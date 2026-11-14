@@ -410,11 +410,17 @@ mod checks_tests;
 #[path = "rounds/tests/fake_github.rs"]
 mod fake_github;
 #[cfg(test)]
+#[path = "rounds/tests/history_events.rs"]
+mod history_events_tests;
+#[cfg(test)]
 #[path = "rounds/tests/history_records.rs"]
 mod history_records_tests;
 #[cfg(test)]
 #[path = "rounds/tests/history_sessions.rs"]
 mod history_sessions_tests;
+#[cfg(test)]
+#[path = "rounds/tests/history_stories.rs"]
+mod history_stories_tests;
 #[cfg(test)]
 #[path = "rounds/tests/rig.rs"]
 mod rig;
@@ -431,6 +437,14 @@ mod history_failures_tests;
 #[cfg(test)]
 #[path = "rounds/tests/history_redaction.rs"]
 mod history_redaction_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/history_events_redaction.rs"]
+mod history_events_redaction_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/history_controls.rs"]
+mod history_controls_tests;
 
 #[cfg(test)]
 #[path = "rounds/tests/history_acceptance.rs"]

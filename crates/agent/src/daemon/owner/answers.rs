@@ -9,6 +9,7 @@
 use std::path::Path;
 
 use agent_core::cli::ActivityEvent;
+use agent_core::history::HistoryEvent;
 use agent_core::ids::TaskId;
 use agent_core::protocol::{AnswerRequest, Client, EventKind, Failure, FailureKind, Reply};
 use agent_core::state::{AnsweredVia, Timestamp};
@@ -302,6 +303,20 @@ impl Owner {
         self.move_to(task, &open.located.team, TaskStatus::Queued, &mut events)?;
         self.unwatch_task(task);
         self.commit(task, &open.located, now, events, None).await?;
+        // The file keeps the answers: what the human answered, whole, is what it says now.
+        if let Some(text) = self.questions_text(task, &open.path).await {
+            self.record_event_at(
+                now,
+                &open.located.team,
+                self.rounds_of_tasks(std::slice::from_ref(task)),
+                HistoryEvent::QuestionAnswered {
+                    task: task.clone(),
+                    number: open.number,
+                    text,
+                    via,
+                },
+            );
+        }
         let channel = match via {
             AnsweredVia::Command => "agent answer",
             AnsweredVia::SavedFile => "a saved file",

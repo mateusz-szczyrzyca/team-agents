@@ -244,7 +244,7 @@ pub(crate) async fn run_with_rng(
     let serving = shutdown.clone();
     sides.spawn(server::serve(listener, inbox, serving));
     let delivering = Arc::clone(&texts);
-    sides.spawn(notifier::run(deliveries, delivering, notifier));
+    sides.spawn(notifier::run(deliveries, delivering, notifier, opened.history.clone()));
     let opens = start_opener(&mut sides, &settings, &surroundings);
     let gate_parts = gate::GateParts {
         store: Arc::clone(&store),
@@ -253,7 +253,12 @@ pub(crate) async fn run_with_rng(
         agent_path: settings.config.binaries().agent_path.clone(),
         stop_grace: timings.run.stop_grace,
     };
-    sides.spawn(gate::run(gate_jobs, gate_parts, shutdown.clone()));
+    sides.spawn(gate::run_recorded(
+        gate_jobs,
+        gate_parts,
+        opened.history.clone(),
+        shutdown.clone(),
+    ));
 
     let owner = Owner::new(
         OwnerParts {

@@ -1,0 +1,47 @@
+Round <round-1> of team <team-2>
+Item 1.1: The first item
+
+Do the first thing in the repository.
+
+Expected result:
+- the first thing works
+
+Checks:
+- run the first thing
+
+Team started <time>: repo example, base branch main, merge autopilot
+
+Agents
+1. claude-1 — solo — named on the command line
+
+Story
+
+<time>  run <run-3>: claude-1 (normal, claude) as solo, because it is the first run of the task
+    task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/claude-1/<task-4>-1.1
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # Working context
+      
+      You are agent **claude-1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      The human does not answer live: you reach them only through a questions file (below).
+      
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-3>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-3>/claude-settings.json --session-id <uuid> --scenario sleep --as claude-1 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-4>, at commit <commit-1>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported SLEEPING
+    ----- final message (35 bytes) -----
+Nothing to do now.
+STATUS: SLEEPING
+    ----- end of final message -----
+    changes: head <commit-1> → <commit-1>
+      uncommitted: added .fake-args-1 (+<n> -<n>)
+      uncommitted: added .fake-log (+<n> -<n>)
+      uncommitted: added .fake-prompt-1 (+<n> -<n>)
+      uncommitted: added .fake-runs (+<n> -<n>)
+<time>  the human stopped team <team-2> (from the terminal); reached task <task-4>
+<time>  round <round-1> closed: abandoned
+
+no pull request recorded for this round

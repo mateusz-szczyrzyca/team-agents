@@ -9,8 +9,9 @@
 
 use std::path::PathBuf;
 
-use agent_core::decide::checks::{Subject, assess_near, markers};
-use agent_core::decide::round::{Checking, ChecksPolicy, ChecksStep};
+use agent_core::decide::checks::{Issue, Subject, assess_near, markers};
+use agent_core::decide::round::{AskReason, Checking, ChecksPolicy, ChecksStep};
+use agent_core::history::{CheckOutcome, HistoryEvent};
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::prompt::Variables;
 use agent_core::repo_path::RepoPath;
@@ -23,7 +24,7 @@ use super::super::start::next_number;
 use super::super::{Notice, Owner, OwnerError};
 use super::publish::{Ready, Site};
 use super::{Announcement, Lead, PublishError, Pulls};
-use crate::daemon::checks::{MAX_RELAYS, authored, decisions, questions, team_message};
+use crate::daemon::checks::{MAX_RELAYS, authored, decisions, named, questions, reason, team_message};
 use crate::daemon::questions;
 use crate::daemon::team::Why;
 
@@ -113,14 +114,7 @@ impl Owner {
                     return Ok(Some(Held::WakeLead));
                 }
                 Asking::Answered(file) => {
-                    let loaded = questions::read(&file).await?;
-                    let decided = decisions(&asked.subjects, &loaded.file);
-                    record.allow(&asked.items, &decided.allowed);
-                    record.restart_passes(&asked.items);
-                    record.asked = None;
-                    self.parts.store.save_checks_record(&lead.task, &record).await?;
-                    tracing::info!(team = %team, allowed = decided.allowed.len(), refused = decided.refused.len(), "the human answered the questions of the checks");
-                    refused = decided.refused;
+                    refused = self.take_answer(site, reviewing, &mut record, &asked, &file).await?;
                 }
             }
         }
@@ -150,32 +144,110 @@ impl Owner {
                     text,
                 });
                 self.parts.store.save_checks_record(&lead.task, &record).await?;
+                let lines = issue_lines(pulls, &issues)?;
+                self.record_checked(
+                    team,
+                    reviewing,
+                    lines,
+                    CheckOutcome::SentBack {
+                        pass,
+                        of: policy.check_passes,
+                    },
+                );
                 tracing::info!(team = %team, pr = %reviewing.pr, pass = pass.get(), issues = issues.len(), "the checks send the round back to the team");
                 Ok(Some(Held::WakeLead))
             }
             ChecksStep::AskHuman { reason } => {
-                let number = self
-                    .parts
-                    .state
-                    .find_task(&lead.task)
-                    .and_then(|found| next_number(found.member))
-                    .ok_or(PublishError::QuestionNumbers)?;
-                let asked = questions(pulls.checks(), team, &lead.task, &issues, reason, checking.passes())?;
-                let file = self.parts.store.home().questions_file(&lead.task, number);
-                replace_text_file(&file, &asked.file.render(), QUESTIONS_FILE_MODE).await?;
-                record.sent = None;
-                record.asked = Some(Asked {
-                    number,
-                    at: now,
-                    items: reviewing.items.to_vec(),
-                    subjects: asked.subjects,
-                    relays: 0,
-                });
-                self.parts.store.save_checks_record(&lead.task, &record).await?;
-                tracing::info!(team = %team, pr = %reviewing.pr, ?reason, issues = issues.len(), "the checks ask the human about the round");
-                Ok(Some(Held::WakeLead))
+                self.put_question(site, reviewing, &mut record, &issues, (reason, checking.passes()), now)
+                    .await
             }
         }
+    }
+
+    /// Takes the human's answer to the questions of the checks: what they allowed is kept for the items, what they refused
+    /// goes back to the team. Returns the refused subjects.
+    async fn take_answer(
+        &mut self,
+        site: Site<'_>,
+        reviewing: &Reviewing<'_>,
+        record: &mut ChecksRecord,
+        asked: &Asked,
+        file: &std::path::Path,
+    ) -> Result<Vec<Subject>, PublishError> {
+        let Site { pulls, team, lead } = site;
+        let loaded = questions::read(file).await?;
+        let decided = decisions(&asked.subjects, &loaded.file);
+        record.allow(&asked.items, &decided.allowed);
+        record.restart_passes(&asked.items);
+        record.asked = None;
+        self.parts.store.save_checks_record(&lead.task, record).await?;
+        tracing::info!(team = %team, allowed = decided.allowed.len(), refused = decided.refused.len(), "the human answered the questions of the checks");
+        if !decided.allowed.is_empty() {
+            let allowed = decided
+                .allowed
+                .iter()
+                .map(|subject| named(pulls.checks(), subject))
+                .collect::<Result<Vec<String>, _>>()?;
+            self.record_checked(team, reviewing, allowed, CheckOutcome::Allowed);
+        }
+        Ok(decided.refused)
+    }
+
+    /// Writes the questions that name the `issues` for the lead to put to the human, and keeps what the checks wait on.
+    async fn put_question(
+        &mut self,
+        site: Site<'_>,
+        reviewing: &Reviewing<'_>,
+        record: &mut ChecksRecord,
+        issues: &[Issue],
+        (reason, passes): (AskReason, u32),
+        now: Timestamp,
+    ) -> Result<Option<Held>, PublishError> {
+        let Site { pulls, team, lead } = site;
+        let number = self
+            .parts
+            .state
+            .find_task(&lead.task)
+            .and_then(|found| next_number(found.member))
+            .ok_or(PublishError::QuestionNumbers)?;
+        let asked = questions(pulls.checks(), team, &lead.task, issues, reason, passes)?;
+        let file = self.parts.store.home().questions_file(&lead.task, number);
+        replace_text_file(&file, &asked.file.render(), QUESTIONS_FILE_MODE).await?;
+        record.sent = None;
+        record.asked = Some(Asked {
+            number,
+            at: now,
+            items: reviewing.items.to_vec(),
+            subjects: asked.subjects,
+            relays: 0,
+        });
+        self.parts.store.save_checks_record(&lead.task, record).await?;
+        let lines = issue_lines(pulls, issues)?;
+        self.record_checked(
+            team,
+            reviewing,
+            lines,
+            CheckOutcome::AskedHuman {
+                reason,
+                question: number,
+            },
+        );
+        tracing::info!(team = %team, pr = %reviewing.pr, ?reason, issues = issues.len(), "the checks ask the human about the round");
+        Ok(Some(Held::WakeLead))
+    }
+
+    /// Hands the history the issues the checks found at the head under review, and what followed.
+    fn record_checked(&self, team: &TeamId, reviewing: &Reviewing<'_>, issues: Vec<String>, outcome: CheckOutcome) {
+        self.record_event(
+            team,
+            self.rounds_of_items(team, reviewing.items),
+            HistoryEvent::Checked {
+                pr: Some(reviewing.pr),
+                head: reviewing.ready.tip.clone(),
+                issues,
+                outcome,
+            },
+        );
     }
 
     /// What the checks find in the round of `reviewing`, whose pull request somebody described as `description`, without what
@@ -273,6 +345,14 @@ impl Owner {
             }
         }
     }
+}
+
+/// The `issues` in words, a line each, as the history keeps them.
+fn issue_lines(pulls: &Pulls, issues: &[Issue]) -> Result<Vec<String>, PublishError> {
+    Ok(issues
+        .iter()
+        .map(|issue| reason(pulls.checks(), issue))
+        .collect::<Result<Vec<String>, _>>()?)
 }
 
 /// The notification that the lead `task` of `team` did not put the question of the checks to the human.

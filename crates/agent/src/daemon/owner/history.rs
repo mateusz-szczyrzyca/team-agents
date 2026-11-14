@@ -2,10 +2,10 @@
 //! while a run is going. Each is handed to the history after the state holds it; the history never refuses or delays.
 
 use agent_core::cli::ActivityEvent;
-use agent_core::history::{AgentIdentity, Record, RunEndRecord, RunStart, RunWhy};
-use agent_core::ids::{RoundId, RunId, TaskId, TeamId};
+use agent_core::history::{AgentIdentity, EventRecord, HistoryEvent, Record, RunEndRecord, RunStart, RunWhy};
+use agent_core::ids::{ItemId, RoundId, RunId, TaskId, TeamId};
 use agent_core::protocol::RunRequest;
-use agent_core::state::{RunState, Timestamp};
+use agent_core::state::{ItemPhase, RunState, Timestamp};
 use agent_runtime::process::error_chain;
 
 use super::Owner;
@@ -13,6 +13,76 @@ use super::start::{Plan, work_branch};
 use crate::daemon::history::{round_opening, team_start};
 
 impl Owner {
+    /// Records `event` of `team` for `rounds` at the time the clock gives; a time the clock cannot give is a record lost.
+    pub(super) fn record_event(&self, team: &TeamId, rounds: Vec<RoundId>, event: HistoryEvent) {
+        if self.history.is_disabled() {
+            return;
+        }
+        match Timestamp::now(&self.parts.clock) {
+            Ok(at) => self.record_event_at(at, team, rounds, event),
+            Err(error) => {
+                tracing::warn!(team = %team, error = %error_chain(&error), "the clock gives a time that cannot be recorded: the history has no record of an event");
+                self.history.record_lost();
+            }
+        }
+    }
+
+    /// Records `event` of `team` for `rounds` as having happened at `at`.
+    pub(super) fn record_event_at(&self, at: Timestamp, team: &TeamId, rounds: Vec<RoundId>, event: HistoryEvent) {
+        self.history.record(Record::Event(Box::new(EventRecord {
+            at,
+            team: team.clone(),
+            rounds,
+            event,
+        })));
+    }
+
+    /// The rounds of the `items` of `team`, each once, in the order of the items; an item with no round is told and left out.
+    pub(super) fn rounds_of_items(&self, team: &TeamId, items: &[ItemId]) -> Vec<RoundId> {
+        let mut rounds: Vec<RoundId> = Vec::new();
+        for item in items {
+            match self.round_of_item(team, *item) {
+                Ok(round) if !rounds.contains(&round) => rounds.push(round),
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(team = %team, item = %item, error = %error_chain(&error), "an item has no round: an event of the history is not linked to it");
+                }
+            }
+        }
+        rounds
+    }
+
+    /// The rounds the latest runs of `tasks` work for, each once, oldest first.
+    pub(super) fn rounds_of_tasks(&self, tasks: &[TaskId]) -> Vec<RoundId> {
+        let mut rounds: Vec<RoundId> = Vec::new();
+        for task in tasks {
+            let Some(found) = self.parts.state.find_task(task) else {
+                continue;
+            };
+            for round in found.member.runs().last().map_or(&[][..], |run| run.rounds()) {
+                if !rounds.contains(round) {
+                    rounds.push(round.clone());
+                }
+            }
+        }
+        rounds
+    }
+
+    /// The text of the questions file `path` of `task`: what the human sees. A file that cannot be read is a record lost.
+    pub(super) async fn questions_text(&self, task: &TaskId, path: &std::path::Path) -> Option<String> {
+        if self.history.is_disabled() {
+            return None;
+        }
+        match tokio::fs::read_to_string(path).await {
+            Ok(text) => Some(text),
+            Err(error) => {
+                tracing::warn!(task = %task, error = %error_chain(&error), "the questions file cannot be read: the history has no record of it");
+                self.history.record_lost();
+                None
+            }
+        }
+    }
+
     /// Records the start of the team `team` that `request` asked for, and the rounds it opened with.
     pub(super) fn record_team_start(&self, request: &RunRequest, team: &TeamId) {
         if self.history.is_disabled() {
@@ -78,6 +148,45 @@ impl Owner {
             }
         };
         let participant = member.agent();
+        let fix_pass = match &why {
+            RunWhy::FixPass { number } => Some(*number),
+            RunWhy::FirstRun
+            | RunWhy::Item { .. }
+            | RunWhy::WakeUp
+            | RunWhy::Request { .. }
+            | RunWhy::Review { .. }
+            | RunWhy::AskHuman
+            | RunWhy::VerdictMissing
+            | RunWhy::Checks
+            | RunWhy::Answers
+            | RunWhy::ResumedByHuman
+            | RunWhy::Continuation => None,
+        };
+        // The findings a fix pass sends the team are what the autopilot added to the lead's prompt.
+        if let (Some(number), Some(findings)) = (fix_pass, &plan.addition) {
+            let pr = team.items().iter().find_map(|progress| match progress.phase() {
+                ItemPhase::Fixing { assignee, pr, .. } if assignee.as_str() == participant.name() => Some(pr.number),
+                ItemPhase::Fixing { .. }
+                | ItemPhase::Pending
+                | ItemPhase::InProgress { .. }
+                | ItemPhase::InReview { .. }
+                | ItemPhase::Approved { .. }
+                | ItemPhase::Done { .. } => None,
+            });
+            if let Some(pr) = pr {
+                self.record_event_at(
+                    at,
+                    team.id(),
+                    rounds.to_vec(),
+                    HistoryEvent::FixPassStarted {
+                        pr,
+                        pass: number,
+                        of: self.parts.settings.config.review().fix_passes,
+                        findings: findings.clone(),
+                    },
+                );
+            }
+        }
         self.history.record(Record::Run(Box::new(RunStart {
             run: plan.run.clone(),
             team: team.id().clone(),

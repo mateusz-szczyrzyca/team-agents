@@ -59,6 +59,9 @@ pub enum CaptureKind {
     /// The changes record could not be built.
     #[strum(serialize = "changes")]
     Changes,
+    /// The gate record could not be built after the command ran.
+    #[strum(serialize = "gate")]
+    Gate,
 }
 
 /// A problem of the history, for the reporter.

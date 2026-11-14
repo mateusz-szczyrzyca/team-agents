@@ -253,6 +253,7 @@ fn pull_json(world: &World, pull: &Pull) -> Value {
         "state": if pull.closed { "closed" } else { "open" },
         "draft": pull.draft,
         "merged": pull.merged,
+        "merge_commit_sha": pull.merged.then_some(&head_sha),
         "mergeable": true,
         "user": {"login": ACCOUNT},
         "head": {"ref": pull.head, "sha": head_sha, "repo": {"full_name": SLUG}},

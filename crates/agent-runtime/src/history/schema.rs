@@ -6,6 +6,59 @@
 
 use super::migrate::Migration;
 
+/// The records a history made before the ledger has, as `kind, key, at, team, rank` rows: one for every row of the
+/// tables of the records. `rank` breaks a tie of time between kinds, in the order a run happens in. `with_sessions` is
+/// for a database of version 2 or newer, which has the sessions of runs; `without_sessions` for version 1.
+///
+/// The migration that makes the ledger and the view a reader makes of an older file are built from this one text, so
+/// they cannot disagree about the order of a history that has no ledger.
+macro_rules! ledger_records {
+    (with_sessions) => {
+        concat!(
+            ledger_records!(without_sessions),
+            " UNION ALL SELECT 'session', run_sessions.run || '/' || run_sessions.n, run_sessions.at, runs.team, 7 \
+             FROM run_sessions JOIN runs ON runs.run = run_sessions.run"
+        )
+    };
+    (without_sessions) => {
+        "SELECT 'team' AS kind, team AS key, at, team, 0 AS rank FROM teams \
+             UNION ALL SELECT 'round', round, at, team, 1 FROM rounds \
+             UNION ALL SELECT 'run', run, at, team, 2 FROM runs \
+             UNION ALL SELECT 'launch', launches.run, launches.at, runs.team, 3 \
+                 FROM launches JOIN runs ON runs.run = launches.run \
+             UNION ALL SELECT 'step', steps.run || '/' || steps.n, steps.at, runs.team, 4 \
+                 FROM steps JOIN runs ON runs.run = steps.run \
+             UNION ALL SELECT 'run_end', run_ends.run, run_ends.at, runs.team, 5 \
+                 FROM run_ends JOIN runs ON runs.run = run_ends.run \
+             UNION ALL SELECT 'changes', run_changes.run, COALESCE(run_ends.at, runs.at), runs.team, 6 \
+                 FROM run_changes JOIN runs ON runs.run = run_changes.run \
+                 LEFT JOIN run_ends ON run_ends.run = run_changes.run"
+    };
+}
+
+/// The rounds each record of the ledger belongs to, as `sequence, position, round` rows, read from the ledger itself
+/// and the tables of the runs: a round opening belongs to its round, and the records of a run to the rounds the run
+/// works for.
+macro_rules! ledger_links {
+    () => {
+        "SELECT sequence, 1 AS position, key AS round FROM history_records WHERE kind = 'round' \
+         UNION ALL \
+         SELECT history_records.sequence, run_rounds.position, run_rounds.round FROM history_records \
+             JOIN run_rounds ON run_rounds.run = CASE WHEN history_records.kind IN ('step', 'session') \
+                 THEN substr(history_records.key, 1, instr(history_records.key, '/') - 1) \
+                 ELSE history_records.key END \
+         WHERE history_records.kind IN ('run', 'launch', 'step', 'run_end', 'changes', 'session')"
+    };
+}
+
+pub(super) use {ledger_links, ledger_records};
+
+/// The first version of the database that has the sessions of runs.
+pub(super) const SESSIONS_VERSION: u32 = 2;
+
+/// The first version of the database that has the ledger.
+pub(super) const LEDGER_VERSION: u32 = 3;
+
 /// The migrations, oldest first: version 1 is the schema of item 8.4.
 ///
 /// Every table is `STRICT`; the `CHECK`s repeat the rules of the typed records, so the database refuses what the types
@@ -204,5 +257,53 @@ CREATE TABLE run_sessions (
     PRIMARY KEY (run, n)
 ) STRICT, WITHOUT ROWID;
 ",
+    },
+    Migration {
+        version: 3,
+        sql: concat!(
+            "\
+CREATE TABLE history_records (
+    sequence INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN (
+        'team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session',
+        'gate', 'checked', 'pull_opened', 'pull_pushed', 'pull_ready', 'review_asked', 'review_submitted',
+        'fix_pass_started', 'pull_approved', 'pull_merged', 'pull_handed_over', 'pull_closed', 'question_asked',
+        'question_answered', 'controlled', 'notified', 'round_closed', 'team_ended', 'lost'
+    )),
+    key TEXT,
+    at TEXT NOT NULL,
+    team TEXT NOT NULL,
+    payload TEXT,
+    cut TEXT NOT NULL,
+    CHECK ((kind IN ('team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session')) = (payload IS NULL)),
+    CHECK (payload IS NULL OR (json_valid(payload) AND json_type(payload) = 'object' AND json_extract(payload, '$.event') = kind)),
+    CHECK (payload IS NOT NULL OR cut = ''),
+    CHECK (key IS NOT NULL OR payload IS NOT NULL)
+) STRICT;
+
+CREATE UNIQUE INDEX history_records_by_key ON history_records (kind, team, key) WHERE key IS NOT NULL;
+
+CREATE INDEX history_records_by_team ON history_records (team, sequence);
+
+CREATE TABLE history_record_rounds (
+    sequence INTEGER NOT NULL REFERENCES history_records (sequence),
+    position INTEGER NOT NULL CHECK (position >= 1),
+    round TEXT NOT NULL,
+    PRIMARY KEY (sequence, position),
+    UNIQUE (sequence, round)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX history_record_rounds_by_round ON history_record_rounds (round, sequence);
+
+INSERT INTO history_records (kind, key, at, team, cut)
+SELECT kind, key, at, team, '' FROM (",
+            ledger_records!(with_sessions),
+            ") ORDER BY at, rank, key;
+
+INSERT INTO history_record_rounds (sequence, position, round) ",
+            ledger_links!(),
+            ";
+"
+        ),
     },
 ];

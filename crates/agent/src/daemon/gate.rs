@@ -15,11 +15,13 @@ use std::time::Duration;
 
 use agent_core::cli::ActivityEvent;
 use agent_core::config::{AbsolutePath, CommandLine, EnvName, InvalidValue};
+use agent_core::history::{EventRecord, HistoryEvent, Record};
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::protocol::{Event, EventKind, Failure, FailureKind, Reply};
 use agent_core::state::{CommitId, GateOutcome, GateRecord, GateResult, GateTree, InvalidTimestamp, Timestamp};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::git::{CommitIdentity, Git, GitError, MergeState, Revision, TreeState};
+use agent_runtime::history::{CaptureKind, Cause, History};
 use agent_runtime::process::{ExitReport, ProcessError, ProcessSpec, Supervisor, error_chain};
 use agent_runtime::run::HoldGuard;
 use agent_runtime::store::{StateStore, StoreError};
@@ -252,6 +254,8 @@ enum Ended {
 struct Service {
     /// What it is made of.
     parts: GateParts,
+    /// Where the gates that ran are recorded.
+    history: History,
     /// Runs the gate commands; it has one slot, which is the machine's one gate at a time.
     supervisor: Supervisor,
     /// The number the next log of each task is tried with.
@@ -263,9 +267,16 @@ impl Service {
     fn new(parts: GateParts) -> Self {
         Self {
             parts,
+            history: History::disabled(),
             supervisor: Supervisor::new(NonZeroUsize::MIN),
             next_log: HashMap::new(),
         }
+    }
+
+    /// The same service, recording the gates that run in `history`.
+    fn with_history(mut self, history: History) -> Self {
+        self.history = history;
+        self
     }
 
     /// Runs `job` and answers its client.
@@ -292,29 +303,39 @@ impl Service {
         if job.cancel.is_cancelled() {
             return Err(GateError::Cancelled);
         }
+        let started_at = Timestamp::now(&self.parts.clock)?;
         let before = inspect(&job.worktree).await.map_err(|source| GateError::Git {
             worktree: job.worktree.as_path().to_path_buf(),
             source,
         })?;
         let (log, log_text) = self.open_log(&job.task).await?;
         let outcome = self.run_command(job, &log).await?;
+        let finished_at = Timestamp::now(&self.parts.clock).inspect_err(|error| {
+            self.record_capture_loss(job, started_at, error);
+        })?;
         // The command has ended with its whole group: what it left in the worktree is final. A gate that changed the
         // tree or moved `HEAD` did not gate what the commit holds.
-        let after = inspect(&job.worktree).await.map_err(|source| GateError::GitAfter {
-            worktree: job.worktree.as_path().to_path_buf(),
-            log: log.clone(),
-            source,
-        })?;
+        let after = inspect(&job.worktree)
+            .await
+            .map_err(|source| GateError::GitAfter {
+                worktree: job.worktree.as_path().to_path_buf(),
+                log: log.clone(),
+                source,
+            })
+            .inspect_err(|error| {
+                self.record_capture_loss(job, finished_at, error);
+            })?;
         let head = before.head.clone();
         let record = GateRecord {
             tree: before.merged_with(&after),
             result: GateResult {
                 head,
-                finished_at: Timestamp::now(&self.parts.clock)?,
+                finished_at,
                 outcome,
                 log: log_text,
             },
         };
+        self.record(job, started_at, &record);
         self.parts
             .store
             .save_gate_record(&job.task, &record)
@@ -429,6 +450,39 @@ impl Service {
         }
     }
 
+    /// Hands the history the gate that ran. The rounds are left to the ledger, which knows the task's runs: this service
+    /// holds no state of rounds.
+    fn record(&self, job: &GateJob, started_at: Timestamp, record: &GateRecord) {
+        self.history.record(Record::Event(Box::new(EventRecord {
+            at: record.result.finished_at,
+            team: job.team.clone(),
+            rounds: Vec::new(),
+            event: HistoryEvent::Gate {
+                task: job.task.clone(),
+                started_at,
+                record: record.clone(),
+            },
+        })));
+    }
+
+    /// Counts a gate that ran but whose post-command state could not be captured, and notes the loss for its round when the
+    /// history is writing.
+    fn record_capture_loss(&self, job: &GateJob, at: Timestamp, error: &impl std::error::Error) {
+        self.history.capture_failed(CaptureKind::Gate, error);
+        if self.history.is_writing() {
+            self.history.record(Record::Event(Box::new(EventRecord {
+                at,
+                team: job.team.clone(),
+                rounds: Vec::new(),
+                event: HistoryEvent::Lost {
+                    what: agent_core::history::EventKind::Gate.to_string(),
+                    cause: Cause::Capture(CaptureKind::Gate).to_string(),
+                    detail: error_chain(error),
+                },
+            })));
+        }
+    }
+
     /// Tells the subscribers and the activity log of the task that the gate ended.
     async fn announce(&self, job: &GateJob, record: &GateRecord) {
         let at = record.result.finished_at;
@@ -501,8 +555,13 @@ async fn inspect(worktree: &AbsolutePath) -> Result<Inspected, GitError> {
 ///
 /// A job waits as long as the ones before it run; when its task is stopped it keeps its place, and is answered
 /// `conflict` without running when its turn comes.
-pub(super) async fn run(mut jobs: mpsc::Receiver<GateJob>, parts: GateParts, shutdown: CancellationToken) {
-    let mut service = Service::new(parts);
+pub(super) async fn run_recorded(
+    mut jobs: mpsc::Receiver<GateJob>,
+    parts: GateParts,
+    history: History,
+    shutdown: CancellationToken,
+) {
+    let mut service = Service::new(parts).with_history(history);
     loop {
         let job = tokio::select! {
             () = shutdown.cancelled() => break,
@@ -513,6 +572,12 @@ pub(super) async fn run(mut jobs: mpsc::Receiver<GateJob>, parts: GateParts, shu
         };
         service.serve(job).await;
     }
+}
+
+/// [`run_recorded`] with a history that records nothing: what the tests of the service run.
+#[cfg(test)]
+pub(super) async fn run(jobs: mpsc::Receiver<GateJob>, parts: GateParts, shutdown: CancellationToken) {
+    run_recorded(jobs, parts, History::disabled(), shutdown).await;
 }
 
 #[cfg(test)]

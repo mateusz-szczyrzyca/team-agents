@@ -131,6 +131,14 @@ impl Redactor {
             Record::Session(session) => {
                 !self.contains(session.run.as_str()) && !self.contains(session.session.as_str())
             }
+            Record::Event(record) => {
+                for (_, text) in record.event.texts_mut() {
+                    *text = self.text(text);
+                }
+                !self.contains(record.team.as_str())
+                    && !record.rounds.iter().any(|round| self.contains(round.as_str()))
+                    && !record.event.identities().iter().any(|identity| self.contains(identity))
+            }
         }
     }
 

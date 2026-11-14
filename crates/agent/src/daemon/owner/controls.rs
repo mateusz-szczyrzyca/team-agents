@@ -6,6 +6,7 @@
 //! person looks: the event, the activity log of each task, with the client that did it.
 
 use agent_core::cli::ActivityEvent;
+use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::protocol::{Client, ControlAction, EventKind, Failure, FailureKind, Reply, SayRequest, Target};
 use agent_core::state::{RunEnd, Timestamp};
@@ -84,6 +85,8 @@ impl Owner {
             return Ok(Err(nothing_done(steer, target, &skipped)));
         }
         self.save().await?;
+        // The control is recorded before what it causes: a team stopped ends its rounds after it.
+        self.record_controlled(now, client, steer.into(), target, &aimed, &reached);
         for event in events {
             self.publish(now, event);
         }
@@ -242,6 +245,32 @@ impl Owner {
         Ok(())
     }
 
+    /// Hands the history a control of the human: what it was, what it was aimed at, who used it and the tasks it reached.
+    fn record_controlled(
+        &self,
+        at: Timestamp,
+        client: &Client,
+        action: ControlAction,
+        target: &Target,
+        aimed: &[Aimed],
+        reached: &[TaskId],
+    ) {
+        let Some(first) = aimed.first() else {
+            return;
+        };
+        self.record_event_at(
+            at,
+            &first.team,
+            self.rounds_of_tasks(reached),
+            HistoryEvent::Controlled {
+                action,
+                target: target.clone(),
+                by: client.clone(),
+                tasks: reached.to_vec(),
+            },
+        );
+    }
+
     /// Records a control of the human: its event, once for the target, and a line in the activity log of each task it
     /// reached.
     async fn record_control(
@@ -323,6 +352,8 @@ impl Owner {
                 }));
             }
         }
+        let said = Timestamp::now(&self.parts.clock)?;
+        self.record_controlled(said, client, ControlAction::Say, &target, &aimed, &hearing);
         self.record_control(client, ControlAction::Say, &target, &aimed, &hearing)
             .await?;
         for Aimed { team, .. } in &aimed {

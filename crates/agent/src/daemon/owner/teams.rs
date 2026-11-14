@@ -13,6 +13,7 @@ use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, Config};
 use agent_core::decide::assign::first_free_worker;
+use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::protocol::{EventKind, Failure, FailureKind, Reply, RunRequest, TeamSummary};
@@ -738,6 +739,10 @@ impl Owner {
             });
         }
         self.closed.insert(team_id.clone());
+        let rounds = self.parts.state.team(team_id).map_or_else(Vec::new, |found| {
+            found.rounds().iter().map(|round| round.id().clone()).collect()
+        });
+        self.record_event_at(now, team_id, rounds, HistoryEvent::TeamEnded {});
         let located = self.locate(&lead)?;
         let now = Timestamp::now(&self.parts.clock)?;
         self.notify(now, &located, &lead, Notice::Prepared(notification));

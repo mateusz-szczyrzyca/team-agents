@@ -1,0 +1,190 @@
+Round <round-1> of team <team-2>
+Item 1.1: The first item
+
+Do the first thing in the repository.
+
+Expected result:
+- the first thing works
+
+Checks:
+- run the first thing
+
+Team started <time>: repo example, base branch main, merge autopilot
+
+Agents
+1. claude-1 — solo — named on the command line
+
+Story
+
+<time>  run <run-3>: claude-1 (normal, claude) as solo, because it is the first run of the task
+    task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/claude-1/<task-4>-1.1
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # Working context
+      
+      You are agent **claude-1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      The human does not answer live: you reach them only through a questions file (below).
+      
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-3>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-3>/claude-settings.json --session-id <uuid> --scenario ask,gated --as claude-1 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-4>, at commit <commit-1>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported QUESTIONS
+    ----- final message (32 bytes) -----
+I have to ask.
+STATUS: QUESTIONS
+    ----- end of final message -----
+    changes: head <commit-1> → <commit-1>
+      uncommitted: added .fake-args-1 (+<n> -<n>)
+      uncommitted: added .fake-log (+<n> -<n>)
+      uncommitted: added .fake-prompt-1 (+<n> -<n>)
+      uncommitted: added .fake-runs (+<n> -<n>)
+<time>  notification sent: claude-1 has questions (<task-4>) (task <task-4>)
+  ----- notification (259 bytes) -----
+Questions number 1 of task <task-4> wait for your answers in <home>/tasks/<task-4>/questions-1.md.
+Answer in the file (put **ANSWERED** on its last line and save) or run `agent answer <task-4>`.
+  ----- end of notification -----
+<time>  task <task-4> asked the human (questions 1)
+  ----- questions (467 bytes) -----
+# Questions — fake
+
+> Answer every question after **Verdict:** — `ok` accepts the recommendation. When you are done, put **ANSWERED** on the last line and save: the answers are sent at once (or run `agent answer <task-4>`).
+
+## 1. What should the team do about the pull request?
+a) one more fix pass — the reviewers are asked again
+b) leave it to me — I merge or close it
+
+**Recommended:** a) — a finding was not fixed (fake)
+
+**Verdict:**
+  ----- end of questions -----
+<time>  task <task-4>: the human answered questions 1 (command)
+  ----- answered questions (483 bytes) -----
+# Questions — fake
+
+> Answer every question after **Verdict:** — `ok` accepts the recommendation. When you are done, put **ANSWERED** on the last line and save: the answers are sent at once (or run `agent answer <task-4>`).
+
+## 1. What should the team do about the pull request?
+a) one more fix pass — the reviewers are asked again
+b) leave it to me — I merge or close it
+
+**Recommended:** a) — a finding was not fixed (fake)
+
+**Verdict:** a
+
+**ANSWERED**
+  ----- end of answered questions -----
+<time>  run <run-5>: claude-1 (normal, claude) as solo, because the human answered the questions of the task
+    task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/claude-1/<task-4>-1.1
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # THE HUMAN ANSWERED YOUR QUESTIONS (questions number 1)
+      
+      The human answered the questions you asked when you ended a run with `STATUS: QUESTIONS`. If you were started again
+      after that without these answers reaching you, they are given again now. Everything of this session still holds, the
+      rules of your first message included. Below is the file with their answers: each question has its verdict. A verdict
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-5>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-5>/claude-settings.json --resume <uuid> --scenario ask,gated --as claude-1 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-4>, at commit <commit-1>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported DONE
+    ----- final message (41 bytes) -----
+Committed, and the gate ran.
+STATUS: DONE
+    ----- end of final message -----
+    changes: head <commit-1> → <commit-2>
+      commit <commit-2> Work of run 2 of claude-1
+      added work-2.txt (+1 -0)
+<time>  gate for task <task-4>: passed at <commit-2> (took <duration>); output <home>/tasks/<task-4>/gate-1.log
+<time>  pull request #1 opened: branch agents/claude-1/<task-4>-1.1 at <commit-2>
+  title: Item 1.1: The first item
+  ----- pull request body (419 bytes) -----
+Work of the team `<team-2>` on `example`, opened by the harness after the repository's gate passed on this branch
+(passed at <commit-2>).
+
+## 1.1 — The first item
+
+Do the first thing in the repository.
+
+### Expected result
+
+- the first thing works
+
+### Checks
+
+- run the first thing
+
+## Reviews
+
+Two investigators from outside the team review this pull request. Their reports are posted here as reviews.
+  ----- end of pull request body -----
+<time>  pull request #1 marked ready for review
+<time>  review pass 1 of #1 asked of inv-r2 (task <task-6>) at <commit-2>
+<time>  review pass 1 of #1 asked of inv-r1 (task <task-7>) at <commit-2>
+<time>  run <run-8>: inv-r2 (investigator, claude) as reviewer, because a review of pull request #1, pass 1
+    task <task-6>; worktree <home>/worktrees/example/<task-6>, branch agents/inv-r2/<task-6>
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # Working context
+      
+      You are agent **inv-r2**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      The human does not answer live: you reach them only through a questions file (below).
+      
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-8>/mcp.json --max-turns 300 --settings <home>/tasks/<task-6>/runs/<run-8>/claude-settings.json --session-id <uuid> --scenario 'late:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-6>, at commit <commit-2>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported DONE
+    ----- final message (43 bytes) -----
+VERDICT: APPROVE
+SUMMARY: fine
+STATUS: DONE
+    ----- end of final message -----
+    changes: head <commit-2> → <commit-2>
+<time>  run <run-9>: inv-r1 (investigator, claude) as reviewer, because a review of pull request #1, pass 1
+    task <task-7>; worktree <home>/worktrees/example/<task-7>, branch agents/inv-r1/<task-7>
+    took <duration>
+    prompt: <n> lines, <n> bytes
+      # Working context
+      
+      You are agent **inv-r1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      The human does not answer live: you reach them only through a questions file (below).
+      
+      … <n> more lines
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-7>/runs/<run-9>/mcp.json --max-turns 300 --settings <home>/tasks/<task-7>/runs/<run-9>/claude-settings.json --session-id <uuid> --scenario 'done:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r1 --home <home> <the prompt>
+    started <time> in <home>/worktrees/example/<task-7>, at commit <commit-2>
+    steps (2):
+      1. <time> info: session started, model fake-model
+      2. <time> info: result: success
+    ended: reported DONE
+    ----- final message (43 bytes) -----
+VERDICT: APPROVE
+SUMMARY: fine
+STATUS: DONE
+    ----- end of final message -----
+    changes: head <commit-2> → <commit-2>
+<time>  review pass 1 of #1 by inv-r1: APPROVE
+  ----- review report (30 bytes) -----
+VERDICT: APPROVE
+SUMMARY: fine
+  ----- end of review report -----
+<time>  review pass 1 of #1 by inv-r2: APPROVE
+  ----- review report (30 bytes) -----
+VERDICT: APPROVE
+SUMMARY: fine
+  ----- end of review report -----
+<time>  pull request #1 approved by both reviews
+<time>  pull request #1 merged as <commit-2>
+<time>  round <round-1> closed: merged
+<time>  team ended
+<time>  notification sent: Team <team-2> is finished (task <task-4>)
+  ----- notification (190 bytes) -----
+The team <team-2> on example has finished its work: 1 items done. Its tasks are closed. The worktrees stay where
+they are, in the home of the harness, until you remove them.
+  ----- end of notification -----

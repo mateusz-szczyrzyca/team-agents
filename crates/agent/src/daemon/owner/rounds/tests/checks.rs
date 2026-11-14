@@ -762,3 +762,182 @@ async fn a_round_that_edits_a_line_far_below_the_opener_of_its_attribute_goes_ba
     );
     assert_eq!(rig.github.calls("POST", "/graphql"), []);
 }
+
+// ---- what the history records of the checks -----------------------------------------------------------------------------
+
+/// The `Checked` events of `team`, in the order they were written.
+fn checked(rig: &Rig, team: &agent_core::ids::TeamId) -> Vec<agent_core::history::HistoryEvent> {
+    agent_runtime::history::Reader::open(&rig.home.history_file())
+        .unwrap()
+        .team_records(team)
+        .unwrap()
+        .into_iter()
+        .filter_map(|stored| match stored.record {
+            agent_core::history::Record::Event(event) => Some(event.event),
+            _ => None,
+        })
+        .filter(|event| event.kind() == agent_core::history::EventKind::Checked)
+        .collect()
+}
+
+#[tokio::test]
+async fn the_checks_are_recorded_with_each_issue_and_what_followed_sent_back_asked_of_the_human_and_allowed() {
+    use agent_core::decide::round::AskReason;
+    use agent_core::history::{CheckOutcome, HistoryEvent};
+
+    let mut rig = checking_rig("script:code-only,done,questions,done", 1, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    let events = checked(&rig, &team);
+    let outcomes: Vec<CheckOutcome> = events
+        .iter()
+        .map(|event| match event {
+            HistoryEvent::Checked { outcome, .. } => *outcome,
+            other => panic!("not a check: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            CheckOutcome::SentBack {
+                pass: NonZeroU32::MIN,
+                of: 1
+            },
+            CheckOutcome::AskedHuman {
+                reason: AskReason::PassesUsed,
+                question: NonZeroU32::MIN
+            },
+            CheckOutcome::Allowed,
+        ]
+    );
+    let HistoryEvent::Checked { pr, head, issues, .. } = &events[0] else {
+        panic!("not a check")
+    };
+    assert_eq!(pr.map(|pr| pr.get().get()), Some(1));
+    assert_eq!(head.as_str(), rig.remote_tip(&rig.github.pulls()[0].head));
+    assert_eq!(issues.len(), 1);
+    assert!(issues[0].contains("production code"), "{}", issues[0]);
+    let HistoryEvent::Checked { issues: allowed, .. } = &events[2] else {
+        panic!("not a check")
+    };
+    assert_eq!(allowed.len(), 1);
+    assert!(allowed[0].contains("production code"), "{}", allowed[0]);
+}
+
+#[tokio::test]
+async fn what_the_human_refuses_is_recorded_as_a_round_sent_back_with_the_refused_issue() {
+    use agent_core::history::{CheckOutcome, HistoryEvent};
+
+    let mut rig = checking_rig("script:edit-test,questions,done,script:restore-test", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 1, "refuse").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    let events = checked(&rig, &team);
+    assert_ne!(events.len(), 0, "no check was recorded");
+    let HistoryEvent::Checked { issues, outcome, .. } = &events[events.len() - 1] else {
+        panic!("not a check")
+    };
+    assert!(matches!(outcome, CheckOutcome::SentBack { .. }), "{outcome:?}");
+    assert!(
+        issues.iter().any(|issue| issue.contains("tests/existing.txt")),
+        "{issues:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_head_pushed_to_an_existing_draft_after_the_checks_sent_it_back_is_recorded_as_a_push() {
+    use agent_core::history::{HistoryEvent, Record};
+
+    let mut rig = checking_rig("script:code-only,script:add-test", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    let events: Vec<HistoryEvent> = agent_runtime::history::Reader::open(&rig.home.history_file())
+        .unwrap()
+        .team_records(&team)
+        .unwrap()
+        .into_iter()
+        .filter_map(|stored| match stored.record {
+            Record::Event(event) => Some(event.event),
+            _ => None,
+        })
+        .collect();
+    let opened_head = events
+        .iter()
+        .find_map(|event| match event {
+            HistoryEvent::PullOpened { head, .. } => Some(head.clone()),
+            _ => None,
+        })
+        .expect("no PullOpened");
+    let reviewed_head = events
+        .iter()
+        .find_map(|event| match event {
+            HistoryEvent::ReviewAsked { head, .. } => Some(head.clone()),
+            _ => None,
+        })
+        .expect("no ReviewAsked");
+    assert_ne!(opened_head, reviewed_head);
+    let pushed_heads: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            HistoryEvent::PullPushed { pr, head } => Some((pr.get().get(), head.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pushed_heads, [(1, reviewed_head)], "{events:?}");
+}
+
+// ---- the story of a round the checks held back --------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_round_the_checks_send_back_once_and_then_ask_the_human_about_is_told_with_both_and_the_allowance() {
+    use super::history_stories_tests::{Normalized, check_story, golden};
+
+    let mut rig = checking_rig("script:code-only,done,questions,done", 1, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start_with_rng(rand::SeedableRng::seed_from_u64(7)).await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.state_where("both reviewers to have run", |state| {
+        let reviewers = state.team(&team).unwrap().reviewers();
+        reviewers.len() == 2
+            && reviewers.iter().all(|member| {
+                !member.runs().is_empty()
+                    && member
+                        .runs()
+                        .iter()
+                        .all(|run| matches!(run.state(), agent_core::state::RunState::Ended { .. }))
+            })
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    let (text, json) = check_story(&rig, &team);
+
+    let sent_back = text.find("→ sent back to the team (pass 1 of 1)").expect(&text);
+    let asked = text.find("→ the human is asked in questions 1").expect(&text);
+    let allowed = text.find("→ allowed by the human: the reviews go on").expect(&text);
+    let reviews = text.find("review pass 1 of #1 asked of").expect(&text);
+    assert!(sent_back < asked && asked < allowed && allowed < reviews, "{text}");
+    golden("story-checks.txt", &Normalized::of(&rig, &text, &json));
+}

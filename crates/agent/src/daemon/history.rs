@@ -14,7 +14,7 @@ use agent_core::ids::BranchName;
 use agent_core::kinds::Role;
 use agent_core::protocol::RunRequest;
 use agent_core::state::{Round, Team};
-use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, Reporter, Setup, TracingReporter, Writer};
+use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, Noting, Reporter, Setup, TracingReporter, Writer};
 use agent_runtime::process::error_chain;
 use agent_runtime::settings::Settings;
 use agent_runtime::store::Home;
@@ -57,7 +57,7 @@ pub(super) async fn open(settings: &Settings, home: &Home) -> Opened {
         reporter: Arc::clone(&reporter),
         capacity: DEFAULT_QUEUE,
     };
-    match History::start_with_secrets(database, setup, settings.secrets.clone()) {
+    match History::start_with_secrets(Noting::new(database), setup, settings.secrets.clone()) {
         Ok(started) => Opened {
             history: started.history,
             writer: Some(started.writer),

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use agent_core::config::InvalidValue;
 use agent_core::ids::{InvalidId, InvalidItemId, InvalidName};
-use agent_core::kinds::UnknownKeyword;
+use agent_core::kinds::{Keyword, UnknownKeyword};
 use agent_core::repo_path::InvalidRepoPath;
 use agent_core::state::{InvalidCommitId, InvalidTimestamp};
 
@@ -61,9 +61,10 @@ pub enum OpenError {
     },
 }
 
-/// Which record a write was about, for the message of an error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
-#[strum(serialize_all = "snake_case")]
+/// Which record a write was about, for the message of an error; for the records of a run and a team also the `kind` the
+/// ledger keeps them under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, strum::VariantNames)]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<RecordKind>)]
 pub enum RecordKind {
     /// A team starting.
     Team,
@@ -81,6 +82,13 @@ pub enum RecordKind {
     RunEnd,
     /// What a run changed.
     Changes,
+    /// An event of a round: a gate, a pull request, a question and the like. The ledger keeps these under the keyword of
+    /// the event, not under this one.
+    Event,
+}
+
+impl Keyword for RecordKind {
+    const WHAT: &'static str = "kind of record";
 }
 
 /// How a write failed, as far as anyone can act on it: the writer reports each kind once.
@@ -218,9 +226,12 @@ pub enum ValueProblem {
     /// The names of the fields that were cut.
     #[error("not the name of a field that is cut")]
     Cut(#[from] agent_core::history::UnknownCutField),
-    /// A list kept as JSON.
-    #[error("not a JSON list of texts")]
+    /// JSON: a list of texts, or the payload of an event.
+    #[error("not the JSON this column holds")]
     Json(#[from] serde_json::Error),
+    /// A number written in a key.
+    #[error("not a number")]
+    Integer(#[from] std::num::ParseIntError),
     /// A number outside what its field holds.
     #[error("a number out of range")]
     Number(#[from] std::num::TryFromIntError),
