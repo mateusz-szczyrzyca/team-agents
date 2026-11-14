@@ -857,6 +857,53 @@ async fn what_the_human_refuses_is_recorded_as_a_round_sent_back_with_the_refuse
     );
 }
 
+#[tokio::test]
+async fn a_head_pushed_to_an_existing_draft_after_the_checks_sent_it_back_is_recorded_as_a_push() {
+    use agent_core::history::{HistoryEvent, Record};
+
+    let mut rig = checking_rig("script:code-only,script:add-test", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    let events: Vec<HistoryEvent> = agent_runtime::history::Reader::open(&rig.home.history_file())
+        .unwrap()
+        .team_records(&team)
+        .unwrap()
+        .into_iter()
+        .filter_map(|stored| match stored.record {
+            Record::Event(event) => Some(event.event),
+            _ => None,
+        })
+        .collect();
+    let opened_head = events
+        .iter()
+        .find_map(|event| match event {
+            HistoryEvent::PullOpened { head, .. } => Some(head.clone()),
+            _ => None,
+        })
+        .expect("no PullOpened");
+    let reviewed_head = events
+        .iter()
+        .find_map(|event| match event {
+            HistoryEvent::ReviewAsked { head, .. } => Some(head.clone()),
+            _ => None,
+        })
+        .expect("no ReviewAsked");
+    assert_ne!(opened_head, reviewed_head);
+    let pushed_heads: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            HistoryEvent::PullPushed { pr, head } => Some((pr.get().get(), head.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pushed_heads, [(1, reviewed_head)], "{events:?}");
+}
+
 // ---- the story of a round the checks held back --------------------------------------------------------------------------
 
 #[tokio::test]
