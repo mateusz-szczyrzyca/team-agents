@@ -349,7 +349,7 @@ fn unexpected(operation: GitOperation, output: &[u8]) -> GitError {
 type Named = (Change, RepoPath);
 
 /// Reads the output of `git diff --name-status -z -M`: a status, then the path, or for a rename the old and the new.
-fn parse_name_status(operation: GitOperation, bytes: &[u8]) -> Result<Vec<Named>, GitError> {
+pub(super) fn parse_name_status(operation: GitOperation, bytes: &[u8]) -> Result<Vec<Named>, GitError> {
     let mut tokens = bytes.split(|byte| *byte == 0).filter(|token| !token.is_empty());
     let mut named = Vec::new();
     while let Some(status) = tokens.next() {
@@ -387,7 +387,7 @@ fn parse_lines(operation: GitOperation, added: &[u8], removed: &[u8]) -> Result<
 
 /// Reads the output of `git diff --numstat -z -M`: `added TAB removed TAB path`, or for a rename an empty path and then
 /// the old and the new. The lines of each file are keyed by the path it has now.
-fn parse_numstat(operation: GitOperation, bytes: &[u8]) -> Result<HashMap<RepoPath, Lines>, GitError> {
+pub(super) fn parse_numstat(operation: GitOperation, bytes: &[u8]) -> Result<HashMap<RepoPath, Lines>, GitError> {
     let mut tokens = bytes.split(|byte| *byte == 0).filter(|token| !token.is_empty());
     let mut counted = HashMap::new();
     while let Some(entry) = tokens.next() {
@@ -409,7 +409,7 @@ fn parse_numstat(operation: GitOperation, bytes: &[u8]) -> Result<HashMap<RepoPa
 }
 
 /// Puts the lines of each file next to how it changed.
-fn join_changes(
+pub(super) fn join_changes(
     operation: GitOperation,
     named: Vec<Named>,
     mut counted: HashMap<RepoPath, Lines>,

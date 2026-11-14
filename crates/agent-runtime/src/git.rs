@@ -25,7 +25,10 @@ use tokio::process::Command;
 
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture};
 
+mod changes;
 mod range;
+
+pub use changes::WorkChanges;
 
 /// How long a local git command may run before its group is killed.
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
