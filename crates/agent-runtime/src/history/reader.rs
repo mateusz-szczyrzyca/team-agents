@@ -222,7 +222,7 @@ impl Reader {
         let ids = keys(
             &snapshot,
             "rounds",
-            "SELECT round FROM rounds WHERE team = ?1 ORDER BY at, round",
+            "SELECT round FROM rounds WHERE team = ?1 ORDER BY at, rowid",
             team.as_str(),
         )?;
         let mut rounds = Vec::with_capacity(ids.len());
@@ -252,7 +252,7 @@ impl Reader {
         let ids = keys(
             &snapshot,
             "runs",
-            "SELECT run FROM runs WHERE team = ?1 ORDER BY at, run",
+            "SELECT run FROM runs WHERE team = ?1 ORDER BY at, rowid",
             team.as_str(),
         )?;
         read_runs(&snapshot, &ids)
@@ -268,7 +268,7 @@ impl Reader {
             &snapshot,
             "run_rounds",
             "SELECT runs.run FROM run_rounds JOIN runs ON runs.run = run_rounds.run WHERE run_rounds.round = ?1 \
-             ORDER BY runs.at, runs.run",
+             ORDER BY runs.at, runs.rowid",
             round.as_str(),
         )?;
         read_runs(&snapshot, &ids)
@@ -320,7 +320,7 @@ impl Reader {
         let mut statement = snapshot
             .prepare(
                 "SELECT runs.run, runs.at, runs.agent, runs.role, runs.prompt, runs.cut FROM run_rounds \
-                 JOIN runs ON runs.run = run_rounds.run WHERE run_rounds.round = ?1 ORDER BY runs.at, runs.run",
+                 JOIN runs ON runs.run = run_rounds.run WHERE run_rounds.round = ?1 ORDER BY runs.at, runs.rowid",
             )
             .map_err(query("runs"))?;
         let mut rows = statement.query(params![round.as_str()]).map_err(query("runs"))?;
