@@ -1,6 +1,6 @@
--- The schema of history.db at user_version 1: what `sqlite_master` holds after the migrations of
+-- The schema of history.db at user_version 3: what `sqlite_master` holds after the migrations of
 -- crates/agent-runtime/src/history/schema.rs, in the order they create it. A test compares it with a fresh database.
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -186,3 +186,35 @@ CREATE TABLE run_sessions (
     PRIMARY KEY (run, n)
 ) STRICT, WITHOUT ROWID;
 
+CREATE TABLE history_records (
+    sequence INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN (
+        'team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session',
+        'gate', 'checked', 'pull_opened', 'pull_pushed', 'pull_ready', 'review_asked', 'review_submitted',
+        'fix_pass_started', 'pull_approved', 'pull_merged', 'pull_handed_over', 'pull_closed', 'question_asked',
+        'question_answered', 'controlled', 'notified', 'round_closed', 'team_ended'
+    )),
+    key TEXT,
+    at TEXT NOT NULL,
+    team TEXT NOT NULL,
+    payload TEXT,
+    cut TEXT NOT NULL,
+    CHECK ((kind IN ('team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session')) = (payload IS NULL)),
+    CHECK (payload IS NULL OR (json_valid(payload) AND json_type(payload) = 'object' AND json_extract(payload, '$.event') = kind)),
+    CHECK (payload IS NOT NULL OR cut = ''),
+    CHECK (key IS NOT NULL OR payload IS NOT NULL)
+) STRICT;
+
+CREATE UNIQUE INDEX history_records_by_key ON history_records (kind, team, key) WHERE key IS NOT NULL;
+
+CREATE INDEX history_records_by_team ON history_records (team, sequence);
+
+CREATE TABLE history_record_rounds (
+    sequence INTEGER NOT NULL REFERENCES history_records (sequence),
+    position INTEGER NOT NULL CHECK (position >= 1),
+    round TEXT NOT NULL,
+    PRIMARY KEY (sequence, position),
+    UNIQUE (sequence, round)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX history_record_rounds_by_round ON history_record_rounds (round, sequence);
