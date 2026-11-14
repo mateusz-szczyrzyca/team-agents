@@ -161,8 +161,8 @@ fn decode_all(
     found.iter().map(|raw| decode(snapshot, raw, &mut steps)).collect()
 }
 
-/// The steps of the runs read so far, so that a run's steps are read once.
-type StepCache = HashMap<RunId, Vec<Stored<agent_core::history::Step>>>;
+/// The steps of the runs read so far, indexed by step number so that a run's steps are read once in linear time.
+type StepCache = HashMap<RunId, HashMap<u32, Stored<agent_core::history::Step>>>;
 
 /// The record a row of the ledger stands for.
 fn decode(snapshot: &Transaction<'_>, raw: &Raw, steps: &mut StepCache) -> Result<SequencedRecord, ReadError> {
@@ -285,13 +285,15 @@ fn record_of(
         RecordKind::Step => {
             let (run, number) = numbered(here, key)?;
             if !steps.contains_key(&run) {
-                steps.insert(run.clone(), read_steps(snapshot, &run)?);
+                let by_number = read_steps(snapshot, &run)?
+                    .into_iter()
+                    .map(|step| (step.value.number.get(), step))
+                    .collect();
+                steps.insert(run.clone(), by_number);
             }
             let found = steps
                 .get(&run)
-                .into_iter()
-                .flatten()
-                .find(|step| step.value.number.get() == number)
+                .and_then(|by_number| by_number.get(&number))
                 .ok_or_else(|| missing(here))?;
             Ok((Record::Step(Box::new(found.value.clone())), found.cut.clone()))
         }

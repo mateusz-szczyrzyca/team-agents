@@ -541,3 +541,56 @@ fn an_event_linked_to_a_round_of_another_team_is_refused_on_write_and_on_read() 
         );
     }
 }
+
+#[test]
+fn many_steps_of_a_run_are_read_in_order_and_a_missing_step_row_is_reported() {
+    use agent_core::cli::ActivityEvent;
+    use agent_core::history::Step;
+
+    let (_dir, path, mut db) = database();
+    let world = complete(13);
+    let round = world.rounds[0].round.clone();
+    let run = world.runs[0].start.clone();
+    db.write(&[
+        Record::Team(Box::new(world.team.clone())),
+        Record::Round(Box::new(world.rounds[0].clone())),
+        Record::Run(Box::new(run.clone())),
+    ])
+    .unwrap();
+    let steps: Vec<Record> = (1..=500_u32)
+        .map(|n| {
+            Record::Step(Box::new(Step {
+                run: run.run.clone(),
+                number: NonZeroU32::new(n).unwrap(),
+                at: at(100 + i64::from(n), 0),
+                event: ActivityEvent::Info(format!("step {n}")),
+            }))
+        })
+        .collect();
+    db.write(&steps).unwrap();
+
+    let reader = Reader::open(&path).unwrap();
+    let read = reader.round_records(&round).unwrap();
+    let read_steps: Vec<Record> = plain(&read).into_iter().skip(3).collect();
+    assert_eq!(read_steps, steps);
+
+    let raw = Connection::open(&path).unwrap();
+    raw.execute(
+        "DELETE FROM steps WHERE run = ?1 AND n = 250",
+        rusqlite::params![run.run.as_str()],
+    )
+    .unwrap();
+
+    let broken = reader.round_records(&round);
+    assert!(
+        matches!(
+            broken,
+            Err(ReadError::Value {
+                table: "history_records",
+                column: "key",
+                ..
+            })
+        ),
+        "{broken:?}"
+    );
+}
