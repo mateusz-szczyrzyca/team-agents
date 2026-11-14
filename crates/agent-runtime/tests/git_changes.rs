@@ -463,4 +463,37 @@ mod git_changes {
         assert!(!marker.exists(), "history invoked the configured filesystem monitor");
         assert_eq!(changes, [change("new.txt", Change::Added, text(1, 0))]);
     }
+
+    #[tokio::test]
+    async fn history_reads_do_not_invoke_a_post_index_change_hook() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        for custom_hooks_path in [false, true] {
+            let (tmp, repo) = repository();
+            commit_at(&repo, "start", 1_700_000_000);
+            let marker = tmp.path().join("hook-called");
+            let hooks_dir = if custom_hooks_path {
+                let dir = tmp.path().join("custom-hooks");
+                std::fs::create_dir(&dir).unwrap();
+                raw(&repo, &["config", "core.hooksPath", dir.to_str().unwrap()]);
+                dir
+            } else {
+                let dir = repo.join(".git").join("hooks");
+                std::fs::create_dir_all(&dir).unwrap();
+                dir
+            };
+            let hook = hooks_dir.join("post-index-change");
+            std::fs::write(&hook, format!("#!/bin/sh\nprintf called > '{}'\n", marker.display())).unwrap();
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+            write(&repo, "new.txt", b"raw\n");
+
+            let changes = handle(&repo).uncommitted_changes().await.unwrap();
+
+            assert!(
+                !marker.exists(),
+                "history invoked post-index-change (custom_hooks_path={custom_hooks_path})"
+            );
+            assert_eq!(changes, [change("new.txt", Change::Added, text(1, 0))]);
+        }
+    }
 }
