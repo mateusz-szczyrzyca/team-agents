@@ -140,39 +140,35 @@ fn entry_of(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes) -> Resul
         Ok(plain(kind, key, at, scope.team, scope.rounds))
     };
     match record {
-        Record::Team(team) => Ok(plain(
+        Record::Team(t) => Ok(plain(
             kind,
-            team.team.to_string(),
-            time_text(team.at),
-            team.team.to_string(),
+            t.team.to_string(),
+            time_text(t.at),
+            t.team.to_string(),
             Vec::new(),
         )),
-        Record::Round(round) => Ok(plain(
+        Record::Round(r) => Ok(plain(
             kind,
-            round.round.to_string(),
-            time_text(round.at),
-            round.team.to_string(),
-            vec![round.round.to_string()],
+            r.round.to_string(),
+            time_text(r.at),
+            r.team.to_string(),
+            vec![r.round.to_string()],
         )),
-        Record::Run(run) => Ok(plain(
-            kind,
-            run.run.to_string(),
-            time_text(run.at),
-            run.team.to_string(),
-            run.rounds.iter().map(ToString::to_string).collect(),
-        )),
+        Record::Run(r) => {
+            let rounds = r.rounds.iter().map(ToString::to_string).collect();
+            Ok(plain(
+                kind,
+                r.run.to_string(),
+                time_text(r.at),
+                r.team.to_string(),
+                rounds,
+            ))
+        }
         Record::Launch(launch) => of_run(&launch.run, launch.run.to_string(), time_text(launch.at)),
         Record::Step(step) => of_run(&step.run, format!("{}/{}", step.run, step.number), time_text(step.at)),
         Record::RunEnd(end) => of_run(&end.run, end.run.to_string(), time_text(end.at)),
-        Record::Session(session) => of_run(
-            &session.run,
-            format!("{}/{}", session.run, session.number),
-            time_text(session.at),
-        ),
-        Record::Changes(changes) => {
-            let at = changed_at(tx, changes.run.as_str(), kind)?;
-            of_run(&changes.run, changes.run.to_string(), at)
-        }
+        Record::Session(s) => of_run(&s.run, format!("{}/{}", s.run, s.number), time_text(s.at)),
+        Record::Changes(c) => of_run(&c.run, c.run.to_string(), changed_at(tx, c.run.as_str(), kind)?),
         Record::Event(event) => event_entry(tx, event, limit),
     }
 }

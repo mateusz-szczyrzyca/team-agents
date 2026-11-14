@@ -15,24 +15,6 @@ use super::Owner;
 use super::start::{Plan, work_branch};
 use crate::daemon::history::{round_opening, team_start};
 
-/// A record whose facts could not be captured on the owner's side.
-struct CaptureLoss<'a> {
-    /// When the event was seen, or [`Timestamp::MIN`] when the clock failed.
-    at: Timestamp,
-    /// The team the event belongs to.
-    team: &'a TeamId,
-    /// The rounds the event belongs to.
-    rounds: Vec<RoundId>,
-    /// The task whose rounds the ledger resolves when `rounds` is empty.
-    task: Option<TaskId>,
-    /// What could not be captured, for the reporter.
-    capture: CaptureKind,
-    /// What record could not be recorded.
-    what: LostKind,
-    /// Why it could not be recorded.
-    cause: LostCause,
-}
-
 impl Owner {
     /// Records `event` of `team` for `rounds` at the time the clock gives; a time the clock cannot give is a record lost.
     pub(super) fn record_event(&self, team: &TeamId, rounds: Vec<RoundId>, event: HistoryEvent) {
@@ -43,27 +25,15 @@ impl Owner {
             Ok(at) => self.record_event_at(at, team, rounds, event),
             Err(error) => {
                 tracing::warn!(team = %team, error = %error_chain(&error), "the clock gives a time that cannot be recorded: the history has no record of an event");
-                let at = self
-                    .parts
-                    .state
-                    .team(team)
-                    .map(agent_core::state::Team::created_at)
-                    .or_else(|| "1970-01-01T00:00:00Z".parse::<Timestamp>().ok());
-                if let Some(at) = at {
-                    self.record_capture_loss(
-                        CaptureLoss {
-                            at,
-                            team,
-                            rounds,
-                            task: None,
-                            capture: CaptureKind::Clock,
-                            what: LostKind::Event(event.kind()),
-                            cause: LostCause::CaptureClock,
-                        },
-                        &error,
-                    );
-                } else {
-                    self.history.capture_failed(CaptureKind::Clock, &error);
+                self.history.capture_failed(CaptureKind::Clock, &error);
+                if let Some(found) = self.parts.state.team(team).filter(|_| self.history.is_writing()) {
+                    let event = HistoryEvent::Lost {
+                        task: None,
+                        what: LostKind::Event(event.kind()),
+                        cause: LostCause::CaptureClock,
+                        detail: error_chain(&error),
+                    };
+                    self.record_event_at(found.created_at(), team, rounds, event);
                 }
             }
         }
@@ -71,31 +41,13 @@ impl Owner {
 
     /// Records `event` of `team` for `rounds` as having happened at `at`.
     pub(super) fn record_event_at(&self, at: Timestamp, team: &TeamId, rounds: Vec<RoundId>, event: HistoryEvent) {
-        self.history.record(Record::Event(Box::new(EventRecord {
+        let record = EventRecord {
             at,
             team: team.clone(),
             rounds,
             event,
-        })));
-    }
-
-    /// Counts a record whose facts could not be captured on the owner's side, and writes a loss tombstone when the
-    /// history is writing.
-    fn record_capture_loss(&self, loss: CaptureLoss<'_>, error: &impl std::error::Error) {
-        self.history.capture_failed(loss.capture, error);
-        if self.history.is_writing() {
-            self.record_event_at(
-                loss.at,
-                loss.team,
-                loss.rounds,
-                HistoryEvent::Lost {
-                    task: loss.task,
-                    what: loss.what,
-                    cause: loss.cause,
-                    detail: error_chain(error),
-                },
-            );
-        }
+        };
+        self.history.record(Record::Event(Box::new(record)));
     }
 
     /// The rounds of the `items` of `team`, each once, in the order of the items; an item with no round is told and left out.
@@ -145,18 +97,16 @@ impl Owner {
             Ok(text) => Some(text),
             Err(error) => {
                 tracing::warn!(task = %task, error = %error_chain(&error), "the questions file cannot be read: the history has no record of it");
-                self.record_capture_loss(
-                    CaptureLoss {
-                        at,
-                        team,
-                        rounds: self.rounds_of_tasks(std::slice::from_ref(task)),
+                self.history.capture_failed(CaptureKind::Questions, &error);
+                if self.history.is_writing() {
+                    let event = HistoryEvent::Lost {
                         task: Some(task.clone()),
-                        capture: CaptureKind::Questions,
                         what: LostKind::Event(kind),
                         cause: LostCause::CaptureQuestions,
-                    },
-                    &error,
-                );
+                        detail: error_chain(&error),
+                    };
+                    self.record_event_at(at, team, self.rounds_of_tasks(std::slice::from_ref(task)), event);
+                }
                 None
             }
         }

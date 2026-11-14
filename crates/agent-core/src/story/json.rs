@@ -77,25 +77,13 @@ fn entry_json(entry: &PlanEntry) -> Value {
 
 fn round_json(round: &RoundOpening) -> Value {
     let (item, brief) = match &round.subject {
-        RoundSubject::Item(item) => (
-            json!({
-                "item": item.item.to_string(),
-                "title": item.title,
-                "description": item.description,
-                "expected_result": item.expected_result,
-                "checks": item.checks,
-            }),
+        RoundSubject::Item(i) => (
+            json!({"item": i.item.to_string(), "title": i.title, "description": i.description, "expected_result": i.expected_result, "checks": i.checks}),
             Value::Null,
         ),
         RoundSubject::Brief(brief) => (Value::Null, Value::String(brief.clone())),
     };
-    json!({
-        "round": round.round.as_str(),
-        "team": round.team.as_str(),
-        "at": round.at.to_string(),
-        "item": item,
-        "brief": brief,
-    })
+    json!({"round": round.round.as_str(), "team": round.team.as_str(), "at": round.at.to_string(), "item": item, "brief": brief})
 }
 
 fn why_json(why: &RunWhy) -> Value {
@@ -117,17 +105,13 @@ fn why_json(why: &RunWhy) -> Value {
 }
 
 fn run_json(run: &RunStart) -> Value {
+    let agent = json!({"name": run.agent.name, "tier": run.agent.tier.to_string(), "cli": run.agent.cli.to_string(), "model": run.agent.model.as_ref().map(ModelName::as_str)});
     json!({
         "run": run.run.as_str(),
         "team": run.team.as_str(),
         "task": run.task.as_str(),
         "at": run.at.to_string(),
-        "agent": {
-            "name": run.agent.name,
-            "tier": run.agent.tier.to_string(),
-            "cli": run.agent.cli.to_string(),
-            "model": run.agent.model.as_ref().map(ModelName::as_str),
-        },
+        "agent": agent,
         "role": run.role.to_string(),
         "rounds": run.rounds.iter().map(RoundId::as_str).collect::<Vec<_>>(),
         "why": why_json(&run.why),
@@ -172,12 +156,7 @@ fn step_json(step: &Step) -> Value {
             json!({"kind": kind, "action": action.to_string(), "by": client_json(by)})
         }
     };
-    json!({
-        "run": step.run.as_str(),
-        "number": step.number.get(),
-        "at": step.at.to_string(),
-        "event": event,
-    })
+    json!({"run": step.run.as_str(), "number": step.number.get(), "at": step.at.to_string(), "event": event})
 }
 
 fn end_json(end: &RunEndRecord) -> Value {
@@ -190,12 +169,7 @@ fn end_json(end: &RunEndRecord) -> Value {
         }
         RunEnd::RateLimited | RunEnd::Hung | RunEnd::Stopped => json!({"kind": kind}),
     };
-    json!({
-        "run": end.run.as_str(),
-        "at": end.at.to_string(),
-        "end": how,
-        "final_message": end.final_message,
-    })
+    json!({"run": end.run.as_str(), "at": end.at.to_string(), "end": how, "final_message": end.final_message})
 }
 
 fn file_json(file: &FileChange) -> Value {
@@ -209,35 +183,26 @@ fn file_json(file: &FileChange) -> Value {
         Lines::Text { added, removed } => json!({"added": added, "removed": removed}),
         Lines::Binary => Value::Null,
     };
-    json!({
-        "path": file.path.as_str(),
-        "change": change,
-        "from": from,
-        "binary": matches!(file.lines, Lines::Binary),
-        "lines": lines,
-    })
+    let binary = matches!(file.lines, Lines::Binary);
+    json!({"path": file.path.as_str(), "change": change, "from": from, "binary": binary, "lines": lines})
 }
 
 fn changes_json(changes: &RunChanges) -> Value {
+    let commits: Vec<_> = changes
+        .commits
+        .iter()
+        .map(|c| json!({"id": c.id.as_str(), "subject": c.subject, "authored_at": c.authored_at.to_string()}))
+        .collect();
     json!({
         "run": changes.run.as_str(),
         "head_before": changes.head_before.as_ref().map(CommitId::as_str),
         "head_after": changes.head_after.as_ref().map(CommitId::as_str),
-        "commits": changes.commits.iter().map(|commit| json!({
-            "id": commit.id.as_str(),
-            "subject": commit.subject,
-            "authored_at": commit.authored_at.to_string(),
-        })).collect::<Vec<_>>(),
+        "commits": commits,
         "files": changes.files.iter().map(file_json).collect::<Vec<_>>(),
         "uncommitted": changes.uncommitted.iter().map(file_json).collect::<Vec<_>>(),
     })
 }
 
 fn session_json(session: &RunSession) -> Value {
-    json!({
-        "run": session.run.as_str(),
-        "number": session.number.get(),
-        "at": session.at.to_string(),
-        "session": session.session.as_str(),
-    })
+    json!({"run": session.run.as_str(), "number": session.number.get(), "at": session.at.to_string(), "session": session.session.as_str()})
 }

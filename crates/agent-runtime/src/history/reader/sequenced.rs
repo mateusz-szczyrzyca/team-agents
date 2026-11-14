@@ -245,6 +245,16 @@ fn missing(here: &Row_) -> ReadError {
     here.rule("key", "the ledger names a record that its table does not have")
 }
 
+/// Unpacks a table record `found` into a ledger [`Record`] and its [`Cut`].
+fn unpacked<T>(
+    found: Option<Stored<T>>,
+    here: &Row_,
+    wrap: impl FnOnce(Box<T>) -> Record,
+) -> Result<(Record, Cut), ReadError> {
+    let Stored { value, cut } = found.ok_or_else(|| missing(here))?;
+    Ok((wrap(Box::new(value)), cut))
+}
+
 /// The record a row of the ledger of `kind` refers to, read from its own tables, with the fields cut.
 fn record_of(
     snapshot: &Transaction<'_>,
@@ -254,37 +264,22 @@ fn record_of(
     steps: &mut StepCache,
 ) -> Result<(Record, Cut), ReadError> {
     let key = here.needed("key", raw.key.as_deref())?;
+    let run_id = || here.value("key", RunId::from_str(key));
     match kind {
-        RecordKind::Team => {
-            let found = read_team(snapshot, &here.value("key", TeamId::from_str(key))?)?;
-            let Stored { value, cut } = found.ok_or_else(|| missing(here))?;
-            Ok((Record::Team(Box::new(value)), cut))
-        }
-        RecordKind::Round => {
-            let found = read_round(snapshot, &here.value("key", RoundId::from_str(key))?)?;
-            let Stored { value, cut } = found.ok_or_else(|| missing(here))?;
-            Ok((Record::Round(Box::new(value)), cut))
-        }
-        RecordKind::Run => {
-            let found = read_run_start(snapshot, &here.value("key", RunId::from_str(key))?)?;
-            let Stored { value, cut } = found.ok_or_else(|| missing(here))?;
-            Ok((Record::Run(Box::new(value)), cut))
-        }
-        RecordKind::Launch => {
-            let found = read_launch(snapshot, &here.value("key", RunId::from_str(key))?)?;
-            let Stored { value, cut } = found.ok_or_else(|| missing(here))?;
-            Ok((Record::Launch(Box::new(value)), cut))
-        }
-        RecordKind::RunEnd => {
-            let found = read_end(snapshot, &here.value("key", RunId::from_str(key))?)?;
-            let Stored { value, cut } = found.ok_or_else(|| missing(here))?;
-            Ok((Record::RunEnd(Box::new(value)), cut))
-        }
-        RecordKind::Changes => {
-            let found = read_changes(snapshot, &here.value("key", RunId::from_str(key))?)?;
-            let Stored { value, cut } = found.ok_or_else(|| missing(here))?;
-            Ok((Record::Changes(Box::new(value)), cut))
-        }
+        RecordKind::Team => unpacked(
+            read_team(snapshot, &here.value("key", TeamId::from_str(key))?)?,
+            here,
+            Record::Team,
+        ),
+        RecordKind::Round => unpacked(
+            read_round(snapshot, &here.value("key", RoundId::from_str(key))?)?,
+            here,
+            Record::Round,
+        ),
+        RecordKind::Run => unpacked(read_run_start(snapshot, &run_id()?)?, here, Record::Run),
+        RecordKind::Launch => unpacked(read_launch(snapshot, &run_id()?)?, here, Record::Launch),
+        RecordKind::RunEnd => unpacked(read_end(snapshot, &run_id()?)?, here, Record::RunEnd),
+        RecordKind::Changes => unpacked(read_changes(snapshot, &run_id()?)?, here, Record::Changes),
         RecordKind::Step => {
             let (run, number) = numbered(here, key)?;
             if !steps.contains_key(&run) {
@@ -296,7 +291,7 @@ fn record_of(
             }
             let found = steps
                 .get(&run)
-                .and_then(|by_number| by_number.get(&number))
+                .and_then(|m| m.get(&number))
                 .ok_or_else(|| missing(here))?;
             Ok((Record::Step(Box::new(found.value.clone())), found.cut.clone()))
         }

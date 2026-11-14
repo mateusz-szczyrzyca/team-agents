@@ -83,16 +83,14 @@ impl<S: Store> Noting<S> {
             self.scopes.clear();
         }
         self.learned = self.learned.saturating_add(1);
-        self.scopes.insert(
-            run.run.clone(),
-            Scope {
-                team: run.team.clone(),
-                task: run.task.clone(),
-                rounds: once_each(&run.rounds),
-                at: run.at,
-                order: self.learned,
-            },
-        );
+        let scope = Scope {
+            team: run.team.clone(),
+            task: run.task.clone(),
+            rounds: once_each(&run.rounds),
+            at: run.at,
+            order: self.learned,
+        };
+        self.scopes.insert(run.run.clone(), scope);
     }
 
     /// The rounds of the latest run of `task` in `team` that this store has seen start.
@@ -112,55 +110,47 @@ impl<S: Store> Noting<S> {
         };
         if self.pending.len() >= MAX_PENDING {
             let dropped = self.pending.remove(0);
-            tracing::warn!(
-                team = %dropped.team,
-                limit = MAX_PENDING,
-                "the history note writer reached its pending-note limit and evicted the oldest loss note"
-            );
+            tracing::warn!(team = %dropped.team, limit = MAX_PENDING, "the history note writer reached its pending-note limit and evicted the oldest loss note");
         }
+        let event = HistoryEvent::Lost {
+            task: None,
+            what,
+            cause: error.kind().lost_cause(),
+            detail: self.redactor.text(&error_chain(error)),
+        };
         self.pending.push(EventRecord {
             at,
             team,
             rounds,
-            event: HistoryEvent::Lost {
-                task: None,
-                what,
-                cause: error.kind().lost_cause(),
-                detail: self.redactor.text(&error_chain(error)),
-            },
+            event,
         });
     }
 
     /// What `record` is, and the team, rounds and time it belongs to; `None` when that cannot be told.
     fn placed(&self, record: &Record) -> Option<(LostKind, TeamId, Vec<RoundId>, Timestamp)> {
         let of_run = |run: &RunId, at: Option<Timestamp>, kind: RecordKind| {
-            self.scopes.get(run).map(|scope| {
+            self.scopes.get(run).map(|s| {
                 (
                     LostKind::Record(kind),
-                    scope.team.clone(),
-                    scope.rounds.clone(),
-                    at.unwrap_or(scope.at),
+                    s.team.clone(),
+                    s.rounds.clone(),
+                    at.unwrap_or(s.at),
                 )
             })
         };
         match record {
-            Record::Team(team) => Some((
-                LostKind::Record(RecordKind::Team),
-                team.team.clone(),
-                Vec::new(),
-                team.at,
-            )),
-            Record::Round(round) => Some((
+            Record::Team(t) => Some((LostKind::Record(RecordKind::Team), t.team.clone(), Vec::new(), t.at)),
+            Record::Round(r) => Some((
                 LostKind::Record(RecordKind::Round),
-                round.team.clone(),
-                vec![round.round.clone()],
-                round.at,
+                r.team.clone(),
+                vec![r.round.clone()],
+                r.at,
             )),
-            Record::Run(run) => Some((
+            Record::Run(r) => Some((
                 LostKind::Record(RecordKind::Run),
-                run.team.clone(),
-                once_each(&run.rounds),
-                run.at,
+                r.team.clone(),
+                once_each(&r.rounds),
+                r.at,
             )),
             Record::Launch(launch) => of_run(&launch.run, Some(launch.at), RecordKind::Launch),
             Record::Step(step) => of_run(&step.run, Some(step.at), RecordKind::Step),
@@ -168,19 +158,19 @@ impl<S: Store> Noting<S> {
             Record::Session(session) => of_run(&session.run, Some(session.at), RecordKind::Session),
             Record::Changes(changes) => of_run(&changes.run, None, RecordKind::Changes),
             // A note is not noted: that would never end.
-            Record::Event(event) => match &event.event {
+            Record::Event(e) => match &e.event {
                 HistoryEvent::Lost { .. } => None,
-                HistoryEvent::Gate { task, .. } if event.rounds.is_empty() => Some((
-                    LostKind::Event(event.event.kind()),
-                    event.team.clone(),
-                    self.rounds_of_task(&event.team, task),
-                    event.at,
+                HistoryEvent::Gate { task, .. } if e.rounds.is_empty() => Some((
+                    LostKind::Event(e.event.kind()),
+                    e.team.clone(),
+                    self.rounds_of_task(&e.team, task),
+                    e.at,
                 )),
                 _ => Some((
-                    LostKind::Event(event.event.kind()),
-                    event.team.clone(),
-                    once_each(&event.rounds),
-                    event.at,
+                    LostKind::Event(e.event.kind()),
+                    e.team.clone(),
+                    once_each(&e.rounds),
+                    e.at,
                 )),
             },
         }

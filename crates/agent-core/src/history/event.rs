@@ -9,6 +9,7 @@ use std::num::NonZeroU32;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString, IntoStaticStr, VariantArray, VariantNames};
 
 use crate::decide::round::AskReason;
 use crate::ids::{BranchName, InvestigatorName, RoundId, TaskId, TeamId};
@@ -19,18 +20,7 @@ use crate::status::ReviewVerdict;
 
 /// Which record a write was about, for the message of an error; for the records of a run and a team also the `kind` the
 /// ledger keeps them under.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    strum::Display,
-    strum::EnumString,
-    strum::IntoStaticStr,
-    strum::VariantNames,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, IntoStaticStr, VariantNames)]
 #[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<RecordKind>)]
 pub enum RecordKind {
     /// A team starting.
@@ -124,11 +114,11 @@ impl TryFrom<String> for LostKind {
     Hash,
     Serialize,
     Deserialize,
-    strum::Display,
-    strum::EnumString,
-    strum::IntoStaticStr,
-    strum::VariantArray,
-    strum::VariantNames,
+    Display,
+    EnumString,
+    IntoStaticStr,
+    VariantArray,
+    VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<LostCause>)]
@@ -180,19 +170,7 @@ impl LostCause {
 }
 
 /// The keyword of a [`HistoryEvent`], as the ledger keeps it in its `kind` column.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    strum::Display,
-    strum::EnumString,
-    strum::IntoStaticStr,
-    strum::VariantArray,
-    strum::VariantNames,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, IntoStaticStr, VariantArray, VariantNames)]
 #[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<EventKind>)]
 pub enum EventKind {
     /// [`HistoryEvent::Gate`].
