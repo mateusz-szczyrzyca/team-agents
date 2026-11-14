@@ -347,20 +347,20 @@ a team, which belongs to the team).
 | `pull_opened` | a pull request was opened | `number`, `branch`, `head`, `title`, `body` whole | `pr N` |
 | `pull_pushed` | the branch was pushed | `pr`, `head` | `pr N head H` |
 | `pull_ready` | the pull request was marked ready | `pr` | `pr N` |
-| `review_asked` | a reviewer was asked | `pr`, `pass` (`0` is the first review), `head`, `reviewer`, `task` | `pr N pass P reviewer R` |
+| `review_asked` | a reviewer was asked | `pr`, `pass` (`0` is the first review), `head`, `reviewer`, `task`, optional `among` (the draw candidates) | `pr N pass P reviewer R` |
 | `review_submitted` | a reviewer submitted | `pr`, `pass`, `reviewer`, `task`, `verdict`, `report` whole | `pr N pass P reviewer R` |
 | `fix_pass_started` | the reviews asked for changes | `pr`, `pass` (from 1), `of`, `findings` whole | `pr N fix pass P` |
 | `pull_approved` | both reviews approved | `pr` | `pr N` |
 | `pull_merged` | the pull request was merged | `pr`, `commit` (`null` when the remote did not say) | `pr N` |
 | `pull_handed_over` | an approved pull request was left to the human (`--no-merge`) | `pr` | `pr N` |
-| `pull_closed` | the pull request was closed without a merge | `pr` | `pr N` |
+| `pull_closed` | an approved pull request was seen closed without a merge while merging or watching `--no-merge`, or the daemon closed the pull request when abandoning a round | `pr` | `pr N` |
 | `question_asked` | a task asked the human | `task`, `number`, `text` whole | `task T questions N` |
 | `question_answered` | the human answered | `task`, `number`, `text` whole (every verdict), `via` | `task T questions N` |
 | `controlled` | the human controlled a task or a team | `action`, `target`, `by`, `tasks` reached | — |
 | `notified` | a notification was sent | `task`, `title`, `body` | — |
 | `round_closed` | a round closed | `round`, `end` | `round R` |
 | `team_ended` | a team ended | — | `team` |
-| `lost` | the database refused a record and could be written to again | `what` (the `kind` of the missing record), `cause` (as the writer reports it, `write_disk_full`, ...), `detail` | — |
+| `lost` | a record was refused by the database or could not be captured (gate, questions file, event clock) while the history could be written to | `what` (the `kind` of the missing record), `cause` (`write_disk_full`, `capture_gate`, `capture_questions`, `capture_clock`, ...), `detail`, optional `task` | — |
 
 Free texts (`issues`, `title`, `body`, `report`, `findings`, `text`, `detail`) are cut at the limit and redacted like every text of
 the history ([What is never in it](#what-is-never-in-it)); `cut` names the fields cut. The review `pass` of the payload
@@ -537,11 +537,14 @@ A run with no row in `run_ends` is going — or the daemon was killed before it 
 snapshot — never a record the writer is in the middle of:
 
 `team`, `rounds_of_team`, `round`, `runs_of_team`, `runs_of_round`, `run` (each with its start, launch and end), `steps`,
-`changes`, `prompts_of_round` and `schema` (what `docs/history.schema.sql` pins), and `team_records` and `round_records`: every
-record of a team, or of a round with the start of its team, as a `SequencedRecord` in the order it was written — what a story
-is made of. A round no record is linked to has none.
+`changes`, `prompts_of_round` and `schema` (what `docs/history.schema.sql` pins). Every record returned by these table queries
+is wrapped in `Stored<T>`: the value and the set of its fields that were cut.
 
-Every answer is a `Stored<T>`: the record and the set of its fields that were cut. Every row is read through the checks of
+For stories and `--json`, `team_records` and `round_records` return `Vec<SequencedRecord>`: every record of a team, or of a
+round together with the start of its team, in the order it was written, each `SequencedRecord` carrying its `sequence`, `at`,
+`team`, `rounds`, `record` and `cut`. A round no record is linked to has none.
+
+Every row is read through the checks of
 its types and the rules of its record — an ID that is not an ID, a step of a kind that lacks its text, a run that ends before
 it starts, a `cut` that names no field — and a row that breaks one is `ReadError::Value` with the table and the column. A
 file whose version is newer than the build reads is `ReadError::Newer`; one no daemon has written to, `ReadError::Empty`.
