@@ -156,6 +156,11 @@ mod history_events {
                 end: RoundEnd::Merged,
             },
             HistoryEvent::TeamEnded {},
+            HistoryEvent::Lost {
+                what: "step".to_owned(),
+                cause: "write_disk_full".to_owned(),
+                detail: "the disk is full — zażółć".to_owned(),
+            },
         ]
     }
 
@@ -180,6 +185,7 @@ mod history_events {
             "notified",
             "round_closed",
             "team_ended",
+            "lost",
         ];
         let events = every_event();
         assert_eq!(events.len(), expected.len());
@@ -218,7 +224,7 @@ mod history_events {
             .map(|event| (event.kind().to_string(), event.key()))
             .collect();
         let none = |kind: &str| keys.iter().find(|(name, _)| name == kind).unwrap().1.is_none();
-        for kind in ["gate", "checked", "controlled", "notified"] {
+        for kind in ["gate", "checked", "controlled", "notified", "lost"] {
             assert!(none(kind), "{kind} can happen again");
         }
         let mut seen = std::collections::BTreeSet::new();
@@ -227,7 +233,7 @@ mod history_events {
                 assert!(seen.insert((kind.clone(), key.clone())), "{kind} {key} is not unique");
             }
         }
-        assert_eq!(seen.len(), keys.len() - 4);
+        assert_eq!(seen.len(), keys.len() - 5);
     }
 
     #[test]
@@ -288,6 +294,7 @@ mod history_events {
             ("notified", vec!["title", "body"]),
             ("round_closed", vec![]),
             ("team_ended", vec![]),
+            ("lost", vec!["detail"]),
         ];
         for (mut event, (kind, names)) in every_event().into_iter().zip(expected) {
             assert_eq!(event.kind().to_string(), kind);
@@ -309,7 +316,7 @@ mod history_events {
             assert_eq!(json.matches("\"changed\"").count(), count, "{json}");
             total += count;
         }
-        assert_eq!(total, 10);
+        assert_eq!(total, 11);
     }
 
     #[test]
