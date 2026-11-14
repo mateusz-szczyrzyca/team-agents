@@ -6,7 +6,7 @@
 //! record that is not there, and a record that was written before is not written again: the ledger's key is unique for
 //! each kind and team.
 
-use agent_core::history::{Cut, EventRecord, MaxTextBytes, Record};
+use agent_core::history::{Cut, EventRecord, HistoryEvent, MaxTextBytes, Record};
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::codec::time_text;
@@ -139,8 +139,23 @@ fn entry_of(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes) -> Resul
             let at = changed_at(tx, changes.run.as_str(), kind)?;
             of_run(&changes.run, changes.run.to_string(), at)
         }
-        Record::Event(event) => event_entry(event, limit),
+        Record::Event(event) => event_entry(tx, event, limit),
     }
+}
+
+/// The rounds of the latest run of `task`; none when the task has no run recorded.
+fn rounds_of_task(tx: &Transaction<'_>, task: &str, kind: RecordKind) -> Result<Vec<String>, WriteError> {
+    let mut statement = tx
+        .prepare(
+            "SELECT round FROM run_rounds WHERE run = \
+             (SELECT run FROM runs WHERE task = ?1 ORDER BY at DESC, rowid DESC LIMIT 1) ORDER BY position",
+        )
+        .map_err(sql(kind))?;
+    statement
+        .query_map(params![task], |row| row.get(0))
+        .map_err(sql(kind))?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(sql(kind))
 }
 
 /// When the changes of `run` count as having happened: when it ended, or when it started if no end is recorded.
@@ -179,7 +194,7 @@ fn run_scope(tx: &Transaction<'_>, run: &str, kind: RecordKind) -> Result<RunSco
 }
 
 /// The ledger entry of an event: its payload with the texts cut at `limit`.
-fn event_entry(record: &EventRecord, limit: MaxTextBytes) -> Result<Entry, WriteError> {
+fn event_entry(tx: &Transaction<'_>, record: &EventRecord, limit: MaxTextBytes) -> Result<Entry, WriteError> {
     let kind = RecordKind::Event;
     let mut event = record.event.clone();
     let mut cut = Cut::default();
@@ -187,12 +202,17 @@ fn event_entry(record: &EventRecord, limit: MaxTextBytes) -> Result<Entry, Write
         *text = cut.keep(field, text, limit);
     }
     let payload = serde_json::to_string(&event).map_err(|source| WriteError::Json { record: kind, source })?;
+    // A gate runs where no state of rounds is at hand: it belongs to the rounds of the run of its task that waits for it.
+    let rounds = match &event {
+        HistoryEvent::Gate { task, .. } if record.rounds.is_empty() => rounds_of_task(tx, task.as_str(), kind)?,
+        _ => record.rounds.iter().map(ToString::to_string).collect(),
+    };
     Ok(Entry {
         kind: event.kind().to_string(),
         key: event.key(),
         at: time_text(record.at),
         team: record.team.to_string(),
-        rounds: record.rounds.iter().map(ToString::to_string).collect(),
+        rounds,
         payload: Some(payload),
         cut: cut.to_string(),
     })

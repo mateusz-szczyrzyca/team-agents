@@ -253,7 +253,12 @@ pub(crate) async fn run_with_rng(
         agent_path: settings.config.binaries().agent_path.clone(),
         stop_grace: timings.run.stop_grace,
     };
-    sides.spawn(gate::run(gate_jobs, gate_parts, shutdown.clone()));
+    sides.spawn(gate::run_recorded(
+        gate_jobs,
+        gate_parts,
+        opened.history.clone(),
+        shutdown.clone(),
+    ));
 
     let owner = Owner::new(
         OwnerParts {
