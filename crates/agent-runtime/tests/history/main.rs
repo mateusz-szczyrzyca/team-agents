@@ -5,6 +5,8 @@
 #[cfg(test)]
 mod docs;
 #[cfg(test)]
+mod gate_rounds;
+#[cfg(test)]
 mod invariants;
 #[cfg(test)]
 mod kill;

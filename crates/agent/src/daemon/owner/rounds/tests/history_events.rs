@@ -6,11 +6,14 @@
 
 use agent_core::history::{EventKind, EventRecord, HistoryEvent, Record};
 use agent_core::ids::{RoundId, TeamId};
-use agent_core::state::{ItemPhase, MergeMode, PrNumber, RoundEnd};
+use agent_core::protocol::{Client, Command, GateRequest, Reply};
+use agent_core::state::{GateOutcome, GateTree, ItemPhase, MergeMode, PrNumber, RoundEnd};
 use agent_core::status::ReviewVerdict;
+use agent_core::status::TaskStatus;
 use agent_runtime::history::Reader;
 
 use super::rig::{ONE, Rig, investigator, normal};
+use crate::client::Connection;
 
 /// A reviewer that approves.
 const APPROVING: &str = "done:VERDICT: APPROVE\\nSUMMARY: fine";
@@ -332,4 +335,54 @@ async fn a_pull_request_the_human_closed_is_recorded_once_however_often_it_is_lo
     let events = events(&rig, &team);
     assert_eq!(count(&events, EventKind::PullClosed), 1, "{:?}", kinds(&events));
     assert_eq!(count(&events, EventKind::PullMerged), 0);
+}
+
+#[tokio::test]
+async fn a_gate_the_daemon_ran_is_recorded_with_its_task_head_outcome_and_log_and_linked_to_the_round_of_its_task() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "commit"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+
+    let reply = Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request_until_answered(Client::Cli, Command::Gate(GateRequest { task: tasks[0].clone() }))
+        .await
+        .unwrap();
+    let Reply::GateRecorded { record } = reply else {
+        panic!("a gate record was expected: {reply:?}")
+    };
+    rig.stop().await.unwrap();
+
+    let events = events(&rig, &team);
+    assert_eq!(count(&events, EventKind::Gate), 1, "{:?}", kinds(&events));
+    let (_, gate) = &events[place(&events, EventKind::Gate, 0)];
+    let HistoryEvent::Gate {
+        task,
+        started_at,
+        record: recorded,
+    } = &gate.event
+    else {
+        panic!("not a gate")
+    };
+    assert_eq!(task, &tasks[0]);
+    assert_eq!(recorded, &record);
+    assert_eq!(
+        (recorded.tree, recorded.result.outcome),
+        (GateTree::Clean, GateOutcome::Passed)
+    );
+    assert!(*started_at <= gate.at);
+    assert_eq!(gate.at, record.result.finished_at);
+    assert!(recorded.result.log.as_path().exists());
+    assert_eq!(gate.rounds, [the_round(&rig)]);
 }
