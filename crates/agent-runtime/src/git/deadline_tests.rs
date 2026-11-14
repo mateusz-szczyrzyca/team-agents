@@ -125,12 +125,14 @@ async fn a_snapshot_deadline_kills_git_and_its_descendant_then_returns() {
             Ok(stat) => stat.rsplit_once(") ").is_some_and(|(_, state)| state.starts_with('Z')),
             Err(error) => error.kind() == std::io::ErrorKind::NotFound,
         };
+        let mut observed_stopped = false;
         for _ in 0..100_000 {
             if stopped() {
+                observed_stopped = true;
                 break;
             }
             tokio::task::yield_now().await;
         }
-        assert!(stopped(), "process {pid} survived the snapshot timeout");
+        assert!(observed_stopped, "process {pid} survived the snapshot timeout");
     }
 }
