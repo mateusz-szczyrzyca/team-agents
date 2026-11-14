@@ -131,17 +131,13 @@ pub(in crate::daemon) trait AssignedTeam {
 
 impl AssignedTeam for Team {
     fn advance_assigned(&mut self, item: ItemId, next: ItemPhase) -> Result<(), AdvanceItemError> {
-        let mut progress = self.item_mut(item).ok_or(AdvanceItemError::NoSuchItem { item })?;
-        progress.advance(next)?;
-        Ok(())
+        self.advance_item(item, next)
     }
 }
 
 impl AssignedTeam for TeamMut<'_> {
     fn advance_assigned(&mut self, item: ItemId, next: ItemPhase) -> Result<(), AdvanceItemError> {
-        let mut progress = self.item_mut(item).ok_or(AdvanceItemError::NoSuchItem { item })?;
-        progress.advance(next)?;
-        Ok(())
+        self.advance_item(item, next)
     }
 }
 
