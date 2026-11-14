@@ -155,3 +155,33 @@ Rule 1 forbids it unless the task changes the behaviour. All of these are forced
   state by hand must open a round first.
 - In "Workflow", say that `make gate` refuses a tree with uncommitted changes in a worktree (commit first); it cost me a
   run.
+
+## Verification run (task `20261114-063114-inv-claude-sonnet`)
+
+The first run reached the CLI's turn limit after its last commit. This run checked the work against the item and changed
+only what was wrong.
+
+- **Gate:** `agent gate` on `64a1a9d`, before any change: `9/9` steps passed (`unit-bats` 223s, `rust` 55s).
+- **Size:** `3,606` changed lines outside tests, fixtures and `tests/`, against the Rust plan's `5,000` (measured with the
+  PR-1 command over `16f50edd...HEAD`, report included).
+- **Read in full:** `state/round.rs`, `state/team/rounds.rs` (operations, their errors, the checks on read) and the daemon's
+  `owner/round_state.rs`. The invariants of the item are all there, in the API and again in `check_rounds`.
+- **Search for the PR-1 hits** (`unwrap(`, `expect(`, `let _ =`, `.ok()`, `unwrap_or`, `as `, `#[allow`) over the added
+  lines outside tests: the `expect`s in `ids.rs` are the three listed under "Lint suppressions"; the `unwrap_or_default`
+  calls are specified fallbacks (a task with no earlier run has no rounds; an item-less round has no review passes), except
+  one.
+
+### Fixed
+
+- `Owner::abandon_open_rounds` read a team that is not in the state as a team with no open rounds
+  (`state.team(team).map(..).unwrap_or_default()`): a lost lookup that vanished (ERR-2). Both callers check the team
+  first, so no behaviour was wrong today, but the function said nothing when the state was inconsistent. The lookup is now
+  `open_rounds_of`, which returns `OwnerError::LostTeam`.
+  - $\color{red}{\textbf{RED}}$ `371fd5ab`: three tests in `owner/round_state/tests.rs`, two fail on their assertions.
+  - $\color{green}{\textbf{GREEN}}$ `46d1fc63`: `3/3` pass.
+
+### Not changed
+
+Everything else in the first run's report stands, including its assumptions (stop and resume, the dropped
+"open round has an item that is not done" check, `approved` after a human merge) and its note that only the ID of a round
+has real RED and GREEN commits. These are for the human to decide.
