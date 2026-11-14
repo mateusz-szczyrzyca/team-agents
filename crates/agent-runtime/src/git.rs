@@ -194,6 +194,31 @@ pub enum GitOperation {
     /// `git diff-tree`, to list the files one commit changed.
     #[strum(serialize = "diff-tree")]
     DiffTree,
+    /// `git read-tree`, to fill the scratch index of a read of the uncommitted changes.
+    #[strum(serialize = "read-tree")]
+    ReadTree,
+    /// `git add`, to put the files of the worktree in the scratch index.
+    #[strum(serialize = "add")]
+    Add,
+}
+
+/// Why the scratch area of a read of the uncommitted changes cannot be made.
+#[derive(Debug, thiserror::Error)]
+pub enum ScratchError {
+    /// A directory of it cannot be made.
+    #[error("cannot make the scratch directory")]
+    Make(#[source] std::io::Error),
+    /// The name of an environment variable it sets is not valid.
+    #[error("{name:?} is not a valid name of an environment variable")]
+    Name {
+        /// The name.
+        name: &'static str,
+        /// What is wrong with it.
+        source: InvalidValue,
+    },
+    /// A path of it is not text, which an environment variable needs.
+    #[error("the path {0:?} is not text")]
+    NotText(PathBuf),
 }
 
 /// Why a git operation failed.
@@ -294,6 +319,12 @@ pub enum GitError {
         operation: GitOperation,
         /// Why the text is not a path.
         source: InvalidRepoPath,
+    },
+    /// The scratch area of a read of the uncommitted changes cannot be made.
+    #[error("cannot make the scratch area of a read of the uncommitted changes")]
+    Scratch {
+        /// What went wrong.
+        source: ScratchError,
     },
     /// The message of a merge is empty.
     #[error("the message of a merge must not be empty")]
