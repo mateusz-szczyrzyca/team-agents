@@ -4,8 +4,8 @@ use std::io::Write;
 use std::path::Path;
 
 use agent_core::ids::{RoundId, TeamId};
-use agent_core::story::{PromptView, Selection, StepView, StoryOptions};
-use agent_runtime::history::ReadError;
+use agent_core::story::{PromptView, Selection, StepView, StoryOptions, json_lines, render};
+use agent_runtime::history::{ReadError, Reader};
 
 /// The exit status of `agent log` when the round or team asked for is not in the history.
 pub(crate) const UNKNOWN_ID_EXIT: u8 = 3;
@@ -103,12 +103,27 @@ impl LogRequest {
 /// Prints what `request` asks of the history in `history`.
 ///
 /// # Errors
-/// [`LogError`].
+/// [`LogError::Read`] when the history cannot be read, [`LogError::UnknownRound`] or [`LogError::UnknownTeam`] when it
+/// has no record of what is asked for, [`LogError::Output`] when `out` refuses the text.
 pub(crate) fn log(history: &Path, request: &LogRequest, out: &mut impl Write) -> Result<(), LogError> {
-    out.write_all(b"").map_err(LogError::Output)?;
-    let _ = history;
-    match &request.selection {
-        Selection::Round(round) => Err(LogError::UnknownRound { round: round.clone() }),
-        Selection::Team(team) => Err(LogError::UnknownTeam { team: team.clone() }),
+    let reader = Reader::open(history)?;
+    let records = match &request.selection {
+        Selection::Round(round) => reader.round_records(round)?,
+        Selection::Team(team) => reader.team_records(team)?,
+    };
+    if records.is_empty() {
+        return Err(match &request.selection {
+            Selection::Round(round) => LogError::UnknownRound { round: round.clone() },
+            Selection::Team(team) => LogError::UnknownTeam { team: team.clone() },
+        });
     }
+    let text = match request.format {
+        Format::Text(options) => render(&records, &request.selection, options),
+        Format::Json => json_lines(&records, &request.selection)
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect(),
+    };
+    out.write_all(text.as_bytes()).map_err(LogError::Output)?;
+    out.flush().map_err(LogError::Output)
 }
