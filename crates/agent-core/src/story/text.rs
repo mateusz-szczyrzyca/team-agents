@@ -11,8 +11,8 @@ use crate::cli::ActivityEvent;
 use crate::decide::checks::{Change, FileChange, Lines};
 use crate::decide::round::AskReason;
 use crate::history::{
-    CheckOutcome, EventRecord, HistoryEvent, HowChosen, Launch, Record, RoundOpening, RoundSubject, RunChanges,
-    RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord, Step, TeamStart,
+    CheckOutcome, EventRecord, HistoryEvent, HowChosen, Launch, LostCause, LostKind, Record, RecordKind, RoundOpening,
+    RoundSubject, RunChanges, RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord, Step, TeamStart,
 };
 use crate::ids::{AgentName, InvestigatorName, RoundId, RunId, TaskId, TeamId};
 use crate::protocol::{Client, ControlAction, Target};
@@ -308,6 +308,10 @@ struct RunBlock<'a> {
     end: Option<(&'a SequencedRecord, &'a RunEndRecord)>,
     /// What it changed.
     changes: Option<&'a RunChanges>,
+    /// Why its starting commit could not be captured.
+    head_lost: Option<(&'a SequencedRecord, LostCause, &'a str)>,
+    /// Why its changes could not be captured or written.
+    changes_lost: Option<(&'a SequencedRecord, LostCause, &'a str)>,
 }
 
 /// One thing the story tells, at its place in time.
@@ -354,7 +358,9 @@ fn blocks(page: &mut Page, records: &[&SequencedRecord], options: StoryOptions) 
                     Record::Team(_) | Record::Round(_) | Record::Event(_) => {}
                 }
             }
-        } else if let Record::Event(event) = &stored.record {
+        } else if let Record::Event(event) = &stored.record
+            && !attach_run_loss(&mut runs, stored, &event.event)
+        {
             items.push(Item::Event(stored, event));
         }
     }
@@ -439,7 +445,10 @@ fn run_rest(page: &mut Page, block: &RunBlock<'_>, start: Option<&RunStart>, opt
         prompt(page, start, block, options);
     }
     if let Some((stored, launch)) = block.launch {
-        command(page, stored, launch, start);
+        command(page, stored, launch, start, block);
+    } else if let Some((lost, cause, detail)) = block.head_lost {
+        page.line(4, &format!("commit before launch: unknown ({cause}: {detail})"));
+        page.cut_note(4, lost);
     }
     steps(page, block, options);
     for s in &block.sessions {
@@ -452,12 +461,51 @@ fn run_rest(page: &mut Page, block: &RunBlock<'_>, start: Option<&RunStart>, opt
         }
         page.cut_note(4, stored);
     }
-    match (block.changes, block.end) {
-        (Some(changes), _) => changed(page, changes),
+    match (block.changes, block.changes_lost, block.end) {
+        (Some(changes), _, _) => changed(page, changes),
+        (None, Some((lost, cause, detail)), _) => {
+            page.line(4, &format!("changes: not recorded ({cause}: {detail})"));
+            page.cut_note(4, lost);
+        }
         // A run that ended has a record of what it changed: the snapshot of it is what is missing.
-        (None, Some(_)) => page.line(4, "changes: not recorded"),
-        (None, None) => {}
+        (None, None, Some(_)) => page.line(4, "changes: not recorded"),
+        (None, None, None) => {}
     }
+}
+
+/// Attaches a task-scoped head or change loss note to its [`RunBlock`] when that run is present.
+fn attach_run_loss<'a>(runs: &mut [RunBlock<'a>], stored: &'a SequencedRecord, event: &'a HistoryEvent) -> bool {
+    let HistoryEvent::Lost {
+        task: Some(task),
+        what,
+        cause,
+        detail,
+    } = event
+    else {
+        return false;
+    };
+    let matches_task = |r: &&mut RunBlock<'a>| r.start.is_some_and(|(_, s)| &s.task == task);
+    if *cause == LostCause::CaptureHead
+        && let Some(run) = runs
+            .iter_mut()
+            .rev()
+            .filter(matches_task)
+            .find(|r| r.head_lost.is_none())
+    {
+        run.head_lost = Some((stored, *cause, detail));
+        return true;
+    }
+    if *what == LostKind::Record(RecordKind::Changes)
+        && let Some(run) = runs
+            .iter_mut()
+            .rev()
+            .filter(matches_task)
+            .find(|r| r.changes.is_none() && r.changes_lost.is_none())
+    {
+        run.changes_lost = Some((stored, *cause, detail));
+        return true;
+    }
+    false
 }
 
 /// How long a run took, in words; a clock that went back is said, not hidden.
@@ -499,7 +547,7 @@ fn prompt(page: &mut Page, start: &RunStart, block: &RunBlock<'_>, options: Stor
 }
 
 /// The command line a process was started with; an argument that is the prompt is shown as `<the prompt>`.
-fn command(page: &mut Page, stored: &SequencedRecord, launch: &Launch, start: Option<&RunStart>) {
+fn command(page: &mut Page, stored: &SequencedRecord, launch: &Launch, start: Option<&RunStart>, block: &RunBlock<'_>) {
     let args = launch.args.iter().map(|arg| match start {
         Some(start) if !arg.is_empty() && *arg == start.prompt => "<the prompt>".to_owned(),
         _ => quoted(arg),
@@ -507,10 +555,13 @@ fn command(page: &mut Page, stored: &SequencedRecord, launch: &Launch, start: Op
     let words: Vec<String> = std::iter::once(quoted(&launch.program)).chain(args).collect();
     page.line(4, &format!("command: {}", words.join(" ")));
     page.cut_note(4, stored);
-    let head = launch
-        .head
-        .as_ref()
-        .map_or_else(|| "unknown (git could not say)".to_owned(), short);
+    let head = launch.head.as_ref().map_or_else(
+        || match block.head_lost {
+            Some((_, cause, detail)) => format!("unknown ({cause}: {detail})"),
+            None => "unknown (git could not say)".to_owned(),
+        },
+        short,
+    );
     let in_file = if launch.prompt_in_file {
         ", the prompt in a file"
     } else {
@@ -518,6 +569,9 @@ fn command(page: &mut Page, stored: &SequencedRecord, launch: &Launch, start: Op
     };
     let (at, dir) = (launch.at, launch.working_dir.as_path().display());
     page.line(4, &format!("started {at} in {dir}, at commit {head}{in_file}"));
+    if let Some((lost, _, _)) = block.head_lost {
+        page.cut_note(4, lost);
+    }
 }
 
 /// `text` as a shell would need it written, when that differs.

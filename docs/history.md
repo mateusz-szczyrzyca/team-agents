@@ -65,7 +65,9 @@ among `drawn_among`: the investigators of the team, or when it has none every ag
 ## The file
 
 `history.db` is a SQLite 3 database (3.54, built into the binary: `rusqlite` with `bundled`). It is **append only**: the daemon
-inserts and never updates or deletes a row (item 8.7 decides what is deleted, and when). Its pragmas:
+inserts and never deletes a row (item 8.7 decides what is deleted, and when), and the only column it ever updates is
+`history_records.at` of a `changes` row when its `run_ends` row is written after it (`run_changes` has no timestamp of its own,
+so its ledger row starts with `runs.at` and takes `run_ends.at` once the end is recorded). Its pragmas:
 
 | Pragma | Value | Why |
 |---|---|---|
@@ -360,7 +362,7 @@ linked to every round of its team; a team-wide control or loss note when no roun
 | `notified` | a notification was sent | `task`, `title`, `body` | — |
 | `round_closed` | a round closed | `round`, `end` | `round R` |
 | `team_ended` | a team ended | — | `team` |
-| `lost` | a record was refused by the database or could not be captured (gate, questions file, event clock) while the history could be written to | `what` (the `kind` of the missing record), `cause` (`write_disk_full`, `capture_gate`, `capture_questions`, `capture_clock`, ...), `detail`, optional `task` | — |
+| `lost` | a record was refused by the database or could not be captured (starting head, changes, gate, questions file, event clock) while the history could be written to | `what` (the `kind` of the missing record), `cause` (`write_disk_full`, `capture_head`, `capture_changes`, `capture_gate`, `capture_questions`, `capture_clock`, ...), `detail`, optional `task` | — |
 
 Free texts (`issues`, `title`, `body`, `report`, `findings`, `text`, `detail`) are cut at the limit and redacted like every text of
 the history ([What is never in it](#what-is-never-in-it)); `cut` names the fields cut. The review `pass` of the payload
@@ -402,14 +404,15 @@ history: not written: cannot open the history database "/home/you/agents/history
 | the daemon is killed (`SIGKILL`) | what was queued is lost; the file opens, passes `PRAGMA integrity_check`, holds whole records only (a record or batch is one transaction); the next daemon records the end of the runs it finds going |
 
 **Noting what is missing.** The count says how many records were lost, not where the gap is. A record the database refuses
-when it is written alone (the writer tries the records of a refused batch one by one) is noted: the next write that succeeds
-also writes a `lost` event for it, with the kind of the missing record, the cause, what went wrong, and the team and rounds it
-belonged to — those of its run, when the writer saw the run start. A story prints the note in the place of the record. The
-note is a best effort: a record of a run the writer never saw start has no place to be noted, a record dropped because the
-queue was full or held a credential is counted and not noted, a note that cannot be written waits (at most 256 of them), and
-what a history that cannot be written at all loses is not noted either — a story then says what it can see: a run that ended
-with no `changes: ...` says `changes: not recorded`, a launch whose commit could not be read says `unknown (git could not
-say)`, and a round with no pull request says so.
+when it is written alone (the writer tries the records of a refused batch one by one) or that could not be captured while the
+history is writable (starting head, changes, gate, questions file, event clock) is noted: the writer records a `lost` event for it,
+with the kind of the missing record, the cause, what went wrong, and the team and rounds it belonged to — those of its run, when the
+writer saw the run start. A story prints the note in the place of the record (for `capture_head` and `changes`, inline on the run's
+launch and `changes:` lines with the cause and detail). The note is a best effort: a record of a run the writer never saw start has
+no place to be noted, a record dropped because the queue was full or held a credential is counted and not noted, a note that cannot
+be written waits (at most 256 of them), and what a history that cannot be written at all loses is not noted either — a story then
+says what it can see: a run that ended with no `changes: ...` and no loss note says `changes: not recorded`, a launch whose commit
+could not be read and has no loss note says `unknown (git could not say)`, and a round with no pull request says so.
 
 A history that starts after its team (a deleted `history.db`) loses the records that hang on a row it does not have — the steps
 of a run that started before — and counts them.

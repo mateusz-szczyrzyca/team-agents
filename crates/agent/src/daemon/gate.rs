@@ -304,19 +304,17 @@ impl Service {
             return Err(GateError::Cancelled);
         }
         let started_at = Timestamp::now(&self.parts.clock);
-        let before = inspect(&job.worktree).await.map_err(|source| GateError::Git {
-            worktree: job.worktree.as_path().to_path_buf(),
-            source,
-        })?;
+        let before = inspect(&job.worktree)
+            .await
+            .map_err(|source| GateError::Git {
+                worktree: job.worktree.as_path().to_path_buf(),
+                source,
+            })
+            .inspect_err(|error| self.record_capture_loss_or_clock(job, started_at.as_ref().ok().copied(), error))?;
         let (log, log_text) = self.open_log(&job.task).await?;
         let outcome = self.run_command(job, &log).await?;
-        let finished_at = Timestamp::now(&self.parts.clock).inspect_err(|error| {
-            if let Ok(at) = started_at {
-                self.record_capture_loss(job, at, error);
-            } else {
-                self.history.capture_failed(CaptureKind::Gate, error);
-            }
-        })?;
+        let finished_at = Timestamp::now(&self.parts.clock)
+            .inspect_err(|error| self.record_capture_loss_or_clock(job, started_at.as_ref().ok().copied(), error))?;
         // The command has ended with its whole group: what it left in the worktree is final. A gate that changed the
         // tree or moved `HEAD` did not gate what the commit holds.
         let after = inspect(&job.worktree)
@@ -472,8 +470,16 @@ impl Service {
         })));
     }
 
-    /// Counts a gate that ran but whose post-command state could not be captured, and notes the loss for its round when the
-    /// history is writing.
+    /// Counts a gate capture failure at `at`, or without a note when `started_at` itself failed.
+    fn record_capture_loss_or_clock(&self, job: &GateJob, at: Option<Timestamp>, error: &impl std::error::Error) {
+        if let Some(at) = at {
+            self.record_capture_loss(job, at, error);
+        } else {
+            self.history.capture_failed(CaptureKind::Gate, error);
+        }
+    }
+
+    /// Counts a gate whose worktree state could not be captured, and notes the loss for its round when the history is writing.
     fn record_capture_loss(&self, job: &GateJob, at: Timestamp, error: &impl std::error::Error) {
         self.history.capture_failed(CaptureKind::Gate, error);
         if self.history.is_writing() {
