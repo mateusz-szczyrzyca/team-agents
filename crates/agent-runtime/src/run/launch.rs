@@ -39,6 +39,8 @@ pub(super) struct Launch {
     pub(super) process: ProcessSpec,
     /// What reads its output.
     pub(super) parser: Box<dyn OutputParser>,
+    /// Whether the prompt was written to a file instead of passed on the command line.
+    pub(super) prompt_in_file: bool,
 }
 
 /// `path` as text, which the adapters need.
@@ -76,7 +78,7 @@ async fn write_file(path: &Path, content: &str) -> Result<(), RunError> {
 /// Makes `job` ready: the prompt, the adapter's run, its files, what it keeps out of git, its process.
 pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch, RunError> {
     let run_dir = parts.store.home().run_dir(&job.task, &job.run);
-    let prompt = argument_prompt(parts, job, &run_dir).await?;
+    let (prompt, prompt_in_file) = argument_prompt(parts, job, &run_dir).await?;
     let request = RunRequest {
         program: parts.config.binaries().program(job.cli).clone(),
         model: job.model.clone(),
@@ -115,24 +117,26 @@ pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch,
             stderr_file: run_dir.join(STDERR_FILE),
         },
         parser: adapter.parser(),
+        prompt_in_file,
     })
 }
 
-/// The prompt as the CLI gets it: itself, or — when it is too long for a command line — the text that sends the agent
-/// to a file that holds it.
-async fn argument_prompt(parts: &EngineParts, job: &RunJob, run_dir: &Path) -> Result<String, RunError> {
+/// The prompt as the CLI gets it: itself (`false`), or — when it is too long for a command line — the text that sends
+/// the agent to a file that holds it (`true`).
+async fn argument_prompt(parts: &EngineParts, job: &RunJob, run_dir: &Path) -> Result<(String, bool), RunError> {
     if job.prompt.len() <= MAX_PROMPT_ARGUMENT_BYTES {
-        return Ok(job.prompt.clone());
+        return Ok((job.prompt.clone(), false));
     }
     let file: PathBuf = run_dir.join(PROMPT_FILE);
     write_file(&file, &job.prompt).await?;
     let values = Variables::new()
         .with("path", utf8(&file)?)
         .map_err(|source| RunError::PromptFileVariable { source })?;
-    parts
+    let prompt = parts
         .texts
         .render(HarnessPrompt::PromptFile, &values)
-        .map_err(|source| RunError::PromptFile { source })
+        .map_err(|source| RunError::PromptFile { source })?;
+    Ok((prompt, true))
 }
 
 /// The `PATH` of the agents: the directories of `[binaries] agent_path`, in order.

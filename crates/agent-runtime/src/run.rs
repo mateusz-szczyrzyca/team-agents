@@ -34,7 +34,7 @@ use crate::clock::SharedClock;
 use crate::git::{GitError, Revision};
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
 use crate::history::{CaptureKind, History};
-use crate::process::{ExitReport, ProcessError, ProcessSpec, Supervisor, error_chain};
+use crate::process::{ExitReport, ProcessError, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
 
 use crate::store::{StateStore, StoreError};
@@ -352,7 +352,7 @@ impl RunEngine {
                 cli: job.cli,
                 source,
             })?;
-        self.record_launch(&job, &launch.process, head_before.clone());
+        self.record_launch(&job, &launch, head_before.clone());
         let mut follow = Follow {
             engine: self,
             task: &job.task,
@@ -461,10 +461,11 @@ impl RunEngine {
 
     /// Records how the process of `job` was started: the command line the CLI saw and the names — never the values — of the
     /// environment it was given.
-    fn record_launch(&self, job: &RunJob, process: &ProcessSpec, head: Option<CommitId>) {
+    fn record_launch(&self, job: &RunJob, launch: &launch::Launch, head: Option<CommitId>) {
         if self.history.is_disabled() {
             return;
         }
+        let process = &launch.process;
         let at = match Timestamp::now(&self.parts.clock) {
             Ok(at) => at,
             Err(error) => {
@@ -486,7 +487,7 @@ impl RunEngine {
             working_dir: process.working_dir.clone(),
             head,
             env_names: process.env.keys().cloned().collect(),
-            prompt_in_file: job.prompt.len() > MAX_PROMPT_ARGUMENT_BYTES,
+            prompt_in_file: launch.prompt_in_file,
         })));
     }
 
