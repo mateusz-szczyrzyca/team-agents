@@ -418,6 +418,9 @@ pub struct ItemProgress {
     /// The fix passes so far, oldest first; their number is what the configured limit is compared with.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     fix_passes: Vec<FixPass>,
+    /// The reviews that approved a merged item; empty before its merge and in states written before this history was kept.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    approving_reviews: Vec<Review>,
     /// The last gate result for this item, if the gate has run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<GateResult>,
@@ -434,6 +437,9 @@ struct ItemProgressWire {
     /// See [`ItemProgress`]; an item written without fix passes has none.
     #[serde(default)]
     fix_passes: Vec<FixPass>,
+    /// See [`ItemProgress`]; states written before this history was kept have none.
+    #[serde(default)]
+    approving_reviews: Vec<Review>,
     /// See [`ItemProgress`]; absent until the gate has run.
     #[serde(default)]
     gate: Option<GateResult>,
@@ -731,6 +737,7 @@ impl ItemProgress {
             id,
             phase,
             fix_passes: Vec::new(),
+            approving_reviews: Vec::new(),
             gate: None,
         }
     }
@@ -951,6 +958,7 @@ mod tests {
                 id: wire.id,
                 phase: wire.phase,
                 fix_passes: wire.fix_passes,
+                approving_reviews: Vec::new(),
                 gate: wire.gate,
             };
             check_has_fix_pass(&progress)?;
