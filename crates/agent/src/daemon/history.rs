@@ -68,10 +68,8 @@ pub(super) async fn open(settings: &Settings, home: &Home) -> Opened {
 
 /// Keeps work available when the opener task or writer thread cannot start.
 fn startup_failed(error: &impl std::error::Error, reporter: Arc<dyn Reporter>) -> Opened {
-    tracing::error!(error = %error_chain(error), "history startup failed: the daemon runs without it");
-    drop(reporter);
     Opened {
-        history: History::disabled(),
+        history: History::unavailable(error, reporter),
         writer: None,
     }
 }

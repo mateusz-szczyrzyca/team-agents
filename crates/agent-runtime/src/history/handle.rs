@@ -18,7 +18,7 @@ use agent_core::ids::{Clock, RunId};
 use agent_core::state::Timestamp;
 
 use super::db::Store;
-use super::error::{CloseError, OpenError, StartError, WriteError, WriteKind};
+use super::error::{CloseError, StartError, WriteError, WriteKind};
 use crate::process::error_chain;
 
 /// How many records may wait for the writer, unless the setup says otherwise.
@@ -220,9 +220,9 @@ impl History {
         }
     }
 
-    /// A handle for a history that cannot be opened: every record is counted as lost. The reason is reported once.
+    /// A handle for a history whose database or writer cannot start: every record is counted as lost. The reason is reported once.
     #[must_use]
-    pub fn unavailable(error: &OpenError, reporter: Arc<dyn Reporter>) -> Self {
+    pub fn unavailable(error: &impl std::error::Error, reporter: Arc<dyn Reporter>) -> Self {
         let reason = error_chain(error);
         let shared = Shared::new(HistoryState::Unavailable { reason: reason.clone() }, reporter);
         shared.report(Cause::Unavailable, || reason);
