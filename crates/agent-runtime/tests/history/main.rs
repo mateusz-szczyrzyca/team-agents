@@ -11,6 +11,8 @@ mod records;
 #[cfg(test)]
 mod schema;
 #[cfg(test)]
+mod states;
+#[cfg(test)]
 mod support;
 #[cfg(test)]
 mod tampered;
