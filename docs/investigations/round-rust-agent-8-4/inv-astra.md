@@ -1,6 +1,6 @@
 # Investigation — Rust item 8.4 — `inv-astra`
 
-Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-agents/pull/100) on `agents/inv-astra/20261114-094819`. The inherited Rust gate passed. Three reader defects are fixed; item `8.4` remains incomplete. Permission questions are prepared for the schema expectations and the remaining PR size.
+Continued the stopped work of [#100](https://github.com/mateusz-szczyrzyca/team-agents/pull/100) on `agents/inv-astra/20261114-094819`. The inherited Rust gate passed. Three reader defects are fixed; item `8.4` remains incomplete. The human authorized the session migration, a larger item and isolated history permission tests. Session recording now passes its focused checks in the worktree; one additional frozen daemon test requires permission before the GREEN implementation can be committed. The first-pass findings below remain as the investigation record; the continuation section gives their current status.
 
 - $\color{red}{\textbf{RED}}$: [`20b096ea`](https://github.com/mateusz-szczyrzyca/team-agents/commit/20b096eaf8cdd962525231e647d343899a9f1be1) adds three tests; each failed because the reader accepted a row that SQLite rejected.
 - $\color{green}{\textbf{GREEN}}$: [`4963b7e2`](https://github.com/mateusz-szczyrzyca/team-agents/commit/4963b7e2f219cd59ccae50e91dd91e9dfbd2689b) validates unused reason columns, nonrandom selection metadata and team-plan roles; simplifies reason decoding and adds the README history reference.
@@ -31,3 +31,27 @@ New tests in [`crates/agent-runtime/tests/history/invariants.rs`](https://github
 ## Approved continuation
 
 The human approved updating the frozen schema snapshot and table inventory in a dedicated `TEST-FIX:` commit, raising this item's size limit instead of splitting it, and isolating permission failures to history storage while state remains writable. Before further implementation, this continuation sets an item-specific ceiling of `7,500` counted lines: the existing `5,000` lines plus room for session migration/capture, bounded capture failures and daemon failure handling. Tests remain excluded; the extra room is a ceiling, not a target. The history checkpoint remains pending until the remaining checks pass.
+
+
+## Session continuation and current blocker
+
+- $\color{red}{\textbf{RED}}$: [`4ffb711c`](https://github.com/mateusz-szczyrzyca/team-agents/commit/4ffb711cf66606b7ea0a513f92a0647f2928a937) adds a merged fake OpenCode round, a live-parser contract for all four CLIs, seeded session round trips, invalid-row checks and a preserved version `1` fixture. Each new test failed on the intended missing behavior before implementation.
+- Authorized `TEST-FIX:`: [`88dc7138`](https://github.com/mateusz-szczyrzyca/team-agents/commit/88dc71381c20c0b7e6320916c00c375df15a5dfd) updates only the schema snapshot and table inventory for append-only session observations.
+- The pending implementation adds migration `2`, `Reader::sessions`, SQL validation and idempotency, and records changed CLI sessions during output processing. It leaves the original prelaunch session intact and retains version `1` reading and data during upgrade. This implementation remains uncommitted in this worktree pending the question below; it is not represented as a passing GREEN commit.
+- Focused checks with the pending implementation: `tools/test-lock.sh sessions-verification cargo test --locked -p agent-runtime --test history --test cli_sessions` passes `55/55` history tests and `1/1` parser contract test. The new daemon session test passes as part of `make rust`.
+- `make rust` with the pending implementation passes formatting and clippy; the daemon suite passes `655/656`. Its sole failure is the inherited `a_history_of_a_newer_version_is_left_as_it_is_and_the_round_goes_on`, whose fixture assumes version `2` is unsupported. No existing daemon test was changed. The gate stops there; the complete workspace test and documentation stages have not passed for this continuation.
+- The history-only Git delays, hidden startup losses and remaining daemon failure proofs listed above are still open. The read-only-home ambiguity is resolved: only history storage must be unwritable, with state and task storage writable. No later plan item was started.
+- New session handling introduces no lint suppression or dependency. The item-specific planned ceiling remains `7,500` counted lines under the human's approval to raise the limit. No Go or Bats suite, real model CLI, hardware device or live installation was used.
+
+## Questions — round 2
+
+The external question file is `questions-2.md` for task `20261114-094819-inv-astra`. Its decision is reproduced here so it is available from the pushed branch.
+
+## 1. May the daemon's frozen newer-schema fixture advance with the supported schema?
+The approved session migration makes history schema version `2` supported. One additional existing test, `a_history_of_a_newer_version_is_left_as_it_is_and_the_round_goes_on` in [`crates/agent/src/daemon/owner/rounds/tests/history_records.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/88dc71381c20c0b7e6320916c00c375df15a5dfd/crates/agent/src/daemon/owner/rounds/tests/history_records.rs#L798), hard-codes version `2` as unsupported. With the session implementation, `make rust` passes formatting and clippy, then reports `655` daemon tests passed and this one failure: `HistoryHealth { state: Writing, lost: 23 }`. The new merged OpenCode session test passes; all `55` runtime history tests and the four-CLI parser contract test pass. Your first approval named only the schema snapshot and table inventory, so it does not authorize changing this third frozen test.
+a) Authorize a dedicated `TEST-FIX:` for this test's migration fixture and version-message expectation — construct a database one version above the latest supported migration and keep its byte-preservation, merged-round and unavailable-status assertions.
+b) Keep this test frozen — prevents completing the approved forward migration without violating the test contract.
+
+**Recommended:** a) — preserves the test's intended newer-schema guarantee as the supported version advances; changes no production behavior. (investigator)
+
+**Verdict:**
