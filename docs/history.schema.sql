@@ -1,7 +1,6 @@
 -- The schema of history.db at user_version 1: what `sqlite_master` holds after the migrations of
 -- crates/agent-runtime/src/history/schema.rs, in the order they create it. A test compares it with a fresh database.
-
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -178,3 +177,12 @@ CREATE TABLE changed_files (
     ),
     PRIMARY KEY (run, scope, path)
 ) STRICT, WITHOUT ROWID;
+
+CREATE TABLE run_sessions (
+    run TEXT NOT NULL REFERENCES runs (run),
+    n INTEGER NOT NULL CHECK (n >= 1),
+    at TEXT NOT NULL,
+    session TEXT NOT NULL,
+    PRIMARY KEY (run, n)
+) STRICT, WITHOUT ROWID;
+
