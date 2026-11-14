@@ -20,6 +20,7 @@ use agent_core::state::Timestamp;
 
 use super::db::Store;
 use super::error::{CloseError, StartError, WriteError, WriteKind};
+use super::redact::Redactor;
 use crate::process::error_chain;
 
 /// How many records may wait for the writer, unless the setup says otherwise.
@@ -44,6 +45,9 @@ pub enum Cause {
     /// A record or its launch head could not be captured.
     #[strum(to_string = "capture_{0}")]
     Capture(CaptureKind),
+    /// A known credential occurs in an identity that cannot safely be replaced.
+    #[strum(serialize = "secret_identity")]
+    SecretIdentity,
 }
 
 /// The snapshot that failed before a record could reach the writer.
@@ -109,6 +113,8 @@ enum Job {
 struct Shared {
     /// How many records were handed in and are not in the database.
     lost: AtomicU64,
+    /// Credentials removed on the writer thread before persistence.
+    redactor: Redactor,
     /// Whether records are being written.
     state: Mutex<HistoryState>,
     /// The causes already reported.
@@ -129,9 +135,10 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl Shared {
     /// A shared state in `state`, with `reporter`.
-    fn new(state: HistoryState, reporter: Arc<dyn Reporter>) -> Arc<Self> {
+    fn new(state: HistoryState, reporter: Arc<dyn Reporter>, redactor: Redactor) -> Arc<Self> {
         Arc::new(Self {
             lost: AtomicU64::new(0),
+            redactor,
             state: Mutex::new(state),
             reported: Mutex::new(BTreeSet::new()),
             steps: Mutex::new(HashMap::new()),
@@ -151,7 +158,7 @@ impl Shared {
         if first {
             self.reporter.report(&Problem {
                 cause,
-                detail: detail(),
+                detail: self.redactor.text(&detail()),
             });
         }
     }
@@ -223,7 +230,7 @@ impl History {
     #[must_use]
     pub fn disabled() -> Self {
         Self {
-            shared: Shared::new(HistoryState::Disabled, Arc::new(TracingReporter)),
+            shared: Shared::new(HistoryState::Disabled, Arc::new(TracingReporter), Redactor::default()),
             queue: None,
         }
     }
@@ -232,7 +239,11 @@ impl History {
     #[must_use]
     pub fn unavailable(error: &impl std::error::Error, reporter: Arc<dyn Reporter>) -> Self {
         let reason = error_chain(error);
-        let shared = Shared::new(HistoryState::Unavailable { reason: reason.clone() }, reporter);
+        let shared = Shared::new(
+            HistoryState::Unavailable { reason: reason.clone() },
+            reporter,
+            Redactor::default(),
+        );
         shared.report(Cause::Unavailable, || reason);
         Self { shared, queue: None }
     }
@@ -242,7 +253,19 @@ impl History {
     /// # Errors
     /// [`StartError`] when the thread cannot be started.
     pub fn start(store: impl Store, setup: Setup) -> Result<Started, StartError> {
-        let shared = Shared::new(HistoryState::Writing, setup.reporter);
+        Self::start_with_secrets(store, setup, agent_core::config::Secrets::default())
+    }
+
+    /// Starts a writer that redacts known secret values before persistence.
+    ///
+    /// # Errors
+    /// [`StartError`] when the writer thread cannot start.
+    pub fn start_with_secrets(
+        store: impl Store,
+        setup: Setup,
+        secrets: agent_core::config::Secrets,
+    ) -> Result<Started, StartError> {
+        let shared = Shared::new(HistoryState::Writing, setup.reporter, Redactor::new(secrets));
         let (queue, jobs) = sync_channel(setup.capacity.get());
         let writing = Arc::clone(&shared);
         let thread = std::thread::Builder::new()
@@ -256,18 +279,6 @@ impl History {
             },
             writer: Writer { thread, queue },
         })
-    }
-
-    /// Starts a writer that redacts known secret values before persistence.
-    ///
-    /// # Errors
-    /// [`StartError`] when the writer thread cannot start.
-    pub fn start_with_secrets(
-        store: impl Store,
-        setup: Setup,
-        _secrets: agent_core::config::Secrets,
-    ) -> Result<Started, StartError> {
-        Self::start(store, setup)
     }
 
     /// Hands `record` to the writer. Never waits.
@@ -462,7 +473,16 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
         let mut next = Some(first);
         while let Some(job) = next.take() {
             match job {
-                Job::Record(record) => batch.push(record),
+                Job::Record(mut record) => {
+                    if shared.redactor.record(&mut record) {
+                        batch.push(record);
+                    } else {
+                        shared.lose(1);
+                        shared.report(Cause::SecretIdentity, || {
+                            "a record contains a credential in a structured identity".to_owned()
+                        });
+                    }
+                }
                 Job::Flush(answer) => flushes.push(answer),
                 Job::Close => closing = true,
             }

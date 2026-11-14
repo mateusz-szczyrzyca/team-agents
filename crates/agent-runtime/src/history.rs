@@ -10,6 +10,7 @@ mod error;
 mod handle;
 pub mod migrate;
 mod reader;
+mod redact;
 pub mod schema;
 mod write;
 

@@ -297,7 +297,7 @@ one by one, so a record that cannot be written loses only itself.
 
 When a record cannot be kept — the queue is full, the file or the disk cannot be written, the database cannot be opened —
 the work goes on, the failure goes to the standard error of the daemon (the journal of the unit) **once for each cause**
-(`queue_full`, `unavailable`, `capture_head`, `capture_changes`, `write_disk_full`, `write_read_only`, `write_io`, `write_corrupt`, `write_refused`, …), the
+(`queue_full`, `unavailable`, `capture_head`, `capture_changes`, `write_disk_full`, `write_read_only`, `write_io`, `write_corrupt`, `write_refused`, `secret_identity`, …), the
 records lost are counted, and `agent status` shows the count. A failed starting-head lookup counts one incomplete launch; a failed change snapshot counts one missing changes record. When history is unavailable, the engine counts the skipped changes record without running Git for it. Disabled history neither captures nor counts records.
 
 For example:
@@ -446,7 +446,18 @@ file whose version is newer than the build reads is `ReadError::Newer`; one no d
 
 ## What is never in it
 
-No secret: the values of `secrets.toml` and of the environment of the CLIs are not recorded — the launch has the *names* of
-the variables only — and a test runs a round with marker values and searches the bytes of `history.db` and its log for them.
-What a model prints is recorded as it printed it: a model that echoes a secret it was given puts it in its messages, as it
-does in `activity.jsonl`.
+The launch records environment variable names, never their values. Before a record reaches SQLite, the writer
+replaces occurrences of known secret values with `[REDACTED]` in free text, including prompts, command arguments,
+activity payloads, final messages and commit subjects. Known values are the GitHub token and every value in
+`[agent_env]` and `[notification_env]` of `secrets.toml`. Overlapping matches are removed together, before text truncation.
+The original prompt and arguments delivered to the CLI are unchanged. This is an explicit exception to byte-for-byte
+history recording, authorized for item `8.4`.
+
+A credential inside a structured identity (for example a session, branch or Git path) cannot be replaced without
+misrepresenting it. The writer omits that record, increments the lost count and reports `secret_identity` once without
+the value. A replacement marker that itself contains a configured secret also causes omission. Writer error details
+are redacted before reporting. Tests inspect both database and live WAL bytes after a merged round whose CLI echoes
+a configured credential.
+
+Unknown credentials, encoded or transformed values, and the separate raw CLI/activity files are outside this exact-value
+history redaction. `History::start_with_secrets` provides the protection; direct `Store` callers must supply safe records.

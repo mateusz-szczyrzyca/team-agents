@@ -375,8 +375,10 @@ file that opens and holds whole records; the next one ends the runs it finds goi
 **Readers need no daemon.** `Reader::open` opens the file read-only; `agent log` (8.5, 8.7) will use it. The schema has a
 version (`PRAGMA user_version`) and forward-only migrations in code; a database of a newer version is never written.
 
-**No secret.** The launch records the *names* of the environment variables of a run, never their values; a test searches the
-bytes of the database and its log for the marker values of `secrets.toml` and of the environment of the CLIs.
+**Known secrets are redacted.** The launch records environment variable names, never values. The writer replaces configured
+credential values in free text with `[REDACTED]` before SQLite receives them. Credentials in structured identities cause
+counted omissions; the warning contains no credential. A merged fake-CLI round echoes a credential and searches both the
+database and live WAL bytes. See [`history.md`](history.md#what-is-never-in-it) for scope and the exact-recording exception.
 
 ### Rounds
 
