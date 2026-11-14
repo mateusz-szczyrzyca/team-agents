@@ -551,7 +551,7 @@ async fn a_no_merge_round_is_told_to_its_approval_and_hand_over_and_the_human_me
 
     assert!(text.contains("approved and handed to the human (--no-merge)"), "{text}");
     assert!(text.contains("closed: approved"), "{text}");
-    assert!(text.contains("merged (the merge commit was not recorded)"), "{text}");
+    assert!(text.contains("pull request #1 merged as "), "{text}");
     golden("story-no-merge.txt", &Normalized::of(&rig, &text, &json));
 }
 

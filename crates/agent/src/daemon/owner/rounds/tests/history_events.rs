@@ -316,6 +316,13 @@ async fn with_no_merge_the_approval_and_the_hand_over_are_recorded_and_the_human
         panic!("not a close")
     };
     assert_eq!(*end, RoundEnd::Approved);
+    let HistoryEvent::PullMerged { commit, .. } = &events[place(&events, EventKind::PullMerged, 0)].1.event else {
+        panic!("not a merge")
+    };
+    assert_eq!(
+        commit.as_ref().map(|commit| commit.as_str().to_owned()),
+        Some(rig.remote_tip("main"))
+    );
 }
 
 #[tokio::test]

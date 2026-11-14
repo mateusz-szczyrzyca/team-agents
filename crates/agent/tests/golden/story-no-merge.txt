@@ -139,7 +139,7 @@ Both reviewers approved pull request #1 of example: https://github.example.com/o
 This team does not merge by itself (`--no-merge`): merge it when you are ready. The items that depend on it wait until
 it is merged, and the team finishes when it is.
   ----- end of notification -----
-<time>  pull request #1 merged (the merge commit was not recorded)
+<time>  pull request #1 merged as <commit-1>
 <time>  team ended
 <time>  notification sent: Team <team-2> is finished (task <task-4>)
   ----- notification (190 bytes) -----
