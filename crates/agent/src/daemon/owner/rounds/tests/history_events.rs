@@ -6,7 +6,13 @@
 
 use agent_core::history::{EventKind, EventRecord, HistoryEvent, Record};
 use agent_core::ids::{RoundId, TeamId};
-use agent_core::protocol::{Client, Command, GateRequest, Reply};
+use std::num::NonZeroU32;
+
+use agent_core::config::TailscaleLogin;
+use agent_core::protocol::{
+    AnswerInput, AnswerList, AnswerRequest, Client, Command, ControlAction, ControlRequest, GateRequest, Reply, Target,
+};
+use agent_core::questions::Verdict;
 use agent_core::state::{GateOutcome, GateTree, ItemPhase, MergeMode, PrNumber, RoundEnd};
 use agent_core::status::ReviewVerdict;
 use agent_core::status::TaskStatus;
@@ -386,4 +392,266 @@ async fn a_gate_the_daemon_ran_is_recorded_with_its_task_head_outcome_and_log_an
     assert_eq!(gate.at, record.result.finished_at);
     assert!(recorded.result.log.as_path().exists());
     assert_eq!(gate.rounds, [the_round(&rig)]);
+}
+
+/// Answers questions number `number` of `task` with `verdict`, as `client`.
+async fn answer(rig: &Rig, task: &agent_core::ids::TaskId, client: Client, number: u32, verdict: &str) {
+    let answers = AnswerList::try_from(vec![AnswerInput {
+        question: NonZeroU32::MIN,
+        verdict: Verdict::from_text(verdict).unwrap().unwrap(),
+    }])
+    .unwrap();
+    let reply = Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            client,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: NonZeroU32::new(number).unwrap(),
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+}
+
+/// A rig whose solo agent asks questions once and then works, with the two reviewers that approve.
+async fn asking_rig() -> Rig {
+    Rig::new(
+        &[
+            normal("claude-1", "ask,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await
+}
+
+/// A question asked: its number, its text and the rounds it was linked to.
+type Asked = (u32, String, Vec<RoundId>);
+
+/// A question answered: its number, its text and the channel.
+type Answered = (u32, String, agent_core::state::AnsweredVia);
+
+/// The questions asked and answered in `events`.
+fn question_events(events: &[(u64, EventRecord)]) -> (Vec<Asked>, Vec<Answered>) {
+    let asked = events
+        .iter()
+        .filter_map(|(_, event)| match &event.event {
+            HistoryEvent::QuestionAsked { number, text, .. } => {
+                Some((number.get(), text.clone(), event.rounds.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let answered = events
+        .iter()
+        .filter_map(|(_, event)| match &event.event {
+            HistoryEvent::QuestionAnswered { number, text, via, .. } => Some((number.get(), text.clone(), *via)),
+            _ => None,
+        })
+        .collect();
+    (asked, answered)
+}
+
+#[tokio::test]
+async fn questions_are_recorded_as_the_human_saw_them_and_as_answered_through_the_command() {
+    use agent_core::state::AnsweredVia;
+
+    let mut rig = asking_rig().await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let seen = std::fs::read_to_string(rig.home.questions_file(&tasks[0], NonZeroU32::MIN)).unwrap();
+    answer(&rig, &tasks[0], Client::Cli, 1, "a").await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let events = events(&rig, &team);
+    let (asked, answered) = question_events(&events);
+    assert_eq!(asked.len(), 1, "{:?}", kinds(&events));
+    assert_eq!(asked[0].0, 1);
+    assert_eq!(asked[0].2, [the_round(&rig)]);
+    // The human saw the file with the instructions the daemon put in it, before any answer: the record is that text.
+    assert_eq!(asked[0].1, seen);
+    assert!(
+        asked[0].1.contains("What should the team do about the pull request?"),
+        "{}",
+        asked[0].1
+    );
+    assert_eq!(answered.len(), 1);
+    assert_eq!((answered[0].0, answered[0].2), (1, AnsweredVia::Command));
+    assert!(answered[0].1.contains("**Verdict:** a"), "{}", answered[0].1);
+    assert!(
+        answered[0]
+            .1
+            .contains("What should the team do about the pull request?")
+    );
+}
+
+#[tokio::test]
+async fn an_answer_through_the_dashboard_is_recorded_with_that_channel() {
+    use agent_core::state::AnsweredVia;
+
+    let mut rig = asking_rig().await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let login: TailscaleLogin = "human@example.com".parse().unwrap();
+    answer(&rig, &tasks[0], Client::Dashboard { login }, 1, "ok").await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let (_, answered) = question_events(&events(&rig, &team));
+    assert_eq!(answered.len(), 1);
+    assert_eq!((answered[0].0, answered[0].2), (1, AnsweredVia::Dashboard));
+    assert!(answered[0].1.contains("**Verdict:** ok"), "{}", answered[0].1);
+}
+
+#[tokio::test]
+async fn a_notification_is_recorded_in_the_words_of_the_file_the_human_got() {
+    let mut rig = asking_rig().await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let told = rig.notification_with("questions").await;
+    rig.stop().await.unwrap();
+
+    let events = events(&rig, &team);
+    let notified: Vec<(Option<agent_core::ids::TaskId>, String)> = events
+        .iter()
+        .filter_map(|(_, event)| match &event.event {
+            HistoryEvent::Notified { task, title, body } => Some((task.clone(), format!("{title}\n{body}"))),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        notified.contains(&(Some(tasks[0].clone()), told.clone())),
+        "{told:?} is not in {notified:?}"
+    );
+    assert!(events.iter().all(|(_, event)| event.team == team));
+}
+
+#[tokio::test]
+async fn the_controls_of_the_human_are_recorded_with_what_they_aimed_at_who_used_them_and_the_tasks_they_reached() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Stop(ControlRequest {
+                target: Target::Team(team.clone()),
+            }),
+        )
+        .await
+        .unwrap();
+    rig.status_is(&tasks[0], TaskStatus::Stopped).await;
+    let login: TailscaleLogin = "human@example.com".parse().unwrap();
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Dashboard { login: login.clone() },
+            Command::Resume(ControlRequest {
+                target: Target::Task(tasks[0].clone()),
+            }),
+        )
+        .await
+        .unwrap();
+    rig.wait_for("the second run", || rig.runs(&tasks[0]) == 2).await;
+    rig.stop().await.unwrap();
+
+    let events = events(&rig, &team);
+    let controls: Vec<_> = events
+        .iter()
+        .filter_map(|(_, event)| match &event.event {
+            HistoryEvent::Controlled {
+                action,
+                target,
+                by,
+                tasks,
+            } => Some((*action, target.clone(), by.clone(), tasks.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        controls,
+        [
+            (
+                ControlAction::Stop,
+                Target::Team(team.clone()),
+                Client::Cli,
+                vec![tasks[0].clone()]
+            ),
+            (
+                ControlAction::Resume,
+                Target::Task(tasks[0].clone()),
+                Client::Dashboard { login },
+                vec![tasks[0].clone()]
+            ),
+        ]
+    );
+    // The stop of the team ended its open round, abandoned.
+    let HistoryEvent::RoundClosed { end, .. } = &events[place(&events, EventKind::RoundClosed, 0)].1.event else {
+        panic!("not a close")
+    };
+    assert_eq!(*end, RoundEnd::Abandoned);
+    assert!(place(&events, EventKind::Controlled, 0) < place(&events, EventKind::RoundClosed, 0));
+}
+
+#[tokio::test]
+async fn a_team_whose_work_is_done_is_recorded_as_ended_once_after_its_rounds_with_the_rounds_it_had() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.wait_for("the team to end", || {
+        Reader::open(&rig.home.history_file())
+            .unwrap()
+            .team_records(&team)
+            .unwrap()
+            .iter()
+            .any(|stored| matches!(&stored.record, Record::Event(event) if event.event.kind() == EventKind::TeamEnded))
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    let events = events(&rig, &team);
+    assert_eq!(count(&events, EventKind::TeamEnded), 1, "{:?}", kinds(&events));
+    assert!(place(&events, EventKind::RoundClosed, 0) < place(&events, EventKind::TeamEnded, 0));
+    assert_eq!(
+        events[place(&events, EventKind::TeamEnded, 0)].1.rounds,
+        [the_round(&rig)]
+    );
 }
