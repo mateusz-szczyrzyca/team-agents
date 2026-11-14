@@ -18,6 +18,10 @@ Ground rules
   description quotes the item in full under `## Task`; the reviewers check the PR against it and run its checks.
   A file outside the expected list, an expected part left out, or a check that cannot pass yet needs its reason in
   the PR description.
+- From item 8.6 on, every check of an item has an ID (`A1`, `A2`, …): it is an acceptance criterion. The PR
+  description answers each one under `## Acceptance` — the ID and how it was shown: the test, or the command and
+  what it printed. A reviewer's report says for each one `met` or `not met`, with its evidence; one not met is a
+  BLOCKER. A criterion that cannot be shown as written is said so in the PR description, with the reason.
 - Each round is started with its own file, `rounds/round-N.M.md`: its `Round:` line, this round's item in full, these
   rules, and an overview of the other items, which are context only.
 - Every item compiles and passes the gate on `main` without the other items of its feature. The gate is the
@@ -42,8 +46,9 @@ Ground rules
   declared once, in a `#[strum(...)]` attribute. No hand-written text tables, no macro of our own for it.
 - New code is developed and tested against a separate `AGENTS_HOME`; nothing here may touch the live `~/agents` of
   the running Bash harness until feature 10.
-- The items of rounds, of the history and of checkpoints (8.3 to 8.10, 11.1, 12.1 and 12.2) are tested harder than
-  the developer rules ask: a log that is wrong is worse than no log, and a takeover that is wrong loses work.
+- The items of rounds, of the history, of checkpoints and of review (8.3 to 8.10, 11.1 and the features 12 and 13)
+  are tested harder than the developer rules ask: a log that is wrong is worse than no log, and a takeover that is
+  wrong loses work.
   - End to end: every record and every query is proved by a run of the daemon with fake CLIs and a fake GitHub
     server, read back through the reading API or `agent log`. Rows a test inserts by hand prove a query, never the
     recording.
@@ -105,6 +110,10 @@ Behaviour in short
   keeps a plan in its worktree — to do, in hand, done — that the harness reads and enforces; a task whose agent is
   gone is taken over by a free agent of the right tier on another account, who gets a briefing made from the
   history and the plan. `agent status <round>` shows each task's checkpoint as `OPEN`, `BUSY` or `CLOSED`.
+- Review, after the cutover (feature 13): the checks every change must pass are written in the repository's
+  `AGENTS.md` and run by the harness before any reviewer starts; what the reviewers find is kept in a ledger, the
+  first review passes are full and the later ones look only at the open findings and the fixes; requests to
+  workers have a form that leaves nothing to guess.
 
 Checkpoints for the human, between features (the agents do not run these):
 
@@ -181,10 +190,10 @@ Depends on: 10 (merged before this round)
       restarted in the middle of a takeover ends with one holder.
     - Why: several subscriptions exist so that work goes on when one of them is used up.
     Checks:
-    - With fake CLIs on two accounts and a fake quota error with a reset two hours away: `agent status <round>`
+    - A1. With fake CLIs on two accounts and a fake quota error with a reset two hours away: `agent status <round>`
       shows the task `OPEN`, then `BUSY` with the second agent as holder and the first before it.
-    - The same with both agents on one account: nobody takes over, and the task is woken at the reset.
-    - `agent log --round <id>` shows the takeover: who was gone and why, who took the task, the snapshot.
+    - A2. The same with both agents on one account: nobody takes over, and the task is woken at the reset.
+    - A3. `agent log --round <id>` shows the takeover: who was gone and why, who took the task, the snapshot.
 
 Plan overview (context only)
 
@@ -229,3 +238,7 @@ Plan overview (context only)
 12. Taking work over
    12.1 Accounts, providers and taking work over   <- this round
    12.2 Checkpoints of reviewers and workers
+13. Review
+   13.1 Mandatory checks: read from `AGENTS.md`, run by the harness
+   13.2 Findings that are kept, and review passes that narrow
+   13.3 Requests to workers that leave nothing to guess

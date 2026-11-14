@@ -17,6 +17,10 @@ Ground rules
   description quotes the item in full under `## Task`; the reviewers check the PR against it and run its checks.
   A file outside the expected list, an expected part left out, or a check that cannot pass yet needs its reason in
   the PR description.
+- From item 8.6 on, every check of an item has an ID (`A1`, `A2`, …): it is an acceptance criterion. The PR
+  description answers each one under `## Acceptance` — the ID and how it was shown: the test, or the command and
+  what it printed. A reviewer's report says for each one `met` or `not met`, with its evidence; one not met is a
+  BLOCKER. A criterion that cannot be shown as written is said so in the PR description, with the reason.
 - Each round is started with its own file, `rounds/round-N.M.md`: its `Round:` line, this round's item in full, these
   rules, and an overview of the other items, which are context only.
 - Every item compiles and passes the gate on `main` without the other items of its feature. The gate is the
@@ -41,8 +45,9 @@ Ground rules
   declared once, in a `#[strum(...)]` attribute. No hand-written text tables, no macro of our own for it.
 - New code is developed and tested against a separate `AGENTS_HOME`; nothing here may touch the live `~/agents` of
   the running Bash harness until feature 10.
-- The items of rounds, of the history and of checkpoints (8.3 to 8.10, 11.1, 12.1 and 12.2) are tested harder than
-  the developer rules ask: a log that is wrong is worse than no log, and a takeover that is wrong loses work.
+- The items of rounds, of the history, of checkpoints and of review (8.3 to 8.10, 11.1 and the features 12 and 13)
+  are tested harder than the developer rules ask: a log that is wrong is worse than no log, and a takeover that is
+  wrong loses work.
   - End to end: every record and every query is proved by a run of the daemon with fake CLIs and a fake GitHub
     server, read back through the reading API or `agent log`. Rows a test inserts by hand prove a query, never the
     recording.
@@ -104,6 +109,10 @@ Behaviour in short
   keeps a plan in its worktree — to do, in hand, done — that the harness reads and enforces; a task whose agent is
   gone is taken over by a free agent of the right tier on another account, who gets a briefing made from the
   history and the plan. `agent status <round>` shows each task's checkpoint as `OPEN`, `BUSY` or `CLOSED`.
+- Review, after the cutover (feature 13): the checks every change must pass are written in the repository's
+  `AGENTS.md` and run by the harness before any reviewer starts; what the reviewers find is kept in a ledger, the
+  first review passes are full and the later ones look only at the open findings and the fixes; requests to
+  workers have a form that leaves nothing to guess.
 
 Checkpoints for the human, between features (the agents do not run these):
 
@@ -720,9 +729,9 @@ Depends on: 7
       daemon is logged with its message and location. Marker secrets, as in 8.4, are not in the log.
     - Why: until now a failure of the harness itself left nothing a human could read afterwards.
     Checks:
-    - With fake CLIs: a run whose CLI prints a line that is not JSON leaves a `warn` row with the event's name, the
+    - A1. With fake CLIs: a run whose CLI prints a line that is not JSON leaves a `warn` row with the event's name, the
       task and the run; with `[log] level = "debug"` the assignment of an item is a row with its input and result.
-    - `docs/log.md` lists every name of the enum (a test compares them).
+    - A2. `docs/log.md` lists every name of the enum (a test compares them).
 [ ] 8.7 `agent log`: questions to the history, search, following and what is kept
     `agent log` with no words prints the newest rows of the daemon's log. It reads the history directly and narrows
     by `--team`, `--round`, `--task`, `--run`, `--agent`, `--level`, `--event`, `--since` and `--until`, alone or
@@ -761,11 +770,11 @@ Depends on: 7
     - Why: the questions asked of a round and of a team — its logs, tasks, agents, worktrees, prompts — each have
       one command, and the home no longer grows without end.
     Checks:
-    - `agent log --round <id> --show prompts` prints the prompts of that round and of no other; `--show agents`
+    - A1. `agent log --round <id> --show prompts` prints the prompts of that round and of no other; `--show agents`
       lists who took part, with roles.
-    - `agent log --grep '<a word of one prompt>'` finds the run that got it; `agent log -f` shows a run starting
+    - A2. `agent log --grep '<a word of one prompt>'` finds the run that got it; `agent log -f` shows a run starting
       while it is watched.
-    - With `keep_days = 1` and the clock moved two days on, a closed round is gone from `agent log --stats` and an
+    - A3. With `keep_days = 1` and the clock moved two days on, a closed round is gone from `agent log --stats` and an
       open one is still there.
 [ ] 8.8 A run that reaches its turn limit goes on
     A model CLI may end a run because a budget of its own ran out, not because the work failed: Claude Code ends
@@ -797,9 +806,9 @@ Depends on: 7
     - Why: a run that used up its turns is not a failure; treated as one it loses finished work, as happened with the
       old harness on item 8.3.
     Checks:
-    - With a fake CLI that prints a `result` of `error_max_turns` on its first run and `STATUS: DONE` on its second:
+    - A1. With a fake CLI that prints a `result` of `error_max_turns` on its first run and `STATUS: DONE` on its second:
       the task ends `done` after two runs and `agent status` never shows it `failed`.
-    - With `[limits] max_turns = 50` the fake CLI is started with `--max-turns 50`.
+    - A2. With `[limits] max_turns = 50` the fake CLI is started with `--max-turns 50`.
 [ ] 8.9 A round outlives its team: continuing a round
     Work that was interrupted is taken up where it stands, by the same agents or by others. A team may break — its
     coordinator gone, its agents out of quota, a stop — while the round's work is in its worktrees. Until now such a
@@ -852,11 +861,11 @@ Depends on: 7
       and opens; a daemon restarted in the middle of a continuation continues once.
     - Why: the incident behind this feature — the worktree was there and nobody could be pointed at it.
     Checks:
-    - With fake CLIs: a solo task is stopped after its fake CLI changed two files without committing; `agent run
+    - A1. With fake CLIs: a solo task is stopped after its fake CLI changed two files without committing; `agent run
       --continue <round> <another agent>` starts in the same worktree, and its prompt names both files.
-    - `git show refs/agents/snapshots/<round>/<task>/1 --stat` lists the two files; `git status` in the worktree is
+    - A2. `git show refs/agents/snapshots/<round>/<task>/1 --stat` lists the two files; `git status` in the worktree is
       what it was.
-    - `agent status <round>` shows the task `OPEN` after the stop and `BUSY` after the continuation, with both
+    - A3. `agent status <round>` shows the task `OPEN` after the stop and `BUSY` after the continuation, with both
       holders.
 [ ] 8.10 The plan of every task
     A task that works for a round keeps a plan the harness can read: what it means to do, what is done, what it is
@@ -912,11 +921,11 @@ Depends on: 7
     - Why: a plan outside the conversation is what makes work resumable by anybody — and lets a long task run as
       several short conversations instead of one that costs more with every turn.
     Checks:
-    - With a fake CLI that ends `DONE` leaving `[ ] 1.2` in its plan: `agent status` shows the run sent back, and
+    - A1. With a fake CLI that ends `DONE` leaving `[ ] 1.2` in its plan: `agent status` shows the run sent back, and
       `agent log --round <id> --show plan` shows the versions of the plan with their times.
-    - With a fake CLI that completes stage 1 and ends `NEXT`: the next run has another session ID and its prompt
+    - A2. With a fake CLI that completes stage 1 and ends `NEXT`: the next run has another session ID and its prompt
       shows stage 1 done.
-    - With a fake CLI that ends at its turn limit: the next run has another session ID, works in the same worktree,
+    - A3. With a fake CLI that ends at its turn limit: the next run has another session ID, works in the same worktree,
       and its prompt says the session is new because the turns ran out.
 
 9. Dashboard
@@ -938,10 +947,10 @@ Depends on: 8
       daemon run with fake CLIs, equal to the story of that round.
     - Why: the human's view of the teams, and a second way to answer and steer.
     Checks:
-    - With a fake daemon socket: the start page lists the teams; a login not allowed gets 403; a request not from
+    - A1. With a fake daemon socket: the start page lists the teams; a login not allowed gets 403; a request not from
       loopback is refused.
-    - An answer posted from the form reaches the daemon; a change of state shows on the page without a reload.
-    - A round's page shows that round's story: its item, its agents by role, its runs, its pull request.
+    - A2. An answer posted from the form reaches the daemon; a change of state shows on the page without a reload.
+    - A3. A round's page shows that round's story: its item, its agents by role, its runs, its pull request.
 
 10. Cutover
 Depends on: 8, 9
@@ -954,9 +963,9 @@ Depends on: 8, 9
     - Tests: the installation into a temporary prefix, described with its result in the PR.
     - Why: the new `agent` can replace the old one on the machine.
     Checks:
-    - `./install.sh` into a temporary prefix installs the three binaries and their units; `agent --version` from there
-      works.
-    - The README describes every command `agent --help` lists.
+    - A1. `./install.sh` into a temporary prefix installs the three binaries and their units; `agent --version`
+      from there works.
+    - A2. The README describes every command `agent --help` lists.
 [ ] 10.2 Remove the old implementation
     Delete `bin/agent`, `agent/`, `live/`, their Bats tests and their Makefile and CI targets; keep `agentbus/`.
     Mechanical removal only (PR-6), with the exact list in the PR description.
@@ -965,8 +974,8 @@ Depends on: 8, 9
     - Tests: the gate green without them.
     - Why: one implementation left, the new one.
     Checks:
-    - `git grep -nE 'bin/agent|live/'` finds no reference outside history in `docs/`.
-    - The repository's gate passes without the removed parts.
+    - A1. `git grep -nE 'bin/agent|live/'` finds no reference outside history in `docs/`.
+    - A2. The repository's gate passes without the removed parts.
 
 11. Usage
 Depends on: 10
@@ -998,9 +1007,9 @@ Depends on: 10
       text.
     - Why: what a round cost in tokens, and which agent and role spent them.
     Checks:
-    - After a round with fake CLIs that report usage: `agent log --round <id> --show usage` lists every agent with
+    - A1. After a round with fake CLIs that report usage: `agent log --round <id> --show usage` lists every agent with
       its role and tokens; the total equals the sum of the rows.
-    - A run of a fake CLI that reports no usage is shown as "not reported".
+    - A2. A run of a fake CLI that reports no usage is shown as "not reported".
 
 12. Taking work over
 Depends on: 10
@@ -1049,10 +1058,10 @@ Depends on: 10
       restarted in the middle of a takeover ends with one holder.
     - Why: several subscriptions exist so that work goes on when one of them is used up.
     Checks:
-    - With fake CLIs on two accounts and a fake quota error with a reset two hours away: `agent status <round>`
+    - A1. With fake CLIs on two accounts and a fake quota error with a reset two hours away: `agent status <round>`
       shows the task `OPEN`, then `BUSY` with the second agent as holder and the first before it.
-    - The same with both agents on one account: nobody takes over, and the task is woken at the reset.
-    - `agent log --round <id>` shows the takeover: who was gone and why, who took the task, the snapshot.
+    - A2. The same with both agents on one account: nobody takes over, and the task is woken at the reset.
+    - A3. `agent log --round <id>` shows the takeover: who was gone and why, who took the task, the snapshot.
 [ ] 12.2 Checkpoints of reviewers and workers
     The two roles outside the crew's own work get the same safety, each in its own way.
     A reviewer keeps a plan like any task (8.10) — its stages are review passes, its steps the steps of its review
@@ -1087,7 +1096,130 @@ Depends on: 10
     - Why: a review or a request cut off in the middle costs its whole time again, and until now a request in
       hand was lost with the daemon.
     Checks:
-    - With fake CLIs: a reviewer that fails after writing a finding is replaced and the second reviewer's prompt
+    - A1. With fake CLIs: a reviewer that fails after writing a finding is replaced and the second reviewer's prompt
       shows that finding under leads; the pull request still gets two verdicts.
-    - A worker's request whose worker is killed is finished by a worker of another provider; `agent log --round
+    - A2. A worker's request whose worker is killed is finished by a worker of another provider; `agent log --round
       <id>` shows both runs and one answer.
+
+13. Review
+Depends on: 10
+[ ] 13.1 Mandatory checks: read from `AGENTS.md`, run by the harness
+    What every change of a repository must pass before anybody reviews it — it builds, the lints are clean, the
+    tests pass — is written in the repository's `AGENTS.md`, under a heading whose text is `Mandatory for
+    investigator`, and run by the harness, not by a model: a reviewer that runs a build pays tokens to read its
+    output, and a review of a change that does not build is wasted. The section holds one or more groups. A group
+    is an optional line `Paths: <pattern> <pattern> …` followed by a fenced `sh` block, one command a line; a group
+    without `Paths:` is always run, one with it only when the round's diff touches a matching path (so a
+    repository can ask for its Rust checks on `crates/**` and its Go checks on `agentbus/**`). Text around the
+    groups is for the reader and is ignored.
+    The section is read from the base branch at the round's merge base, never from the round's own head: a round
+    cannot weaken what it is checked by. `agent run` refuses a repository whose base branch has no such section or
+    one that does not parse, with the line and what is wrong; `agent checks <repo>` prints what was read. The
+    section replaces `[repos.NAME] gate`: `agent gate` runs the groups that apply to the task's diff, in order,
+    each command with the gate's timeout, stops at the first failure, and records every command with its exit
+    code, its time and the file of its output. The daemon runs the same before every review pass, on the head the
+    reviewers would get. A failure sends the round back to the team with the failed command and the lines that
+    tell what failed, and no reviewer starts; it counts against `[review] check_passes`. A reviewer's prompt
+    carries the record — the commands, their results, the head — and the review rules tell it not to run them
+    again.
+    Expected result:
+    - Files: the section's parser in `crates/agent-core/src/mandatory.rs`, the choice of groups in
+      `crates/agent-core/src/decide/checks.rs`, reading a file of the base branch in
+      `crates/agent-runtime/src/git.rs`, `crates/agent/src/daemon/gate.rs`, `crates/agent/src/commands/gate.rs`
+      and `checks.rs`, the record in the state and the history, the texts in `prompts/harness/review/`, the gate
+      step of `prompts/investigator/code-review.md`, the section in this repository's `AGENTS.md`,
+      `docs/architecture.md`, `docs/configuration.md`.
+    - Adds: the section's format and parser; the groups by path; the refusal of a repository without it; the
+      record per command; the run before every review pass; the record in the reviewer's prompt; `agent checks`.
+    - Removed: `[repos.NAME] gate` (a configuration that still has it is refused, with what to do).
+    - Tests: the ground rule on testing these items applies. The parser: one group, several, with and without
+      `Paths:`, a heading at any level, no section, an empty block, a block that is not `sh`, two sections — each
+      error with its line. The choice: a table of diffs against groups, a rename counted under both paths, a diff
+      of nothing. In a real repository: the section is read from the merge base when the head changed or removed
+      it. End to end with fake CLIs and the fake GitHub server: a failing command starts no reviewer (the fake
+      CLIs of the reviewers are never called) and the team's prompt names the command; a passing run puts the
+      record into both reviewers' prompts; a round that touches one group's paths runs that group only; after a
+      fix pass the checks run again on the new head; a round that edits the section is checked by the old one.
+    - Why: the cheapest review finding is the one no model has to make.
+    Checks:
+    - A1. With fake CLIs: a round whose head fails the first command gets no review; `agent status <round>` shows
+      the command and its exit code, and the reviewers' fake CLIs were not started.
+    - A2. `agent checks <repo>` on this repository prints its groups with their paths and commands.
+    - A3. `agent run` in a repository whose `AGENTS.md` has no such section is refused and says which section is
+      missing.
+[ ] 13.2 Findings that are kept, and review passes that narrow
+    What a review found is kept, so that the next reviewer starts where the last one ended instead of discovering
+    the pull request again. The daemon reads every finding out of a reviewer's report (the report format of the
+    review rules) into a ledger of the pull request, in the state and the history: an ID that never changes
+    (`F1`, `F2`, …), its severity (BLOCKER or MINOR), the rule, the file and lines at the head it was raised on,
+    the text, the reviewer, the review pass, and its state — open, fixed, withdrawn. A report the daemon cannot
+    read is sent back to its reviewer once, then the review counts as failed.
+    The first `[review] full_passes` review passes (default 1) are full: every reviewer reviews the whole pull
+    request on its own. From the second full pass on a reviewer is given the ledger too, after its instructions
+    to review first and compare afterwards. Every later pass is narrowed. Its prompt holds the open findings and
+    the diff of the fixes — from the head the last pass reviewed to the head now — and nothing else is to be
+    reviewed: the reviewer answers each open finding `fixed` or `not fixed` with a place in the code, and may
+    raise new findings only on lines the fixes changed. A finding on any other line is recorded as out of scope,
+    blocks nothing and is listed for the human.
+    Who reviews a narrowed pass is `[review] narrowed_reviewers`: `all` (default) — as many reviewers as a full
+    pass; `requesters` — only the reviewers that asked for changes, the approval of the others stands unless the
+    fixes change more than `[review] approval_expires_lines` lines; `one` — one reviewer, whose approval counts
+    for all. A pull request is merged when `[review] approvals` approvals (default 2) stand at its head, no
+    BLOCKER is open and the mandatory checks passed there.
+    The team that fixes gets every open finding with its ID, the MINOR ones too. It may dispute one in the pull
+    request's description (`## Disputed findings`: the ID and the reason); the next reviewer withdraws it or keeps
+    it, and a finding disputed twice is put to the human. A pull request approved with only MINOR findings open is
+    merged, the open ones listed in its description. `agent status <round>` and `agent log --round` show the
+    ledger: each finding, its state and the pass that changed it.
+    Expected result:
+    - Files: the ledger in `crates/agent-core/src/state/` and `crates/agent-core/src/history.rs`, the report's
+      parser in `crates/agent-core/src/review/report.rs`, the kind of a pass and its reviewers in
+      `crates/agent-core/src/decide/round.rs`, `crates/agent/src/daemon/owner/rounds/`, the texts in
+      `prompts/harness/review/`, the re-review part of `prompts/investigator/code-review.md`, `[review]` in
+      `crates/agent-core/src/config.rs`, `docs/architecture.md`, `docs/configuration.md`, `docs/state.md`,
+      `docs/history.md`.
+    - Adds: findings with IDs and states; the report's parser; full and narrowed passes; the three ways to man a
+      narrowed pass; `approvals`; disputes; the ledger in the prompts, in `agent status` and in the story.
+    - Tests: the ground rule on testing these items applies. The parser: the report of the review rules whole,
+      with every section, with none, with grouped places (`also:`), a line it cannot read. The ledger: the same
+      finding raised by two reviewers is two findings; IDs are never used again; every change of state allowed
+      and refused. The decision: a table — which pass is full, who reviews under each of the three settings, the
+      approval that stands and the one that expires at the line limit, when a pull request may merge. End to end
+      with fake CLIs and the fake GitHub server: two full reviews, three findings, a fix, a narrowed pass whose
+      prompt holds exactly the open findings and the diff of the fixes and not the whole diff; a finding marked
+      fixed closes, one not fixed goes back with its ID; a new finding on an unchanged line blocks nothing and is
+      in the description; a disputed finding withdrawn, and one disputed twice asks the human; a merge with MINOR
+      findings open lists them; `full_passes = 2` makes the second pass full with the ledger in it; each setting
+      of `narrowed_reviewers` starts the reviewers the table says; a daemon restarted between two passes keeps the
+      ledger.
+    - Why: a review that starts from nothing every time costs the most and converges the least.
+    Checks:
+    - A1. With fake CLIs: after one fix pass the reviewers' second prompt names the open findings by ID and
+      contains the diff of the fixes; `agent status <round>` shows each finding with its state.
+    - A2. A finding the second pass raises on a line the fixes did not change does not stop the merge.
+    - A3. With `[review] narrowed_reviewers = "requesters"` only the reviewer that asked for changes is started
+      again.
+[ ] 13.3 Requests to workers that leave nothing to guess
+    Workers are the cheapest models: a request they have to interpret is a request they get wrong. A request a
+    member or the coordinator delegates has a form the daemon checks before any worker gets it — the lines
+    `Files:` (what may be changed), `For:` (the acceptance criteria of the round's item, or the steps of the
+    requester's plan, by ID), `Tests:` (the tests to write, by name, or `none` with the reason) and `Do:` (the
+    work). A request without them goes back to the requester with what is missing, and no worker starts. The
+    worker's prompt shows the criteria and steps named, in full. Its result lists the files it changed; a change
+    outside `Files:` is not undone but is said to the requester, first in the result. The texts every role is
+    given say how to split work into such requests: one request, one behaviour, one or two files.
+    Expected result:
+    - Files: the request's form in `crates/agent-core/src/request.rs`, its check in
+      `crates/agent/src/daemon/team/`, the texts in `prompts/harness/team/`, `docs/architecture.md`.
+    - Adds: the form of a request and its check; the criteria and steps in the worker's prompt; the files of a
+      worker's result and the report of a change outside them.
+    - Tests: the ground rule on testing these items applies. The form: whole, each line missing, an ID that the
+      item or the plan does not have, `Tests: none` without a reason. End to end with fake CLIs: a request without
+      `Files:` starts no worker and the requester's next prompt says what is missing; a good request gives the
+      worker a prompt with the named criteria in full; a worker that changes a file outside `Files:` — the
+      requester's message names the file first.
+    - Why: a request that is exact is cheap to do and cheap to check.
+    Checks:
+    - A1. With fake CLIs: a delegated request without `For:` is answered to the requester with the missing line,
+      and the worker's fake CLI is not started.
+    - A2. A request that names criterion A2 of its item gives the worker a prompt that quotes A2.

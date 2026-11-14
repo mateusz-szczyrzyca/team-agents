@@ -359,6 +359,8 @@ N changed lines outside tests.
 Each new behaviour and the test that specifies it; the regression test for a bug fix.
 Existing tests modified or removed, each with its reason (normally: none).
 Tests changed after RED: every `TEST-FIX` commit with its reason (normally: none).
+Acceptance: when the checks of the task carry IDs (`A1`, `A2`, …), each ID with how you showed it — the test, or
+the command and what it printed. One you could not show: say so, with the reason.
 
 ## Gate
 The commands you ran and their results.

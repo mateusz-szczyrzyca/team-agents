@@ -296,6 +296,10 @@ SUMMARY: one or two sentences — what the PR does and why this verdict
 SIZE: 742 changed lines outside tests (limit 1500)
 GATE: fmt ok, clippy ok, test ok, doc ok        (or: not run — <reason>)
 
+CRITERIA
+A1 met — `cargo test -p sync receiver_gone` passes; src/sync.rs:88
+A2 not met — the cap is 6, the task says "at most 5"; src/retry.rs:52
+
 BLOCKERS
 1. [ERR-2] src/sync.rs:88 — `let _ = tx.send(evt)` drops the send error → return `SyncError::ReceiverGone`, or log it and stop the loop.
 2. [TDD-2] src/retry.rs:52 — the backoff cap is untested: `>` → `>=` keeps the suite green → add a test at the cap.
@@ -316,11 +320,15 @@ OUT OF SCOPE
 
 - One line per finding: `[ID] file:line — problem → fix`. Group repeats: `also: a.rs:10, b.rs:22`.
 - Leave out empty sections. VERDICT, SUMMARY, SIZE and GATE are always present.
+- CRITERIA: when the checks of the task carry IDs (`A1`, `A2`, …), one line for each — `met` or `not met`, with the
+  evidence: the command you ran and what it showed, or the place in the code. Never `met` on the PR's word. One
+  not met is a BLOCKER, listed there too.
 - A review that ended at step 2 or 3 reports only that blocker.
 
 ## 8. Re-review
 
-1. Go through the previous BLOCKERs one by one: `fixed` or `not fixed`, with `file:line`.
+1. Go through the previous BLOCKERs one by one: `fixed` or `not fixed`, with `file:line`. The same for every
+   criterion that was `not met`.
 2. Re-run the size check and the gate. Review only what changed since the last round, and what that touches.
 3. New findings on unchanged code only if they are BLOCKERs; mark them `(missed earlier)`.
 4. Do not reopen points you accepted. Do not turn an earlier MINOR into a BLOCKER without a new fact.
