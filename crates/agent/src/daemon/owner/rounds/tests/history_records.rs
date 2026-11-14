@@ -502,7 +502,7 @@ async fn the_changes_of_a_run_are_what_its_cli_did_a_file_added_deleted_modified
          git mv moved.txt renamed.txt\n\
          printf 'x\\ny\\n' > added.txt\n\
          printf '\\000\\001\\002\\003' > blob.bin\n\
-         git add -A\n\
+         git add edited.txt added.txt blob.bin\n\
          git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q -m 'Change many things'\n\
          printf 'left\\n' > left.txt\n",
     )
