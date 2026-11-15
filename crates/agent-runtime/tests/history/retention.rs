@@ -14,7 +14,7 @@ fn retention_keeps_open_and_boundary_rounds_and_removes_all_old_owned_rows() {
         old.rounds.truncate(1);
         old.runs.truncate(1);
         old.runs[0].start.rounds = vec![old.rounds[0].round.clone()];
-        old.runs[0].start.prompt = "x ".repeat(300_000);
+        old.runs[0].start.prompt = "expiredretentionmarker ".repeat(30_000);
         let mut open = complete(seed + 100);
         open.rounds.truncate(1);
         open.runs.truncate(1);
@@ -82,9 +82,12 @@ fn retention_keeps_open_and_boundary_rounds_and_removes_all_old_owned_rows() {
             "seed={seed}: {before} -> {after}"
         );
         assert_eq!(
-            raw.query_row("SELECT count(*) FROM history_search WHERE body MATCH 'x'", [], |r| r
-                .get::<_, i64>(0))
-                .unwrap(),
+            raw.query_row(
+                "SELECT count(*) FROM history_search WHERE body MATCH 'expiredretentionmarker'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
             0,
             "seed={seed}"
         );
