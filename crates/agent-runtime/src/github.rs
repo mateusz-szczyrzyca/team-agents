@@ -27,6 +27,7 @@ use reqwest::{Method, Url};
 use serde::Deserialize;
 use serde::de::{DeserializeOwned, Error as _};
 use serde_json::{Value, json};
+use tracing::Instrument;
 
 /// The base URL of the public GitHub API.
 const PUBLIC_API: &str = "https://api.github.com";
@@ -1390,70 +1391,75 @@ impl GitHub {
 
     /// Makes a call as [`Self::call`] does and returns the whole answer.
     async fn answer(&self, call: Call) -> Result<Answer, GitHubError> {
-        let allowed = match call.idempotency {
-            Idempotency::Idempotent => self.settings.retry.max_attempts.get(),
-            Idempotency::Once => 1,
-        };
-        let started = std::time::Instant::now();
-        let mut attempt = 1_u32;
-        loop {
-            let failure = match self.attempt(&call).await {
-                Ok(answer) => {
+        let span = tracing::debug_span!("github", operation = %call.operation);
+        async move {
+            let allowed = match call.idempotency {
+                Idempotency::Idempotent => self.settings.retry.max_attempts.get(),
+                Idempotency::Once => 1,
+            };
+            let started = std::time::Instant::now();
+            let mut attempt = 1_u32;
+            loop {
+                let failure = match self.attempt(&call).await {
+                    Ok(answer) => {
+                        crate::history::log_outside_call(
+                            "github",
+                            &call.operation.to_string(),
+                            started.elapsed(),
+                            Some(i32::from(answer.status)),
+                            "ok",
+                        );
+                        return Ok(answer);
+                    }
+                    Err(failure) => failure,
+                };
+                let next = attempt.saturating_add(1);
+                let delay = if attempt < allowed && failure.is_transient() {
+                    self.settings.retry.delay_before(next, failure.retry_after())
+                } else {
+                    None
+                };
+                let Some(delay) = delay else {
+                    let error = failure.into_error(call.operation, attempt, self.settings.timeout);
+                    let code = match &error {
+                        GitHubError::Status { status, .. } => Some(i32::from(*status)),
+                        _ => None,
+                    };
                     crate::history::log_outside_call(
                         "github",
                         &call.operation.to_string(),
                         started.elapsed(),
-                        Some(i32::from(answer.status)),
-                        "ok",
+                        code,
+                        "failed",
                     );
-                    return Ok(answer);
-                }
-                Err(failure) => failure,
-            };
-            let next = attempt.saturating_add(1);
-            let delay = if attempt < allowed && failure.is_transient() {
-                self.settings.retry.delay_before(next, failure.retry_after())
-            } else {
-                None
-            };
-            let Some(delay) = delay else {
-                let error = failure.into_error(call.operation, attempt, self.settings.timeout);
-                let code = match &error {
-                    GitHubError::Status { status, .. } => Some(i32::from(*status)),
-                    _ => None,
+                    let diagnostic = error_chain(&error);
+                    tracing::warn!(
+                        event = agent_core::log::LogEvent::GithubCallFailed.as_str(),
+                        operation = %call.operation,
+                        attempt,
+                        retry = false,
+                        error = %diagnostic,
+                        "a GitHub API call failed"
+                    );
+                    return Err(error);
                 };
-                crate::history::log_outside_call(
-                    "github",
-                    &call.operation.to_string(),
-                    started.elapsed(),
-                    code,
-                    "failed",
-                );
-                let diagnostic = error_chain(&error);
+                let diagnostic = failure.diagnostic();
+                let delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX);
                 tracing::warn!(
                     event = agent_core::log::LogEvent::GithubCallFailed.as_str(),
                     operation = %call.operation,
                     attempt,
-                    retry = false,
+                    retry = true,
+                    retry_delay_ms = delay_ms,
                     error = %diagnostic,
-                    "a GitHub API call failed"
+                    "a GitHub API call failed and is retried"
                 );
-                return Err(error);
-            };
-            let diagnostic = failure.diagnostic();
-            let delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX);
-            tracing::warn!(
-                event = agent_core::log::LogEvent::GithubCallFailed.as_str(),
-                operation = %call.operation,
-                attempt,
-                retry = true,
-                retry_delay_ms = delay_ms,
-                error = %diagnostic,
-                "a GitHub API call failed and is retried"
-            );
-            tokio::time::sleep(delay).await;
-            attempt = next;
+                tokio::time::sleep(delay).await;
+                attempt = next;
+            }
         }
+        .instrument(span)
+        .await
     }
 
     /// One attempt of a call, within the time of an attempt.

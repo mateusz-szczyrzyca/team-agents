@@ -27,6 +27,7 @@ use agent_core::kinds::{Keyword, UnknownKeyword};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
+use tracing::Instrument;
 
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, capture, capture_with_input};
 
@@ -1227,39 +1228,44 @@ impl AgentBus {
     /// wins over `AGENTBUS_DIR` of the environment, and in `AGENTS_HOME`, where the command writes its log: nothing
     /// but this `AgentBus` decides which bus a command works on.
     async fn run(&self, command: BusCommand, args: Args, input: Option<&[u8]>) -> Result<String, AgentBusError> {
-        let mut process = tokio::process::Command::new(self.program.as_path());
-        process
-            .arg(command.to_string())
-            .arg("--dir")
-            .arg(self.bus_dir())
-            .args(args.0)
-            .env("AGENTS_HOME", self.home.as_path());
-        let limits = CaptureLimits {
-            timeout: self.timeout,
-            max_bytes: MAX_OUTPUT_BYTES,
-        };
-        let started = std::time::Instant::now();
-        let captured = match input {
-            Some(bytes) => capture_with_input(process, limits, bytes).await,
-            None => capture(process, limits).await,
-        };
-        let duration = started.elapsed();
-        let captured = match captured {
-            Ok(captured) => {
-                let code = match captured.exit {
-                    ExitReport::Exited { code } => Some(code),
-                    ExitReport::Signaled { .. } => None,
-                };
-                let status = if captured.exit.succeeded() { "ok" } else { "failed" };
-                crate::history::log_outside_call("agentbus", &command.to_string(), duration, code, status);
-                captured
-            }
-            Err(source) => {
-                crate::history::log_outside_call("agentbus", &command.to_string(), duration, None, "error");
-                return Err(AgentBusError::Run { command, source });
-            }
-        };
-        outcome(command, captured)
+        let span = tracing::debug_span!("agentbus", operation = %command);
+        async move {
+            let mut process = tokio::process::Command::new(self.program.as_path());
+            process
+                .arg(command.to_string())
+                .arg("--dir")
+                .arg(self.bus_dir())
+                .args(args.0)
+                .env("AGENTS_HOME", self.home.as_path());
+            let limits = CaptureLimits {
+                timeout: self.timeout,
+                max_bytes: MAX_OUTPUT_BYTES,
+            };
+            let started = std::time::Instant::now();
+            let captured = match input {
+                Some(bytes) => capture_with_input(process, limits, bytes).await,
+                None => capture(process, limits).await,
+            };
+            let duration = started.elapsed();
+            let captured = match captured {
+                Ok(captured) => {
+                    let code = match captured.exit {
+                        ExitReport::Exited { code } => Some(code),
+                        ExitReport::Signaled { .. } => None,
+                    };
+                    let status = if captured.exit.succeeded() { "ok" } else { "failed" };
+                    crate::history::log_outside_call("agentbus", &command.to_string(), duration, code, status);
+                    captured
+                }
+                Err(source) => {
+                    crate::history::log_outside_call("agentbus", &command.to_string(), duration, None, "error");
+                    return Err(AgentBusError::Run { command, source });
+                }
+            };
+            outcome(command, captured)
+        }
+        .instrument(span)
+        .await
     }
 }
 

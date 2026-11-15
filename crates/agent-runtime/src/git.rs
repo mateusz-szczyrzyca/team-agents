@@ -22,6 +22,7 @@ use agent_core::ids::{AgentName, BranchName};
 use agent_core::repo_path::InvalidRepoPath;
 use agent_core::state::{CommitId, InvalidCommitId};
 use tokio::process::Command;
+use tracing::Instrument;
 
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture, capture_until};
 
@@ -884,37 +885,42 @@ impl Git {
 
     /// Runs git with `args` and returns what it did, whether it succeeded or not.
     async fn run(&self, operation: GitOperation, reach: Reach, args: &[&OsStr]) -> Result<Captured, GitError> {
-        let timeout = match reach {
-            Reach::Local => self.limits.local_timeout,
-            Reach::Network => self.limits.network_timeout,
-        };
-        let limits = CaptureLimits {
-            timeout: self.deadline.map_or(timeout, |deadline| {
-                timeout.min(deadline.saturating_duration_since(tokio::time::Instant::now()))
-            }),
-            max_bytes: self.limits.max_output_bytes,
-        };
-        let started = std::time::Instant::now();
-        let captured = match self.deadline {
-            Some(deadline) => capture_until(self.command(args), limits, deadline).await,
-            None => capture(self.command(args), limits).await,
-        };
-        let duration = started.elapsed();
-        match captured {
-            Ok(captured) => {
-                let code = match captured.exit {
-                    ExitReport::Exited { code } => Some(code),
-                    ExitReport::Signaled { .. } => None,
-                };
-                let outcome = if captured.exit.succeeded() { "ok" } else { "failed" };
-                crate::history::log_outside_call("git", &operation.to_string(), duration, code, outcome);
-                Ok(captured)
-            }
-            Err(source) => {
-                crate::history::log_outside_call("git", &operation.to_string(), duration, None, "error");
-                Err(GitError::Run { operation, source })
+        let span = tracing::debug_span!("git", operation = %operation);
+        async move {
+            let timeout = match reach {
+                Reach::Local => self.limits.local_timeout,
+                Reach::Network => self.limits.network_timeout,
+            };
+            let limits = CaptureLimits {
+                timeout: self.deadline.map_or(timeout, |deadline| {
+                    timeout.min(deadline.saturating_duration_since(tokio::time::Instant::now()))
+                }),
+                max_bytes: self.limits.max_output_bytes,
+            };
+            let started = std::time::Instant::now();
+            let captured = match self.deadline {
+                Some(deadline) => capture_until(self.command(args), limits, deadline).await,
+                None => capture(self.command(args), limits).await,
+            };
+            let duration = started.elapsed();
+            match captured {
+                Ok(captured) => {
+                    let code = match captured.exit {
+                        ExitReport::Exited { code } => Some(code),
+                        ExitReport::Signaled { .. } => None,
+                    };
+                    let outcome = if captured.exit.succeeded() { "ok" } else { "failed" };
+                    crate::history::log_outside_call("git", &operation.to_string(), duration, code, outcome);
+                    Ok(captured)
+                }
+                Err(source) => {
+                    crate::history::log_outside_call("git", &operation.to_string(), duration, None, "error");
+                    Err(GitError::Run { operation, source })
+                }
             }
         }
+        .instrument(span)
+        .await
     }
 
     /// Runs git with `args`; a command that ends with a failure is an error.
