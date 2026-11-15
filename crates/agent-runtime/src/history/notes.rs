@@ -6,7 +6,7 @@
 //! best effort: a record whose run was never seen by this store has no place to be noted, a batch that fails is not
 //! noted (the writer tries its records one by one), and a note that cannot be written waits, a bounded number of them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use agent_core::history::{EventRecord, HistoryEvent, LostKind, Record};
 use agent_core::ids::{RoundId, RunId, TaskId, TeamId};
@@ -49,8 +49,10 @@ pub struct Noting<S> {
     scopes: HashMap<RunId, Scope>,
     /// How many runs this store has learned, to order runs of the same task.
     learned: u64,
-    /// The notes that wait for a write that succeeds.
-    pending: Vec<EventRecord>,
+    /// The notes that wait for a write that succeeds, oldest first.
+    pending: VecDeque<EventRecord>,
+    /// How many loss notes were permanently refused after the loss they describe had already been counted.
+    dropped_notes: u64,
 }
 
 impl<S: Store> Noting<S> {
@@ -68,7 +70,8 @@ impl<S: Store> Noting<S> {
             redactor: Redactor::new(secrets),
             scopes: HashMap::new(),
             learned: 0,
-            pending: Vec::new(),
+            pending: VecDeque::new(),
+            dropped_notes: 0,
         }
     }
 
@@ -108,8 +111,9 @@ impl<S: Store> Noting<S> {
         let Some((what, team, rounds, at)) = self.placed(record) else {
             return;
         };
-        if self.pending.len() >= MAX_PENDING {
-            let dropped = self.pending.remove(0);
+        if self.pending.len() >= MAX_PENDING
+            && let Some(dropped) = self.pending.pop_front()
+        {
             tracing::warn!(team = %dropped.team, limit = MAX_PENDING, "the history note writer reached its pending-note limit and evicted the oldest loss note");
         }
         let event = HistoryEvent::Lost {
@@ -118,7 +122,7 @@ impl<S: Store> Noting<S> {
             cause: error.kind().lost_cause(),
             detail: self.redactor.text(&error_chain(error)),
         };
-        self.pending.push(EventRecord {
+        self.pending.push_back(EventRecord {
             at,
             team,
             rounds,
@@ -193,21 +197,27 @@ impl<S: Store> Noting<S> {
         }
     }
 
-    /// Writes the notes that wait; the ones that cannot be written wait on.
+    /// Writes each waiting note separately; a permanently refused note cannot hold back the notes behind it.
     fn write_notes(&mut self) {
-        if self.pending.is_empty() {
-            return;
-        }
-        let notes: Vec<Record> = self
-            .pending
-            .iter()
-            .map(|note| Record::Event(Box::new(note.clone())))
-            .collect();
-        match self.inner.write(&notes) {
-            Ok(()) => self.pending.clear(),
-            // The notes are about records already counted as lost: they wait for the next write, and the work goes on.
-            Err(error) => {
-                tracing::warn!(waiting = self.pending.len(), error = %error_chain(&error), "the notes of the lost records of the history cannot be written yet");
+        while let Some(note) = self.pending.pop_front() {
+            let record = Record::Event(Box::new(note.clone()));
+            match self.inner.write(std::slice::from_ref(&record)) {
+                Ok(()) => {}
+                Err(error) if matches!(&error, WriteError::Rule { .. }) => {
+                    self.dropped_notes = self.dropped_notes.saturating_add(1);
+                    tracing::warn!(
+                        team = %note.team,
+                        dropped_notes = self.dropped_notes,
+                        error = %error_chain(&error),
+                        "a loss note is refused permanently and dropped; the loss it describes was already counted"
+                    );
+                }
+                Err(error) => {
+                    self.pending.push_front(note);
+                    // These notes describe records already counted as lost; a transient failure can wait for the next write.
+                    tracing::warn!(waiting = self.pending.len(), error = %error_chain(&error), "the notes of the lost records of the history cannot be written yet");
+                    break;
+                }
             }
         }
     }
