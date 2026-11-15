@@ -23,7 +23,7 @@ mod activity_control {
     }
 
     /// Appends `event` to the log of the task at 5 seconds and returns the lines of the log.
-    async fn logged(event: ActivityEvent) -> Vec<Value> {
+    fn logged(event: ActivityEvent) -> Vec<Value> {
         let dir = tempfile::tempdir().unwrap();
         let home = home_in(&dir);
         let task = TaskId::from_str(TASK).unwrap();
@@ -54,8 +54,7 @@ mod activity_control {
         let lines = logged(ActivityEvent::Control {
             action: ControlAction::Pause,
             by: Client::Cli,
-        })
-        .await;
+        });
 
         assert_eq!(
             lines,
@@ -70,8 +69,7 @@ mod activity_control {
             by: Client::Dashboard {
                 login: "you@example.com".parse().unwrap(),
             },
-        })
-        .await;
+        });
 
         assert_eq!(
             lines,

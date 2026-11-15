@@ -708,7 +708,6 @@ mod tests {
     use std::str::FromStr;
 
     use agent_core::state::UnsupportedSchema;
-    use serde_json::json;
 
     use super::*;
 
@@ -753,10 +752,6 @@ mod tests {
 
     fn task() -> TaskId {
         "task-20261111-193001-k3x9".parse().unwrap()
-    }
-
-    fn at() -> agent_core::state::Timestamp {
-        "2026-11-12T10:00:00Z".parse().unwrap()
     }
 
     fn fixture_state() -> State {
