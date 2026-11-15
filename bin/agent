@@ -6938,6 +6938,14 @@ cmd__runner() {
       # End this independent attempt, but retain the provider's reset time for capacity admission.
       meta_set "$id" QUOTA_UNTIL "$(( $(date +%s) + pause_secs ))"
       note="the investigator exhausted its provider quota"
+    elif [[ $fst == DONE && $RC != 0 && $HUNG == 0 && ! -s $qfile && -d ${WORKTREE:-} \
+        && -z $(git -C "$WORKTREE" status --porcelain) ]]; then
+      # The investigator said DONE and left nothing uncommitted, and only then its CLI ended with an error (a
+      # provider's stream that broke after the last message, say). The work is done: what follows — the sync to the
+      # pull request, the checks, the review — judges it, as after any DONE. Failed would drop a finished fix pass.
+      status=done; note=""
+      act "$id" info "the CLI ended with exit code $RC after STATUS: DONE and a clean worktree — taken as done"
+      log_warn done_despite_cli_error "task=$id" "agent=$AGENT" "exit_code=$RC"
     elif [[ -z $fst && $RC == 0 && $HUNG == 0 && ! -s $qfile && -n ${FINAL//[[:space:]]/} ]]; then
       # The CLI ended cleanly with a message and no STATUS line: most often the investigator asks for a decision in
       # prose (permission to change a test, say). As for any other task, its last message becomes the human's
