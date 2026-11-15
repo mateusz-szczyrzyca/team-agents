@@ -681,3 +681,103 @@ fn history_record_log_redacts_secrets_and_does_not_count_log_drops_as_lost_recor
     });
     assert_eq!(unavailable.health().lost, 0);
 }
+
+#[test]
+fn an_empty_daemon_log_module_is_rejected_by_the_api_and_sqlite() {
+    let (_dir, path, mut db) = database();
+    let empty_module = LogRecord {
+        at: at(10, 0),
+        module: String::new(),
+        event: LogEvent::BusDown,
+        team: None,
+        task: None,
+        message: "bus down".to_owned(),
+        fields: BTreeMap::new(),
+        cut: Cut::default(),
+    };
+    let api_result = db.write_logs(&[empty_module]);
+    drop(db);
+
+    let raw = Connection::open(&path).unwrap();
+    let raw_result = raw.execute(
+        "INSERT INTO daemon_logs (first_at, at, level, module, event, message, fields, count, cut) \
+         VALUES ('2026-04-13T09:00:00Z', '2026-04-13T09:00:00Z', 'warn', '', 'bus_down', 'm', '{}', 1, '')",
+        [],
+    );
+    assert!(
+        matches!(
+            api_result,
+            Err(WriteError::Rule {
+                record: RecordKind::Event,
+                ..
+            })
+        ),
+        "the public writer accepted an empty module: {api_result:?}"
+    );
+    assert!(raw_result.is_err(), "SQLite accepted an empty module");
+}
+
+#[test]
+fn warning_coalescing_uses_min_and_max_timestamps_for_seeded_permutations() {
+    for seed in 0..20_u64 {
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+        let mut timestamps = [10_i64, 30, 20, 5, 25];
+        for index in (1..timestamps.len()).rev() {
+            let other = rng.random_range(0..=index);
+            timestamps.swap(index, other);
+        }
+        let (_dir, path, mut db) = database();
+        for timestamp in timestamps {
+            db.write_logs(&[LogRecord {
+                at: at(timestamp, 0),
+                module: "agent::daemon".to_owned(),
+                event: LogEvent::BusDown,
+                team: Some(LogTeamScope::new(team_a(), [round_a(1)])),
+                task: Some(LogTaskScope::new(task_a(), Some(run_a(1)))),
+                message: "same warning".to_owned(),
+                fields: BTreeMap::from([("operation".to_owned(), json!("inbox"))]),
+                cut: Cut::default(),
+            }])
+            .unwrap();
+        }
+        let entries = Reader::open(&path).unwrap().daemon_logs().unwrap();
+        assert_eq!(entries.len(), 1, "seed={seed}, order={timestamps:?}");
+        assert_eq!(entries[0].count().get(), 5, "seed={seed}");
+        assert_eq!(entries[0].first_at(), at(5, 0), "seed={seed}");
+        assert_eq!(entries[0].at(), at(30, 0), "seed={seed}");
+    }
+}
+
+#[test]
+fn warning_coalescing_lookup_uses_its_equivalence_index_at_scale() {
+    let (_dir, path, mut db) = database();
+    for number in 0..1_000_i64 {
+        db.write_logs(&[LogRecord {
+            at: at(number, 0),
+            module: "agent::daemon".to_owned(),
+            event: LogEvent::BusDown,
+            team: None,
+            task: None,
+            message: format!("distinct warning {number}"),
+            fields: BTreeMap::new(),
+            cut: Cut::default(),
+        }])
+        .unwrap();
+    }
+    drop(db);
+
+    let raw = Connection::open(&path).unwrap();
+    let plan: String = raw
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT id FROM daemon_logs \
+             WHERE level = 'warn' AND event = 'bus_down' AND team IS NULL AND task IS NULL AND run IS NULL \
+               AND message = 'not present' AND fields = '{}' AND cut = '' ORDER BY id DESC",
+            [],
+            |row| row.get(3),
+        )
+        .unwrap();
+    assert!(
+        plan.contains("daemon_logs_warn_coalescing"),
+        "warning lookup does not use its equivalence index: {plan}"
+    );
+}
