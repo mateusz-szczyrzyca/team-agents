@@ -2,7 +2,7 @@
 
 ## Status
 
-`QUESTIONS`: a tested query slice is implemented. Round `8.7` is incomplete. The next schema migration conflicts with existing tests; the requested permission is in `questions-3.md` for task `20261115-212152-inv-astra`.
+`QUESTIONS`: a tested query slice is implemented. Round `8.7` is incomplete. The FTS5 migration exposed two additional tests that fix the final schema version at `4`; the requested permission is in `questions-4.md` for task `20261115-212152-inv-astra`. The third answer authorized exactly the two previously identified tests, so it does not cover these additional assertions.
 
 ## Implemented
 
@@ -18,21 +18,32 @@ The implementation is in [`crates/agent-runtime/src/history/reader/query.rs`](ht
 
 ## Blocking schema contract
 
-- `the_pinned_file_is_the_version_of_the_last_migration_and_every_table_of_it_is_strict` fixes the complete table list and requires every table to be `STRICT`: [`crates/agent-runtime/tests/history/schema.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/ad204aa2448806656e45845ff1452be284a104a6/crates/agent-runtime/tests/history/schema.rs).
-- `older_databases_read_empty_daemon_logs_and_upgrade_to_version_four_without_loss` requires the writer to upgrade to exactly version `4`: [`crates/agent-runtime/tests/history/logs.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/ad204aa2448806656e45845ff1452be284a104a6/crates/agent-runtime/tests/history/logs.rs).
-- FTS5 requires virtual and shadow tables. An in-memory SQLite probe returned `strict = 0` for the virtual table and its `5` shadow tables.
-- The required FTS5 index and new schema need a forward migration. Existing migrations must remain readable.
+- `the_migration_gives_the_records_of_a_version_two_file_a_sequence_in_the_order_of_time` requires final schema version `4`: [`crates/agent-runtime/tests/history/ledger.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/ad204aa2448806656e45845ff1452be284a104a6/crates/agent-runtime/tests/history/ledger.rs#L360).
+- `version_one_fixture_remains_readable_and_migrates_without_losing_records` requires final schema version `4`: [`crates/agent-runtime/tests/history/sessions.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/ad204aa2448806656e45845ff1452be284a104a6/crates/agent-runtime/tests/history/sessions.rs#L74).
+- Both tests pass their preceding data-preservation assertions and fail at the final version comparison: actual `5`, expected `4`.
+- An audit of the Rust schema-version assertions found these two additional hard-coded final-version checks.
 
-[`AGENTS.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/ad204aa2448806656e45845ff1452be284a104a6/AGENTS.md), Never rule `1`, says: “If the task requires behaviour that an existing test forbids, stop and ask the human in your questions file; wait for the answer.” Earlier permissions cover the CLI parser cases, not these schema assertions. Neither conflicting test has been changed.
+[`AGENTS.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/ad204aa2448806656e45845ff1452be284a104a6/AGENTS.md), Never rule `1`, says: “If the task requires behaviour that an existing test forbids, stop and ask the human in your questions file; wait for the answer.” The third answer explicitly permits changes to exactly the previously named schema and daemon-log tests. Neither newly conflicting test has been changed.
 
 ## Question
 
-May the schema-evolution assertions be updated for this round?
+May only the final-version assertions in these two additional tests use the version declared by the pinned schema file?
 
-- Recommended option `a`: extend the exact inventory, retain `STRICT` checks on ordinary tables, explicitly verify FTS5 virtual and shadow tables, and verify upgrades to the latest version while preserving old-data checks. Add version `4` migration coverage and search edge cases before implementation.
-- Option `b`: retain these assertions, which blocks the specified FTS5 migration and requires revised scope.
+- Recommended option `a`: change those assertions in a separate `TEST-FIX:` commit, preserving every readability, data-preservation, session and ordering assertion; list the changes under `Tests changed after RED`.
+- Option `b`: retain those assertions, which blocks the forward migration and requires revised scope.
 
-The full question is in the task's `questions-3.md`, with an empty verdict.
+The full question is in the task's `questions-4.md`, with an empty verdict.
+
+## Pending search work
+
+The search work is preserved locally and is not included in the pushed branch while the migration is blocked:
+
+- A test-first migration test uses populated version `4` databases and seeds `8703`, `8704`, `8705`; it verifies preservation, indexed existing and new records, Polish text, quotes, punctuation and FTS operator words treated as text.
+- Its compiling stub first failed by returning no matching rows; the FTS5 implementation then passed this test.
+- The two test changes authorized by the third answer were isolated in a `TEST-FIX:` commit. Ordinary tables remain subject to `STRICT` checks; the FTS5 virtual table and all shadow tables are named explicitly.
+- Runtime clippy passed with `-D warnings`.
+- The complete history suite reported `100` passed and `4` failed. Two failures are the newly conflicting version assertions. Two are unfinished implementation work: documenting the new schema objects and reconciling the search helper view with the schema inventory check. These latter failures do not require permission to fix production code or documentation.
+- Local recovery uses the task-specific Git stashes named `inv-astra 20261115-212152 search implementation awaiting questions-4` and `inv-astra 20261115-212152 search RED and authorized TEST-FIX awaiting questions-4`. The first stash retains the original RED and TEST-FIX commits through its parent. No pending search code was pushed.
 
 ## Tests
 
@@ -89,7 +100,7 @@ None added or modified. No lint suppressions added. No tools were missing.
 
 ## Not done
 
-- FTS5 indexing and literal search, including the required Unicode and metacharacter cases.
+- Complete and publish the pending FTS5 indexing and literal-search work after the additional test permission; add the remaining end-to-end search coverage.
 - Following across restart and deletion, with durable monotonic row IDs.
 - Views other than `log`, including `usage`.
 - Startup and daily retention, gate-file removal, atomic deletion, vacuum and statistics.
