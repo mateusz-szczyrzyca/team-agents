@@ -15,7 +15,7 @@ fn every_row_filter_and_pair_uses_an_index_with_a_hundred_thousand_steps() {
     assert_eq!(
         raw.query_row("SELECT count(*) FROM steps", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        100000
+        100_000
     );
     assert_eq!(
         raw.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))

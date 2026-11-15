@@ -534,7 +534,7 @@ mod history_process {
             seen.push(next());
         }
         let output = world.agent(&["run", "claude-1", "Watch this run."]);
-        assert!(output.status.success(), "{:?}", output);
+        assert!(output.status.success(), "{output:?}");
         loop {
             seen.push(next());
             if seen.last().unwrap()["event"] == "run_started" {
