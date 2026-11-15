@@ -52,7 +52,7 @@ fn every_filter_and_pair_matches_the_unfiltered_rows_including_fractional_bounda
                         6 => filter.event = Some(LogEvent::RunStarted),
                         7 => filter.since = Some(at(10, 2)),
                         8 => filter.until = Some(at(10, 6)),
-                        _ => unreachable!(),
+                        _ => panic!("unknown filter index {index}"),
                     }
                 }
                 let expected: Vec<_> = all
