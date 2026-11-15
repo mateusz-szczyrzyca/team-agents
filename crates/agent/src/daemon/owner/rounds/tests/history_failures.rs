@@ -16,7 +16,7 @@ use agent_runtime::history::{HistoryDb, Reader};
 use agent_runtime::history::{Problem, Reporter};
 use agent_runtime::run::RunJob;
 
-use super::rig::{ONE, Rig, investigator, normal};
+use super::rig::{ONE, PATIENCE, Rig, investigator, normal};
 
 /// An isolated repository with an agent and two approving reviewers.
 async fn rig() -> Rig {
@@ -32,8 +32,8 @@ async fn rig() -> Rig {
     .await
 }
 
-/// Finish a real daemon round and obtain the same health exposed by the CLI.
-async fn merge_and_status(rig: &Rig) -> HistoryHealth {
+/// Finish a real daemon round, then wait until status exposes the expected asynchronous losses.
+async fn merge_and_status(rig: &Rig, minimum_lost: u64) -> HistoryHealth {
     rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let state = rig
         .item_where("1.1", "merged", |phase| matches!(phase, ItemPhase::Done { .. }))
@@ -44,17 +44,32 @@ async fn merge_and_status(rig: &Rig) -> HistoryHealth {
             completion: Completion::Merged { .. }
         }
     ));
-    let reply = crate::client::Connection::connect(&rig.home.socket_file())
-        .await
-        .unwrap()
-        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
-        .await
-        .unwrap();
-    let Reply::Overview { history, teams } = reply else {
-        panic!("{reply:?}")
-    };
-    assert_eq!(teams.len(), 1);
-    history
+    // A merged round does not imply that the independent writer has reached its failing records.
+    // Observe the same status as the CLI without flushing history or releasing an injected database lock.
+    tokio::time::timeout(PATIENCE, async {
+        loop {
+            let reply = crate::client::Connection::connect(&rig.home.socket_file())
+                .await
+                .unwrap()
+                .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+                .await
+                .unwrap();
+            if let Reply::Teams { teams } = &reply {
+                assert_eq!(teams.len(), 1);
+            } else {
+                let Reply::Overview { history, teams } = reply else {
+                    panic!("{reply:?}")
+                };
+                assert_eq!(teams.len(), 1);
+                if history.lost >= minimum_lost {
+                    return history;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("status must report the injected history losses")
 }
 
 /// Restore permissions even on assertion failure so the temporary home can be removed.
@@ -81,7 +96,7 @@ async fn read_only_history_storage_leaves_state_writable_and_the_round_merges() 
     let error = std::fs::OpenOptions::new().write(true).open(&database).unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
     rig.start().await;
-    let health = merge_and_status(&rig).await;
+    let health = merge_and_status(&rig, 3).await;
     rig.stop().await.unwrap();
     assert!(matches!(health.state, HistoryState::Unavailable { .. }), "{health:?}");
     assert!(health.lost >= 3, "{health:?}");
@@ -97,7 +112,7 @@ async fn failing_step_inserts_are_counted_while_other_records_survive_and_the_ro
         "CREATE TRIGGER reject_steps BEFORE INSERT ON steps BEGIN SELECT RAISE(FAIL, 'injected step failure'); END;",
     )
     .unwrap();
-    let health = merge_and_status(&rig).await;
+    let health = merge_and_status(&rig, 3).await;
     rig.stop().await.unwrap();
     assert_eq!(health.state, HistoryState::Writing);
     assert!(health.lost >= 3, "{health:?}");
@@ -141,7 +156,7 @@ git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false com
     rig.start().await;
     let db = rusqlite::Connection::open(rig.home.history_file()).unwrap();
     db.execute_batch("BEGIN IMMEDIATE").unwrap();
-    let health = merge_and_status(&rig).await;
+    let health = merge_and_status(&rig, 1).await;
     // Release the external writer only after the merge, so draining history cannot be required for progress.
     db.execute_batch("ROLLBACK").unwrap();
     rig.stop().await.unwrap();
@@ -166,7 +181,7 @@ async fn sqlite_full_does_not_prevent_merging_or_the_other_records_surviving() {
         .execute("INSERT INTO history_fault_full(id) VALUES(NULL)", [])
         .unwrap_err();
     assert!(matches!(failure, rusqlite::Error::SqliteFailure(error, _) if error.code == rusqlite::ErrorCode::DiskFull));
-    let health = merge_and_status(&rig).await;
+    let health = merge_and_status(&rig, 3).await;
     rig.stop().await.unwrap();
     assert_eq!(health.state, HistoryState::Writing);
     assert!(health.lost >= 3, "{health:?}");
