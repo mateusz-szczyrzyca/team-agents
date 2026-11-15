@@ -353,6 +353,58 @@ async fn one_hundred_idle_team_looks_write_zero_rows_at_info() {
 }
 
 #[tokio::test]
+async fn five_repeated_branch_assignment_warnings_are_one_git_failure_with_count_five() {
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let db = HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
+    let started = History::start(
+        db,
+        Setup {
+            reporter: Arc::new(SilentReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let layer = HistoryLayer::new(
+        LogLevel::Warn,
+        SharedClock::new(daemon.clock.clone()),
+        Secrets::default(),
+        Some(started.history.clone()),
+    );
+    let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(layer).into();
+
+    async {
+        for _ in 0..5 {
+            daemon.clock.advance(time::Duration::seconds(1));
+            owner.look_at(&team_id(0));
+            owner.team_life().await.unwrap();
+        }
+    }
+    .with_subscriber(dispatch)
+    .await;
+
+    started.writer.close().unwrap();
+    let logs = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    let failures: Vec<_> = logs
+        .iter()
+        .filter(|entry| entry.event() == LogEvent::GitCallFailed)
+        .collect();
+    assert_eq!(failures.len(), 1, "expected one coalesced branch failure: {logs:?}");
+    let failure = failures[0];
+    assert_eq!(failure.level(), LogLevel::Warn);
+    assert_eq!(failure.count().get(), 5);
+    assert_eq!(failure.team(), Some(&team_id(0)));
+    assert_eq!(failure.task(), Some(&task(1)));
+    assert!(failure.rounds().is_empty(), "{failure:?}");
+    assert_eq!(
+        failure.fields().get("item").and_then(serde_json::Value::as_str),
+        Some("1.1")
+    );
+}
+
+#[tokio::test]
 async fn five_repeated_bus_warnings_coalesce_into_one_row_with_count_five() {
     let state = pair_state();
     let daemon = Daemon::new(&state, Some(Path::new("false")));

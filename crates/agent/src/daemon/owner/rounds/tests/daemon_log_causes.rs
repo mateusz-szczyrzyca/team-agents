@@ -251,6 +251,68 @@ async fn a_notification_that_cannot_be_written_is_logged_by_name() {
     assert_eq!(observed, BTreeSet::from([LogEvent::NotificationFailed]));
 }
 
+#[tokio::test]
+async fn notification_logs_carry_the_delivery_team_and_round_for_success_and_failure() {
+    let mut delivered = Rig::new(
+        &[
+            normal("claude-1", "questions"),
+            investigator("inv-r1", SILENT),
+            investigator("inv-r2", SILENT),
+        ],
+        5,
+        false,
+    )
+    .await;
+    delivered.start().await;
+    let (delivered_team, delivered_tasks) = delivered.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let delivered_state = delivered
+        .state_where("the successful notification to be attempted", |state| {
+            state
+                .find_task(&delivered_tasks[0])
+                .is_some_and(|found| found.member.runs().len() == 1 && found.member.status() != TaskStatus::Running)
+        })
+        .await;
+    let delivered_round = delivered_state.teams()[0].rounds()[0].id().clone();
+    delivered.stop().await.unwrap();
+
+    let delivered_logs = logs_in(&delivered.home.history_file());
+    let sent = row(&delivered_logs, LogEvent::NotificationSent, |entry| {
+        entry.task() == Some(&delivered_tasks[0])
+    });
+    assert_eq!(sent.team(), Some(&delivered_team));
+    assert_eq!(sent.rounds(), std::slice::from_ref(&delivered_round));
+
+    let mut undelivered = Rig::new(
+        &[
+            normal("claude-1", "questions"),
+            investigator("inv-r1", SILENT),
+            investigator("inv-r2", SILENT),
+        ],
+        5,
+        false,
+    )
+    .await;
+    std::fs::write(undelivered.home.notifications_dir(), "not a directory\n").unwrap();
+    undelivered.start().await;
+    let (undelivered_team, undelivered_tasks) = undelivered.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let undelivered_state = undelivered
+        .state_where("the failed notification to be attempted", |state| {
+            state
+                .find_task(&undelivered_tasks[0])
+                .is_some_and(|found| found.member.runs().len() == 1 && found.member.status() != TaskStatus::Running)
+        })
+        .await;
+    let undelivered_round = undelivered_state.teams()[0].rounds()[0].id().clone();
+    undelivered.stop().await.unwrap();
+
+    let undelivered_logs = logs_in(&undelivered.home.history_file());
+    let failed = row(&undelivered_logs, LogEvent::NotificationFailed, |entry| {
+        entry.task() == Some(&undelivered_tasks[0])
+    });
+    assert_eq!(failed.team(), Some(&undelivered_team));
+    assert_eq!(failed.rounds(), std::slice::from_ref(&undelivered_round));
+}
+
 /// A daemon whose state file becomes a directory while a run works: the owner fails on its next save, which is
 /// `daemon_task_failed` with the cause, and the daemon stops with `daemon_stopped` and the outcome `failed`.
 async fn record_failed_owner(observed: &mut BTreeSet<LogEvent>) {
