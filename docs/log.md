@@ -126,8 +126,8 @@ A broken external dependency (`agentbus` down, a failing `git` remote, a rate-li
 tick while a team waits. Instead of writing thousands of identical rows:
 
 - When a `warn` event has the same `(event, team, rounds, task, run, message, fields)` as an existing `warn` row in
-  `daemon_logs`, the writer increments `count` by `1` and updates `at` to the new timestamp, leaving `first_at` at the
-  timestamp of the first occurrence.
+  `daemon_logs`, the writer increments `count` by `1`, sets `first_at` to the earliest timestamp and `at` to the latest,
+  regardless of the order in which concurrent producers enqueue their events.
 - `error`, `info`, and `debug` rows never coalesce (`count` is always `1` and `first_at == at`).
 
 ### Decisions and outside calls (`debug`)
@@ -139,7 +139,8 @@ At `level = "debug"`:
   round checks, or choosing a merge action). Its `fields` carry `decision`, `input`, and `result`. A decision check on
   an idle team or task that produces no action logs nothing.
 - `outside_call_completed` is emitted whenever an external call (`git`, `agentbus`, the GitHub API, or a model CLI
-  process) finishes, with `call`, `operation`, `elapsed_ms`, and `outcome` in `fields`.
+  process) finishes, with `tool`, `operation`, `duration_ms`, `outcome`, and, when available, `exit_code` in `fields`.
+  For a GitHub call, `exit_code` is the actual HTTP response status.
 
 ### Panic hook
 
@@ -190,4 +191,4 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `run_started` | `info` | A model CLI run starts. |
 | `run_ended` | `info` | A model CLI run ends. |
 | `decision_taken` | `debug` | A pure decision of `agent_core::decide` takes action, with `decision`, `input`, and `result`. |
-| `outside_call_completed` | `debug` | An outside call (`git`, `agentbus`, GitHub API, model CLI) completes, with `call`, `operation`, `elapsed_ms`, and `outcome`. |
+| `outside_call_completed` | `debug` | An outside call (`git`, `agentbus`, GitHub API, model CLI) completes, with `tool`, `operation`, `duration_ms`, `outcome`, and, when available, `exit_code`. |
