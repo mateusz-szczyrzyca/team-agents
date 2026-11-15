@@ -567,10 +567,7 @@ fn execute_blocking(environment: &Environment, work: Work, out: &mut impl Write)
 /// [`CommandError`].
 async fn execute(environment: &Environment, command: Command, out: &mut impl Write) -> Result<(), CommandError> {
     match command {
-        Command::Daemon(args) => {
-            let _layer = agent_runtime::history::HistoryLayer::install_global();
-            Ok(daemon(environment, args.prompts_dir).await?)
-        }
+        Command::Daemon(args) => Ok(daemon(environment, args.prompts_dir).await?),
         Command::Status(args) => {
             let home = environment.home()?;
             let mut connection = Connection::connect(&home.socket_file()).await?;

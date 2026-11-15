@@ -23,6 +23,9 @@ pub(crate) enum DaemonCommandError {
     /// The daemon stopped with an error.
     #[error(transparent)]
     Daemon(#[from] DaemonError),
+    /// The daemon's structured logging subscriber could not be installed.
+    #[error("cannot install the daemon logging subscriber")]
+    LogSubscriber(#[source] tracing::subscriber::SetGlobalDefaultError),
     /// The task that watches the signals failed.
     #[error("the task that watches the signals failed")]
     Watcher(#[source] JoinError),
@@ -34,7 +37,8 @@ pub(crate) enum DaemonCommandError {
 /// [`DaemonCommandError`].
 pub(crate) async fn daemon(environment: &Environment, prompts_dir: Option<PathBuf>) -> Result<(), DaemonCommandError> {
     let home = environment.home()?;
-    let _layer = agent_runtime::history::HistoryLayer::install_global();
+    let log_layer =
+        agent_runtime::history::HistoryLayer::install_global().map_err(DaemonCommandError::LogSubscriber)?;
     if let Some(error) = environment.offset_error() {
         tracing::warn!(%error, "the time zone of the machine is unknown: UTC is used to read the reset times of providers");
     }
@@ -59,7 +63,7 @@ pub(crate) async fn daemon(environment: &Environment, prompts_dir: Option<PathBu
         timings: None,
     };
     tracing::info!(home = %setup.home.root().display(), "the daemon starts");
-    let ended = daemon::run(setup, shutdown.clone()).await;
+    let ended = daemon::run_with_log_layer(setup, shutdown.clone(), log_layer).await;
     shutdown.cancel();
     watcher.await.map_err(DaemonCommandError::Watcher)?;
     ended?;

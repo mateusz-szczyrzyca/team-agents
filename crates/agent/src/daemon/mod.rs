@@ -177,32 +177,56 @@ impl Surroundings {
 ///
 /// # Errors
 /// [`DaemonError`].
+#[cfg(test)]
 pub(crate) async fn run(setup: DaemonSetup, shutdown: CancellationToken) -> Result<(), DaemonError> {
     run_in(setup, Surroundings::from_process(), shutdown).await
+}
+
+/// Runs the daemon with the explicitly installed process logging layer.
+pub(crate) async fn run_with_log_layer(
+    setup: DaemonSetup,
+    shutdown: CancellationToken,
+    log_layer: HistoryLayer,
+) -> Result<(), DaemonError> {
+    let rng = StdRng::try_from_rng(&mut SysRng).map_err(DaemonError::Entropy)?;
+    run_with_rng_and_log_layer(setup, Surroundings::from_process(), rng, shutdown, Some(log_layer)).await
 }
 
 /// Runs the daemon until `shutdown` is cancelled, in `surroundings`.
 ///
 /// # Errors
 /// [`DaemonError`].
+#[cfg(test)]
 pub(crate) async fn run_in(
     setup: DaemonSetup,
     surroundings: Surroundings,
     shutdown: CancellationToken,
 ) -> Result<(), DaemonError> {
     let rng = StdRng::try_from_rng(&mut SysRng).map_err(DaemonError::Entropy)?;
-    run_with_rng(setup, surroundings, rng, shutdown).await
+    run_with_rng_and_log_layer(setup, surroundings, rng, shutdown, None).await
 }
 
 /// Runs the daemon with the caller's random source for team selection and identifiers.
 ///
 /// # Errors
 /// [`DaemonError`].
+#[cfg(test)]
 pub(crate) async fn run_with_rng(
     setup: DaemonSetup,
     surroundings: Surroundings,
     rng: StdRng,
     shutdown: CancellationToken,
+) -> Result<(), DaemonError> {
+    run_with_rng_and_log_layer(setup, surroundings, rng, shutdown, None).await
+}
+
+/// Runs the daemon with either the process-wide logging layer supplied by the command or a scoped test layer.
+async fn run_with_rng_and_log_layer(
+    setup: DaemonSetup,
+    surroundings: Surroundings,
+    rng: StdRng,
+    shutdown: CancellationToken,
+    installed_log_layer: Option<HistoryLayer>,
 ) -> Result<(), DaemonError> {
     let store = match StateStore::open(setup.home.clone()).await {
         Ok(store) => Arc::new(store),
@@ -210,12 +234,7 @@ pub(crate) async fn run_with_rng(
         Err(error) => return Err(error.into()),
     };
     let settings = Arc::new(Settings::load(&setup.home).await?);
-    let log_layer = HistoryLayer::deferred(
-        settings.config.log().level,
-        setup.clock.clone(),
-        settings.secrets.clone(),
-    );
-    log_layer.sync_global();
+    let log_layer = daemon_log_layer(&settings, &setup, installed_log_layer);
     let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(log_layer.clone()).into();
     let language = settings.config.language().clone();
     let texts = Arc::new(HarnessPrompts::load(&setup.prompts_dir, &language).await?);
@@ -306,6 +325,23 @@ pub(crate) async fn run_with_rng(
     server::remove(&setup.home).await.map_err(DaemonError::RemoveSocket)?;
     owned_end?;
     failure.map_or(Ok(()), Err)
+}
+
+/// Configures the installed process layer, or creates the isolated layer used by daemon tests.
+fn daemon_log_layer(settings: &Settings, setup: &DaemonSetup, installed: Option<HistoryLayer>) -> HistoryLayer {
+    let layer = installed.unwrap_or_else(|| {
+        HistoryLayer::deferred(
+            settings.config.log().level,
+            setup.clock.clone(),
+            settings.secrets.clone(),
+        )
+    });
+    layer.configure(
+        settings.config.log().level,
+        setup.clock.clone(),
+        settings.secrets.clone(),
+    );
+    layer
 }
 
 /// Attaches `pulls` to `owner`, or logs under `dispatch` that the home has no GitHub token.

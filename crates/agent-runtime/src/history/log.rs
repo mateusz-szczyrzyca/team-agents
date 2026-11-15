@@ -6,8 +6,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::panic::PanicHookInfo;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard, Once, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, Once, PoisonError};
 use std::time::Duration;
 
 use agent_core::config::Secrets;
@@ -23,7 +22,6 @@ use tracing::{Event, Level, Metadata, Subscriber};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::util::SubscriberInitExt;
 
 use super::handle::History;
 use super::redact::Redactor;
@@ -33,23 +31,10 @@ use crate::clock::{SharedClock, SystemClock};
 pub type StderrSink = Arc<dyn Fn(&str) + Send + Sync>;
 
 thread_local! {
-    /// Stack of currently entered `(layer_id, span_id)` pairs on the current thread, outermost first.
+    /// Stack of currently entered `(layer_id, span_id)` pairs on the current thread, outermost first. It is used only
+    /// by the panic hook, which runs outside the subscriber's event callback and therefore has no span context.
     static ENTERED_SPANS: RefCell<Vec<(usize, u64)>> = const { RefCell::new(Vec::new()) };
-    /// Thread-local fallback subscriber guard so spans created before `.with_subscriber(...)` are still tracked even
-    /// when another test thread installed a non-`HistoryLayer` global subscriber.
-    static THREAD_SPAN_GUARD: RefCell<Option<tracing::subscriber::DefaultGuard>> = const { RefCell::new(None) };
 }
-
-/// Shared map of `(layer_id, span_id)` to its recorded [`SpanScope`], allowing spans created on the global
-/// subscriber before `.with_subscriber(...)` to still contribute their scope when entered inside a scoped subscriber.
-static SPAN_SCOPES: LazyLock<Mutex<HashMap<(usize, u64), SpanScope>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// Global [`HistoryLayer`] installed when `agent daemon` starts.
-static GLOBAL_LAYER: OnceLock<HistoryLayer> = OnceLock::new();
-
-/// Whether [`HistoryLayer::install_global`] was called in this process (`agent daemon`), enabling dual output to
-/// `stderr` alongside `history.db`.
-static GLOBAL_STDERR_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Active [`HistoryLayer`] used by the process panic hook.
 static PANIC_LAYER: Mutex<Option<HistoryLayer>> = Mutex::new(None);
@@ -74,8 +59,10 @@ struct LayerState {
     history: Option<History>,
     /// Optional custom `stderr` sink for deterministic testing.
     stderr_sink: Option<StderrSink>,
-    /// Whether this layer exists only to track span scopes on the thread before `.with_subscriber(...)`.
-    span_only: bool,
+    /// Whether the daemon writes every retained record to `stderr` as well as to its open history database.
+    dual_stderr: bool,
+    /// Span scopes owned by this layer's subscriber, keyed by the subscriber-local span ID.
+    spans: HashMap<u64, SpanScope>,
 }
 
 /// A `tracing_subscriber::Layer` that records structured [`LogEvent`] events into `history.db`
@@ -101,7 +88,6 @@ impl HistoryLayer {
         if let Some(ref handle) = history {
             handle.configure_log_fallback(redactor.clone(), None);
         }
-        ensure_thread_span_subscriber();
         Self {
             state: Arc::new(Mutex::new(LayerState {
                 level,
@@ -109,7 +95,8 @@ impl HistoryLayer {
                 redactor,
                 history,
                 stderr_sink: None,
-                span_only: false,
+                dual_stderr: false,
+                spans: HashMap::new(),
             })),
         }
     }
@@ -120,30 +107,18 @@ impl HistoryLayer {
         Self::new(level, clock, secrets, None)
     }
 
-    /// Installs a global [`HistoryLayer`] and panic hook for the daemon process.
-    #[must_use]
-    pub fn install_global() -> Self {
-        GLOBAL_STDERR_ENABLED.store(true, Ordering::Relaxed);
-        let layer = ensure_global_subscriber();
+    /// Explicitly installs a global subscriber and panic hook for the daemon process.
+    ///
+    /// Construction itself has no subscriber side effects. The caller handles an already-installed global subscriber.
+    ///
+    /// # Errors
+    /// [`tracing::subscriber::SetGlobalDefaultError`]: another global subscriber is already installed.
+    pub fn install_global() -> Result<Self, tracing::subscriber::SetGlobalDefaultError> {
+        let layer = Self::deferred(LogLevel::Info, SharedClock::new(SystemClock), Secrets::default());
+        locked(&layer.state).dual_stderr = true;
+        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(layer.clone()))?;
         install_panic_hook(layer.clone());
-        layer
-    }
-
-    /// Synchronizes the global [`HistoryLayer`], if one was installed at startup, with `self`.
-    pub fn sync_global(&self) {
-        let Some(global) = GLOBAL_LAYER.get() else {
-            return;
-        };
-        if Arc::ptr_eq(&global.state, &self.state) {
-            return;
-        }
-        let current = locked(&self.state);
-        let mut target = locked(&global.state);
-        target.level = current.level;
-        target.clock = current.clock.clone();
-        target.redactor = current.redactor.clone();
-        target.history.clone_from(&current.history);
-        target.stderr_sink.clone_from(&current.stderr_sink);
+        Ok(layer)
     }
 
     /// Updates the threshold level, clock, and secrets of this layer.
@@ -159,7 +134,6 @@ impl HistoryLayer {
                 history.configure_log_fallback(redactor, sink);
             }
         }
-        self.sync_global();
     }
 
     /// Attaches the opened [`History`] handle so subsequent events are written to `history.db`.
@@ -169,13 +143,11 @@ impl HistoryLayer {
             history.configure_log_fallback(state.redactor.clone(), state.stderr_sink.clone());
             state.history = Some(history);
         }
-        self.sync_global();
     }
 
     /// Detaches the [`History`] handle when the writer is closing so late events go to `stderr`.
     pub fn detach_history(&self) {
         locked(&self.state).history = None;
-        self.sync_global();
     }
 
     /// Replaces the standard error fallback sink (used by tests to inspect `stderr` lines deterministically).
@@ -187,7 +159,6 @@ impl HistoryLayer {
             }
             state.stderr_sink = Some(sink);
         }
-        self.sync_global();
     }
 
     /// Records a [`LogEvent::DaemonPanicked`] entry from `info`.
@@ -200,13 +171,13 @@ impl HistoryLayer {
         let thread = std::thread::current().name().unwrap_or("unnamed").to_owned();
         let mut scope = SpanScope::default();
         ENTERED_SPANS.with(|stack| {
-            let stack = stack.borrow();
-            if !stack.is_empty() {
-                let scopes = locked(&SPAN_SCOPES);
-                for raw in stack.iter() {
-                    if let Some(ext) = scopes.get(raw) {
-                        scope.merge_from(ext);
-                    }
+            let layer_id = Arc::as_ptr(&self.state) as usize;
+            let state = locked(&self.state);
+            for (entered_layer, span) in stack.borrow().iter() {
+                if *entered_layer == layer_id
+                    && let Some(ext) = state.spans.get(span)
+                {
+                    scope.merge_from(ext);
                 }
             }
         });
@@ -226,7 +197,7 @@ impl HistoryLayer {
         message: String,
         fields: BTreeMap<String, Value>,
     ) {
-        let (clock, redactor, history, stderr_sink) = {
+        let (clock, redactor, history, stderr_sink, dual_stderr) = {
             let state = locked(&self.state);
             if !state.level.keeps(event.level()) {
                 return;
@@ -236,6 +207,7 @@ impl HistoryLayer {
                 state.redactor.clone(),
                 state.history.clone(),
                 state.stderr_sink.clone(),
+                state.dual_stderr,
             )
         };
         let Ok(at) = Timestamp::now(&clock) else {
@@ -256,12 +228,24 @@ impl HistoryLayer {
         if !redactor.log_record(&mut record) {
             return;
         }
-        if stderr_sink.is_some() || history.is_none() || GLOBAL_STDERR_ENABLED.load(Ordering::Relaxed) {
+        if stderr_sink.is_some() || history.is_none() || dual_stderr {
             write_stderr_line(stderr_sink.as_ref(), &format_stderr_line(&record));
         }
         if let Some(history) = history {
             history.record_log(record);
         }
+    }
+
+    /// Keeps diagnostics outside the fixed event vocabulary visible on `stderr` without inventing history rows.
+    fn write_unrecognized_event(&self, metadata: &Metadata<'_>, name: Option<&str>, visitor: &EventVisitor) {
+        let fields = serde_json::to_string(&visitor.fields).unwrap_or_else(|_| "{}".to_owned());
+        let name = name.map_or_else(String::new, |name| format!(" event={name}"));
+        self.write_plain_stderr(&format!(
+            "{} {}{name} message={:?} fields={fields}",
+            level_from_tracing(*metadata.level()),
+            metadata.target(),
+            visitor.message
+        ));
     }
 
     /// Writes a redacted diagnostic line to `stderr` when `TracingReporter` reports lost domain history records.
@@ -279,8 +263,29 @@ impl HistoryLayer {
 #[must_use]
 fn format_stderr_line(record: &LogRecord) -> String {
     let fields = serde_json::to_string(&record.fields).unwrap_or_else(|_| "{}".to_owned());
+    let mut scope = Vec::new();
+    if let Some(team) = &record.team {
+        scope.push(format!("team={}", team.team()));
+        if !team.rounds().is_empty() {
+            scope.push(format!(
+                "rounds={}",
+                team.rounds().iter().map(RoundId::as_str).collect::<Vec<_>>().join(",")
+            ));
+        }
+    }
+    if let Some(task) = &record.task {
+        scope.push(format!("task={}", task.task()));
+        if let Some(run) = task.run() {
+            scope.push(format!("run={run}"));
+        }
+    }
+    let scope = if scope.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", scope.join(" "))
+    };
     format!(
-        "{} {} {} event={} message={:?} fields={fields}",
+        "{} {} {} event={}{scope} message={:?} fields={fields}",
         record.at,
         record.level(),
         record.module,
@@ -430,16 +435,18 @@ impl EventVisitor {
         let clean = text.trim().trim_matches('"');
         match field.name() {
             "event" => self.event_name = Some(clean.to_owned()),
-            "message" => clean.clone_into(&mut self.message),
+            "message" => text.clone_into(&mut self.message),
             name if SpanVisitor(&mut self.scope).record_scope_field(field, clean) => {
                 let _ = name;
             }
             "input" | "result" => {
-                let parsed = serde_json::from_str::<Value>(clean).unwrap_or_else(|_| Value::String(clean.to_owned()));
+                let parsed = serde_json::from_str::<Value>(clean).unwrap_or_else(|_| Value::String(text.to_owned()));
                 self.fields.insert(field.name().to_owned(), parsed);
             }
             name => {
-                self.fields.insert(name.to_owned(), Value::String(clean.to_owned()));
+                // Keep the original string intact: trimming it before `Redactor` sees it can turn a configured secret
+                // with quotes or surrounding whitespace into a different, unredacted value.
+                self.fields.insert(name.to_owned(), Value::String(text.to_owned()));
             }
         }
     }
@@ -480,9 +487,6 @@ where
             return true;
         }
         let state = locked(&self.state);
-        if state.span_only {
-            return false;
-        }
         let level = level_from_tracing(*metadata.level());
         state.level.keeps(level)
     }
@@ -490,19 +494,16 @@ where
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let mut scope = SpanScope::default();
         attrs.record(&mut SpanVisitor(&mut scope));
-        let key = (Arc::as_ptr(&self.state) as usize, id.into_u64());
-        locked(&SPAN_SCOPES).insert(key, scope.clone());
+        locked(&self.state).spans.insert(id.into_u64(), scope.clone());
         if let Some(span) = ctx.span(id) {
             span.extensions_mut().insert(scope);
         }
     }
 
     fn on_record(&self, id: &Id, values: &SpanRecord<'_>, ctx: Context<'_, S>) {
-        let key = (Arc::as_ptr(&self.state) as usize, id.into_u64());
         {
-            let mut scopes = locked(&SPAN_SCOPES);
-            let entry = scopes.entry(key).or_default();
-            values.record(&mut SpanVisitor(entry));
+            let mut state = locked(&self.state);
+            values.record(&mut SpanVisitor(state.spans.entry(id.into_u64()).or_default()));
         }
         let Some(span) = ctx.span(id) else {
             return;
@@ -538,23 +539,11 @@ where
     }
 
     fn on_close(&self, id: Id, _ctx: Context<'_, S>) {
-        let key = (Arc::as_ptr(&self.state) as usize, id.into_u64());
-        locked(&SPAN_SCOPES).remove(&key);
+        locked(&self.state).spans.remove(&id.into_u64());
     }
 
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
         let mut scope = SpanScope::default();
-        ENTERED_SPANS.with(|stack| {
-            let stack = stack.borrow();
-            if !stack.is_empty() {
-                let scopes = locked(&SPAN_SCOPES);
-                for raw in stack.iter() {
-                    if let Some(ext) = scopes.get(raw) {
-                        scope.merge_from(ext);
-                    }
-                }
-            }
-        });
         if let Some(span_scope) = ctx.event_scope(event) {
             for span in span_scope.from_root() {
                 if let Some(ext) = span.extensions().get::<SpanScope>() {
@@ -566,15 +555,12 @@ where
         event.record(&mut visitor);
         scope.merge_from(&visitor.scope);
 
-        let Some(event_name) = visitor.event_name else {
-            if visitor.message.starts_with("the history cannot keep some records") {
-                let cause = visitor.fields.get("cause").and_then(Value::as_str).unwrap_or_default();
-                let detail = visitor.fields.get("detail").and_then(Value::as_str).unwrap_or_default();
-                self.write_plain_stderr(&format!("{} cause={cause} detail={detail}", visitor.message));
-            }
+        let Some(event_name) = visitor.event_name.clone() else {
+            self.write_unrecognized_event(event.metadata(), None, &visitor);
             return;
         };
         let Ok(log_event) = event_name.parse::<LogEvent>() else {
+            self.write_unrecognized_event(event.metadata(), Some(&event_name), &visitor);
             return;
         };
         let message = if visitor.message.is_empty() {
@@ -584,51 +570,6 @@ where
         };
         self.dispatch_record(event.metadata().target(), log_event, scope, message, visitor.fields);
     }
-}
-
-/// Ensures the current thread has a default `Registry` + [`HistoryLayer`] subscriber so spans created before
-/// `.with_subscriber(...)` still receive valid span IDs and record their attributes even when another test installed
-/// a `fmt` global subscriber.
-fn ensure_thread_span_subscriber() {
-    THREAD_SPAN_GUARD.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        if slot.is_none() {
-            let silent_sink: StderrSink = Arc::new(|_| {});
-            let span_layer = HistoryLayer {
-                state: Arc::new(Mutex::new(LayerState {
-                    level: LogLevel::Error,
-                    clock: SharedClock::new(SystemClock),
-                    redactor: Redactor::new(Secrets::default()),
-                    history: None,
-                    stderr_sink: Some(silent_sink),
-                    span_only: true,
-                })),
-            };
-            let subscriber = tracing_subscriber::registry().with(span_layer);
-            *slot = Some(tracing::subscriber::set_default(subscriber));
-        }
-    });
-}
-
-/// Ensures a global `Registry` + [`HistoryLayer`] subscriber is installed so spans created before `.with_subscriber(...)`
-/// still receive valid span IDs and record their attributes.
-fn ensure_global_subscriber() -> HistoryLayer {
-    GLOBAL_LAYER
-        .get_or_init(|| {
-            let created = HistoryLayer {
-                state: Arc::new(Mutex::new(LayerState {
-                    level: LogLevel::Info,
-                    clock: SharedClock::new(SystemClock),
-                    redactor: Redactor::new(Secrets::default()),
-                    history: None,
-                    stderr_sink: None,
-                    span_only: false,
-                })),
-            };
-            drop(tracing_subscriber::registry().with(created.clone()).try_init());
-            created
-        })
-        .clone()
 }
 
 /// Installs the daemon panic hook that records [`LogEvent::DaemonPanicked`] with a redacted message
