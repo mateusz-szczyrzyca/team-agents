@@ -277,47 +277,49 @@ impl Owner {
     ///
     /// # Errors
     /// [`OwnerError`] when the clock cannot give a timestamp for those records.
-    async fn record_control(
+    fn record_control(
         &mut self,
         client: &Client,
         action: ControlAction,
         target: &Target,
         aimed: &[Aimed],
         reached: &[TaskId],
-    ) -> Result<(), OwnerError> {
-        let now = Timestamp::now(&self.parts.clock)?;
-        let Some(first) = aimed.first() else {
-            return Ok(());
-        };
-        // A round is refused before a control is recorded: `aim` has no task for it.
-        let task = match target {
-            Target::Task(task) => Some(task.clone()),
-            Target::Team(_) | Target::Round(_) => None,
-        };
-        self.publish(
-            now,
-            EventKind::Controlled {
-                team: first.team.clone(),
-                task,
-                action,
-                by: client.clone(),
-            },
-        );
-        for task in reached {
-            let event = ActivityEvent::Control {
-                action,
-                by: client.clone(),
+    ) -> std::future::Ready<Result<(), OwnerError>> {
+        // Keep the control API awaitable while recording itself only queues history writes.
+        std::future::ready((|| {
+            let now = Timestamp::now(&self.parts.clock)?;
+            let Some(first) = aimed.first() else {
+                return Ok(());
             };
-            self.record_control_step(task, now, &event);
-            self.log_activity(task, now, event).await;
-        }
-        tracing::info!(
-            event = LogEvent::ControlUsed.as_str(),
-            action = ?action,
-            tasks = reached.len(),
-            "the human used a control"
-        );
-        Ok(())
+            // A round is refused before a control is recorded: `aim` has no task for it.
+            let task = match target {
+                Target::Task(task) => Some(task.clone()),
+                Target::Team(_) | Target::Round(_) => None,
+            };
+            self.publish(
+                now,
+                EventKind::Controlled {
+                    team: first.team.clone(),
+                    task,
+                    action,
+                    by: client.clone(),
+                },
+            );
+            for task in reached {
+                let event = ActivityEvent::Control {
+                    action,
+                    by: client.clone(),
+                };
+                self.record_control_step(task, now, &event);
+            }
+            tracing::info!(
+                event = LogEvent::ControlUsed.as_str(),
+                action = ?action,
+                tasks = reached.len(),
+                "the human used a control"
+            );
+            Ok(())
+        })())
     }
 
     // ---- say ------------------------------------------------------------------------------------------------
