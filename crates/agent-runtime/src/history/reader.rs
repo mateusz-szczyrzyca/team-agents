@@ -410,8 +410,20 @@ impl Reader {
     ///
     /// # Errors
     /// [`ReadError`] for unreadable or invalid stored records.
-    pub fn steps_of_task(&self, _task: &TaskId) -> Result<Vec<Stored<Step>>, ReadError> {
-        Ok(Vec::new())
+    pub fn steps_of_task(&self, task: &TaskId) -> Result<Vec<Stored<Step>>, ReadError> {
+        let snapshot = self.snapshot("steps")?;
+        let ids = keys(
+            &snapshot,
+            "runs",
+            "SELECT run FROM runs WHERE task = ?1 ORDER BY at, rowid",
+            task.as_str(),
+        )?;
+        let mut steps = Vec::new();
+        for id in ids {
+            let run = Row_::of("runs", &id).value("run", RunId::from_str(&id))?;
+            steps.extend(read_steps(&snapshot, &run)?);
+        }
+        Ok(steps)
     }
 
     /// What `run` changed; `None` when nothing was recorded about it.
