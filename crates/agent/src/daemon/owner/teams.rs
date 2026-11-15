@@ -24,8 +24,10 @@ use agent_runtime::agentbus::{
     AgentBusError, DelegationStatus, DelegationUpdate, FailureClass, MemberState, Recipient, RequestId, Woken,
 };
 use agent_runtime::git::{CommitIdentity, DeleteMode, Git, GitError, RemoveMode, Revision, WorktreeBranch};
+use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 use agent_runtime::team_prompts::TeamPrompts;
+use serde_json::json;
 use tracing::Instrument;
 
 use super::{Located, Notice, Owner, OwnerError};
@@ -633,6 +635,11 @@ impl Owner {
                 held.push(request.id);
                 continue;
             }
+            log_decision(
+                "first_free_worker",
+                &json!({"workers": &names, "busy": &busy}),
+                &json!({"worker": &worker, "request_id": request.id}),
+            );
             self.release(&task, Why::Delegated(Box::new(request.clone())), look)?;
             self.serving.insert(
                 task.clone(),

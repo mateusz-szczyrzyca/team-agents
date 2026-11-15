@@ -16,7 +16,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use agent_core::cli::{ActivityEvent, BuildRunError, McpServerKind, OutputError, OutputParser, RunMode, SessionId};
+use agent_core::cli::{
+    ActivityEvent, BuildRunError, McpServerKind, OutputError, OutputParser, RunMode, RunOutput, SessionId,
+};
 use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValue, ModelName, Secrets, Watchdog};
 use agent_core::decide::outcome::{
     Classified, ClassifyError, ExitStatus, LimitContext, RunFinish, StoppedBy, classify_outcome,
@@ -26,6 +28,7 @@ use agent_core::ids::{RunId, TaskId};
 use agent_core::kinds::CliKind;
 use agent_core::prompt::VariablesError;
 use agent_core::state::{CommitId, InvalidTimestamp, Timestamp};
+use serde_json::json;
 use time::UtcOffset;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
@@ -33,7 +36,7 @@ use tokio_util::sync::CancellationToken;
 use crate::clock::SharedClock;
 use crate::git::{GitError, Revision};
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
-use crate::history::{CaptureKind, History};
+use crate::history::{CaptureKind, History, log_decision};
 use crate::process::{ExitReport, ProcessError, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
 
@@ -328,6 +331,42 @@ fn model_cli_span(task: &TaskId, run: &RunId, cli: &str) -> tracing::Span {
     tracing::Span::new(&MODEL_CLI_METADATA, &fields.value_set(&entries))
 }
 
+/// Classifies a completed stream and records bounded projections, never its raw output or pause evidence.
+fn classify_and_log(
+    output: &RunOutput,
+    finish: RunFinish,
+    context: &LimitContext<'_>,
+) -> Result<Classified, ClassifyError> {
+    let classified = classify_outcome(output, finish, context)?;
+    let input = json!({
+        "stream": match output.stream {
+            agent_core::cli::StreamOutcome::Succeeded => "succeeded",
+            agent_core::cli::StreamOutcome::Failed => "failed",
+            agent_core::cli::StreamOutcome::Incomplete => "incomplete",
+        },
+        "exit": match finish.exit {
+            ExitStatus::Code(code) => json!({"code": code}),
+            ExitStatus::Signal => json!("signal"),
+        },
+        "stopped_by": match finish.stopped_by {
+            StoppedBy::Nobody => "nobody",
+            StoppedBy::Watchdog => "watchdog",
+            StoppedBy::Human => "human",
+        },
+        "now": context.now,
+        "local_offset_seconds": context.local_offset.whole_seconds(),
+    });
+    let result = json!({
+        "end": &classified.end,
+        "pause": classified.pause.as_ref().map(|pause| json!({
+            "until": &pause.until,
+            "reason": pause.reason.to_string(),
+        })),
+    });
+    log_decision("classify_outcome", &input, &result);
+    Ok(classified)
+}
+
 /// Carries out runs of model CLIs.
 #[derive(Debug, Clone)]
 pub struct RunEngine {
@@ -497,7 +536,7 @@ impl RunEngine {
             now: Timestamp::now(&self.parts.clock)?,
             local_offset: self.parts.local_offset,
         };
-        let classified = classify_outcome(&output, finish, &context).map_err(|source| RunError::Classify {
+        let classified = classify_and_log(&output, finish, &context).map_err(|source| RunError::Classify {
             task: job.task.clone(),
             source,
         })?;

@@ -16,8 +16,10 @@ use agent_core::state::{
 };
 use agent_core::task_list::Item;
 use agent_runtime::agentbus::{BusTier, MemberState, NewMember, NewTeam};
+use agent_runtime::history::log_decision;
 use agent_runtime::store::Home;
 use rand::Rng;
+use serde_json::json;
 
 use super::assign::{Assigned, AssignmentError, agent_name, assignable, start_item, task_branch};
 
@@ -173,15 +175,27 @@ pub(in crate::daemon) fn form(
     if list.items().next().is_some() && list.items().all(Item::is_done) {
         return Err(FormError::NothingToDo);
     }
-    let plan = plan_team(
-        &TeamRequest {
-            agents: &request.agents,
-            flag_coordinator: request.coordinator.as_ref(),
-            listed_coordinator: list.coordinator(),
-        },
-        config,
-        rng,
-    )?;
+    let team_request = TeamRequest {
+        agents: &request.agents,
+        flag_coordinator: request.coordinator.as_ref(),
+        listed_coordinator: list.coordinator(),
+    };
+    let plan = plan_team(&team_request, config, rng)?;
+    let input = json!({
+        "agents": &request.agents,
+        "flag_coordinator": request.coordinator.as_ref(),
+        "listed_coordinator": list.coordinator(),
+    });
+    let result = match &plan {
+        TeamPlan::Solo { agent } => json!({"kind": "solo", "agent": agent}),
+        TeamPlan::Team(roster) => json!({
+            "kind": "team",
+            "coordinator": &roster.coordinator,
+            "members": &roster.members,
+            "workers": &roster.workers,
+        }),
+    };
+    log_decision("plan_team", &input, &result);
     let id = TeamId::generate(clock, rng)?;
     let created_at = Timestamp::now(clock)?;
     let crew = make_crew(plan, clock, rng)?;
