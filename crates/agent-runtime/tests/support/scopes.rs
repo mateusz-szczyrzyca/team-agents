@@ -38,7 +38,7 @@ impl field::Visit for EventName {
 
     fn record_str(&mut self, field: &field::Field, value: &str) {
         if field.name() == "event" {
-            self.0 = value.to_owned();
+            value.clone_into(&mut self.0);
         }
     }
 }
