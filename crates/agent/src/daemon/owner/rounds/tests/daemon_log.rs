@@ -305,6 +305,26 @@ async fn one_hundred_idle_team_looks_write_zero_rows_at_info() {
         Some(started.history.clone()),
     );
     let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(layer).into();
+    let worktree = daemon.home.worktree_dir(&crate::fixtures::repo(), &task(1));
+    std::fs::create_dir_all(&worktree).unwrap();
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["config", "user.name", "Test"][..],
+        &["config", "user.email", "test@example.com"][..],
+        &["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "init"][..],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&worktree)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    // Assign the item before the measured looks, so that every measured look is idle.
+    owner.look_at(&team_id(0));
+    owner.team_life().await.unwrap();
 
     async {
         tracing::info!(
