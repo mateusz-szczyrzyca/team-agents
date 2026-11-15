@@ -358,4 +358,3 @@ CREATE TABLE history_cursors (
 CREATE TRIGGER daemon_logs_cursor AFTER INSERT ON daemon_logs BEGIN
  UPDATE history_cursors SET value = max(value, new.id) WHERE name = 'daemon_logs';
 END;
-

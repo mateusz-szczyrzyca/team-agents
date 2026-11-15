@@ -2,7 +2,7 @@
 
 ## Result
 
-Implemented round `8.7` locally on `agents/inv-astra/20261115-212152`, but the final gate is blocked by two existing history-failure tests. The human authorized the tests-only synchronization correction in answer `5`; the implementation is restored for that correction and final gate verification.
+Implemented round `8.7` on `agents/inv-astra/20261115-212152`. The human’s fifth answer authorized the final test synchronization correction, committed separately as `TEST-FIX:`. The complete implementation is restored; final gate verification follows this report commit before publication.
 
 - Bare `agent log` reads the newest `100` daemon log rows directly, without a daemon connection.
 - All `9` row filters intersect; `-n`, JSON lines, literal FTS5 search, durable following, all `9` focused views and database statistics are implemented.
@@ -80,6 +80,13 @@ Authorized schema changes:
 - [`a9b41f3e`](https://github.com/mateusz-szczyrzyca/team-agents/commit/a9b41f3efd95ae4d2d1734b7b42573f068b533f6): `version_one_fixture_remains_readable_and_migrates_without_losing_records` changes only its final version expectation.
 - [`af8a22cc`](https://github.com/mateusz-szczyrzyca/team-agents/commit/af8a22cc6ae82618ccb10b9eef379c51232c8d7a): the same exact schema inventory gains the ordinary `STRICT` cursor table for schema `6`.
 
+Authorized asynchronous-status synchronization in [`da6066f4`](https://github.com/mateusz-szczyrzyca/team-agents/commit/da6066f4e1b2c9bcded88e7daffc49a2b1a57ed2), in [`crates/agent/src/daemon/owner/rounds/tests/history_failures.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/da6066f4e1b2c9bcded88e7daffc49a2b1a57ed2/crates/agent/src/daemon/owner/rounds/tests/history_failures.rs): the shared `merge_and_status` helper first proves the round merged, then polls public status until each caller's original loss threshold is visible. It uses cooperative yields and the existing bounded test timeout, with no arbitrary sleep, history flush or production change. All existing assertions remain. The affected callers are:
+
+- `read_only_history_storage_leaves_state_writable_and_the_round_merges`: wait for at least `3` reported losses.
+- `failing_step_inserts_are_counted_while_other_records_survive_and_the_round_merges`: wait for at least `3` reported losses.
+- `a_full_history_queue_does_not_prevent_a_round_from_merging`: wait for at least `1` reported loss; its external database lock remains held until the round has merged and status exposes the loss.
+- `sqlite_full_does_not_prevent_merging_or_the_other_records_surviving`: wait for at least `3` reported losses.
+
 Activity migration in [`44aefa74`](https://github.com/mateusz-szczyrzyca/team-agents/commit/44aefa74c737f3b5ccde85503ccd474e1fbc1f04):
 
 - Five store tests move to [`crates/agent-runtime/tests/history/activity.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/8b995504d328219541f9ca56324267eab19a2433/crates/agent-runtime/tests/history/activity.rs): `append_activity_writes_one_json_line_per_event_in_order` becomes `append_activity_writes_one_record_per_event_in_order`; `the_activity_log_grows_across_stores_and_is_kept_per_task`; `append_activity_cuts_a_long_text_on_a_character_boundary`; `append_activity_keeps_a_text_at_the_limit_whole`; `append_activity_reports_a_log_that_cannot_be_opened`. Assertions use validated history and explicit cut metadata instead of JSONL and an ellipsis.
@@ -120,6 +127,7 @@ The implementation has separate $\color{red}{\textbf{RED}}$ and $\color{green}{\
 
 ## Checks
 
+- `tools/test-lock.sh inv-astra-status-synchronization cargo test -p agent --bin agent history_failures_tests --locked`: `7/7` passed after the authorized synchronization correction.
 - `tools/test-lock.sh inv-astra-history cargo test -p agent-runtime --test history --locked`: `118/118` passed before the final two queue/failure tests were added.
 - `tools/test-lock.sh inv-astra-retention-failures cargo test -p agent-runtime --test history retention --locked`: `8/8` passed, including both added failure tests.
 - `tools/test-lock.sh inv-astra-search cargo test -p agent daemon_recorded_questions_answers_steps_and_final_messages_are_searchable --locked`: `1/1` passed.
@@ -149,11 +157,11 @@ The implementation has separate $\color{red}{\textbf{RED}}$ and $\color{green}{\
 
 ## Skipped tests
 
-None added or skipped. No required tool was missing.
+No test is marked ignored or skipped in the gate. One earlier diagnostic run filtered out the global-panic-hook test to expose the failure messages; that command is recorded above and is not gate evidence. No required tool was missing.
 
 ## Size
 
-The `PR-1` counting command reports `1777` changed non-test lines before replacing this report; the report remains within the relaxed `5000`-line ceiling. The final response reports the final count.
+The `PR-1` counting command reports `1891` changed non-test lines, within the relaxed `5000`-line ceiling.
 
 ## Task
 
@@ -206,13 +214,13 @@ Full round item from [`rounds/round-8.7.md`](https://github.com/mateusz-szczyrzy
 >     - A3. With `keep_days = 1` and the clock moved two days on, a closed round is gone from `agent log --stats` and an
 >       open one is still there.
 
-## Gate blocker discovered at handover
+## Earlier gate failure and authorized correction
 
 - The full gate passed formatting and clippy, then the agent binary suite reported `764` passed and `2` failed.
 - `failing_step_inserts_are_counted_while_other_records_survive_and_the_round_merges`: `merge_and_status` requires `Reply::Overview` before the writer has reported the injected failure; actual reply is `Reply::Teams`.
 - `sqlite_full_does_not_prevent_merging_or_the_other_records_surviving`: the same status race at the same helper assertion.
 - A diagnostic run excluding the global-panic-hook test exposed both panics: `763` passed, `2` failed, `1` filtered out. This was diagnosis, not gate verification.
 - The history-failure group passes in isolation (`7/7`); that retry does not replace the failed gate.
-- No existing fault-injection test was changed. Question `5` requests permission to synchronize the assertions with the asynchronous writer while preserving every existing behavior assertion.
+- The human authorized the test-only correction in answer `5`; the helper and its callers were corrected in the separate commit listed under “Tests changed after RED”. No production code was changed to make the daemon wait for history.
 
-The human answered question `5` with option `a`. The authorized correction and its validation are recorded below once complete.
+The corrected history-failure group passes `7/7`. The final gate is run with every test included; neither the earlier passing retry nor the diagnostic filtered run is treated as gate verification.
