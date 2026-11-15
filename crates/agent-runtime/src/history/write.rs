@@ -516,10 +516,25 @@ pub(super) fn insert_log(
         return Ok(());
     }
 
+    let id = if super::migrate::version_of(tx).map_err(sql(kind))? >= 6 {
+        let previous: i64 = tx
+            .query_row(
+                "SELECT value FROM history_cursors WHERE name = 'daemon_logs'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(sql(kind))?;
+        Some(previous.checked_add(1).ok_or(WriteError::Rule {
+            record: kind,
+            rule: "daemon log cursor exhausted",
+        })?)
+    } else {
+        None
+    };
     tx.execute(
         "INSERT INTO daemon_logs \
-         (first_at, at, level, module, event, team, task, run, message, fields, count, cut) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11)",
+         (first_at, at, level, module, event, team, task, run, message, fields, count, cut, id) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11, ?12)",
         params![
             at_text,
             at_text,
@@ -532,6 +547,7 @@ pub(super) fn insert_log(
             record.message,
             fields_json,
             cut_text,
+            id,
         ],
     )
     .map_err(sql(kind))?;

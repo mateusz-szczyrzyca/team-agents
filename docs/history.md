@@ -651,3 +651,8 @@ FTS5 document lengths: `id` identifies the document and `sz` stores token counts
 FTS5 configuration: `k` and `v` are internal keys and values. Managed by SQLite; applications do not modify these internal representations.
 
 The indexes `daemon_logs_by_event`, `runs_by_agent` and `daemon_logs_by_time` support event, agent and normalized timestamp filters.
+
+### `history_cursors`
+
+Migration `6` keeps the durable daemon-log cursor. `name` identifies `daemon_logs`; `value` is the greatest inserted
+ID. Retention never deletes this row, so a follower can resume after its last ID even if every log row was deleted.

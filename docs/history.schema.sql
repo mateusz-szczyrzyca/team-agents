@@ -1,4 +1,4 @@
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -349,4 +349,13 @@ CREATE INDEX daemon_logs_by_event ON daemon_logs(event,id);
 CREATE INDEX runs_by_agent ON runs(agent,run);
 
 CREATE INDEX daemon_logs_by_time ON daemon_logs((substr(at,1,19)||'.'||substr(CASE WHEN substr(at,20,1)='.' THEN substr(at,21,length(at)-21) ELSE '' END||'000000000',1,9)),id);
+
+CREATE TABLE history_cursors (
+    name TEXT PRIMARY KEY CHECK (name = 'daemon_logs'),
+    value INTEGER NOT NULL CHECK (value >= 0)
+) STRICT;
+
+CREATE TRIGGER daemon_logs_cursor AFTER INSERT ON daemon_logs BEGIN
+ UPDATE history_cursors SET value = max(value, new.id) WHERE name = 'daemon_logs';
+END;
 
