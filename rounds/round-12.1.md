@@ -56,7 +56,7 @@ Ground rules
   declared once, in a `#[strum(...)]` attribute. No hand-written text tables, no macro of our own for it.
 - New code is developed and tested against a separate `AGENTS_HOME`; nothing here may touch the live `~/agents` of
   the running Bash harness until feature 10.
-- The items of rounds, of the history, of checkpoints and of review (8.3 to 8.10, 11.1 and the features 12 and 13)
+- The items of rounds, of the history, of checkpoints and of review (8.3 to 8.11, 11.1 and the features 12 and 13)
   are tested harder than the developer rules ask: a log that is wrong is worse than no log, and a takeover that is
   wrong loses work.
   - End to end: every record and every query is proved by a run of the daemon with fake CLIs and a fake GitHub
@@ -120,6 +120,10 @@ Behaviour in short
   keeps a plan in its worktree — to do, in hand, done — that the harness reads and enforces; a task whose agent is
   gone is taken over by a free agent of the right tier on another account, who gets a briefing made from the
   history and the plan. `agent status <round>` shows each task's checkpoint as `OPEN`, `BUSY` or `CLOSED`.
+- A subscription is an account (8.11): `[accounts.NAME]` with its provider, its own environment, the most runs at
+  once and the highest effort it allows; every agent names its account, and the account is shown wherever the
+  agent and its model are. A quota that runs out stops the whole account until its reset. The daemon spreads work
+  over the accounts — first by which is idle, after the cutover (12.3) by how much of each is used.
 - Review, after the cutover (feature 13): the checks every change must pass are written in the repository's
   `AGENTS.md` and run by the harness before any reviewer starts; what the reviewers find is kept in a ledger, the
   first review passes are full and the later ones look only at the open findings and the fixes; requests to
@@ -136,30 +140,29 @@ Checkpoints for the human, between features (the agents do not run these):
   is expensive to change later.
 - After item 8.9: stop a real solo task in the middle of its work and continue its round with another agent: it
   works in the same worktree and its first message shows that it knows what was done.
+- After item 8.11: write the accounts of the live installation — every subscription with its provider, its
+  environment in `secrets.toml`, `max_parallel` and `max_effort` — and run `agent config check` and `agent agents`
+  on it: the accounts decide what runs where, and who may stand in for whom.
 - After feature 8, before feature 10: a real run with cheap models on a toy repository and a separate
   `AGENTS_HOME`, in the default `--autopilot`: from a two-item list to two merged PRs. Then `agent log --round` of
   each: the story is whole — the task, who was chosen and how, every prompt, every step, every change, both
   reviews — and `agent log --level warn` shows nothing unexplained. The cutover starts only after it passes.
 - After feature 9: the dashboard opened through `tailscale serve` from another device: the teams listed, a question
   answered, a team paused and resumed.
-- After item 12.1: read the `provider` and `account` of every agent in the live `agents.toml`; they decide who may
-  stand in for whom.
 
 Out of scope for this plan: remote nodes and the lead, investigation teams with phases and standalone investigation
-requests, `agent live`, archiving, the cost of tokens in money, moving the state file into the database, choosing
-agents by the quota their accounts have left (load balancing), automatic PR size limits (reviewers check PR-1), a
-proof by the harness that a RED commit fails (a reviewer runs one, TDD-1), an `agentbus` socket API (it is called
-as a process).
+requests, `agent live`, archiving, the cost of tokens in money, moving the state file into the database, one agent
+on several accounts, automatic PR size limits (reviewers check PR-1), a proof by the harness that a RED commit
+fails (a reviewer runs one, TDD-1), an `agentbus` socket API (it is called as a process).
 
 This round's item
 
 12. Taking work over
-Depends on: 10 (merged before this round)
-[ ] 12.1 Accounts, providers and taking work over
-    The daemon gives the work of an agent that is gone to one that is free, without the human. The configuration
-    says what the names cannot: every agent, investigator and worker has a `provider` and an `account` (required;
-    two agents with the same pair share their limits). A quota that runs out marks the whole account exhausted
-    until its reset: no run starts on any agent of it, and every task those agents hold is paused with it.
+Depends on: 10, 11 (merged before this round)
+[ ] 12.1 Taking work over: the crew
+    The daemon gives the work of an agent that is gone to one that is free, without the human. Accounts, their
+    providers and their exhaustion are those of 8.11; among several agents that may take a task the choice is the
+    one 8.11 makes by account.
     An agent is gone from its task when the task is `failed`, when its agent left (`EXCLUDED`) or is no longer in
     the configuration, or when its account is exhausted and the reset is further away than `[takeover]
     wait_minutes` (default 15; with no reset time given, the pause of `[limits]` counts). A stop or a pause by the
@@ -170,7 +173,7 @@ Depends on: 10 (merged before this round)
     - an investigator's: another investigator — a free one of the team first, else one of the configuration from
       outside it, who joins the team, and only while two investigators stay outside it for the reviews;
     - the coordinator's: by the rule that chooses a coordinator, among the free.
-    Among several the choice is random. The decision is a pure function and the daemon's alone; the coordinator is
+    The decision is a pure function and the daemon's alone; the coordinator is
     told by a message and may ask for another holder within the same rules. The new holder takes the task as in
     8.9 — the same worktree and branch, a snapshot, a new session, the briefing with the plan — and the task it
     held before becomes vacant. The agent that was gone, once it is back, is free: it does not get its old task
@@ -178,19 +181,16 @@ Depends on: 10 (merged before this round)
     stays: an exhausted account is waited for and its agent woken at the reset; a failed task stays failed, the
     human is told, and the round shows it `OPEN`.
     Expected result:
-    - Files: `provider` and `account` in `crates/agent-core/src/config.rs`, the exhausted accounts in the state,
-      the decision in `crates/agent-core/src/decide/takeover.rs`, the daemon in `crates/agent/src/daemon/owner/`,
-      the texts in `prompts/harness/takeover/`, `[takeover]`, `config/agents.example.toml`,
-      `docs/configuration.md`, `docs/architecture.md`, `docs/state.md`.
-    - Adds: providers and accounts; an account's exhaustion; when an agent is gone and when one is free; the
+    - Files: the decision in `crates/agent-core/src/decide/takeover.rs`, the daemon in
+      `crates/agent/src/daemon/owner/`, the texts in `prompts/harness/takeover/`, `[takeover]`,
+      `config/agents.example.toml`, `docs/configuration.md`, `docs/architecture.md`, `docs/state.md`.
+    - Adds: when an agent is gone and when one is free; the
       takeover decision for the crew; the change of holder with what 8.9 gives it; the message to the coordinator
       and its request; the records in the history.
-    - Tests: the ground rule on testing these items applies. Configuration: an agent without `provider` or
-      `account` is refused with its name. Accounts: one agent's quota pauses every task of its account and none
-      of another; the reset wakes them all once. The decision: a table of every tier, every reason for being gone
-      and every reason that is not one (a stop, a pause, a reset nearer than the limit), free and not free with
-      the option on and off, the guard of two outside investigators at its edge (three configured, two, one), no
-      candidate, several candidates with a seeded draw. End to end with fake CLIs, one of which reports an
+    - Tests: the ground rule on testing these items applies. The decision: a table of every tier, every reason for
+      being gone and every reason that is not one (a stop, a pause, a reset nearer than the limit), free and not free
+      with the option on and off, the guard of two outside investigators at its edge (three configured, two, one), no
+      candidate, several candidates chosen by account. End to end with fake CLIs, one of which reports an
       exhausted quota with a reset in two hours: a free member on another account takes the task in the same
       worktree with a briefing that names the uncommitted files, and the round merges; with the reset in five
       minutes nobody takes over and the same agent is woken; an agent of the same account is never chosen; the
@@ -227,7 +227,7 @@ Plan overview (context only)
    7.1 Starting work and the team's life
    7.2 Questions, answers and controls
    7.3 Gate service
-8. Autopilot, rounds, the history and checkpoints
+8. Autopilot, rounds, the history, checkpoints and accounts
    8.1 Pull requests, reviews and the merge loop
    8.2 Round checks before review
    8.3 Rounds as an entity
@@ -238,6 +238,7 @@ Plan overview (context only)
    8.8 A run that reaches its turn limit goes on
    8.9 A round outlives its team: continuing a round
    8.10 The plan of every task
+   8.11 Accounts: several subscriptions, each with its own credentials, limits and effort
 9. Dashboard
    9.1 The dashboard
 10. Cutover
@@ -246,8 +247,9 @@ Plan overview (context only)
 11. Usage
    11.1 The tokens of every run
 12. Taking work over
-   12.1 Accounts, providers and taking work over   <- this round
+   12.1 Taking work over: the crew   <- this round
    12.2 Checkpoints of reviewers and workers
+   12.3 Choosing by what an account has left
 13. Review
    13.1 Mandatory checks: read from `AGENTS.md`, run by the harness
    13.2 Findings that are kept, and review passes that narrow
