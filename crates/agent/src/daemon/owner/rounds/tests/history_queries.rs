@@ -8,6 +8,7 @@ use agent_core::state::{MergeMode, Timestamp};
 use agent_runtime::history::{HistoryLayer, Reader};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::fmt::Write;
 
 /// Decodes the public JSON-lines interface, not database internals.
 fn rows(rig: &Rig, args: &[&str]) -> Vec<Value> {
@@ -320,10 +321,10 @@ async fn focused_views_of_a_daemon_round_have_normalized_golden_output() {
     let mut text = String::new();
     for (scope, id) in [("--round", round.as_str()), ("--team", team.as_str())] {
         for view in ["tasks", "agents", "worktrees", "prompts", "usage"] {
-            text.push_str(&format!("{scope} --show {view}\n"));
+            writeln!(text, "{scope} --show {view}").unwrap();
             text.push_str(&log(&rig, &["log", scope, id, "--show", view]));
         }
-        text.push_str(&format!("{scope} --show log --event run_started\n"));
+        writeln!(text, "{scope} --show log --event run_started").unwrap();
         text.push_str(&log(
             &rig,
             &["log", scope, id, "--show", "log", "--event", "run_started"],
