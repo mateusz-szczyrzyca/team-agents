@@ -513,6 +513,15 @@ impl RunningProcess {
     }
 }
 
+/// Reports that the group of a dropped process could not be killed.
+fn dropped_group_cleanup_warning(_error: &GroupSignalError) {}
+
+/// Reports that a killed captured process could not be reaped.
+fn captured_reap_cleanup_warning(_error: &io::Error) {}
+
+/// Reports that a killed captured process did not end before the reap deadline.
+fn captured_reap_timeout_warning() {}
+
 impl Drop for RunningProcess {
     fn drop(&mut self) {
         // `Drop` cannot return an error, so a failure is logged: the harness is already giving the process up.
@@ -1378,6 +1387,64 @@ mod tests {
             .unwrap();
 
         assert_eq!(captured.exit, ExitReport::Exited { code: 3 });
+    }
+
+    #[derive(Debug)]
+    struct IgnoreHistoryProblems;
+
+    impl crate::history::Reporter for IgnoreHistoryProblems {
+        fn report(&self, _problem: &crate::history::Problem) {}
+    }
+
+    #[test]
+    fn process_cleanup_warnings_have_stable_names_in_history() {
+        use agent_core::config::Secrets;
+        use agent_core::history::MaxTextBytes;
+        use agent_core::log::{LogEvent, LogLevel};
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.db");
+        let db = crate::history::HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
+        let started = crate::history::History::start(
+            db,
+            crate::history::Setup {
+                reporter: std::sync::Arc::new(IgnoreHistoryProblems),
+                capacity: crate::history::DEFAULT_QUEUE,
+            },
+        )
+        .unwrap();
+        let layer = crate::history::HistoryLayer::new(
+            LogLevel::Warn,
+            crate::clock::SharedClock::new(crate::clock::SystemClock),
+            Secrets::default(),
+            Some(started.history.clone()),
+        );
+        let subscriber = tracing_subscriber::registry().with(layer);
+        let error = GroupSignalError {
+            signal: GroupSignal::Kill,
+            group: 123,
+            source: io::Error::new(io::ErrorKind::PermissionDenied, "injected signal failure"),
+        };
+
+        tracing::subscriber::with_default(subscriber, || {
+            dropped_group_cleanup_warning(&error);
+            captured_reap_cleanup_warning(&io::Error::other("injected reap failure"));
+            captured_reap_timeout_warning();
+        });
+        started.writer.close().unwrap();
+
+        let logs = crate::history::Reader::open(&path).unwrap().daemon_logs().unwrap();
+        assert_eq!(logs.len(), 3, "{logs:?}");
+        for (entry, message) in logs.iter().zip([
+            "cannot kill the group of a dropped process",
+            "cannot reap a captured process that was killed",
+            "a captured process that was killed did not end",
+        ]) {
+            assert_eq!(entry.event(), LogEvent::RunHung);
+            assert_eq!(entry.level(), LogLevel::Warn);
+            assert_eq!(entry.message(), message);
+        }
     }
 
     #[derive(Debug, thiserror::Error)]
