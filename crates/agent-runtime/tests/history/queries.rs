@@ -93,3 +93,44 @@ fn every_filter_and_pair_matches_the_unfiltered_rows_including_fractional_bounda
         );
     }
 }
+
+#[test]
+fn timestamp_filters_read_version_four_without_requiring_new_indexes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let mut db = agent_runtime::history::HistoryDb::open_with(
+        &path,
+        &agent_runtime::history::schema::MIGRATIONS[..4],
+        agent_core::history::MaxTextBytes::default(),
+    )
+    .unwrap();
+    agent_runtime::history::Store::write_logs(
+        &mut db,
+        &[agent_core::log::LogRecord {
+            at: "2026-11-15T12:00:00Z".parse().unwrap(),
+            module: "legacy".to_owned(),
+            event: agent_core::log::LogEvent::DaemonStarted,
+            team: None,
+            task: None,
+            message: "old".to_owned(),
+            fields: std::collections::BTreeMap::new(),
+            cut: agent_core::history::Cut::default(),
+        }],
+    )
+    .unwrap();
+    let reader = agent_runtime::history::Reader::open(&path).unwrap();
+    let before = reader.schema().unwrap();
+    assert_eq!(
+        reader
+            .log_rows(
+                &agent_runtime::history::LogFilter {
+                    since: Some("2026-11-15T12:00:00Z".parse().unwrap()),
+                    ..Default::default()
+                },
+                agent_runtime::history::LogWindow::Newest(100)
+            )
+            .unwrap(),
+        reader.daemon_logs().unwrap()
+    );
+    assert_eq!(reader.schema().unwrap(), before);
+}
