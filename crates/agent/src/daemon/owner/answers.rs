@@ -8,7 +8,6 @@
 
 use std::path::Path;
 
-use agent_core::cli::ActivityEvent;
 use agent_core::history::HistoryEvent;
 use agent_core::ids::TaskId;
 use agent_core::log::LogEvent;
@@ -384,15 +383,6 @@ impl Owner {
             AnsweredVia::SavedFile => "a saved file",
             AnsweredVia::Dashboard => "the dashboard",
         };
-        self.log_activity(
-            task,
-            now,
-            ActivityEvent::Info(format!(
-                "questions number {} were answered through {channel}",
-                open.number
-            )),
-        )
-        .await;
         tracing::info!(
             event = LogEvent::QuestionsAnswered.as_str(),
             task = %task,

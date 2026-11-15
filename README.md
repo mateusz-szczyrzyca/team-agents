@@ -1030,7 +1030,7 @@ pull requests, review and fix passes, questions, answers, controls and notificat
 [`docs/history.md`](docs/history.md) for `[history]` settings, read-only queries and lost-record reporting in
 `agent status`. Readers reject invalid variant fields even when SQLite constraints were bypassed.
 Known values from `secrets.toml` are replaced with `[REDACTED]` before history persistence, including echoed CLI output;
-secret-bearing structured identities cause counted omissions. Raw CLI/activity files are separate from this protection.
+secret-bearing structured identities cause counted omissions. Raw CLI output files are separate from this protection; Rust tasks no longer write `activity.jsonl`.
 Git attribution may briefly hold a run at its boundaries: each snapshot has a `2`-second budget plus bounded process cleanup;
 timeouts are counted and the work continues.
 
@@ -1045,13 +1045,18 @@ Read a round with `target/debug/agent log --round <round-id>`, or a team's round
 `target/debug/agent log --team <team-id>`. Both read the history directly and work with the daemon stopped.
 Use `--prompts` for whole prompts, `--no-steps` to omit individual steps, or `--json` for every record exactly once
 as JSON lines. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
-ordering and exit codes. Schema version `4` adds the daemon log; older history files remain readable without migration
+ordering and exit codes. Schema version `6` adds the search index and durable follow cursor after the daemon-log schema; older history files remain readable without migration
 by `agent log`, and the daemon migrates them when it opens them for writing.
 
 Bare `target/debug/agent log` prints the newest `100` daemon log rows. Use `--show log` with a round or team to
 select rows instead of its story, or add a row filter: `--task`, `--run`, `--agent`, `--level`, `--event`,
-`--since`, `--until` or `-n`. Filters intersect; `--json` emits one log row per line in this mode. Combining
+`--since`, `--until`, `--grep`, `-n` or `-f`. Filters intersect; `--json` emits one log row per line in this mode. Combining
 `--round` and `--team` also selects rows. A row query with no matches succeeds with empty output.
+
+Use `--grep TEXT` for literal FTS5 search, `-f` to follow new rows across daemon restarts, and `--stats` for database
+size, table counts and the oldest timestamp. A scoped `--show` selects `tasks`, `agents`, `worktrees`, `runs`, `prompts`,
+`changes`, `reviews`, `log` or `usage`. `[history] keep_days` removes expired closed rounds and their gate output;
+`[log] keep_days` removes old rows of no round. Both default to `0` (keep all), and open rounds always stay.
 
 How the human answers the agents and steers a task or a team, through the daemon (`agent daemon`) that owns the state:
 

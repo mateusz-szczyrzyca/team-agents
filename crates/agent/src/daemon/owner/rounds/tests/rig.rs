@@ -527,3 +527,19 @@ impl Rig {
 #[cfg(test)]
 #[path = "rig/tests.rs"]
 mod tests;
+
+impl Rig {
+    /// Shares the injected daemon clock with the log layer in query tests.
+    pub(super) fn history_test_clock(&self) -> SharedClock {
+        SharedClock::new(self.clock.clone())
+    }
+}
+
+impl Rig {
+    /// Moves the injected clock without waiting for real time to pass.
+    pub(super) fn advance_history_days(&self, days: u32) {
+        self.clock
+            .ticks
+            .fetch_add(days.checked_mul(86_400).unwrap(), Ordering::SeqCst);
+    }
+}

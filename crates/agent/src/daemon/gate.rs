@@ -13,7 +13,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::cli::ActivityEvent;
 use agent_core::config::{AbsolutePath, CommandLine, EnvName, InvalidValue};
 use agent_core::history::{EventRecord, HistoryEvent, LostCause, LostKind, Record};
 use agent_core::ids::{TaskId, TeamId};
@@ -386,7 +385,7 @@ impl Service {
                 task: job.task.clone(),
                 source,
             })?;
-        self.announce(job, &record).await;
+        self.announce(job, &record);
         Ok(record)
     }
 
@@ -547,28 +546,9 @@ impl Service {
         }
     }
 
-    /// Tells the subscribers and the activity log of the task that the gate ended.
-    async fn announce(&self, job: &GateJob, record: &GateRecord) {
+    /// Tells subscribers that the gate ended; its record is already in history.
+    fn announce(&self, job: &GateJob, record: &GateRecord) {
         let at = record.result.finished_at;
-        let text = format!(
-            "gate {}; output: {}",
-            record.summary(),
-            record.result.log.as_path().display()
-        );
-        if let Err(error) = self
-            .parts
-            .store
-            .append_activity(&job.task, at, &ActivityEvent::Info(text))
-            .await
-        {
-            // The log explains to a person what happened; the record does not depend on it.
-            tracing::error!(
-                event = LogEvent::StateSaveFailed.as_str(),
-                task = %job.task,
-                error = %error_chain(&error),
-                "the activity log cannot be written"
-            );
-        }
         let finished = EventKind::GateFinished {
             team: job.team.clone(),
             task: job.task.clone(),

@@ -133,6 +133,8 @@ open = "off"
 [history]
 enabled = true
 max_text_bytes = 1048576
+# Closed rounds and their gate output; 0 keeps everything. Open rounds always stay.
+keep_days = 0
 
 # --- Daemon log ----------------------------------------------------------------------------------------------------
 # The daemon's own log goes to its standard error (the systemd journal) and to `history.db` (docs/log.md).
@@ -140,6 +142,8 @@ max_text_bytes = 1048576
 
 [log]
 level = "info"
+# Rows belonging to no round; scoped rows follow history.keep_days.
+keep_days = 0
 
 # --- Dashboard -----------------------------------------------------------------------------------------------------
 # It listens on a loopback address only; remote access goes through `tailscale serve`, and only the Tailscale

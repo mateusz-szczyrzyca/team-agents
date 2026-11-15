@@ -94,7 +94,7 @@ const GATE_ABOUT: &str =
 const LOG: &str = "log";
 
 /// What `agent log` is for, as the help says.
-const LOG_ABOUT: &str = "Reads history directly, with no daemon needed. With only --round or --team and optional --prompts, --no-steps, --json: tells the story. With no scope, both scopes, --show log, or any row filter: prints daemon log rows. Row filters are --task, --run, --agent, --level, --event, --since, --until and -n.";
+const LOG_ABOUT: &str = "Reads history directly, with no daemon needed. With only --round or --team and optional --prompts, --no-steps, --json: tells the story. With no scope, both scopes, --show log, or any row filter: prints daemon log rows. Row filters are --task, --run, --agent, --level, --event, --since, --until, --grep, -n and -f.";
 
 /// What `agent run` is for, as the help says.
 const RUN_ABOUT: &str = "Starts a task or a team on the repository the current directory is in";

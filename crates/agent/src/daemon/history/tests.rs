@@ -279,3 +279,30 @@ async fn an_opener_task_failure_reports_unavailable_and_counts_every_lost_record
         .unwrap_err();
     assert_startup_losses(&error);
 }
+
+#[test]
+fn retention_is_due_at_start_and_each_day_using_the_injected_time() {
+    use agent_core::state::Timestamp;
+    let config = Config::from_toml_str("[history]\nkeep_days=1\n[log]\nkeep_days=2\n").unwrap();
+    let home = Home::new(&"/isolated/history".parse().unwrap());
+    let now: Timestamp = "2026-11-15T12:00:00Z".parse().unwrap();
+    let mut last = None;
+    let request = super::retention_due(&config, &home, now, &mut last).unwrap();
+    assert_eq!(request.closed_before, Some("2026-11-14T12:00:00Z".parse().unwrap()));
+    assert_eq!(request.logs_before, Some("2026-11-13T12:00:00Z".parse().unwrap()));
+    assert_eq!(request.home, home.root());
+    assert!(
+        super::retention_due(
+            &config,
+            &home,
+            "2026-11-16T11:59:59.999999999Z".parse().unwrap(),
+            &mut last
+        )
+        .is_none()
+    );
+    assert!(super::retention_due(&config, &home, "2026-11-16T12:00:00Z".parse().unwrap(), &mut last).is_some());
+    let disabled = Config::from_toml_str("[history]\nkeep_days=0\n[log]\nkeep_days=0\n").unwrap();
+    let request = super::retention_due(&disabled, &home, now, &mut None).unwrap();
+    assert_eq!(request.closed_before, None);
+    assert_eq!(request.logs_before, None);
+}

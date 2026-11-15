@@ -14,6 +14,16 @@ use super::{Format, LogError};
 /// Row arguments; their presence opts a scoped story into log queries.
 #[derive(Debug, Args)]
 pub(crate) struct RowArgs {
+    /// Follow later rows once, in insertion order, across daemon restarts.
+    #[arg(short = 'f', long)]
+    follow: bool,
+
+    /// Search recorded text as a literal phrase (FTS5), not an expression.
+    #[arg(long)]
+    grep: Option<String>,
+    /// Database size, table counts and oldest record.
+    #[arg(long)]
+    stats: bool,
     /// Filter by task ID.
     #[arg(long)]
     task: Option<TaskId>,
@@ -46,7 +56,10 @@ pub(crate) struct RowArgs {
 impl RowArgs {
     /// Whether any row option was explicitly supplied.
     pub(crate) fn requested(&self) -> bool {
-        self.task.is_some()
+        self.follow
+            || self.stats
+            || self.grep.is_some()
+            || self.task.is_some()
             || self.run.is_some()
             || self.agent.is_some()
             || self.level.is_some()
@@ -67,7 +80,15 @@ impl RowArgs {
         out: &mut impl Write,
     ) -> Result<(), LogError> {
         let reader = Reader::open(path)?;
+        if self.stats {
+            writeln!(out, "{}", reader.statistics()?).map_err(LogError::Output)?;
+            return out.flush().map_err(LogError::Output);
+        }
+        if let Some(view) = self.show.filter(|view| *view != LogView::Log) {
+            return super::views::print(&reader, round, team.as_ref(), view, format, out);
+        }
         let filter = LogFilter {
+            grep: self.grep.clone(),
             team,
             round,
             task: self.task.clone(),
@@ -78,19 +99,48 @@ impl RowArgs {
             since: self.since,
             until: self.until,
         };
-        for row in reader.log_rows(&filter, LogWindow::Newest(self.limit.unwrap_or(100)))? {
-            let text = match format {
-                Format::Text(_) => format!("{} {} {} {}", row.at(), row.level(), row.event(), row.message()),
-                Format::Json => serde_json::json!({
-                    "id": row.id(), "first_at": row.first_at(), "at": row.at(), "level": row.level(),
-                    "event": row.event(), "module": row.module(), "team": row.team(), "rounds": row.rounds(),
-                    "task": row.task(), "run": row.run(), "message": row.message(), "fields": row.fields(),
-                    "count": row.count().get(), "cut": row.cut().to_string(),
-                })
-                .to_string(),
+        let runtime = if self.follow {
+            Some(
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_time()
+                    .build()
+                    .map_err(LogError::FollowRuntime)?,
+            )
+        } else {
+            None
+        };
+        let mut cursor = reader.log_cursor()?;
+        let mut window = LogWindow::Newest(self.limit.unwrap_or(100));
+        loop {
+            for row in reader.log_rows(&filter, window)? {
+                cursor = cursor.max(row.id());
+                print_row(&row, format, out)?;
+            }
+            out.flush().map_err(LogError::Output)?;
+            let Some(runtime) = &runtime else {
+                return Ok(());
             };
-            writeln!(out, "{text}").map_err(LogError::Output)?;
+            // SQLite and stdout stay outside the async runtime. Only the cancellable timer runs inside it.
+            runtime.block_on(async { tokio::time::sleep(std::time::Duration::from_millis(100)).await });
+            window = LogWindow::After {
+                id: cursor,
+                limit: 1000,
+            };
         }
-        out.flush().map_err(LogError::Output)
     }
+}
+
+/// Writes one row in the same format for the initial window and follow pages.
+fn print_row(row: &agent_core::log::LogEntry, format: Format, out: &mut impl Write) -> Result<(), LogError> {
+    let text = match format {
+        Format::Text(_) => format!("{} {} {} {}", row.at(), row.level(), row.event(), row.message()),
+        Format::Json => serde_json::json!({
+            "id": row.id(), "first_at": row.first_at(), "at": row.at(), "level": row.level(),
+            "event": row.event(), "module": row.module(), "team": row.team(), "rounds": row.rounds(),
+            "task": row.task(), "run": row.run(), "message": row.message(), "fields": row.fields(),
+            "count": row.count().get(), "cut": row.cut().to_string(),
+        })
+        .to_string(),
+    };
+    writeln!(out, "{text}").map_err(LogError::Output)
 }

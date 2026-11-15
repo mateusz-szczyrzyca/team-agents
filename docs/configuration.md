@@ -48,8 +48,8 @@ Top-level key and tables:
 | `[github]` | table | none trusted, public API | whose words on GitHub are instructions, and where the API is |
 | `[notifications]` | table | files only | how the human is told |
 | `[questions]` | table | nothing opened, `$VISUAL`/`$EDITOR` | how the questions of the agents reach you |
-| `[history]` | table | `enabled = true`, `max_text_bytes = 1048576` | the history database (`history.db`) |
-| `[log]` | table | `level = "info"` | the daemon's own log (`stderr` and `history.db`) |
+| `[history]` | table | `enabled = true`, `max_text_bytes = 1048576`, `keep_days = 0` | the history database (`history.db`) |
+| `[log]` | table | `level = "info"`, `keep_days = 0` | the daemon's own log (`stderr` and `history.db`) |
 | `[web]` | table | loopback, nobody let in | the dashboard |
 | `[repos.NAME]` | table | none | per repository: base branch, gate and the checks before a review |
 
@@ -146,6 +146,7 @@ Neither text may contain `<`, `>` or control characters.
 |---|---|---|
 | `history.enabled` | `true` | whether the daemon writes `history.db` in `AGENTS_HOME` ([`history.md`](history.md)); `false` records nothing and loses nothing |
 | `history.max_text_bytes` | `1048576` (1 MiB) | the longest text one field of the history keeps, in bytes, `1` to `268435456`: a longer text (a prompt, a final message) is cut at a character boundary and the record says which field was cut |
+| `history.keep_days` | `0` | days to retain closed rounds; `0` keeps all; an open round is never deleted |
 
 A history that cannot be written — the file is a directory, the disk is full, the database is of a newer version — never stops
 or waits for storage: the daemon says so once on its standard error for each cause, counts the records it could not keep, and
@@ -159,6 +160,11 @@ process cleanup. The capture exception and configured-secret redaction are docum
 | Key | Default | Meaning |
 |---|---|---|
 | `log.level` | `info` | `error`, `warn`, `info`, or `debug`: the lowest severity of the daemon's own log events written to standard error and to `history.db` ([`log.md`](log.md)) |
+| `log.keep_days` | `0` | days to retain log rows of no round; `0` keeps all; scoped rows follow their round's retention |
+
+Both retention values are non-negative integers no greater than `4294967295`. The daemon runs retention at startup
+and once per `24` hours of its clock. Cutoffs are exclusive: a round closed exactly at the cutoff stays until a later
+pass. Retention removes history and gate output, not worktrees or the authoritative state. See [`log.md`](log.md#retention).
 
 ### `[repos.NAME]`
 

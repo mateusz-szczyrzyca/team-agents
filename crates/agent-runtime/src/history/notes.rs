@@ -235,6 +235,10 @@ fn once_each(rounds: &[RoundId]) -> Vec<RoundId> {
 }
 
 impl<S: Store> Store for Noting<S> {
+    fn retain(&mut self, request: &super::Retention) -> Result<(), super::RetainError> {
+        self.inner.retain(request)
+    }
+
     fn write(&mut self, records: &[Record]) -> Result<(), WriteError> {
         for record in records {
             if let Record::Run(run) = record {

@@ -20,6 +20,14 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Where records are written: the database, or whatever stands in for it where a test needs the writer to stall or
 /// fail.
 pub trait Store: Send + 'static {
+    /// Deletes expired records on the writer connection.
+    ///
+    /// # Errors
+    /// [`super::RetainError`] when cleanup fails; later writes remain possible.
+    fn retain(&mut self, _request: &super::Retention) -> Result<(), super::RetainError> {
+        Ok(())
+    }
+
     /// Writes `records` as one unit: all of them or none.
     ///
     /// # Errors
@@ -49,6 +57,14 @@ pub struct HistoryDb {
 }
 
 impl HistoryDb {
+    /// Deletes expired closed rounds and unscoped logs as one transaction.
+    ///
+    /// # Errors
+    /// [`crate::history::RetainError`] when storage refuses cleanup.
+    pub fn retain(&mut self, request: &crate::history::Retention) -> Result<(), crate::history::RetainError> {
+        super::retention::retain(&mut self.connection, request)
+    }
+
     /// Opens (and makes, and migrates) the database at `path`.
     ///
     /// # Errors
@@ -83,6 +99,14 @@ impl HistoryDb {
                 found,
                 supported,
             });
+        }
+        let vacuum: u32 = connection
+            .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
+            .map_err(database)?;
+        if vacuum != 1 {
+            connection
+                .execute_batch("PRAGMA auto_vacuum = FULL; VACUUM;")
+                .map_err(database)?;
         }
         let mode: String = connection
             .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
@@ -126,6 +150,10 @@ impl HistoryDb {
 }
 
 impl Store for HistoryDb {
+    fn retain(&mut self, request: &super::Retention) -> Result<(), super::RetainError> {
+        Self::retain(self, request)
+    }
+
     fn write(&mut self, records: &[Record]) -> Result<(), WriteError> {
         let transaction = self
             .connection

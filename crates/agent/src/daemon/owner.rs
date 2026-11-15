@@ -22,7 +22,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::cli::{ActivityEvent, SessionId as CliSessionId};
+use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::outcome::{AfterHang, after_hang};
 use agent_core::history::{HistoryEvent, RunWhy};
@@ -474,9 +474,18 @@ impl Owner {
     pub(super) async fn run(mut self, mut inbox: mpsc::Receiver<Message>) -> Result<(), OwnerError> {
         self.recover().await?;
         self.adopt_open_questions().await?;
+        let mut retained_at = None;
         let mut tick = tokio::time::interval(self.parts.tick.max(Duration::from_millis(1)));
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
+            if let Some(request) = super::history::retention_due(
+                &self.parts.settings.config,
+                self.parts.store.home(),
+                Timestamp::now(&self.parts.clock)?,
+                &mut retained_at,
+            ) {
+                self.history.retain(request);
+            }
             self.team_life().await?;
             self.start_queued().await?;
             tokio::select! {
@@ -1463,20 +1472,6 @@ impl Owner {
             self.notify(at, located, task, notice);
         }
         Ok(())
-    }
-
-    /// Appends `event` to the activity log of `task`.
-    async fn log_activity(&self, task: &TaskId, at: Timestamp, event: ActivityEvent) {
-        if let Err(error) = self.parts.store.append_activity(task, at, &event).await {
-            // The log explains to a person what happened; the state does not depend on it. A log that cannot be written
-            // is told, and the work goes on.
-            tracing::error!(
-                event = LogEvent::StateSaveFailed.as_str(),
-                task = %task,
-                error = %error_chain(&error),
-                "the activity log cannot be written"
-            );
-        }
     }
 
     /// Saves the state.

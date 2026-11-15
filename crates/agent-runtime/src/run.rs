@@ -40,7 +40,7 @@ use crate::history::{CaptureKind, History, log_decision};
 use crate::process::{ExitReport, ProcessError, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
 
-use crate::store::{StateStore, StoreError};
+use crate::store::StateStore;
 pub use hold::{HoldGuard, WatchdogHold};
 
 /// One best-effort history boundary may spend two seconds collecting Git data, plus bounded child cleanup.
@@ -254,14 +254,6 @@ pub enum RunError {
         path: PathBuf,
         /// What the operating system said.
         source: std::io::Error,
-    },
-    /// The activity of the run cannot be logged.
-    #[error("cannot log the activity of the run of {task}")]
-    Activity {
-        /// The task.
-        task: TaskId,
-        /// What the store said.
-        source: StoreError,
     },
     /// The end of the run cannot be classified.
     #[error("cannot classify the end of the run of {task}")]
@@ -696,7 +688,7 @@ impl Unreadable {
 struct Follow<'a> {
     /// The engine, for the store and the clock.
     engine: &'a RunEngine,
-    /// The task.
+    /// The task, included in diagnostics for unreadable output.
     task: &'a TaskId,
     /// The run, which its steps are recorded for.
     run: &'a RunId,
@@ -713,10 +705,10 @@ struct Follow<'a> {
 }
 
 impl Follow<'_> {
-    /// Feeds the lines written since the last call to the parser and its events to the activity log.
+    /// Feeds the lines written since the last call to the parser and its events to the history.
     async fn read_new(&mut self) -> Result<(), RunError> {
         let lines = self.tail.read_new().await?;
-        self.feed(&lines).await
+        self.feed(&lines)
     }
 
     /// Reads what is left of the output after the process ended, the last line without a newline included.
@@ -731,7 +723,7 @@ impl Follow<'_> {
             }
         }
         if let Some(last) = self.tail.finish() {
-            self.feed(&[last]).await?;
+            self.feed(&[last])?;
         }
         if self.tail.dropped() > 0 {
             tracing::warn!(
@@ -746,7 +738,7 @@ impl Follow<'_> {
     }
 
     /// Gives `lines` to the parser and logs the events.
-    async fn feed(&mut self, lines: &[String]) -> Result<(), RunError> {
+    fn feed(&mut self, lines: &[String]) -> Result<(), RunError> {
         for line in lines {
             let events = match self.parser.push_line(line) {
                 Ok(events) => events,
@@ -768,15 +760,6 @@ impl Follow<'_> {
                     self.progress = Progress::Made;
                 }
                 let at = Timestamp::now(&self.engine.parts.clock)?;
-                self.engine
-                    .parts
-                    .store
-                    .append_activity(self.task, at, &event)
-                    .await
-                    .map_err(|source| RunError::Activity {
-                        task: self.task.clone(),
-                        source,
-                    })?;
                 self.engine.history.step(self.run, at, event);
             }
         }

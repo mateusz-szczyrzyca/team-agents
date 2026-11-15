@@ -14,6 +14,7 @@ pub mod migrate;
 mod notes;
 mod reader;
 mod redact;
+mod retention;
 pub mod schema;
 mod write;
 
@@ -28,3 +29,5 @@ pub use notes::Noting;
 pub use reader::{Reader, RoundPrompt, RunRow, Stored};
 
 pub use reader::query::{LogFilter, LogWindow};
+
+pub use retention::{RetainError, Retention};

@@ -17,6 +17,10 @@ it does not read or write a file or a socket — that is the runtime's job (item
 Nothing here is the old Bash harness's `bus/state.json`, `meta.env` or `activity.jsonl`: those are not read, converted
 or kept compatible.
 
+The Rust daemon no longer writes a task's `activity.jsonl`. Run steps live in `history.db` and are read through
+`Reader::steps_of_task`; the state document remains the authority for current task and round state. Existing
+activity files are left alone. See [history retention](history.md#retention-and-task-activity).
+
 ## State
 
 ### The file

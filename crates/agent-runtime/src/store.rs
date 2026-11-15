@@ -1,27 +1,21 @@
-//! The state store: the layout of `AGENTS_HOME`, the lock that keeps one daemon per home, the state file and the
-//! activity log of a task.
+//! The state store: the layout of `AGENTS_HOME`, its exclusive daemon lock, and atomic state files.
 //!
 //! The daemon is the only writer of its home (`docs/architecture.md`, "Process model"): [`StateStore::open`] takes an
 //! exclusive `flock` on `daemon.lock` and holds it as long as the store lives, so a second daemon on the same home is
 //! refused instead of racing the first. The state is saved as a whole, through a temporary file and a rename, so a
 //! crash leaves either the old state or the new one.
 
-use std::borrow::Cow;
 use std::fs::File;
 use std::io::{self, Write};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
 
-use agent_core::cli::ActivityEvent;
 use agent_core::config::{AbsolutePath, RepoName};
 use agent_core::ids::{RunId, TaskId};
-use agent_core::protocol::{Client, ControlAction};
-use agent_core::state::{
-    ChecksRecord, GateRecord, MAX_STATE_BYTES, PrNumber, RenderError, State, StateError, Timestamp,
-};
+use agent_core::state::{ChecksRecord, GateRecord, MAX_STATE_BYTES, PrNumber, RenderError, State, StateError};
 use tempfile::NamedTempFile;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tokio::task::JoinError;
 
 use crate::text_file::{TextFileError, read_text_file};
@@ -59,7 +53,7 @@ const PROMPTS_DIR: &str = "prompts";
 /// The directory of the git worktrees in the home; one directory per repository, inside it one per task.
 const WORKTREES_DIR: &str = "worktrees";
 
-/// The activity log of a task, in the task's directory: JSON lines, append only.
+/// The legacy activity filename; retained for identifying old files, never written.
 const ACTIVITY_FILE: &str = "activity.jsonl";
 
 /// The file in a task's directory that holds the last gate record of the task.
@@ -73,13 +67,6 @@ const TEMP_PREFIX: &str = ".state-";
 
 /// Suffix of the temporary file of a save.
 const TEMP_SUFFIX: &str = ".tmp";
-
-/// The longest text of one field of an activity line, in bytes. A model can print a whole file; the log keeps what
-/// lets a human see what happened.
-pub const MAX_ACTIVITY_FIELD_BYTES: usize = 4096;
-
-/// What a cut field ends with, so that a reader sees that it was cut.
-const CUT_MARK: &str = "…";
 
 /// The name of the environment variable that says where the harness keeps its files: the commands find the daemon's
 /// socket through it, and the daemon gives it to the runs it starts so that the commands an agent runs find it too.
@@ -332,25 +319,11 @@ pub enum StoreError {
         /// What the operating system said.
         source: io::Error,
     },
-    /// An activity line cannot be written as JSON.
-    #[error("an activity line cannot be rendered")]
-    RenderActivity {
-        /// What the serializer said.
-        source: serde_json::Error,
-    },
     /// A gate record cannot be written as JSON.
     #[error("a gate record cannot be rendered")]
     RenderGateRecord {
         /// What the serializer said.
         source: serde_json::Error,
-    },
-    /// An activity line cannot be appended to the log.
-    #[error("cannot append to the activity log {path:?}")]
-    AppendActivity {
-        /// The activity log.
-        path: PathBuf,
-        /// What the operating system said.
-        source: io::Error,
     },
     /// A file of a task's directory cannot be read: the gate record or the report of a review.
     #[error("cannot read the file {path:?} of a task")]
@@ -390,7 +363,7 @@ pub enum StoreError {
     },
 }
 
-/// The owner of a home: it holds the lock, reads and saves the state and appends to the activity logs.
+/// The owner of a home: it holds the lock, reads and saves the state.
 ///
 /// There is one per daemon. Dropping it releases the lock.
 #[derive(Debug)]
@@ -410,106 +383,6 @@ pub(crate) struct StagedState {
     target: PathBuf,
     /// The home directory, synced after the rename so that the rename itself survives a crash.
     dir: PathBuf,
-}
-
-/// The body of an activity line: what happened, by kind. Texts are borrowed or, when cut, owned.
-#[derive(Debug, serde::Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum ActivityBody<'a> {
-    /// A message of the agent.
-    Text {
-        /// What it said.
-        text: Cow<'a, str>,
-    },
-    /// A shell command of the agent.
-    Command {
-        /// Its command line.
-        command: Cow<'a, str>,
-    },
-    /// A file the agent changed.
-    FileEdit {
-        /// The file, as the CLI names it.
-        path: Cow<'a, str>,
-    },
-    /// A call of an agentbus tool.
-    BusCall {
-        /// The tool.
-        tool: Cow<'a, str>,
-        /// Its arguments.
-        arguments: Cow<'a, str>,
-    },
-    /// A call of any other tool.
-    ToolCall {
-        /// The tool.
-        name: Cow<'a, str>,
-        /// What it was asked to do.
-        summary: Cow<'a, str>,
-    },
-    /// An error of the CLI or of a tool call.
-    Error {
-        /// What went wrong.
-        message: Cow<'a, str>,
-    },
-    /// Metadata of the run.
-    Info {
-        /// The metadata.
-        message: Cow<'a, str>,
-    },
-    /// A control of the human.
-    Control {
-        /// Which control.
-        action: ControlAction,
-        /// The client it came from.
-        by: &'a Client,
-    },
-}
-
-/// One line of the activity log.
-#[derive(Debug, serde::Serialize)]
-struct ActivityLine<'a> {
-    /// When the event was appended.
-    at: Timestamp,
-    /// What happened.
-    #[serde(flatten)]
-    body: ActivityBody<'a>,
-}
-
-impl<'a> ActivityLine<'a> {
-    /// The line of `event` at `at`, its texts cut to [`MAX_ACTIVITY_FIELD_BYTES`].
-    fn new(at: Timestamp, event: &'a ActivityEvent) -> Self {
-        let body = match event {
-            ActivityEvent::Text(text) => ActivityBody::Text { text: cut(text) },
-            ActivityEvent::Command(command) => ActivityBody::Command { command: cut(command) },
-            ActivityEvent::FileEdit { path } => ActivityBody::FileEdit { path: cut(path) },
-            ActivityEvent::BusCall { tool, arguments } => ActivityBody::BusCall {
-                tool: cut(tool),
-                arguments: cut(arguments),
-            },
-            ActivityEvent::ToolCall { name, summary } => ActivityBody::ToolCall {
-                name: cut(name),
-                summary: cut(summary),
-            },
-            ActivityEvent::Error(message) => ActivityBody::Error { message: cut(message) },
-            ActivityEvent::Info(message) => ActivityBody::Info { message: cut(message) },
-            ActivityEvent::Control { action, by } => ActivityBody::Control { action: *action, by },
-        };
-        Self { at, body }
-    }
-}
-
-/// `text`, or its first characters that fit in [`MAX_ACTIVITY_FIELD_BYTES`] and [`CUT_MARK`] when it is longer. The cut
-/// falls between characters.
-fn cut(text: &str) -> Cow<'_, str> {
-    if text.len() <= MAX_ACTIVITY_FIELD_BYTES {
-        return Cow::Borrowed(text);
-    }
-    let mut kept: String = text
-        .char_indices()
-        .take_while(|(index, c)| index + c.len_utf8() <= MAX_ACTIVITY_FIELD_BYTES)
-        .map(|(_, c)| c)
-        .collect();
-    kept.push_str(CUT_MARK);
-    Cow::Owned(kept)
 }
 
 /// The number of bytes to read of a state file: one more than the limit, so that a file over it is seen as such.
@@ -805,36 +678,6 @@ impl StateStore {
     ) -> Result<Option<String>, StoreError> {
         read_task_file(&self.home.review_report_file(task, pr, pass)).await
     }
-
-    /// Appends one line to the activity log of `task`: the time and the event, texts cut to
-    /// [`MAX_ACTIVITY_FIELD_BYTES`].
-    ///
-    /// The line is written with one `write`, to a file opened for appending; it is not synced, because the log
-    /// explains a run to a human and the state does not depend on it.
-    ///
-    /// # Errors
-    /// [`StoreError::CreateDir`], [`StoreError::RenderActivity`] and [`StoreError::AppendActivity`].
-    pub async fn append_activity(&self, task: &TaskId, at: Timestamp, event: &ActivityEvent) -> Result<(), StoreError> {
-        let mut line = serde_json::to_vec(&ActivityLine::new(at, event))
-            .map_err(|source| StoreError::RenderActivity { source })?;
-        line.push(b'\n');
-        let dir = self.home.task_dir(task);
-        let create = dir.clone();
-        blocking(move || create_dir(&create)).await?;
-        let path = self.home.activity_log(task);
-        let append_error = |source| StoreError::AppendActivity {
-            path: path.clone(),
-            source,
-        };
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .await
-            .map_err(append_error)?;
-        file.write_all(&line).await.map_err(append_error)?;
-        file.flush().await.map_err(append_error)
-    }
 }
 
 impl StagedState {
@@ -865,7 +708,6 @@ mod tests {
     use std::str::FromStr;
 
     use agent_core::state::UnsupportedSchema;
-    use serde_json::json;
 
     use super::*;
 
@@ -912,10 +754,6 @@ mod tests {
         "task-20261111-193001-k3x9".parse().unwrap()
     }
 
-    fn at() -> Timestamp {
-        "2026-11-12T10:00:00Z".parse().unwrap()
-    }
-
     fn fixture_state() -> State {
         State::from_json(FIXTURE).unwrap()
     }
@@ -925,14 +763,6 @@ mod tests {
         std::fs::read_dir(dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-            .collect()
-    }
-
-    fn activity_lines(home: &Home, task: &TaskId) -> Vec<serde_json::Value> {
-        std::fs::read_to_string(home.activity_log(task))
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
             .collect()
     }
 
@@ -1206,136 +1036,6 @@ mod tests {
 
         assert!(
             matches!(&result, Err(StoreError::CreateDir { path, .. }) if *path == blocker.join("home")),
-            "{result:?}"
-        );
-    }
-
-    // Rule: each event is one JSON line with the time and its kind, in the order appended.
-    #[tokio::test]
-    async fn append_activity_writes_one_json_line_per_event_in_order() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = home_in(&dir);
-        let store = StateStore::open(home.clone()).await.unwrap();
-        let events = [
-            ActivityEvent::Text("hello żółć".to_owned()),
-            ActivityEvent::Command("cargo test".to_owned()),
-            ActivityEvent::FileEdit {
-                path: "src/lib.rs".to_owned(),
-            },
-            ActivityEvent::BusCall {
-                tool: "notebook_append".to_owned(),
-                arguments: "{}".to_owned(),
-            },
-            ActivityEvent::ToolCall {
-                name: "Read".to_owned(),
-                summary: "a file".to_owned(),
-            },
-            ActivityEvent::Error("boom".to_owned()),
-            ActivityEvent::Info("model x".to_owned()),
-        ];
-
-        for event in &events {
-            store.append_activity(&task(), at(), event).await.unwrap();
-        }
-
-        let t = "2026-11-12T10:00:00Z";
-        assert_eq!(
-            activity_lines(&home, &task()),
-            vec![
-                json!({"at": t, "kind": "text", "text": "hello żółć"}),
-                json!({"at": t, "kind": "command", "command": "cargo test"}),
-                json!({"at": t, "kind": "file_edit", "path": "src/lib.rs"}),
-                json!({"at": t, "kind": "bus_call", "tool": "notebook_append", "arguments": "{}"}),
-                json!({"at": t, "kind": "tool_call", "name": "Read", "summary": "a file"}),
-                json!({"at": t, "kind": "error", "message": "boom"}),
-                json!({"at": t, "kind": "info", "message": "model x"}),
-            ]
-        );
-    }
-
-    // Rule: the log is append only: a later daemon adds to what an earlier one wrote, and tasks do not mix.
-    #[tokio::test]
-    async fn the_activity_log_grows_across_stores_and_is_kept_per_task() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = home_in(&dir);
-        let other: TaskId = "task-20261111-193002-k3x9".parse().unwrap();
-        let first = StateStore::open(home.clone()).await.unwrap();
-        first
-            .append_activity(&task(), at(), &ActivityEvent::Text("one".to_owned()))
-            .await
-            .unwrap();
-        first
-            .append_activity(&other, at(), &ActivityEvent::Text("elsewhere".to_owned()))
-            .await
-            .unwrap();
-        drop(first);
-
-        let second = reopen(&home).await.unwrap();
-        second
-            .append_activity(&task(), at(), &ActivityEvent::Text("two".to_owned()))
-            .await
-            .unwrap();
-
-        let texts: Vec<_> = activity_lines(&home, &task())
-            .iter()
-            .map(|line| line["text"].as_str().unwrap().to_owned())
-            .collect();
-        assert_eq!(texts, ["one", "two"]);
-        assert_eq!(activity_lines(&home, &other).len(), 1);
-    }
-
-    // Rule: a long text is cut at the limit, on a character boundary, and says so.
-    #[tokio::test]
-    async fn append_activity_cuts_a_long_text_on_a_character_boundary() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = home_in(&dir);
-        let store = StateStore::open(home.clone()).await.unwrap();
-        // 'ż' has two bytes and the text starts with one: the limit falls inside the 2048th 'ż'.
-        let long = format!("a{}", "ż".repeat(MAX_ACTIVITY_FIELD_BYTES));
-
-        store
-            .append_activity(&task(), at(), &ActivityEvent::Text(long))
-            .await
-            .unwrap();
-
-        let lines = activity_lines(&home, &task());
-        let kept = lines[0]["text"].as_str().unwrap();
-        assert_eq!(
-            kept,
-            format!("a{}{CUT_MARK}", "ż".repeat(MAX_ACTIVITY_FIELD_BYTES / 2 - 1))
-        );
-    }
-
-    // Rule: a text at the limit is kept whole.
-    #[tokio::test]
-    async fn append_activity_keeps_a_text_at_the_limit_whole() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = home_in(&dir);
-        let store = StateStore::open(home.clone()).await.unwrap();
-        let exact = "a".repeat(MAX_ACTIVITY_FIELD_BYTES);
-
-        store
-            .append_activity(&task(), at(), &ActivityEvent::Text(exact.clone()))
-            .await
-            .unwrap();
-
-        assert_eq!(activity_lines(&home, &task())[0]["text"], exact);
-    }
-
-    // Rule: a log that cannot be appended to is an error with its path.
-    #[tokio::test]
-    async fn append_activity_reports_a_log_that_cannot_be_opened() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = home_in(&dir);
-        let store = StateStore::open(home.clone()).await.unwrap();
-        std::fs::create_dir_all(home.activity_log(&task())).unwrap();
-
-        let result = store
-            .append_activity(&task(), at(), &ActivityEvent::Text("x".to_owned()))
-            .await;
-
-        assert!(
-            matches!(&result, Err(StoreError::AppendActivity { path, .. }) if *path == home.activity_log(&task())),
             "{result:?}"
         );
     }
