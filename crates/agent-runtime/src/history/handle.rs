@@ -47,6 +47,9 @@ pub enum Cause {
     /// A record or its launch head could not be captured.
     #[strum(to_string = "capture_{0}")]
     Capture(CaptureKind),
+    /// An event could not be built from the daemon's state.
+    #[strum(serialize = "capture_event")]
+    CaptureEvent,
     /// A known credential occurs in an identity that cannot safely be replaced.
     #[strum(serialize = "secret_identity")]
     SecretIdentity,
@@ -386,6 +389,14 @@ impl History {
         if !self.is_disabled() {
             self.shared.lose(1);
             self.shared.report(Cause::Capture(kind), || error_chain(error));
+        }
+    }
+
+    /// Counts an event that could not be built from the daemon's state and reports its cause once.
+    pub fn capture_event_failed(&self, error: &impl std::error::Error) {
+        if !self.is_disabled() {
+            self.shared.lose(1);
+            self.shared.report(Cause::CaptureEvent, || error_chain(error));
         }
     }
 

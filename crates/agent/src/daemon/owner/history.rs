@@ -15,6 +15,17 @@ use super::Owner;
 use super::start::{Plan, work_branch};
 use crate::daemon::history::{round_opening, team_start};
 
+/// Why the daemon could not build the event that starts a fix pass.
+#[derive(Debug, thiserror::Error)]
+enum FixPassCaptureError {
+    /// The run's plan carries none of the reviewers' findings.
+    #[error("the fix pass has no findings in its plan")]
+    MissingFindings,
+    /// The state has no item in a fix pass for the run's agent.
+    #[error("no item is in a fix pass for the run's agent")]
+    NoFixingItem,
+}
+
 impl Owner {
     /// Records `event` of `team` for `rounds` at the time the clock gives; a time the clock cannot give is a record lost.
     pub(super) fn record_event(&self, team: &TeamId, rounds: Vec<RoundId>, event: HistoryEvent) {
@@ -48,6 +59,32 @@ impl Owner {
             event,
         };
         self.history.record(Record::Event(Box::new(record)));
+    }
+
+    /// Counts an unbuildable fix-pass event under its capture cause and leaves a loss note in its round.
+    fn fix_pass_capture_failed(
+        &self,
+        task: &TaskId,
+        team: &TeamId,
+        rounds: &[RoundId],
+        at: Timestamp,
+        problem: &FixPassCaptureError,
+    ) {
+        self.history.capture_event_failed(problem);
+        if !self.history.is_writing() {
+            return;
+        }
+        self.record_event_at(
+            at,
+            team,
+            rounds.to_vec(),
+            HistoryEvent::Lost {
+                task: Some(task.clone()),
+                what: LostKind::Event(EventKind::FixPassStarted),
+                cause: LostCause::CaptureEvent,
+                detail: error_chain(problem),
+            },
+        );
     }
 
     /// The rounds of the `items` of `team`, each once, in the order of the items; an item with no round is told and left out.
@@ -219,11 +256,11 @@ impl Owner {
                     );
                 } else {
                     tracing::warn!(task = %task, pass = number.get(), "no item is in a fix pass for the run's agent: the history has no record of the fix pass");
-                    self.history.record_lost();
+                    self.fix_pass_capture_failed(task, team.id(), rounds, at, &FixPassCaptureError::NoFixingItem);
                 }
             } else {
                 tracing::warn!(task = %task, pass = number.get(), "a fix pass has no findings in its plan: the history has no record of the fix pass");
-                self.history.record_lost();
+                self.fix_pass_capture_failed(task, team.id(), rounds, at, &FixPassCaptureError::MissingFindings);
             }
         }
         self.history.record(Record::Run(Box::new(RunStart {

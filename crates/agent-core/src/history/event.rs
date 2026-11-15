@@ -153,6 +153,8 @@ pub enum LostCause {
     CaptureQuestions,
     /// The clock could not give a valid timestamp.
     CaptureClock,
+    /// An event could not be built from the daemon's state.
+    CaptureEvent,
     /// A configured secret occurred in a structured identity.
     SecretIdentity,
 }
