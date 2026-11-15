@@ -284,10 +284,7 @@ impl Owner {
         aimed: &[Aimed],
         reached: &[TaskId],
     ) -> Result<(), OwnerError> {
-        let Ok(now) = Timestamp::now(&self.parts.clock) else {
-            tracing::warn!(action = ?action, "the clock gives a time that cannot be used: the control is not published or written to the activity log");
-            return Ok(());
-        };
+        let now = Timestamp::now(&self.parts.clock)?;
         let Some(first) = aimed.first() else {
             return Ok(());
         };
