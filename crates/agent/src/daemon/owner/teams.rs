@@ -535,7 +535,9 @@ impl Owner {
             };
             if let Err(error) = self.switch_branch(&repo, &assigned, base).await {
                 tracing::warn!(
+                    event = LogEvent::GitCallFailed.as_str(),
                     team = %team_id,
+                    task = %assigned.task,
                     item = %assigned.item,
                     member = %assigned.agent,
                     error = %error_chain(&error),
