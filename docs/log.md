@@ -34,7 +34,7 @@ produce empty row output, without changing the database.
 | `0` | the story or matching log rows were printed |
 | `1` | the history cannot be read (no file, a newer version, a row that breaks its rules), or the output cannot be written |
 | `2` | command-line parsing fails, for example an invalid ID, an unrecognised option or `--show` without a scope |
-| `3` | story mode: the history has no such round or team |
+| `3` | story mode or focused view (`--show`): the history has no such round or team |
 
 ## Search, following and focused views
 

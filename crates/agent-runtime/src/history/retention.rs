@@ -56,6 +56,11 @@ pub(super) fn retain(connection: &mut rusqlite::Connection, request: &Retention)
         DROP TABLE expired_teams; DROP TABLE expired_rounds;",
     )?;
     tx.commit()?;
+    // While the daemon keeps the writer open across daily passes, checkpoint and truncate the WAL so
+    // freed pages are returned to the filesystem; a busy reader only defers truncation to the next pass.
+    if let Err(error) = connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+        tracing::warn!(%error, "cannot truncate history write-ahead log after retention");
+    }
     Ok(())
 }
 

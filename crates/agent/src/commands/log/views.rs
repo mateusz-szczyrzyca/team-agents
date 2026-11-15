@@ -21,17 +21,17 @@ pub(super) fn print(
     out: &mut impl Write,
 ) -> Result<(), LogError> {
     let (selection, records, runs) = if let Some(id) = round {
-        (
-            Selection::Round(id.clone()),
-            reader.round_records(&id)?,
-            reader.runs_of_round(&id)?,
-        )
+        let records = reader.round_records(&id)?;
+        if records.is_empty() {
+            return Err(LogError::UnknownRound { round: id });
+        }
+        (Selection::Round(id.clone()), records, reader.runs_of_round(&id)?)
     } else if let Some(id) = team {
-        (
-            Selection::Team(id.clone()),
-            reader.team_records(id)?,
-            reader.runs_of_team(id)?,
-        )
+        let records = reader.team_records(id)?;
+        if records.is_empty() {
+            return Err(LogError::UnknownTeam { team: id.clone() });
+        }
+        (Selection::Team(id.clone()), records, reader.runs_of_team(id)?)
     } else {
         return Err(LogError::NoSubject);
     };
