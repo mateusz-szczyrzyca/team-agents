@@ -24,7 +24,9 @@ impl Reader {
             .collect::<Result<Vec<_>, _>>()
             .map_err(&fail)?;
         let mut tables = serde_json::Map::new();
-        let mut oldest: Option<String> = None;
+        let mut oldest: Option<String> = snapshot
+            .query_row("SELECT min(at) FROM history_records", [], |r| r.get(0))
+            .map_err(&fail)?;
         for name in names {
             // Names originate in the database, so quote identifiers even though values cannot name tables.
             let quoted = name.replace('"', "\"\"");
@@ -32,7 +34,7 @@ impl Reader {
                 .query_row(&format!("SELECT count(*) FROM \"{quoted}\""), [], |r| r.get(0))
                 .map_err(&fail)?;
             tables.insert(name.clone(), count.into());
-            if matches!(name.as_str(), "history_records" | "daemon_logs") {
+            if name == "daemon_logs" {
                 let at: Option<String> = snapshot
                     .query_row(&format!("SELECT min(at) FROM \"{quoted}\""), [], |r| r.get(0))
                     .map_err(&fail)?;
