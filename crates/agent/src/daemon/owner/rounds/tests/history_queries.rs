@@ -175,3 +175,65 @@ fn assert_views(rig: &Rig, reader: &Reader, flag: &str, scope: &str) {
         }
     }
 }
+
+#[tokio::test]
+async fn daemon_daily_retention_removes_closed_round_and_gate_but_keeps_old_open_round() {
+    use super::history_stories_tests::gate_when_committed;
+    let mut rig = patient(
+        &[
+            normal("claude-1", "gated"),
+            normal("claude-2", "sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("\n[history]\nkeep_days = 1\n[log]\nkeep_days = 1\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
+    rig.start_with_log_layer(HistoryLayer::deferred(
+        LogLevel::Info,
+        rig.history_test_clock(),
+        Secrets::default(),
+    ))
+    .await;
+    let (closed_team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    gate_when_committed(&rig, &tasks[0], 1).await;
+    let (open_team, _) = rig.run(&["claude-2"], ONE, MergeMode::NoMerge, None).await;
+    rig.wait_for("closed first round", || {
+        Reader::open(&rig.home.history_file()).unwrap().team_records(&closed_team).unwrap().iter().any(|r| matches!(&r.record, Record::Event(e) if matches!(e.event, agent_core::history::HistoryEvent::RoundClosed { .. })))
+    }).await;
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let gate = reader
+        .team_records(&closed_team)
+        .unwrap()
+        .into_iter()
+        .find_map(|row| match row.record {
+            Record::Event(e) => match e.event {
+                agent_core::history::HistoryEvent::Gate { record, .. } => Some(record.result.log),
+                _ => None,
+            },
+            _ => None,
+        })
+        .unwrap();
+    assert!(gate.as_path().is_file());
+    let before = reader.statistics().unwrap();
+    assert_eq!(before["tables"]["rounds"], 2);
+    rig.advance_history_days(2);
+    rig.wait_for("daily retention", || reader.team(&closed_team).unwrap().is_none())
+        .await;
+    assert!(reader.team(&open_team).unwrap().is_some());
+    assert_eq!(reader.rounds_of_team(&open_team).unwrap().len(), 1);
+    assert!(!gate.as_path().exists());
+    let after = rows(&rig, &["log", "--stats"]);
+    assert_eq!(after[0]["tables"]["rounds"], 1);
+    assert!(reader.team_records(&closed_team).unwrap().is_empty());
+    rig.stop().await.unwrap();
+    // Startup performs the same cleanup, including with an old open round still present.
+    rig.advance_history_days(2);
+    rig.start().await;
+    rig.stop().await.unwrap();
+    assert_eq!(reader.rounds_of_team(&open_team).unwrap().len(), 1);
+}

@@ -534,3 +534,12 @@ impl Rig {
         SharedClock::new(self.clock.clone())
     }
 }
+
+impl Rig {
+    /// Moves the injected clock without waiting for real time to pass.
+    pub(super) fn advance_history_days(&self, days: u32) {
+        self.clock
+            .ticks
+            .fetch_add(days.checked_mul(86_400).unwrap(), Ordering::SeqCst);
+    }
+}
