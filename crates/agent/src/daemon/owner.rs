@@ -584,7 +584,20 @@ impl Owner {
                                 "a repository in the state is gone from the configuration"
                             );
                         }
-                        _ => {}
+                        StartProblem::NoSuchTask { .. }
+                        | StartProblem::NoWorktree { .. }
+                        | StartProblem::WorktreeNotDirectory { .. }
+                        | StartProblem::Path { .. }
+                        | StartProblem::NumbersExhausted
+                        | StartProblem::Prompt(_)
+                        | StartProblem::Id(_)
+                        | StartProblem::Answers(_)
+                        | StartProblem::AnswersText(_)
+                        | StartProblem::Team(_)
+                        | StartProblem::Name(_)
+                        | StartProblem::Branch(_)
+                        | StartProblem::Session(_)
+                        | StartProblem::Autopilot(_) => {}
                     }
                 }
                 return self.fail_to_start(&task, error_chain(&problem)).await;
