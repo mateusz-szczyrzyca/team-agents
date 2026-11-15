@@ -3,6 +3,7 @@
 pub(crate) mod rows;
 #[cfg(test)]
 mod tests;
+mod views;
 
 use std::io::Write;
 use std::path::Path;

@@ -14,6 +14,12 @@ use super::{Format, LogError};
 /// Row arguments; their presence opts a scoped story into log queries.
 #[derive(Debug, Args)]
 pub(crate) struct RowArgs {
+    /// Search recorded text as a literal phrase (FTS5), not an expression.
+    #[arg(long)]
+    grep: Option<String>,
+    /// Database size, table counts and oldest record.
+    #[arg(long)]
+    stats: bool,
     /// Filter by task ID.
     #[arg(long)]
     task: Option<TaskId>,
@@ -46,7 +52,9 @@ pub(crate) struct RowArgs {
 impl RowArgs {
     /// Whether any row option was explicitly supplied.
     pub(crate) fn requested(&self) -> bool {
-        self.task.is_some()
+        self.stats
+            || self.grep.is_some()
+            || self.task.is_some()
             || self.run.is_some()
             || self.agent.is_some()
             || self.level.is_some()
@@ -67,8 +75,15 @@ impl RowArgs {
         out: &mut impl Write,
     ) -> Result<(), LogError> {
         let reader = Reader::open(path)?;
+        if self.stats {
+            writeln!(out, "{}", reader.statistics()?).map_err(LogError::Output)?;
+            return out.flush().map_err(LogError::Output);
+        }
+        if let Some(view) = self.show.filter(|view| *view != LogView::Log) {
+            return super::views::print(&reader, round, team.as_ref(), view, format, out);
+        }
         let filter = LogFilter {
-            grep: None,
+            grep: self.grep.clone(),
             team,
             round,
             task: self.task.clone(),

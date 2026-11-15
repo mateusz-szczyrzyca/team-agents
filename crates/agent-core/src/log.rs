@@ -583,6 +583,30 @@ impl LogEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, strum::VariantNames)]
 #[strum(parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<LogView>)]
 pub enum LogView {
+    /// Tasks with the latest recorded run status.
+    #[strum(serialize = "tasks")]
+    Tasks,
+    /// Participants and how they were chosen.
+    #[strum(serialize = "agents")]
+    Agents,
+    /// Worktree paths, branches and recorded heads.
+    #[strum(serialize = "worktrees")]
+    Worktrees,
+    /// Run starts.
+    #[strum(serialize = "runs")]
+    Runs,
+    /// Whole recorded prompts.
+    #[strum(serialize = "prompts")]
+    Prompts,
+    /// Recorded changes.
+    #[strum(serialize = "changes")]
+    Changes,
+    /// Review requests and reports.
+    #[strum(serialize = "reviews")]
+    Reviews,
+    /// Availability of token accounting.
+    #[strum(serialize = "usage")]
+    Usage,
     /// Daemon log rows.
     #[strum(serialize = "log")]
     Log,

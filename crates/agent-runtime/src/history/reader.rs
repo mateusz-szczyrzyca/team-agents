@@ -30,6 +30,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, Transaction, param
 
 pub(super) mod query;
 mod sequenced;
+mod stats;
 
 use super::codec::parse_time;
 use super::error::{ReadError, ValueProblem};
