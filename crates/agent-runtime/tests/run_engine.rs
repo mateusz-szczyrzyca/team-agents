@@ -532,6 +532,68 @@ mod run_engine {
     }
 
     #[tokio::test]
+    async fn successful_classification_logs_one_decision_but_cancellation_logs_none() {
+        let normal = env().await;
+        let (normal_lines, normal_dispatch) = logging_dispatch();
+        let normal_result = tracing::instrument::WithSubscriber::with_subscriber(
+            normal
+                .engine
+                .run(normal.job("done", Env::new_session()), &CancellationToken::new()),
+            normal_dispatch,
+        )
+        .await;
+        assert!(
+            matches!(normal_result, Ok(RunVerdict::Finished(_))),
+            "{normal_result:?}"
+        );
+        let decisions = |lines: &Arc<std::sync::Mutex<Vec<String>>>| {
+            lines
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|line| {
+                    line.contains("event=decision_taken") && line.contains("\"decision\":\"classify_outcome\"")
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let recorded = decisions(&normal_lines);
+        assert_eq!(recorded.len(), 1, "missing classify_outcome decision: {normal_lines:?}");
+        assert!(recorded[0].contains("\"input\":"), "{recorded:?}");
+        assert!(recorded[0].contains("\"result\":"), "{recorded:?}");
+        assert!(
+            recorded[0].contains("succeeded") && recorded[0].contains("reported"),
+            "{recorded:?}"
+        );
+        assert!(
+            !recorded[0].contains("final_message") && !recorded[0].contains("evidence"),
+            "{recorded:?}"
+        );
+
+        let cancelled = env().await;
+        let (cancelled_lines, cancelled_dispatch) = logging_dispatch();
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let engine = cancelled.engine.clone();
+        let job = cancelled.job("hang", Env::new_session());
+        let marker = cancelled.worktree.path().join(".fake-child");
+        let running = tokio::spawn(async move {
+            tracing::instrument::WithSubscriber::with_subscriber(engine.run(job, &token), cancelled_dispatch).await
+        });
+        eventually("the fake CLI child", || marker.is_file()).await;
+        cancel.cancel();
+        let cancelled_result = running.await.unwrap();
+        assert!(
+            matches!(cancelled_result, Ok(RunVerdict::Interrupted { .. })),
+            "{cancelled_result:?}"
+        );
+        assert!(
+            decisions(&cancelled_lines).is_empty(),
+            "cancellation is not a classification decision"
+        );
+    }
+
+    #[tokio::test]
     async fn a_missing_working_directory_is_a_spawn_error() {
         let env = env().await;
         let mut job = env.job("done", Env::new_session());

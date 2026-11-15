@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use agent_core::config::AbsolutePath;
 use agent_core::ids::AgentName;
@@ -51,6 +52,48 @@ fn roster(formed: &Formed) -> Vec<(Role, String)> {
         .into_iter()
         .map(|(role, member)| (role, member.agent().name().to_owned()))
         .collect()
+}
+
+#[test]
+fn successful_team_planning_logs_one_decision_but_a_refusal_logs_none() {
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&lines);
+    let layer = agent_runtime::history::HistoryLayer::deferred(
+        agent_core::log::LogLevel::Debug,
+        agent_runtime::clock::SharedClock::new(agent_runtime::clock::SystemClock),
+        agent_core::config::Secrets::default(),
+    );
+    layer.with_stderr_sink(Arc::new(move |line: &str| {
+        captured.lock().unwrap().push(line.to_owned());
+    }));
+    let dispatch = tracing::Dispatch::new(tracing_subscriber::layer::SubscriberExt::with(
+        tracing_subscriber::registry(),
+        layer,
+    ));
+
+    let planned = tracing::dispatcher::with_default(&dispatch, || formed(&request(&["claude-1"], PLAIN)));
+    assert!(planned.is_ok(), "{planned:?}");
+    let decisions = || {
+        lines
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|line| line.contains("event=decision_taken") && line.contains("\"decision\":\"plan_team\""))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let recorded = decisions();
+    assert_eq!(recorded.len(), 1, "missing successful plan_team decision: {lines:?}");
+    assert!(recorded[0].contains("\"input\":"), "{recorded:?}");
+    assert!(recorded[0].contains("\"result\":"), "{recorded:?}");
+    assert!(
+        recorded[0].contains("claude-1") && recorded[0].contains("solo"),
+        "{recorded:?}"
+    );
+
+    let refused = tracing::dispatcher::with_default(&dispatch, || formed(&request(&["not-configured"], PLAIN)));
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(decisions().len(), 1, "a refused plan must not add a decision row");
 }
 
 // ---- a task alone ------------------------------------------------------------------------------------------------
