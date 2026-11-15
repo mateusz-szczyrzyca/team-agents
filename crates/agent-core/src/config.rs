@@ -16,6 +16,7 @@ use serde::Deserialize;
 use crate::history::MaxTextBytes;
 use crate::ids::{AgentName, BranchName, InvestigatorName};
 use crate::kinds::{CliKind, Keyword, Tier, UnknownKeyword};
+use crate::log::LogLevel;
 use crate::repo_path::PathPatterns;
 
 pub use secrets::{InvalidSecret, MAX_SECRETS_BYTES, Position, Secret, Secrets, SecretsError};
@@ -391,6 +392,20 @@ impl Default for History {
     }
 }
 
+/// `[log]`: which of the daemon's own log events are kept in `history.db` and printed to standard error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Log {
+    /// The lowest level kept: `error`, `warn`, `info` (default), or `debug`.
+    pub level: LogLevel,
+}
+
+impl Default for Log {
+    fn default() -> Self {
+        Self { level: LogLevel::Error }
+    }
+}
+
 /// `[web]`: the dashboard's listening address and who may open it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -451,6 +466,8 @@ pub struct Config {
     questions: Questions,
     /// The history.
     history: History,
+    /// The daemon's own log.
+    log: Log,
     /// The dashboard.
     web: Web,
     /// The repositories, by name.
@@ -511,6 +528,9 @@ struct RawConfig {
     /// See [`Config::history`].
     #[serde(default)]
     history: History,
+    /// See [`Config::log`].
+    #[serde(default)]
+    log: Log,
     /// See [`Config::web`].
     #[serde(default)]
     web: Web,
@@ -538,6 +558,7 @@ impl RawConfig {
             notifications,
             questions,
             history,
+            log,
             web,
             repos,
         } = self;
@@ -559,6 +580,7 @@ impl RawConfig {
             notifications,
             questions,
             history,
+            log,
             web,
             repos,
         })
@@ -737,6 +759,12 @@ impl Config {
     #[must_use]
     pub fn history(&self) -> &History {
         &self.history
+    }
+
+    /// Which of the daemon's own log events are kept.
+    #[must_use]
+    pub const fn log(&self) -> &Log {
+        &self.log
     }
 
     /// The dashboard's address and logins.

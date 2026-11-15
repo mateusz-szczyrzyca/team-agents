@@ -52,6 +52,7 @@ pub mod decide;
 pub mod history;
 pub mod ids;
 pub mod kinds;
+pub mod log;
 pub mod prompt;
 pub mod protocol;
 pub mod questions;

@@ -48,6 +48,8 @@ Top-level key and tables:
 | `[github]` | table | none trusted, public API | whose words on GitHub are instructions, and where the API is |
 | `[notifications]` | table | files only | how the human is told |
 | `[questions]` | table | nothing opened, `$VISUAL`/`$EDITOR` | how the questions of the agents reach you |
+| `[history]` | table | `enabled = true`, `max_text_bytes = 1048576` | the history database (`history.db`) |
+| `[log]` | table | `level = "info"` | the daemon's own log (`stderr` and `history.db`) |
 | `[web]` | table | loopback, nobody let in | the dashboard |
 | `[repos.NAME]` | table | none | per repository: base branch, gate and the checks before a review |
 
@@ -151,6 +153,12 @@ or waits for storage: the daemon says so once on its standard error for each cau
 
 Git history capture has a fixed overall `2`-second budget at each run boundary, with at most `1` additional second for
 process cleanup. The capture exception and configured-secret redaction are documented in [`history.md`](history.md).
+
+### `[log]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `log.level` | `info` | `error`, `warn`, `info`, or `debug`: the lowest severity of the daemon's own log events written to standard error and to `history.db` ([`log.md`](log.md)) |
 
 ### `[repos.NAME]`
 

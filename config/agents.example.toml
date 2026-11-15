@@ -134,6 +134,13 @@ open = "off"
 enabled = true
 max_text_bytes = 1048576
 
+# --- Daemon log ----------------------------------------------------------------------------------------------------
+# The daemon's own log goes to its standard error (the systemd journal) and to `history.db` (docs/log.md).
+# `level` is error | warn | info (default) | debug.
+
+[log]
+level = "info"
+
 # --- Dashboard -----------------------------------------------------------------------------------------------------
 # It listens on a loopback address only; remote access goes through `tailscale serve`, and only the Tailscale
 # logins listed here get in.

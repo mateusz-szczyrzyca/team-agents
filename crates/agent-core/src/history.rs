@@ -137,6 +137,11 @@ impl Cut {
         kept.text
     }
 
+    /// Notes that `field` was cut.
+    pub fn mark(&mut self, field: &'static str) {
+        self.0.insert(field);
+    }
+
     /// Whether `field` was cut.
     #[must_use]
     pub fn has(&self, field: &str) -> bool {
