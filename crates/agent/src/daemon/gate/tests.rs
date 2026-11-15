@@ -343,6 +343,57 @@ async fn a_gate_over_its_timeout_is_stopped_with_what_it_started_and_recorded_as
 }
 
 #[tokio::test]
+async fn a_timed_out_gate_records_a_scoped_gate_timed_out_warning() {
+    use agent_core::config::Secrets;
+    use agent_core::history::MaxTextBytes;
+    use agent_core::log::{LogEvent, LogLevel};
+    use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, HistoryLayer, Reader, Setup, TracingReporter};
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let rig = Rig::new().await;
+    rig.worktree(1);
+    let (job, answer) = rig.job(1, "sleep 30", Duration::from_millis(100));
+    let db = HistoryDb::open(&rig.home.history_file(), MaxTextBytes::default()).unwrap();
+    let started = History::start(
+        db,
+        Setup {
+            reporter: Arc::new(TracingReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let layer = HistoryLayer::new(
+        LogLevel::Debug,
+        SharedClock::new(rig.clock.clone()),
+        Secrets::default(),
+        Some(started.history.clone()),
+    );
+    let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(layer));
+    let mut service = Service::new(rig.parts()).with_history(started.history.clone());
+
+    tracing::instrument::WithSubscriber::with_subscriber(service.serve(job), dispatch).await;
+    let record = recorded(answer).await;
+    started.writer.close().unwrap();
+
+    assert_eq!(record.result.outcome, GateOutcome::TimedOut);
+    let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    let rows: Vec<_> = logs
+        .iter()
+        .filter(|row| row.event() == LogEvent::GateTimedOut)
+        .collect();
+    assert_eq!(rows.len(), 1, "the real timeout must produce one warning: {logs:?}");
+    let row = rows[0];
+    assert_eq!(row.level(), LogLevel::Warn);
+    assert_eq!(row.team(), Some(&team_id(1)));
+    assert_eq!(row.task(), Some(&task(1)));
+    assert!(row.run().is_none() && row.rounds().is_empty(), "{row:?}");
+    assert_eq!(
+        row.fields().get("timeout_ms").and_then(serde_json::Value::as_u64),
+        Some(100)
+    );
+}
+
+#[tokio::test]
 async fn the_next_gate_runs_after_one_that_timed_out() {
     let mut rig = Rig::new().await;
     rig.worktree(1);

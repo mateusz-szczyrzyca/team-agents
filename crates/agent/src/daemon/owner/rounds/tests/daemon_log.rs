@@ -18,6 +18,7 @@ use agent_runtime::history::{
     DEFAULT_QUEUE, History, HistoryDb, HistoryLayer, Problem, Reader, Reporter, Setup, install_panic_hook,
     log_decision, log_outside_call,
 };
+use agent_runtime::store::StoreError;
 use serde_json::json;
 use tracing::Instrument;
 use tracing::instrument::WithSubscriber;
@@ -26,8 +27,8 @@ use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
 
 use super::rig::{ONE, Rig, investigator, normal};
-use crate::daemon::owner::Message;
 use crate::daemon::owner::fixture::{Daemon, pair_state};
+use crate::daemon::owner::{Message, OwnerError};
 use crate::fixtures::{at, solo_state, task, team_id};
 
 /// Silent reporter for tests that inspect `daemon_logs` or `stderr` directly.
@@ -391,6 +392,236 @@ async fn five_repeated_bus_warnings_coalesce_into_one_row_with_count_five() {
     assert_eq!(bus_rows[0].rounds(), [round]);
     assert_eq!(bus_rows[0].task(), Some(&task_id));
     assert_eq!(bus_rows[0].run(), Some(&run));
+}
+
+#[tokio::test]
+async fn a_state_save_replace_failure_records_state_save_failed() {
+    let state = solo_state();
+    let daemon = Daemon::new(&state, None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let db = HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
+    let started = History::start(
+        db,
+        Setup {
+            reporter: Arc::new(SilentReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let layer = HistoryLayer::new(
+        LogLevel::Info,
+        SharedClock::new(daemon.clock.clone()),
+        Secrets::default(),
+        Some(started.history.clone()),
+    );
+    let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(layer));
+    let state_path = daemon.home.state_file();
+    std::fs::remove_file(&state_path).unwrap();
+    std::fs::create_dir(&state_path).unwrap();
+
+    let result = owner.save().with_subscriber(dispatch).await;
+    assert!(
+        matches!(&result, Err(OwnerError::Store(StoreError::Replace { path, .. })) if path == &state_path),
+        "{result:?}"
+    );
+    started.writer.close().unwrap();
+
+    let logs = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    let rows: Vec<_> = logs
+        .iter()
+        .filter(|row| row.event() == LogEvent::StateSaveFailed)
+        .collect();
+    assert_eq!(
+        rows.len(),
+        1,
+        "the real replace failure must produce one error: {logs:?}"
+    );
+    assert_eq!(rows[0].level(), LogLevel::Error);
+    assert!(rows[0].team().is_none() && rows[0].task().is_none() && rows[0].run().is_none());
+    assert!(
+        rows[0]
+            .fields()
+            .get("error")
+            .is_some_and(|error| !error.to_string().is_empty())
+    );
+}
+
+#[tokio::test]
+async fn a_live_daemon_log_write_failure_falls_back_to_stderr_and_the_round_merges() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let stderr = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&stderr);
+    let layer = HistoryLayer::deferred(
+        LogLevel::Info,
+        SharedClock::new(agent_runtime::clock::SystemClock),
+        Secrets::default(),
+    );
+    layer.with_stderr_sink(Arc::new(move |line: &str| {
+        captured.lock().unwrap().push(line.to_owned());
+    }));
+    rig.start_with_log_layer(layer).await;
+    let db = rusqlite::Connection::open(rig.home.history_file()).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER reject_live_daemon_logs BEFORE INSERT ON daemon_logs \
+         BEGIN SELECT RAISE(FAIL, 'injected live daemon_logs failure'); END;",
+    )
+    .unwrap();
+
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .item_where("1.1", "merged", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    assert!(matches!(
+        state.teams()[0].item("1.1".parse().unwrap()).unwrap().phase(),
+        ItemPhase::Done {
+            completion: Completion::Merged { .. }
+        }
+    ));
+    rig.wait_for("the live daemon-log fallback", || {
+        let lines = stderr.lock().unwrap().join("\n");
+        lines.contains("the history cannot keep a log entry") && lines.contains("event=run_ended")
+    })
+    .await;
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Teams { .. }), "{reply:?}");
+    rig.stop().await.unwrap();
+    drop(db);
+
+    let joined = stderr.lock().unwrap().join("\n");
+    assert_eq!(
+        joined.matches("the history cannot keep a log entry").count(),
+        1,
+        "{joined}"
+    );
+    assert!(joined.contains("event=run_ended"), "{joined}");
+}
+
+/// Database path passed only to the process-isolated spawned-panic child test.
+const SPAWNED_PANIC_DB: &str = "AGENT_TEST_SPAWNED_PANIC_DB";
+
+#[test]
+fn a_panic_in_a_spawned_daemon_side_task_records_daemon_panicked() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "daemon::owner::rounds::daemon_log_tests::spawned_daemon_panic_child_process",
+            "--nocapture",
+        ])
+        .env(SPAWNED_PANIC_DB, &path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "spawned-panic child failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let logs = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    let rows: Vec<_> = logs
+        .iter()
+        .filter(|row| row.event() == LogEvent::DaemonPanicked)
+        .collect();
+    assert_eq!(rows.len(), 1, "the real spawned panic must produce one row: {logs:?}");
+    assert_eq!(rows[0].level(), LogLevel::Error);
+    assert!(
+        rows[0].fields()["message"]
+            .to_string()
+            .contains("injected spawned daemon panic")
+    );
+    assert!(rows[0].fields().get("location").is_some());
+    assert!(rows[0].fields().get("thread").is_some());
+}
+
+/// Runs in its own test process because installing the panic hook changes process-global state.
+#[tokio::test]
+async fn spawned_daemon_panic_child_process() {
+    let Some(path) = std::env::var_os(SPAWNED_PANIC_DB) else {
+        return;
+    };
+    let db = HistoryDb::open(Path::new(&path), MaxTextBytes::default()).unwrap();
+    let started = History::start(
+        db,
+        Setup {
+            reporter: Arc::new(SilentReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let layer = HistoryLayer::new(
+        LogLevel::Info,
+        SharedClock::new(agent_runtime::clock::SystemClock),
+        Secrets::default(),
+        Some(started.history.clone()),
+    );
+    install_panic_hook(layer.clone());
+    let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(layer));
+    let mut sides = tokio::task::JoinSet::new();
+    sides.spawn(async { panic!("injected spawned daemon panic") }.with_subscriber(dispatch.clone()));
+
+    let failure = crate::daemon::join_sides(&mut sides, &dispatch).await;
+    assert!(
+        matches!(failure, Some(crate::daemon::DaemonError::Join(_))),
+        "{failure:?}"
+    );
+    started.writer.close().unwrap();
+}
+
+#[test]
+fn an_assignable_decision_with_no_result_writes_no_decision_row() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let db = HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
+    let started = History::start(
+        db,
+        Setup {
+            reporter: Arc::new(SilentReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let layer = HistoryLayer::new(
+        LogLevel::Debug,
+        SharedClock::new(daemon.clock.clone()),
+        Secrets::default(),
+        Some(started.history.clone()),
+    );
+    let subscriber = tracing_subscriber::registry().with(layer);
+
+    let decided = tracing::subscriber::with_default(subscriber, || {
+        crate::daemon::team::assignable(&state.teams()[0]).unwrap()
+    });
+    assert!(decided.is_empty(), "{decided:?}");
+    started.writer.close().unwrap();
+
+    let logs = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    assert!(
+        !logs.iter().any(|row| {
+            row.event() == LogEvent::DecisionTaken
+                && row.fields().get("decision").and_then(|value| value.as_str()) == Some("assignable")
+        }),
+        "an empty assignment is not a decision: {logs:?}"
+    );
 }
 
 #[tokio::test]
