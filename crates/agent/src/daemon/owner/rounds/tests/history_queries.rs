@@ -332,3 +332,75 @@ async fn focused_views_of_a_daemon_round_have_normalized_golden_output() {
     }
     golden("log-focused-views.txt", &Normalized::of(&rig, &text, &json));
 }
+
+#[tokio::test]
+async fn daemon_recorded_questions_answers_steps_and_final_messages_are_searchable() {
+    use agent_core::protocol::{AnswerInput, AnswerList, AnswerRequest, Client, Command, Reply};
+    use agent_core::questions::Verdict;
+    use agent_core::status::TaskStatus;
+
+    let mut rig = patient(
+        &[
+            normal("claude-1", "ask,stream:search"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("search.jsonl"), concat!(
+        r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"żółwstepmarker"}]}}"#,
+        "\n",
+    )).unwrap();
+    rig.start_with_log_layer(HistoryLayer::deferred(
+        LogLevel::Info,
+        rig.history_test_clock(),
+        Secrets::default(),
+    ))
+    .await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let answers = AnswerList::try_from(vec![AnswerInput {
+        question: std::num::NonZeroU32::MIN,
+        verdict: Verdict::from_text("answersearchmarker").unwrap().unwrap(),
+    }])
+    .unwrap();
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: std::num::NonZeroU32::MIN,
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.stop().await.unwrap();
+
+    for query in [
+        "What should the team do about the pull request",
+        "answersearchmarker",
+        "żółwstepmarker",
+        "Streamed",
+        "I have to ask",
+    ] {
+        let found = rows(&rig, &["log", "--grep", query, "--json", "-n", "100000"]);
+        assert!(!found.is_empty(), "query {query:?}");
+        assert!(
+            found.iter().all(|row| row["task"] == tasks[0].to_string()),
+            "{query:?}: {found:?}"
+        );
+    }
+    assert_eq!(
+        rows(&rig, &["log", "--grep", "unrecordedanswersearchmarker", "--json"]),
+        Vec::<Value>::new()
+    );
+}
