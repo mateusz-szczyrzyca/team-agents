@@ -393,17 +393,11 @@ impl Default for History {
 }
 
 /// `[log]`: which of the daemon's own log events are kept in `history.db` and printed to standard error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Log {
     /// The lowest level kept: `error`, `warn`, `info` (default), or `debug`.
     pub level: LogLevel,
-}
-
-impl Default for Log {
-    fn default() -> Self {
-        Self { level: LogLevel::Error }
-    }
 }
 
 /// `[web]`: the dashboard's listening address and who may open it.

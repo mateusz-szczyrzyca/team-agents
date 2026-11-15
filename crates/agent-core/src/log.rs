@@ -70,8 +70,8 @@ impl LogLevel {
 
     /// Whether a configured threshold of `self` keeps an event of `event_level`.
     #[must_use]
-    pub const fn keeps(self, _event_level: Self) -> bool {
-        false
+    pub const fn keeps(self, event_level: Self) -> bool {
+        (event_level as u8) <= (self as u8)
     }
 }
 
@@ -177,7 +177,30 @@ impl LogEvent {
     /// The severity level of this event.
     #[must_use]
     pub const fn level(self) -> LogLevel {
-        LogLevel::Error
+        match self {
+            Self::StateSaveFailed | Self::ConfigurationNameMissing | Self::DaemonPanicked => LogLevel::Error,
+            Self::CliOutputUnreadable
+            | Self::RunEndedWithoutStatus
+            | Self::RunHung
+            | Self::RunQuotaExhausted
+            | Self::RunRateLimited
+            | Self::BusDown
+            | Self::GitCallFailed
+            | Self::GithubCallFailed
+            | Self::GateCannotStart
+            | Self::GateTimedOut
+            | Self::GateDirtyTree
+            | Self::QuestionsFileInvalid
+            | Self::RestartCorrected
+            | Self::RequestRefused => LogLevel::Warn,
+            Self::TeamChanged
+            | Self::RoundChanged
+            | Self::ItemPhaseChanged
+            | Self::TaskStatusChanged
+            | Self::RunStarted
+            | Self::RunEnded => LogLevel::Info,
+            Self::DecisionTaken | Self::OutsideCallCompleted => LogLevel::Debug,
+        }
     }
 }
 
@@ -201,19 +224,27 @@ pub struct LogTeamScope {
 impl LogTeamScope {
     /// Builds a team scope, sorting and deduplicating `rounds`.
     #[must_use]
-    pub fn new(team: TeamId, _rounds: impl IntoIterator<Item = RoundId>) -> Self {
-        Self {
-            team,
-            rounds: Vec::new(),
-        }
+    pub fn new(team: TeamId, rounds: impl IntoIterator<Item = RoundId>) -> Self {
+        let mut rounds: Vec<RoundId> = rounds.into_iter().collect();
+        rounds.sort();
+        rounds.dedup();
+        Self { team, rounds }
     }
 
     /// Builds a team scope from `rounds` that must already be strictly ascending.
     ///
     /// # Errors
     /// [`InvalidLogEntry::UnsortedRounds`] if `rounds` is not strictly ascending.
-    pub fn from_sorted(_team: TeamId, _rounds: Vec<RoundId>) -> Result<Self, InvalidLogEntry> {
-        Err(InvalidLogEntry::UnsortedRounds)
+    pub fn from_sorted(team: TeamId, rounds: Vec<RoundId>) -> Result<Self, InvalidLogEntry> {
+        if !rounds.windows(2).all(|pair| {
+            matches!(
+                (pair.first(), pair.get(1)),
+                (Some(left), Some(right)) if left < right
+            )
+        }) {
+            return Err(InvalidLogEntry::UnsortedRounds);
+        }
+        Ok(Self { team, rounds })
     }
 
     getter!("The team.", pub const fn team(&self) -> &TeamId = &self.team);
@@ -294,14 +325,29 @@ impl LogRecord {
 
     /// Cuts `message` and `fields` to fit within `limit` and marks any truncated field in `self.cut`.
     #[must_use]
-    pub fn keep(self, _limit: MaxTextBytes) -> Self {
+    pub fn keep(mut self, limit: MaxTextBytes) -> Self {
+        self.message = self.cut.keep("message", &self.message, limit);
+        let max = usize::try_from(limit.get()).unwrap_or(usize::MAX);
+        let serialized_len = serde_json::to_string(&self.fields).map_or(usize::MAX, |text| text.len());
+        if serialized_len > max {
+            let mut replacement = BTreeMap::new();
+            replacement.insert("truncated".to_owned(), serde_json::Value::Bool(true));
+            self.fields = replacement;
+            self.cut.mark("fields");
+        }
         self
     }
 
     /// Whether `self` and `other` are the same warning in the same scope and may be coalesced into one row.
     #[must_use]
-    pub fn same_warning(&self, _other: &Self) -> bool {
-        false
+    pub fn same_warning(&self, other: &Self) -> bool {
+        self.level() == LogLevel::Warn
+            && other.level() == LogLevel::Warn
+            && self.event == other.event
+            && self.team == other.team
+            && self.task == other.task
+            && self.message == other.message
+            && self.fields == other.fields
     }
 }
 
@@ -414,8 +460,56 @@ impl LogEntry {
     ///
     /// # Errors
     /// [`InvalidLogEntry`] if any invariant of `daemon_logs` or `daemon_log_rounds` is violated.
-    pub fn try_new(_parts: LogEntryParts) -> Result<Self, InvalidLogEntry> {
-        Err(InvalidLogEntry::RoundsWithoutTeam)
+    pub fn try_new(parts: LogEntryParts) -> Result<Self, InvalidLogEntry> {
+        let LogEntryParts {
+            id,
+            first_at,
+            at,
+            level,
+            module,
+            event,
+            team,
+            rounds,
+            task,
+            run,
+            message,
+            fields,
+            count,
+            cut,
+        } = parts;
+        if level != event.level() {
+            return Err(InvalidLogEntry::LevelMismatch { event, level });
+        }
+        if count.get() > 1 && level != LogLevel::Warn {
+            return Err(InvalidLogEntry::NonWarnRepeated { event, count });
+        }
+        if first_at > at {
+            return Err(InvalidLogEntry::FirstAfterLast { first_at, at });
+        }
+        let team = match (team, rounds.is_empty()) {
+            (Some(team), _) => Some(LogTeamScope::from_sorted(team, rounds)?),
+            (None, true) => None,
+            (None, false) => return Err(InvalidLogEntry::RoundsWithoutTeam),
+        };
+        let task = match (task, run) {
+            (Some(task), run) => Some(LogTaskScope::new(task, run)),
+            (None, None) => None,
+            (None, Some(run)) => return Err(InvalidLogEntry::RunWithoutTask { run }),
+        };
+        let cut = Cut::parse(&cut, KNOWN_LOG_CUT_FIELDS)?;
+        Ok(Self {
+            id,
+            first_at,
+            at,
+            module,
+            event,
+            team,
+            task,
+            message,
+            fields,
+            count,
+            cut,
+        })
     }
 
     getter!("The row's primary key (`id`).", pub const fn id(&self) -> i64 = self.id);
