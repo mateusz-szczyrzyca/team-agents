@@ -3,6 +3,7 @@ use super::{Format, LogError};
 use agent_core::history::{EndKind, HistoryEvent, Record};
 use agent_core::ids::{RoundId, TeamId};
 use agent_core::log::LogView;
+use agent_core::state::RunEnd;
 use agent_core::story::{Selection, json_lines};
 use agent_runtime::history::Reader;
 use std::collections::BTreeMap;
@@ -134,7 +135,7 @@ fn print_latest(
     for row in latest.values() {
         let run = &row.start.value;
         let value = if view == LogView::Tasks {
-            serde_json::json!({"task":run.task,"agent":run.agent.name,"role":run.role,"status":row.end.as_ref().map(|end| EndKind::of(&end.value.end).to_string()),"end":row.end.as_ref().map(|end| &end.value.end)})
+            serde_json::json!({"task":run.task,"agent":run.agent.name,"role":run.role,"status":row.end.as_ref().map(|end| match &end.value.end { RunEnd::Reported { outcome } => outcome.to_string(), other => EndKind::of(other).to_string() }),"end":row.end.as_ref().map(|end| &end.value.end)})
         } else {
             serde_json::json!({"task":run.task,"worktree":run.worktree,"branch":run.branch,"head":row.launch.as_ref().and_then(|launch| launch.value.head.as_ref())})
         };
