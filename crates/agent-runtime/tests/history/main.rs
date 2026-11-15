@@ -37,3 +37,6 @@ mod redaction;
 
 #[cfg(test)]
 mod queries;
+
+#[cfg(test)]
+mod search;

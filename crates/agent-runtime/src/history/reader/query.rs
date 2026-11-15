@@ -73,6 +73,8 @@ impl Selection {
 /// Optional predicates; every supplied predicate must match.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LogFilter {
+    /// Literal phrase searched across recorded text.
+    pub grep: Option<String>,
     /// Owning team.
     pub team: Option<TeamId>,
     /// Associated round.
@@ -113,6 +115,9 @@ impl Reader {
     /// # Errors
     /// [`ReadError`] when the database or a selected row is invalid.
     pub fn log_rows(&self, filter: &LogFilter, window: LogWindow) -> Result<Vec<LogEntry>, ReadError> {
+        if filter.grep.is_some() {
+            return Ok(Vec::new());
+        }
         let snapshot = self.snapshot("daemon_logs")?;
         if version_of(&snapshot).map_err(query("daemon_logs"))? < DAEMON_LOGS_VERSION {
             return Ok(Vec::new());

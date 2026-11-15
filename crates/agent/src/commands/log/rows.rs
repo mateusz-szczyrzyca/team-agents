@@ -68,6 +68,7 @@ impl RowArgs {
     ) -> Result<(), LogError> {
         let reader = Reader::open(path)?;
         let filter = LogFilter {
+            grep: None,
             team,
             round,
             task: self.task.clone(),
