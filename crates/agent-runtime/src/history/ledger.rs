@@ -81,8 +81,8 @@ pub(super) fn append(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes)
     let sequence = tx.last_insert_rowid();
     if let Record::RunEnd(end) = record {
         tx.execute(
-            "UPDATE history_records SET at = ?1 WHERE kind = 'changes' AND key = ?2",
-            params![&entry.at, end.run.as_str()],
+            "UPDATE history_records SET at = ?1 WHERE kind = 'changes' AND key = ?2 AND team = ?3",
+            params![&entry.at, end.run.as_str(), &entry.team],
         )
         .map_err(sql(kind))?;
     }
@@ -100,20 +100,19 @@ pub(super) fn append(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes)
 /// Checks that none of `rounds` is recorded as belonging to a team other than `team`.
 fn check_rounds(tx: &Transaction<'_>, team: &str, rounds: &[String], kind: RecordKind) -> Result<(), WriteError> {
     for round in rounds {
-        let foreign: Option<i64> = tx
+        let owner: Option<String> = tx
             .query_row(
-                "SELECT 1 FROM rounds WHERE round = ?1 AND team <> ?2 \
-                 UNION ALL \
-                 SELECT 1 FROM history_record_rounds AS l \
-                 JOIN history_records AS r ON r.sequence = l.sequence \
-                 WHERE l.round = ?1 AND r.team <> ?2 \
-                 LIMIT 1",
-                params![round, team],
+                "SELECT COALESCE(\
+                     (SELECT team FROM rounds WHERE round = ?1),\
+                     (SELECT r.team FROM history_record_rounds AS l \
+                      JOIN history_records AS r ON r.sequence = l.sequence \
+                      WHERE l.round = ?1 ORDER BY l.sequence LIMIT 1)\
+                 )",
+                [round],
                 |row| row.get(0),
             )
-            .optional()
             .map_err(sql(kind))?;
-        if foreign.is_some() {
+        if owner.as_deref().is_some_and(|owner| owner != team) {
             return Err(WriteError::Rule {
                 record: kind,
                 rule: "a record cannot belong to a round of another team",
