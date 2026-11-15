@@ -1,186 +1,244 @@
-# Review of PR #101 against item 8.5 — `inv-opus`
+# Re-review of PR #101 against item 8.5 — `inv-opus` (task `20261115-012102-inv-opus`)
 
 PR: [#101](https://github.com/mateusz-szczyrzyca/team-agents/pull/101), "Item 8.5: the history of a pull request, and the
-story of a round". Reviewed head: [`311120f`](https://github.com/mateusz-szczyrzyca/team-agents/commit/311120fac52d5f7f0716961ea60eb9e502878180)
-(the PR's `headRefOid`, also the base of this branch). Measured against item 8.5 of `rounds/round-8.5.md`, the developer
-rules (`prompts/agent/rust-developer.md`) and `AGENTS.md`.
+story of a round". Reviewed head: [`f01d6ed`](https://github.com/mateusz-szczyrzyca/team-agents/commit/f01d6ed9014c3e9b0b9a342318b875f1b259f335)
+(the PR's `headRefOid`, after `5` fix passes). Measured against item 8.5 of `rounds/round-8.5.md`, the review rules
+(`prompts/investigator/code-review.md`), the developer rules (`prompts/agent/rust-developer.md`), `AGENTS.md`, and the
+latest reviews: `inv-astra` (on [`fff5808`](https://github.com/mateusz-szczyrzyca/team-agents/commit/fff580885497dd47cf34fe20900e65ffd45aa563)),
+`inv-kimi-deepinfra` and `inv-claude-sonnet` (both on `f01d6ed`). My previous review, at
+[`311120f`](https://github.com/mateusz-szczyrzyca/team-agents/commit/311120fac52d5f7f0716961ea60eb9e502878180), is the earlier
+version of this file in [`8738b91`](https://github.com/mateusz-szczyrzyca/team-agents/blob/8738b91d1152f252e36f9a2466d100d9beef8519/docs/investigations/please-perform-code-review-of-this-pr-https-github-com-mateusz-s/inv-opus.md).
 
-**Verdict: REQUEST_CHANGES.** Most of the item is there, and done carefully. The gate is green and the item's two checks
-pass when I run them by hand. But two recording/story defects show up in real daemon data: a run's changes get the wrong
-time, and a team's end is printed once per round. The loss rule of the item is only partly met. Two of the three
-behaviours I broke on purpose went unnoticed by the tests.
+```text
+VERDICT: REQUEST_CHANGES
+SUMMARY: The ledger, the pure story, offline `agent log` and the seven daemon-made goldens are in place, the gate is
+         green and both checks of the item pass with the real binary. Not merge-ready: three recording defects (an
+         unbuildable fix pass is not told in the story, the human's allowance in a mixed answer is never recorded, and
+         one refused loss note blocks every later note), all three of my mutations survived, and TYP-6 is still broken.
+SIZE: 4,324 changed lines outside tests (limit 5,000 for this plan)
+GATE: `GATE_WAIT=1 make gate` — ok rust 78s (fmt, clippy -D warnings, tests, doc); 2,455 passed, 0 failed, 0 ignored
+```
+
+## Criteria (the item's checks)
+
+- **Check 1 — met.** I copied the `history.db` of the team round with one fix pass out of its daemon run, after the
+  daemon stopped. I ran the real `target/debug/agent log --round <id>` against a fresh `AGENTS_HOME` that held only
+  that file. The story shows:
+  - the item;
+  - `5` agents by role with how each was chosen, the reviewers included;
+  - every run with its prompt's first lines, its size and its numbered steps;
+  - the files each run changed;
+  - two review passes with their verdicts;
+  - `pull request #1 merged as 7d423ed`.
+- **Check 2 — met.**
+  - `--prompts` prints both second-pass reviewer prompts whole (`30,066` bytes each; I compared them with `runs.prompt`
+    in SQLite).
+  - `--json | wc -l` gives `81`; an independent SQL count of the round's records gives `81`.
 
 ## Checks
 
 | What | Result |
 |---|---|
-| `GATE_WAIT=1 make gate` on `311120f` | **PASS**, `72` s (`rust` step: fmt, clippy `-D warnings`, tests, docs) |
-| PR-1 size command against `origin/main...HEAD` | `4,084` lines (limit `5,000`; matches the PR description) |
-| Item check 1: a team round with one fix pass, daemon stopped, `agent log --round <id>` with the real binary | passes: item, agents by role, every run with its prompt's first lines and steps, files per run, two review passes with verdicts, the merge |
-| Item check 2: `--prompts` prints the reviewers' second prompts whole | passes (`30,066`-byte prompts printed between markers) |
-| Item check 2: `--json \| wc -l` equals the round's records in the database | passes: `81` = `81` (independent SQL count) |
-| Unknown round | `agent: the history has no round …`, exit `3` |
-| No history file in `AGENTS_HOME` | exit `1`, message names the path, no file is created |
-| Golden-story tests (`history_stories`), run `3` times | `7/7` passed each time |
-| RED commit [`1fe99b1`](https://github.com/mateusz-szczyrzyca/team-agents/commit/1fe99b17f3ab022b8e731125be4a2987c9d48b19) checked out and run | `story_records`: `1` passed, `8` failed, as its message says |
-| TDD-14 freeze: each RED commit's test files diffed to `HEAD` | only `use` lines and the listed `TEST-FIX` commits change them |
-
-How I ran item check 1: I temporarily patched
-`a_team_round_with_a_worker_one_fix_pass_and_a_second_review_pass_that_approves_is_told_whole` (not committed) to copy
-its `history.db` out after `rig.stop()`. Then I ran `target/debug/agent log` with `AGENTS_HOME` set to a fresh
-directory that held only that file.
+| Gate on `f01d6ed` | **PASS**, `78` s, `2,455` tests passed, `0` failed, `0` ignored |
+| PR-1 command against `origin/main...HEAD` | `4,324` (`4,320` without the test-only `deadline_tests.rs`); within `5,000` |
+| Merge with current `main` ([`c4de42a`](https://github.com/mateusz-szczyrzyca/team-agents/commit/c4de42ab2ab24cf260be667d37d02f9278c8acc8)) | `git merge-tree` reports no conflict; `rounds/round-8.5.md` is unchanged on `main` |
+| `agent log --round <unknown>` / `--team <unknown>` | message and exit `3` |
+| `agent log` with no `history.db` in `AGENTS_HOME` | exit `1`, message names the path, no file created |
+| `agent log --team <id>` | `team ended` printed once; `--json` gives `87` lines (`81` of the round plus `6` team-wide records) |
+| `--no-steps` | no `steps (` line |
+| $\color{red}{\textbf{RED}}$ [`63e9fc8`](https://github.com/mateusz-szczyrzyca/team-agents/commit/63e9fc8189658e6e25be99677ae67b2d9172dbb8), checked out and run | `a_fix_pass_whose_event_cannot_be_built_is_counted_as_lost` fails on its assertion (`left: 0`, `right: 1`) |
+| Freeze (TDD-14): every RED commit diffed to `HEAD` for removed asserts | every hit comes from one of the `10` listed `TEST-FIX` commits |
+| Sweep of added lines | the only production `expect` is the accepted one in `story/json.rs`; no `unsafe`, `println!`, `process::exit` |
 
 ## Behaviours broken on purpose (review step 6)
 
-Each mutation was reverted with `git checkout` before the next one.
+I reverted each mutation before the next one. A control mutation proved that the harness catches a real break: the
+merge recorded with no round makes `6` golden tests fail.
 
 | # | Mutation | Where | Result |
 |---|---|---|---|
-| 1 | The gate event records `started_at: record.result.finished_at`, so every gate takes no time (recorded) | [`crates/agent/src/daemon/gate.rs#L447-L458`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent/src/daemon/gate.rs#L447-L458) | **survived**: `cargo test -p agent` all green (`709` + the integration tests) |
-| 2 | The story orders a tie by the reverse write order (`Reverse(record.sequence)`) | [`crates/agent-core/src/story.rs#L55-L75`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-core/src/story.rs#L55-L75) | killed: `3` tests of `story_records` fail |
-| 3 | The ledger links a gate to the rounds of the task's *oldest* run (`ORDER BY at ASC, rowid ASC`) instead of the latest (recorded) | [`crates/agent-runtime/src/history/ledger.rs#L147-L159`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-runtime/src/history/ledger.rs#L147-L159) | **survived**: `cargo test -p agent-runtime -p agent` all green |
+| 1 | A closed pull request is recorded with no round (recorded) | [`merges.rs#L175-L180`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent/src/daemon/owner/rounds/merges.rs#L175-L180) | **survived**: `cargo test -p agent`, `720` + all integration tests green |
+| 2 | A late review report is not recorded at all (recorded) | [`verdicts.rs#L139-L163`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent/src/daemon/owner/rounds/verdicts.rs#L139-L163) | **survived**: `cargo test -p agent` all green |
+| 3 | A head-capture loss note goes to the *first* run of its task instead of the latest (`.rev()` removed) (story) | [`text.rs#L488-L497`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-core/src/story/text.rs#L488-L497) | **survived**: `cargo test -p agent-core -p agent -p agent-runtime` all green |
+| — | My earlier mutation: a gate linked to the task's *oldest* run | [`ledger.rs#L181`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-runtime/src/history/ledger.rs#L181) | now killed by `a_task_with_runs_in_two_rounds_links_second_round_events_only_to_the_second_round_and_renders_team_ended_once` |
 
-## Findings
+## BLOCKERS
 
-### Major
+1. **[COR, item "a story says … that it was lost and why"]**
+   [`crates/agent/src/daemon/owner/history.rs#L193-L227`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent/src/daemon/owner/history.rs#L193-L227)
+   — a fix pass with no findings, or with no item in `Fixing` for the run's agent, only calls `record_lost()`.
+   - Nothing is reported under a cause, and no `Lost` note is written, although the team, task and rounds are known.
+   - The story then shows a fix-pass run and no fix pass.
+   - I confirm the finding of `inv-claude-sonnet` (major 1) and `inv-kimi-deepinfra` (major 1).
+   - → Add a cause for an event that cannot be built. Queue `HistoryEvent::Lost { what: LostKind::Event(EventKind::FixPassStarted), .. }`
+     linked to `rounds`, as `questions_text` does. Assert the note and its story line.
+2. **[COR, item "allowed by the human"] — new.**
+   [`crates/agent/src/daemon/owner/rounds/checks.rs#L185-L192`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent/src/daemon/owner/rounds/checks.rs#L185-L192)
+   — `CheckOutcome::Allowed` is recorded only when the human allowed **every** issue.
+   - In a mixed answer, the issues the human allowed are recorded nowhere: the refused ones come back as `sent_back`,
+     and the allowance disappears from the history and the story.
+   - The pass-2 fix turned "recorded wrongly" into "not recorded". The test
+     `a_mixed_allow_and_refuse_answer_does_not_record_all_issues_allowed` only checks that the event is absent.
+   - → Record `Allowed` with `decided.allowed` whenever it is non-empty (the event carries its own issue list), and
+     assert those issues.
+3. **[COR, ERR-1] — new.**
+   [`crates/agent-runtime/src/history/notes.rs#L197-L212`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-runtime/src/history/notes.rs#L197-L212)
+   (with [`ledger.rs#L101-L124`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-runtime/src/history/ledger.rs#L101-L124))
+   — all pending notes are written as one batch.
+   - A note takes the team and rounds of the record it is about. So the note of a record refused by the round rule
+     ("a record cannot belong to a round of another team") is refused again, every time.
+   - From then on, every note waits until `256` newer ones push it out.
+   - **Proved:** I wrote a scratch test (not committed): a foreign-team run that names this team's round, then a run
+     that names its round twice. The second, valid note is never written (`0` notes, expected `1`). Without the
+     foreign run, the same test writes it (`1`).
+   - → Write notes one by one. Drop a note refused by a `Rule` and count it; keep only notes refused for a transient
+     reason.
+4. **[TDD-2] — new.**
+   [`crates/agent/src/daemon/owner/rounds/verdicts.rs#L136-L163`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent/src/daemon/owner/rounds/verdicts.rs#L136-L163)
+   — no test covers the `review_submitted` of a late report.
+   - A late report answers a review pass that is already decided.
+   - Mutation 2 removed this record entirely, and every test stayed green.
+   - No golden has a late report: in `story-team-fix-pass.txt` the approval comes before the request for changes.
+   - → Add a daemon test in which `REQUEST_CHANGES` decides the pass first and the other reviewer reports after it.
+     Assert its `ReviewSubmitted`, its pass and its round.
+5. **[TDD-2] — new.**
+   [`crates/agent/src/daemon/owner/rounds/merges.rs#L168-L181`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent/src/daemon/owner/rounds/merges.rs#L168-L181)
+   — nothing tests that `pull_closed` is linked to its round.
+   - With mutation 1 the closing is missing from the round story, and nothing fails.
+   - `a_pull_request_the_human_closed_is_recorded_once_however_often_it_is_looked_at` only counts the team's events.
+   - → Assert the rounds of the event, or `closed` in `agent log --round`.
+6. **[TDD-2] — new.**
+   [`crates/agent-core/src/story/text.rs#L477-L507`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-core/src/story/text.rs#L477-L507)
+   — `attach_run_loss` picks the latest run of the task, and no test checks that choice (mutation 3).
+   - Every story test has one run per task that has a loss.
+   - → Add a story test with two runs of one task and the capture loss on the second.
+7. **[TYP-6]** `_ =>` arms on the workspace enum `Record`:
+   [`text.rs#L74`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-core/src/story/text.rs#L74)
+   and [`#L163`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-core/src/story/text.rs#L163)
+   (confirming `inv-claude-sonnet` major 2). Also two binding catch-alls:
+   - `other =>` on `HistoryEvent` at [`text.rs#L752`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-core/src/story/text.rs#L752);
+   - `kind =>` on `EventKind` in `LostKind::from_str` at [`event.rs#L94`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-core/src/history/event.rs#L94),
+     added in pass 2. With it, a new event kind becomes a valid lost kind without anyone deciding so.
+   - → List the variants.
+8. **[ERR-2, TDD-2, PR-7] — new.**
+   [`crates/agent/src/daemon/owner/controls.rs#L276-L287`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent/src/daemon/owner/controls.rs#L276-L287)
+   — [`e5d5e59`](https://github.com/mateusz-szczyrzyca/team-agents/commit/e5d5e59c1cb4e82c8ca867ef8cb7df8fcb327b72)
+   changed the existing `record_control`: a clock error used to fail the operation, and is now logged and skipped.
+   - On that error, the control's published event and its activity-log lines are dropped.
+   - This is not the history: `record_event` already handles the history's own clock failure.
+   - No test provokes this path (the only clock-failure tests are in `gate/tests.rs` and `history_events.rs`).
+   - → Restore the propagation. Or, if this is the intended behaviour, write it down and add a test.
+9. **[PERF-3] — new.**
+   [`crates/agent-runtime/src/history/ledger.rs#L101-L124`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-runtime/src/history/ledger.rs#L101-L124)
+   — `check_rounds` scans every earlier link of a round, for every record and every round it names.
+   - When no foreign link exists, `LIMIT 1` never stops the scan early.
+   - Every step of a run is linked to the run's rounds, so the writer's work grows with the square of a round's
+     steps. A slow writer drops records when its queue is full.
+   - → Look up the owner in `rounds` first, and otherwise compare with the round's first link only: the invariant
+     gives a round one team.
 
-1. **[correctness, recorded] Every `changes` record gets the time its run started, not the time it ended.** The run
-   engine records `Changes` when the process exits
-   ([`crates/agent-runtime/src/run.rs#L498-L503`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-runtime/src/run.rs#L498-L503)).
-   The owner records `RunEnd` after that
-   ([`crates/agent/src/daemon/owner/history.rs#L219`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent/src/daemon/owner/history.rs#L219)).
-   The ledger's
-   [`changed_at`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-runtime/src/history/ledger.rs#L162-L174)
-   takes the run end's time if one is recorded, and the run's start time otherwise. Because the end is never recorded
-   yet, it always falls back to the start. In the database of the team-fix-pass round, all `11` `changes` rows have
-   `at` equal to `runs.at` and a sequence below their `run_end`. This breaks the documented contract
-   ([`docs/history.md#L195`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/docs/history.md#L195):
-   "for `changes`, when the run ended"). It also puts every run's changes *before* its launch and steps in `--json`,
-   whose order is time order. Story point 4 asks for "after each run its changes". The text story hides this because
-   it groups records by run. Fix: give the changes record its own time, or record the end first, and add a daemon
-   test that asserts the `changes` time equals the `run_end` time.
+## MINOR
 
-2. **[correctness, story] `agent log --team` prints "team ended" once per round of the team.** The daemon links
-   `TeamEnded` to every round of the team
-   ([`crates/agent/src/daemon/owner/teams.rs#L742-L745`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent/src/daemon/owner/teams.rs#L742-L745)).
-   The team story prints each round's linked records under that round
-   ([`crates/agent-core/src/story/text.rs#L88-L96`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-core/src/story/text.rs#L88-L96)).
-   The same happens to any other record linked to two rounds. The test
-   `the_story_of_a_team_tells_its_rounds_in_order_and_the_team_start_and_end_once` passes only because its fixture
-   links `TeamEnded` to no round
-   ([`crates/agent-core/tests/support/story_world.rs#L315-L319`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-core/tests/support/story_world.rs#L315-L319)),
-   which is not what the daemon does. `docs/history.md` also says the end of a team has no rounds
-   ([`#L340`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/docs/history.md#L340)).
-   I reproduced it with a scratch test (not committed): two rounds, `TeamEnded` linked to both as the daemon links
-   it. `text.matches("team ended\n").count()` was `2`. No golden covers a team with two items, so nothing catches it.
+1. **[ERR-2]** [`handle.rs#L370`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-runtime/src/history/handle.rs#L370)
+   — `Timestamp::now(clock).unwrap_or(start_at)` hides a clock failure and stamps the note with the run's start
+   (confirming `inv-claude-sonnet` minor 1).
+2. **[TYP-4, COR]** Capture losses are filed under the wrong cause:
+   - `capture_run_failed` accepts every `CaptureKind`, and maps `Gate`, `Questions` and `Clock` to `capture_changes`
+     ([`handle.rs#L364-L368`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-runtime/src/history/handle.rs#L364-L368)).
+   - A gate's clock failure is counted and noted as `capture_gate`, not `capture_clock`
+     ([`gate.rs#L313-L317`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent/src/daemon/gate.rs#L313-L317)).
+   - → Use a two-variant run-capture kind, and file clock failures under `capture_clock`.
+3. **[ERR-2]** [`history.rs#L55-L66`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent/src/daemon/owner/history.rs#L55-L66)
+   — an item with no round is logged and dropped: its event is in no round story, and it is not counted
+   (confirming `inv-claude-sonnet` minor 2).
+4. **[TYP-1, ground rule "refused … again when read"]**
+   [`reader/sequenced.rs#L191`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-runtime/src/history/reader/sequenced.rs#L191)
+   — `cut` is checked against the union `EVENT_CUTS`, not against the event's own fields: a `pull_ready` row with
+   `cut = "report"` is read, and the story says it was cut. → Check against the event's `texts_mut()` names.
+5. **[tests, ground rule "every record … proved by a run of the daemon"]** `story-no-merge.txt` and `story-checks.txt`
+   have no gate record. Their rigs use the `work` action, which writes `gate.json` itself
+   ([`team-cli.sh#L104-L113`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent/tests/fixtures/team-cli.sh#L104-L113)).
+   The pull request is "opened … after the repository's gate passed", but the story has no gate and no loss note.
+   → Use `gated` in those rigs.
+6. **[ERR-11]** [`log.rs#L113-L114`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent/src/commands/log.rs#L113-L114)
+   — `agent log --round <id> --json | head -2` ends with `agent: cannot write the story: Broken pipe (os error 32)`.
+   → Treat a closed pipe as a normal end, and test it.
+7. **[PERF-3]** [`ledger.rs#L82-L88`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-runtime/src/history/ledger.rs#L82-L88)
+   — the update of a run's `changes` time has no `team` in its `WHERE`, so the `(kind, team, key)` index narrows only
+   by `kind`, and every run end scans all `changes` rows. → Add `AND team = ?`.
+8. **[story completeness, from my previous review, still open]** the round story leaves out the run of the worker
+   that is linked to no round. In the fix-pass round, the round has `81` records and the team `87`, and that run is
+   among the difference. The story is not wrong, and the docs now say so.
+9. **[TDD-1]** The message of $\color{red}{\textbf{RED}}$ [`63e9fc8`](https://github.com/mateusz-szczyrzyca/team-agents/commit/63e9fc8189658e6e25be99677ae67b2d9172dbb8)
+   names the test, but has no test command and no failing lines. It does fail on its assertion.
+10. **[PR-9]** Wrong or missing facts in the PR description:
+    - `## What and why` names the branch `agents/inv-gemini-argon/20261114-190223`, not
+      `agents/inv-claude-sonnet/20261114-151411`.
+    - The script's "Round size" block says `0 lines`.
+    - At `4,324` the PR is above PR-2's ~`4,000` threshold for planning a split, and no split is recorded.
 
-3. **[item gap] A lost record is said in its place only when the database refused it.** The item says: "a story says,
-   in the place of what is missing, that it was lost and why". Only records that SQLite refuses when written alone
-   get a `lost` note
-   ([`crates/agent-runtime/src/history/notes.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-runtime/src/history/notes.rs)).
-   Two kinds of loss leave the story silent:
-   - The new capture failures of this item: an unreadable questions file, or a clock that cannot give a time. They
-     call `record_lost()`
-     ([`crates/agent/src/daemon/owner/history.rs#L17-L28`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent/src/daemon/owner/history.rs#L17-L28),
-     [`#L71-L84`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent/src/daemon/owner/history.rs#L71-L84)).
-     That bumps the total but reports **no cause**
-     ([`crates/agent-runtime/src/history/handle.rs#L331-L336`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-runtime/src/history/handle.rs#L331-L336)),
-     although the item asks for "each under its cause".
-   - Queue-full and secret-identity drops: they are counted, but nothing appears in the story.
+## Previous findings — status at `f01d6ed`
 
-   The PR says the human approved "best-effort loss tombstones". The contract proposed to the human was broader. The
-   Phase 1 report
-   ([`docs/investigations/round-rust-agent-8-5/inv-kimi-deepinfra.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/docs/investigations/round-rust-agent-8-5/inv-kimi-deepinfra.md),
-   points 2 and 3 of "Loss") recommended notes "for queue overflow, individual write failures, secret-identity omission
-   and failed captures". It also recommended that an absence with no note says "missing; no stored record / cause
-   unknown". Unless the human's verdict narrowed this, the captures and queue overflow still need a note. At minimum,
-   the new 8.5 captures should report a cause.
+My blockers at `311120f`:
 
-### Medium
+1. A run's `changes` got the run's start time: **fixed** ([`ledger.rs#L82-L88`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-runtime/src/history/ledger.rs#L82-L88), `RunEnd` updates it).
+2. `team ended` was printed once per round in `--team`: **fixed** (`in_round(…, false)`; I counted `1`).
+3. A loss was told in its place only when the database refused it: **partly fixed**. Capture failures are now noted.
+   An unbuildable fix pass (blocker 1) and an item with no round (minor 3) are still not.
+4. A human merge had no merge commit: **fixed** (`merge_commit_sha`).
+5. How long a gate took was untested: **fixed** ([`f88810e`](https://github.com/mateusz-szczyrzyca/team-agents/commit/f88810ec7b4c62cd8d88724d3b0a50870f2d8097)).
+6. The gate's link to the task's latest run was untested: **fixed** (the mutation is now killed).
+7. My minors 7, 8, 9, 12, 14 and 16 are **fixed**. Minor 10 is open (minor 8 above). Minor 11 is documented.
 
-4. **[item gap, recorded] A merge the human makes is recorded without its merge commit.**
-   [`crates/agent/src/daemon/owner/rounds/merges.rs#L168-L169`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent/src/daemon/owner/rounds/merges.rs#L168-L169)
-   records `Merged(None)`. Its comment says "GitHub's answer for the pull request does not say its commit". That is not
-   true of GitHub: `GET /repos/{owner}/{repo}/pulls/{n}` returns `merge_commit_sha`. The client simply does not decode
-   it ([`crates/agent-runtime/src/github.rs#L1720`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-runtime/src/github.rs#L1720)).
-   So every `--no-merge` round ends with "merged (the merge commit was not recorded)". The golden pins that text
-   ([`crates/agent/tests/golden/story-no-merge.txt#L142`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent/tests/golden/story-no-merge.txt#L142)).
-   The missing commit is not counted as lost and its cause is not told. The item asks for "merged (the merge commit)".
+The latest reviews:
 
-5. **[tests, TDD-2 / TDD-7] How long a gate took is not proven** (mutation 1). The only assertion is
-   `assert!(*started_at <= gate.at)`
-   ([`crates/agent/src/daemon/owner/rounds/tests/history_events.rs#L391`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent/src/daemon/owner/rounds/tests/history_events.rs#L391)),
-   and the goldens normalise durations. The rig's clock is injected and ticks, so an exact or strict assertion is
-   possible.
+- `inv-kimi-deepinfra`:
+  - major 1 is confirmed (blocker 1);
+  - majors 2 and 3 are in NEEDS HUMAN.
+- `inv-claude-sonnet`:
+  - majors 1 and 2 are confirmed (blockers 1 and 7);
+  - minors 1 and 2 are confirmed (minors 1 and 3);
+  - minor 3 is in NEEDS HUMAN.
+- `inv-astra`'s size blocker is **fixed** in `f01d6ed`: `4,324` lines.
 
-6. **[tests, TDD-2] Linking a gate to the task's *latest* run is not proven** (mutation 3).
-   `a_gate_with_no_rounds_belongs_to_the_rounds_of_the_latest_run_of_its_task`
-   ([`crates/agent-runtime/tests/history/gate_rounds.rs#L33`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-runtime/tests/history/gate_rounds.rs#L33))
-   builds a world with one run per task, so "latest" and "oldest" are the same run. In a team with two items, a
-   regression would put the coordinator's second gate in the first round.
+## ACCEPTED DEVIATIONS
 
-### Minor
+- **[ERR-3]** [`story/json.rs#L44-L50`](https://github.com/mateusz-szczyrzyca/team-agents/blob/f01d6ed9014c3e9b0b9a342318b875f1b259f335/crates/agent-core/src/story/json.rs#L44-L50)
+  — a scoped `expect`. Its reason holds: events are plain data, and every kind is serialized in a test.
+- **[TDD-14]** All `10` listed `TEST-FIX` commits are accepted.
+  - [`f88810e`](https://github.com/mateusz-szczyrzyca/team-agents/commit/f88810ec7b4c62cd8d88724d3b0a50870f2d8097)
+    loosens the exact pin of [`20922fc`](https://github.com/mateusz-szczyrzyca/team-agents/commit/20922fcb90d02c6c156d68ce008ac60e9cd13e1c)
+    to `>= 1s`. The exact value was not deterministic, because daemon tasks share the ticking clock, and a gate that
+    takes no time still fails it.
+- **Loss notes are a best effort:** a queue-full or secret drop is counted, not noted. The human approved this, and
+  `docs/history.md` documents it.
+- **[PR-1]** `4,324` lines, within the plan's `5,000`.
 
-7. **[TYP-4] `HistoryEvent::Lost { what: String, cause: String }`**
-   ([`crates/agent-core/src/history/event.rs#L260-L267`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-core/src/history/event.rs#L260-L267)).
-   A kind and a cause are stored as free strings, in a persisted format that accepts any value on read. `RecordKind` /
-   `EventKind` and the writer's cause enum already exist.
-8. **[TYP-4] Three `bool` parameters in `LogRequest::new(round, team, prompts, no_steps, json)`**
-   ([`crates/agent/src/commands/log.rs#L75-L81`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent/src/commands/log.rs#L75-L81)).
-   `PromptView`, `StepView` and `Format` already exist and could be passed in instead.
-9. **[item, story point 2] The reviewers are not among "the agents by role and how each was chosen".** The "Agents"
-   part lists only the team's plan
-   ([`crates/agent-core/src/story/text.rs#L186-L228`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-core/src/story/text.rs#L186-L228)).
-   The reviewers appear only in "asked of …" and in their runs, and how they were chosen is not recorded. This should
-   be recorded, or the PR should say why not.
-10. **[story completeness] The round story leaves out a run that the team ran during the round.** The worker's first
-    run is linked to no round (round linking from 8.4). The team-fix-pass round therefore shows `10` of the team's `11`
-    runs (checked in its database). `--team` prints that run in a trailing "Team events" part, after "team ended",
-    out of time order. The story is not wrong, but the PR should state it.
-11. **[item] "closed" is noticed only for approved pull requests.** `PullClosed` is recorded only in `try_merge`
-    ([`merges.rs#L170-L183`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent/src/daemon/owner/rounds/merges.rs#L170-L184)).
-    A pull request the human closes during review leaves no record. This limit is not documented.
-12. **[TDD-8, deviation's reason] The real-time waits were added by this PR.** They are `late:` (`sleep 3`) and
-    `wait_for_gate` (`sleep 0.1` polling)
-    ([`crates/agent/tests/fixtures/team-cli.sh#L118-L125`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent/tests/fixtures/team-cli.sh#L116-L125),
-    [`#L178-L182`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent/tests/fixtures/team-cli.sh#L178-L182)).
-    They came with [`e09d40e`](https://github.com/mateusz-szczyrzyca/team-agents/commit/e09d40eee563cb92ec21a0dab806b44b138167c0).
-    The PR says they were "retained because the task explicitly requires preserving existing tests", which does not
-    apply to tests the PR itself added. The order of the reviewers' verdicts in the goldens depends on the 3-second
-    margin. It was stable in my `3` runs.
-13. **[TDD-1]** In RED [`1fe99b1`](https://github.com/mateusz-szczyrzyca/team-agents/commit/1fe99b17f3ab022b8e731125be4a2987c9d48b19), two tests pass
-    against the stub (the commit says so). Two others fail on an index or `unwrap`, not on their assertion:
-    `story_records.rs:230` (`lines[2]`) and `:260` (`find(...).unwrap()`).
-14. **[notes.rs, ERR-1]** Notes are dropped without a log line in two places
-    ([`notes.rs#L60-L63`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-runtime/src/history/notes.rs#L60-L63),
-    [`#L79-L81`](https://github.com/mateusz-szczyrzyca/team-agents/blob/311120fac52d5f7f0716961ea60eb9e502878180/crates/agent-runtime/src/history/notes.rs#L79-L81)):
-    - At `4096` runs, the store forgets where *every* run belongs (`scopes.clear()`), so a later loss of a run still
-      going cannot be placed.
-    - At `256` pending notes, the oldest is dropped (`pending.remove(0)`).
-15. **[TDD-14 / PR-2, both disclosed]**
-    - `TEST-FIX` [`5d88ce7`](https://github.com/mateusz-szczyrzyca/team-agents/commit/5d88ce76ca6d06f85036acfb39cc274fe6cb338c)
-      also changes `docs/history.schema.sql`.
-    - At `4,084` lines the PR is above the ~`4,000`-line split threshold, and no split was planned before coding.
-16. **[cosmetic]**
-    - The questions notification reads "claude-1 has questions (`<task-4>`) (task `<task-4>`)": the task is named twice.
-    - In `story-question-answered.txt` the notification (line `44`) comes before "asked the human" (line `49`), because
-      the question is timed after the instructions are added to the file.
+## NEEDS HUMAN
 
-## What is good
+- **An existing test was changed:** [`89fd5ad`](https://github.com/mateusz-szczyrzyca/team-agents/commit/89fd5adf354222d1b8a32ed7fae3379f2703efef)
+  (`deadline_tests.rs`). It records your approval (question `1`, verdict `a`) and weakens nothing.
+- **Two inherited commits have a weak `Test-First: not possible` reason:**
+  [`a70e9d1`](https://github.com/mateusz-szczyrzyca/team-agents/commit/a70e9d16cd550c257db1639aaa0528d1f44722dc) and
+  [`e09d40e`](https://github.com/mateusz-szczyrzyca/team-agents/commit/e09d40eee563cb92ec21a0dab806b44b138167c0)
+  (`inv-kimi-deepinfra` majors 2 and 3).
+  - The branch cannot be rewritten.
+  - At the head both behaviours are covered: `Lost` was reworked through
+    [`48b93e3`](https://github.com/mateusz-szczyrzyca/team-agents/commit/48b93e385b8a2b985eddb8c1c650ee13f0610246) →
+    [`33e4840`](https://github.com/mateusz-szczyrzyca/team-agents/commit/33e484067cc732d9f3563d8df2d71544d00c17cb),
+    and `inv-claude-sonnet` showed that `4` goldens fail when the merge time is reverted.
+  - I recommend accepting both as a deviation. A focused ordering test for the merge time would still be welcome.
+- **A design risk for item 8.9 (not this PR):** `check_rounds` refuses any record of another team that is linked to
+  an existing round. When 8.9 hands a round to a new team, every record of the new team would be refused, and their
+  notes would poison the note queue (blocker 3).
 
-- One ledger with a write sequence. Events are stored as JSON with SQL checks of kind and payload, refused on write and
-  again on read. A migration to schema `3` keeps the 8.4 histories readable through temporary views.
-- The story is a pure function in `agent-core` (`selected` / `render` / `json_lines`). The text and the JSON share one
-  selection, and seeded property tests cover order, permutation and disjoint teams.
-- Seven goldens come from real daemon runs with fake CLIs and a fake GitHub. `check_story` compares every run's
-  stored prompt with what the fake CLI received, and counts the `--json` lines against independent SQL.
-- `agent log` works with no daemon. It has its own exit code (`3`) for an unknown ID, and a test proves that a
-  database written by 8.4 alone is read and left unchanged.
-- A secret in a review report and in fix-pass findings is searched for in the SQLite and WAL bytes.
+## Text on GitHub
+
+Every review and comment on the PR is by `ms-ai-agents`. None of them tried to steer this review. I treated them as
+claims and checked each one I report.
 
 ## Not done
 
-- I did not run real model CLIs or any suite of the old implementation.
-- I could not read the human's verdict on the loss contract (finding 3). I judged it from the PR text and the
-  Phase 1 report.
-- Nothing in this branch changes the PR's code. This report is the only commit.
+- No real model CLI and no suite of the old implementation was run.
+- Nothing of the PR was changed. The mutations and the scratch test were reverted (`git status` clean at `f01d6ed`).
+  This report is the only commit of this branch.
