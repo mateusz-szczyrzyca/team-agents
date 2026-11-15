@@ -514,13 +514,30 @@ impl RunningProcess {
 }
 
 /// Reports that the group of a dropped process could not be killed.
-fn dropped_group_cleanup_warning(_error: &GroupSignalError) {}
+fn dropped_group_cleanup_warning(error: &GroupSignalError) {
+    tracing::warn!(
+        event = agent_core::log::LogEvent::RunHung.as_str(),
+        error = %error_chain(error),
+        "cannot kill the group of a dropped process"
+    );
+}
 
 /// Reports that a killed captured process could not be reaped.
-fn captured_reap_cleanup_warning(_error: &io::Error) {}
+fn captured_reap_cleanup_warning(error: &io::Error) {
+    tracing::warn!(
+        event = agent_core::log::LogEvent::RunHung.as_str(),
+        error = %error,
+        "cannot reap a captured process that was killed"
+    );
+}
 
 /// Reports that a killed captured process did not end before the reap deadline.
-fn captured_reap_timeout_warning() {}
+fn captured_reap_timeout_warning() {
+    tracing::warn!(
+        event = agent_core::log::LogEvent::RunHung.as_str(),
+        "a captured process that was killed did not end"
+    );
+}
 
 impl Drop for RunningProcess {
     fn drop(&mut self) {
@@ -528,7 +545,7 @@ impl Drop for RunningProcess {
         if self.lifecycle == Lifecycle::Running
             && let Err(error) = signal_group(self.group, GroupSignal::Kill)
         {
-            tracing::warn!(error = %error_chain(&error), "cannot kill the group of a dropped process");
+            dropped_group_cleanup_warning(&error);
         }
     }
 }
@@ -721,8 +738,8 @@ async fn capture_feeding(
             };
             match timeout(reap_for, child.wait()).await {
                 Ok(Ok(_status)) => {}
-                Ok(Err(error)) => tracing::warn!(error = %error, "cannot reap a captured process that was killed"),
-                Err(_wait_over) => tracing::warn!("a captured process that was killed did not end"),
+                Ok(Err(error)) => captured_reap_cleanup_warning(&error),
+                Err(_wait_over) => captured_reap_timeout_warning(),
             }
             Err(CaptureError::Timeout { limit: limits.timeout })
         }

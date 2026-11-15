@@ -151,8 +151,6 @@ only:
   close cleanly): a failure to write the log is never logged into the history, so that it cannot loop;
 - an event of a time the clock cannot give: it has no time to be stored with;
 - `trace` events, which no `[log] level` keeps in the history;
-- the three cleanup warnings of `agent_runtime::process` (a dropped run whose process group cannot be killed, a killed
-  captured process that cannot be reaped or does not end): they have no event name, because no test can provoke them;
 - the note of the GitHub client that it left out what accounts that are not trusted wrote, which no call of the daemon
   makes yet.
 
@@ -186,7 +184,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 |---|---|---|
 | `cli_output_unreadable` | `warn` | A line of a model CLI's output cannot be read as its event format. |
 | `run_ended_without_status` | `warn` | A model CLI run cannot start, ends without reporting a status or a reviewer's verdict, or fails. |
-| `run_hung` | `warn` | The hang watchdog stops a silent run. |
+| `run_hung` | `warn` | The hang watchdog stops a silent run, or process cleanup cannot kill or reap a process so that its end is known. |
 | `run_quota_exhausted` | `warn` | A run stops because its model quota is exhausted. |
 | `run_rate_limited` | `warn` | A run stops because of a rate limit. |
 | `bus_down` | `warn` | An `agentbus` operation fails and what waits for it is retried or dropped. |
