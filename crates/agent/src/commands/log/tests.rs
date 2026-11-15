@@ -115,6 +115,6 @@ fn row_argument_errors_preserve_usage_status_without_opening_history() {
         .unwrap();
         assert_eq!(status, ExitCode::from(2), "{args:?}");
         assert_eq!(out, b"");
-        assert!(!err.is_empty());
+        assert_ne!(err, b"");
     }
 }
