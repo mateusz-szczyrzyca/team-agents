@@ -4,6 +4,13 @@ This round: item 8.9 of the plan "Rewrite `bin/agent` in Rust" — this item onl
 expected result and its checks, is under "This round's item". The rules below hold for every round. The overview at
 the end lists the other items for context only: do not do their work, and do not start a later item.
 
+This is an implementation round: its result is working code with its tests, written test-first, committed and
+pushed on your branch — whatever your instructions call the work (a task, a topic, an investigation), and also
+when you work alone and somebody else will merge or review it later. A written analysis, a design, a plan or a
+list of recommendations is not a result: do not hand one in instead of the code, and do not leave the code to
+whoever comes next. A short report of what you did may go with the code. If you cannot implement the item, or
+a part of it, say what stops you and ask.
+
 Ground rules
 
 - Each role is given its own rules (the developer rules to write code, the review rules to review it); they are
@@ -24,6 +31,9 @@ Ground rules
   BLOCKER. A criterion that cannot be shown as written is said so in the PR description, with the reason.
 - Each round is started with its own file, `rounds/round-N.M.md`: its `Round:` line, this round's item in full, these
   rules, and an overview of the other items, which are context only.
+- A round's result is code: the item implemented, with its tests, on the branch of whoever was given the round —
+  also when that agent works alone and another merges or reviews its work later. An analysis or a list of
+  recommendations in place of the code is not a result. The round files say so at their top, from 8.7 on.
 - Every item compiles and passes the gate on `main` without the other items of its feature. The gate is the
   repository's gate command and nothing more: here the Rust workspace's checks. The suites of the old
   implementation (its Bats and Go tests) are never run by a round, and a failure in them is not the round's
