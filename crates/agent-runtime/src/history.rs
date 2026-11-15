@@ -9,6 +9,7 @@ mod db;
 mod error;
 mod handle;
 mod ledger;
+pub mod log;
 pub mod migrate;
 mod notes;
 mod reader;
@@ -21,6 +22,7 @@ pub use error::{CloseError, OpenError, ReadError, RecordKind, StartError, ValueP
 pub use handle::{
     CaptureKind, Cause, DEFAULT_QUEUE, History, Problem, Reporter, Setup, Started, TracingReporter, Writer,
 };
+pub use log::{HistoryLayer, install_panic_hook, log_decision, log_outside_call};
 pub use migrate::Migration;
 pub use notes::Noting;
 pub use reader::{Reader, RoundPrompt, RunRow, Stored};

@@ -453,3 +453,7 @@ mod history_acceptance_tests;
 #[cfg(test)]
 #[path = "rounds/tests/history_deadline.rs"]
 mod history_deadline_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/daemon_log.rs"]
+mod daemon_log_tests;
