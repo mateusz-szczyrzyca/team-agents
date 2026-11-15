@@ -1520,6 +1520,75 @@ mod github_client {
         assert_eq!(pr.state, PullState::Merged);
         assert_eq!(pr.merge_commit_sha.as_ref().map(CommitId::as_str), Some(OTHER_HEAD));
     }
+
+    fn logging_dispatch() -> (std::sync::Arc<std::sync::Mutex<Vec<String>>>, tracing::Dispatch) {
+        let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = std::sync::Arc::clone(&lines);
+        let layer = agent_runtime::history::HistoryLayer::deferred(
+            agent_core::log::LogLevel::Debug,
+            agent_runtime::clock::SharedClock::new(agent_runtime::clock::SystemClock),
+            agent_core::config::Secrets::default(),
+        );
+        layer.with_stderr_sink(std::sync::Arc::new(move |line: &str| {
+            captured.lock().unwrap().push(line.to_owned());
+        }));
+        let subscriber = tracing_subscriber::layer::SubscriberExt::with(tracing_subscriber::registry(), layer);
+        (lines, tracing::Dispatch::new(subscriber))
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_recovered_rate_limit_logs_its_retry_and_the_actual_success_status() {
+        let server = FakeServer::sequence(vec![
+            reply(429, &json!({"message": "slow down"})).with_header("Retry-After", "1"),
+            reply(201, &pr_json(7)),
+        ])
+        .await
+        .unwrap();
+        let (lines, dispatch) = logging_dispatch();
+
+        tracing::instrument::WithSubscriber::with_subscriber(github(&server).get_pull_request(number(7)), dispatch)
+            .await
+            .unwrap();
+
+        let joined = lines.lock().unwrap().join("\n");
+        let retry = joined
+            .lines()
+            .find(|line| line.contains("event=github_call_failed"))
+            .unwrap_or_default();
+        assert!(retry.contains("\"attempt\":1"), "{joined}");
+        assert!(retry.contains("\"retry\":true"), "{joined}");
+        let completed = joined
+            .lines()
+            .find(|line| line.contains("event=outside_call_completed"))
+            .unwrap_or_default();
+        assert!(completed.contains("\"exit_code\":201"), "{joined}");
+        assert!(completed.contains("\"outcome\":\"ok\""), "{joined}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_terminal_transport_log_contains_the_complete_source_chain() {
+        let server = FakeServer::always(Reply::Hang).await.unwrap();
+        let url = server.url();
+        drop(server);
+        let (lines, dispatch) = logging_dispatch();
+
+        let error = tracing::instrument::WithSubscriber::with_subscriber(
+            github_with(settings(&url, 1)).get_pull_request(number(7)),
+            dispatch,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, GitHubError::Transport { attempts: 1, .. }), "{error:?}");
+
+        let joined = lines.lock().unwrap().join("\n");
+        let failure = joined
+            .lines()
+            .find(|line| line.contains("event=github_call_failed"))
+            .unwrap_or_default();
+        assert!(failure.contains("error sending request"), "{joined}");
+        assert!(failure.contains("tcp connect error"), "{joined}");
+        assert!(failure.contains("Connection"), "{joined}");
+    }
 }
 
 #[cfg(test)]
