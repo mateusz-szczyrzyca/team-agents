@@ -1,5 +1,7 @@
 //! Remove configured credentials before records reach the store, without changing CLI input.
 
+use std::fmt;
+
 use agent_core::cli::ActivityEvent;
 use agent_core::config::{Secret, Secrets};
 use agent_core::decide::checks::Change;
@@ -12,16 +14,38 @@ use serde_json::Value;
 const MARKER: &str = "[REDACTED]";
 
 /// Known values retain `Secret`'s redacted debug representation even in writer diagnostics.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub(super) struct Redactor {
     /// All credentials configured for GitHub, model CLIs and notifications.
     secrets: Secrets,
+    /// Debug-escaped forms of credentials whose representation differs from their original value.
+    escaped: Vec<String>,
+}
+
+impl fmt::Debug for Redactor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The cached escaped forms are still credentials and must never enter diagnostics.
+        formatter
+            .debug_struct("Redactor")
+            .field("secrets", &self.secrets)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Redactor {
     /// Owns the configured credentials for the writer's lifetime.
-    pub(super) const fn new(secrets: Secrets) -> Self {
-        Self { secrets }
+    pub(super) fn new(secrets: Secrets) -> Self {
+        let escaped = secrets
+            .github_token()
+            .into_iter()
+            .chain(secrets.agent_env().values())
+            .chain(secrets.notification_env().values())
+            .filter_map(|value| {
+                let escaped = value.expose().escape_debug().to_string();
+                (escaped != value.expose()).then_some(escaped)
+            })
+            .collect();
+        Self { secrets, escaped }
     }
 
     /// Values retain their protected type until matching is necessary.
@@ -33,9 +57,16 @@ impl Redactor {
             .chain(self.secrets.notification_env().values())
     }
 
+    /// Every literal representation that a debug-formatted event field can contain.
+    fn patterns(&self) -> impl Iterator<Item = &str> {
+        self.values()
+            .map(Secret::expose)
+            .chain(self.escaped.iter().map(String::as_str))
+    }
+
     /// Whether `text` contains a configured value, without printing the value in diagnostics.
     fn contains(&self, text: &str) -> bool {
-        self.values().any(|value| text.contains(value.expose()))
+        self.patterns().any(|pattern| text.contains(pattern))
     }
 
     /// Replaces the union of overlapping matches, so a shorter match cannot hide a longer one.
@@ -47,11 +78,11 @@ impl Redactor {
         let mut covered = 0;
         for (at, character) in text.char_indices() {
             let end = self
-                .values()
-                .filter_map(|value| {
+                .patterns()
+                .filter_map(|pattern| {
                     text.get(at..)
-                        .is_some_and(|rest| rest.starts_with(value.expose()))
-                        .then_some(at + value.expose().len())
+                        .is_some_and(|rest| rest.starts_with(pattern))
+                        .then_some(at + pattern.len())
                 })
                 .max()
                 .unwrap_or(at);
