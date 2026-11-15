@@ -354,3 +354,149 @@ fn assert_no_markers_on_disk(dir: &std::path::Path, markers: &[&str]) {
         }
     }
 }
+
+#[test]
+fn constructing_an_unused_layer_does_not_replace_the_active_subscriber() {
+    let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&stderr_lines);
+    let layer = HistoryLayer::deferred(
+        LogLevel::Info,
+        SharedClock::new(StepClock::new(1_763_200_400)),
+        Secrets::default(),
+    );
+    layer.with_stderr_sink(Arc::new(move |line: &str| {
+        captured.lock().unwrap().push(line.to_owned());
+    }));
+    let subscriber = tracing_subscriber::registry().with(layer);
+    std::thread::spawn(move || {
+        tracing::subscriber::with_default(subscriber, || {
+            let _unused = HistoryLayer::new(
+                LogLevel::Debug,
+                SharedClock::new(StepClock::new(1_763_200_500)),
+                Secrets::default(),
+                None,
+            );
+            tracing::error!(
+                event = LogEvent::StateSaveFailed.as_str(),
+                reason = "disk full",
+                "the active subscriber must survive"
+            );
+        });
+    })
+    .join()
+    .unwrap();
+    let joined = stderr_lines.lock().unwrap().join("\n");
+    assert!(joined.contains("the active subscriber must survive"), "{joined}");
+}
+
+#[test]
+fn unnamed_and_unknown_events_keep_a_redacted_stderr_diagnostic() {
+    let secrets = Secrets::parse("github_token = \"ghp_unknown_diagnostic_secret\"\n", 0o600).unwrap();
+    let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&stderr_lines);
+    let layer = HistoryLayer::deferred(
+        LogLevel::Debug,
+        SharedClock::new(StepClock::new(1_763_200_600)),
+        secrets,
+    );
+    layer.with_stderr_sink(Arc::new(move |line: &str| {
+        captured.lock().unwrap().push(line.to_owned());
+    }));
+    let subscriber = tracing_subscriber::registry().with(layer);
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::error!(detail = "ghp_unknown_diagnostic_secret", "ordinary daemon failure");
+        tracing::warn!(
+            event = "future_event",
+            detail = "keep this too",
+            "unknown daemon warning"
+        );
+    });
+    let joined = stderr_lines.lock().unwrap().join("\n");
+    assert!(joined.contains("ordinary daemon failure"), "{joined}");
+    assert!(joined.contains("unknown daemon warning"), "{joined}");
+    assert!(joined.contains("keep this too"), "{joined}");
+    assert!(!joined.contains("ghp_unknown_diagnostic_secret"), "{joined}");
+    assert!(joined.contains("[REDACTED]"), "{joined}");
+}
+
+#[test]
+fn quoted_and_whitespace_secrets_are_redacted_before_field_normalization() {
+    const QUOTED: &str = "\"private-marker\"";
+    const WHITESPACE: &str = "  whitespace-marker  ";
+    let secrets = Secrets::parse(
+        "github_token = '\"private-marker\"'\n\
+         [agent_env]\n\
+         SPACED = '  whitespace-marker  '\n",
+        0o600,
+    )
+    .unwrap();
+    let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&stderr_lines);
+    let layer = HistoryLayer::deferred(
+        LogLevel::Debug,
+        SharedClock::new(StepClock::new(1_763_200_700)),
+        secrets,
+    );
+    layer.with_stderr_sink(Arc::new(move |line: &str| {
+        captured.lock().unwrap().push(line.to_owned());
+    }));
+    let subscriber = tracing_subscriber::registry().with(layer);
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::warn!(
+            event = LogEvent::CliOutputUnreadable.as_str(),
+            detail = QUOTED,
+            "quoted secret"
+        );
+        tracing::warn!(
+            event = LogEvent::BusDown.as_str(),
+            detail = WHITESPACE,
+            "whitespace secret"
+        );
+    });
+    let joined = stderr_lines.lock().unwrap().join("\n");
+    assert!(!joined.contains(QUOTED), "{joined}");
+    assert!(!joined.contains(WHITESPACE), "{joined}");
+    assert_eq!(joined.matches("[REDACTED]").count(), 2, "{joined}");
+}
+
+#[test]
+fn stderr_fallback_contains_all_available_scope_ids() {
+    let team: TeamId = "team-20261115-090000-err1".parse().unwrap();
+    let round_a: RoundId = "round-20261115-090000-er1a".parse().unwrap();
+    let round_b: RoundId = "round-20261115-090000-er1b".parse().unwrap();
+    let task: TaskId = "task-20261115-090000-err1".parse().unwrap();
+    let run: RunId = "run-20261115-090000-err1".parse().unwrap();
+    let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&stderr_lines);
+    let layer = HistoryLayer::deferred(
+        LogLevel::Debug,
+        SharedClock::new(StepClock::new(1_763_200_800)),
+        Secrets::default(),
+    );
+    layer.with_stderr_sink(Arc::new(move |line: &str| {
+        captured.lock().unwrap().push(line.to_owned());
+    }));
+    let subscriber = tracing_subscriber::registry().with(layer);
+    tracing::subscriber::with_default(subscriber, || {
+        let span = tracing::error_span!(
+            "run",
+            team = %team,
+            rounds = %format!("{round_a},{round_b}"),
+            task = %task,
+            run = %run,
+        );
+        let _enter = span.enter();
+        tracing::warn!(event = LogEvent::BusDown.as_str(), reason = "offline", "bus failed");
+    });
+    let lines = stderr_lines.lock().unwrap();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let normalized = lines[0].split_once(' ').map_or(lines[0].as_str(), |(_, rest)| rest);
+    assert_eq!(
+        normalized,
+        format!(
+            "warn agent_runtime::history::log::tests event=bus_down team={team} \
+             rounds={round_a},{round_b} task={task} run={run} message=\"bus failed\" \
+             fields={{\"reason\":\"offline\"}}"
+        )
+    );
+}
