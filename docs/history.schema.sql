@@ -297,7 +297,7 @@ CREATE TABLE 'history_search_docsize'(id INTEGER PRIMARY KEY, sz BLOB);
 CREATE TABLE 'history_search_config'(k PRIMARY KEY, v) WITHOUT ROWID;
 
 CREATE TRIGGER history_search_insert AFTER INSERT ON history_records BEGIN
- INSERT INTO history_search(sequence,run,task,body) SELECT h.sequence,
+ INSERT INTO history_search(rowid,sequence,run,task,body) SELECT h.sequence,h.sequence,
 CASE WHEN h.kind IN ('run','launch','run_end','changes') THEN h.key
      WHEN h.kind IN ('step','session') THEN substr(h.key,1,instr(h.key,'/')-1) END AS run,
 json_extract(h.payload,'$.task') AS task,
@@ -312,12 +312,12 @@ FROM history_records h WHERE sequence=new.sequence;
 END;
 
 CREATE TRIGGER history_search_delete AFTER DELETE ON history_records BEGIN
- DELETE FROM history_search WHERE sequence=old.sequence;
+ DELETE FROM history_search WHERE rowid=old.sequence;
 END;
 
 CREATE TRIGGER history_search_update AFTER UPDATE ON history_records BEGIN
- DELETE FROM history_search WHERE sequence=old.sequence;
- INSERT INTO history_search(sequence,run,task,body) SELECT h.sequence,
+ DELETE FROM history_search WHERE rowid=old.sequence;
+ INSERT INTO history_search(rowid,sequence,run,task,body) SELECT h.sequence,h.sequence,
 CASE WHEN h.kind IN ('run','launch','run_end','changes') THEN h.key
      WHEN h.kind IN ('step','session') THEN substr(h.key,1,instr(h.key,'/')-1) END AS run,
 json_extract(h.payload,'$.task') AS task,
@@ -332,16 +332,16 @@ FROM history_records h WHERE sequence=new.sequence;
 END;
 
 CREATE TRIGGER log_search_insert AFTER INSERT ON daemon_logs BEGIN
- INSERT INTO history_search(log,body) VALUES(new.id,new.message);
+ INSERT INTO history_search(rowid,log,body) VALUES(-new.id,new.id,new.message);
 END;
 
 CREATE TRIGGER log_search_delete AFTER DELETE ON daemon_logs BEGIN
- DELETE FROM history_search WHERE log=old.id;
+ DELETE FROM history_search WHERE rowid=-old.id;
 END;
 
 CREATE TRIGGER log_search_update AFTER UPDATE ON daemon_logs BEGIN
- DELETE FROM history_search WHERE log=old.id;
- INSERT INTO history_search(log,body) VALUES(new.id,new.message);
+ DELETE FROM history_search WHERE rowid=-old.id;
+ INSERT INTO history_search(rowid,log,body) VALUES(-new.id,new.id,new.message);
 END;
 
 CREATE INDEX daemon_logs_by_event ON daemon_logs(event,id);
@@ -358,3 +358,4 @@ CREATE TABLE history_cursors (
 CREATE TRIGGER daemon_logs_cursor AFTER INSERT ON daemon_logs BEGIN
  UPDATE history_cursors SET value = max(value, new.id) WHERE name = 'daemon_logs';
 END;
+
