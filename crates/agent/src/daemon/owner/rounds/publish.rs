@@ -388,7 +388,13 @@ impl Owner {
             match publishing.transition(&event, policy) {
                 Ok(_) => confirmed.push(*id),
                 Err(error) => {
-                    tracing::warn!(team = %team_id, item = %id, error = %error_chain(&error), "a pull request does not carry what the gate passed: it is looked at again");
+                    tracing::warn!(
+                        event = LogEvent::GithubCallFailed.as_str(),
+                        team = %team_id,
+                        item = %id,
+                        error = %error_chain(&error),
+                        "a pull request does not carry what the gate passed: it is looked at again"
+                    );
                 }
             }
         }
@@ -476,7 +482,13 @@ impl Owner {
             );
         }
         let reason = error_chain(error);
-        tracing::warn!(team = %team_id, branch = %publication.head_branch, %reason, "a branch cannot be published: it is tried again in a minute");
+        tracing::warn!(
+            event = LogEvent::GithubCallFailed.as_str(),
+            team = %team_id,
+            branch = %publication.head_branch,
+            %reason,
+            "a branch cannot be published: it is tried again in a minute"
+        );
         let retry = Timestamp::from_utc(now.as_utc().saturating_add(PUBLISH_BACKOFF))?;
         self.watch
             .retry_at

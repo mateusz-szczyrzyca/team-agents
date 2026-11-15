@@ -47,7 +47,12 @@ pub(super) async fn run(
         let notification = match delivery.notice.render(&texts, &delivery.agent, &delivery.task) {
             Ok(notification) => notification,
             Err(error) => {
-                tracing::error!(task = %delivery.task, error = %error_chain(&error), "cannot render a notification");
+                tracing::error!(
+                    event = agent_core::log::LogEvent::StateSaveFailed.as_str(),
+                    task = %delivery.task,
+                    error = %error_chain(&error),
+                    "cannot render a notification"
+                );
                 continue;
             }
         };
@@ -66,7 +71,12 @@ pub(super) async fn run(
                 })));
             }
             Err(error) => {
-                tracing::error!(task = %delivery.task, error = %error_chain(&error), "cannot deliver a notification");
+                tracing::error!(
+                    event = agent_core::log::LogEvent::StateSaveFailed.as_str(),
+                    task = %delivery.task,
+                    error = %error_chain(&error),
+                    "cannot deliver a notification"
+                );
             }
         }
     }

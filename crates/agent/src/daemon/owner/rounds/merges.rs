@@ -107,7 +107,13 @@ impl Owner {
                 }
                 Ok(Merge::Waits) => {}
                 Err(error) => {
-                    tracing::warn!(team = %team_id, pr = %pr.number, error = %error_chain(&error), "an approved pull request cannot be merged: it is looked at again in a while");
+                    tracing::warn!(
+                        event = LogEvent::GithubCallFailed.as_str(),
+                        team = %team_id,
+                        pr = %pr.number,
+                        error = %error_chain(&error),
+                        "an approved pull request cannot be merged: it is looked at again in a while"
+                    );
                 }
             }
         }
@@ -314,7 +320,12 @@ impl Owner {
         }
         .await;
         if let Err(error) = result {
-            tracing::warn!(repo = %lead.repo, error = %error_chain(&error), "the base branch cannot be fetched after a merge: the next item starts from the checkout's");
+            tracing::warn!(
+                event = LogEvent::GitCallFailed.as_str(),
+                repo = %lead.repo,
+                error = %error_chain(&error),
+                "the base branch cannot be fetched after a merge: the next item starts from the checkout's"
+            );
         }
     }
 }

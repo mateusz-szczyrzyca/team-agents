@@ -124,7 +124,11 @@ impl Reporter {
             Ok(event) => self.written(&event),
             Err(error) => {
                 // The system lost track of something: a save may have been missed, and the owner looks at every open file.
-                tracing::warn!(%error, "the watch on the questions files reported an error; the open files are read again");
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::QuestionsFileInvalid.as_str(),
+                    %error,
+                    "the watch on the questions files reported an error; the open files are read again"
+                );
                 self.shared.queue.lock().unwrap_or_else(PoisonError::into_inner).lost();
                 self.wake();
             }

@@ -40,7 +40,11 @@ pub(crate) async fn daemon(environment: &Environment, prompts_dir: Option<PathBu
     let log_layer =
         agent_runtime::history::HistoryLayer::install_global().map_err(DaemonCommandError::LogSubscriber)?;
     if let Some(error) = environment.offset_error() {
-        tracing::warn!(%error, "the time zone of the machine is unknown: UTC is used to read the reset times of providers");
+        tracing::warn!(
+            event = agent_core::log::LogEvent::RestartCorrected.as_str(),
+            %error,
+            "the time zone of the machine is unknown: UTC is used to read the reset times of providers"
+        );
     }
     // The handlers are installed before the daemon starts, so that no signal is missed while it starts.
     let mut terminate = signal(SignalKind::terminate()).map_err(DaemonCommandError::Signals)?;

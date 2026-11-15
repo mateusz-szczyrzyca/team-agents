@@ -145,7 +145,11 @@ pub(super) async fn serve(listener: UnixListener, inbox: mpsc::Sender<Message>, 
                 Ok(permit) => permit,
                 // The semaphore is never closed: this does not happen, and the loop would only spin.
                 Err(error) => {
-                    tracing::error!(%error, "the connection limit of the daemon is closed");
+                    tracing::error!(
+                        event = agent_core::log::LogEvent::DaemonPanicked.as_str(),
+                        %error,
+                        "the connection limit of the daemon is closed"
+                    );
                     break;
                 }
             },
@@ -164,7 +168,11 @@ pub(super) async fn serve(listener: UnixListener, inbox: mpsc::Sender<Message>, 
             }
             Err(error) => {
                 // A failed accept (no descriptors left, a client that went away) is not the end of the daemon.
-                tracing::warn!(%error, "cannot accept a connection");
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::RequestRefused.as_str(),
+                    %error,
+                    "cannot accept a connection"
+                );
                 tokio::time::sleep(ACCEPT_RETRY).await;
             }
         }
@@ -185,7 +193,11 @@ fn reap(connections: &mut JoinSet<()>) {
 /// Logs a connection task that panicked.
 fn report(joined: Result<(), tokio::task::JoinError>) {
     if let Err(error) = joined {
-        tracing::error!(%error, "a connection task failed");
+        tracing::error!(
+            event = agent_core::log::LogEvent::DaemonPanicked.as_str(),
+            %error,
+            "a connection task failed"
+        );
     }
 }
 
@@ -278,7 +290,11 @@ async fn exchange(stream: UnixStream, inbox: &mpsc::Sender<Message>) {
             Step::Event(Ok(event)) => forward(subscription.as_ref(), event, &mut write).await,
             Step::Event(Err(error)) => {
                 // A subscriber that cannot keep up is let go: it subscribes again and starts from the state.
-                tracing::warn!(%error, "a subscription ended");
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::RequestRefused.as_str(),
+                    %error,
+                    "a subscription ended"
+                );
                 return;
             }
         };

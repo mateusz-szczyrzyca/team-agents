@@ -256,14 +256,24 @@ impl Owner {
                 .instrument(span.clone())
                 .await
             {
-                tracing::warn!(task = %workspace.task, error = %error_chain(&error), "a worktree of a refused team cannot be removed");
+                tracing::warn!(
+                    event = LogEvent::GitCallFailed.as_str(),
+                    task = %workspace.task,
+                    error = %error_chain(&error),
+                    "a worktree of a refused team cannot be removed"
+                );
             }
             if let Err(error) = git
                 .branch_delete(&workspace.branch, DeleteMode::Force)
                 .instrument(span)
                 .await
             {
-                tracing::warn!(task = %workspace.task, error = %error_chain(&error), "a branch of a refused team cannot be removed");
+                tracing::warn!(
+                    event = LogEvent::GitCallFailed.as_str(),
+                    task = %workspace.task,
+                    error = %error_chain(&error),
+                    "a branch of a refused team cannot be removed"
+                );
             }
         }
     }
@@ -520,7 +530,13 @@ impl Owner {
                 return Ok(());
             };
             if let Err(error) = self.switch_branch(&repo, &assigned, base).await {
-                tracing::warn!(team = %team_id, item = %assigned.item, member = %assigned.agent, error = %error_chain(&error), "the worktree of a member cannot take the branch of its next item: the item waits and is tried again at the next look");
+                tracing::warn!(
+                    team = %team_id,
+                    item = %assigned.item,
+                    member = %assigned.agent,
+                    error = %error_chain(&error),
+                    "the worktree of a member cannot take the branch of its next item: the item waits and is tried again at the next look"
+                );
                 continue;
             }
             let now = Timestamp::now(&self.parts.clock)?;

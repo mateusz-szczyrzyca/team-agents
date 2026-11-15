@@ -168,22 +168,22 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | Event | Level | Meaning |
 |---|---|---|
 | `cli_output_unreadable` | `warn` | A line of a model CLI's output cannot be read as its event format. |
-| `run_ended_without_status` | `warn` | A model CLI run ends without reporting a status or fails. |
+| `run_ended_without_status` | `warn` | A model CLI run cannot start, ends without reporting a status or verdict, or fails. |
 | `run_hung` | `warn` | The hang watchdog stops a silent run. |
 | `run_quota_exhausted` | `warn` | A run stops because its model quota is exhausted. |
 | `run_rate_limited` | `warn` | A run stops because of a rate limit. |
 | `bus_down` | `warn` | An `agentbus` operation fails and what waits for it is retried or dropped. |
-| `git_call_failed` | `warn` | A `git` call fails or a branch operation is retried. |
-| `github_call_failed` | `warn` | A GitHub API call fails or is retried. |
+| `git_call_failed` | `warn` | A `git` call, worktree operation, or branch operation fails or is retried. |
+| `github_call_failed` | `warn` | A GitHub API call, pull-request publication, or merge fails, is retried, or has no token configured. |
 | `gate_cannot_start` | `warn` | A gate command cannot start or be recorded. |
 | `gate_timed_out` | `warn` | A gate command exceeds its timeout and is killed. |
 | `gate_dirty_tree` | `warn` | A gate runs on or leaves a dirty worktree or moves `HEAD`. |
-| `state_save_failed` | `error` | The daemon's state file cannot be saved. |
-| `questions_file_invalid` | `warn` | A questions file is missing or not valid. |
+| `state_save_failed` | `error` | The daemon's state file, activity log, or notification cannot be saved or delivered. |
+| `questions_file_invalid` | `warn` | A questions file is missing, invalid, or cannot be prepared, watched, or opened. |
 | `configuration_name_missing` | `error` | An agent, investigator, or repository named in the state or a request is no longer in `agents.toml`. |
-| `restart_corrected` | `warn` | A restart of the daemon found an interrupted run and corrected it. |
-| `request_refused` | `warn` | A client request is refused as invalid. |
-| `daemon_panicked` | `error` | A task or thread in the daemon panicked, with its message and location. |
+| `restart_corrected` | `warn` | A daemon start or restart found an interrupted run or host environment fallback and corrected it. |
+| `request_refused` | `warn` | A client connection, subscription, or request cannot be accepted or is refused. |
+| `daemon_panicked` | `error` | A task or thread in the daemon panicked or failed unexpectedly, with its message and location. |
 | `team_changed` | `info` | A team is started or closed. |
 | `round_changed` | `info` | A round is opened or closed. |
 | `item_phase_changed` | `info` | An item's phase changes. |

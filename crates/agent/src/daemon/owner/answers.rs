@@ -43,11 +43,21 @@ impl Owner {
         match questions::with_instructions(&loaded.file, &self.parts.question_texts, task) {
             Ok(prepared) => {
                 if let Err(error) = replace_text_file(path, &prepared.render(), loaded.mode).await {
-                    tracing::warn!(task = %task, error = %error_chain(&error), "the instructions cannot be put in the questions file");
+                    tracing::warn!(
+                        event = LogEvent::QuestionsFileInvalid.as_str(),
+                        task = %task,
+                        error = %error_chain(&error),
+                        "the instructions cannot be put in the questions file"
+                    );
                 }
             }
             Err(error) => {
-                tracing::warn!(task = %task, error = %error_chain(&error), "the instructions of the questions file cannot be made");
+                tracing::warn!(
+                    event = LogEvent::QuestionsFileInvalid.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the instructions of the questions file cannot be made"
+                );
             }
         }
         self.watch_task(task);
@@ -61,7 +71,12 @@ impl Owner {
         };
         if let Err(error) = opens.try_send(path.to_path_buf()) {
             // The human is told by the notification: a file that is not opened is where it was.
-            tracing::warn!(task = %task, %error, "the questions file cannot be queued to be opened in the editor");
+            tracing::warn!(
+                event = LogEvent::QuestionsFileInvalid.as_str(),
+                task = %task,
+                %error,
+                "the questions file cannot be queued to be opened in the editor"
+            );
         }
     }
 
@@ -78,7 +93,12 @@ impl Owner {
                 self.watched.insert(task.clone());
             }
             Err(error) => {
-                tracing::warn!(task = %task, error = %error_chain(&error), "a save of the questions file is not noticed: answer with `agent answer`");
+                tracing::warn!(
+                    event = LogEvent::QuestionsFileInvalid.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "a save of the questions file is not noticed: answer with `agent answer`"
+                );
             }
         }
     }
@@ -94,7 +114,12 @@ impl Owner {
         };
         if let Err(error) = watcher.unwatch(&self.parts.store.home().task_dir(task)) {
             // The directory may be gone with the task: a watch that cannot be let go costs nothing.
-            tracing::warn!(task = %task, error = %error_chain(&error), "the watch on the questions file cannot be let go");
+            tracing::warn!(
+                event = LogEvent::QuestionsFileInvalid.as_str(),
+                task = %task,
+                error = %error_chain(&error),
+                "the watch on the questions file cannot be let go"
+            );
         }
     }
 
@@ -289,7 +314,12 @@ impl Owner {
                 Err(error) => tracing::error!(task = %task, %error, "the clock gives no time for a notification"),
             },
             Err(error) => {
-                tracing::error!(task = %task, error = %error_chain(&error), "the notification of incomplete answers cannot be made");
+                tracing::error!(
+                    event = LogEvent::StateSaveFailed.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the notification of incomplete answers cannot be made"
+                );
             }
         }
     }

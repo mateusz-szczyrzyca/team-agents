@@ -293,7 +293,12 @@ impl Service {
             Err(error) => {
                 let _entered = span.enter();
                 if matches!(error, GateError::Cancelled) {
-                    tracing::warn!(task = %task, error = %error_chain(&error), "a gate was not run or not recorded");
+                    tracing::warn!(
+                        event = LogEvent::RequestRefused.as_str(),
+                        task = %task,
+                        error = %error_chain(&error),
+                        "a gate was not run or not recorded"
+                    );
                 } else {
                     tracing::error!(
                         event = LogEvent::GateCannotStart.as_str(),

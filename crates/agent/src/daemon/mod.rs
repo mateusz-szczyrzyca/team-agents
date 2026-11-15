@@ -350,7 +350,10 @@ fn attach_pulls(owner: Owner, pulls: Option<Pulls>, dispatch: &tracing::Dispatch
         owner.with_pulls(pulls)
     } else {
         tracing::dispatcher::with_default(dispatch, || {
-            tracing::info!("the home has no GitHub token (github_token in secrets.toml): no pull request is opened");
+            tracing::warn!(
+                event = agent_core::log::LogEvent::GithubCallFailed.as_str(),
+                "the home has no GitHub token (github_token in secrets.toml): no pull request is opened"
+            );
         });
         owner
     }

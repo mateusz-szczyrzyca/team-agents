@@ -187,7 +187,14 @@ impl Owner {
         let count = self.watch.bounces.entry(task.clone()).or_insert(0);
         *count = count.saturating_add(1);
         let count = *count;
-        tracing::warn!(task = %task, pr = %asked.pr.number, ?problem, count, "a reviewer's report has no verdict");
+        tracing::warn!(
+            event = LogEvent::RunEndedWithoutStatus.as_str(),
+            task = %task,
+            pr = %asked.pr.number,
+            ?problem,
+            count,
+            "a reviewer's report has no verdict"
+        );
         if count <= MAX_VERDICT_BOUNCES {
             let mut look = Look::default();
             self.release(task, Why::VerdictMissing, &mut look)?;
@@ -273,7 +280,13 @@ impl Owner {
                 None
             }
             Err(error) => {
-                tracing::warn!(team = %team_id, pr = %asked.pr.number, error = %error_chain(&error), "the round does not take a verdict: it is recorded and changes nothing");
+                tracing::warn!(
+                    event = LogEvent::RunEndedWithoutStatus.as_str(),
+                    team = %team_id,
+                    pr = %asked.pr.number,
+                    error = %error_chain(&error),
+                    "the round does not take a verdict: it is recorded and changes nothing"
+                );
                 None
             }
         }
@@ -325,7 +338,13 @@ impl Owner {
     /// task's directory.
     pub(super) async fn post_review(&mut self, pulls: &Pulls, lead: &Lead, task: &TaskId, asked: &Asked, report: &str) {
         if let Err(error) = self.try_post_review(pulls, lead, task, asked, report).await {
-            tracing::warn!(task = %task, pr = %asked.pr.number, error = %error_chain(&error), "a review cannot be posted on the pull request: its verdict counts and its report is kept");
+            tracing::warn!(
+                event = LogEvent::GithubCallFailed.as_str(),
+                task = %task,
+                pr = %asked.pr.number,
+                error = %error_chain(&error),
+                "a review cannot be posted on the pull request: its verdict counts and its report is kept"
+            );
         }
     }
 

@@ -6,6 +6,7 @@ use std::str::FromStr;
 use agent_core::config::AbsolutePath;
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
+use agent_core::log::LogEvent;
 use agent_core::state::{CommitId, ItemPhase, Member, Participant, PullRequest, Review, ReviewOutcome, Timestamp};
 use agent_runtime::git::{Git, Revision, WorktreeBranch};
 use agent_runtime::history::log_decision;
@@ -44,7 +45,13 @@ impl Owner {
                 // Fewer than two investigators are free: the pull request waits for them.
                 Ok(false) => {}
                 Err(error) => {
-                    tracing::warn!(team = %team_id, pr = %pr.number, error = %error_chain(&error), "the reviews of a pull request cannot be asked for: it is tried again at the next look");
+                    tracing::warn!(
+                        event = LogEvent::GitCallFailed.as_str(),
+                        team = %team_id,
+                        pr = %pr.number,
+                        error = %error_chain(&error),
+                        "the reviews of a pull request cannot be asked for: it is tried again at the next look"
+                    );
                 }
             }
         }
@@ -216,13 +223,23 @@ impl Owner {
                 .worktree_remove(&gone.path, agent_runtime::git::RemoveMode::Force)
                 .await
             {
-                tracing::warn!(task = %task, error = %error_chain(&error), "the worktree of a reviewer that was not asked cannot be removed");
+                tracing::warn!(
+                    event = LogEvent::GitCallFailed.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the worktree of a reviewer that was not asked cannot be removed"
+                );
             }
             if let Err(error) = git
                 .branch_delete(&gone.branch, agent_runtime::git::DeleteMode::Force)
                 .await
             {
-                tracing::warn!(task = %task, error = %error_chain(&error), "the branch of a reviewer that was not asked cannot be removed");
+                tracing::warn!(
+                    event = LogEvent::GitCallFailed.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the branch of a reviewer that was not asked cannot be removed"
+                );
             }
         }
     }

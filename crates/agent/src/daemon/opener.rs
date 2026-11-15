@@ -27,7 +27,12 @@ pub(super) async fn run(mut queue: mpsc::Receiver<PathBuf>, opener: VscodeOpener
                 tracing::info!(file = %file.display(), "no window of VS Code is connected: the file is not opened");
             }
             Err(error) => {
-                tracing::warn!(file = %file.display(), error = %error_chain(&error), "a questions file cannot be opened in VS Code");
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::QuestionsFileInvalid.as_str(),
+                    file = %file.display(),
+                    error = %error_chain(&error),
+                    "a questions file cannot be opened in VS Code"
+                );
             }
         }
     }

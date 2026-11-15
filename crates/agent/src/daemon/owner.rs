@@ -413,7 +413,11 @@ impl Owner {
             Ok((watcher, saves)) => (Some(watcher), Some(saves)),
             Err(error) => {
                 // The daemon is useful without it: the answers still come through `agent answer` and the dashboard.
-                tracing::warn!(error = %error_chain(&error), "the questions files are not watched: a saved answer is not noticed");
+                tracing::warn!(
+                    event = LogEvent::QuestionsFileInvalid.as_str(),
+                    error = %error_chain(&error),
+                    "the questions files are not watched: a saved answer is not noticed"
+                );
                 (None, None)
             }
         };
@@ -682,8 +686,17 @@ impl Owner {
     /// Fails `task`, which could not be started, and tells the human why; its team learns it as of a run that ended
     /// without a status: the coordinator about a member, the requester about the request of a worker.
     async fn fail_to_start(&mut self, task: &TaskId, reason: String) -> Result<(), OwnerError> {
-        tracing::error!(task = %task, %reason, "a run cannot be started");
         let located = self.locate(task)?;
+        {
+            let span = tracing::error_span!("task", team = %located.team, task = %task);
+            let _entered = span.enter();
+            tracing::warn!(
+                event = LogEvent::RunEndedWithoutStatus.as_str(),
+                task = %task,
+                %reason,
+                "a run cannot be started"
+            );
+        }
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
         self.move_to(task, &located.team, TaskStatus::Running, &mut events)?;
@@ -723,10 +736,19 @@ impl Owner {
 
     /// A run that could not be carried out: its task fails.
     async fn failed(&mut self, task: &TaskId, reason: String) -> Result<(), OwnerError> {
-        tracing::error!(task = %task, %reason, "a run failed");
         // The run is over without the human's word being carried out: the task failed, and is the human's to resume.
         self.halts.remove(task);
         let located = self.locate(task)?;
+        {
+            let span = tracing::error_span!("task", team = %located.team, task = %task);
+            let _entered = span.enter();
+            tracing::warn!(
+                event = LogEvent::RunEndedWithoutStatus.as_str(),
+                task = %task,
+                %reason,
+                "a run failed"
+            );
+        }
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
         self.end_run(
@@ -1442,7 +1464,12 @@ impl Owner {
         if let Err(error) = self.parts.store.append_activity(task, at, &event).await {
             // The log explains to a person what happened; the state does not depend on it. A log that cannot be written
             // is told, and the work goes on.
-            tracing::warn!(task = %task, error = %error_chain(&error), "the activity log cannot be written");
+            tracing::error!(
+                event = LogEvent::StateSaveFailed.as_str(),
+                task = %task,
+                error = %error_chain(&error),
+                "the activity log cannot be written"
+            );
         }
     }
 
@@ -1479,7 +1506,12 @@ impl Owner {
         if let Err(error) = self.parts.notices.try_send(delivery) {
             // The human is told through files and a command, not through the state: a notification that cannot be
             // queued is logged, and the task goes on.
-            tracing::error!(task = %task, %error, "a notification could not be queued");
+            tracing::error!(
+                event = LogEvent::StateSaveFailed.as_str(),
+                task = %task,
+                %error,
+                "a notification could not be queued"
+            );
         }
     }
 }
