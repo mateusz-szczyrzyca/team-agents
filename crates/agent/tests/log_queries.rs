@@ -1,4 +1,5 @@
 //! Direct-history query contracts, independent of a running daemon.
+#[cfg(test)]
 #[path = "support/story_history.rs"]
 mod story_history;
 
@@ -65,7 +66,7 @@ fn grep_is_a_literal_log_filter_and_stats_work_without_a_daemon() {
         team: None,
         task: None,
         message: "Zażółć AND OR NEAR \"quoted\" % *".to_owned(),
-        fields: Default::default(),
+        fields: std::collections::BTreeMap::default(),
         cut: Cut::default(),
     }])
     .unwrap();
@@ -102,4 +103,23 @@ fn grep_is_a_literal_log_filter_and_stats_work_without_a_daemon() {
     assert_eq!(stats["tables"]["daemon_logs"], 1);
     assert!(stats["bytes"].as_u64().unwrap() > 0);
     assert_eq!(stats["oldest"], "2026-11-15T00:00:00.000000000Z");
+}
+
+#[test]
+fn statistics_read_a_legacy_database_without_migrating_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let written = story_history::write_old_history(&path);
+    let before = agent_runtime::history::Reader::open(&path).unwrap().schema().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_agent"))
+        .env("AGENTS_HOME", dir.path())
+        .args(["log", "--stats", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stats: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(stats["tables"]["teams"], 1);
+    let reader = agent_runtime::history::Reader::open(&path).unwrap();
+    assert_eq!(reader.schema().unwrap(), before);
+    assert!(reader.team(&written.team).unwrap().is_some());
 }
