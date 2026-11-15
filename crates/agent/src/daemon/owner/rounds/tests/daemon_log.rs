@@ -818,3 +818,500 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
         assert_eq!(row.run(), Some(&run));
     }
 }
+
+#[tokio::test]
+async fn remaining_daemon_diagnostics_are_retained_in_history_and_history_losses_stay_stderr_only() {
+    let mut daemon = Daemon::new(&solo_state(), None);
+    daemon.scenario(1, "done");
+    daemon.start().await;
+    daemon.status_is(1, agent_core::status::TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let db = HistoryDb::open(&daemon.home.history_file(), MaxTextBytes::default()).unwrap();
+    let started = History::start(
+        db,
+        Setup {
+            reporter: Arc::new(SilentReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&stderr_lines);
+    let layer = HistoryLayer::new(
+        LogLevel::Debug,
+        SharedClock::new(daemon.clock.clone()),
+        Secrets::default(),
+        Some(started.history.clone()),
+    );
+    layer.with_stderr_sink(Arc::new(move |line: &str| {
+        captured.lock().unwrap().push(line.to_owned());
+    }));
+    let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(layer).into();
+
+    async {
+        let (_, stream) = std::os::unix::net::UnixStream::pair().unwrap();
+        let owned: std::os::fd::OwnedFd = stream.into();
+        let std_listener = std::os::unix::net::UnixListener::from(owned);
+        std_listener.set_nonblocking(true).unwrap();
+        let bad_listener = tokio::net::UnixListener::from_std(std_listener).unwrap();
+        let (inbox, _rx) = tokio::sync::mpsc::channel(1);
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let cancel = shutdown.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(15)).await;
+            cancel.cancel();
+        });
+        crate::daemon::server::serve(bad_listener, inbox, shutdown).await;
+
+        agent_runtime::history::TracingReporter.report(&Problem {
+            cause: agent_runtime::history::Cause::Unavailable,
+            detail: "simulated history write loss".to_owned(),
+        });
+    }
+    .with_subscriber(dispatch)
+    .await;
+
+    started.writer.close().unwrap();
+
+    let logs = Reader::open(&daemon.home.history_file())
+        .unwrap()
+        .daemon_logs()
+        .unwrap();
+    let no_token = logs
+        .iter()
+        .find(|row| row.event() == LogEvent::GithubCallFailed && row.message().contains("the home has no GitHub token"))
+        .expect("expected missing GitHub token diagnostic in daemon_logs");
+    assert_eq!(no_token.level(), LogLevel::Warn);
+    assert_eq!(no_token.module(), "agent::daemon");
+
+    let accept_failed = logs
+        .iter()
+        .find(|row| row.event() == LogEvent::RequestRefused && row.message() == "cannot accept a connection")
+        .expect("expected socket accept failure diagnostic in daemon_logs");
+    assert_eq!(accept_failed.level(), LogLevel::Warn);
+    assert_eq!(accept_failed.module(), "agent::daemon::server");
+    assert!(
+        accept_failed
+            .fields()
+            .get("error")
+            .is_some_and(|val| !val.to_string().is_empty()),
+        "{accept_failed:?}"
+    );
+
+    let joined_stderr = stderr_lines.lock().unwrap().join("\n");
+    assert!(
+        joined_stderr.contains("the history cannot keep some records"),
+        "expected history loss warning on stderr, got: {joined_stderr}"
+    );
+    assert!(
+        !logs
+            .iter()
+            .any(|row| row.message().contains("the history cannot keep some records")),
+        "history loss warning must stay stderr-only to avoid recursion: {logs:?}"
+    );
+}
+
+/// Exercises an autopilot round with a malformed CLI line and an initial merge refusal before human merge,
+/// recording `CliOutputUnreadable`, `TeamChanged`, `RoundChanged`, `ItemPhaseChanged`, `TaskStatusChanged`,
+/// `RunStarted`, `RunEnded`, `DecisionTaken`, `OutsideCallCompleted`, and `GithubCallFailed`.
+async fn record_autopilot_round_events(observed: &mut BTreeSet<LogEvent>) {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:badline"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.github.answer_merges(super::fake_github::MergeAnswer::Refuse(405));
+    let mut cfg = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    cfg.push_str("\n[log]\nlevel = \"debug\"\n");
+    std::fs::write(rig.home.config_file(), cfg).unwrap();
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("badline.sh"),
+        "set -eu\nprintf 'not-valid-json-line\\n'\nprintf 'ok\\n' > work.txt\ngit add work.txt\n\
+         git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -qm 'Item 1.1'\n",
+    )
+    .unwrap();
+    rig.start().await;
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.notification_with("could not be merged").await;
+    rig.github.merged_by_a_human(1);
+    let round_state = rig
+        .item_where("1.1", "merged", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let rig_team = round_state.teams()[0].id().clone();
+    let rig_round = round_state.teams()[0].rounds()[0].id().clone();
+    let author_member = &round_state.teams()[0].crew().roster()[0].1;
+    let author_task = author_member.task().clone();
+    let author_run = author_member.runs()[0].id().clone();
+
+    let rig_logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    for required in [
+        LogEvent::CliOutputUnreadable,
+        LogEvent::GithubCallFailed,
+        LogEvent::TeamChanged,
+        LogEvent::RoundChanged,
+        LogEvent::ItemPhaseChanged,
+        LogEvent::TaskStatusChanged,
+        LogEvent::RunStarted,
+        LogEvent::RunEnded,
+        LogEvent::DecisionTaken,
+        LogEvent::OutsideCallCompleted,
+    ] {
+        let row = rig_logs
+            .iter()
+            .find(|entry| entry.event() == required && entry.team() == Some(&rig_team))
+            .unwrap_or_else(|| panic!("missing {required} with team in autopilot round logs: {rig_logs:?}"));
+        assert_eq!(row.level(), required.level());
+        if matches!(
+            required,
+            LogEvent::CliOutputUnreadable | LogEvent::RunStarted | LogEvent::RunEnded
+        ) {
+            assert_eq!(row.rounds(), std::slice::from_ref(&rig_round));
+            assert_eq!(row.task(), Some(&author_task));
+            assert_eq!(row.run(), Some(&author_run));
+        }
+        observed.insert(required);
+    }
+}
+
+/// Resumes or unpauses `task(1)` on `owner`.
+async fn send_task_control(owner: &mut crate::daemon::owner::Owner, unpause: bool) {
+    let control = agent_core::protocol::ControlRequest {
+        target: Target::Task(task(1)),
+    };
+    let command = if unpause {
+        Command::Unpause(control)
+    } else {
+        Command::Resume(control)
+    };
+    let (reply, _rx) = tokio::sync::oneshot::channel();
+    owner
+        .handle(Message::Request {
+            client: Client::Cli,
+            command,
+            reply,
+        })
+        .await
+        .unwrap();
+}
+
+/// Exercises owner and runtime failure causes (`RestartCorrected`, `RunEndedWithoutStatus`, `RunQuotaExhausted`,
+/// `RunRateLimited`, `RunHung`, `QuestionsFileInvalid` in both `owner.rs` and `owner/answers.rs`, `BusDown`,
+/// `RequestRefused`, `ConfigurationNameMissing` for `agent` and `repo`, `StateSaveFailed`, and `GitCallFailed`).
+async fn record_owner_and_runtime_failure_events(dir: &Path, base_daemon: &Daemon) {
+    let (mut owner, _sinks) = base_daemon.bare_owner().await;
+    base_daemon.scenario(1, "nostatus");
+    owner.start_queued().await.unwrap();
+    let running_state = owner.parts.state.clone();
+    let joined = owner.runs.join_next_with_id().await.unwrap();
+    owner.settle_joined(joined).await.unwrap();
+
+    let recover_daemon = Daemon::new(&running_state, None);
+    let (mut recovering_owner, _recover_sinks) = recover_daemon.bare_owner().await;
+    recovering_owner.recover().await.unwrap();
+
+    for (index, scenario) in ["quota", "ratelimit", "hang"].into_iter().enumerate() {
+        base_daemon.scenario(1, scenario);
+        send_task_control(&mut owner, index > 0).await;
+        owner.start_queued().await.unwrap();
+        let joined = owner.runs.join_next_with_id().await.unwrap();
+        owner.settle_joined(joined).await.unwrap();
+    }
+
+    let missing_q = dir.join("missing-questions.md");
+    base_daemon.scenario(1, &format!("questions {}", missing_q.display()));
+    owner.start_queued().await.unwrap();
+    let joined = owner.runs.join_next_with_id().await.unwrap();
+    owner.settle_joined(joined).await.unwrap();
+
+    let qfile = base_daemon.questions_file(1, 1);
+    base_daemon.scenario(1, &format!("questions {}", qfile.display()));
+    send_task_control(&mut owner, false).await;
+    owner.start_queued().await.unwrap();
+    let joined = owner.runs.join_next_with_id().await.unwrap();
+    owner.settle_joined(joined).await.unwrap();
+    let mut parsed_q = agent_core::questions::QuestionsFile::parse(&std::fs::read_to_string(&qfile).unwrap()).unwrap();
+    parsed_q.mark_answered();
+    std::fs::write(&qfile, parsed_q.render()).unwrap();
+    owner
+        .reported(crate::daemon::questions::watch::Report::Rescan)
+        .await
+        .unwrap();
+
+    let pair_daemon = Daemon::new(&pair_state(), Some(Path::new("false")));
+    let (mut pair_owner, _pair_sinks) = pair_daemon.bare_owner().await;
+    pair_owner.look_at(&team_id(0));
+    pair_owner.team_life().await.unwrap();
+
+    let (reply, answer) = tokio::sync::oneshot::channel();
+    pair_owner
+        .handle(Message::Request {
+            client: Client::Cli,
+            command: Command::Status(StatusRequest {
+                target: Some(Target::Task("task-20261115-090000-none".parse().unwrap())),
+            }),
+            reply,
+        })
+        .await
+        .unwrap();
+    answer.await.unwrap().unwrap_err();
+
+    record_config_and_storage_failure_events(dir).await;
+}
+
+/// Exercises `ConfigurationNameMissing` (for both `agent` and `repo`), `StateSaveFailed`, and `GitCallFailed`.
+async fn record_config_and_storage_failure_events(dir: &Path) {
+    let missing_cfg_daemon = Daemon::new(&pair_state(), None);
+    std::fs::write(
+        missing_cfg_daemon.home.config_file(),
+        "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n\
+         [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .unwrap();
+    let (mut missing_agent_owner, _s1) = missing_cfg_daemon.bare_owner().await;
+    missing_agent_owner.start_queued().await.unwrap();
+
+    let missing_repo_daemon = Daemon::new(&solo_state(), None);
+    missing_repo_daemon.scenario(1, "done");
+    std::fs::write(
+        missing_repo_daemon.home.config_file(),
+        "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n\
+         [repos.other-repo]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .unwrap();
+    let (mut missing_repo_owner, _s2) = missing_repo_daemon.bare_owner().await;
+    missing_repo_owner.start_queued().await.unwrap();
+
+    let save_daemon = Daemon::new(&solo_state(), None);
+    let (save_owner, _s3) = save_daemon.bare_owner().await;
+    let state_path = save_daemon.home.state_file();
+    std::fs::remove_file(&state_path).unwrap();
+    std::fs::create_dir(&state_path).unwrap();
+    save_owner.save().await.unwrap_err();
+
+    let git_span = tracing::error_span!("task", team = %team_id(0), task = %task(1));
+    let git = agent_runtime::git::Git::new(
+        dir.to_str().unwrap().parse().unwrap(),
+        agent_runtime::git::CommitIdentity::new("Test".to_owned(), "test@example.com".to_owned(), None),
+    );
+    git.rev_parse(&agent_runtime::git::Revision::Head)
+        .instrument(git_span)
+        .await
+        .unwrap_err();
+}
+
+/// Exercises `GateCannotStart`, `GateTimedOut`, and `GateDirtyTree` via `gate::run_recorded`.
+async fn record_gate_failure_events(dir: &Path, history: History) {
+    let gate_daemon = Daemon::new(&solo_state(), None);
+    let gate_store = Arc::new(
+        agent_runtime::store::StateStore::open(gate_daemon.home.clone())
+            .await
+            .unwrap(),
+    );
+    let (events_tx, _events_rx) = tokio::sync::broadcast::channel(16);
+    let (gate_queue, gate_rx) = crate::daemon::gate::GateQueue::new();
+    let gate_shutdown = tokio_util::sync::CancellationToken::new();
+    let abs = |p: &Path| p.to_str().unwrap().parse::<agent_core::config::AbsolutePath>().unwrap();
+    let gate_parts = crate::daemon::gate::GateParts {
+        store: Arc::clone(&gate_store),
+        clock: SharedClock::new(gate_daemon.clock.clone()),
+        events: events_tx,
+        agent_path: vec![abs(Path::new("/usr/bin")), abs(Path::new("/bin"))],
+        stop_grace: Duration::from_secs(1),
+    };
+    let worktree = gate_daemon.home.worktree_dir(&crate::fixtures::repo(), &task(1));
+    std::fs::create_dir_all(&worktree).unwrap();
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["config", "user.name", "Test"][..],
+        &["config", "user.email", "test@example.com"][..],
+        &["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "init"][..],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&worktree)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    let cmd = |script: &str| {
+        agent_core::config::CommandLine::try_from(vec!["sh".to_owned(), "-c".to_owned(), script.to_owned()]).unwrap()
+    };
+    let mut replies = Vec::new();
+    for (wt, script, timeout) in [
+        (abs(&dir.join("nonexistent-worktree")), "true", Duration::from_secs(5)),
+        (abs(&worktree), "sleep 30", Duration::from_millis(50)),
+        (abs(&worktree), "printf 'dirty\\n' > dirty.txt", Duration::from_secs(5)),
+    ] {
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        gate_queue
+            .enqueue(crate::daemon::gate::GateJob {
+                task: task(1),
+                team: team_id(0),
+                worktree: wt,
+                command: cmd(script),
+                timeout,
+                cancel: tokio_util::sync::CancellationToken::new(),
+                hold: None,
+                reply,
+            })
+            .unwrap();
+        replies.push(answer);
+    }
+    let gate_task = tokio::spawn(
+        crate::daemon::gate::run_recorded(gate_rx, gate_parts, history, gate_shutdown.clone())
+            .with_subscriber(tracing::dispatcher::get_default(Clone::clone)),
+    );
+    replies.remove(0).await.unwrap().unwrap_err();
+    replies.remove(0).await.unwrap().unwrap();
+    replies.remove(0).await.unwrap().unwrap();
+    gate_shutdown.cancel();
+    gate_task.await.unwrap();
+}
+
+/// Verifies that `logs` contains every owner, runtime, and gate failure event with its level and scope IDs.
+fn assert_owner_and_gate_failure_logs(logs: &[agent_core::log::LogEntry], observed: &mut BTreeSet<LogEvent>) {
+    for run_event in [
+        LogEvent::RunEndedWithoutStatus,
+        LogEvent::RunQuotaExhausted,
+        LogEvent::RunRateLimited,
+        LogEvent::RunHung,
+    ] {
+        let row = logs
+            .iter()
+            .find(|entry| entry.event() == run_event && entry.run().is_some())
+            .unwrap_or_else(|| panic!("missing {run_event} with run scope in {logs:?}"));
+        assert_eq!(row.level(), LogLevel::Warn);
+        assert_eq!(row.team(), Some(&team_id(0)));
+        assert_eq!(row.task(), Some(&task(1)));
+        observed.insert(run_event);
+    }
+    assert!(
+        logs.iter().any(|entry| {
+            entry.event() == LogEvent::RunEndedWithoutStatus && entry.message() == "a run cannot be started"
+        }),
+        "expected fail_to_start diagnostic in daemon_logs: {logs:?}"
+    );
+
+    for expected_module in ["agent::daemon::owner", "agent::daemon::owner::answers"] {
+        assert!(
+            logs.iter().any(|entry| {
+                entry.event() == LogEvent::QuestionsFileInvalid
+                    && entry.module() == expected_module
+                    && entry.team() == Some(&team_id(0))
+                    && entry.task() == Some(&task(1))
+            }),
+            "missing {expected_module} QuestionsFileInvalid row: {logs:?}"
+        );
+    }
+    observed.insert(LogEvent::QuestionsFileInvalid);
+
+    for expected_kind in ["agent", "repo"] {
+        let row = logs
+            .iter()
+            .find(|entry| {
+                entry.event() == LogEvent::ConfigurationNameMissing
+                    && entry.module() == "agent::daemon::owner"
+                    && entry.fields().get("kind").and_then(|v| v.as_str()) == Some(expected_kind)
+            })
+            .unwrap_or_else(|| panic!("missing ConfigurationNameMissing for kind={expected_kind}: {logs:?}"));
+        assert_eq!(row.level(), LogLevel::Error);
+        assert_eq!(row.team(), Some(&team_id(0)));
+        assert!(row.task().is_some());
+    }
+    observed.insert(LogEvent::ConfigurationNameMissing);
+
+    for (event, expected_team, expected_task) in [
+        (LogEvent::RestartCorrected, None, None),
+        (LogEvent::BusDown, Some(team_id(0)), None),
+        (LogEvent::RequestRefused, None, None),
+        (LogEvent::StateSaveFailed, None, None),
+        (LogEvent::GitCallFailed, Some(team_id(0)), Some(task(1))),
+        (LogEvent::GateCannotStart, Some(team_id(0)), Some(task(1))),
+        (LogEvent::GateTimedOut, Some(team_id(0)), Some(task(1))),
+        (LogEvent::GateDirtyTree, Some(team_id(0)), Some(task(1))),
+    ] {
+        let row = logs
+            .iter()
+            .find(|entry| entry.event() == event)
+            .unwrap_or_else(|| panic!("missing {event} in {logs:?}"));
+        assert_eq!(row.level(), event.level());
+        assert_eq!(row.team(), expected_team.as_ref(), "wrong team for {event}: {row:?}");
+        assert_eq!(row.task(), expected_task.as_ref(), "wrong task for {event}: {row:?}");
+        observed.insert(event);
+    }
+}
+
+#[tokio::test]
+async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_ids() {
+    let mut observed = BTreeSet::new();
+    record_autopilot_round_events(&mut observed).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let db = HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
+    let started = History::start(
+        db,
+        Setup {
+            reporter: Arc::new(SilentReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let base_daemon = Daemon::new(&solo_state(), Some(Path::new("false")));
+    let layer = HistoryLayer::new(
+        LogLevel::Debug,
+        SharedClock::new(base_daemon.clock.clone()),
+        Secrets::default(),
+        Some(started.history.clone()),
+    );
+    let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(layer).into();
+
+    async {
+        record_owner_and_runtime_failure_events(dir.path(), &base_daemon).await;
+        record_gate_failure_events(dir.path(), started.history.clone()).await;
+    }
+    .with_subscriber(dispatch)
+    .await;
+
+    started.writer.close().unwrap();
+    let logs = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    assert_owner_and_gate_failure_logs(&logs, &mut observed);
+
+    let panic_path = dir.path().join("panic-history.db");
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "daemon::owner::rounds::daemon_log_tests::spawned_daemon_panic_child_process",
+            "--nocapture",
+        ])
+        .env(SPAWNED_PANIC_DB, &panic_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let panic_logs = Reader::open(&panic_path).unwrap().daemon_logs().unwrap();
+    let panic_row = panic_logs
+        .iter()
+        .find(|entry| entry.event() == LogEvent::DaemonPanicked)
+        .expect("missing DaemonPanicked row");
+    assert_eq!(panic_row.level(), LogLevel::Error);
+    observed.insert(LogEvent::DaemonPanicked);
+
+    let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
+    assert_eq!(
+        observed, expected,
+        "every LogEvent variant must be produced by a real production cause"
+    );
+}
