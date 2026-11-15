@@ -500,3 +500,106 @@ fn stderr_fallback_contains_all_available_scope_ids() {
         )
     );
 }
+
+/// A clock in the year -1: no [`agent_core::state::Timestamp`] can hold its time.
+struct BeforeYearZero;
+
+impl Clock for BeforeYearZero {
+    fn now(&self) -> time::UtcDateTime {
+        time::UtcDateTime::new(
+            time::Date::from_calendar_date(-1, time::Month::January, 1).unwrap(),
+            time::Time::MIDNIGHT,
+        )
+    }
+}
+
+/// A started history in `dir`, and its path.
+fn started_history(dir: &std::path::Path) -> (crate::history::Started, std::path::PathBuf) {
+    let path = dir.join("history.db");
+    let started = History::start(
+        HistoryDb::open(&path, MaxTextBytes::default()).unwrap(),
+        Setup {
+            reporter: Arc::new(SilentReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    (started, path)
+}
+
+/// A sink that keeps the lines of `stderr`, and the lines.
+fn stderr_capture(layer: &HistoryLayer) -> Arc<Mutex<Vec<String>>> {
+    let lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&lines);
+    layer.with_stderr_sink(Arc::new(move |line: &str| {
+        captured.lock().unwrap().push(line.to_owned());
+    }));
+    lines
+}
+
+#[test]
+fn an_event_whose_time_the_clock_cannot_give_goes_to_stderr_and_not_to_the_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let (started, path) = started_history(dir.path());
+    let layer = HistoryLayer::new(
+        LogLevel::Info,
+        SharedClock::new(BeforeYearZero),
+        Secrets::default(),
+        Some(started.history.clone()),
+    );
+    let stderr = stderr_capture(&layer);
+    let subscriber = tracing_subscriber::registry().with(layer);
+
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::error!(
+            event = LogEvent::StateSaveFailed.as_str(),
+            path = "/srv/agents/state.json",
+            "the state cannot be saved"
+        );
+    });
+    started.writer.close().unwrap();
+
+    assert_eq!(Reader::open(&path).unwrap().daemon_logs().unwrap(), []);
+    let lines = stderr.lock().unwrap();
+    let line = lines
+        .iter()
+        .find(|line| line.contains("the state cannot be saved"))
+        .unwrap_or_else(|| panic!("the event is not on stderr: {lines:?}"));
+    assert!(line.contains("event=state_save_failed"), "{line}");
+    assert!(line.contains("/srv/agents/state.json"), "{line}");
+}
+
+#[test]
+fn a_scoped_future_dropped_under_another_subscriber_closes_its_spans_in_its_own() {
+    let layer = HistoryLayer::deferred(
+        LogLevel::Debug,
+        SharedClock::new(StepClock::new(1_763_201_200)),
+        Secrets::default(),
+    );
+    let daemon = tracing::Dispatch::new(tracing_subscriber::registry().with(layer));
+    let other = tracing::Dispatch::new(tracing_subscriber::registry());
+    let team: TeamId = "team-20261115-090000-scp1".parse().unwrap();
+    let task: TaskId = "task-20261115-090000-scp1".parse().unwrap();
+    let future = tracing::dispatcher::with_default(&daemon, || {
+        let parent = tracing::info_span!("team", team = %team);
+        let child = tracing::info_span!(parent: &parent, "task", task = %task);
+        tracing::Instrument::instrument(
+            async move {
+                let _child = child;
+                std::future::pending::<()>().await;
+            },
+            parent,
+        )
+    });
+    let mut scoped = Box::pin(super::Scoped::new(future, daemon));
+    let waker = std::task::Waker::noop();
+    let mut context = std::task::Context::from_waker(waker);
+    assert!(scoped.as_mut().poll(&mut context).is_pending());
+
+    // An aborted task is dropped by the runtime, under whatever subscriber the thread has then.
+    let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tracing::dispatcher::with_default(&other, || drop(scoped));
+    }));
+
+    assert!(dropped.is_ok(), "the spans were closed in the other registry");
+}

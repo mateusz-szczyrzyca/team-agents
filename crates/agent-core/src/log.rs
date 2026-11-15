@@ -110,7 +110,7 @@ impl TryFrom<String> for LogLevel {
 pub enum LogEvent {
     /// A line of a model CLI's output cannot be read as its event format.
     CliOutputUnreadable,
-    /// A model CLI run ends without reporting a status or fails.
+    /// A model CLI run cannot start, ends without reporting a status or a reviewer's verdict, or fails.
     RunEndedWithoutStatus,
     /// The hang watchdog stops a silent run.
     RunHung,
@@ -120,9 +120,9 @@ pub enum LogEvent {
     RunRateLimited,
     /// An `agentbus` operation fails and what waits for it is retried or dropped.
     BusDown,
-    /// A `git` call fails or a branch operation is retried.
+    /// A `git` call, worktree operation or branch operation fails or is retried.
     GitCallFailed,
-    /// A GitHub API call fails or is retried.
+    /// A GitHub API call, a publication or a merge fails or is retried, or the home has no GitHub token.
     GithubCallFailed,
     /// A gate command cannot start or be recorded.
     GateCannotStart,
@@ -130,18 +130,26 @@ pub enum LogEvent {
     GateTimedOut,
     /// A gate runs on or leaves a dirty worktree or moves `HEAD`.
     GateDirtyTree,
-    /// The daemon's state file cannot be saved.
+    /// The daemon's state file or the activity log of a task cannot be saved.
     StateSaveFailed,
-    /// A questions file is missing or not valid.
+    /// A questions file is missing or not valid, or cannot be prepared, watched or opened.
     QuestionsFileInvalid,
     /// An agent, investigator, or repository named in the state or a request is no longer in `agents.toml`.
     ConfigurationNameMissing,
-    /// A restart of the daemon found an interrupted run and corrected it.
+    /// A start or restart of the daemon found an interrupted run or a host fallback and corrected it.
     RestartCorrected,
-    /// A client request is refused as invalid.
+    /// A client connection, subscription or request cannot be accepted or is refused.
     RequestRefused,
     /// A task or thread in the daemon panicked.
     DaemonPanicked,
+    /// A task of the daemon (a side task or the task of a client connection) ends with an error it does not handle.
+    DaemonTaskFailed,
+    /// A team that was formed is not started because of a fault of the daemon, not of the request.
+    TeamNotStarted,
+    /// A notification for the human cannot be made, timed, queued or delivered.
+    NotificationFailed,
+    /// A record of the history cannot be made as it should: it is left out, counted as lost or made with a fallback.
+    HistoryRecordIncomplete,
     /// A team is started or closed.
     TeamChanged,
     /// A round is opened or closed.
@@ -154,10 +162,34 @@ pub enum LogEvent {
     RunStarted,
     /// A model CLI run ends.
     RunEnded,
+    /// The daemon has opened its state and its history and serves its socket.
+    DaemonStarted,
+    /// A signal (`SIGTERM` or `SIGINT`) asks the daemon to stop.
+    DaemonStopRequested,
+    /// Everything of the daemon but its history has ended: the last record of a daemon that ended cleanly.
+    DaemonStopped,
+    /// A request for a worker is given to a worker.
+    RequestDelegated,
+    /// The open questions of a task are answered, with the channel of the answer.
+    QuestionsAnswered,
+    /// The human used a control (stop, pause, unpause, resume) and it reached its tasks.
+    ControlUsed,
+    /// The checks before a review send a round back to its team, ask the human, or take the human's answer.
+    ChecksDecided,
+    /// The reviews of a pull request are asked for.
+    ReviewsRequested,
+    /// A reviewer's report comes when no review waits for it: it is kept or left out, and changes nothing.
+    ReviewReportLate,
+    /// A notification for the human is delivered.
+    NotificationSent,
+    /// A new questions file is opened in the editor, or is not because the editor is not there.
+    QuestionsFileOpened,
     /// A pure decision of `agent_core::decide` takes action, with its input and result.
     DecisionTaken,
     /// An outside call (`git`, `agentbus`, GitHub API, model CLI) completes, with its duration and outcome.
     OutsideCallCompleted,
+    /// The other end of an answer (a client of the socket, or a task of the daemon) was gone before the answer.
+    PeerGone,
 }
 
 impl Keyword for LogEvent {
@@ -178,7 +210,12 @@ impl LogEvent {
     #[must_use]
     pub const fn level(self) -> LogLevel {
         match self {
-            Self::StateSaveFailed | Self::ConfigurationNameMissing | Self::DaemonPanicked => LogLevel::Error,
+            Self::StateSaveFailed
+            | Self::ConfigurationNameMissing
+            | Self::DaemonPanicked
+            | Self::DaemonTaskFailed
+            | Self::TeamNotStarted
+            | Self::NotificationFailed => LogLevel::Error,
             Self::CliOutputUnreadable
             | Self::RunEndedWithoutStatus
             | Self::RunHung
@@ -192,14 +229,26 @@ impl LogEvent {
             | Self::GateDirtyTree
             | Self::QuestionsFileInvalid
             | Self::RestartCorrected
-            | Self::RequestRefused => LogLevel::Warn,
+            | Self::RequestRefused
+            | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
             | Self::RoundChanged
             | Self::ItemPhaseChanged
             | Self::TaskStatusChanged
             | Self::RunStarted
-            | Self::RunEnded => LogLevel::Info,
-            Self::DecisionTaken | Self::OutsideCallCompleted => LogLevel::Debug,
+            | Self::RunEnded
+            | Self::DaemonStarted
+            | Self::DaemonStopRequested
+            | Self::DaemonStopped
+            | Self::RequestDelegated
+            | Self::QuestionsAnswered
+            | Self::ControlUsed
+            | Self::ChecksDecided
+            | Self::ReviewsRequested
+            | Self::ReviewReportLate
+            | Self::NotificationSent
+            | Self::QuestionsFileOpened => LogLevel::Info,
+            Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
     }
 }

@@ -5,7 +5,9 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::future::Future;
 use std::panic::PanicHookInfo;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, Once, PoisonError};
 use std::time::Duration;
 
@@ -724,6 +726,50 @@ pub fn log_outside_call(tool: &str, operation: &str, duration: Duration, exit_co
     // Direct dispatch still reaches the active subscriber, whose layer filters by level, but does not let another
     // scoped dispatcher's cached macro interest suppress this completion record.
     tracing::Event::dispatch(&OUTSIDE_CALL_METADATA, &values);
+}
+
+/// A future that is polled — and dropped — with `dispatch` as the default subscriber.
+///
+/// `WithSubscriber` sets the subscriber only while the future is polled. A task that is aborted is dropped by the runtime
+/// outside of that, and the registry of `tracing-subscriber` closes the parent of a span through the default subscriber of
+/// the moment: the spans of a future dropped under another registry would be closed in the wrong one.
+pub struct Scoped<F> {
+    /// The subscriber of the future.
+    dispatch: tracing::Dispatch,
+    /// The future, until it has finished or is dropped.
+    inner: Option<Pin<Box<F>>>,
+}
+
+impl<F> fmt::Debug for Scoped<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Scoped")
+            .field("finished", &self.inner.is_none())
+            .finish()
+    }
+}
+
+impl<F: Future> Scoped<F> {
+    /// `future`, polled and dropped with `dispatch` as the default subscriber.
+    #[must_use]
+    pub fn new(future: F, dispatch: tracing::Dispatch) -> Self {
+        Self {
+            dispatch,
+            inner: Some(Box::pin(future)),
+        }
+    }
+}
+
+impl<F: Future> Future for Scoped<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<F::Output> {
+        let this = self.get_mut();
+        let Some(inner) = this.inner.as_mut() else {
+            // Polled again after it finished: a future may answer anything then, and this one never ends again.
+            return std::task::Poll::Pending;
+        };
+        tracing::dispatcher::with_default(&this.dispatch, || inner.as_mut().poll(cx))
+    }
 }
 
 #[cfg(test)]

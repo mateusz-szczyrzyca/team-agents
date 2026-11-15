@@ -467,3 +467,7 @@ mod history_deadline_tests;
 #[cfg(test)]
 #[path = "rounds/tests/daemon_log.rs"]
 mod daemon_log_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/daemon_log_causes.rs"]
+mod daemon_log_cause_tests;
