@@ -91,26 +91,31 @@ fn retention_keeps_open_and_boundary_rounds_and_removes_all_old_owned_rows() {
             0,
             "seed={seed}"
         );
-        for table in [
-            "rounds",
-            "runs",
-            "teams",
-            "steps",
-            "launches",
-            "run_ends",
-            "run_changes",
-            "commits",
-            "changed_files",
-            "run_rounds",
-            "plan",
-            "history_records",
-            "history_record_rounds",
-        ] {
-            let actual = after["tables"][table].as_u64().unwrap();
-            assert!(
-                actual < before["tables"][table].as_u64().unwrap(),
-                "seed={seed} table={table}"
-            );
-        }
+        assert_owned_counts_drop(&before, &after, seed);
+    }
+}
+
+/// Checks each table owning records of the deleted round.
+fn assert_owned_counts_drop(before: &serde_json::Value, after: &serde_json::Value, seed: u64) {
+    for table in [
+        "rounds",
+        "runs",
+        "teams",
+        "steps",
+        "launches",
+        "run_ends",
+        "run_changes",
+        "commits",
+        "changed_files",
+        "run_rounds",
+        "plan",
+        "history_records",
+        "history_record_rounds",
+    ] {
+        let actual = after["tables"][table].as_u64().unwrap();
+        assert!(
+            actual < before["tables"][table].as_u64().unwrap(),
+            "seed={seed} table={table}"
+        );
     }
 }
