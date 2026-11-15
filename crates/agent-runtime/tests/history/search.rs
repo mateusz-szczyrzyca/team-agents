@@ -98,3 +98,45 @@ fn populated_version_four_migrates_without_loss_and_indexes_old_and_new_text() {
         assert_eq!(indexed, total, "seed {seed}");
     }
 }
+
+#[test]
+fn searches_the_tool_name_and_detail_of_a_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let mut world = complete(8750);
+    world.runs[0].steps[0].event = agent_core::cli::ActivityEvent::ToolCall {
+        name: "uniquetoolneedle".to_owned(),
+        summary: "uniquedetailneedle".to_owned(),
+    };
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+    db.write(&world.records()).unwrap();
+    let run = &world.runs[0].start;
+    db.write_logs(&[LogRecord {
+        at: at(11, 0),
+        module: "search-test".to_owned(),
+        event: LogEvent::RunStarted,
+        team: Some(LogTeamScope::new(run.team.clone(), run.rounds.clone())),
+        task: Some(LogTaskScope::new(run.task.clone(), Some(run.run.clone()))),
+        message: "starting".to_owned(),
+        fields: BTreeMap::new(),
+        cut: Cut::default(),
+    }])
+    .unwrap();
+    let reader = Reader::open(&path).unwrap();
+    let all = reader.daemon_logs().unwrap();
+    for text in ["uniquetoolneedle", "uniquedetailneedle"] {
+        assert_eq!(
+            reader
+                .log_rows(
+                    &LogFilter {
+                        grep: Some(text.to_owned()),
+                        ..LogFilter::default()
+                    },
+                    LogWindow::Newest(100)
+                )
+                .unwrap(),
+            all,
+            "{text}"
+        );
+    }
+}

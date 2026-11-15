@@ -240,3 +240,59 @@ async fn daemon_daily_retention_removes_closed_round_and_gate_but_keeps_old_open
     rig.stop().await.unwrap();
     assert_eq!(reader.rounds_of_team(&open_team).unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn task_and_worktree_views_show_running_status_and_the_last_recorded_head() {
+    let mut rig = patient(
+        &[
+            normal("claude-1", "gated"),
+            normal("claude-2", "sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, task) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    super::history_stories_tests::gate_when_committed(&rig, &task[0], 1).await;
+    rig.wait_for("finished changes", || {
+        Reader::open(&rig.home.history_file())
+            .unwrap()
+            .team_records(&team)
+            .unwrap()
+            .iter()
+            .any(|r| matches!(&r.record, Record::Changes(c) if c.head_after != c.head_before))
+    })
+    .await;
+    let (open, _) = rig.run(&["claude-2"], ONE, MergeMode::NoMerge, None).await;
+    rig.wait_for("open run", || {
+        !Reader::open(&rig.home.history_file())
+            .unwrap()
+            .runs_of_team(&open)
+            .unwrap()
+            .is_empty()
+    })
+    .await;
+    let tasks = rows(&rig, &["log", "--team", open.as_str(), "--show", "tasks", "--json"]);
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["status"], "running");
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let records = reader.team_records(&team).unwrap();
+    let changes = records
+        .iter()
+        .find_map(|r| match &r.record {
+            Record::Changes(c) if c.head_after != c.head_before => Some(c),
+            _ => None,
+        })
+        .unwrap();
+    let run = reader.run(&changes.run).unwrap().unwrap();
+    let trees = rows(&rig, &["log", "--team", team.as_str(), "--show", "worktrees", "--json"]);
+    let tree = trees
+        .iter()
+        .find(|tree| tree["task"] == run.start.value.task.as_str())
+        .unwrap();
+    assert_eq!(tree["head"], serde_json::to_value(&changes.head_after).unwrap());
+    rig.stop().await.unwrap();
+}
