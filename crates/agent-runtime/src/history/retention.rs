@@ -1,4 +1,5 @@
 //! Retention of closed rounds through the single database writer.
+use super::codec::{time_key, time_key_sql};
 use agent_core::state::Timestamp;
 use std::path::PathBuf;
 
@@ -38,15 +39,23 @@ pub(super) fn retain(connection: &mut rusqlite::Connection, request: &Retention)
     let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     tx.execute_batch(include_str!("retention.sql"))?;
     tx.execute(
-        "INSERT INTO expired_rounds SELECT DISTINCT r.round FROM rounds r JOIN history_records h
-        ON h.kind = 'round_closed' AND json_extract(h.payload, '$.round') = r.round
-        WHERE (substr(h.at,1,19)||'.'||substr(CASE WHEN substr(h.at,20,1)='.' THEN substr(h.at,21,length(h.at)-21) ELSE '' END||'000000000',1,9)) < ?1",
+        concat!(
+            "INSERT INTO expired_rounds SELECT DISTINCT r.round FROM rounds r JOIN history_records h
+            ON h.kind = 'round_closed' AND json_extract(h.payload, '$.round') = r.round
+            WHERE (",
+            time_key_sql!("h.at"),
+            ") < ?1"
+        ),
         [request.closed_before.map(time_key)],
     )?;
     tx.execute_batch(include_str!("retention_owned.sql"))?;
     tx.execute(
-        "INSERT OR IGNORE INTO expired_logs SELECT id FROM daemon_logs l
-        WHERE (substr(l.at,1,19)||'.'||substr(CASE WHEN substr(l.at,20,1)='.' THEN substr(l.at,21,length(l.at)-21) ELSE '' END||'000000000',1,9)) < ?1 AND NOT EXISTS (SELECT 1 FROM daemon_log_rounds d WHERE d.log = l.id)",
+        concat!(
+            "INSERT OR IGNORE INTO expired_logs SELECT id FROM daemon_logs l
+            WHERE (",
+            time_key_sql!("l.at"),
+            ") < ?1 AND NOT EXISTS (SELECT 1 FROM daemon_log_rounds d WHERE d.log = l.id)"
+        ),
         [request.logs_before.map(time_key)],
     )?;
     remove_gate_files(&tx, request)?;
@@ -122,6 +131,10 @@ fn remove_rows(tx: &rusqlite::Transaction<'_>) -> Result<(), rusqlite::Error> {
             [],
         )?;
     }
+    let expired_rounds: i64 = tx.query_row("SELECT count(*) FROM expired_rounds", [], |row| row.get(0))?;
+    if expired_rounds == 0 {
+        return Ok(());
+    }
     for (table, key) in [
         ("run_rounds", "run"),
         ("history_record_rounds", "sequence"),
@@ -135,14 +148,6 @@ fn remove_rows(tx: &rusqlite::Transaction<'_>) -> Result<(), rusqlite::Error> {
         ))?;
     }
     Ok(())
-}
-
-/// Normalizes variable timestamp precision for an exclusive nanosecond boundary.
-fn time_key(at: Timestamp) -> String {
-    let text = at.to_string();
-    let utc = text.trim_end_matches('Z');
-    let (seconds, fraction) = utc.split_once('.').unwrap_or((utc, ""));
-    format!("{seconds}.{fraction:0<9}")
 }
 
 /// Resolves parents relative to owned directory descriptors without following symlinks.

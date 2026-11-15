@@ -7,19 +7,12 @@ use agent_core::state::Timestamp;
 use rusqlite::{params_from_iter, types::Value};
 
 use super::{ReadError, Reader, decode_daemon_log, query};
+use crate::history::codec::{time_key, time_key_sql};
 use crate::history::migrate::version_of;
 use crate::history::schema::DAEMON_LOGS_VERSION;
 
 /// UTC text padded to nanoseconds, so text order is timestamp order.
-const TIME_KEY: &str = "substr(l.at,1,19)||'.'||substr(CASE WHEN substr(l.at,20,1)='.' THEN substr(l.at,21,length(l.at)-21) ELSE '' END||'000000000',1,9)";
-
-/// Normalizes the variable fractional precision of the persisted timestamp.
-fn time_key(at: Timestamp) -> String {
-    let text = at.to_string();
-    let utc = text.trim_end_matches('Z');
-    let (seconds, fraction) = utc.split_once('.').unwrap_or((utc, ""));
-    format!("{seconds}.{fraction:0<9}")
-}
+const TIME_KEY: &str = time_key_sql!("l.at");
 
 /// SQL and its bound values; only fixed fragments enter the SQL text.
 #[derive(Debug)]
