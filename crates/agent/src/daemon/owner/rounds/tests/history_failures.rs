@@ -1,11 +1,20 @@
 //! History storage failures must not prevent the fake GitHub round from merging.
 
+use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
+use agent_core::cli::{RunMode, SessionId};
+use agent_core::config::{AbsolutePath, CliArgs};
 use agent_core::history::{HistoryHealth, HistoryState, MaxTextBytes};
+use agent_core::ids::RunId;
+use agent_core::kinds::CliKind;
 use agent_core::protocol::{Client, Command, Reply, StatusRequest};
 use agent_core::state::{Completion, ItemPhase, MergeMode};
 use agent_runtime::history::{HistoryDb, Reader};
+use agent_runtime::history::{Problem, Reporter};
+use agent_runtime::run::RunJob;
 
 use super::rig::{ONE, Rig, investigator, normal};
 
@@ -333,59 +342,23 @@ async fn a_fix_pass_whose_event_cannot_be_built_is_counted_as_lost() {
     started.writer.close().unwrap();
 }
 
-#[tokio::test]
-async fn an_unbuilt_fix_pass_is_counted_under_its_capture_cause_and_told_in_its_round_story() {
-    use std::collections::BTreeMap;
-    use std::num::{NonZeroU32, NonZeroUsize};
-    use std::str::FromStr;
-    use std::sync::{Arc, Mutex};
+#[derive(Debug, Default)]
+struct CaptureProblems(Mutex<Vec<Problem>>);
 
-    use agent_core::cli::{RunMode, SessionId};
-    use agent_core::config::{AbsolutePath, CliArgs};
-    use agent_core::history::{EventKind, HistoryEvent, LostKind, Record, RunWhy};
-    use agent_core::ids::RunId;
-    use agent_core::kinds::CliKind;
-    use agent_core::story::{PromptView, Selection, StepView, StoryOptions};
-    use agent_runtime::history::{History, Problem, Reporter, Setup};
-    use agent_runtime::run::RunJob;
-
-    use crate::daemon::owner::fixture::Daemon;
-    use crate::daemon::owner::start::Plan;
-    use crate::fixtures::{at, solo_state, task};
-
-    #[derive(Debug, Default)]
-    struct Problems(Mutex<Vec<Problem>>);
-
-    impl Reporter for Problems {
-        fn report(&self, problem: &Problem) {
-            self.0.lock().unwrap().push(problem.clone());
-        }
+impl Reporter for CaptureProblems {
+    fn report(&self, problem: &Problem) {
+        self.0.lock().unwrap().push(problem.clone());
     }
+}
 
-    let state = solo_state();
-    let team = state.teams()[0].id().clone();
-    let round = "round-20261111-191500-f1x1".parse().unwrap();
-    let daemon = Daemon::new(&state, None);
-    let (owner, _sinks) = daemon.bare_owner().await;
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("history.db");
-    let database = HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
-    let problems = Arc::new(Problems::default());
-    let started = History::start(
-        database,
-        Setup {
-            reporter: problems.clone(),
-            capacity: NonZeroUsize::new(16).unwrap(),
-        },
-    )
-    .unwrap();
-    let owner = owner.with_history(started.history.clone());
-    let make_plan = |run_id: &str, addition: Option<String>| Plan {
+/// A plan whose fix-pass findings can be withheld without changing anything else.
+fn fix_pass_plan(run_id: &str, addition: Option<String>) -> crate::daemon::owner::start::Plan {
+    crate::daemon::owner::start::Plan {
         run: run_id.parse::<RunId>().unwrap(),
         recorded_session: None,
         addition,
         job: RunJob {
-            task: task(1),
+            task: crate::fixtures::task(1),
             run: run_id.parse::<RunId>().unwrap(),
             cli: CliKind::Claude,
             model: None,
@@ -397,7 +370,40 @@ async fn an_unbuilt_fix_pass_is_counted_under_its_capture_cause_and_told_in_its_
             working_dir: AbsolutePath::from_str("/work/example").unwrap(),
             mcp_servers: BTreeMap::new(),
         },
-    };
+    }
+}
+
+#[tokio::test]
+async fn an_unbuilt_fix_pass_is_counted_under_its_capture_cause_and_told_in_its_round_story() {
+    use std::num::{NonZeroU32, NonZeroUsize};
+
+    use agent_core::history::{EventKind, HistoryEvent, LostKind, Record, RunWhy};
+    use agent_core::story::{PromptView, Selection, StepView, StoryOptions};
+    use agent_runtime::history::{History, Setup};
+
+    use crate::daemon::owner::fixture::Daemon;
+    use crate::fixtures::{at, solo_state, task};
+
+    let state = solo_state();
+    let team = state.teams()[0].id().clone();
+    let round = "round-20261111-191500-f1x1".parse().unwrap();
+    let daemon = Daemon::new(&state, None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let database = HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
+    let problems = Arc::new(CaptureProblems::default());
+    let concrete = Arc::clone(&problems);
+    let reporter: Arc<dyn Reporter> = concrete;
+    let started = History::start(
+        database,
+        Setup {
+            reporter,
+            capacity: NonZeroUsize::new(16).unwrap(),
+        },
+    )
+    .unwrap();
+    let owner = owner.with_history(started.history.clone());
 
     for (run, addition, at) in [
         ("run-20261111-193001-f1x1", None, at(10)),
@@ -405,7 +411,7 @@ async fn an_unbuilt_fix_pass_is_counted_under_its_capture_cause_and_told_in_its_
     ] {
         owner.record_run_start(
             &task(1),
-            &make_plan(run, addition),
+            &fix_pass_plan(run, addition),
             std::slice::from_ref(&round),
             RunWhy::FixPass {
                 number: NonZeroU32::MIN,
