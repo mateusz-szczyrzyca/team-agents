@@ -516,4 +516,43 @@ mod story_text {
         assert!(!text.contains("a launch record is missing"), "{text}");
         assert!(!text.contains("a changes record is missing"), "{text}");
     }
+
+    #[test]
+    fn a_head_capture_loss_is_attached_to_the_latest_run_of_its_task() {
+        let mut written = Written::default();
+        written.team(&team(1), 0);
+        written.round(&team(1), &round(1), 1);
+        written.run(&team(1), &[round(1)], 1, 0, "first", 0);
+        written.run(&team(1), &[round(1)], 2, 50, "second", 0);
+        for stored in &mut written.records {
+            match &mut stored.record {
+                agent_core::history::Record::Run(start) if start.run == run(2) => {
+                    start.task = task(1);
+                }
+                agent_core::history::Record::Launch(launch) if launch.run == run(2) => {
+                    launch.head = None;
+                }
+                _ => {}
+            }
+        }
+        written.event(
+            &team(1),
+            70,
+            &[round(1)],
+            HistoryEvent::Lost {
+                task: Some(task(1)),
+                what: LostKind::Record(RecordKind::Launch),
+                cause: LostCause::CaptureHead,
+                detail: "second run failed".to_owned(),
+            },
+        );
+
+        let text = story(&written.records, PREVIEW);
+
+        assert!(
+            place(&text, &format!("run {}:", run(2))) < place(&text, "capture_head: second run failed"),
+            "{text}"
+        );
+        assert_eq!(text.matches("capture_head: second run failed").count(), 1, "{text}");
+    }
 }

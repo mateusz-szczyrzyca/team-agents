@@ -383,6 +383,21 @@ async fn a_pull_request_the_human_closed_is_recorded_once_however_often_it_is_lo
     let events = events(&rig, &team);
     assert_eq!(count(&events, EventKind::PullClosed), 1, "{:?}", kinds(&events));
     assert_eq!(count(&events, EventKind::PullMerged), 0);
+
+    let round = the_round(&rig);
+    let round_closed = Reader::open(&rig.home.history_file())
+        .unwrap()
+        .round_records(&round)
+        .unwrap()
+        .iter()
+        .filter(|stored| {
+            matches!(
+                &stored.record,
+                Record::Event(event) if event.event.kind() == EventKind::PullClosed
+            )
+        })
+        .count();
+    assert_eq!(round_closed, 1, "pull_closed must be linked to {round}");
 }
 
 #[tokio::test]
@@ -902,4 +917,56 @@ async fn a_task_with_runs_in_two_rounds_links_second_round_events_only_to_the_se
         },
     );
     assert_eq!(team_story.matches("team ended\n").count(), 1, "{team_story}");
+}
+
+#[tokio::test]
+async fn a_review_report_that_arrives_after_its_pass_was_decided_is_recorded_in_its_round() {
+    let late_approvals = "late:VERDICT: APPROVE\\nSUMMARY: late first,done:VERDICT: APPROVE\\nSUMMARY: fixed";
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", CHANGES_ONCE),
+            investigator("inv-r2", late_approvals),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (_team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    let round = the_round(&rig);
+    rig.stop().await.unwrap();
+
+    let records = Reader::open(&rig.home.history_file())
+        .unwrap()
+        .round_records(&round)
+        .unwrap();
+    let mut submissions: Vec<(u32, String, ReviewVerdict)> = records
+        .iter()
+        .filter_map(|stored| match &stored.record {
+            Record::Event(event) => match &event.event {
+                HistoryEvent::ReviewSubmitted {
+                    pass,
+                    reviewer,
+                    verdict,
+                    ..
+                } => Some((*pass, reviewer.as_str().to_owned(), *verdict)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    submissions.sort_by(|left, right| (left.0, &left.1).cmp(&(right.0, &right.1)));
+    assert_eq!(
+        submissions,
+        [
+            (0, "inv-r1".to_owned(), ReviewVerdict::RequestChanges),
+            (0, "inv-r2".to_owned(), ReviewVerdict::Approve),
+            (1, "inv-r1".to_owned(), ReviewVerdict::Approve),
+            (1, "inv-r2".to_owned(), ReviewVerdict::Approve),
+        ]
+    );
 }
