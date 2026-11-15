@@ -1060,49 +1060,58 @@ impl Owner {
     /// # Errors
     /// [`OwnerError`] when a request changes the state and it cannot be saved.
     async fn handle(&mut self, message: Message) -> Result<(), OwnerError> {
-        match message {
-            Message::Request { client, command, reply } => {
-                // A gate is answered when it has run, by the service: the reply goes with the job.
-                let command = match command {
-                    Command::Gate(request) => {
-                        self.gate_request(request, reply);
-                        return Ok(());
+        let span = tracing::debug_span!("request");
+        async move {
+            match message {
+                Message::Request { client, command, reply } => {
+                    // A gate is answered when it has run, by the service: the reply goes with the job.
+                    let command = match command {
+                        Command::Gate(request) => {
+                            self.gate_request(request, reply);
+                            return Ok(());
+                        }
+                        other => other,
+                    };
+                    let answer = match command {
+                        Command::Run(request) => self.run_request(request).await?,
+                        Command::Answer(request) => self.answer_request(&client, request).await?,
+                        Command::Stop(request) => self.control_request(&client, Steer::Stop, &request.target).await?,
+                        Command::Pause(request) => self.control_request(&client, Steer::Pause, &request.target).await?,
+                        Command::Unpause(request) => {
+                            self.control_request(&client, Steer::Unpause, &request.target).await?
+                        }
+                        Command::Resume(request) => {
+                            self.control_request(&client, Steer::Resume, &request.target).await?
+                        }
+                        Command::Say(request) => self.say_request(&client, request).await?,
+                        other => self.answer(&other),
+                    };
+                    if let Err(ref failure) = answer {
+                        tracing::warn!(
+                            event = LogEvent::RequestRefused.as_str(),
+                            kind = ?failure.kind,
+                            reason = %failure.message,
+                            "a client request was refused"
+                        );
                     }
-                    other => other,
-                };
-                let answer = match command {
-                    Command::Run(request) => self.run_request(request).await?,
-                    Command::Answer(request) => self.answer_request(&client, request).await?,
-                    Command::Stop(request) => self.control_request(&client, Steer::Stop, &request.target).await?,
-                    Command::Pause(request) => self.control_request(&client, Steer::Pause, &request.target).await?,
-                    Command::Unpause(request) => self.control_request(&client, Steer::Unpause, &request.target).await?,
-                    Command::Resume(request) => self.control_request(&client, Steer::Resume, &request.target).await?,
-                    Command::Say(request) => self.say_request(&client, request).await?,
-                    other => self.answer(&other),
-                };
-                if let Err(ref failure) = answer {
-                    tracing::warn!(
-                        event = LogEvent::RequestRefused.as_str(),
-                        kind = ?failure.kind,
-                        reason = %failure.message,
-                        "a client request was refused"
-                    );
+                    if reply.send(answer).is_err() {
+                        // The connection closed while its request waited: nobody is left to answer.
+                        tracing::debug!("the connection of a request closed before the answer");
+                    }
                 }
-                if reply.send(answer).is_err() {
-                    // The connection closed while its request waited: nobody is left to answer.
-                    tracing::debug!("the connection of a request closed before the answer");
+                Message::Subscribe { team, reply } => {
+                    // The receiver is made before the teams are read, and nothing changes between: no event is missed.
+                    let events = self.parts.events.subscribe();
+                    let teams = self.summaries(team.as_ref());
+                    if reply.send((teams, events)).is_err() {
+                        tracing::debug!("the connection of a subscription closed before the answer");
+                    }
                 }
             }
-            Message::Subscribe { team, reply } => {
-                // The receiver is made before the teams are read, and nothing changes between: no event is missed.
-                let events = self.parts.events.subscribe();
-                let teams = self.summaries(team.as_ref());
-                if reply.send((teams, events)).is_err() {
-                    tracing::debug!("the connection of a subscription closed before the answer");
-                }
-            }
+            Ok(())
         }
-        Ok(())
+        .instrument(span)
+        .await
     }
 
     /// The summaries of the teams, or of the one named.

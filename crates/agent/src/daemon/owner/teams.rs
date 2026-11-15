@@ -93,6 +93,7 @@ impl Owner {
             Ok(formed) => formed,
             Err(refusal) => return Ok(Err(refusal_of(&refusal))),
         };
+        let team_span = tracing::debug_span!("team", team = %formed.team.id());
         // The team goes into a copy of the state first: a team the state refuses leaves nothing behind, and the state the
         // owner holds changes only once the copy is saved.
         let mut next = self.parts.state.clone();
@@ -103,11 +104,15 @@ impl Owner {
                 error_chain(&error)
             ))));
         }
-        if let Err(failure) = self.make_workspaces(&request, &formed).await {
+        if let Err(failure) = self
+            .make_workspaces(&request, &formed)
+            .instrument(team_span.clone())
+            .await
+        {
             return Ok(Err(failure));
         }
         if let Some(bus_team) = &formed.bus
-            && let Err(error) = self.parts.bus.team_create(bus_team).await
+            && let Err(error) = self.parts.bus.team_create(bus_team).instrument(team_span.clone()).await
         {
             tracing::warn!(
                 event = LogEvent::BusDown.as_str(),
@@ -115,7 +120,9 @@ impl Owner {
                 error = %error_chain(&error),
                 "the team cannot be created on the bus"
             );
-            self.remove_workspaces(&request, &formed.workspaces).await;
+            self.remove_workspaces(&request, &formed.workspaces)
+                .instrument(team_span.clone())
+                .await;
             return Ok(Err(Failure {
                 kind: FailureKind::Internal,
                 message: format!("cannot create the team on the agentbus: {}", error_chain(&error)),
@@ -133,7 +140,7 @@ impl Owner {
             Ok(started) => started,
             Err(error) => {
                 tracing::error!(team = %id, error = %error_chain(&error), "the events of the new team cannot be made: the team is not started");
-                self.undo_start(&request, &formed).await;
+                self.undo_start(&request, &formed).instrument(team_span.clone()).await;
                 return Ok(Err(internal(&format!(
                     "the new team has no round for an item it started: {}",
                     error_chain(&error)
@@ -147,7 +154,7 @@ impl Owner {
                 error = %error_chain(&error),
                 "the state with the new team cannot be saved: the team is not started"
             );
-            self.undo_start(&request, &formed).await;
+            self.undo_start(&request, &formed).instrument(team_span.clone()).await;
             return Ok(Err(internal(&format!(
                 "cannot save the state with the new team: {}",
                 error_chain(&error)
@@ -200,7 +207,11 @@ impl Owner {
                 branch: workspace.branch.clone(),
                 start: Revision::Branch(formed.base.clone()),
             };
-            if let Err(error) = git.worktree_add(&workspace.path, &branch).await {
+            if let Err(error) = git
+                .worktree_add(&workspace.path, &branch)
+                .instrument(tracing::debug_span!("workspace", task = %workspace.task))
+                .await
+            {
                 self.remove_workspaces(request, &made).await;
                 return Err(git_failure(
                     &format!("cannot make the worktree of task {}", workspace.task),
@@ -236,11 +247,20 @@ impl Owner {
         };
         let git = checkout_git(&self.parts.settings.config, request, &lead.agent);
         for workspace in made {
+            let span = tracing::debug_span!("workspace", task = %workspace.task);
             // A refusal that is being returned already: what cannot be removed is told, and left for the human.
-            if let Err(error) = git.worktree_remove(&workspace.path, RemoveMode::Force).await {
+            if let Err(error) = git
+                .worktree_remove(&workspace.path, RemoveMode::Force)
+                .instrument(span.clone())
+                .await
+            {
                 tracing::warn!(task = %workspace.task, error = %error_chain(&error), "a worktree of a refused team cannot be removed");
             }
-            if let Err(error) = git.branch_delete(&workspace.branch, DeleteMode::Force).await {
+            if let Err(error) = git
+                .branch_delete(&workspace.branch, DeleteMode::Force)
+                .instrument(span)
+                .await
+            {
                 tracing::warn!(task = %workspace.task, error = %error_chain(&error), "a branch of a refused team cannot be removed");
             }
         }

@@ -21,6 +21,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 use super::owner::Message;
 use crate::lines::{LineError, read_line_into, write_line};
@@ -321,32 +322,38 @@ async fn answer(
     subscription: &mut Option<Subscription>,
     write: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Result<(), LineError> {
-    let request = match Request::from_line(line) {
-        Ok(request) => request,
-        Err(error) => {
-            let failure = Failure {
-                kind: FailureKind::Invalid,
-                message: refusal_text(&error),
-            };
-            tracing::warn!(
-                event = agent_core::log::LogEvent::RequestRefused.as_str(),
-                reason = %failure.message,
-                "a client request was refused"
-            );
-            return respond(write, Response::error(RequestId(0), failure)).await;
-        }
-    };
-    let id = request.id;
-    let client = request.client;
-    let result = match request.command {
-        Command::Subscribe(subscribe) => subscribe_to(inbox, subscribe.team, subscription).await,
-        command => ask(inbox, client, command).await,
-    };
-    let response = match result {
-        Ok(reply) => Response::ok(id, reply),
-        Err(failure) => Response::error(id, failure),
-    };
-    respond(write, response).await
+    let span = tracing::debug_span!("request", request_id = tracing::field::Empty);
+    async move {
+        let request = match Request::from_line(line) {
+            Ok(request) => request,
+            Err(error) => {
+                let failure = Failure {
+                    kind: FailureKind::Invalid,
+                    message: refusal_text(&error),
+                };
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::RequestRefused.as_str(),
+                    reason = %failure.message,
+                    "a client request was refused"
+                );
+                return respond(write, Response::error(RequestId(0), failure)).await;
+            }
+        };
+        let id = request.id;
+        tracing::Span::current().record("request_id", id.0);
+        let client = request.client;
+        let result = match request.command {
+            Command::Subscribe(subscribe) => subscribe_to(inbox, subscribe.team, subscription).await,
+            command => ask(inbox, client, command).await,
+        };
+        let response = match result {
+            Ok(reply) => Response::ok(id, reply),
+            Err(failure) => Response::error(id, failure),
+        };
+        respond(write, response).await
+    }
+    .instrument(span)
+    .await
 }
 
 /// What a client is told about a line that is not a request.
