@@ -115,11 +115,11 @@ impl Reader {
     /// # Errors
     /// [`ReadError`] when the database or a selected row is invalid.
     pub fn log_rows(&self, filter: &LogFilter, window: LogWindow) -> Result<Vec<LogEntry>, ReadError> {
-        if filter.grep.is_some() {
-            return Ok(Vec::new());
-        }
         let snapshot = self.snapshot("daemon_logs")?;
         if version_of(&snapshot).map_err(query("daemon_logs"))? < DAEMON_LOGS_VERSION {
+            return Ok(Vec::new());
+        }
+        if filter.grep.is_some() && version_of(&snapshot).map_err(query("daemon_logs"))? < 5 {
             return Ok(Vec::new());
         }
         let mut selection = Selection::new(filter);
@@ -133,8 +133,17 @@ impl Reader {
         if selection.predicates.is_empty() {
             selection.predicates.push("l.id > 0".to_owned());
         }
+        let prefix = if let Some(text) = &filter.grep {
+            selection
+                .values
+                .insert(0, format!("\"{}\"", text.replace('"', "\"\"")).into());
+            selection.predicates.push("(l.id IN (SELECT log FROM hits) OR l.run IN (SELECT run FROM hits) OR l.task IN (SELECT task FROM hits WHERE run IS NULL) OR l.id IN (SELECT d.log FROM daemon_log_rounds d JOIN history_record_rounds h ON h.round=d.round WHERE h.sequence IN (SELECT sequence FROM hits WHERE run IS NULL AND task IS NULL)))".to_owned());
+            "WITH hits AS MATERIALIZED (SELECT sequence,log,run,task FROM history_search WHERE history_search MATCH ?) "
+        } else {
+            ""
+        };
         let sql = format!(
-            "SELECT l.id,l.first_at,l.at,l.level,l.module,l.event,l.team,l.task,l.run,l.message,l.fields,l.count,l.cut \
+            "{prefix}SELECT l.id,l.first_at,l.at,l.level,l.module,l.event,l.team,l.task,l.run,l.message,l.fields,l.count,l.cut \
              FROM daemon_logs l WHERE {} ORDER BY l.id {order} LIMIT ?",
             selection.predicates.join(" AND ")
         );

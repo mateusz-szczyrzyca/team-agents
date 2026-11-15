@@ -1,6 +1,4 @@
--- The schema of history.db at user_version 4: what `sqlite_master` holds after the migrations of
--- crates/agent-runtime/src/history/schema.rs, in the order they create it. A test compares it with a fresh database.
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -285,3 +283,70 @@ CREATE TABLE daemon_log_rounds (
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
+
+CREATE VIRTUAL TABLE history_search USING fts5(sequence UNINDEXED, log UNINDEXED, run UNINDEXED, task UNINDEXED, body, tokenize='unicode61 remove_diacritics 0');
+
+CREATE TABLE 'history_search_data'(id INTEGER PRIMARY KEY, block BLOB);
+
+CREATE TABLE 'history_search_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID;
+
+CREATE TABLE 'history_search_content'(id INTEGER PRIMARY KEY, c0, c1, c2, c3, c4);
+
+CREATE TABLE 'history_search_docsize'(id INTEGER PRIMARY KEY, sz BLOB);
+
+CREATE TABLE 'history_search_config'(k PRIMARY KEY, v) WITHOUT ROWID;
+
+CREATE TRIGGER history_search_insert AFTER INSERT ON history_records BEGIN
+ INSERT INTO history_search(sequence,run,task,body) SELECT h.sequence,
+CASE WHEN h.kind IN ('run','launch','run_end','changes') THEN h.key
+     WHEN h.kind IN ('step','session') THEN substr(h.key,1,instr(h.key,'/')-1) END AS run,
+json_extract(h.payload,'$.task') AS task,
+coalesce(h.key,'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_tree(h.payload) WHERE type='text'),'') || ' ' || coalesce(CASE h.kind
+ WHEN 'run' THEN (SELECT prompt FROM runs WHERE run=h.key)
+ WHEN 'step' THEN (SELECT coalesce(text,detail,path,'') FROM steps WHERE run=substr(h.key,1,instr(h.key,'/')-1) AND n=CAST(substr(h.key,instr(h.key,'/')+1) AS INTEGER))
+ WHEN 'run_end' THEN (SELECT final_message FROM run_ends WHERE run=h.key)
+ WHEN 'team' THEN (SELECT task_list FROM teams WHERE team=h.key)
+ WHEN 'round' THEN (SELECT coalesce(brief,'') || ' ' || coalesce(title,'') || ' ' || coalesce(description,'') FROM rounds WHERE round=h.key)
+END,'') AS body
+FROM history_records h WHERE sequence=new.sequence;
+END;
+
+CREATE TRIGGER history_search_delete AFTER DELETE ON history_records BEGIN
+ DELETE FROM history_search WHERE sequence=old.sequence;
+END;
+
+CREATE TRIGGER history_search_update AFTER UPDATE ON history_records BEGIN
+ DELETE FROM history_search WHERE sequence=old.sequence;
+ INSERT INTO history_search(sequence,run,task,body) SELECT h.sequence,
+CASE WHEN h.kind IN ('run','launch','run_end','changes') THEN h.key
+     WHEN h.kind IN ('step','session') THEN substr(h.key,1,instr(h.key,'/')-1) END AS run,
+json_extract(h.payload,'$.task') AS task,
+coalesce(h.key,'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_tree(h.payload) WHERE type='text'),'') || ' ' || coalesce(CASE h.kind
+ WHEN 'run' THEN (SELECT prompt FROM runs WHERE run=h.key)
+ WHEN 'step' THEN (SELECT coalesce(text,detail,path,'') FROM steps WHERE run=substr(h.key,1,instr(h.key,'/')-1) AND n=CAST(substr(h.key,instr(h.key,'/')+1) AS INTEGER))
+ WHEN 'run_end' THEN (SELECT final_message FROM run_ends WHERE run=h.key)
+ WHEN 'team' THEN (SELECT task_list FROM teams WHERE team=h.key)
+ WHEN 'round' THEN (SELECT coalesce(brief,'') || ' ' || coalesce(title,'') || ' ' || coalesce(description,'') FROM rounds WHERE round=h.key)
+END,'') AS body
+FROM history_records h WHERE sequence=new.sequence;
+END;
+
+CREATE TRIGGER log_search_insert AFTER INSERT ON daemon_logs BEGIN
+ INSERT INTO history_search(log,body) VALUES(new.id,new.message);
+END;
+
+CREATE TRIGGER log_search_delete AFTER DELETE ON daemon_logs BEGIN
+ DELETE FROM history_search WHERE log=old.id;
+END;
+
+CREATE TRIGGER log_search_update AFTER UPDATE ON daemon_logs BEGIN
+ DELETE FROM history_search WHERE log=old.id;
+ INSERT INTO history_search(log,body) VALUES(new.id,new.message);
+END;
+
+CREATE INDEX daemon_logs_by_event ON daemon_logs(event,id);
+
+CREATE INDEX runs_by_agent ON runs(agent,run);
+
+CREATE INDEX daemon_logs_by_time ON daemon_logs((substr(at,1,19)||'.'||substr(CASE WHEN substr(at,20,1)='.' THEN substr(at,21,length(at)-21) ELSE '' END||'000000000',1,9)),id);
+

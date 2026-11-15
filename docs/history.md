@@ -76,9 +76,9 @@ so its ledger row starts with `runs.at` and takes `run_ends.at` once the end is 
 | `synchronous` | `NORMAL` | in WAL mode a crash may lose the last commits, never corrupt the file |
 | `foreign_keys` | `ON` (each connection of the writer) | the rows of one record hold together |
 | `busy_timeout` | 5 seconds | a person with `sqlite3` open does not make the writer lose a batch at once |
-| `user_version` | the version of the schema, `4` | forward-only migrations (below) |
+| `user_version` | the version of the schema, `5` | forward-only migrations (below) |
 
-Every table is `STRICT`: a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
+Every ordinary table is `STRICT` (FTS5 manages its virtual and shadow tables): a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
 (a step of the kind `message` has a text and no path), so a row that something else wrote is refused by SQLite or, if
 the checks were switched off, by the reading API.
 
@@ -621,3 +621,33 @@ a configured credential.
 
 Unknown credentials, encoded or transformed values, and the separate raw CLI/activity files are outside this exact-value
 history redaction. `History::start_with_secrets` provides the protection; direct `Store` callers must supply safe records.
+
+## Search index
+
+Migration `5` indexes existing and future ledger text and daemon messages with FTS5. Queries bind a quoted phrase, escaping quotes; operator words are literal words. The Unicode tokenizer preserves diacritics. Triggers update the index in the same transaction as its source rows.
+
+### `history_search`
+
+The FTS5 virtual table: `sequence` identifies a ledger entry, `log` a daemon row, `run` and `task` connect a match to its log rows, and `body` contains searchable text. Managed by SQLite; applications do not modify these internal representations.
+
+### `history_search_data`
+
+FTS5 segment blocks: `id` identifies the `block` blob. Managed by SQLite; applications do not modify these internal representations.
+
+### `history_search_idx`
+
+FTS5 segment lookup: `segid`, `term` and `pgno` identify term pages. Managed by SQLite; applications do not modify these internal representations.
+
+### `history_search_content`
+
+FTS5 stored documents: `id` is the document identifier; `c0`, `c1`, `c2`, `c3`, `c4` store sequence, log, run, task and body respectively. Managed by SQLite; applications do not modify these internal representations.
+
+### `history_search_docsize`
+
+FTS5 document lengths: `id` identifies the document and `sz` stores token counts. Managed by SQLite; applications do not modify these internal representations.
+
+### `history_search_config`
+
+FTS5 configuration: `k` and `v` are internal keys and values. Managed by SQLite; applications do not modify these internal representations.
+
+The indexes `daemon_logs_by_event`, `runs_by_agent` and `daemon_logs_by_time` support event, agent and normalized timestamp filters.

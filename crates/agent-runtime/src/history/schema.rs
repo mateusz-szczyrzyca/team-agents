@@ -64,7 +64,7 @@ pub(super) const DAEMON_LOGS_VERSION: u32 = 4;
 
 /// The migrations, oldest first: version 1 is the schema of item 8.4.
 ///
-/// Every table is `STRICT`; the `CHECK`s repeat the rules of the typed records, so the database refuses what the types
+/// Every ordinary table is `STRICT`; the `CHECK`s repeat the rules of the typed records, so the database refuses what the types
 /// would, and a reader that finds a row that breaks one knows the file was changed by something else. Foreign keys
 /// join the rows of one record (a run and its steps); `team`, `task` and `round` in `runs` and `rounds` are plain
 /// columns, so a history that starts after its team did (a deleted database, a daemon upgraded in the middle of a team)
@@ -375,5 +375,9 @@ CREATE TABLE daemon_log_rounds (
 
 CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
 ",
+    },
+    Migration {
+        version: 5,
+        sql: include_str!("search.sql"),
     },
 ];
