@@ -53,8 +53,8 @@ impl HistoryDb {
     ///
     /// # Errors
     /// [`crate::history::RetainError`] when storage refuses cleanup.
-    pub fn retain(&mut self, _request: &crate::history::Retention) -> Result<(), crate::history::RetainError> {
-        Ok(())
+    pub fn retain(&mut self, request: &crate::history::Retention) -> Result<(), crate::history::RetainError> {
+        super::retention::retain(&mut self.connection, request)
     }
 
     /// Opens (and makes, and migrates) the database at `path`.
@@ -91,6 +91,14 @@ impl HistoryDb {
                 found,
                 supported,
             });
+        }
+        let vacuum: u32 = connection
+            .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
+            .map_err(database)?;
+        if vacuum != 1 {
+            connection
+                .execute_batch("PRAGMA auto_vacuum = FULL; VACUUM;")
+                .map_err(database)?;
         }
         let mode: String = connection
             .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
