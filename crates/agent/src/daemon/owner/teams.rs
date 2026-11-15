@@ -18,7 +18,7 @@ use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::protocol::{EventKind, Failure, FailureKind, Reply, RunRequest, TeamSummary};
-use agent_core::state::{RunEnd, Timestamp};
+use agent_core::state::{ItemPhase, RunEnd, Timestamp};
 use agent_core::status::{ItemStatus, TaskStatus};
 use agent_runtime::agentbus::{
     AgentBusError, DelegationStatus, DelegationUpdate, FailureClass, MemberState, Recipient, RequestId, Woken,
@@ -154,6 +154,7 @@ impl Owner {
             ))));
         }
         self.parts.state = next;
+        log_initial_lifecycle(&formed);
         self.record_team_start(&request, &id);
         let now = Timestamp::now(&self.parts.clock)?;
         self.publish(now, EventKind::TeamStarted { team: id.clone() });
@@ -913,6 +914,48 @@ fn is_transient(error: &AgentBusError) -> bool {
         error.class(),
         None | Some(FailureClass::Storage | FailureClass::Process | FailureClass::Unclassified)
     )
+}
+
+/// Logs the transitions that `form` already applied and the successful state save has now made durable.
+fn log_initial_lifecycle(formed: &Formed) {
+    let team = &formed.team;
+    for round in team.rounds() {
+        let span = tracing::error_span!("round", team = %team.id(), rounds = %round.id());
+        let _entered = span.enter();
+        tracing::info!(
+            event = LogEvent::RoundChanged.as_str(),
+            team = %team.id(),
+            round = %round.id(),
+            change = "opened",
+            item = ?round.item(),
+            "a round is opened"
+        );
+    }
+    for progress in team.items() {
+        let ItemPhase::InProgress { assignee, .. } = progress.phase() else {
+            continue;
+        };
+        let Some(round) = team.round_of(progress.id()) else {
+            continue;
+        };
+        let Some(workspace) = formed.workspaces.iter().find(|workspace| workspace.agent == *assignee) else {
+            continue;
+        };
+        let span = tracing::error_span!(
+            "item_assign",
+            team = %team.id(),
+            rounds = %round.id(),
+            task = %workspace.task
+        );
+        let _entered = span.enter();
+        tracing::info!(
+            event = LogEvent::ItemPhaseChanged.as_str(),
+            item = %progress.id(),
+            phase = "in_progress",
+            member = %assignee,
+            "an item is given to a member"
+        );
+    }
 }
 
 /// The events of a new team: its rounds, which were opened with it, and the items it starts with — those that have a
