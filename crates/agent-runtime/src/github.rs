@@ -892,6 +892,8 @@ enum NextPage {
 struct Answer {
     /// The body, at most [`MAX_RESPONSE_BYTES`].
     body: Vec<u8>,
+    /// The actual successful HTTP status returned by GitHub.
+    status: u16,
     /// What the `Link` header says about the page after this one.
     next_page: NextPage,
 }
@@ -937,6 +939,16 @@ impl Failure {
         }
     }
 
+    /// A diagnostic for a failed attempt that will be retried, including all available transport causes.
+    fn diagnostic(&self) -> String {
+        match self {
+            Self::Transport(source) => error_chain(source),
+            Self::TimedOut => "the attempt timed out".to_owned(),
+            Self::Rejected { status, message, .. } => format!("GitHub answered {status}: {message}"),
+            Self::TooLarge => format!("the answer exceeds {MAX_RESPONSE_BYTES} bytes"),
+        }
+    }
+
     /// The error of a call that failed on its `attempts`-th attempt, each of which had `limit`.
     fn into_error(self, operation: GitHubOperation, attempts: u32, limit: Duration) -> GitHubError {
         match self {
@@ -968,6 +980,18 @@ impl Failure {
             },
         }
     }
+}
+
+/// Renders an error and each source in order, because `Display` commonly shows only the outermost operation.
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
 }
 
 impl GitHub {
@@ -1379,7 +1403,7 @@ impl GitHub {
                         "github",
                         &call.operation.to_string(),
                         started.elapsed(),
-                        Some(200),
+                        Some(i32::from(answer.status)),
                         "ok",
                     );
                     return Ok(answer);
@@ -1405,15 +1429,28 @@ impl GitHub {
                     code,
                     "failed",
                 );
+                let diagnostic = error_chain(&error);
                 tracing::warn!(
                     event = agent_core::log::LogEvent::GithubCallFailed.as_str(),
                     operation = %call.operation,
-                    error = %error,
+                    attempt,
+                    retry = false,
+                    error = %diagnostic,
                     "a GitHub API call failed"
                 );
                 return Err(error);
             };
-            tracing::debug!(operation = %call.operation, attempt, ?delay, "a call failed and is made again");
+            let diagnostic = failure.diagnostic();
+            let delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX);
+            tracing::warn!(
+                event = agent_core::log::LogEvent::GithubCallFailed.as_str(),
+                operation = %call.operation,
+                attempt,
+                retry = true,
+                retry_delay_ms = delay_ms,
+                error = %diagnostic,
+                "a GitHub API call failed and is retried"
+            );
             tokio::time::sleep(delay).await;
             attempt = next;
         }
@@ -1456,7 +1493,11 @@ impl GitHub {
             body.extend_from_slice(&chunk);
         }
         if status.is_success() {
-            return Ok(Answer { body, next_page });
+            return Ok(Answer {
+                body,
+                status: status.as_u16(),
+                next_page,
+            });
         }
         let code = status.as_u16();
         Err(Failure::Rejected {
