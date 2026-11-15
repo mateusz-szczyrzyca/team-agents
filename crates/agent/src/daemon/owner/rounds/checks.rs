@@ -182,7 +182,7 @@ impl Owner {
         record.asked = None;
         self.parts.store.save_checks_record(&lead.task, record).await?;
         tracing::info!(team = %team, allowed = decided.allowed.len(), refused = decided.refused.len(), "the human answered the questions of the checks");
-        if !decided.allowed.is_empty() && decided.refused.is_empty() {
+        if !decided.allowed.is_empty() {
             let allowed = decided
                 .allowed
                 .iter()
