@@ -51,6 +51,7 @@ fn the_pinned_file_is_the_version_of_the_last_migration_and_every_table_of_it_is
             "commits",
             "daemon_log_rounds",
             "daemon_logs",
+            "history_cursors",
             "history_record_rounds",
             "history_records",
             "history_search",
