@@ -143,6 +143,12 @@ impl Reader {
             return Ok(Vec::new());
         }
         let (sql, values) = log_query(filter, window);
+        // Read-only access never upgrades an older history; its pre-search schema has no time index.
+        let sql = if version_of(&snapshot).map_err(query("daemon_logs"))? < 5 {
+            sql.replace(" INDEXED BY daemon_logs_by_time", "")
+        } else {
+            sql
+        };
         let mut statement = snapshot.prepare(&sql).map_err(query("daemon_logs"))?;
         let mut rows = statement
             .query(params_from_iter(values))
