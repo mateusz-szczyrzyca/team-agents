@@ -6,6 +6,7 @@ use std::path::Path;
 use agent_core::ids::{AgentName, RoundId, RunId, TaskId, TeamId};
 use agent_core::log::{LogEvent, LogLevel, LogView};
 use agent_core::state::Timestamp;
+use agent_runtime::history::{LogFilter, LogWindow, Reader};
 use clap::Args;
 
 use super::{Format, LogError};
@@ -59,12 +60,37 @@ impl RowArgs {
     /// Prints a bounded query of the directly opened history.
     pub(crate) fn print(
         &self,
-        _path: &Path,
-        _round: Option<RoundId>,
-        _team: Option<TeamId>,
-        _format: Format,
-        _out: &mut impl Write,
+        path: &Path,
+        round: Option<RoundId>,
+        team: Option<TeamId>,
+        format: Format,
+        out: &mut impl Write,
     ) -> Result<(), LogError> {
-        Ok(())
+        let reader = Reader::open(path)?;
+        let filter = LogFilter {
+            team,
+            round,
+            task: self.task.clone(),
+            run: self.run.clone(),
+            agent: self.agent.clone(),
+            level: self.level,
+            event: self.event,
+            since: self.since,
+            until: self.until,
+        };
+        for row in reader.log_rows(&filter, LogWindow::Newest(self.limit.unwrap_or(100)))? {
+            let text = match format {
+                Format::Text(_) => format!("{} {} {} {}", row.at(), row.level(), row.event(), row.message()),
+                Format::Json => serde_json::json!({
+                    "id": row.id(), "first_at": row.first_at(), "at": row.at(), "level": row.level(),
+                    "event": row.event(), "module": row.module(), "team": row.team(), "rounds": row.rounds(),
+                    "task": row.task(), "run": row.run(), "message": row.message(), "fields": row.fields(),
+                    "count": row.count().get(), "cut": row.cut().to_string(),
+                })
+                .to_string(),
+            };
+            writeln!(out, "{text}").map_err(LogError::Output)?;
+        }
+        out.flush().map_err(LogError::Output)
     }
 }

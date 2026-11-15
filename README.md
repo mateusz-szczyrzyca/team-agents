@@ -1048,6 +1048,11 @@ as JSON lines. An unknown round or team exits with code `3`. See [`docs/log.md`]
 ordering and exit codes. Schema version `4` adds the daemon log; older history files remain readable without migration
 by `agent log`, and the daemon migrates them when it opens them for writing.
 
+Bare `target/debug/agent log` prints the newest `100` daemon log rows. Use `--show log` with a round or team to
+select rows instead of its story, or add a row filter: `--task`, `--run`, `--agent`, `--level`, `--event`,
+`--since`, `--until` or `-n`. Filters intersect; `--json` emits one log row per line in this mode. Combining
+`--round` and `--team` also selects rows. A row query with no matches succeeds with empty output.
+
 How the human answers the agents and steers a task or a team, through the daemon (`agent daemon`) that owns the state:
 
 | Command | What it does |
