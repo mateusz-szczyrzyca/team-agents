@@ -23,6 +23,9 @@ Ground rules
   BLOCKER. A criterion that cannot be shown as written is said so in the PR description, with the reason.
 - Each round is started with its own file, `rounds/round-N.M.md`: its `Round:` line, this round's item in full, these
   rules, and an overview of the other items, which are context only.
+- A round's result is code: the item implemented, with its tests, on the branch of whoever was given the round —
+  also when that agent works alone and another merges or reviews its work later. An analysis or a list of
+  recommendations in place of the code is not a result. The round files say so at their top, from 8.7 on.
 - Every item compiles and passes the gate on `main` without the other items of its feature. The gate is the
   repository's gate command and nothing more: here the Rust workspace's checks. The suites of the old
   implementation (its Bats and Go tests) are never run by a round, and a failure in them is not the round's
@@ -45,7 +48,7 @@ Ground rules
   declared once, in a `#[strum(...)]` attribute. No hand-written text tables, no macro of our own for it.
 - New code is developed and tested against a separate `AGENTS_HOME`; nothing here may touch the live `~/agents` of
   the running Bash harness until feature 10.
-- The items of rounds, of the history, of checkpoints and of review (8.3 to 8.10, 11.1 and the features 12 and 13)
+- The items of rounds, of the history, of checkpoints and of review (8.3 to 8.11, 11.1 and the features 12 and 13)
   are tested harder than the developer rules ask: a log that is wrong is worse than no log, and a takeover that is
   wrong loses work.
   - End to end: every record and every query is proved by a run of the daemon with fake CLIs and a fake GitHub
@@ -109,6 +112,13 @@ Behaviour in short
   keeps a plan in its worktree — to do, in hand, done — that the harness reads and enforces; a task whose agent is
   gone is taken over by a free agent of the right tier on another account, who gets a briefing made from the
   history and the plan. `agent status <round>` shows each task's checkpoint as `OPEN`, `BUSY` or `CLOSED`.
+- A subscription is an account (8.11): `[accounts.NAME]` with its provider, its own environment, the most runs at
+  once and the highest effort it allows; every agent names its account, and the account is shown wherever the
+  agent and its model are. A quota that runs out stops the whole account until its reset. The daemon spreads work
+  over the accounts — first by which is idle, after the cutover (12.3) by how much of each is used.
+- The watchdog stops a run that is silent. After the cutover (12.4) the daemon also notices a run that is busy and
+  gets nowhere — an hour of steps without a commit, the same command failing again and again, the same file
+  edited over and over, a task woken for nothing — and first tells the agent, then stops the run and asks.
 - Review, after the cutover (feature 13): the checks every change must pass are written in the repository's
   `AGENTS.md` and run by the harness before any reviewer starts; what the reviewers find is kept in a ledger, the
   first review passes are full and the later ones look only at the open findings and the fixes; requests to
@@ -125,20 +135,22 @@ Checkpoints for the human, between features (the agents do not run these):
   is expensive to change later.
 - After item 8.9: stop a real solo task in the middle of its work and continue its round with another agent: it
   works in the same worktree and its first message shows that it knows what was done.
+- After item 8.11: write the accounts of the live installation — every subscription with its provider, its
+  environment in `secrets.toml`, `max_parallel` and `max_effort` — and run `agent config check` and `agent agents`
+  on it: the accounts decide what runs where, and who may stand in for whom.
 - After feature 8, before feature 10: a real run with cheap models on a toy repository and a separate
   `AGENTS_HOME`, in the default `--autopilot`: from a two-item list to two merged PRs. Then `agent log --round` of
   each: the story is whole — the task, who was chosen and how, every prompt, every step, every change, both
   reviews — and `agent log --level warn` shows nothing unexplained. The cutover starts only after it passes.
 - After feature 9: the dashboard opened through `tailscale serve` from another device: the teams listed, a question
   answered, a team paused and resumed.
-- After item 12.1: read the `provider` and `account` of every agent in the live `agents.toml`; they decide who may
-  stand in for whom.
+- After item 12.4: look at the stalls of a week of real rounds in `agent log --event stall` and set the limits of
+  `[stall]` by them: the defaults are guesses.
 
 Out of scope for this plan: remote nodes and the lead, investigation teams with phases and standalone investigation
-requests, `agent live`, archiving, the cost of tokens in money, moving the state file into the database, choosing
-agents by the quota their accounts have left (load balancing), automatic PR size limits (reviewers check PR-1), a
-proof by the harness that a RED commit fails (a reviewer runs one, TDD-1), an `agentbus` socket API (it is called
-as a process).
+requests, `agent live`, archiving, the cost of tokens in money, moving the state file into the database, one agent
+on several accounts, automatic PR size limits (reviewers check PR-1), a proof by the harness that a RED commit
+fails (a reviewer runs one, TDD-1), an `agentbus` socket API (it is called as a process).
 
 1. Workspace and core vocabulary
 Depends on: none
@@ -265,8 +277,8 @@ Depends on: 1
       with the macro.
     - Removes: `keyword_enum!`. Adds: the strum derives and attributes on each keyword enum; `UnknownKeyword` built
       from strum's variant names.
-    - Tests: the existing tests of the keyword enums (`assert_keywords`, `assert_refuses`, the status-transition tests)
-      pass unchanged: none edited or removed. A new test only for a path strum adds that they do not cover.
+    - Tests: the existing tests of the keyword enums (`assert_keywords`, `assert_refuses`, the status-transition
+      tests) pass unchanged: none edited or removed. A new test only for a path strum adds that they do not cover.
     - Why: a tested, maintained crate instead of a home-made macro (DEP-1: `strum` is the standard crate for this; std
       and the existing dependencies have no derive for it).
     Checks:
@@ -447,16 +459,16 @@ Depends on: 6
     - Two `agent gate` calls at once: the second waits, then runs; both results are recorded with their commit.
     - A gate over its timeout is stopped and recorded as failed; a run waiting on it is not cut by the watchdog.
 
-8. Autopilot, rounds, the history and checkpoints
+8. Autopilot, rounds, the history, checkpoints and accounts
 Depends on: 7
 [ ] 8.1 Pull requests, reviews and the merge loop
     When an item's integration has a green gate at its head: push, open the PR with a body from a template, mark it
-    ready; later pushes update it. Two free investigators from outside the team (the PR waits until two are free) review
-    it with the review rules of the prompt catalog and the item's full text, its expected result included; the verdict
-    is parsed from the review rules' report format and posted on the PR. Both ready → merge through the API, then the
-    next item; with `--no-merge` the human is notified instead. Changes requested → a fix pass for the team with the
-    findings, at most the configured number; then a question to the human. All items done → the team ends and the human
-    is notified.
+    ready; later pushes update it. Two free investigators from outside the team (the PR waits until two are free)
+    review it with the review rules of the prompt catalog and the item's full text, its expected result included; the
+    verdict is parsed from the review rules' report format and posted on the PR. Both ready → merge through the API,
+    then the next item; with `--no-merge` the human is notified instead. Changes requested → a fix pass for the team
+    with the findings, at most the configured number; then a question to the human. All items done → the team ends and
+    the human is notified.
     Expected result:
     - Files: `crates/agent/src/daemon/{pr,review,merge}.rs`, the PR and review texts under `prompts/harness/pr/`
       and `prompts/harness/review/`.
@@ -729,8 +741,8 @@ Depends on: 7
       daemon is logged with its message and location. Marker secrets, as in 8.4, are not in the log.
     - Why: until now a failure of the harness itself left nothing a human could read afterwards.
     Checks:
-    - A1. With fake CLIs: a run whose CLI prints a line that is not JSON leaves a `warn` row with the event's name, the
-      task and the run; with `[log] level = "debug"` the assignment of an item is a row with its input and result.
+    - A1. With fake CLIs: a run whose CLI prints a line that is not JSON leaves a `warn` row with the event's name,
+      the task and the run; with `[log] level = "debug"` the assignment of an item is a row with its input and result.
     - A2. `docs/log.md` lists every name of the enum (a test compares them).
 [ ] 8.7 `agent log`: questions to the history, search, following and what is kept
     `agent log` with no words prints the newest rows of the daemon's log. It reads the history directly and narrows
@@ -806,8 +818,8 @@ Depends on: 7
     - Why: a run that used up its turns is not a failure; treated as one it loses finished work, as happened with the
       old harness on item 8.3.
     Checks:
-    - A1. With a fake CLI that prints a `result` of `error_max_turns` on its first run and `STATUS: DONE` on its second:
-      the task ends `done` after two runs and `agent status` never shows it `failed`.
+    - A1. With a fake CLI that prints a `result` of `error_max_turns` on its first run and `STATUS: DONE` on its
+      second: the task ends `done` after two runs and `agent status` never shows it `failed`.
     - A2. With `[limits] max_turns = 50` the fake CLI is started with `--max-turns 50`.
 [ ] 8.9 A round outlives its team: continuing a round
     Work that was interrupted is taken up where it stands, by the same agents or by others. A team may break — its
@@ -863,8 +875,8 @@ Depends on: 7
     Checks:
     - A1. With fake CLIs: a solo task is stopped after its fake CLI changed two files without committing; `agent run
       --continue <round> <another agent>` starts in the same worktree, and its prompt names both files.
-    - A2. `git show refs/agents/snapshots/<round>/<task>/1 --stat` lists the two files; `git status` in the worktree is
-      what it was.
+    - A2. `git show refs/agents/snapshots/<round>/<task>/1 --stat` lists the two files; `git status` in the worktree
+      is what it was.
     - A3. `agent status <round>` shows the task `OPEN` after the stop and `BUSY` after the continuation, with both
       holders.
 [ ] 8.10 The plan of every task
@@ -925,8 +937,79 @@ Depends on: 7
       `agent log --round <id> --show plan` shows the versions of the plan with their times.
     - A2. With a fake CLI that completes stage 1 and ends `NEXT`: the next run has another session ID and its prompt
       shows stage 1 done.
-    - A3. With a fake CLI that ends at its turn limit: the next run has another session ID, works in the same worktree,
-      and its prompt says the session is new because the turns ran out.
+    - A3. With a fake CLI that ends at its turn limit: the next run has another session ID, works in the same
+      worktree, and its prompt says the session is new because the turns ran out.
+[ ] 8.11 Accounts: several subscriptions, each with its own credentials, limits and effort
+    The harness exists to use several subscriptions well — more than one at the same provider too. Until now a
+    subscription is nothing the harness knows: every model CLI run gets the same environment (`[agent_env]`), so
+    all agents of one CLI are one subscription, and nothing says which subscription a model ran on.
+    An account is one subscription: `[accounts.NAME]` in `agents.toml` (the name as an agent's) with
+    - `provider` — required, a name: `anthropic`, `openai`, `openrouter`, `deepinfra`, …; several accounts may
+      have the same one;
+    - `max_parallel` — optional: the most runs at once on the agents of this account; without it, no limit;
+    - `max_effort`, `default_effort` — optional, see below.
+    Every agent, investigator and worker names its account: `account = "NAME"`, required; one agent, one account
+    (a CLI's session belongs to the account it was started on); several agents may share one. `secrets.toml` gets
+    `[account_env.NAME]`: the environment of the runs of that account's agents and of no other run. `[agent_env]`
+    stays for what every run gets; a variable in both is refused.
+    Effort is a typed setting: `effort` of an agent is one of `low`, `medium`, `high`, `xhigh`, `max`, in that
+    order. Without it the agent has its account's `default_effort`, and without that the CLI's own default (no
+    flag). Each adapter says which levels its CLI has and turns a level into that CLI's arguments, taken from the
+    CLI's documentation at the version its fixtures record; this item replaces effort given through `args`.
+    Nothing is guessed. The configuration is refused when it is read — by the daemon at its start and by the new
+    `agent config check`, which reads it as the daemon does — naming the agent or the account and the key, when: an
+    agent has no `account` or names one that does not exist; an account has no `provider`; an `effort` or
+    `default_effort` is above the account's `max_effort` (without `max_effort` every level the CLI has is allowed); a
+    level is one the agent's CLI does not have; `max_parallel` is 0; `[account_env.NAME]` names no account.
+    A quota that runs out exhausts the account, not the agent: until the reset the CLI gave (without one, the
+    pause of `[limits]`) no run starts on any agent of that account, every task those agents hold is paused, and
+    at the reset they are woken, each once. The exhausted accounts are in the state and survive a restart.
+    `max_parallel` is held the same way: a run that would exceed it waits in the queue.
+    Whenever the daemon chooses an agent — the members of a team it draws, a reviewer, a worker for a request —
+    it leaves out those whose account is exhausted or at its `max_parallel`. Where its choice among the rest is
+    random today, it is instead by account: the account with the fewest runs under way, then the one whose last
+    run started longest ago, then at random. An order the configuration gives (the workers' list) stays, after
+    the leaving out. The choice is a pure function.
+    The account is shown wherever the agent or the model is: the new `agent agents` (tier, CLI, model, effort,
+    account, provider, and the account's state: free, exhausted until when, runs under way of how many); `agent
+    status` and `show` of a task and of a round; the run's record in the history (account and effort; a schema
+    migration); `agent log --account NAME`; the notifications. The versions of the state, the protocol and the history
+    follow their rules.
+    Expected result:
+    - Files: accounts and effort in `crates/agent-core/src/config.rs`, `[account_env]` in the secrets, the levels
+      of each CLI in `crates/agent-runtime/src/cli/`, the exhausted accounts in `crates/agent-core/src/state/`,
+      the choice in `crates/agent-core/src/decide/accounts.rs`, the queue and the starting of runs in
+      `crates/agent/src/daemon/`, the account in `crates/agent-core/src/protocol/` and
+      `crates/agent-runtime/src/history/`, `crates/agent/src/commands/`, `config/agents.example.toml`,
+      `docs/configuration.md`, `docs/architecture.md`, `docs/state.md`, `docs/history.md`.
+    - Adds: accounts with provider, `max_parallel`, `max_effort`, `default_effort`; `account` of every agent;
+      `[account_env]`; `effort` and its translation per CLI; the refusals; an account's exhaustion; the choice by
+      account; `agent config check` and `agent agents`; the account in the commands, the history and the
+      notifications.
+    - Removed: effort through `args` in the example configuration.
+    - Tests: the ground rule on testing these items applies. Configuration: each refusal with the name and the key
+      in the error; a level at, under and over `max_effort`; a level a CLI does not have; two accounts of one
+      provider; an agent's `effort` over its account's default. The environment, with fake CLIs that record what
+      they got: two agents of one CLI on two accounts each see their own account's variable and not the other's;
+      a run sees `[agent_env]` too; marker values of one account are not in the other's run, in the history or in
+      the log. Effort: per CLI, the arguments of every level it has, pinned; no flag without a level. Exhaustion:
+      a fake quota error on one agent pauses every task of its account and none of another account at the same
+      provider; no run starts on the account before the reset; at the reset each task is woken once; a daemon
+      restarted meanwhile still holds the account. `max_parallel`: with 1, the second run on the account waits
+      and starts when the first ends; a run on another account does not wait. The choice: a table — exhausted,
+      at its limit, fewest under way, longest idle, a tie with a seeded draw, a configured order kept. End to end:
+      a team drawn from four agents on two accounts takes one of each; `agent agents` and `agent status` name the
+      account of every agent, as text.
+    - Why: without accounts the new `agent` uses one subscription a CLI; the cutover would lose what the harness
+      is for.
+    Checks:
+    - A1. With fake CLIs that print their environment: two Claude agents on two accounts run with two different
+      values of the same variable.
+    - A2. An agent with `effort = "max"` on an account with `max_effort = "high"`: `agent config check` fails and
+      names the agent, the account and both levels.
+    - A3. After a fake quota error on one agent, `agent agents` shows its account exhausted with the reset time
+      and every agent of that account as not available; an agent of another account of the same provider runs.
+    - A4. `agent status <round>` and `agent log --round <id>` name the account beside every agent and model.
 
 9. Dashboard
 Depends on: 8
@@ -985,8 +1068,9 @@ Depends on: 10
     CLI reports as a running total and what as an addition is decided per CLI from recorded output, documented in
     `docs/history.md` and never counted twice, also for a session that a later run resumes. A CLI that reports
     nothing leaves the run "not reported", never zero. `agent log --round <id> --show usage` and `--team <id>
-    --show usage` print the tokens by agent and role, by model, and in total; a coordinator's run that worked for
-    two rounds is shown in both, marked, and counted once in the team's total. No money: prices are out of scope.
+    --show usage` print the tokens by agent and role, by account, by model, and in total; a coordinator's run that
+    worked for two rounds is shown in both, marked, and counted once in the team's total. No money: prices are out of
+    scope. `agent log --account NAME --show usage` (with `--since`) prints what one account's runs took.
     With the tokens known, the size of a conversation can end it: `[limits] fresh_session_tokens` (default 0: off)
     — when the last run of a task read more input than that a step on average, its next run, whatever starts it,
     is a new session with the briefing of 8.9 and the plan, as after a turn limit (8.10).
@@ -1012,12 +1096,11 @@ Depends on: 10
     - A2. A run of a fake CLI that reports no usage is shown as "not reported".
 
 12. Taking work over
-Depends on: 10
-[ ] 12.1 Accounts, providers and taking work over
-    The daemon gives the work of an agent that is gone to one that is free, without the human. The configuration
-    says what the names cannot: every agent, investigator and worker has a `provider` and an `account` (required;
-    two agents with the same pair share their limits). A quota that runs out marks the whole account exhausted
-    until its reset: no run starts on any agent of it, and every task those agents hold is paused with it.
+Depends on: 10, 11
+[ ] 12.1 Taking work over: the crew
+    The daemon gives the work of an agent that is gone to one that is free, without the human. Accounts, their
+    providers and their exhaustion are those of 8.11; among several agents that may take a task the choice is the
+    one 8.11 makes by account.
     An agent is gone from its task when the task is `failed`, when its agent left (`EXCLUDED`) or is no longer in
     the configuration, or when its account is exhausted and the reset is further away than `[takeover]
     wait_minutes` (default 15; with no reset time given, the pause of `[limits]` counts). A stop or a pause by the
@@ -1028,7 +1111,7 @@ Depends on: 10
     - an investigator's: another investigator — a free one of the team first, else one of the configuration from
       outside it, who joins the team, and only while two investigators stay outside it for the reviews;
     - the coordinator's: by the rule that chooses a coordinator, among the free.
-    Among several the choice is random. The decision is a pure function and the daemon's alone; the coordinator is
+    The decision is a pure function and the daemon's alone; the coordinator is
     told by a message and may ask for another holder within the same rules. The new holder takes the task as in
     8.9 — the same worktree and branch, a snapshot, a new session, the briefing with the plan — and the task it
     held before becomes vacant. The agent that was gone, once it is back, is free: it does not get its old task
@@ -1036,19 +1119,16 @@ Depends on: 10
     stays: an exhausted account is waited for and its agent woken at the reset; a failed task stays failed, the
     human is told, and the round shows it `OPEN`.
     Expected result:
-    - Files: `provider` and `account` in `crates/agent-core/src/config.rs`, the exhausted accounts in the state,
-      the decision in `crates/agent-core/src/decide/takeover.rs`, the daemon in `crates/agent/src/daemon/owner/`,
-      the texts in `prompts/harness/takeover/`, `[takeover]`, `config/agents.example.toml`,
-      `docs/configuration.md`, `docs/architecture.md`, `docs/state.md`.
-    - Adds: providers and accounts; an account's exhaustion; when an agent is gone and when one is free; the
+    - Files: the decision in `crates/agent-core/src/decide/takeover.rs`, the daemon in
+      `crates/agent/src/daemon/owner/`, the texts in `prompts/harness/takeover/`, `[takeover]`,
+      `config/agents.example.toml`, `docs/configuration.md`, `docs/architecture.md`, `docs/state.md`.
+    - Adds: when an agent is gone and when one is free; the
       takeover decision for the crew; the change of holder with what 8.9 gives it; the message to the coordinator
       and its request; the records in the history.
-    - Tests: the ground rule on testing these items applies. Configuration: an agent without `provider` or
-      `account` is refused with its name. Accounts: one agent's quota pauses every task of its account and none
-      of another; the reset wakes them all once. The decision: a table of every tier, every reason for being gone
-      and every reason that is not one (a stop, a pause, a reset nearer than the limit), free and not free with
-      the option on and off, the guard of two outside investigators at its edge (three configured, two, one), no
-      candidate, several candidates with a seeded draw. End to end with fake CLIs, one of which reports an
+    - Tests: the ground rule on testing these items applies. The decision: a table of every tier, every reason for
+      being gone and every reason that is not one (a stop, a pause, a reset nearer than the limit), free and not free
+      with the option on and off, the guard of two outside investigators at its edge (three configured, two, one), no
+      candidate, several candidates chosen by account. End to end with fake CLIs, one of which reports an
       exhausted quota with a reset in two hours: a free member on another account takes the task in the same
       worktree with a briefing that names the uncommitted files, and the round merges; with the reset in five
       minutes nobody takes over and the same agent is woken; an agent of the same account is never chosen; the
@@ -1100,6 +1180,94 @@ Depends on: 10
       shows that finding under leads; the pull request still gets two verdicts.
     - A2. A worker's request whose worker is killed is finished by a worker of another provider; `agent log --round
       <id>` shows both runs and one answer.
+[ ] 12.3 Choosing by what an account has left
+    With the tokens of every run known (11.1), the daemon spreads work by how much of each subscription is used,
+    not only by which one is idle. An account may give its budget: `window_hours` and `window_tokens` — both or
+    neither. Its use is the tokens its runs took in the window that ends now, read from the history. Wherever
+    8.11 chooses by account, an account with a budget is ranked by the share of it that is left, the largest
+    first; accounts without a budget come after those with one that have more than `[accounts] reserve_percent`
+    (default 10) left, and before those with less, in the order 8.11 gives. An account that reported an exhausted
+    quota is exhausted whatever its budget says, and one over its budget is not treated as exhausted: the budget
+    ranks, the CLI decides. `agent agents` and `agent log --account NAME --show usage` show the use, the budget and
+    the share left.
+    Expected result:
+    - Files: the budget in `crates/agent-core/src/config.rs`, the use of an account in
+      `crates/agent-runtime/src/history/`, the ranking in `crates/agent-core/src/decide/accounts.rs`,
+      `crates/agent/src/commands/`, `config/agents.example.toml`, `docs/configuration.md`,
+      `docs/architecture.md`.
+    - Adds: `window_hours`, `window_tokens`, `reserve_percent`; an account's use in a window; the ranking by the
+      share left; the use in the commands.
+    - Tests: the ground rule on testing these items applies. Configuration: one of the two keys alone is refused.
+      The use: runs inside, outside and across the edge of the window; a run that reported no usage counts as
+      nothing and is said so. The ranking: a table — two budgets, a budget and none, under the reserve, over the
+      budget, an exhausted account, a tie. End to end with fake CLIs that report usage: of two free agents the one
+      whose account has more left gets the next item, and after its runs the other one does.
+    - Why: using every subscription well means not running one out while another stands idle.
+    Checks:
+    - A1. With fake CLIs that report usage and two accounts with the same budget: after one account's run the
+      next work goes to the other; `agent agents` shows both shares.
+    - A2. An account with `window_tokens` and no `window_hours` is refused by `agent config check`.
+[ ] 12.4 A run that is busy and gets nowhere: stall detection
+    The watchdog knows one kind of trouble: silence. A run that keeps writing output is alive to it, also when
+    the same test has failed for an hour or nothing has been committed since the morning. The daemon now watches
+    for work that goes in circles, from what it already records: the steps of the run in the history and the
+    commits in its worktree. Four signals, each with its limit in `[stall]`; `0` turns a signal off:
+    - `no_commit_minutes` (default 60): a run of a task that works on an item has made steps for that long and its
+      branch has no new commit — counted from the run's start or its last commit, time waiting for a gate, a
+      question or a message left out;
+    - `same_failure_repeats` (default 5): the same command — the same text, whitespace aside — has ended with an
+      error that many times in a row in one run, with no commit in between (the exit status of a command step is
+      recorded for this, if it is not yet);
+    - `same_file_edits` (default 15): the same file has been edited that many times in one run with no commit in
+      between;
+    - `idle_wakes` (default 5): a task has been woken that many times in a row and each run ended without a
+      commit, a message sent, a question or a change of its plan — what the old harness's wake-loop guard held.
+    They are heuristics, and a long refactoring or a slow test can look the same; so the answer comes in steps
+    and never loses work:
+    1. the first time a signal is raised in a run: a `warn` in the log with its facts, and a message to the agent
+       — what was noticed, with the command or the file, and what to do: say in your plan what you are trying,
+       change the approach, or ask your question. The run goes on. An agent whose CLI takes no message while it
+       runs gets it at the start of its next run;
+    2. the same signal again in the same run, after another full limit: the run is stopped at its next step, its
+       worktree left as it is, a snapshot taken (8.9), the task waits, and the human is asked — the question shows
+       the signal, the last steps and the uncommitted files, and offers: go on (the count starts again), go on in
+       a new session with the briefing, give the task to another agent (12.1, when one may take it), stop;
+    3. `[stall] on_second = "ask"` is the default; `"takeover"` gives the task to another agent by the rules of
+       12.1 without asking, and asks only when nobody may take it.
+    A signal belongs to one run: a commit, or the end of the run, starts its count again; `idle_wakes` belongs to
+    the task and starts again when a run does one of the things it names. The decision is a pure function of the
+    run's steps, the commits and the clock. Every raised signal and what followed is a record in the history and
+    is shown in the story of the round and in `agent status <round>`.
+    Expected result:
+    - Files: the signals in `crates/agent-core/src/decide/stall.rs`, `[stall]` in
+      `crates/agent-core/src/config.rs`, the exit status of a command step in `crates/agent-core/src/history.rs`
+      and the adapters, the watching in `crates/agent/src/daemon/`, the record in
+      `crates/agent-runtime/src/history/`, the texts in `prompts/harness/stall/`, `config/agents.example.toml`,
+      `docs/architecture.md`, `docs/configuration.md`, `docs/history.md`, `docs/log.md`.
+    - Adds: the four signals and their limits; the message to the agent; the stop with its snapshot and its
+      question; `on_second`; the records and the log events; the stall in the story and in `agent status`.
+    - Removed: the known limit "an agent that never reads its messages is woken again and again".
+    - Tests: the ground rule on testing these items applies. The decision, as tables with the injected clock: each
+      signal one under, at and over its limit; a commit, a gate wait, a question and the end of the run starting
+      the count again; `0` never raising; two signals at once; the same command with other whitespace counted,
+      another command not; a failure, a success and the same failure not counted as in a row. End to end with fake
+      CLIs that follow a script: a fake CLI that fails the same command six times gets the message after the
+      fifth, and its text names the command; one that goes on is stopped after the tenth, the worktree is byte for
+      byte what it was, the snapshot holds its uncommitted file, and the question lists the last steps; each
+      answer of the human does what it says — go on, a new session (another session ID, the briefing), another
+      agent (the holder changes, 12.1), stop; a fake CLI that commits after the message is not stopped; a run
+      that waits ten minutes for its gate is not counted as idle; with `on_second = "takeover"` and a free agent
+      the task changes its holder with no question, and with none the human is asked; a task woken five times
+      that does nothing is stopped and the human is told once; a daemon restarted after the first step still
+      takes the second.
+    - Why: a run that goes in circles costs as much as one that works, and until now nothing told them apart.
+    Checks:
+    - A1. With a fake CLI that runs the same failing command in a loop: `agent log --round <id>` shows the warning
+      with the command, then the stop; `agent status <round>` shows the task waiting with the stall as its
+      reason.
+    - A2. With `[stall] same_failure_repeats = 0` the same fake CLI is never warned or stopped by that signal.
+    - A3. A fake CLI that makes steps for longer than `no_commit_minutes` (the clock moved) without a commit gets
+      the message; one that commits once in that time does not.
 
 13. Review
 Depends on: 10
