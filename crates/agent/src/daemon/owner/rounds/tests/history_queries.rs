@@ -50,7 +50,7 @@ async fn two_teams_three_rounds_prove_every_filter_pair_view_and_literal_search(
     rig.stop().await.unwrap();
     let reader = Reader::open(&rig.home.history_file()).unwrap();
     let all = rows(&rig, &["log", "--json", "-n", "100000"]);
-    assert!(!all.is_empty());
+    assert_ne!(all, Vec::<Value>::new());
     let mut agents = BTreeMap::new();
     for team in [&first, &second] {
         for run in reader.runs_of_team(team).unwrap() {
@@ -74,8 +74,11 @@ async fn two_teams_three_rounds_prove_every_filter_pair_view_and_literal_search(
         let found = rows(&rig, &["log", "--grep", text, "--json", "-n", "100000"]);
         assert!(!found.is_empty(), "search {text:?}");
     }
-    assert!(rows(&rig, &["log", "--grep", "absentsearchmarker", "--json"]).is_empty());
-    assert!(rows(&rig, &["log", "-n", "0", "--json"]).is_empty());
+    assert_eq!(
+        rows(&rig, &["log", "--grep", "absentsearchmarker", "--json"]),
+        Vec::<Value>::new()
+    );
+    assert_eq!(rows(&rig, &["log", "-n", "0", "--json"]), Vec::<Value>::new());
     assert_eq!(rows(&rig, &["log", "-n", "1", "--json"]), all[all.len() - 1..]);
 }
 
@@ -229,7 +232,7 @@ async fn daemon_daily_retention_removes_closed_round_and_gate_but_keeps_old_open
     assert!(!gate.as_path().exists());
     let after = rows(&rig, &["log", "--stats"]);
     assert_eq!(after[0]["tables"]["rounds"], 1);
-    assert!(reader.team_records(&closed_team).unwrap().is_empty());
+    assert_eq!(reader.team_records(&closed_team).unwrap(), Vec::new());
     rig.stop().await.unwrap();
     // Startup performs the same cleanup, including with an old open round still present.
     rig.advance_history_days(2);
