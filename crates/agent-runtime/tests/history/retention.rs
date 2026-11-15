@@ -169,3 +169,42 @@ fn deleting_all_log_rows_and_reopening_never_reuses_a_follow_cursor() {
     assert_eq!(later.len(), 1);
     assert!(later[0].id() > first[0].id());
 }
+
+#[test]
+fn retention_runs_through_the_single_writer_and_noting_wrapper() {
+    use agent_runtime::history::{History, Noting, Setup, TracingReporter};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let db = HistoryDb::open(&path, roomy()).unwrap();
+    let started = History::start(
+        Noting::new(db),
+        Setup {
+            capacity: std::num::NonZeroUsize::new(1024).unwrap(),
+            reporter: std::sync::Arc::new(TracingReporter),
+        },
+    )
+    .unwrap();
+    let world = complete(8720);
+    for record in world.records() {
+        started.history.record(record);
+    }
+    for round in &world.rounds {
+        started.history.record(Record::Event(Box::new(EventRecord {
+            at: at(2000, 0),
+            team: world.team.team.clone(),
+            rounds: vec![round.round.clone()],
+            event: HistoryEvent::RoundClosed {
+                round: round.round.clone(),
+                end: RoundEnd::Merged,
+            },
+        })));
+    }
+    started.history.retain(Retention {
+        closed_before: Some(at(2001, 0)),
+        logs_before: None,
+        home: dir.path().to_path_buf(),
+    });
+    started.history.flush();
+    assert!(Reader::open(&path).unwrap().team(&world.team.team).unwrap().is_none());
+    started.writer.close().unwrap();
+}

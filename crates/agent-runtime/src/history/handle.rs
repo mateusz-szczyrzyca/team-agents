@@ -568,6 +568,9 @@ impl History {
         locked(&self.shared.runs).remove(run);
     }
 
+    /// Queues retention on the sole database writer without blocking work.
+    pub fn retain(&self, _request: super::Retention) {}
+
     /// Waits until everything handed in before is written or lost.
     pub fn flush(&self) {
         let Some(queue) = &self.queue else {

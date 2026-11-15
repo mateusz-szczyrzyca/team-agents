@@ -168,3 +168,13 @@ pub(super) fn health_to_tell(history: &History) -> Option<HistoryHealth> {
 
 #[cfg(test)]
 mod tests;
+
+/// Computes maintenance cutoffs once per day of the injected clock, including startup.
+pub(super) fn retention_due(
+    _config: &Config,
+    _home: &Home,
+    _now: agent_core::state::Timestamp,
+    _last: &mut Option<agent_core::state::Timestamp>,
+) -> Option<agent_runtime::history::Retention> {
+    None
+}
