@@ -409,3 +409,58 @@ async fn send(write: &mut tokio::net::unix::OwnedWriteHalf, frame: &Frame) -> Re
     })?;
     write_line(write, &line).await
 }
+
+#[cfg(test)]
+mod request_span_tests {
+    use std::sync::{Arc, Mutex};
+
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::registry::LookupSpan;
+
+    use super::{Subscription, answer};
+
+    /// Records the spans around server events.
+    #[derive(Clone, Default)]
+    struct ServerScopes(Arc<Mutex<Vec<Vec<String>>>>);
+
+    impl<S> Layer<S> for ServerScopes
+    where
+        S: tracing::Subscriber + for<'lookup> LookupSpan<'lookup>,
+    {
+        fn on_event(&self, event: &tracing::Event<'_>, context: Context<'_, S>) {
+            if event.metadata().target() != "agent::daemon::server" {
+                return;
+            }
+            let spans = context
+                .event_scope(event)
+                .into_iter()
+                .flatten()
+                .map(|span| span.name().to_owned())
+                .collect();
+            self.0.lock().unwrap().push(spans);
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_request_diagnostics_are_inside_a_request_span() {
+        let (_client, server) = tokio::net::UnixStream::pair().unwrap();
+        let (_read, mut write) = server.into_split();
+        let (inbox, _messages) = tokio::sync::mpsc::channel(1);
+        let mut subscription: Option<Subscription> = None;
+        let scopes = ServerScopes::default();
+        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(scopes.clone()));
+
+        answer("not-json", &inbox, &mut subscription, &mut write)
+            .with_subscriber(dispatch)
+            .await
+            .unwrap();
+
+        let events = scopes.0.lock().unwrap();
+        assert!(
+            events.iter().any(|spans| spans.contains(&"request".to_owned())),
+            "server refusal has no request span: {events:?}"
+        );
+    }
+}

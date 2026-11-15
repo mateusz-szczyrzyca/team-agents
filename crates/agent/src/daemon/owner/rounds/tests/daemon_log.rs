@@ -11,7 +11,7 @@ use agent_core::config::Secrets;
 use agent_core::history::MaxTextBytes;
 use agent_core::ids::{RoundId, RunId, TaskId, TeamId};
 use agent_core::log::{LogEvent, LogLevel};
-use agent_core::protocol::{Client, Command, Reply, StatusRequest};
+use agent_core::protocol::{Client, Command, Reply, StatusRequest, Target};
 use agent_core::state::{Completion, ItemPhase, MergeMode};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::history::{
@@ -21,9 +21,12 @@ use agent_runtime::history::{
 use serde_json::json;
 use tracing::Instrument;
 use tracing::instrument::WithSubscriber;
-use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Layer;
+use tracing_subscriber::layer::{Context, SubscriberExt};
+use tracing_subscriber::registry::LookupSpan;
 
 use super::rig::{ONE, Rig, investigator, normal};
+use crate::daemon::owner::Message;
 use crate::daemon::owner::fixture::{Daemon, pair_state};
 use crate::fixtures::{at, solo_state, task, team_id};
 
@@ -33,6 +36,28 @@ struct SilentReporter;
 
 impl Reporter for SilentReporter {
     fn report(&self, _problem: &Problem) {}
+}
+
+/// Records the span names around owner events for request instrumentation tests.
+#[derive(Clone, Default)]
+struct OwnerScopes(Arc<Mutex<Vec<Vec<String>>>>);
+
+impl<S> Layer<S> for OwnerScopes
+where
+    S: tracing::Subscriber + for<'lookup> LookupSpan<'lookup>,
+{
+    fn on_event(&self, event: &tracing::Event<'_>, context: Context<'_, S>) {
+        if event.metadata().target() != "agent::daemon::owner" {
+            return;
+        }
+        let spans = context
+            .event_scope(event)
+            .into_iter()
+            .flatten()
+            .map(|span| span.name().to_owned())
+            .collect();
+        self.0.lock().unwrap().push(spans);
+    }
 }
 
 #[tokio::test]
@@ -166,6 +191,94 @@ async fn team_start_records_the_initial_round_and_item_lifecycle() {
     });
     assert!(opening.is_some(), "initial round opening is missing: {logs:?}");
     assert!(in_progress.is_some(), "initial item phase is missing: {logs:?}");
+}
+
+#[tokio::test]
+async fn initial_external_calls_carry_the_team_and_workspace_task() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            normal("claude-2", "work"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("\n[log]\nlevel = \"debug\"\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
+
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["claude-1", "claude-2"], ONE, MergeMode::Autopilot, None)
+        .await;
+    rig.stop().await.unwrap();
+
+    let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    let calls: Vec<_> = logs
+        .iter()
+        .filter(|row| row.event() == LogEvent::OutsideCallCompleted)
+        .collect();
+    for task in tasks {
+        assert!(
+            calls.iter().any(|row| {
+                row.team() == Some(&team)
+                    && row.task() == Some(&task)
+                    && row.run().is_none()
+                    && row.fields().get("tool").and_then(|value| value.as_str()) == Some("git")
+                    && row.fields().get("operation").and_then(|value| value.as_str()) == Some("worktree add")
+            }),
+            "initial worktree add for {task} lacks team/task scope: {calls:?}"
+        );
+    }
+    assert!(
+        calls.iter().any(|row| {
+            row.team() == Some(&team)
+                && row.task().is_none()
+                && row.run().is_none()
+                && row.fields().get("tool").and_then(|value| value.as_str()) == Some("git")
+                && row.fields().get("operation").and_then(|value| value.as_str()) == Some("rev-parse")
+        }),
+        "initial base-revision lookup lacks team-only scope: {calls:?}"
+    );
+    assert!(
+        calls.iter().any(|row| {
+            row.team() == Some(&team)
+                && row.task().is_none()
+                && row.run().is_none()
+                && row.fields().get("tool").and_then(|value| value.as_str()) == Some("agentbus")
+                && row.fields().get("operation").and_then(|value| value.as_str()) == Some("team-create")
+        }),
+        "initial team-create lacks team-only scope: {calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn owner_refusals_are_emitted_inside_a_request_span() {
+    let state = solo_state();
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let scopes = OwnerScopes::default();
+    let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(scopes.clone()));
+    let (reply, answer) = tokio::sync::oneshot::channel();
+    let message = Message::Request {
+        client: Client::Cli,
+        command: Command::Status(StatusRequest {
+            target: Some(Target::Task("task-20261115-090000-none".parse().unwrap())),
+        }),
+        reply,
+    };
+
+    owner.handle(message).with_subscriber(dispatch).await.unwrap();
+    answer.await.unwrap().unwrap_err();
+
+    let events = scopes.0.lock().unwrap();
+    assert!(
+        events.iter().any(|spans| spans.contains(&"request".to_owned())),
+        "owner refusal has no request span: {events:?}"
+    );
 }
 
 #[tokio::test]
