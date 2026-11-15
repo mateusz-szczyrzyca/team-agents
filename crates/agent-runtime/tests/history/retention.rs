@@ -208,3 +208,72 @@ fn retention_runs_through_the_single_writer_and_noting_wrapper() {
     assert!(Reader::open(&path).unwrap().team(&world.team.team).unwrap().is_none());
     started.writer.close().unwrap();
 }
+
+/// A closed round with a gate path supplied by the caller.
+fn gate_world(path: &std::path::Path) -> super::support::World {
+    let mut world = complete(8717);
+    world.rounds.truncate(1);
+    world.runs.truncate(1);
+    world.runs[0].start.rounds = vec![world.rounds[0].round.clone()];
+    assert!(path.is_absolute());
+    world
+}
+
+#[test]
+fn retention_refuses_a_gate_parent_symlink_and_keeps_the_round_atomic() {
+    use agent_core::state::{GateOutcome, GateRecord, GateResult, GateTree};
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let victim = outside.path().join("gate.log");
+    std::fs::write(&victim, "must survive").unwrap();
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("escaped")).unwrap();
+    let gate = dir.path().join("escaped/gate.log");
+    let world = gate_world(&gate);
+    let path = dir.path().join("history.db");
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+    db.write(&world.records()).unwrap();
+    db.write(&[
+        Record::Event(Box::new(EventRecord {
+            at: at(2000, 0),
+            team: world.team.team.clone(),
+            rounds: vec![world.rounds[0].round.clone()],
+            event: HistoryEvent::Gate {
+                task: world.runs[0].start.task.clone(),
+                started_at: at(1990, 0),
+                record: GateRecord {
+                    tree: GateTree::Clean,
+                    result: GateResult {
+                        head: "1".repeat(40).parse().unwrap(),
+                        finished_at: at(2000, 0),
+                        outcome: GateOutcome::Passed,
+                        log: gate.to_str().unwrap().parse().unwrap(),
+                    },
+                },
+            },
+        })),
+        Record::Event(Box::new(EventRecord {
+            at: at(2001, 0),
+            team: world.team.team.clone(),
+            rounds: vec![world.rounds[0].round.clone()],
+            event: HistoryEvent::RoundClosed {
+                round: world.rounds[0].round.clone(),
+                end: RoundEnd::Merged,
+            },
+        })),
+    ])
+    .unwrap();
+    let before = Reader::open(&path).unwrap().team_records(&world.team.team).unwrap();
+    assert!(matches!(
+        db.retain(&Retention {
+            closed_before: Some(at(3000, 0)),
+            logs_before: None,
+            home: dir.path().to_path_buf()
+        }),
+        Err(agent_runtime::history::RetainError::File { .. })
+    ));
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "must survive");
+    assert_eq!(
+        Reader::open(&path).unwrap().team_records(&world.team.team).unwrap(),
+        before
+    );
+}
