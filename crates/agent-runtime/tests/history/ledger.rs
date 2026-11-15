@@ -360,7 +360,7 @@ fn the_migration_gives_the_records_of_a_version_two_file_a_sequence_in_the_order
         assert_eq!(
             raw.pragma_query_value::<u32, _>(None, "user_version", |row| row.get(0))
                 .unwrap(),
-            3
+            4
         );
     }
 }
