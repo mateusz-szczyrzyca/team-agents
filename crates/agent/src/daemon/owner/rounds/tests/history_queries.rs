@@ -296,3 +296,38 @@ async fn task_and_worktree_views_show_running_status_and_the_last_recorded_head(
     assert_eq!(tree["head"], serde_json::to_value(&changes.head_after).unwrap());
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn focused_views_of_a_daemon_round_have_normalized_golden_output() {
+    use super::history_stories_tests::{Normalized, golden};
+    let mut rig = patient(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "late:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start_with_rng(rand::SeedableRng::seed_from_u64(8707)).await;
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    rig.wait_for("closed round", || Reader::open(&rig.home.history_file()).unwrap().team_records(&team).unwrap().iter().any(|r| matches!(&r.record, Record::Event(e) if matches!(e.event, agent_core::history::HistoryEvent::RoundClosed { .. })))).await;
+    rig.stop().await.unwrap();
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let round = reader.rounds_of_team(&team).unwrap()[0].value.round.clone();
+    let json = log(&rig, &["log", "--team", team.as_str(), "--json"]);
+    let mut text = String::new();
+    for (scope, id) in [("--round", round.as_str()), ("--team", team.as_str())] {
+        for view in ["tasks", "agents", "worktrees", "prompts", "usage"] {
+            text.push_str(&format!("{scope} --show {view}\n"));
+            text.push_str(&log(&rig, &["log", scope, id, "--show", view]));
+        }
+        text.push_str(&format!("{scope} --show log --event run_started\n"));
+        text.push_str(&log(
+            &rig,
+            &["log", scope, id, "--show", "log", "--event", "run_started"],
+        ));
+    }
+    golden("log-focused-views.txt", &Normalized::of(&rig, &text, &json));
+}
