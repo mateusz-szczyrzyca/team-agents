@@ -315,6 +315,30 @@ async fn forward(
     send(write, &Frame::Event(event)).await
 }
 
+/// The callsite for directly constructed socket request spans.
+static SERVER_REQUEST_CALLSITE: tracing::callsite::DefaultCallsite =
+    tracing::callsite::DefaultCallsite::new(&SERVER_REQUEST_METADATA);
+
+/// The stable metadata and scope fields of a socket request span.
+static SERVER_REQUEST_METADATA: tracing::Metadata<'static> = tracing::Metadata::new(
+    "request",
+    module_path!(),
+    tracing::Level::DEBUG,
+    Some(file!()),
+    Some(line!()),
+    Some(module_path!()),
+    tracing::field::FieldSet::new(&["request_id"], tracing::callsite::Identifier(&SERVER_REQUEST_CALLSITE)),
+    tracing::metadata::Kind::SPAN,
+);
+
+/// Opens a socket request span without consulting the process-wide macro-interest cache.
+fn server_request_span() -> tracing::Span {
+    agent_runtime::history::ensure_scoped_callsites();
+    let fields = SERVER_REQUEST_METADATA.fields();
+    let entries: [(&tracing::field::Field, Option<&dyn tracing::field::Value>); 0] = [];
+    tracing::Span::new(&SERVER_REQUEST_METADATA, &fields.value_set(&entries))
+}
+
 /// Reads `line` as a request, has the owner answer it and writes the answer.
 async fn answer(
     line: &str,
@@ -322,7 +346,7 @@ async fn answer(
     subscription: &mut Option<Subscription>,
     write: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Result<(), LineError> {
-    let span = tracing::debug_span!("request", request_id = tracing::field::Empty);
+    let span = server_request_span();
     async move {
         let request = match Request::from_line(line) {
             Ok(request) => request,

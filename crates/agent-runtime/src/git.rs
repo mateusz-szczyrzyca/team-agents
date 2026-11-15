@@ -885,7 +885,7 @@ impl Git {
 
     /// Runs git with `args` and returns what it did, whether it succeeded or not.
     async fn run(&self, operation: GitOperation, reach: Reach, args: &[&OsStr]) -> Result<Captured, GitError> {
-        let span = tracing::debug_span!("git", operation = %operation);
+        let span = git_span(operation);
         async move {
             let timeout = match reach {
                 Reach::Local => self.limits.local_timeout,
@@ -932,6 +932,36 @@ impl Git {
             Err(failed(operation, &captured))
         }
     }
+}
+
+/// The callsite for directly constructed `git` operation spans.
+static GIT_CALLSITE: tracing::callsite::DefaultCallsite = tracing::callsite::DefaultCallsite::new(&GIT_METADATA);
+
+/// The stable metadata and fields of a `git` operation span.
+static GIT_METADATA: tracing::Metadata<'static> = tracing::Metadata::new(
+    "git",
+    module_path!(),
+    tracing::Level::DEBUG,
+    Some(file!()),
+    Some(line!()),
+    Some(module_path!()),
+    tracing::field::FieldSet::new(&["operation"], tracing::callsite::Identifier(&GIT_CALLSITE)),
+    tracing::metadata::Kind::SPAN,
+);
+
+/// Opens a `git` operation span without consulting the process-wide macro-interest cache.
+fn git_span(operation: GitOperation) -> tracing::Span {
+    crate::history::ensure_scoped_callsites();
+    let operation = operation.to_string();
+    let operation_text = operation.as_str();
+    let fields = GIT_METADATA.fields();
+    let field_list = fields.iter().collect::<Vec<_>>();
+    let [operation_field] = field_list.as_slice() else {
+        // The static metadata and this destructuring must change together.
+        return tracing::Span::none();
+    };
+    let entries = [(operation_field, Some(&operation_text as &dyn tracing::field::Value))];
+    tracing::Span::new(&GIT_METADATA, &fields.value_set(&entries))
 }
 
 /// Where a command goes, which decides its time.

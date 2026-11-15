@@ -1073,7 +1073,7 @@ impl Owner {
     /// # Errors
     /// [`OwnerError`] when a request changes the state and it cannot be saved.
     async fn handle(&mut self, message: Message) -> Result<(), OwnerError> {
-        let span = tracing::debug_span!("request");
+        let span = owner_request_span();
         async move {
             match message {
                 Message::Request { client, command, reply } => {
@@ -1523,4 +1523,29 @@ fn not_found(message: String) -> Failure {
         kind: FailureKind::NotFound,
         message,
     }
+}
+
+/// The callsite of an owner request span.
+static OWNER_REQUEST_CALLSITE: tracing::callsite::DefaultCallsite =
+    tracing::callsite::DefaultCallsite::new(&OWNER_REQUEST_METADATA);
+
+/// The metadata of an owner request span.
+static OWNER_REQUEST_METADATA: tracing::Metadata<'static> = tracing::Metadata::new(
+    "request",
+    module_path!(),
+    tracing::Level::DEBUG,
+    Some(file!()),
+    Some(line!()),
+    Some(module_path!()),
+    tracing::field::FieldSet::new(&[], tracing::callsite::Identifier(&OWNER_REQUEST_CALLSITE)),
+    tracing::metadata::Kind::SPAN,
+);
+
+/// Builds the span around one owner request through [`tracing::Span::new`] so a subscriber installed with
+/// [`tracing::subscriber::with_default`] sees it even when another thread without a subscriber ran first.
+fn owner_request_span() -> tracing::Span {
+    agent_runtime::history::ensure_scoped_callsites();
+    let fields = OWNER_REQUEST_METADATA.fields();
+    let pairs: [(&tracing::field::Field, Option<&dyn tracing::field::Value>); 0] = [];
+    tracing::Span::new(&OWNER_REQUEST_METADATA, &fields.value_set(&pairs))
 }

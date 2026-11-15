@@ -1228,7 +1228,7 @@ impl AgentBus {
     /// wins over `AGENTBUS_DIR` of the environment, and in `AGENTS_HOME`, where the command writes its log: nothing
     /// but this `AgentBus` decides which bus a command works on.
     async fn run(&self, command: BusCommand, args: Args, input: Option<&[u8]>) -> Result<String, AgentBusError> {
-        let span = tracing::debug_span!("agentbus", operation = %command);
+        let span = agentbus_span(command);
         async move {
             let mut process = tokio::process::Command::new(self.program.as_path());
             process
@@ -1267,6 +1267,37 @@ impl AgentBus {
         .instrument(span)
         .await
     }
+}
+
+/// The callsite for directly constructed `agentbus` operation spans.
+static AGENTBUS_CALLSITE: tracing::callsite::DefaultCallsite =
+    tracing::callsite::DefaultCallsite::new(&AGENTBUS_METADATA);
+
+/// The stable metadata and fields of an `agentbus` operation span.
+static AGENTBUS_METADATA: tracing::Metadata<'static> = tracing::Metadata::new(
+    "agentbus",
+    module_path!(),
+    tracing::Level::DEBUG,
+    Some(file!()),
+    Some(line!()),
+    Some(module_path!()),
+    tracing::field::FieldSet::new(&["operation"], tracing::callsite::Identifier(&AGENTBUS_CALLSITE)),
+    tracing::metadata::Kind::SPAN,
+);
+
+/// Opens an `agentbus` operation span without consulting the process-wide macro-interest cache.
+fn agentbus_span(command: BusCommand) -> tracing::Span {
+    crate::history::ensure_scoped_callsites();
+    let operation = command.to_string();
+    let operation_text = operation.as_str();
+    let fields = AGENTBUS_METADATA.fields();
+    let field_list = fields.iter().collect::<Vec<_>>();
+    let [operation_field] = field_list.as_slice() else {
+        // The static metadata and this destructuring must change together.
+        return tracing::Span::none();
+    };
+    let entries = [(operation_field, Some(&operation_text as &dyn tracing::field::Value))];
+    tracing::Span::new(&AGENTBUS_METADATA, &fields.value_set(&entries))
 }
 
 /// Decodes the JSON a command printed.

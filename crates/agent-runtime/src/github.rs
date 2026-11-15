@@ -1391,7 +1391,7 @@ impl GitHub {
 
     /// Makes a call as [`Self::call`] does and returns the whole answer.
     async fn answer(&self, call: Call) -> Result<Answer, GitHubError> {
-        let span = tracing::debug_span!("github", operation = %call.operation);
+        let span = github_span(call.operation);
         async move {
             let allowed = match call.idempotency {
                 Idempotency::Idempotent => self.settings.retry.max_attempts.get(),
@@ -1513,6 +1513,36 @@ impl GitHub {
             message: error_message(&body),
         })
     }
+}
+
+/// The callsite of a GitHub operation span.
+static GITHUB_CALLSITE: tracing::callsite::DefaultCallsite = tracing::callsite::DefaultCallsite::new(&GITHUB_METADATA);
+
+/// The metadata of a GitHub operation span.
+static GITHUB_METADATA: tracing::Metadata<'static> = tracing::Metadata::new(
+    "github",
+    module_path!(),
+    tracing::Level::DEBUG,
+    Some(file!()),
+    Some(line!()),
+    Some(module_path!()),
+    tracing::field::FieldSet::new(&["operation"], tracing::callsite::Identifier(&GITHUB_CALLSITE)),
+    tracing::metadata::Kind::SPAN,
+);
+
+/// Builds the span around one GitHub operation through [`tracing::Span::new`] so a subscriber installed with
+/// [`tracing::subscriber::with_default`] sees it even when another thread without a subscriber ran first.
+fn github_span(operation: GitHubOperation) -> tracing::Span {
+    crate::history::ensure_scoped_callsites();
+    let operation_value = tracing::field::display(operation);
+    let values: [&dyn tracing::field::Value; 1] = [&operation_value];
+    let fields = GITHUB_METADATA.fields();
+    let Some(operation_field) = fields.iter().next() else {
+        // The static metadata and this lookup must change together.
+        return tracing::Span::none();
+    };
+    let pairs = [(&operation_field, Some(values[0]))];
+    tracing::Span::new(&GITHUB_METADATA, &fields.value_set(&pairs))
 }
 
 /// The GraphQL mutation that marks a pull request ready for review.

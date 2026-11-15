@@ -42,6 +42,55 @@ static PANIC_LAYER: Mutex<Option<HistoryLayer>> = Mutex::new(None);
 /// Ensures `std::panic::set_hook` is installed at most once per process.
 static PANIC_HOOK_ONCE: Once = Once::new();
 
+/// Subscriber registered in `tracing_core`'s global dispatcher list so that `tracing_core` never takes its
+/// single-dispatcher fast path (`Rebuilder::JustOne`) and caches `Interest::never()` from a thread running without a
+/// subscriber while another thread uses `WithSubscriber`.
+struct ScopedCallsiteGuard;
+
+impl Subscriber for ScopedCallsiteGuard {
+    fn register_callsite(&self, _metadata: &'static Metadata<'static>) -> tracing::subscriber::Interest {
+        tracing::subscriber::Interest::sometimes()
+    }
+
+    fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+        false
+    }
+
+    fn max_level_hint(&self) -> Option<tracing::level_filters::LevelFilter> {
+        Some(tracing::level_filters::LevelFilter::TRACE)
+    }
+
+    fn new_span(&self, _span: &Attributes<'_>) -> Id {
+        Id::from_u64(1)
+    }
+
+    fn record(&self, _span: &Id, _values: &SpanRecord<'_>) {}
+
+    fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+
+    fn event(&self, _event: &Event<'_>) {}
+
+    fn enter(&self, _span: &Id) {}
+
+    fn exit(&self, _span: &Id) {}
+}
+
+/// Holds two live `Dispatch` instances so `tracing_core`'s `LOCKED_DISPATCHERS` always has more than one entry and
+/// combines callsite interest to `Interest::sometimes()`.
+static SCOPED_CALLSITE_GUARDS: std::sync::LazyLock<(tracing::Dispatch, tracing::Dispatch)> =
+    std::sync::LazyLock::new(|| {
+        let first = tracing::Dispatch::new(ScopedCallsiteGuard);
+        let second = tracing::Dispatch::new(ScopedCallsiteGuard);
+        tracing::callsite::rebuild_interest_cache();
+        (first, second)
+    });
+
+/// Ensures `tracing` macro callsites evaluate against the current thread's scoped subscriber instead of caching
+/// `Interest::never()` from a concurrent thread with `NoSubscriber`.
+pub fn ensure_scoped_callsites() {
+    let _ = &*SCOPED_CALLSITE_GUARDS;
+}
+
 /// Locks `mutex`, recovering from poison so logging never panics when another thread panicked.
 fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -84,6 +133,7 @@ impl HistoryLayer {
     /// Creates a layer with `level`, `clock`, `secrets`, and an optional open `history`.
     #[must_use]
     pub fn new(level: LogLevel, clock: SharedClock, secrets: Secrets, history: Option<History>) -> Self {
+        ensure_scoped_callsites();
         let redactor = Redactor::new(secrets);
         if let Some(ref handle) = history {
             handle.configure_log_fallback(redactor.clone(), None);

@@ -313,6 +313,7 @@ static MODEL_CLI_METADATA: tracing::Metadata<'static> = tracing::Metadata::new(
 
 /// Opens a model operation span without consulting the process-wide macro-interest cache.
 fn model_cli_span(task: &TaskId, run: &RunId, cli: &str) -> tracing::Span {
+    crate::history::ensure_scoped_callsites();
     let task = task.to_string();
     let run = run.to_string();
     let task_text = task.as_str();
