@@ -123,3 +123,14 @@ fn statistics_read_a_legacy_database_without_migrating_it() {
     assert_eq!(reader.schema().unwrap(), before);
     assert!(reader.team(&written.team).unwrap().is_some());
 }
+
+#[test]
+fn statistics_include_the_oldest_record_before_the_ledger_migration() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let written = story_history::write_old_history(&path);
+    let reader = agent_runtime::history::Reader::open(&path).unwrap();
+    let oldest = reader.team(&written.team).unwrap().unwrap().value.at;
+    let stats = reader.statistics().unwrap();
+    assert_eq!(stats["oldest"], oldest.to_string());
+}
