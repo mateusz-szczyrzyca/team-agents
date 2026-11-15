@@ -40,3 +40,6 @@ mod queries;
 
 #[cfg(test)]
 mod search;
+
+#[cfg(test)]
+mod retention;

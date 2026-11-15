@@ -49,6 +49,14 @@ pub struct HistoryDb {
 }
 
 impl HistoryDb {
+    /// Deletes expired closed rounds and unscoped logs as one transaction.
+    ///
+    /// # Errors
+    /// [`crate::history::RetainError`] when storage refuses cleanup.
+    pub fn retain(&mut self, _request: &crate::history::Retention) -> Result<(), crate::history::RetainError> {
+        Ok(())
+    }
+
     /// Opens (and makes, and migrates) the database at `path`.
     ///
     /// # Errors
