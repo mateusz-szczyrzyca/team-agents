@@ -487,6 +487,12 @@ pub(super) fn insert_log(
             rule: "the database was made before migration 4, which keeps daemon logs: it is migrated when it is opened",
         });
     }
+    if record.module.is_empty() {
+        return Err(WriteError::Rule {
+            record: kind,
+            rule: "a daemon log module cannot be empty",
+        });
+    }
     let record = record.clone().keep(limit);
     let fields_json =
         serde_json::to_string(&record.fields).map_err(|source| WriteError::Json { record: kind, source })?;
@@ -498,10 +504,12 @@ pub(super) fn insert_log(
     let run = record.task.as_ref().and_then(LogTaskScope::run).map(RunId::as_str);
 
     if record.level() == LogLevel::Warn
-        && let Some(existing_id) = find_matching_warn_id(tx, &record, &fields_json, &cut_text, &at_text)?
+        && let Some(existing_id) = find_matching_warn_id(tx, &record, &fields_json, &cut_text)?
     {
         tx.execute(
-            "UPDATE daemon_logs SET count = count + 1, at = ?1 WHERE id = ?2",
+            "UPDATE daemon_logs SET count = count + 1, \
+             first_at = CASE WHEN ?1 < first_at THEN ?1 ELSE first_at END, \
+             at = CASE WHEN ?1 > at THEN ?1 ELSE at END WHERE id = ?2",
             params![at_text, existing_id],
         )
         .map_err(sql(kind))?;
@@ -538,14 +546,13 @@ pub(super) fn insert_log(
     Ok(())
 }
 
-/// Finds the `id` of an existing `warn` row with identical `(event, team, rounds, task, run, message, fields, cut)`
-/// and `first_at <= at_text`.
+/// Finds the `id` of an existing `warn` row with identical `(event, team, rounds, task, run, message, fields, cut)`.
+/// The index covers every scalar criterion; round lists are compared exactly to disambiguate rows sharing that prefix.
 fn find_matching_warn_id(
     tx: &Transaction<'_>,
     record: &LogRecord,
     fields_json: &str,
     cut_text: &str,
-    at_text: &str,
 ) -> Result<Option<i64>, WriteError> {
     let kind = RecordKind::Event;
     let team = record.team.as_ref().map(|scope| scope.team().as_str());
@@ -556,7 +563,7 @@ fn find_matching_warn_id(
         .prepare(
             "SELECT id FROM daemon_logs \
              WHERE level = 'warn' AND event = ?1 AND team IS ?2 AND task IS ?3 AND run IS ?4 \
-               AND message = ?5 AND fields = ?6 AND cut = ?7 AND first_at <= ?8 \
+               AND message = ?5 AND fields = ?6 AND cut = ?7 \
              ORDER BY id DESC",
         )
         .map_err(sql(kind))?;
@@ -569,8 +576,7 @@ fn find_matching_warn_id(
                 run,
                 record.message,
                 fields_json,
-                cut_text,
-                at_text
+                cut_text
             ],
             |row| row.get(0),
         )

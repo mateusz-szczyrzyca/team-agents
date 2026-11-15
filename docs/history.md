@@ -325,7 +325,8 @@ repository whose clean filter transforms content can therefore show differences 
 ### `daemon_logs` and `daemon_log_rounds`
 
 The daemon's own log, added by migration `4` ([`log.md`](log.md)): one row per logged event, with repeated identical
-warnings coalesced into one row (`count` incremented and `at` updated).
+warnings coalesced into one row (`count` incremented, `first_at` kept at the earliest timestamp and `at` at the latest,
+independently of enqueue order).
 
 #### `daemon_logs`
 
@@ -335,7 +336,7 @@ warnings coalesced into one row (`count` incremented and `at` updated).
 | `first_at` | TEXT | when the entry was first seen |
 | `at` | TEXT | when the entry was most recently seen (`first_at <= at`) |
 | `level` | TEXT | `error`, `warn`, `info` or `debug` |
-| `module` | TEXT | the Rust module that emitted the event |
+| `module` | TEXT, nonempty | the Rust module that emitted the event |
 | `event` | TEXT | the event keyword (`agent_core::log::LogEvent`) |
 | `team` | TEXT | the team from the active span; `NULL` for a daemon-wide event |
 | `task` | TEXT | the task from the active span; `NULL` when not in a task |
@@ -370,6 +371,7 @@ The rounds a daemon log entry belongs to, oldest first. Key `(log, position)`, `
 | `daemon_logs_by_task` | `daemon_logs (task, id)`, where `task` is not `NULL` | the daemon log entries of a task |
 | `daemon_logs_by_run` | `daemon_logs (run, id)`, where `run` is not `NULL` | the daemon log entries of a run |
 | `daemon_logs_by_level` | `daemon_logs (level, id)` | the daemon log entries of a severity level |
+| `daemon_logs_warn_coalescing` | `daemon_logs (event, team, task, run, message, fields, cut)`, where `level` is `warn` | indexed lookup of a repeated warning; the writer also compares its ordered round list exactly |
 | `daemon_log_rounds_by_round` | `daemon_log_rounds (round, log)` | the daemon log entries of a round |
 
 The key of each table is an index too: `WITHOUT ROWID` tables are stored in the order of their key.

@@ -224,7 +224,7 @@ CREATE TABLE daemon_logs (
     first_at TEXT NOT NULL,
     at TEXT NOT NULL,
     level TEXT NOT NULL CHECK (level IN ('error', 'warn', 'info', 'debug')),
-    module TEXT NOT NULL,
+    module TEXT NOT NULL CHECK (module <> ''),
     event TEXT NOT NULL CHECK (event IN (
         'cli_output_unreadable', 'run_ended_without_status', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
         'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out', 'gate_dirty_tree',
@@ -262,6 +262,9 @@ CREATE INDEX daemon_logs_by_task ON daemon_logs (task, id) WHERE task IS NOT NUL
 CREATE INDEX daemon_logs_by_run ON daemon_logs (run, id) WHERE run IS NOT NULL;
 
 CREATE INDEX daemon_logs_by_level ON daemon_logs (level, id);
+
+CREATE INDEX daemon_logs_warn_coalescing ON daemon_logs (event, team, task, run, message, fields, cut)
+    WHERE level = 'warn';
 
 CREATE TABLE daemon_log_rounds (
     log INTEGER NOT NULL REFERENCES daemon_logs (id),
