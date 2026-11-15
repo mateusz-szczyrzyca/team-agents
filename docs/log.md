@@ -47,7 +47,8 @@ linked to `<id>` (and the start of its team), so team-wide records with no round
 
 A record the database refused has a best-effort loss note: where it would stand, the story says that it was lost, what
 it was and why (the cause the writer gave). The note needs a subsequent successful write; permanent storage failure
-cannot leave a durable explanation. Queue and capture losses are counted by `agent status`; a run without its end or
+cannot leave a durable explanation. A permanently invalid note is warned about and dropped so it cannot block later
+notes; the loss it described was already counted. Queue and capture losses are counted by `agent status`; a run without its end or
 changes also has a missing-record notice in its story. A text cut at the history limit says so after it.
 
 ## `--json`

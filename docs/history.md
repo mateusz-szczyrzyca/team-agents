@@ -362,7 +362,11 @@ linked to every round of its team; a team-wide control or loss note when no roun
 | `notified` | a notification was sent | `task`, `title`, `body` | — |
 | `round_closed` | a round closed | `round`, `end` | `round R` |
 | `team_ended` | a team ended | — | `team` |
-| `lost` | a record was refused by the database or could not be captured (starting head, changes, gate, questions file, event clock) while the history could be written to | `what` (the `kind` of the missing record), `cause` (`write_disk_full`, `capture_head`, `capture_changes`, `capture_gate`, `capture_questions`, `capture_clock`, ...), `detail`, optional `task` | — |
+| `lost` | a record was refused by the database or could not be captured (starting head, changes, gate, questions file, event clock, daemon event) while the history could be written to | `what` (the `kind` of the missing record), `cause` (`write_disk_full`, `capture_head`, `capture_changes`, `capture_gate`, `capture_questions`, `capture_clock`, `capture_event`, ...), `detail`, optional `task` | — |
+
+For `checked`, an `allowed` outcome carries exactly the issues the human allowed, including when other issues in a
+mixed answer were refused and sent back separately. A `review_submitted` is retained even when it arrives after its
+review pass was already decided; it remains linked to that pass and round.
 
 Free texts (`issues`, `title`, `body`, `report`, `findings`, `text`, `detail`) are cut at the limit and redacted like every text of
 the history ([What is never in it](#what-is-never-in-it)); `cut` names the fields cut. The review `pass` of the payload
@@ -376,7 +380,7 @@ one by one, so a record that cannot be written loses only itself.
 
 When a record cannot be kept — the queue is full, the file or the disk cannot be written, the database cannot be opened —
 the work goes on, the failure goes to the standard error of the daemon (the journal of the unit) **once for each cause**
-(`queue_full`, `unavailable`, `capture_head`, `capture_changes`, `write_disk_full`, `write_read_only`, `write_io`, `write_corrupt`, `write_refused`, `secret_identity`, …), the
+(`queue_full`, `unavailable`, `capture_head`, `capture_changes`, `capture_event`, `write_disk_full`, `write_read_only`, `write_io`, `write_corrupt`, `write_refused`, `secret_identity`, …), the
 records lost are counted, and `agent status` shows the count. A failed starting-head lookup counts one incomplete launch; a failed change snapshot counts one missing changes record. When history is unavailable, the engine counts the skipped changes record without running Git for it. Disabled history neither captures nor counts records.
 
 The human authorized a bounded capture exception for item `8.4`: before launching a CLI and after it exits, the engine
@@ -405,14 +409,17 @@ history: not written: cannot open the history database "/home/you/agents/history
 
 **Noting what is missing.** The count says how many records were lost, not where the gap is. A record the database refuses
 when it is written alone (the writer tries the records of a refused batch one by one) or that could not be captured while the
-history is writable (starting head, changes, gate, questions file, event clock) is noted: the writer records a `lost` event for it,
-with the kind of the missing record, the cause, what went wrong, and the team and rounds it belonged to — those of its run, when the
-writer saw the run start. A story prints the note in the place of the record (for `capture_head` and `changes`, inline on the run's
-launch and `changes:` lines with the cause and detail). The note is a best effort: a record of a run the writer never saw start has
-no place to be noted, a record dropped because the queue was full or held a credential is counted and not noted, a note that cannot
-be written waits (at most 256 of them), and what a history that cannot be written at all loses is not noted either — a story then
-says what it can see: a run that ended with no `changes: ...` and no loss note says `changes: not recorded`, a launch whose commit
-could not be read and has no loss note says `unknown (git could not say)`, and a round with no pull request says so.
+history is writable (starting head, changes, gate, questions file, event clock, daemon event) is noted: the writer records a `lost`
+event for it, with the kind of the missing record, the cause, what went wrong, and the team and rounds it belonged to — those of its
+run, when the writer saw the run start. An unbuildable `fix_pass_started` uses `capture_event`, links to the task and round, and
+says which daemon state was missing. A story prints the note in the place of the record (for `capture_head` and `changes`, inline on
+the run's launch and `changes:` lines with the cause and detail). The note is a best effort: a record of a run the writer never saw
+start has no place to be noted, a record dropped because the queue was full or held a credential is counted and not noted, and what
+a history that cannot be written at all loses is not noted either. Waiting notes are tried separately after a successful write. A
+transient failure keeps a note waiting (at most 256 of them); a note the history refuses permanently is dropped with a warning and a
+cumulative dropped-note count so it cannot block later notes. The loss it described was already counted. A story then says what it
+can see: a run that ended with no `changes: ...` and no loss note says `changes: not recorded`, a launch whose commit could not be
+read and has no loss note says `unknown (git could not say)`, and a round with no pull request says so.
 
 A history that starts after its team (a deleted `history.db`) loses the records that hang on a row it does not have — the steps
 of a run that started before — and counts them.
