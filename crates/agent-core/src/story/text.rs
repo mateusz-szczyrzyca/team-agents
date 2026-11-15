@@ -71,7 +71,14 @@ pub(super) fn render(chosen: &[&SequencedRecord], selection: &Selection, options
     let team = chosen.first().map(|record| record.team.clone());
     let start = chosen.iter().find_map(|record| match &record.record {
         Record::Team(start) => Some((*record, start.as_ref())),
-        _ => None,
+        Record::Round(_)
+        | Record::Run(_)
+        | Record::Launch(_)
+        | Record::Step(_)
+        | Record::RunEnd(_)
+        | Record::Session(_)
+        | Record::Changes(_)
+        | Record::Event(_) => None,
     });
     match (selection, team) {
         (Selection::Round(round), Some(team)) => {
@@ -160,7 +167,15 @@ fn round_part(page: &mut Page, chosen: &[&SequencedRecord], round: &RoundId, tea
     page.line(0, &format!("Round {round} of team {team}"));
     let opening = chosen.iter().find_map(|record| match &record.record {
         Record::Round(opening) if &opening.round == round => Some((*record, opening.as_ref())),
-        _ => None,
+        Record::Round(_)
+        | Record::Team(_)
+        | Record::Run(_)
+        | Record::Launch(_)
+        | Record::Step(_)
+        | Record::RunEnd(_)
+        | Record::Session(_)
+        | Record::Changes(_)
+        | Record::Event(_) => None,
     });
     let Some((stored, opening)) = opening else {
         page.line(0, "(the opening of the round was not recorded)");
@@ -749,7 +764,16 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         } => {
             entry(page, at, &format!("a {what} record is missing ({cause}): {detail}"));
         }
-        other => pull_request_event(page, at, other),
+        event @ (HistoryEvent::PullOpened { .. }
+        | HistoryEvent::PullPushed { .. }
+        | HistoryEvent::PullReady { .. }
+        | HistoryEvent::ReviewAsked { .. }
+        | HistoryEvent::ReviewSubmitted { .. }
+        | HistoryEvent::FixPassStarted { .. }
+        | HistoryEvent::PullApproved { .. }
+        | HistoryEvent::PullMerged { .. }
+        | HistoryEvent::PullHandedOver { .. }
+        | HistoryEvent::PullClosed { .. }) => pull_request_event(page, at, event),
     }
     page.cut_note(2, stored);
 }

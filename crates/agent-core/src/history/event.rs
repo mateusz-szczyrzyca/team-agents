@@ -90,8 +90,25 @@ impl FromStr for LostKind {
             Err(_) => {}
         }
         match EventKind::from_str(text)? {
+            kind @ (EventKind::Gate
+            | EventKind::Checked
+            | EventKind::PullOpened
+            | EventKind::PullPushed
+            | EventKind::PullReady
+            | EventKind::ReviewAsked
+            | EventKind::ReviewSubmitted
+            | EventKind::FixPassStarted
+            | EventKind::PullApproved
+            | EventKind::PullMerged
+            | EventKind::PullHandedOver
+            | EventKind::PullClosed
+            | EventKind::QuestionAsked
+            | EventKind::QuestionAnswered
+            | EventKind::Controlled
+            | EventKind::Notified
+            | EventKind::RoundClosed
+            | EventKind::TeamEnded) => Ok(Self::Event(kind)),
             EventKind::Lost => Err(UnknownKeyword::of::<EventKind>(text)),
-            kind => Ok(Self::Event(kind)),
         }
     }
 }
