@@ -360,24 +360,27 @@ async fn five_repeated_bus_warnings_coalesce_into_one_row_with_count_five() {
     let team = team_id(0);
     let task_id = task(1);
 
-    let span = tracing::error_span!(
-        "run",
-        team = %team,
-        rounds = %round,
-        task = %task_id,
-        run = %run,
-    );
     async {
-        daemon.clock.advance(time::Duration::seconds(10));
-        for step in 0..5 {
-            if step > 0 {
-                daemon.clock.advance(time::Duration::seconds(1));
+        let span = tracing::error_span!(
+            "run",
+            team = %team,
+            rounds = %round,
+            task = %task_id,
+            run = %run,
+        );
+        async {
+            daemon.clock.advance(time::Duration::seconds(10));
+            for step in 0..5 {
+                if step > 0 {
+                    daemon.clock.advance(time::Duration::seconds(1));
+                }
+                owner.look_at(&team);
+                owner.team_life().await.unwrap();
             }
-            owner.look_at(&team);
-            owner.team_life().await.unwrap();
         }
+        .instrument(span)
+        .await;
     }
-    .instrument(span)
     .with_subscriber(dispatch)
     .await;
 
