@@ -132,5 +132,12 @@ fn statistics_include_the_oldest_record_before_the_ledger_migration() {
     let reader = agent_runtime::history::Reader::open(&path).unwrap();
     let oldest = reader.team(&written.team).unwrap().unwrap().value.at;
     let stats = reader.statistics().unwrap();
-    assert_eq!(stats["oldest"], oldest.to_string());
+    assert_eq!(
+        stats["oldest"]
+            .as_str()
+            .unwrap()
+            .parse::<agent_core::state::Timestamp>()
+            .unwrap(),
+        oldest
+    );
 }
