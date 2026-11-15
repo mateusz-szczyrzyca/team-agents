@@ -277,3 +277,78 @@ fn retention_refuses_a_gate_parent_symlink_and_keeps_the_round_atomic() {
         before
     );
 }
+
+#[test]
+fn removing_one_old_round_preserves_the_new_round_and_shared_runs_of_the_team() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let mut world = complete(8751);
+    world.rounds.truncate(1);
+    world.runs.truncate(1);
+    let old = world.rounds[0].round.clone();
+    let new: agent_core::ids::RoundId = "round-20261118-110640-new1".parse().unwrap();
+    let mut opening = world.rounds[0].clone();
+    opening.round = new.clone();
+    world.rounds.push(opening);
+    world.runs[0].start.rounds = vec![old.clone(), new.clone()];
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+    db.write(&world.records()).unwrap();
+    db.write(&[Record::Event(Box::new(EventRecord {
+        at: at(2000, 0),
+        team: world.team.team.clone(),
+        rounds: vec![old.clone()],
+        event: HistoryEvent::RoundClosed {
+            round: old.clone(),
+            end: RoundEnd::Merged,
+        },
+    }))])
+    .unwrap();
+    let before = Reader::open(&path).unwrap().statistics().unwrap();
+    db.retain(&Retention {
+        closed_before: Some(at(2001, 0)),
+        logs_before: None,
+        home: dir.path().to_path_buf(),
+    })
+    .unwrap();
+    let reader = Reader::open(&path).unwrap();
+    assert!(reader.round(&old).unwrap().is_none());
+    assert!(reader.round(&new).unwrap().is_some());
+    assert_eq!(reader.team(&world.team.team).unwrap().unwrap().value, world.team);
+    let mut expected = world.runs[0].start.clone();
+    expected.rounds = vec![new.clone()];
+    assert_eq!(reader.run(&expected.run).unwrap().unwrap().start.value, expected);
+    assert_eq!(
+        reader
+            .steps(&expected.run)
+            .unwrap()
+            .iter()
+            .map(|step| step.value.clone())
+            .collect::<Vec<_>>(),
+        world.runs[0].steps
+    );
+    let after = reader.statistics().unwrap();
+    for (table, count) in before["tables"].as_object().unwrap() {
+        if table.starts_with("history_search") {
+            continue;
+        }
+        let removed = match table.as_str() {
+            "rounds" | "run_rounds" => 1,
+            "history_records" => 2,
+            "history_record_rounds" => u64::try_from(world.runs[0].steps.len() + 6).unwrap(),
+            _ => 0,
+        };
+        assert_eq!(
+            after["tables"][table].as_u64().unwrap(),
+            count.as_u64().unwrap() - removed,
+            "{table}"
+        );
+    }
+    assert_eq!(reader.round_records(&old).unwrap(), Vec::new());
+    assert!(
+        reader
+            .round_records(&new)
+            .unwrap()
+            .iter()
+            .all(|record| !record.rounds.contains(&old))
+    );
+}
