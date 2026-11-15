@@ -12,6 +12,7 @@ use agent_core::history::RunWhy;
 use agent_core::ids::{BranchName, GenerateIdError, InvalidBranchName, InvalidName, RunId, TaskId};
 use agent_core::kinds::Role;
 use agent_core::kinds::{CliKind, Tier};
+use agent_core::log::LogEvent;
 use agent_core::state::{
     ItemPhase, ItemProgress, Member, Participant, PrNumber, Question, ReviewOutcome, Run, RunEnd, RunState, State,
     TaskRef, Team,
@@ -569,7 +570,11 @@ fn fix_pass_number(team: &Team) -> Option<NonZeroU32> {
 /// continuation of the task — what the state says of the runs it had.
 pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy {
     let Some(found) = state.find_task(task) else {
-        tracing::warn!(task = %task, "the task of a new run is not in the state: recording its reason as continuation");
+        tracing::warn!(
+            event = LogEvent::HistoryRecordIncomplete.as_str(),
+            task = %task,
+            "the task of a new run is not in the state: recording its reason as continuation"
+        );
         return RunWhy::Continuation;
     };
     let (team, member) = (found.team, found.member);
@@ -585,7 +590,12 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
         Some(Why::VerdictMissing) => RunWhy::VerdictMissing,
         Some(Why::FixPass) => fix_pass_number(team).map_or_else(
             || {
-                tracing::warn!(team = %team.id(), task = %task, "no item of the team is in a fix pass: recording the run's reason as continuation");
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    team = %team.id(),
+                    task = %task,
+                    "no item of the team is in a fix pass: recording the run's reason as continuation"
+                );
                 RunWhy::Continuation
             },
             |number| RunWhy::FixPass { number },
@@ -608,7 +618,12 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
 fn review_why(team: &Team, task: &TaskId) -> RunWhy {
     pending_review(team, task).map_or_else(
         || {
-            tracing::warn!(team = %team.id(), task = %task, "the reviewer has no pending review in the state: recording the run's reason as continuation");
+            tracing::warn!(
+                event = LogEvent::HistoryRecordIncomplete.as_str(),
+                team = %team.id(),
+                task = %task,
+                "the reviewer has no pending review in the state: recording the run's reason as continuation"
+            );
             RunWhy::Continuation
         },
         |(pr, pass)| RunWhy::Review { pr, pass },

@@ -101,7 +101,12 @@ impl Owner {
             Some(Answer::Current(asked)) => asked,
             Some(Answer::Late(late)) => return self.keep_late_review(&pulls, task, located, &late, message).await,
             None => {
-                tracing::debug!(task = %task, "a reviewer ended with nothing that it was asked to review: its report is not taken");
+                tracing::info!(
+                    event = LogEvent::ReviewReportLate.as_str(),
+                    team = %located.team,
+                    task = %task,
+                    "a reviewer ended with nothing that it was asked to review: its report is not taken"
+                );
                 return Ok(());
             }
         };
@@ -131,7 +136,13 @@ impl Owner {
         late: &Late,
         message: &str,
     ) -> Result<(), OwnerError> {
-        tracing::info!(task = %task, pr = %late.pr.number, "a reviewer ended a review of a review pass that is decided: its report is kept and posted");
+        tracing::info!(
+            event = LogEvent::ReviewReportLate.as_str(),
+            team = %located.team,
+            task = %task,
+            pr = %late.pr.number,
+            "a reviewer ended a review of a review pass that is decided: its report is kept and posted"
+        );
         let report = report_text(message);
         let pass = count(late.pass);
         self.parts
@@ -160,7 +171,13 @@ impl Owner {
                 );
             }
             Err(problem) => {
-                tracing::info!(task = %task, ?problem, "a late report has no verdict: the history records no review of it");
+                tracing::info!(
+                    event = LogEvent::ReviewReportLate.as_str(),
+                    team = %located.team,
+                    task = %task,
+                    ?problem,
+                    "a late report has no verdict: the history records no review of it"
+                );
             }
         }
         let lead = self.lead_of(&located.team)?;
@@ -276,7 +293,12 @@ impl Owner {
                 Some(next)
             }
             Err(VerdictError::Round(RoundError::NotExpected { .. })) => {
-                tracing::info!(team = %team_id, pr = %asked.pr.number, "a verdict came after the review pass was decided: it is recorded and changes nothing");
+                tracing::info!(
+                    event = LogEvent::ReviewReportLate.as_str(),
+                    team = %team_id,
+                    pr = %asked.pr.number,
+                    "a verdict came after the review pass was decided: it is recorded and changes nothing"
+                );
                 None
             }
             Err(error) => {

@@ -36,7 +36,12 @@ impl Owner {
         match Timestamp::now(&self.parts.clock) {
             Ok(at) => self.record_event_at(at, team, rounds, event),
             Err(error) => {
-                tracing::warn!(team = %team, error = %error_chain(&error), "the clock gives a time that cannot be recorded: the history has no record of an event");
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    team = %team,
+                    error = %error_chain(&error),
+                    "the clock gives a time that cannot be recorded: the history has no record of an event"
+                );
                 self.history.capture_failed(CaptureKind::Clock, &error);
                 if let Some(found) = self.parts.state.team(team).filter(|_| self.history.is_writing()) {
                     let event = HistoryEvent::Lost {
@@ -96,7 +101,13 @@ impl Owner {
                 Ok(round) if !rounds.contains(&round) => rounds.push(round),
                 Ok(_) => {}
                 Err(error) => {
-                    tracing::warn!(team = %team, item = %item, error = %error_chain(&error), "an item has no round: an event of the history is not linked to it");
+                    tracing::warn!(
+                        event = LogEvent::HistoryRecordIncomplete.as_str(),
+                        team = %team,
+                        item = %item,
+                        error = %error_chain(&error),
+                        "an item has no round: an event of the history is not linked to it"
+                    );
                 }
             }
         }
@@ -134,7 +145,12 @@ impl Owner {
         match tokio::fs::read_to_string(path).await {
             Ok(text) => Some(text),
             Err(error) => {
-                tracing::warn!(task = %task, error = %error_chain(&error), "the questions file cannot be read: the history has no record of it");
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the questions file cannot be read: the history has no record of it"
+                );
                 self.history.capture_failed(CaptureKind::Questions, &error);
                 if self.history.is_writing() {
                     let event = HistoryEvent::Lost {
@@ -178,7 +194,12 @@ impl Owner {
         match team_start(request, found, base, &self.parts.settings.config) {
             Ok(record) => self.history.record(Record::Team(Box::new(record))),
             Err(error) => {
-                tracing::warn!(team = %team, error = %error_chain(&error), "the plan of a new team cannot be explained: the history has no record of the team");
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    team = %team,
+                    error = %error_chain(&error),
+                    "the plan of a new team cannot be explained: the history has no record of the team"
+                );
                 self.history.record_lost();
             }
         }
@@ -196,7 +217,12 @@ impl Owner {
             return;
         };
         let Some(opening) = found.round(round).and_then(|round| round_opening(found, round)) else {
-            tracing::warn!(team = %team, round = %round, "the item of a round is not in the task list: the history has no record of the round");
+            tracing::warn!(
+                event = LogEvent::HistoryRecordIncomplete.as_str(),
+                team = %team,
+                round = %round,
+                "the item of a round is not in the task list: the history has no record of the round"
+            );
             self.history.record_lost();
             return;
         };
@@ -215,7 +241,12 @@ impl Owner {
         let branch = match work_branch(team, member) {
             Ok(branch) => branch,
             Err(error) => {
-                tracing::warn!(task = %task, error = %error_chain(&error), "the branch of a run cannot be told: the history has no record of the run");
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the branch of a run cannot be told: the history has no record of the run"
+                );
                 self.history.record_lost();
                 return;
             }
@@ -262,11 +293,21 @@ impl Owner {
                         },
                     );
                 } else {
-                    tracing::warn!(task = %task, pass = number.get(), "no item is in a fix pass for the run's agent: the history has no record of the fix pass");
+                    tracing::warn!(
+                        event = LogEvent::HistoryRecordIncomplete.as_str(),
+                        task = %task,
+                        pass = number.get(),
+                        "no item is in a fix pass for the run's agent: the history has no record of the fix pass"
+                    );
                     self.fix_pass_capture_failed(task, team.id(), rounds, at, &FixPassCaptureError::NoFixingItem);
                 }
             } else {
-                tracing::warn!(task = %task, pass = number.get(), "a fix pass has no findings in its plan: the history has no record of the fix pass");
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    pass = number.get(),
+                    "a fix pass has no findings in its plan: the history has no record of the fix pass"
+                );
                 self.fix_pass_capture_failed(task, team.id(), rounds, at, &FixPassCaptureError::MissingFindings);
             }
         }

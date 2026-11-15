@@ -137,7 +137,13 @@ impl Owner {
                 },
             );
         }
-        tracing::info!(team = %team_id, pr = %pr.number, reviewers = prepared.reviews.len(), "reviews are asked for");
+        tracing::info!(
+            event = LogEvent::ReviewsRequested.as_str(),
+            team = %team_id,
+            pr = %pr.number,
+            reviewers = prepared.reviews.len(),
+            "reviews are asked for"
+        );
         Ok(true)
     }
 

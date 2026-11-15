@@ -166,7 +166,15 @@ impl Owner {
                         of: policy.check_passes,
                     },
                 );
-                tracing::info!(team = %team, pr = %reviewing.pr, pass = pass.get(), issues = issues.len(), "the checks send the round back to the team");
+                tracing::info!(
+                    event = agent_core::log::LogEvent::ChecksDecided.as_str(),
+                    outcome = "sent_back",
+                    team = %team,
+                    pr = %reviewing.pr,
+                    pass = pass.get(),
+                    issues = issues.len(),
+                    "the checks send the round back to the team"
+                );
                 Ok(Some(Held::WakeLead))
             }
             ChecksStep::AskHuman { reason } => {
@@ -193,7 +201,14 @@ impl Owner {
         record.restart_passes(&asked.items);
         record.asked = None;
         self.parts.store.save_checks_record(&lead.task, record).await?;
-        tracing::info!(team = %team, allowed = decided.allowed.len(), refused = decided.refused.len(), "the human answered the questions of the checks");
+        tracing::info!(
+            event = agent_core::log::LogEvent::ChecksDecided.as_str(),
+            outcome = "human_answered",
+            team = %team,
+            allowed = decided.allowed.len(),
+            refused = decided.refused.len(),
+            "the human answered the questions of the checks"
+        );
         if !decided.allowed.is_empty() {
             let allowed = decided
                 .allowed
@@ -244,7 +259,15 @@ impl Owner {
                 question: number,
             },
         );
-        tracing::info!(team = %team, pr = %reviewing.pr, ?reason, issues = issues.len(), "the checks ask the human about the round");
+        tracing::info!(
+            event = agent_core::log::LogEvent::ChecksDecided.as_str(),
+            outcome = "asked_human",
+            team = %team,
+            pr = %reviewing.pr,
+            ?reason,
+            issues = issues.len(),
+            "the checks ask the human about the round"
+        );
         Ok(Some(Held::WakeLead))
     }
 
@@ -346,11 +369,21 @@ impl Owner {
                     Ok(notification) => match self.locate(&lead.task) {
                         Ok(located) => self.notify(now, &located, &lead.task, Notice::Prepared(notification)),
                         Err(error) => {
-                            tracing::error!(task = %lead.task, %error, "a notification of the checks has no task to be about");
+                            tracing::error!(
+                                event = agent_core::log::LogEvent::NotificationFailed.as_str(),
+                                task = %lead.task,
+                                %error,
+                                "a notification of the checks has no task to be about"
+                            );
                         }
                     },
                     Err(error) => {
-                        tracing::error!(task = %lead.task, error = %agent_runtime::process::error_chain(&error), "a notification of the checks cannot be made");
+                        tracing::error!(
+                            event = agent_core::log::LogEvent::NotificationFailed.as_str(),
+                            task = %lead.task,
+                            error = %agent_runtime::process::error_chain(&error),
+                            "a notification of the checks cannot be made"
+                        );
                     }
                 }
                 Ok(())

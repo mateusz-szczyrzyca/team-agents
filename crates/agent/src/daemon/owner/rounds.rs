@@ -360,7 +360,7 @@ impl Owner {
             Ok(notification) => notification,
             Err(error) => {
                 tracing::error!(
-                    event = agent_core::log::LogEvent::StateSaveFailed.as_str(),
+                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
                     ?prompt,
                     error = %error_chain(&error),
                     "a notification of the autopilot cannot be made"
@@ -372,7 +372,7 @@ impl Owner {
             Ok(located) => self.notify(now, &located, &lead.task, Notice::Prepared(notification)),
             Err(error) => {
                 tracing::error!(
-                    event = agent_core::log::LogEvent::StateSaveFailed.as_str(),
+                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
                     task = %lead.task,
                     %error,
                     "a notification of the autopilot has no task to be about"

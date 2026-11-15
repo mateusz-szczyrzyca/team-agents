@@ -322,8 +322,11 @@ CREATE TABLE daemon_logs (
         'cli_output_unreadable', 'run_ended_without_status', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
         'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out', 'gate_dirty_tree',
         'state_save_failed', 'questions_file_invalid', 'configuration_name_missing', 'restart_corrected',
-        'request_refused', 'daemon_panicked', 'team_changed', 'round_changed', 'item_phase_changed',
-        'task_status_changed', 'run_started', 'run_ended', 'decision_taken', 'outside_call_completed'
+        'request_refused', 'daemon_panicked', 'daemon_task_failed', 'team_not_started', 'notification_failed',
+        'history_record_incomplete', 'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed',
+        'run_started', 'run_ended', 'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated',
+        'questions_answered', 'control_used', 'checks_decided', 'reviews_requested', 'review_report_late',
+        'notification_sent', 'questions_file_opened', 'decision_taken', 'outside_call_completed', 'peer_gone'
     )),
     team TEXT,
     task TEXT,
@@ -335,16 +338,23 @@ CREATE TABLE daemon_logs (
     CHECK (first_at <= at),
     CHECK (run IS NULL OR task IS NOT NULL),
     CHECK (
-        (level = 'error' AND event IN ('state_save_failed', 'configuration_name_missing', 'daemon_panicked'))
+        (level = 'error' AND event IN (
+            'state_save_failed', 'configuration_name_missing', 'daemon_panicked', 'daemon_task_failed',
+            'team_not_started', 'notification_failed'
+        ))
         OR (level = 'warn' AND event IN (
             'cli_output_unreadable', 'run_ended_without_status', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
             'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out',
-            'gate_dirty_tree', 'questions_file_invalid', 'restart_corrected', 'request_refused'
+            'gate_dirty_tree', 'questions_file_invalid', 'restart_corrected', 'request_refused',
+            'history_record_incomplete'
         ))
         OR (level = 'info' AND event IN (
-            'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended'
+            'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
+            'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated', 'questions_answered',
+            'control_used', 'checks_decided', 'reviews_requested', 'review_report_late', 'notification_sent',
+            'questions_file_opened'
         ))
-        OR (level = 'debug' AND event IN ('decision_taken', 'outside_call_completed'))
+        OR (level = 'debug' AND event IN ('decision_taken', 'outside_call_completed', 'peer_gone'))
     )
 ) STRICT;
 

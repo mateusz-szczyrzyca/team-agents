@@ -312,7 +312,11 @@ impl Service {
         };
         if reply.send(answer).is_err() {
             // The client went away while it waited: nobody is left to tell. The record, if any, is kept all the same.
-            tracing::debug!(task = %task, "the client of a gate went away before its answer");
+            tracing::debug!(
+                event = LogEvent::PeerGone.as_str(),
+                task = %task,
+                "the client of a gate went away before its answer"
+            );
         }
     }
 
@@ -558,7 +562,12 @@ impl Service {
             .await
         {
             // The log explains to a person what happened; the record does not depend on it.
-            tracing::warn!(task = %job.task, error = %error_chain(&error), "the activity log cannot be written");
+            tracing::error!(
+                event = LogEvent::StateSaveFailed.as_str(),
+                task = %job.task,
+                error = %error_chain(&error),
+                "the activity log cannot be written"
+            );
         }
         let finished = EventKind::GateFinished {
             team: job.team.clone(),

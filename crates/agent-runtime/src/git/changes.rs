@@ -264,10 +264,15 @@ async fn close_scratch(scratch: tempfile::TempDir) {
     match tokio::task::spawn_blocking(move || scratch.close()).await {
         Ok(Ok(())) => {}
         Ok(Err(source)) => {
-            tracing::warn!(error = %source, "cannot remove the scratch directory of a read of the uncommitted changes");
+            tracing::warn!(
+                event = agent_core::log::LogEvent::GitCallFailed.as_str(),
+                error = %source,
+                "cannot remove the scratch directory of a read of the uncommitted changes"
+            );
         }
         Err(source) => {
             tracing::warn!(
+                event = agent_core::log::LogEvent::GitCallFailed.as_str(),
                 error = %source,
                 "the task that removes the scratch directory of a read of the uncommitted changes failed"
             );

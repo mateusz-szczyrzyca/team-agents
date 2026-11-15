@@ -262,8 +262,16 @@ impl HistoryLayer {
                 state.dual_stderr,
             )
         };
-        let Ok(at) = Timestamp::now(&clock) else {
-            return;
+        let at = match Timestamp::now(&clock) {
+            Ok(at) => at,
+            Err(error) => {
+                // A record without a time cannot be stored: it is told on `stderr`, with why it is not in the history.
+                self.write_plain_stderr(&format!(
+                    "{} {module} event={event} message={message:?} fields={fields:?} (not in the history: {error})",
+                    event.level()
+                ));
+                return;
+            }
         };
         let team = scope.team.map(|team_id| LogTeamScope::new(team_id, scope.rounds));
         let task = scope.task.map(|task_id| LogTaskScope::new(task_id, scope.run));
@@ -742,9 +750,11 @@ pub struct Scoped<F> {
 
 impl<F> fmt::Debug for Scoped<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The future itself need not be `Debug`: whether it is still there is what a reader can use.
         f.debug_struct("Scoped")
+            .field("dispatch", &self.dispatch)
             .field("finished", &self.inner.is_none())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -763,12 +773,27 @@ impl<F: Future> Future for Scoped<F> {
     type Output = F::Output;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<F::Output> {
-        let this = self.get_mut();
-        let Some(inner) = this.inner.as_mut() else {
-            // Polled again after it finished: a future may answer anything then, and this one never ends again.
-            return std::task::Poll::Pending;
-        };
-        tracing::dispatcher::with_default(&this.dispatch, || inner.as_mut().poll(cx))
+        let Self { dispatch, inner } = self.get_mut();
+        tracing::dispatcher::with_default(dispatch, || {
+            let polled = match inner.as_mut() {
+                Some(future) => future.as_mut().poll(cx),
+                // Polled again after it finished: a future may answer anything then, and this one never ends again.
+                None => return std::task::Poll::Pending,
+            };
+            if polled.is_ready() {
+                // What the future held is dropped here, under its subscriber.
+                *inner = None;
+            }
+            polled
+        })
+    }
+}
+
+impl<F> Drop for Scoped<F> {
+    fn drop(&mut self) {
+        if let Some(future) = self.inner.take() {
+            tracing::dispatcher::with_default(&self.dispatch, || drop(future));
+        }
     }
 }
 

@@ -152,7 +152,11 @@ only:
 - an event of a time the clock cannot give: it has no time to be stored with;
 - `trace` events, which no `[log] level` keeps in the history;
 - the three cleanup warnings of `agent_runtime::process` (a dropped run whose process group cannot be killed, a killed
-  captured process that cannot be reaped or does not end): they have no event name, because no test can provoke them.
+  captured process that cannot be reaped or does not end): they have no event name, because no test can provoke them;
+- the warning that the worktree of a member cannot take the branch of its next item, which repeats at every look while
+  it fails: it has no event name yet;
+- the note of the GitHub client that it left out what accounts that are not trusted wrote, which no call of the daemon
+  makes yet.
 
 Events from before the history is open (such as `restart_corrected` for an unknown time zone at the start of `agent daemon`)
 and after it is closed are on `stderr` only.

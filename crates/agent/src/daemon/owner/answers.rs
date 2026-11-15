@@ -311,11 +311,16 @@ impl Owner {
         match made {
             Ok(notification) => match Timestamp::now(&self.parts.clock) {
                 Ok(now) => self.notify(now, &open.located, task, Notice::Prepared(notification)),
-                Err(error) => tracing::error!(task = %task, %error, "the clock gives no time for a notification"),
+                Err(error) => tracing::error!(
+                    event = LogEvent::NotificationFailed.as_str(),
+                    task = %task,
+                    %error,
+                    "the clock gives no time for a notification"
+                ),
             },
             Err(error) => {
                 tracing::error!(
-                    event = LogEvent::StateSaveFailed.as_str(),
+                    event = LogEvent::NotificationFailed.as_str(),
                     task = %task,
                     error = %error_chain(&error),
                     "the notification of incomplete answers cannot be made"
@@ -388,7 +393,13 @@ impl Owner {
             )),
         )
         .await;
-        tracing::info!(task = %task, number = %open.number, channel, "the questions are answered");
+        tracing::info!(
+            event = LogEvent::QuestionsAnswered.as_str(),
+            task = %task,
+            number = %open.number,
+            channel,
+            "the questions are answered"
+        );
         self.look_at(&open.located.team);
         Ok(())
     }
