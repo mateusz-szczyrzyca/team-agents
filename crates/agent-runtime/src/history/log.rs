@@ -543,6 +543,10 @@ where
     }
 
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
+        let level = level_from_tracing(*event.metadata().level());
+        if !locked(&self.state).level.keeps(level) {
+            return;
+        }
         let mut scope = SpanScope::default();
         if let Some(span_scope) = ctx.event_scope(event) {
             for span in span_scope.from_root() {
@@ -609,32 +613,67 @@ where
     );
 }
 
+/// The callsite for directly dispatched outside-call events.
+static OUTSIDE_CALL_CALLSITE: tracing::callsite::DefaultCallsite =
+    tracing::callsite::DefaultCallsite::new(&OUTSIDE_CALL_METADATA);
+
+/// The stable metadata and public fields of an outside-call event.
+static OUTSIDE_CALL_METADATA: Metadata<'static> = Metadata::new(
+    "outside_call_completed",
+    module_path!(),
+    Level::DEBUG,
+    Some(file!()),
+    Some(line!()),
+    Some(module_path!()),
+    tracing::field::FieldSet::new(
+        &[
+            "event",
+            "tool",
+            "operation",
+            "duration_ms",
+            "exit_code",
+            "outcome",
+            "message",
+        ],
+        tracing::callsite::Identifier(&OUTSIDE_CALL_CALLSITE),
+    ),
+    tracing::metadata::Kind::EVENT,
+);
+
 /// Records a completed outside call (`outside_call_completed`, `debug`) to `git`, `agentbus`, `github`, or `gate`.
 pub fn log_outside_call(tool: &str, operation: &str, duration: Duration, exit_code: Option<i32>, outcome: &str) {
-    if !tracing::enabled!(Level::DEBUG) {
-        return;
-    }
     let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
-    if let Some(code) = exit_code {
-        tracing::debug!(
-            event = LogEvent::OutsideCallCompleted.as_str(),
-            tool = tool,
-            operation = operation,
-            duration_ms = duration_ms,
-            exit_code = i64::from(code),
-            outcome = outcome,
-            "an outside call completed"
-        );
-    } else {
-        tracing::debug!(
-            event = LogEvent::OutsideCallCompleted.as_str(),
-            tool = tool,
-            operation = operation,
-            duration_ms = duration_ms,
-            outcome = outcome,
-            "an outside call completed"
-        );
-    }
+    let exit_code = exit_code.map(i64::from);
+    let event = LogEvent::OutsideCallCompleted.as_str();
+    let message = "an outside call completed";
+    let fields = OUTSIDE_CALL_METADATA.fields();
+    let field_list = fields.iter().collect::<Vec<_>>();
+    let [
+        event_field,
+        tool_field,
+        operation_field,
+        duration_field,
+        exit_field,
+        outcome_field,
+        message_field,
+    ] = field_list.as_slice()
+    else {
+        // The static metadata and this destructuring must change together.
+        return;
+    };
+    let entries = [
+        (event_field, Some(&event as &dyn tracing::field::Value)),
+        (tool_field, Some(&tool as &dyn tracing::field::Value)),
+        (operation_field, Some(&operation as &dyn tracing::field::Value)),
+        (duration_field, Some(&duration_ms as &dyn tracing::field::Value)),
+        (exit_field, Some(&exit_code as &dyn tracing::field::Value)),
+        (outcome_field, Some(&outcome as &dyn tracing::field::Value)),
+        (message_field, Some(&message as &dyn tracing::field::Value)),
+    ];
+    let values = fields.value_set(&entries);
+    // Direct dispatch still reaches the active subscriber, whose layer filters by level, but does not let another
+    // scoped dispatcher's cached macro interest suppress this completion record.
+    tracing::Event::dispatch(&OUTSIDE_CALL_METADATA, &values);
 }
 
 #[cfg(test)]

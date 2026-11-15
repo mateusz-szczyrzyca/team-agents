@@ -338,6 +338,41 @@ impl RunEngine {
         cancel: &CancellationToken,
         hold: &WatchdogHold,
     ) -> Result<RunVerdict, RunError> {
+        let started = std::time::Instant::now();
+        let tool = job.cli.as_str();
+        let span = tracing::debug_span!(
+            "model_cli",
+            task = %job.task,
+            run = %job.run,
+            cli = tool,
+        );
+        let operation = async {
+            let result = self.run_held_lifecycle(job, cancel, hold).await;
+            let (exit_code, outcome) = match &result {
+                Ok(RunVerdict::Finished(run)) => {
+                    let code = match run.finish.exit {
+                        ExitStatus::Code(code) => Some(code),
+                        ExitStatus::Signal => None,
+                    };
+                    let outcome = if code == Some(0) { "ok" } else { "failed" };
+                    (code, outcome)
+                }
+                Ok(RunVerdict::Interrupted { .. }) => (None, "cancelled"),
+                Err(_) => (None, "error"),
+            };
+            crate::history::log_outside_call(tool, "run", started.elapsed(), exit_code, outcome);
+            result
+        };
+        tracing::Instrument::instrument(operation, span).await
+    }
+
+    /// Carries out the process lifecycle whose completion is logged by [`Self::run_held`].
+    async fn run_held_lifecycle(
+        &self,
+        job: RunJob,
+        cancel: &CancellationToken,
+        hold: &WatchdogHold,
+    ) -> Result<RunVerdict, RunError> {
         let launch = launch::prepare(&self.parts, &job).await?;
         let stdout = launch.process.stdout_file.clone();
         let stderr = launch.process.stderr_file.clone();
