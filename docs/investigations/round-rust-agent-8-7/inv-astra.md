@@ -2,25 +2,37 @@
 
 ## Status
 
-`QUESTIONS`: implementation is paused at the existing-test conflict required by `AGENTS.md`. This report is not an implementation of round `8.7` and must not be treated as a completed round.
+`QUESTIONS`: the first answer permits replacing the two obsolete parser cases and requires more edge cases. A separate output-contract decision is pending in `questions-2.md` for task `20261115-212152-inv-astra`. This is not an implementation of round `8.7`.
 
-## Blocking contract
+## Authorized changes
 
-The existing test `log_refuses_no_subject_two_subjects_and_a_name_that_is_not_an_id_with_status_2` in [`crates/agent/src/tests/log_command.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/ad204aa2448806656e45845ff1452be284a104a6/crates/agent/src/tests/log_command.rs#L73-L99) requires:
+- Bare `agent log` must succeed and print recent daemon logs.
+- Combined `--round` and `--team` must be accepted and intersect their filters.
+- Invalid-ID checks must remain.
+- Replacement coverage must include additional edge cases.
 
-- Bare `agent log` to fail parsing with `MissingRequiredArgument` and exit `2`.
-- Combined `--round` and `--team` to fail parsing with `ArgumentConflict` and exit `2`.
-- Invalid identifiers to fail validation; this remains appropriate for round `8.7`.
+## Blocking output contract
 
-The first two cases conflict directly with the requested default daemon log output and combinable filters. The parser enforces the same restriction through its required, mutually exclusive argument group in [`crates/agent/src/main.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/ad204aa2448806656e45845ff1452be284a104a6/crates/agent/src/main.rs#L205-L224).
+The existing scoped CLI tests require a narrative rather than daemon log rows:
 
-[`AGENTS.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/ad204aa2448806656e45845ff1452be284a104a6/AGENTS.md#L51-L55), Never rule `1`, says: “If the task requires behaviour that an existing test forbids, stop and ask the human in your questions file; wait for the answer.” The explicit permission in the round to migrate activity-file tests does not mention this CLI test.
+- `a_round_is_told_from_its_item_to_its_merge_without_a_daemon` requires item text, prompts, steps, changes, reviews and merge output from `agent log --round ID`.
+- `a_team_is_told_round_by_round_in_order` requires the story of every round from `agent log --team ID`.
+- `json_prints_every_record_of_the_round_once_and_the_flags_do_not_change_it` requires every history record, including steps and `pull_merged`, from `agent log --round ID --json`.
+- Source: [`crates/agent/src/tests/log_command.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/ad204aa2448806656e45845ff1452be284a104a6/crates/agent/src/tests/log_command.rs#L107-L233).
+- The process tests independently pin the narrative output and repeat the obsolete bare-command rejection: [`crates/agent/tests/log_process.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/ad204aa2448806656e45845ff1452be284a104a6/crates/agent/tests/log_process.rs#L44-L122).
+
+Round `8.7` describes the scope options as filters on daemon log rows and requires each filter alone to agree with the complete JSON output. Keeping a narrative default only when one scope filter is present would change the output category along with the filter.
+
+[`AGENTS.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/ad204aa2448806656e45845ff1452be284a104a6/AGENTS.md#L51-L55), Never rule `1`, says: “If the task requires behaviour that an existing test forbids, stop and ask the human in your questions file; wait for the answer.” The first answer specifically authorized the two parser cases; the narrative and JSON output assertions are a separate contract.
 
 ## Question
 
-The harness question is in `questions-1.md` for task `20261115-212152-inv-astra`.
+Should scoped `agent log` default to daemon log rows, replacing the existing story-output contract?
 
-Authorize replacing the two obsolete rejection cases with success coverage for default logging and intersected team/round filters, keeping the invalid-ID checks. With that answer, resume implementation of the full item on `agents/inv-astra/20261115-212152`.
+- Recommended option `a`: use daemon log rows consistently with and without filters; authorize migrating the existing CLI story-output assertions to precise filtered-log and `--show` coverage. Preserve invalid-ID, error handling, direct-reading and old-schema coverage, and add edge cases. Migrate the duplicate bare-command assertion too.
+- Option `b`: retain the narrative default for a lone scope filter; require `--show log` for scoped daemon log rows and apply the round's filter checks in that mode.
+
+The question is written to the harness's `questions-2.md`; its verdict is pending.
 
 ## Acceptance
 
@@ -30,8 +42,8 @@ Authorize replacing the two obsolete rejection cases with success coverage for d
 
 ## Checks
 
-- The targeted existing-contract test passed: `1` passed, `0` failed, `0` ignored, `755` filtered out.
-- Command: `tools/test-lock.sh inv-astra-log-contract cargo test -p agent --bin agent log_refuses_no_subject_two_subjects_and_a_name_that_is_not_an_id_with_status_2 --locked -- --exact log_command_tests::log_refuses_no_subject_two_subjects_and_a_name_that_is_not_an_id_with_status_2`.
+- `tools/test-lock.sh inv-astra-log-output-contract cargo test -p agent --bin agent log_command_tests --locked`: `11` passed, `0` failed, `0` ignored, `745` filtered out. This confirms the existing contracts; it does not validate round `8.7`.
+- The previous report commit passed `make gate`.
 - The required `make gate` is run after committing this report; its result is reported in the final response.
 - No production code or existing tests were changed.
 
@@ -41,4 +53,4 @@ None added or modified.
 
 ## Not done
 
-All implementation and new behavior tests for round `8.7` await the answer. No pull request was opened. No other agent's worktree was inspected, and no agent CLI was run.
+All implementation and new behavior tests for round `8.7` remain pending. No pull request was opened. No other agent's worktree was inspected, and no agent CLI was run.
