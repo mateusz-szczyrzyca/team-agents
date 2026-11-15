@@ -1,9 +1,11 @@
 //! Single-subject projections of validated history records.
 use super::{Format, LogError};
-use agent_core::history::{EndKind, HistoryEvent, Record};
+use agent_core::history::{EndKind, HistoryEvent, HowKind, Record, SequencedRecord};
 use agent_core::ids::{RoundId, TeamId};
+use agent_core::kinds::Role;
 use agent_core::log::LogView;
 use agent_core::state::RunEnd;
+use agent_core::status::TaskStatus;
 use agent_core::story::{Selection, json_lines};
 use agent_runtime::history::Reader;
 use std::collections::BTreeMap;
@@ -99,7 +101,7 @@ pub(super) fn print(
             {
                 participants.insert(
                     reviewer.to_string(),
-                    serde_json::json!({"agent":reviewer,"role":"reviewer","how":"drawn","among":among}),
+                    serde_json::json!({"agent":reviewer,"role":Role::Reviewer,"how":HowKind::Drawn.to_string(),"among":among}),
                 );
             }
         }
@@ -107,7 +109,7 @@ pub(super) fn print(
             output(out, value, format)?;
         }
     } else {
-        print_latest(&runs, view, format, out)?;
+        print_latest(&runs, &records, view, format, out)?;
     }
     out.flush().map_err(LogError::Output)
 }
@@ -124,10 +126,21 @@ fn output(out: &mut impl Write, value: &serde_json::Value, format: Format) -> Re
 /// Projects the most recent recorded run of each task.
 fn print_latest(
     runs: &[agent_runtime::history::RunRow],
+    records: &[SequencedRecord],
     view: LogView,
     format: Format,
     out: &mut impl Write,
 ) -> Result<(), LogError> {
+    let heads: BTreeMap<_, _> = records
+        .iter()
+        .filter_map(|record| {
+            if let Record::Changes(changes) = &record.record {
+                Some((&changes.run, &changes.head_after))
+            } else {
+                None
+            }
+        })
+        .collect();
     let mut latest = BTreeMap::new();
     for run in runs {
         latest.insert(run.start.value.task.clone(), run);
@@ -135,9 +148,9 @@ fn print_latest(
     for row in latest.values() {
         let run = &row.start.value;
         let value = if view == LogView::Tasks {
-            serde_json::json!({"task":run.task,"agent":run.agent.name,"role":run.role,"status":row.end.as_ref().map(|end| match &end.value.end { RunEnd::Reported { outcome } => outcome.to_string(), other => EndKind::of(other).to_string() }),"end":row.end.as_ref().map(|end| &end.value.end)})
+            serde_json::json!({"task":run.task,"agent":run.agent.name,"role":run.role,"status":row.end.as_ref().map_or_else(|| TaskStatus::Running.to_string(), |end| match &end.value.end { RunEnd::Reported { outcome } => outcome.to_string(), other => EndKind::of(other).to_string() }),"end":row.end.as_ref().map(|end| &end.value.end)})
         } else {
-            serde_json::json!({"task":run.task,"worktree":run.worktree,"branch":run.branch,"head":row.launch.as_ref().and_then(|launch| launch.value.head.as_ref())})
+            serde_json::json!({"task":run.task,"worktree":run.worktree,"branch":run.branch,"head":heads.get(&run.run).and_then(|head| head.as_ref()).or_else(|| row.launch.as_ref().and_then(|launch| launch.value.head.as_ref()))})
         };
         output(out, &value, format)?;
     }

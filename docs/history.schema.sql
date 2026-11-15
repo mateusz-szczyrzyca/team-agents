@@ -303,7 +303,7 @@ CASE WHEN h.kind IN ('run','launch','run_end','changes') THEN h.key
 json_extract(h.payload,'$.task') AS task,
 coalesce(h.key,'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_tree(h.payload) WHERE type='text'),'') || ' ' || coalesce(CASE h.kind
  WHEN 'run' THEN (SELECT prompt FROM runs WHERE run=h.key)
- WHEN 'step' THEN (SELECT coalesce(text,detail,path,'') FROM steps WHERE run=substr(h.key,1,instr(h.key,'/')-1) AND n=CAST(substr(h.key,instr(h.key,'/')+1) AS INTEGER))
+ WHEN 'step' THEN (SELECT coalesce(text,'') || ' ' || coalesce(detail,'') || ' ' || coalesce(path,'') || ' ' || coalesce(tool,'') || ' ' || coalesce(action,'') || ' ' || coalesce(login,'') FROM steps WHERE run=substr(h.key,1,instr(h.key,'/')-1) AND n=CAST(substr(h.key,instr(h.key,'/')+1) AS INTEGER))
  WHEN 'run_end' THEN (SELECT final_message FROM run_ends WHERE run=h.key)
  WHEN 'team' THEN (SELECT task_list FROM teams WHERE team=h.key)
  WHEN 'round' THEN (SELECT coalesce(brief,'') || ' ' || coalesce(title,'') || ' ' || coalesce(description,'') FROM rounds WHERE round=h.key)
@@ -323,7 +323,7 @@ CASE WHEN h.kind IN ('run','launch','run_end','changes') THEN h.key
 json_extract(h.payload,'$.task') AS task,
 coalesce(h.key,'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_tree(h.payload) WHERE type='text'),'') || ' ' || coalesce(CASE h.kind
  WHEN 'run' THEN (SELECT prompt FROM runs WHERE run=h.key)
- WHEN 'step' THEN (SELECT coalesce(text,detail,path,'') FROM steps WHERE run=substr(h.key,1,instr(h.key,'/')-1) AND n=CAST(substr(h.key,instr(h.key,'/')+1) AS INTEGER))
+ WHEN 'step' THEN (SELECT coalesce(text,'') || ' ' || coalesce(detail,'') || ' ' || coalesce(path,'') || ' ' || coalesce(tool,'') || ' ' || coalesce(action,'') || ' ' || coalesce(login,'') FROM steps WHERE run=substr(h.key,1,instr(h.key,'/')-1) AND n=CAST(substr(h.key,instr(h.key,'/')+1) AS INTEGER))
  WHEN 'run_end' THEN (SELECT final_message FROM run_ends WHERE run=h.key)
  WHEN 'team' THEN (SELECT task_list FROM teams WHERE team=h.key)
  WHEN 'round' THEN (SELECT coalesce(brief,'') || ' ' || coalesce(title,'') || ' ' || coalesce(description,'') FROM rounds WHERE round=h.key)
@@ -358,4 +358,3 @@ CREATE TABLE history_cursors (
 CREATE TRIGGER daemon_logs_cursor AFTER INSERT ON daemon_logs BEGIN
  UPDATE history_cursors SET value = max(value, new.id) WHERE name = 'daemon_logs';
 END;
-
