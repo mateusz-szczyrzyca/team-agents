@@ -110,6 +110,26 @@ pub enum LogWindow {
 }
 
 impl Reader {
+    /// Greatest log ID ever allocated, including rows removed by retention.
+    ///
+    /// # Errors
+    /// [`ReadError`] when the database cannot be queried.
+    pub fn log_cursor(&self) -> Result<i64, ReadError> {
+        let snapshot = self.snapshot("daemon_logs")?;
+        let version = version_of(&snapshot).map_err(query("daemon_logs"))?;
+        if version < DAEMON_LOGS_VERSION {
+            return Ok(0);
+        }
+        let sql = if version >= 6 {
+            "SELECT value FROM history_cursors WHERE name = 'daemon_logs'"
+        } else {
+            "SELECT coalesce(max(id), 0) FROM daemon_logs"
+        };
+        snapshot
+            .query_row(sql, [], |row| row.get(0))
+            .map_err(query("daemon_logs"))
+    }
+
     /// Reads one snapshot with all filters intersected, in insertion order.
     ///
     /// # Errors
