@@ -1329,3 +1329,24 @@ async fn a_socket_that_cannot_be_removed_still_flushes_and_closes_the_history_wr
     );
     assert!(runs[0].end.is_some());
 }
+
+#[tokio::test]
+async fn a_run_records_steps_without_creating_an_activity_file() {
+    let mut fixture = Fixture::new(&solo_state(), 3, "done");
+    fixture.start().await;
+    fixture.status_is(TaskStatus::Done).await;
+    fixture.stop().await.unwrap();
+    let steps = agent_runtime::history::Reader::open(&fixture.home.history_file())
+        .unwrap()
+        .steps_of_task(&task(1))
+        .unwrap();
+    assert!(
+        steps
+            .iter()
+            .any(|row| row.value.event == agent_core::cli::ActivityEvent::Text("working".to_owned()))
+    );
+    assert!(
+        !fixture.home.activity_log(&task(1)).exists(),
+        "activity belongs only in history"
+    );
+}
