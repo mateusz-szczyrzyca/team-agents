@@ -1077,10 +1077,13 @@ async fn a_usable_worker_request_logs_one_decision_and_idle_polls_log_none() {
         "idle polls and one usable request must produce exactly one row: {decisions:?}"
     );
     let row = decisions[0];
-    let input = row.fields().get("input").and_then(|value| value.as_str()).unwrap();
-    let result = row.fields().get("result").and_then(|value| value.as_str()).unwrap();
+    let input = row.fields().get("input").unwrap().to_string();
+    let result = row.fields().get("result").unwrap().to_string();
     assert!(input.contains("glm-1") && input.contains("glm-2"), "{input}");
-    assert!(result.contains("glm-1") && result.contains("H1"), "{result}");
+    assert!(
+        result.contains("glm-1") && result.contains("\"request_id\":1"),
+        "{result}"
+    );
     assert!(
         !format!("{:?}", row.fields()).contains(marker),
         "delegation text leaked into {row:?}"
