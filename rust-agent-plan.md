@@ -116,6 +116,9 @@ Behaviour in short
   once and the highest effort it allows; every agent names its account, and the account is shown wherever the
   agent and its model are. A quota that runs out stops the whole account until its reset. The daemon spreads work
   over the accounts — first by which is idle, after the cutover (12.3) by how much of each is used.
+- The watchdog stops a run that is silent. After the cutover (12.4) the daemon also notices a run that is busy and
+  gets nowhere — an hour of steps without a commit, the same command failing again and again, the same file
+  edited over and over, a task woken for nothing — and first tells the agent, then stops the run and asks.
 - Review, after the cutover (feature 13): the checks every change must pass are written in the repository's
   `AGENTS.md` and run by the harness before any reviewer starts; what the reviewers find is kept in a ledger, the
   first review passes are full and the later ones look only at the open findings and the fixes; requests to
@@ -141,6 +144,8 @@ Checkpoints for the human, between features (the agents do not run these):
   reviews — and `agent log --level warn` shows nothing unexplained. The cutover starts only after it passes.
 - After feature 9: the dashboard opened through `tailscale serve` from another device: the teams listed, a question
   answered, a team paused and resumed.
+- After item 12.4: look at the stalls of a week of real rounds in `agent log --event stall` and set the limits of
+  `[stall]` by them: the defaults are guesses.
 
 Out of scope for this plan: remote nodes and the lead, investigation teams with phases and standalone investigation
 requests, `agent live`, archiving, the cost of tokens in money, moving the state file into the database, one agent
@@ -1202,6 +1207,67 @@ Depends on: 10, 11
     - A1. With fake CLIs that report usage and two accounts with the same budget: after one account's run the
       next work goes to the other; `agent agents` shows both shares.
     - A2. An account with `window_tokens` and no `window_hours` is refused by `agent config check`.
+[ ] 12.4 A run that is busy and gets nowhere: stall detection
+    The watchdog knows one kind of trouble: silence. A run that keeps writing output is alive to it, also when
+    the same test has failed for an hour or nothing has been committed since the morning. The daemon now watches
+    for work that goes in circles, from what it already records: the steps of the run in the history and the
+    commits in its worktree. Four signals, each with its limit in `[stall]`; `0` turns a signal off:
+    - `no_commit_minutes` (default 60): a run of a task that works on an item has made steps for that long and its
+      branch has no new commit — counted from the run's start or its last commit, time waiting for a gate, a
+      question or a message left out;
+    - `same_failure_repeats` (default 5): the same command — the same text, whitespace aside — has ended with an
+      error that many times in a row in one run, with no commit in between (the exit status of a command step is
+      recorded for this, if it is not yet);
+    - `same_file_edits` (default 15): the same file has been edited that many times in one run with no commit in
+      between;
+    - `idle_wakes` (default 5): a task has been woken that many times in a row and each run ended without a
+      commit, a message sent, a question or a change of its plan — what the old harness's wake-loop guard held.
+    They are heuristics, and a long refactoring or a slow test can look the same; so the answer comes in steps
+    and never loses work:
+    1. the first time a signal is raised in a run: a `warn` in the log with its facts, and a message to the agent
+       — what was noticed, with the command or the file, and what to do: say in your plan what you are trying,
+       change the approach, or ask your question. The run goes on. An agent whose CLI takes no message while it
+       runs gets it at the start of its next run;
+    2. the same signal again in the same run, after another full limit: the run is stopped at its next step, its
+       worktree left as it is, a snapshot taken (8.9), the task waits, and the human is asked — the question shows
+       the signal, the last steps and the uncommitted files, and offers: go on (the count starts again), go on in
+       a new session with the briefing, give the task to another agent (12.1, when one may take it), stop;
+    3. `[stall] on_second = "ask"` is the default; `"takeover"` gives the task to another agent by the rules of
+       12.1 without asking, and asks only when nobody may take it.
+    A signal belongs to one run: a commit, or the end of the run, starts its count again; `idle_wakes` belongs to
+    the task and starts again when a run does one of the things it names. The decision is a pure function of the
+    run's steps, the commits and the clock. Every raised signal and what followed is a record in the history and
+    is shown in the story of the round and in `agent status <round>`.
+    Expected result:
+    - Files: the signals in `crates/agent-core/src/decide/stall.rs`, `[stall]` in
+      `crates/agent-core/src/config.rs`, the exit status of a command step in `crates/agent-core/src/history.rs`
+      and the adapters, the watching in `crates/agent/src/daemon/`, the record in
+      `crates/agent-runtime/src/history/`, the texts in `prompts/harness/stall/`, `config/agents.example.toml`,
+      `docs/architecture.md`, `docs/configuration.md`, `docs/history.md`, `docs/log.md`.
+    - Adds: the four signals and their limits; the message to the agent; the stop with its snapshot and its
+      question; `on_second`; the records and the log events; the stall in the story and in `agent status`.
+    - Removed: the known limit "an agent that never reads its messages is woken again and again".
+    - Tests: the ground rule on testing these items applies. The decision, as tables with the injected clock: each
+      signal one under, at and over its limit; a commit, a gate wait, a question and the end of the run starting
+      the count again; `0` never raising; two signals at once; the same command with other whitespace counted,
+      another command not; a failure, a success and the same failure not counted as in a row. End to end with fake
+      CLIs that follow a script: a fake CLI that fails the same command six times gets the message after the
+      fifth, and its text names the command; one that goes on is stopped after the tenth, the worktree is byte for
+      byte what it was, the snapshot holds its uncommitted file, and the question lists the last steps; each
+      answer of the human does what it says — go on, a new session (another session ID, the briefing), another
+      agent (the holder changes, 12.1), stop; a fake CLI that commits after the message is not stopped; a run
+      that waits ten minutes for its gate is not counted as idle; with `on_second = "takeover"` and a free agent
+      the task changes its holder with no question, and with none the human is asked; a task woken five times
+      that does nothing is stopped and the human is told once; a daemon restarted after the first step still
+      takes the second.
+    - Why: a run that goes in circles costs as much as one that works, and until now nothing told them apart.
+    Checks:
+    - A1. With a fake CLI that runs the same failing command in a loop: `agent log --round <id>` shows the warning
+      with the command, then the stop; `agent status <round>` shows the task waiting with the stall as its
+      reason.
+    - A2. With `[stall] same_failure_repeats = 0` the same fake CLI is never warned or stopped by that signal.
+    - A3. A fake CLI that makes steps for longer than `no_commit_minutes` (the clock moved) without a commit gets
+      the message; one that commits once in that time does not.
 
 13. Review
 Depends on: 10

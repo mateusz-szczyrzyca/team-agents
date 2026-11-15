@@ -124,6 +124,9 @@ Behaviour in short
   once and the highest effort it allows; every agent names its account, and the account is shown wherever the
   agent and its model are. A quota that runs out stops the whole account until its reset. The daemon spreads work
   over the accounts — first by which is idle, after the cutover (12.3) by how much of each is used.
+- The watchdog stops a run that is silent. After the cutover (12.4) the daemon also notices a run that is busy and
+  gets nowhere — an hour of steps without a commit, the same command failing again and again, the same file
+  edited over and over, a task woken for nothing — and first tells the agent, then stops the run and asks.
 - Review, after the cutover (feature 13): the checks every change must pass are written in the repository's
   `AGENTS.md` and run by the harness before any reviewer starts; what the reviewers find is kept in a ledger, the
   first review passes are full and the later ones look only at the open findings and the fixes; requests to
@@ -149,6 +152,8 @@ Checkpoints for the human, between features (the agents do not run these):
   reviews — and `agent log --level warn` shows nothing unexplained. The cutover starts only after it passes.
 - After feature 9: the dashboard opened through `tailscale serve` from another device: the teams listed, a question
   answered, a team paused and resumed.
+- After item 12.4: look at the stalls of a week of real rounds in `agent log --event stall` and set the limits of
+  `[stall]` by them: the defaults are guesses.
 
 Out of scope for this plan: remote nodes and the lead, investigation teams with phases and standalone investigation
 requests, `agent live`, archiving, the cost of tokens in money, moving the state file into the database, one agent
@@ -217,6 +222,7 @@ Plan overview (context only)
    12.1 Taking work over: the crew
    12.2 Checkpoints of reviewers and workers
    12.3 Choosing by what an account has left
+   12.4 A run that is busy and gets nowhere: stall detection
 13. Review
    13.1 Mandatory checks: read from `AGENTS.md`, run by the harness
    13.2 Findings that are kept, and review passes that narrow
