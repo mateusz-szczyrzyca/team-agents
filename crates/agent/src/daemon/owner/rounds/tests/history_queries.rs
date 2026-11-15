@@ -246,7 +246,7 @@ async fn task_and_worktree_views_show_running_status_and_the_last_recorded_head(
     let mut rig = patient(
         &[
             normal("claude-1", "gated"),
-            normal("claude-2", "sleep"),
+            normal("claude-2", "gated"),
             investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
             investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
         ],
