@@ -43,3 +43,6 @@ mod search;
 
 #[cfg(test)]
 mod retention;
+
+#[cfg(test)]
+mod activity;

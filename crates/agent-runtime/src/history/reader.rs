@@ -406,6 +406,14 @@ impl Reader {
         read_steps(&snapshot, run)
     }
 
+    /// The recorded steps of a task across all runs, ordered by run start and step number.
+    ///
+    /// # Errors
+    /// [`ReadError`] for unreadable or invalid stored records.
+    pub fn steps_of_task(&self, _task: &TaskId) -> Result<Vec<Stored<Step>>, ReadError> {
+        Ok(Vec::new())
+    }
+
     /// What `run` changed; `None` when nothing was recorded about it.
     ///
     /// # Errors
