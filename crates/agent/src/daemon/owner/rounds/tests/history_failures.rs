@@ -1,11 +1,20 @@
 //! History storage failures must not prevent the fake GitHub round from merging.
 
+use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
+use agent_core::cli::{RunMode, SessionId};
+use agent_core::config::{AbsolutePath, CliArgs};
 use agent_core::history::{HistoryHealth, HistoryState, MaxTextBytes};
+use agent_core::ids::RunId;
+use agent_core::kinds::CliKind;
 use agent_core::protocol::{Client, Command, Reply, StatusRequest};
 use agent_core::state::{Completion, ItemPhase, MergeMode};
 use agent_runtime::history::{HistoryDb, Reader};
+use agent_runtime::history::{Problem, Reporter};
+use agent_runtime::run::RunJob;
 
 use super::rig::{ONE, Rig, investigator, normal};
 
@@ -241,4 +250,231 @@ async fn records_the_daemon_cannot_build_are_counted_as_lost() {
     assert_eq!(started.history.health().lost, 3);
 
     started.writer.close().unwrap();
+}
+
+#[tokio::test]
+async fn a_fix_pass_whose_event_cannot_be_built_is_counted_as_lost() {
+    use std::collections::BTreeMap;
+    use std::num::{NonZeroU32, NonZeroUsize};
+    use std::str::FromStr;
+    use std::sync::Arc;
+
+    use agent_core::cli::{RunMode, SessionId};
+    use agent_core::config::{AbsolutePath, CliArgs};
+    use agent_core::history::{Record, RunWhy};
+    use agent_core::ids::RunId;
+    use agent_core::kinds::CliKind;
+    use agent_runtime::history::{History, Problem, Reporter, Setup, Store, WriteError};
+    use agent_runtime::run::RunJob;
+
+    use crate::daemon::owner::fixture::Daemon;
+    use crate::daemon::owner::start::Plan;
+    use crate::fixtures::{at, solo_state, task};
+
+    /// Accepts every batch so only records the daemon could not build count as lost.
+    struct Accepting;
+    impl Store for Accepting {
+        fn write(&mut self, _records: &[Record]) -> Result<(), WriteError> {
+            Ok(())
+        }
+    }
+
+    /// Ignores reported problems.
+    #[derive(Debug)]
+    struct Silent;
+    impl Reporter for Silent {
+        fn report(&self, _problem: &Problem) {}
+    }
+
+    let state = solo_state();
+    let daemon = Daemon::new(&state, None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let started = History::start(
+        Accepting,
+        Setup {
+            reporter: Arc::new(Silent),
+            capacity: NonZeroUsize::new(16).unwrap(),
+        },
+    )
+    .unwrap();
+    let owner = owner.with_history(started.history.clone());
+    let make_plan = |run_id: &str, addition: Option<String>| Plan {
+        run: run_id.parse::<RunId>().unwrap(),
+        recorded_session: None,
+        addition,
+        job: RunJob {
+            task: task(1),
+            run: run_id.parse::<RunId>().unwrap(),
+            cli: CliKind::Claude,
+            model: None,
+            extra_args: CliArgs::default(),
+            mode: RunMode::New {
+                session_id: SessionId::try_from("s".to_owned()).unwrap(),
+            },
+            prompt: "Fix.".to_owned(),
+            working_dir: AbsolutePath::from_str("/work/example").unwrap(),
+            mcp_servers: BTreeMap::new(),
+        },
+    };
+
+    owner.record_run_start(
+        &task(1),
+        &make_plan("run-20261111-193001-f1x1", None),
+        &[],
+        RunWhy::FixPass {
+            number: NonZeroU32::MIN,
+        },
+        at(10),
+    );
+    assert_eq!(started.history.health().lost, 1);
+
+    owner.record_run_start(
+        &task(1),
+        &make_plan("run-20261111-193002-f1x2", Some("findings".to_owned())),
+        &[],
+        RunWhy::FixPass {
+            number: NonZeroU32::MIN,
+        },
+        at(20),
+    );
+    assert_eq!(started.history.health().lost, 2);
+
+    started.writer.close().unwrap();
+}
+
+#[derive(Debug, Default)]
+struct CaptureProblems(Mutex<Vec<Problem>>);
+
+impl Reporter for CaptureProblems {
+    fn report(&self, problem: &Problem) {
+        self.0.lock().unwrap().push(problem.clone());
+    }
+}
+
+/// A plan whose fix-pass findings can be withheld without changing anything else.
+fn fix_pass_plan(run_id: &str, addition: Option<String>) -> crate::daemon::owner::start::Plan {
+    crate::daemon::owner::start::Plan {
+        run: run_id.parse::<RunId>().unwrap(),
+        recorded_session: None,
+        addition,
+        job: RunJob {
+            task: crate::fixtures::task(1),
+            run: run_id.parse::<RunId>().unwrap(),
+            cli: CliKind::Claude,
+            model: None,
+            extra_args: CliArgs::default(),
+            mode: RunMode::New {
+                session_id: SessionId::try_from("s".to_owned()).unwrap(),
+            },
+            prompt: "Fix.".to_owned(),
+            working_dir: AbsolutePath::from_str("/work/example").unwrap(),
+            mcp_servers: BTreeMap::new(),
+        },
+    }
+}
+
+#[tokio::test]
+async fn an_unbuilt_fix_pass_is_counted_under_its_capture_cause_and_told_in_its_round_story() {
+    use std::num::{NonZeroU32, NonZeroUsize};
+
+    use agent_core::history::{EventKind, HistoryEvent, LostKind, Record, RunWhy};
+    use agent_core::story::{PromptView, Selection, StepView, StoryOptions};
+    use agent_runtime::history::{History, Setup};
+
+    use crate::daemon::owner::fixture::Daemon;
+    use crate::fixtures::{at, solo_state, task};
+
+    let state = solo_state();
+    let team = state.teams()[0].id().clone();
+    let round = "round-20261111-191500-f1x1".parse().unwrap();
+    let daemon = Daemon::new(&state, None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let database = HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
+    let problems = Arc::new(CaptureProblems::default());
+    let concrete = Arc::clone(&problems);
+    let reporter: Arc<dyn Reporter> = concrete;
+    let started = History::start(
+        database,
+        Setup {
+            reporter,
+            capacity: NonZeroUsize::new(16).unwrap(),
+        },
+    )
+    .unwrap();
+    let owner = owner.with_history(started.history.clone());
+
+    for (run, addition, at) in [
+        ("run-20261111-193001-f1x1", None, at(10)),
+        ("run-20261111-193002-f1x2", Some("findings".to_owned()), at(20)),
+    ] {
+        owner.record_run_start(
+            &task(1),
+            &fix_pass_plan(run, addition),
+            std::slice::from_ref(&round),
+            RunWhy::FixPass {
+                number: NonZeroU32::MIN,
+            },
+            at,
+        );
+    }
+    assert_eq!(started.history.health().lost, 2);
+    started.writer.close().unwrap();
+
+    let causes: Vec<String> = problems
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|problem| problem.cause.to_string())
+        .collect();
+    assert_eq!(causes, ["capture_event"]);
+
+    let records = Reader::open(&path).unwrap().round_records(&round).unwrap();
+    let losses: Vec<(String, String)> = records
+        .iter()
+        .filter_map(|stored| match &stored.record {
+            Record::Event(event) => match &event.event {
+                HistoryEvent::Lost {
+                    task: Some(found),
+                    what: LostKind::Event(EventKind::FixPassStarted),
+                    cause,
+                    detail,
+                } if *found == task(1) && event.team == team && event.rounds == vec![round.clone()] => {
+                    Some((cause.to_string(), detail.clone()))
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        losses,
+        [
+            (
+                "capture_event".to_owned(),
+                "the fix pass has no findings in its plan".to_owned(),
+            ),
+            (
+                "capture_event".to_owned(),
+                "no item is in a fix pass for the run's agent".to_owned(),
+            ),
+        ]
+    );
+
+    let story = agent_core::story::render(
+        &records,
+        &Selection::Round(round),
+        StoryOptions {
+            prompts: PromptView::Preview,
+            steps: StepView::Listed,
+        },
+    );
+    assert_eq!(story.matches("capture_event").count(), 2, "{story}");
+    assert!(story.contains("the fix pass has no findings in its plan"), "{story}");
+    assert!(
+        story.contains("no item is in a fix pass for the run's agent"),
+        "{story}"
+    );
 }

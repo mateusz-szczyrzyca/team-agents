@@ -58,4 +58,5 @@ pub mod questions;
 pub mod repo_path;
 pub mod state;
 pub mod status;
+pub mod story;
 pub mod task_list;

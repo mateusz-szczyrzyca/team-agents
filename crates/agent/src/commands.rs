@@ -4,6 +4,7 @@ pub(crate) mod answer;
 pub(crate) mod control;
 pub(crate) mod daemon;
 pub(crate) mod gate;
+pub(crate) mod log;
 pub(crate) mod pause;
 pub(crate) mod resume;
 pub(crate) mod run;

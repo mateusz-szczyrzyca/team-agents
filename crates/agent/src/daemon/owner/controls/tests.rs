@@ -608,3 +608,18 @@ async fn a_stop_of_a_task_that_has_no_run_is_not_left_to_stop_its_next_run() {
 
     assert!(owner.halts.is_empty(), "{:?}", owner.halts);
 }
+
+#[tokio::test]
+async fn a_clock_failure_while_recording_a_control_is_returned_not_silently_dropped() {
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let target = of_task(1);
+    let aimed = owner.aim(&target, super::Reach::CrewAndReviewers).unwrap();
+    daemon.clock.advance(time::Duration::days(-1_000_000));
+
+    let result = owner
+        .record_control(&Client::Cli, ControlAction::Pause, &target, &aimed, &[task(1)])
+        .await;
+
+    assert!(matches!(result, Err(super::super::OwnerError::Clock(_))), "{result:?}");
+}

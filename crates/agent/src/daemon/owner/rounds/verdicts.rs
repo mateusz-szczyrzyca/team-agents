@@ -2,6 +2,7 @@
 //! round machine says what follows.
 
 use agent_core::decide::round::{RoundError, RoundPolicy};
+use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, ItemId, TaskId, TeamId};
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::EventKind;
@@ -12,7 +13,7 @@ use agent_runtime::github::CommentReview;
 use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
-use crate::daemon::merge::{Next, VerdictError, after_verdict, count};
+use crate::daemon::merge::{Next, VerdictError, after_verdict, count, items_of};
 use crate::daemon::review::{VerdictProblem, parse_verdict, report_text};
 use crate::daemon::team::Why;
 
@@ -135,6 +136,31 @@ impl Owner {
             .store
             .save_review_report(task, late.pr.number, pass, &report)
             .await?;
+        // The report is a review all the same: the history has it, with its verdict, though it changes nothing.
+        match parse_verdict(message) {
+            Ok(verdict) => {
+                let items = self
+                    .parts
+                    .state
+                    .team(&located.team)
+                    .map_or_else(Vec::new, |team| items_of(team, late.pr.number));
+                self.record_event(
+                    &located.team,
+                    self.rounds_of_items(&located.team, &items),
+                    HistoryEvent::ReviewSubmitted {
+                        pr: late.pr.number,
+                        pass,
+                        reviewer: late.reviewer.clone(),
+                        task: task.clone(),
+                        verdict,
+                        report: report.clone(),
+                    },
+                );
+            }
+            Err(problem) => {
+                tracing::info!(task = %task, ?problem, "a late report has no verdict: the history records no review of it");
+            }
+        }
         let lead = self.lead_of(&located.team)?;
         let asked = Asked {
             pr: late.pr.clone(),
@@ -201,6 +227,19 @@ impl Owner {
         let next = self.decide(team_id, asked, verdict);
         let mut look = Look::default();
         self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
+        self.record_event_at(
+            now,
+            team_id,
+            self.rounds_of_items(team_id, &asked.items),
+            HistoryEvent::ReviewSubmitted {
+                pr: asked.pr.number,
+                pass: passes,
+                reviewer: asked.reviewer.clone(),
+                task: task.clone(),
+                verdict,
+                report: report.clone(),
+            },
+        );
         self.post_review(pulls, &lead, task, asked, &report).await;
         if let Some(next) = next {
             self.apply_next(team_id, &lead, asked, next, &mut look)?;
@@ -319,6 +358,7 @@ impl Owner {
         next: Next,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
+        let mut approved = false;
         for id in &asked.items {
             let mut team_mut = self
                 .parts
@@ -347,6 +387,19 @@ impl Owner {
                 item: *id,
                 source,
             })?;
+            // One approval for the pull request, though its items move one by one; before the round of a hand-over closes.
+            if !approved && matches!(next, Next::Merge | Next::HandToHuman) {
+                approved = true;
+                let rounds = self.rounds_of_items(team_id, &asked.items);
+                self.record_event(
+                    team_id,
+                    rounds.clone(),
+                    HistoryEvent::PullApproved { pr: asked.pr.number },
+                );
+                if matches!(next, Next::HandToHuman) {
+                    self.record_event(team_id, rounds, HistoryEvent::PullHandedOver { pr: asked.pr.number });
+                }
+            }
             let round = self.round_of_item(team_id, *id)?;
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),

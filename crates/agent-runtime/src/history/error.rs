@@ -3,6 +3,8 @@
 use std::path::PathBuf;
 
 use agent_core::config::InvalidValue;
+use agent_core::history::LostCause;
+pub use agent_core::history::RecordKind;
 use agent_core::ids::{InvalidId, InvalidItemId, InvalidName};
 use agent_core::kinds::UnknownKeyword;
 use agent_core::repo_path::InvalidRepoPath;
@@ -61,28 +63,6 @@ pub enum OpenError {
     },
 }
 
-/// Which record a write was about, for the message of an error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
-#[strum(serialize_all = "snake_case")]
-pub enum RecordKind {
-    /// A team starting.
-    Team,
-    /// A round opening.
-    Round,
-    /// A run starting.
-    Run,
-    /// The process of a run starting.
-    Launch,
-    /// A session observed in a running CLI.
-    Session,
-    /// A step of a run.
-    Step,
-    /// A run ending.
-    RunEnd,
-    /// What a run changed.
-    Changes,
-}
-
 /// How a write failed, as far as anyone can act on it: the writer reports each kind once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::Display)]
 #[strum(serialize_all = "snake_case")]
@@ -103,6 +83,23 @@ pub enum WriteKind {
     Encoding,
     /// Anything else SQLite reports.
     Other,
+}
+
+impl WriteKind {
+    /// The [`LostCause`] for this write failure.
+    #[must_use]
+    pub const fn lost_cause(self) -> LostCause {
+        match self {
+            Self::DiskFull => LostCause::WriteDiskFull,
+            Self::Busy => LostCause::WriteBusy,
+            Self::ReadOnly => LostCause::WriteReadOnly,
+            Self::Io => LostCause::WriteIo,
+            Self::Corrupt => LostCause::WriteCorrupt,
+            Self::Refused => LostCause::WriteRefused,
+            Self::Encoding => LostCause::WriteEncoding,
+            Self::Other => LostCause::WriteOther,
+        }
+    }
 }
 
 /// Why a record cannot be written.
@@ -218,9 +215,12 @@ pub enum ValueProblem {
     /// The names of the fields that were cut.
     #[error("not the name of a field that is cut")]
     Cut(#[from] agent_core::history::UnknownCutField),
-    /// A list kept as JSON.
-    #[error("not a JSON list of texts")]
+    /// JSON: a list of texts, or the payload of an event.
+    #[error("not the JSON this column holds")]
     Json(#[from] serde_json::Error),
+    /// A number written in a key.
+    #[error("not a number")]
+    Integer(#[from] std::num::ParseIntError),
     /// A number outside what its field holds.
     #[error("a number out of range")]
     Number(#[from] std::num::TryFromIntError),

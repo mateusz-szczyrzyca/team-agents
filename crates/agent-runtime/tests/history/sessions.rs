@@ -74,7 +74,7 @@ fn version_one_fixture_remains_readable_and_migrates_without_losing_records() {
     assert_eq!(
         raw.pragma_query_value::<u32, _>(None, "user_version", |row| row.get(0))
             .unwrap(),
-        2
+        3
     );
 }
 

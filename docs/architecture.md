@@ -374,13 +374,23 @@ file that opens and holds whole records; the next one ends the runs it finds goi
 human-authorized capture exception: a `2`-second overall budget at each run boundary, plus at most `1` second to reap a
 killed Git process. Captures that exceed it are abandoned and counted before the next run starts.
 
-**Readers need no daemon.** `Reader::open` opens the file read-only; `agent log` (8.5, 8.7) will use it. The schema has a
+**Readers need no daemon.** `Reader::open` opens the file read-only; `agent log` (8.5, 8.7) uses it. The schema has a
 version (`PRAGMA user_version`) and forward-only migrations in code; a database of a newer version is never written.
 
 **Known secrets are redacted.** The launch records environment variable names, never values. The writer replaces configured
 credential values in free text with `[REDACTED]` before SQLite receives them. Credentials in structured identities cause
 counted omissions; the warning contains no credential. A merged fake-CLI round echoes a credential and searches both the
 database and live WAL bytes. See [`history.md`](history.md#what-is-never-in-it) for scope and the exact-recording exception.
+
+**Events and the story.** Beyond what runs do, the daemon records the happenings of a round as events (`agent_core::history::HistoryEvent`:
+a gate, the checks and what followed, a pull request opened, pushed, ready, reviewed, approved, merged, handed over or closed, a fix
+pass, a question asked or answered, a control, a notification, the end of a round or a team). Every record of every kind has a place
+in one ledger (`history_records`), which orders records of the same time by the order they were written. A record that cannot be
+written or captured is counted as lost under its cause, like every record of 8.4. Database refusals receive best-effort loss
+notes when writing recovers; stories also identify missing run changes. See [`history.md`](history.md#what-happens-when-the-history-cannot-be-written) for the limits
+of durable loss reporting.
+`agent log --round` and `--team` ([`log.md`](log.md)) read the ledger directly and give it to `agent_core::story`, a pure function
+from records to lines (or JSON lines); there is no socket call in it, so it works without the daemon.
 
 ### Rounds
 

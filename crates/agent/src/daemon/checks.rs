@@ -129,7 +129,7 @@ fn bullets<'a>(texts: &ChecksPrompts, issues: impl IntoIterator<Item = &'a Issue
 }
 
 /// What a subject is called in a list: the file, or the lack of tests.
-fn named(texts: &ChecksPrompts, subject: &Subject) -> Result<String, ChecksTextError> {
+pub(super) fn named(texts: &ChecksPrompts, subject: &Subject) -> Result<String, ChecksTextError> {
     Ok(match subject {
         Subject::Path(path) => format!("`{path}`"),
         Subject::NoTests => texts

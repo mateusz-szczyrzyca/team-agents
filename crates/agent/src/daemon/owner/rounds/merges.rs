@@ -1,6 +1,7 @@
 //! The merge: reading an approved pull request, merging it in autopilot, telling the human what the team does not do by
 //! itself, and completing the items of a pull request that is merged.
 
+use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, TeamId};
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::EventKind;
@@ -45,8 +46,8 @@ struct About<'a> {
 
 /// What was found of an approved pull request.
 pub(super) enum Merge {
-    /// It is merged, by the harness or by someone else.
-    Merged,
+    /// It is merged, by the harness or by someone else; the merge commit when GitHub reports it.
+    Merged(Option<CommitId>),
     /// It is not merged and is left as it is for now.
     Waits,
 }
@@ -93,8 +94,14 @@ impl Owner {
                 lead: &lead,
             };
             match self.try_merge(site, &pr, now).await {
-                Ok(Merge::Merged) => {
+                Ok(Merge::Merged(commit)) => {
                     self.watch.polled.remove(&(team_id.clone(), pr.number));
+                    self.record_event_at(
+                        now,
+                        team_id,
+                        self.rounds_of_items(team_id, &items),
+                        HistoryEvent::PullMerged { pr: pr.number, commit },
+                    );
                     self.complete(team_id, &lead, &pr, &items, now, look).await?;
                 }
                 Ok(Merge::Waits) => {}
@@ -158,8 +165,19 @@ impl Owner {
             now,
         };
         match remote.state {
-            PullState::Merged => Ok(Merge::Merged),
+            PullState::Merged => Ok(Merge::Merged(remote.merge_commit_sha)),
             PullState::Closed => {
+                let team = site.team;
+                let items = self
+                    .parts
+                    .state
+                    .team(team)
+                    .map_or_else(Vec::new, |found| items_of(found, pr.number));
+                self.record_event(
+                    team,
+                    self.rounds_of_items(team, &items),
+                    HistoryEvent::PullClosed { pr: pr.number },
+                );
                 self.tell_about(&about, Telling::Closed);
                 Ok(Merge::Waits)
             }
@@ -191,7 +209,7 @@ impl Owner {
             commit_message: None,
         };
         match github.merge_pull_request(pr.number, &request).await {
-            Ok(_) => Ok(Merge::Merged),
+            Ok(merged) => Ok(Merge::Merged(Some(merged.commit))),
             Err(error) if refuses(&error) => {
                 self.watch.refused.insert(key);
                 self.tell_about(about, Telling::MergeFailed(&error_chain(&error)));

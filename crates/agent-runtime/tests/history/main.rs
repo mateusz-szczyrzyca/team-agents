@@ -5,9 +5,13 @@
 #[cfg(test)]
 mod docs;
 #[cfg(test)]
+mod gate_rounds;
+#[cfg(test)]
 mod invariants;
 #[cfg(test)]
 mod kill;
+#[cfg(test)]
+mod ledger;
 #[cfg(test)]
 mod records;
 #[cfg(test)]
@@ -22,6 +26,9 @@ mod support;
 mod tampered;
 #[cfg(test)]
 mod writer;
+
+#[cfg(test)]
+mod notes;
 
 #[cfg(test)]
 mod redaction;

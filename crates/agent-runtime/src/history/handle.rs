@@ -14,8 +14,10 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 
 use agent_core::cli::{ActivityEvent, SessionId};
-use agent_core::history::{HistoryHealth, HistoryState, Record, RunSession, Step};
-use agent_core::ids::{Clock, RunId};
+use agent_core::history::{
+    EventRecord, HistoryEvent, HistoryHealth, HistoryState, LostCause, LostKind, Record, RecordKind, RunSession, Step,
+};
+use agent_core::ids::{Clock, RoundId, RunId, TaskId, TeamId};
 use agent_core::state::Timestamp;
 
 use super::db::Store;
@@ -45,6 +47,9 @@ pub enum Cause {
     /// A record or its launch head could not be captured.
     #[strum(to_string = "capture_{0}")]
     Capture(CaptureKind),
+    /// An event could not be built from the daemon's state.
+    #[strum(serialize = "capture_event")]
+    CaptureEvent,
     /// A known credential occurs in an identity that cannot safely be replaced.
     #[strum(serialize = "secret_identity")]
     SecretIdentity,
@@ -59,6 +64,15 @@ pub enum CaptureKind {
     /// The changes record could not be built.
     #[strum(serialize = "changes")]
     Changes,
+    /// The gate record could not be built after the command ran.
+    #[strum(serialize = "gate")]
+    Gate,
+    /// A questions file could not be read.
+    #[strum(serialize = "questions")]
+    Questions,
+    /// The clock could not give a valid timestamp for an event.
+    #[strum(serialize = "clock")]
+    Clock,
 }
 
 /// A problem of the history, for the reporter.
@@ -125,7 +139,12 @@ struct Shared {
     reporter: Arc<dyn Reporter>,
     /// Latest observed session and sequence number of each active run.
     sessions: Mutex<HashMap<RunId, (SessionId, u32)>>,
+    /// Active runs' team, task, rounds, and start time for run-scoped capture loss notes.
+    runs: Mutex<HashMap<RunId, ActiveRun>>,
 }
+
+/// The team, task, rounds, and start time of an active run.
+type ActiveRun = (TeamId, TaskId, Vec<RoundId>, Timestamp);
 
 /// The data behind `mutex`. A thread that panicked while it held the lock did at most one insert, one removal or one
 /// copy, so the data is consistent whatever happened: the poison is not an error here.
@@ -143,6 +162,7 @@ impl Shared {
             reported: Mutex::new(BTreeSet::new()),
             steps: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
+            runs: Mutex::new(HashMap::new()),
             reporter,
         })
     }
@@ -287,6 +307,12 @@ impl History {
             self.lose_without_writer();
             return;
         };
+        if let Record::Run(run) = &record {
+            locked(&self.shared.runs).insert(
+                run.run.clone(),
+                (run.team.clone(), run.task.clone(), run.rounds.clone(), run.at),
+            );
+        }
         match queue.try_send(Job::Record(record)) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
@@ -307,7 +333,9 @@ impl History {
     /// the capture future; a disabled history does neither. Capture failures do not fail the model's work.
     pub async fn record_captured<E: std::error::Error>(
         &self,
+        run: &RunId,
         kind: CaptureKind,
+        clock: &impl Clock,
         capture: impl Future<Output = Result<Record, E>>,
     ) {
         if !self.is_writing() {
@@ -316,8 +344,44 @@ impl History {
         }
         match capture.await {
             Ok(record) => self.record(record),
-            Err(error) => self.capture_failed(kind, &error),
+            Err(error) => self.capture_run_failed(run, kind, clock, &error),
         }
+    }
+
+    /// Counts a failed run snapshot, reports its cause once, and queues a round-linked loss note when the history is writing.
+    pub fn capture_run_failed(
+        &self,
+        run: &RunId,
+        kind: CaptureKind,
+        clock: &impl Clock,
+        error: &impl std::error::Error,
+    ) {
+        self.capture_failed(kind, error);
+        let Some((team, task, rounds, start_at)) = locked(&self.shared.runs)
+            .get(run)
+            .cloned()
+            .filter(|_| self.is_writing())
+        else {
+            return;
+        };
+        let (what, cause) = match kind {
+            CaptureKind::Head => (LostKind::Record(RecordKind::Launch), LostCause::CaptureHead),
+            CaptureKind::Changes | CaptureKind::Gate | CaptureKind::Questions | CaptureKind::Clock => {
+                (LostKind::Record(RecordKind::Changes), LostCause::CaptureChanges)
+            }
+        };
+        let at = Timestamp::now(clock).unwrap_or(start_at);
+        self.record(Record::Event(Box::new(EventRecord {
+            at,
+            team,
+            rounds,
+            event: HistoryEvent::Lost {
+                task: Some(task),
+                what,
+                cause,
+                detail: error_chain(error),
+            },
+        })));
     }
 
     /// Count a failed snapshot (including an incomplete launch) and report its cause once.
@@ -325,6 +389,14 @@ impl History {
         if !self.is_disabled() {
             self.shared.lose(1);
             self.shared.report(Cause::Capture(kind), || error_chain(error));
+        }
+    }
+
+    /// Counts an event that could not be built from the daemon's state and reports its cause once.
+    pub fn capture_event_failed(&self, error: &impl std::error::Error) {
+        if !self.is_disabled() {
+            self.shared.lose(1);
+            self.shared.report(Cause::CaptureEvent, || error_chain(error));
         }
     }
 
@@ -433,6 +505,7 @@ impl History {
     pub fn finish_run(&self, run: &RunId) {
         locked(&self.shared.steps).remove(run);
         locked(&self.shared.sessions).remove(run);
+        locked(&self.shared.runs).remove(run);
     }
 
     /// Waits until everything handed in before is written or lost.
