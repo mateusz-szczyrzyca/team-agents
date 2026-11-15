@@ -39,7 +39,10 @@ async fn two_teams_three_rounds_prove_every_filter_pair_view_and_literal_search(
         Secrets::default(),
     ))
     .await;
-    let marked = CHAIN.replace("Build the thing.", "Zażółć gęślą AND OR NEAR % * \"cytat\"");
+    let marked = CHAIN.replace(
+        "Do the first thing in the repository.",
+        "Zażółć gęślą AND OR NEAR % * \"cytat\"",
+    );
     let (first, _) = rig.run(&["claude-1"], &marked, MergeMode::NoMerge, None).await;
     let (second, _) = rig.run(&["claude-2"], ONE, MergeMode::NoMerge, None).await;
     rig.wait_for("three closed rounds", || {
@@ -71,7 +74,8 @@ async fn two_teams_three_rounds_prove_every_filter_pair_view_and_literal_search(
     {
         assert_views(&rig, &reader, flag, &scope);
     }
-    for text in ["Zażółć", "Zażółć gęślą AND OR NEAR % * \"cytat\"", "fine", "run"] {
+    assert_prompt_search(&rig, &reader, &first);
+    for text in ["fine", "run"] {
         let found = rows(&rig, &["log", "--grep", text, "--json", "-n", "100000"]);
         assert!(!found.is_empty(), "search {text:?}");
     }
@@ -81,6 +85,42 @@ async fn two_teams_three_rounds_prove_every_filter_pair_view_and_literal_search(
     );
     assert_eq!(rows(&rig, &["log", "-n", "0", "--json"]), Vec::<Value>::new());
     assert_eq!(rows(&rig, &["log", "-n", "1", "--json"]), all[all.len() - 1..]);
+}
+
+/// Checks that literal search selects only the team and runs whose prompt contains the needle.
+fn assert_prompt_search(rig: &Rig, reader: &Reader, first: &agent_core::ids::TeamId) {
+    let first_runs = reader.runs_of_team(first).unwrap();
+    for text in ["Zażółć", "Zażółć gęślą AND OR NEAR % * \"cytat\""] {
+        let matching_runs: Vec<String> = first_runs
+            .iter()
+            .filter(|run| run.start.value.prompt.contains(text))
+            .map(|run| run.start.value.run.to_string())
+            .collect();
+        assert!(!matching_runs.is_empty(), "no run prompt contains {text:?}");
+        assert!(
+            matching_runs.len() < first_runs.len(),
+            "needle {text:?} should appear only in the first round's runs"
+        );
+        let found = rows(rig, &["log", "--grep", text, "--json", "-n", "100000"]);
+        assert!(!found.is_empty(), "search {text:?}");
+        assert!(
+            found.iter().all(|row| row["team"] == first.as_str()),
+            "search {text:?} returned rows outside {first}: {found:?}"
+        );
+        assert!(
+            found
+                .iter()
+                .filter_map(|row| row["run"].as_str())
+                .all(|run| matching_runs.iter().any(|expected| expected == run)),
+            "search {text:?} returned unrelated run rows: {found:?}"
+        );
+        assert!(
+            matching_runs
+                .iter()
+                .all(|expected| found.iter().any(|row| row["run"] == expected.as_str())),
+            "search {text:?} missed a matching run in {matching_runs:?}: {found:?}"
+        );
+    }
 }
 
 /// Computes each single predicate and every conjunction independently of SQL.
@@ -206,9 +246,24 @@ async fn daemon_daily_retention_removes_closed_round_and_gate_but_keeps_old_open
     let (closed_team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
     gate_when_committed(&rig, &tasks[0], 1).await;
     let (open_team, _) = rig.run(&["claude-2"], ONE, MergeMode::NoMerge, None).await;
-    rig.wait_for("closed first round", || {
-        Reader::open(&rig.home.history_file()).unwrap().team_records(&closed_team).unwrap().iter().any(|r| matches!(&r.record, Record::Event(e) if matches!(e.event, agent_core::history::HistoryEvent::RoundClosed { .. })))
-    }).await;
+    rig.wait_for("closed and notified first round", || {
+        let records = Reader::open(&rig.home.history_file())
+            .unwrap()
+            .team_records(&closed_team)
+            .unwrap();
+        records.iter().any(|r| {
+            matches!(
+                &r.record,
+                Record::Event(e) if matches!(e.event, agent_core::history::HistoryEvent::RoundClosed { .. })
+            )
+        }) && records.iter().any(|r| {
+            matches!(
+                &r.record,
+                Record::Event(e) if matches!(e.event, agent_core::history::HistoryEvent::Notified { .. })
+            )
+        })
+    })
+    .await;
     let reader = Reader::open(&rig.home.history_file()).unwrap();
     let gate = reader
         .team_records(&closed_team)

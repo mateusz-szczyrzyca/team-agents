@@ -1,8 +1,11 @@
 //! Retention boundaries, atomic snapshots and durable log cursors.
-use super::support::{at, complete, roomy};
-use agent_core::history::{EventRecord, HistoryEvent, Record};
+use super::support::{World, at, complete, roomy};
+use agent_core::history::{Cut, EventRecord, HistoryEvent, Record, RunSession};
+use agent_core::log::{LogEvent, LogRecord, LogTaskScope, LogTeamScope};
 use agent_core::state::RoundEnd;
-use agent_runtime::history::{HistoryDb, Reader, Retention, Store};
+use agent_runtime::history::{HistoryDb, LogFilter, LogWindow, Reader, Retention, Store};
+use std::collections::BTreeMap;
+use std::num::NonZeroU32;
 
 #[test]
 fn retention_keeps_open_and_boundary_rounds_and_removes_all_old_owned_rows() {
@@ -21,16 +24,25 @@ fn retention_keeps_open_and_boundary_rounds_and_removes_all_old_owned_rows() {
         open.runs[0].start.rounds = vec![open.rounds[0].round.clone()];
         db.write(&old.records()).unwrap();
         db.write(&open.records()).unwrap();
-        db.write(&[Record::Event(Box::new(EventRecord {
-            at: at(2000, 0),
-            team: old.team.team.clone(),
-            rounds: vec![old.rounds[0].round.clone()],
-            event: HistoryEvent::RoundClosed {
-                round: old.rounds[0].round.clone(),
-                end: RoundEnd::Merged,
-            },
-        }))])
+        db.write(&[
+            Record::Session(Box::new(RunSession {
+                run: old.runs[0].start.run.clone(),
+                number: NonZeroU32::MIN,
+                at: old.runs[0].start.at,
+                session: "0b6f2f56-6e83-4f68-a9d8-5a1bb43f6a11".parse().unwrap(),
+            })),
+            Record::Event(Box::new(EventRecord {
+                at: at(2000, 0),
+                team: old.team.team.clone(),
+                rounds: vec![old.rounds[0].round.clone()],
+                event: HistoryEvent::RoundClosed {
+                    round: old.rounds[0].round.clone(),
+                    end: RoundEnd::Merged,
+                },
+            })),
+        ])
         .unwrap();
+        db.write_logs(&[round_log(&old), round_log(&open)]).unwrap();
         let disabled = Retention {
             closed_before: None,
             logs_before: None,
@@ -76,6 +88,7 @@ fn retention_keeps_open_and_boundary_rounds_and_removes_all_old_owned_rows() {
         assert!(reader.team(&old.team.team).unwrap().is_none(), "seed={seed}");
         assert!(reader.run(&old.runs[0].start.run).unwrap().is_none(), "seed={seed}");
         assert!(reader.round(&open.rounds[0].round).unwrap().is_some(), "seed={seed}");
+        assert_round_log_counts(&reader, &old.rounds[0].round, &open.rounds[0].round, seed);
         let after = reader.statistics().unwrap();
         assert!(
             after["bytes"].as_i64().unwrap() < before["bytes"].as_i64().unwrap(),
@@ -95,6 +108,51 @@ fn retention_keeps_open_and_boundary_rounds_and_removes_all_old_owned_rows() {
     }
 }
 
+/// Checks that the expired round's daemon logs were removed while the open round's daemon log remains.
+fn assert_round_log_counts(
+    reader: &Reader,
+    removed: &agent_core::ids::RoundId,
+    kept: &agent_core::ids::RoundId,
+    seed: u64,
+) {
+    for (round, expected) in [(removed, 0), (kept, 1)] {
+        assert_eq!(
+            reader
+                .log_rows(
+                    &LogFilter {
+                        round: Some(round.clone()),
+                        ..LogFilter::default()
+                    },
+                    LogWindow::Newest(10),
+                )
+                .unwrap()
+                .len(),
+            expected,
+            "seed={seed} round={round}"
+        );
+    }
+}
+
+/// Builds a daemon log entry owned by the first round and run of `world`.
+fn round_log(world: &World) -> LogRecord {
+    LogRecord {
+        at: world.runs[0].start.at,
+        module: "retention".to_owned(),
+        event: LogEvent::RunStarted,
+        team: Some(LogTeamScope::new(
+            world.team.team.clone(),
+            [world.rounds[0].round.clone()],
+        )),
+        task: Some(LogTaskScope::new(
+            world.runs[0].start.task.clone(),
+            Some(world.runs[0].start.run.clone()),
+        )),
+        message: "round log".to_owned(),
+        fields: BTreeMap::new(),
+        cut: Cut::default(),
+    }
+}
+
 /// Checks each table owning records of the deleted round.
 fn assert_owned_counts_drop(before: &serde_json::Value, after: &serde_json::Value, seed: u64) {
     for table in [
@@ -108,9 +166,13 @@ fn assert_owned_counts_drop(before: &serde_json::Value, after: &serde_json::Valu
         "commits",
         "changed_files",
         "run_rounds",
+        "run_sessions",
         "plan",
         "history_records",
         "history_record_rounds",
+        "daemon_logs",
+        "daemon_log_rounds",
+        "history_search",
     ] {
         let actual = after["tables"][table].as_u64().unwrap();
         assert!(

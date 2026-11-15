@@ -499,8 +499,8 @@ async fn a_word_that_the_bus_does_not_take_is_refused_and_not_recorded() {
 
     assert_eq!(kind, FailureKind::Internal);
     assert!(message.contains("agentbus"), "{message}");
-    assert_eq!(controls(&daemon, 1, 0).await, Vec::<serde_json::Value>::new());
     daemon.stop().await.unwrap();
+    assert_eq!(controls(&daemon, 1, 0).await, Vec::<serde_json::Value>::new());
 }
 
 #[tokio::test]

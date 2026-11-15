@@ -100,4 +100,82 @@ fn every_row_filter_and_pair_uses_an_index_with_a_hundred_thousand_steps() {
             }
         }
     }
+    assert_reader_query_plans(&raw);
+}
+
+/// Checks `EXPLAIN QUERY PLAN` for every story, view and task-step query on `Reader`.
+fn assert_reader_query_plans(raw: &rusqlite::Connection) {
+    for (name, sql, values) in [
+        (
+            "team_records",
+            "SELECT h.sequence, h.kind, h.key, h.at, h.team, h.payload, h.cut, r.round \
+             FROM history_records AS h LEFT JOIN history_record_rounds AS r ON r.sequence = h.sequence \
+             WHERE h.team = ?1 ORDER BY h.sequence, r.position",
+            vec![Value::from("team-20261115-120000-aaaa".to_owned())],
+        ),
+        (
+            "round_records",
+            "SELECT h.sequence, h.kind, h.key, h.at, h.team, h.payload, h.cut, r.round \
+             FROM history_records AS h LEFT JOIN history_record_rounds AS r ON r.sequence = h.sequence \
+             WHERE h.sequence IN (SELECT sequence FROM history_record_rounds WHERE round = ?1) \
+             OR (h.kind = ?2 AND h.team = (SELECT hr.team FROM history_records AS hr \
+                 JOIN history_record_rounds AS rr ON rr.sequence = hr.sequence WHERE rr.round = ?1 LIMIT 1)) \
+             ORDER BY h.sequence, r.position",
+            vec![
+                Value::from("round-20261115-120000-aaaa".to_owned()),
+                Value::from("team".to_owned()),
+            ],
+        ),
+        (
+            "rounds_of_team",
+            "SELECT round FROM rounds WHERE team = ?1 ORDER BY at, rowid",
+            vec![Value::from("team-20261115-120000-aaaa".to_owned())],
+        ),
+        (
+            "runs_of_team",
+            "SELECT run FROM runs WHERE team = ?1 ORDER BY at, rowid",
+            vec![Value::from("team-20261115-120000-aaaa".to_owned())],
+        ),
+        (
+            "runs_of_round",
+            "SELECT runs.run FROM run_rounds JOIN runs ON runs.run = run_rounds.run \
+             WHERE run_rounds.round = ?1 ORDER BY runs.at, runs.rowid",
+            vec![Value::from("round-20261115-120000-aaaa".to_owned())],
+        ),
+        (
+            "prompts_of_round",
+            "SELECT runs.run, runs.at, runs.agent, runs.role, runs.prompt, runs.cut FROM run_rounds \
+             JOIN runs ON runs.run = run_rounds.run WHERE run_rounds.round = ?1 ORDER BY runs.at, runs.rowid",
+            vec![Value::from("round-20261115-120000-aaaa".to_owned())],
+        ),
+        (
+            "steps",
+            "SELECT n, at, kind, text, path, tool, detail, action, client, login, cut \
+             FROM steps WHERE run = ?1 ORDER BY n",
+            vec![Value::from("run-20261115-120000-aaaa".to_owned())],
+        ),
+        (
+            "steps_of_task",
+            "SELECT s.n,s.at,s.kind,s.text,s.path,s.tool,s.detail,s.action,s.client,s.login,s.cut,s.run \
+             FROM runs r JOIN steps s ON s.run=r.run WHERE r.task=?1 ORDER BY r.at,r.rowid,s.n",
+            vec![Value::from("task-20261115-120000-aaaa".to_owned())],
+        ),
+    ] {
+        let plan = raw
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap()
+            .query_map(params_from_iter(values), |r| r.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            plan.iter()
+                .any(|line| line.contains("INDEX") || line.contains("PRIMARY KEY")),
+            "{name}: {plan:?}"
+        );
+        assert!(
+            !plan.iter().any(|line| line.starts_with("SCAN ")),
+            "unindexed scan in {name}: {plan:?}"
+        );
+    }
 }
