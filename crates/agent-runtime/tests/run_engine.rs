@@ -439,6 +439,98 @@ mod run_engine {
         );
     }
 
+    fn logging_dispatch() -> (Arc<std::sync::Mutex<Vec<String>>>, tracing::Dispatch) {
+        let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = Arc::clone(&lines);
+        let layer = agent_runtime::history::HistoryLayer::deferred(
+            agent_core::log::LogLevel::Debug,
+            SharedClock::new(FixedClock(now().as_utc())),
+            Secrets::default(),
+        );
+        layer.with_stderr_sink(Arc::new(move |line: &str| {
+            captured.lock().unwrap().push(line.to_owned());
+        }));
+        let subscriber = tracing_subscriber::layer::SubscriberExt::with(tracing_subscriber::registry(), layer);
+        (lines, tracing::Dispatch::new(subscriber))
+    }
+
+    fn model_call(lines: &Arc<std::sync::Mutex<Vec<String>>>) -> String {
+        lines
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|line| line.contains("event=outside_call_completed") && line.contains("\"tool\":\"claude\""))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn model_cli_completion_is_logged_for_exit_spawn_failure_and_cancellation() {
+        let normal = env().await;
+        let (normal_lines, normal_dispatch) = logging_dispatch();
+        let normal_job = normal.job("done", Env::new_session());
+        let normal_task = normal_job.task.clone();
+        let normal_run = normal_job.run.clone();
+        let normal_span = tracing::info_span!("test_run", task = %normal_task, run = %normal_run);
+        let normal_result = tracing::instrument::WithSubscriber::with_subscriber(
+            tracing::Instrument::instrument(normal.engine.run(normal_job, &CancellationToken::new()), normal_span),
+            normal_dispatch,
+        )
+        .await;
+        assert!(
+            matches!(normal_result, Ok(RunVerdict::Finished(_))),
+            "{normal_result:?}"
+        );
+
+        let missing = env_with("/nonexistent/claude", "", timings()).await;
+        let (missing_lines, missing_dispatch) = logging_dispatch();
+        let missing_result = tracing::instrument::WithSubscriber::with_subscriber(
+            missing
+                .engine
+                .run(missing.job("done", Env::new_session()), &CancellationToken::new()),
+            missing_dispatch,
+        )
+        .await;
+        assert!(
+            matches!(missing_result, Err(RunError::Spawn { .. })),
+            "{missing_result:?}"
+        );
+
+        let cancelled = env().await;
+        let (cancelled_lines, cancelled_dispatch) = logging_dispatch();
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let engine = cancelled.engine.clone();
+        let job = cancelled.job("hang", Env::new_session());
+        let marker = cancelled.worktree.path().join(".fake-child");
+        let running = tokio::spawn(async move {
+            tracing::instrument::WithSubscriber::with_subscriber(engine.run(job, &token), cancelled_dispatch).await
+        });
+        eventually("the fake CLI child", || marker.is_file()).await;
+        cancel.cancel();
+        let cancelled_result = running.await.unwrap();
+        assert!(
+            matches!(cancelled_result, Ok(RunVerdict::Interrupted { .. })),
+            "{cancelled_result:?}"
+        );
+
+        let normal_call = model_call(&normal_lines);
+        assert!(normal_call.contains("\"operation\":\"run\""), "{normal_call}");
+        assert!(normal_call.contains("\"duration_ms\":"), "{normal_call}");
+        assert!(normal_call.contains("\"exit_code\":0"), "{normal_call}");
+        assert!(normal_call.contains("\"outcome\":\"ok\""), "{normal_call}");
+        assert!(normal_call.contains(&format!("task={normal_task}")), "{normal_call}");
+        assert!(normal_call.contains(&format!("run={normal_run}")), "{normal_call}");
+
+        let missing_call = model_call(&missing_lines);
+        assert!(missing_call.contains("\"outcome\":\"error\""), "{missing_call}");
+        assert!(!missing_call.contains("\"exit_code\""), "{missing_call}");
+
+        let cancelled_call = model_call(&cancelled_lines);
+        assert!(cancelled_call.contains("\"outcome\":\"cancelled\""), "{cancelled_call}");
+        assert!(!cancelled_call.contains("\"exit_code\""), "{cancelled_call}");
+    }
+
     #[tokio::test]
     async fn a_missing_working_directory_is_a_spawn_error() {
         let env = env().await;
