@@ -131,6 +131,44 @@ git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false com
 }
 
 #[tokio::test]
+async fn team_start_records_the_initial_round_and_item_lifecycle() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig.state();
+    let initial_round = state.teams()[0].rounds()[0].id().clone();
+    let author_task = tasks[0].clone();
+    rig.stop().await.unwrap();
+
+    let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    let opening = logs.iter().find(|row| {
+        row.event() == LogEvent::RoundChanged
+            && row.team() == Some(&team)
+            && row.rounds().contains(&initial_round)
+            && row.fields().get("change").and_then(|value| value.as_str()) == Some("opened")
+    });
+    let in_progress = logs.iter().find(|row| {
+        row.event() == LogEvent::ItemPhaseChanged
+            && row.team() == Some(&team)
+            && row.rounds().contains(&initial_round)
+            && row.task() == Some(&author_task)
+            && row.fields().get("item").and_then(|value| value.as_str()) == Some("1.1")
+            && row.fields().get("phase").and_then(|value| value.as_str()) == Some("in_progress")
+    });
+    assert!(opening.is_some(), "initial round opening is missing: {logs:?}");
+    assert!(in_progress.is_some(), "initial item phase is missing: {logs:?}");
+}
+
+#[tokio::test]
 async fn one_hundred_idle_team_looks_write_zero_rows_at_info() {
     let state = solo_state();
     let daemon = Daemon::new(&state, None);
