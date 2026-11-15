@@ -76,7 +76,7 @@ so its ledger row starts with `runs.at` and takes `run_ends.at` once the end is 
 | `synchronous` | `NORMAL` | in WAL mode a crash may lose the last commits, never corrupt the file |
 | `foreign_keys` | `ON` (each connection of the writer) | the rows of one record hold together |
 | `busy_timeout` | 5 seconds | a person with `sqlite3` open does not make the writer lose a batch at once |
-| `user_version` | the version of the schema, `5` | forward-only migrations (below) |
+| `user_version` | the version of the schema, `6` | forward-only migrations (below) |
 
 Every ordinary table is `STRICT` (FTS5 manages its virtual and shadow tables): a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
 (a step of the kind `message` has a text and no path), so a row that something else wrote is refused by SQLite or, if
@@ -656,3 +656,36 @@ The indexes `daemon_logs_by_event`, `runs_by_agent` and `daemon_logs_by_time` su
 
 Migration `6` keeps the durable daemon-log cursor. `name` identifies `daemon_logs`; `value` is the greatest inserted
 ID. Retention never deletes this row, so a follower can resume after its last ID even if every log row was deleted.
+
+## Retention and task activity
+
+The daemon is still the only writer. It schedules retention through the same bounded history queue at startup
+and once per day, using the injected clock. `[history] keep_days = 0` and `[log] keep_days = 0` disable their
+respective policies; otherwise their cutoffs are exclusive UTC instants. Only a persisted `round_closed` event
+makes a round eligible. An open round of any age stays. A team with any remaining round stays.
+
+An immediate transaction selects expired rounds, removes their records, run children, search documents and log
+links, and removes now-empty teams. Records shared with a surviving round stay, with their surviving links
+renumbered. Unscoped log retention is independent. Concurrent readers keep their old snapshot until they finish;
+subsequent reads see the complete committed result. The durable log cursor never goes backwards.
+
+Gate output is removed before the database transaction commits. Paths must stay beneath `AGENTS_HOME`; directory
+components are opened without following symlinks. Missing output is accepted for crash recovery. Another file error
+rolls back the database deletion and is reported once per cause without stopping work. Files already removed before
+an error or crash remain absent, and the next scheduled pass can finish the deletion. Database and filesystem
+changes cannot be one atomic transaction.
+
+The writer enables `auto_vacuum = FULL`; an older database without it is vacuumed when opened for writing.
+Freed pages are reclaimed at commit; WAL checkpointing makes the smaller logical database visible in the main file.
+`agent log --stats` counts every table in one snapshot and reports logical database bytes and the oldest timestamp.
+
+Migration `4` added daemon logs. Migration `5` adds indexes and the FTS5 table, backfills existing searchable records,
+and installs insert/update/delete triggers. Migration `6` adds the persistent daemon-log high-water mark. Ordinary
+tables remain `STRICT`; the explicitly listed FTS5 virtual and shadow tables use SQLite's FTS storage format.
+Read-only readers still accept older versions without migrating them; an older database has no searchable index
+until opened by the daemon. The populated version `4` migration test checks preservation and indexed search.
+
+Rust tasks no longer write `activity.jsonl`. Their steps are recorded once in the history; `Reader::steps_of_task`
+returns the task's steps across its runs in run order and step order. Existing activity consumers and their tests
+now use that API. Legacy activity paths may remain on disk and are not read or migrated. Raw CLI output files are
+unchanged and have a separate confidentiality contract. Disabling history consequently disables stored task steps.
