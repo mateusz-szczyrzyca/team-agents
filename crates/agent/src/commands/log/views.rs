@@ -44,11 +44,12 @@ pub(super) fn print(
         .filter(|r| team.is_none_or(|team| *team == r.start.value.team))
         .collect();
     if view == LogView::Usage {
-        return output(
+        output(
             out,
             &serde_json::json!({"message":"Tokens are not recorded yet (11.1)."}),
             format,
-        );
+        )?;
+        return out.flush().map_err(LogError::Output);
     }
     if matches!(
         view,
