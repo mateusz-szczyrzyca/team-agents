@@ -425,10 +425,10 @@ async fn the_gates_of_a_task_have_a_log_each_and_the_record_is_the_last() {
 
 #[tokio::test]
 async fn a_gate_that_ends_is_told_to_the_subscribers_and_logged_in_the_activity_of_the_task() {
-    let mut rig = Rig::new().await;
-    rig.worktree(1);
     use agent_core::history::{HistoryEvent, Record, TeamStart};
     use agent_runtime::history::{History, HistoryDb, Reader, Setup, Store, TracingReporter};
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
     let mut db = HistoryDb::open(&rig.home.history_file(), agent_core::history::MaxTextBytes::default()).unwrap();
     db.write(&[Record::Team(Box::new(TeamStart {
         team: team_id(1),
