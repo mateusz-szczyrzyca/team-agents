@@ -150,7 +150,7 @@ and `history.db` record the fault before unwinding.
 ### Redaction, bounds, and storage failures
 
 - **No secrets.** Before any line is written to `stderr` or queued for `history.db`, every configured secret from
-  `secrets.toml` (`github_token`, `[agent_env]`, and `[notification_env]`) is replaced with `<redacted>` in the event's
+  `secrets.toml` (`github_token`, `[agent_env]`, and `[notification_env]`) is replaced with `[REDACTED]` in the event's
   `message`, structured `fields`, and span fields.
 - **Size bounds.** `message` and `fields` are bounded by `[history] max_text_bytes`. A longer `message` is cut at a
   UTF-8 character boundary and `"message"` is recorded in `cut`; a `fields` JSON object whose serialized form exceeds

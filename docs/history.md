@@ -28,12 +28,13 @@ Each record has its time. Everything is keyed by its team and, where it has one,
 | the **end** of a run | how it ended, the agent's final message whole | `run_ends` |
 | what a run **changed** | the process is gone: from git, the commits between the two heads (hash, subject, author time), the files that differ (added, deleted, modified, renamed from where; lines added and removed; binary or not), and what it left uncommitted in the worktree | `run_changes`, `commits`, `changed_files` |
 | an **event** of a round | a gate, the checks before a review, a pull request opened, pushed, marked ready, reviewed, approved, merged, handed to the human or closed, a fix pass, a question asked or answered, a control of the human, a notification, the end of a round or of a team — each with its time, team and rounds, see [Events](#events) | `history_records` |
+| the **daemon's own log** | what the daemon did, what went wrong, and why a decision was taken ([`log.md`](log.md)) | `daemon_logs`, `daemon_log_rounds` |
 
-Every record above, whatever its kind, also has a row in the **ledger** (`history_records`, with `history_record_rounds`):
+Every domain record above, whatever its kind, also has a row in the **ledger** (`history_records`, with `history_record_rounds`):
 its place in the order everything was written in, its time, its team and the rounds it belongs to. The story of a round
 is made from the ledger ([`log.md`](log.md)).
 
-**Not here** (later items of the plan): the daemon's own log (8.6); questions to the history, search and what is deleted
+**Not here** (later items of the plan): questions to the history, search and what is deleted
 and when (8.7); tokens (11.1).
 
 ### Why a run starts
@@ -75,7 +76,7 @@ so its ledger row starts with `runs.at` and takes `run_ends.at` once the end is 
 | `synchronous` | `NORMAL` | in WAL mode a crash may lose the last commits, never corrupt the file |
 | `foreign_keys` | `ON` (each connection of the writer) | the rows of one record hold together |
 | `busy_timeout` | 5 seconds | a person with `sqlite3` open does not make the writer lose a batch at once |
-| `user_version` | the version of the schema, `3` | forward-only migrations (below) |
+| `user_version` | the version of the schema, `4` | forward-only migrations (below) |
 
 Every table is `STRICT`: a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
 (a step of the kind `message` has a text and no path), so a row that something else wrote is refused by SQLite or, if
@@ -321,6 +322,39 @@ The files are read through an index of a scratch directory, so reading them chan
 clean/process filters and filesystem monitors: it observes worktree bytes without running those external commands. A
 repository whose clean filter transforms content can therefore show differences that its normal filtered `git diff` hides.
 
+### `daemon_logs` and `daemon_log_rounds`
+
+The daemon's own log, added by migration `4` ([`log.md`](log.md)): one row per logged event, with repeated identical
+warnings coalesced into one row (`count` incremented and `at` updated).
+
+#### `daemon_logs`
+
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | INTEGER, key | the rowid in write order |
+| `first_at` | TEXT | when the entry was first seen |
+| `at` | TEXT | when the entry was most recently seen (`first_at <= at`) |
+| `level` | TEXT | `error`, `warn`, `info` or `debug` |
+| `module` | TEXT | the Rust module that emitted the event |
+| `event` | TEXT | the event keyword (`agent_core::log::LogEvent`) |
+| `team` | TEXT | the team from the active span; `NULL` for a daemon-wide event |
+| `task` | TEXT | the task from the active span; `NULL` when not in a task |
+| `run` | TEXT | the run from the active span; `NULL` when not in a run (`run IS NULL OR task IS NOT NULL`) |
+| `message` | TEXT | the redacted, truncated message |
+| `fields` | TEXT, JSON object | the redacted, truncated structured fields |
+| `count` | INTEGER ≥ 1 | how many times an identical warning happened (`1` for `error`, `info` and `debug`) |
+| `cut` | TEXT | the fields that were cut (`message`, `fields`) |
+
+#### `daemon_log_rounds`
+
+The rounds a daemon log entry belongs to, oldest first. Key `(log, position)`, `WITHOUT ROWID`; `UNIQUE (log, round)`.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `log` | INTEGER | the log entry (foreign key to `daemon_logs`) |
+| `position` | INTEGER ≥ 1 | its place in the list |
+| `round` | TEXT | the round |
+
 ## Indexes
 
 | Index | On | For |
@@ -332,6 +366,11 @@ repository whose clean filter transforms content can therefore show differences 
 | `history_records_by_key` | `history_records (kind, team, key)`, where `key` is not `NULL` | a record that is written twice is one record |
 | `history_records_by_team` | `history_records (team, sequence)` | the records of a team, in the order of writes |
 | `history_record_rounds_by_round` | `history_record_rounds (round, sequence)` | the records of a round |
+| `daemon_logs_by_team` | `daemon_logs (team, id)`, where `team` is not `NULL` | the daemon log entries of a team |
+| `daemon_logs_by_task` | `daemon_logs (task, id)`, where `task` is not `NULL` | the daemon log entries of a task |
+| `daemon_logs_by_run` | `daemon_logs (run, id)`, where `run` is not `NULL` | the daemon log entries of a run |
+| `daemon_logs_by_level` | `daemon_logs (level, id)` | the daemon log entries of a severity level |
+| `daemon_log_rounds_by_round` | `daemon_log_rounds (round, log)` | the daemon log entries of a round |
 
 The key of each table is an index too: `WITHOUT ROWID` tables are stored in the order of their key.
 
@@ -553,6 +592,10 @@ is wrapped in `Stored<T>`: the value and the set of its fields that were cut.
 For stories and `--json`, `team_records` and `round_records` return `Vec<SequencedRecord>`: every record of a team, or of a
 round together with the start of its team, in the order it was written, each `SequencedRecord` carrying its `sequence`, `at`,
 `team`, `rounds`, `record` and `cut`. A round no record is linked to has none.
+
+For the daemon's own log, `daemon_logs`, `daemon_logs_for_team`, `daemon_logs_for_round`, `daemon_logs_for_task` and
+`daemon_logs_for_run` return `Vec<LogEntry>` in write order (`id ASC`), validated against the rules of `daemon_logs` and
+`daemon_log_rounds`. Databases before migration `4` return an empty vector without modifying the file.
 
 Every row is read through the checks of
 its types and the rules of its record — an ID that is not an ID, a step of a kind that lacks its text, a run that ends before

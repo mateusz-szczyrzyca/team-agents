@@ -4,7 +4,9 @@ use agent_core::cli::ActivityEvent;
 use agent_core::config::{Secret, Secrets};
 use agent_core::decide::checks::Change;
 use agent_core::history::{HowChosen, Record, RoundSubject, RunStart, RunWhy, TeamStart};
+use agent_core::log::LogRecord;
 use agent_core::protocol::Client;
+use serde_json::Value;
 
 /// The explicit replacement for a credential in free text.
 const MARKER: &str = "[REDACTED]";
@@ -202,5 +204,53 @@ impl Redactor {
             ActivityEvent::Control { by: Client::Cli, .. } => {}
         }
         true
+    }
+
+    /// Redacts free text and structured JSON fields in `record`; returns `false` if a credential occurs in an identity
+    /// or the replacement marker itself.
+    pub(super) fn log_record(&self, record: &mut LogRecord) -> bool {
+        if self.values().next().is_none() {
+            return true;
+        }
+        if self.contains(MARKER) {
+            return false;
+        }
+        record.module = self.text(&record.module);
+        record.message = self.text(&record.message);
+        let fields = std::mem::take(&mut record.fields);
+        record.fields = fields
+            .into_iter()
+            .map(|(key, mut value)| {
+                self.json_value(&mut value);
+                (self.text(&key), value)
+            })
+            .collect();
+        let team_safe = record.team.as_ref().is_none_or(|scope| {
+            !self.contains(scope.team().as_str()) && !scope.rounds().iter().any(|round| self.contains(round.as_str()))
+        });
+        let task_safe = record.task.as_ref().is_none_or(|scope| {
+            !self.contains(scope.task().as_str()) && !scope.run().is_some_and(|run| self.contains(run.as_str()))
+        });
+        team_safe && task_safe
+    }
+
+    /// Recursively redacts strings and object keys inside `value`.
+    pub(super) fn json_value(&self, value: &mut Value) {
+        match value {
+            Value::Null | Value::Bool(_) | Value::Number(_) => {}
+            Value::String(text) => *text = self.text(text),
+            Value::Array(items) => {
+                for item in items {
+                    self.json_value(item);
+                }
+            }
+            Value::Object(map) => {
+                let entries = std::mem::take(map);
+                for (key, mut child) in entries {
+                    self.json_value(&mut child);
+                    map.insert(self.text(&key), child);
+                }
+            }
+        }
     }
 }

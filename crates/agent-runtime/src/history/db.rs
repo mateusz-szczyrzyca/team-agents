@@ -10,8 +10,8 @@ use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
 use super::error::{OpenError, WriteError};
 use super::migrate::{self, Migration};
-use super::schema::{LEDGER_VERSION, MIGRATIONS};
-use super::write::{self, Ledger};
+use super::schema::{DAEMON_LOGS_VERSION, LEDGER_VERSION, MIGRATIONS};
+use super::write::{self, DaemonLogs, Ledger};
 
 /// How long the writer waits for a lock another process holds (a reader that checkpoints, a person with `sqlite3`) before
 /// the batch fails and is counted as lost.
@@ -44,6 +44,8 @@ pub struct HistoryDb {
     limit: MaxTextBytes,
     /// Whether the database has the ledger.
     ledger: Ledger,
+    /// Whether the database has the daemon log tables.
+    logs: DaemonLogs,
 }
 
 impl HistoryDb {
@@ -103,10 +105,16 @@ impl HistoryDb {
         } else {
             Ledger::Absent
         };
+        let logs = if version >= DAEMON_LOGS_VERSION {
+            DaemonLogs::Kept
+        } else {
+            DaemonLogs::Absent
+        };
         Ok(Self {
             connection,
             limit,
             ledger,
+            logs,
         })
     }
 
@@ -125,6 +133,19 @@ impl Store for HistoryDb {
             .map_err(|source| WriteError::Transaction { source })?;
         for record in records {
             write::insert(&transaction, record, self.limit, self.ledger)?;
+        }
+        transaction
+            .commit()
+            .map_err(|source| WriteError::Transaction { source })
+    }
+
+    fn write_logs(&mut self, records: &[LogRecord]) -> Result<(), WriteError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|source| WriteError::Transaction { source })?;
+        for record in records {
+            write::insert_log(&transaction, record, self.limit, self.logs)?;
         }
         transaction
             .commit()
