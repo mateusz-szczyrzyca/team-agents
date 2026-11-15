@@ -119,3 +119,53 @@ fn assert_owned_counts_drop(before: &serde_json::Value, after: &serde_json::Valu
         );
     }
 }
+
+#[test]
+fn deleting_all_log_rows_and_reopening_never_reuses_a_follow_cursor() {
+    use agent_core::history::Cut;
+    use agent_core::log::{LogEvent, LogRecord};
+    use agent_runtime::history::{LogFilter, LogWindow};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let log = LogRecord {
+        at: at(10, 0),
+        module: "retention".to_owned(),
+        event: LogEvent::DaemonStarted,
+        team: None,
+        task: None,
+        message: "started".to_owned(),
+        fields: std::collections::BTreeMap::new(),
+        cut: Cut::default(),
+    };
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+    db.write_logs(std::slice::from_ref(&log)).unwrap();
+    let first = Reader::open(&path)
+        .unwrap()
+        .log_rows(&LogFilter::default(), LogWindow::Newest(10))
+        .unwrap();
+    db.retain(&Retention {
+        closed_before: None,
+        logs_before: Some(at(20, 0)),
+        home: dir.path().to_path_buf(),
+    })
+    .unwrap();
+    assert_eq!(
+        Reader::open(&path).unwrap().statistics().unwrap()["tables"]["daemon_logs"],
+        0
+    );
+    drop(db);
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+    db.write_logs(&[log]).unwrap();
+    let later = Reader::open(&path)
+        .unwrap()
+        .log_rows(
+            &LogFilter::default(),
+            LogWindow::After {
+                id: first[0].id(),
+                limit: 10,
+            },
+        )
+        .unwrap();
+    assert_eq!(later.len(), 1);
+    assert!(later[0].id() > first[0].id());
+}
