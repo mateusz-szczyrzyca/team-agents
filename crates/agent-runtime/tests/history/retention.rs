@@ -453,3 +453,40 @@ fn retention_shrinks_the_checkpointed_database_file() {
         0
     );
 }
+
+#[test]
+fn retention_truncates_the_write_ahead_log_while_the_writer_stays_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let mut world = complete(8753);
+    world.rounds.truncate(1);
+    world.runs.truncate(1);
+    world.runs[0].start.rounds = vec![world.rounds[0].round.clone()];
+    world.runs[0].start.prompt = "removablelargeprompt ".repeat(30_000);
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+    db.write(&world.records()).unwrap();
+    db.write(&[Record::Event(Box::new(EventRecord {
+        at: at(2000, 0),
+        team: world.team.team.clone(),
+        rounds: vec![world.rounds[0].round.clone()],
+        event: HistoryEvent::RoundClosed {
+            round: world.rounds[0].round.clone(),
+            end: RoundEnd::Merged,
+        },
+    }))])
+    .unwrap();
+    drop(db);
+    let before = std::fs::metadata(&path).unwrap().len();
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+    db.retain(&Retention {
+        closed_before: Some(at(2001, 0)),
+        logs_before: None,
+        home: dir.path().to_path_buf(),
+    })
+    .unwrap();
+    let after = std::fs::metadata(&path).unwrap().len();
+    let wal = std::fs::metadata(dir.path().join("history.db-wal")).map_or(0, |meta| meta.len());
+    assert!(after < before, "seed=8753: {before} -> {after}");
+    assert_eq!(wal, 0);
+    drop(db);
+}

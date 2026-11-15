@@ -323,3 +323,24 @@ fn every_projection_reports_a_failure_to_flush_output() {
         assert_eq!(code, ExitCode::FAILURE, "{view}");
     }
 }
+
+#[test]
+fn focused_views_refuse_an_unknown_round_or_team_with_status_3() {
+    let (_dir, home, _) = with_history();
+    let other_round = "round-20990101-000000-zzzz";
+    let other_team = "team-20990101-000000-zzzz";
+
+    let (code_round, out_round, err_round) = agent(
+        &environment(&home),
+        &["log", "--round", other_round, "--show", "prompts"],
+    );
+    let (code_team, out_team, err_team) = agent(
+        &environment(&home),
+        &["log", "--team", other_team, "--show", "tasks", "--json"],
+    );
+
+    assert_eq!((code_round, out_round.as_str()), (ExitCode::from(3), ""));
+    assert!(err_round.contains(other_round), "{err_round}");
+    assert_eq!((code_team, out_team.as_str()), (ExitCode::from(3), ""));
+    assert!(err_team.contains(other_team), "{err_team}");
+}
