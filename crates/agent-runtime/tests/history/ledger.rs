@@ -360,7 +360,13 @@ fn the_migration_gives_the_records_of_a_version_two_file_a_sequence_in_the_order
         assert_eq!(
             raw.pragma_query_value::<u32, _>(None, "user_version", |row| row.get(0))
                 .unwrap(),
-            4
+            include_str!("../../../../docs/history.schema.sql")
+                .lines()
+                .find_map(|line| line.strip_prefix("PRAGMA user_version = "))
+                .unwrap()
+                .trim_end_matches(';')
+                .parse::<u32>()
+                .unwrap()
         );
     }
 }
