@@ -28,6 +28,7 @@ use agent_core::state::{CommitId, MergeMode, PrNumber, RunEnd, SessionId, Timest
 use agent_core::status::RunOutcome;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, Transaction, params};
 
+pub(super) mod query;
 mod sequenced;
 
 use super::codec::parse_time;

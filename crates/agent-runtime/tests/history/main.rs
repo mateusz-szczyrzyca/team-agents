@@ -34,3 +34,6 @@ mod notes;
 
 #[cfg(test)]
 mod redaction;
+
+#[cfg(test)]
+mod queries;

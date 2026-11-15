@@ -26,3 +26,5 @@ pub use log::{HistoryLayer, Scoped, ensure_scoped_callsites, install_panic_hook,
 pub use migrate::Migration;
 pub use notes::Noting;
 pub use reader::{Reader, RoundPrompt, RunRow, Stored};
+
+pub use reader::query::{LogFilter, LogWindow};
