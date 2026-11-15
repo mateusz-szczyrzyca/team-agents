@@ -74,6 +74,8 @@ struct LayerState {
     history: Option<History>,
     /// Optional custom `stderr` sink for deterministic testing.
     stderr_sink: Option<StderrSink>,
+    /// Whether this layer exists only to track span scopes on the thread before `.with_subscriber(...)`.
+    span_only: bool,
 }
 
 /// A `tracing_subscriber::Layer` that records structured [`LogEvent`] events into `history.db`
@@ -99,7 +101,6 @@ impl HistoryLayer {
         if let Some(ref handle) = history {
             handle.configure_log_fallback(redactor.clone(), None);
         }
-        drop(ensure_global_subscriber());
         ensure_thread_span_subscriber();
         Self {
             state: Arc::new(Mutex::new(LayerState {
@@ -108,6 +109,7 @@ impl HistoryLayer {
                 redactor,
                 history,
                 stderr_sink: None,
+                span_only: false,
             })),
         }
     }
@@ -477,8 +479,12 @@ where
         if metadata.is_span() {
             return true;
         }
+        let state = locked(&self.state);
+        if state.span_only {
+            return false;
+        }
         let level = level_from_tracing(*metadata.level());
-        locked(&self.state).level.keeps(level)
+        state.level.keeps(level)
     }
 
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
@@ -595,6 +601,7 @@ fn ensure_thread_span_subscriber() {
                     redactor: Redactor::new(Secrets::default()),
                     history: None,
                     stderr_sink: Some(silent_sink),
+                    span_only: true,
                 })),
             };
             let subscriber = tracing_subscriber::registry().with(span_layer);
@@ -615,6 +622,7 @@ fn ensure_global_subscriber() -> HistoryLayer {
                     redactor: Redactor::new(Secrets::default()),
                     history: None,
                     stderr_sink: None,
+                    span_only: false,
                 })),
             };
             drop(tracing_subscriber::registry().with(created.clone()).try_init());
