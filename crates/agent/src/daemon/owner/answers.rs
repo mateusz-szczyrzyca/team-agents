@@ -11,6 +11,7 @@ use std::path::Path;
 use agent_core::cli::ActivityEvent;
 use agent_core::history::HistoryEvent;
 use agent_core::ids::TaskId;
+use agent_core::log::LogEvent;
 use agent_core::protocol::{AnswerRequest, Client, EventKind, Failure, FailureKind, Reply};
 use agent_core::state::{AnsweredVia, Timestamp};
 use agent_core::status::TaskStatus;
@@ -237,7 +238,14 @@ impl Owner {
             Ok(loaded) => loaded,
             Err(problem) => {
                 // Most likely a save in the middle of a write: the next event of the save comes with the whole file.
-                tracing::warn!(task = %saved.task, error = %error_chain(&problem), "the saved questions file cannot be read");
+                let span = tracing::error_span!("task", team = %open.located.team, task = %saved.task);
+                let _entered = span.enter();
+                tracing::warn!(
+                    event = LogEvent::QuestionsFileInvalid.as_str(),
+                    task = %saved.task,
+                    error = %error_chain(&problem),
+                    "the saved questions file cannot be read"
+                );
                 return Ok(());
             }
         };
@@ -246,6 +254,16 @@ impl Owner {
             Judgement::Answered => self.record_answer(&saved.task, &open, AnsweredVia::SavedFile).await,
             Judgement::Incomplete { problems } => {
                 let text = questions::describe(&loaded.file, &problems);
+                {
+                    let span = tracing::error_span!("task", team = %open.located.team, task = %saved.task);
+                    let _entered = span.enter();
+                    tracing::warn!(
+                        event = LogEvent::QuestionsFileInvalid.as_str(),
+                        task = %saved.task,
+                        problems = %text,
+                        "the saved questions file is incomplete"
+                    );
+                }
                 self.tell_incomplete(&saved.task, &open, text);
                 Ok(())
             }

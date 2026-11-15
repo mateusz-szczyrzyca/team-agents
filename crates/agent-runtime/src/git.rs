@@ -894,11 +894,27 @@ impl Git {
             }),
             max_bytes: self.limits.max_output_bytes,
         };
+        let started = std::time::Instant::now();
         let captured = match self.deadline {
             Some(deadline) => capture_until(self.command(args), limits, deadline).await,
             None => capture(self.command(args), limits).await,
         };
-        captured.map_err(|source| GitError::Run { operation, source })
+        let duration = started.elapsed();
+        match captured {
+            Ok(captured) => {
+                let code = match captured.exit {
+                    ExitReport::Exited { code } => Some(code),
+                    ExitReport::Signaled { .. } => None,
+                };
+                let outcome = if captured.exit.succeeded() { "ok" } else { "failed" };
+                crate::history::log_outside_call("git", &operation.to_string(), duration, code, outcome);
+                Ok(captured)
+            }
+            Err(source) => {
+                crate::history::log_outside_call("git", &operation.to_string(), duration, None, "error");
+                Err(GitError::Run { operation, source })
+            }
+        }
     }
 
     /// Runs git with `args`; a command that ends with a failure is an error.
@@ -938,10 +954,18 @@ fn diagnostic(bytes: &[u8]) -> String {
 
 /// The error for a command that ended with a failure.
 fn failed(operation: GitOperation, captured: &Captured) -> GitError {
+    let stderr = diagnostic(&captured.stderr.bytes);
+    tracing::warn!(
+        event = agent_core::log::LogEvent::GitCallFailed.as_str(),
+        operation = %operation,
+        exit = ?captured.exit,
+        stderr = %stderr,
+        "a git command failed"
+    );
     GitError::Failed {
         operation,
         exit: captured.exit,
-        stderr: diagnostic(&captured.stderr.bytes),
+        stderr,
     }
 }
 

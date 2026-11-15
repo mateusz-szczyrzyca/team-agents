@@ -28,6 +28,7 @@ use agent_core::decide::outcome::{AfterHang, after_hang};
 use agent_core::history::{HistoryEvent, RunWhy};
 use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
+use agent_core::log::LogEvent;
 use agent_core::protocol::{
     Client, Command, Event, EventKind, Failure, FailureKind, Reply, RoundDetail, RoundTask, Target, TeamSummary,
 };
@@ -39,7 +40,7 @@ use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::HarnessPrompts;
-use agent_runtime::history::History;
+use agent_runtime::history::{History, log_decision};
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunVerdict, WatchdogHold};
@@ -51,9 +52,11 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::{Id as JoinId, JoinError, JoinSet};
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
+use tracing::instrument::WithSubscriber;
 
 pub(crate) use self::rounds::{Pulls, PullsError};
-use self::start::{Context, Plan, next_number, plan, run_why};
+use self::start::{Context, Plan, StartProblem, next_number, plan, run_why};
 use self::teams::{Outbound, Served};
 use super::control::{Halt, Steer, after_halt, halted_status};
 use super::gate::GateQueue;
@@ -504,7 +507,8 @@ impl Owner {
         self.remember_closed_teams();
         self.look_at_every_team();
         if !recovery.interrupted.is_empty() {
-            tracing::info!(
+            tracing::warn!(
+                event = LogEvent::RestartCorrected.as_str(),
                 tasks = recovery.interrupted.len(),
                 "runs that a restart interrupted are queued again"
             );
@@ -559,7 +563,32 @@ impl Owner {
         };
         let plan = match planned {
             Ok(plan) => plan,
-            Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
+            Err(problem) => {
+                if let Ok(located) = self.locate(&task) {
+                    let span = tracing::error_span!("task", team = %located.team, task = %task);
+                    let _entered = span.enter();
+                    match &problem {
+                        StartProblem::AgentGone { name } => {
+                            tracing::error!(
+                                event = LogEvent::ConfigurationNameMissing.as_str(),
+                                kind = "agent",
+                                name = %name,
+                                "an agent in the state is gone from the configuration"
+                            );
+                        }
+                        StartProblem::RepoGone { repo } => {
+                            tracing::error!(
+                                event = LogEvent::ConfigurationNameMissing.as_str(),
+                                kind = "repo",
+                                name = %repo,
+                                "a repository in the state is gone from the configuration"
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+                return self.fail_to_start(&task, error_chain(&problem)).await;
+            }
         };
         let rounds = round_state::rounds_for(&self.parts.state, &task, why.as_ref())?;
         let reason = run_why(&self.parts.state, &task, why.as_ref());
@@ -602,16 +631,36 @@ impl Owner {
         self.commit(task, &located, now, events, None).await?;
         // The run is in the state: the history is told before the engine can say anything about it.
         self.record_run_start(task, &plan, &rounds, reason, now);
-        tracing::info!(task = %task, run = %plan.run, agent = %located.agent, "run started");
+        let rounds_field = rounds.iter().map(RoundId::as_str).collect::<Vec<_>>().join(",");
+        let run_span = tracing::error_span!(
+            "run",
+            team = %located.team,
+            rounds = %rounds_field,
+            task = %task,
+            run = %plan.run
+        );
+        {
+            let _entered = run_span.enter();
+            tracing::info!(
+                event = LogEvent::RunStarted.as_str(),
+                task = %task,
+                run = %plan.run,
+                agent = %located.agent,
+                "run started"
+            );
+        }
         let engine = self.parts.engine.clone();
         let cancel = self.shutdown.child_token();
         self.cancels.insert(task.clone(), cancel.clone());
         let hold = WatchdogHold::new();
         self.holds.insert(task.clone(), hold.clone());
         let job = plan.job;
-        let handle = self
-            .runs
-            .spawn(async move { engine.run_held(job, &cancel, &hold).await });
+        let dispatch = tracing::dispatcher::get_default(Clone::clone);
+        let handle = self.runs.spawn(
+            async move { engine.run_held(job, &cancel, &hold).await }
+                .instrument(run_span)
+                .with_subscriber(dispatch),
+        );
         self.running.insert(handle.id(), task.clone());
         self.in_flight.insert(task.clone());
         Ok(())
@@ -713,7 +762,7 @@ impl Owner {
         let located = self.locate(task)?;
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
-        tracing::info!(task = %task, end = ?run.classified.end, "run ended");
+        let settle_span = self.settle_span_of(task, &located.team);
         self.attach_session(task, run.session.clone())?;
         let settled = settle(
             located.role,
@@ -723,6 +772,14 @@ impl Owner {
         );
         let settled = self.solo_waits_for_its_items(located.role, &located.team, settled);
         let settled = self.reviewer_waits(located.role, &located.team, settled);
+        {
+            let _entered = settle_span.enter();
+            log_decision(
+                "settle",
+                &format!("role={:?}, end={:?}", located.role, run.classified.end),
+                &format!("{settled:?}"),
+            );
+        }
         // The human asked for a stop or a pause while the run was ending by itself: their word wins where it can. Over a
         // limit's pause or a hang it wins entirely: the run ended by the human's word, with no wake-up, no strike and no
         // notice of a pause that nobody waits for.
@@ -733,6 +790,10 @@ impl Owner {
         } else {
             run.classified.end.clone()
         };
+        if overruled.is_none() {
+            let _entered = settle_span.enter();
+            log_unusual_end(&end);
+        }
         self.end_run(
             task,
             &located.team,
@@ -753,7 +814,9 @@ impl Owner {
                 settled,
                 progress: run.progress,
             };
-            self.settled_status(ended, &mut events).await?
+            self.settled_status(ended, &mut events)
+                .instrument(settle_span.clone())
+                .await?
         };
         let status = halt.map_or(status, |halt| after_halt(halt, status));
         self.move_to(task, &located.team, status, &mut events)?;
@@ -769,6 +832,34 @@ impl Owner {
             self.review_ended(task, &located, run.final_message.as_deref()).await?;
         }
         self.after_run(task, &located, &end, run.final_message.as_deref())
+    }
+
+    /// Builds the `tracing::Span` for settling the current run of `task` in `team`.
+    fn settle_span_of(&self, task: &TaskId, team: &TeamId) -> tracing::Span {
+        let (run_id, run_rounds) = self
+            .parts
+            .state
+            .find_task(task)
+            .and_then(|found| found.member.current_run())
+            .map_or_else(
+                || (String::new(), String::new()),
+                |current| {
+                    let rounds_str = current
+                        .rounds()
+                        .iter()
+                        .map(RoundId::as_str)
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    (current.id().as_str().to_owned(), rounds_str)
+                },
+            );
+        tracing::error_span!(
+            "run_settle",
+            team = %team,
+            rounds = %run_rounds,
+            task = %task,
+            run = %run_id
+        )
     }
 
     /// The status a run's end sends its task to, and what the human is told of it.
@@ -831,7 +922,13 @@ impl Owner {
             .and_then(|found| found.member.last_session())
             .map(|session| CliSessionId::from_str(session.as_str()))
             .transpose()?;
-        let next = match after_hang(count, session.as_ref(), watchdog) {
+        let decision = after_hang(count, session.as_ref(), watchdog);
+        log_decision(
+            "after_hang",
+            &format!("count={count}, has_session={}", session.is_some()),
+            &format!("{decision:?}"),
+        );
+        let next = match decision {
             AfterHang::Resume => (TaskStatus::Queued, None),
             AfterHang::MarkHung => {
                 self.hangs.remove(task);
@@ -864,7 +961,16 @@ impl Owner {
         };
         let loaded = match questions::read(&path).await {
             Ok(loaded) => loaded,
-            Err(problem) => return Ok(unusable(error_chain(&problem))),
+            Err(problem) => {
+                let reason = error_chain(&problem);
+                tracing::warn!(
+                    event = LogEvent::QuestionsFileInvalid.as_str(),
+                    path = %path.display(),
+                    %reason,
+                    "a questions file cannot be read or is invalid"
+                );
+                return Ok(unusable(reason));
+            }
         };
         let file = match path.to_str().map(AbsolutePath::from_str) {
             Some(Ok(file)) => file,
@@ -974,6 +1080,14 @@ impl Owner {
                     Command::Say(request) => self.say_request(&client, request).await?,
                     other => self.answer(&other),
                 };
+                if let Err(ref failure) = answer {
+                    tracing::warn!(
+                        event = LogEvent::RequestRefused.as_str(),
+                        kind = ?failure.kind,
+                        reason = %failure.message,
+                        "a client request was refused"
+                    );
+                }
                 if reply.send(answer).is_err() {
                     // The connection closed while its request waited: nobody is left to answer.
                     tracing::debug!("the connection of a request closed before the answer");
@@ -1173,11 +1287,28 @@ impl Owner {
         status: TaskStatus,
         events: &mut Vec<EventKind>,
     ) -> Result<(), OwnerError> {
+        let rounds = self
+            .rounds_of_tasks(std::slice::from_ref(task))
+            .iter()
+            .map(RoundId::as_str)
+            .collect::<Vec<_>>()
+            .join(",");
         let (_, mut member) = self.member_mut(task)?;
+        let from = member.status();
         member.transition(status).map_err(|source| OwnerError::Status {
             task: task.clone(),
             source,
         })?;
+        let span = tracing::error_span!("task", team = %team, rounds = %rounds, task = %task);
+        {
+            let _entered = span.enter();
+            tracing::info!(
+                event = LogEvent::TaskStatusChanged.as_str(),
+                from = %from.as_str(),
+                to = %status.as_str(),
+                "task status changed"
+            );
+        }
         events.push(EventKind::TaskStatus {
             team: team.clone(),
             task: task.clone(),
@@ -1211,6 +1342,24 @@ impl Owner {
                 task: task.clone(),
                 source,
             })?;
+        let rounds_field = rounds.iter().map(RoundId::as_str).collect::<Vec<_>>().join(",");
+        let span = tracing::error_span!(
+            "run",
+            team = %team,
+            rounds = %rounds_field,
+            task = %task,
+            run = %run
+        );
+        {
+            let _entered = span.enter();
+            tracing::info!(
+                event = LogEvent::RunEnded.as_str(),
+                task = %task,
+                run = %run,
+                end = ?end,
+                "run ended"
+            );
+        }
         // A clock that was set back must not end the run before it started in the history either.
         self.record_run_end(&run, at.max(started_at), &end, final_message);
         events.push(EventKind::RunEnded {
@@ -1277,11 +1426,14 @@ impl Owner {
 
     /// Saves the state.
     async fn save(&self) -> Result<(), OwnerError> {
-        self.parts
-            .store
-            .save(&self.parts.state)
-            .await
-            .map_err(OwnerError::Store)
+        self.parts.store.save(&self.parts.state).await.map_err(|error| {
+            tracing::error!(
+                event = LogEvent::StateSaveFailed.as_str(),
+                error = %error_chain(&error),
+                "state.json cannot be saved"
+            );
+            OwnerError::Store(error)
+        })
     }
 
     /// Sends an event to the subscribers.
@@ -1307,6 +1459,39 @@ impl Owner {
             // queued is logged, and the task goes on.
             tracing::error!(task = %task, %error, "a notification could not be queued");
         }
+    }
+}
+
+/// Emits the corresponding `warn` event when a run ended without a status line, hit a limit, or hung.
+fn log_unusual_end(end: &RunEnd) {
+    match end {
+        RunEnd::NoStatus { exit_code } => {
+            tracing::warn!(
+                event = LogEvent::RunEndedWithoutStatus.as_str(),
+                exit_code = ?exit_code,
+                "a run ended without a STATUS line"
+            );
+        }
+        RunEnd::QuotaExhausted { resets_at } => {
+            tracing::warn!(
+                event = LogEvent::RunQuotaExhausted.as_str(),
+                resets_at = ?resets_at,
+                "a run hit a quota limit and paused its task"
+            );
+        }
+        RunEnd::RateLimited => {
+            tracing::warn!(
+                event = LogEvent::RunRateLimited.as_str(),
+                "a run hit a rate limit and paused its task"
+            );
+        }
+        RunEnd::Hung => {
+            tracing::warn!(
+                event = LogEvent::RunHung.as_str(),
+                "a run hung and was stopped by the watchdog"
+            );
+        }
+        RunEnd::Reported { .. } | RunEnd::Stopped => {}
     }
 }
 

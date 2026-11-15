@@ -17,9 +17,6 @@ pub(crate) enum DaemonCommandError {
     /// `AGENTS_HOME` cannot be used.
     #[error(transparent)]
     Environment(#[from] EnvironmentError),
-    /// The log cannot be set up.
-    #[error("cannot set up the log of the daemon")]
-    Logging(#[source] Box<dyn std::error::Error + Send + Sync>),
     /// The signals cannot be watched.
     #[error("cannot watch SIGTERM and SIGINT")]
     Signals(#[source] io::Error),
@@ -37,11 +34,7 @@ pub(crate) enum DaemonCommandError {
 /// [`DaemonCommandError`].
 pub(crate) async fn daemon(environment: &Environment, prompts_dir: Option<PathBuf>) -> Result<(), DaemonCommandError> {
     let home = environment.home()?;
-    tracing_subscriber::fmt()
-        .with_writer(io::stderr)
-        .with_max_level(tracing::Level::INFO)
-        .try_init()
-        .map_err(DaemonCommandError::Logging)?;
+    let _layer = agent_runtime::history::HistoryLayer::install_global();
     if let Some(error) = environment.offset_error() {
         tracing::warn!(%error, "the time zone of the machine is unknown: UTC is used to read the reset times of providers");
     }

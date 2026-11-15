@@ -23,6 +23,7 @@ use agent_runtime::checks_prompts::{ChecksPrompts, ChecksPromptsError};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::editor::{SocketDirs, VscodeOpener};
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
+use agent_runtime::history::HistoryLayer;
 use agent_runtime::notify::Notifier;
 use agent_runtime::process::Supervisor;
 use agent_runtime::prompts::{PromptLoadError, PromptLoader};
@@ -37,6 +38,8 @@ use time::UtcOffset;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::sync::CancellationToken;
+use tracing::instrument::WithSubscriber;
+use tracing_subscriber::layer::SubscriberExt;
 
 use self::owner::{EVENT_BACKLOG, INBOX, MAX_RUNS, Owner, OwnerError, OwnerParts, Pulls, PullsError};
 use self::server::ServerError;
@@ -207,6 +210,13 @@ pub(crate) async fn run_with_rng(
         Err(error) => return Err(error.into()),
     };
     let settings = Arc::new(Settings::load(&setup.home).await?);
+    let log_layer = HistoryLayer::deferred(
+        settings.config.log().level,
+        setup.clock.clone(),
+        settings.secrets.clone(),
+    );
+    log_layer.sync_global();
+    let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(log_layer.clone()).into();
     let language = settings.config.language().clone();
     let texts = Arc::new(HarnessPrompts::load(&setup.prompts_dir, &language).await?);
     let team_texts = Arc::new(TeamPrompts::load(&setup.prompts_dir, &language).await?);
@@ -221,7 +231,10 @@ pub(crate) async fn run_with_rng(
         tick: TICK,
         run: RunTimings::from_config(settings.config.watchdog()),
     });
-    let opened = history::open(&settings, &setup.home).await;
+    let opened = history::open(&settings, &setup.home)
+        .with_subscriber(dispatch.clone())
+        .await;
+    log_layer.attach_history(opened.history.clone());
     let engine = RunEngine::new(EngineParts {
         store: Arc::clone(&store),
         texts: Arc::clone(&texts),
@@ -242,10 +255,12 @@ pub(crate) async fn run_with_rng(
     let (gates, gate_jobs) = gate::GateQueue::new();
     let mut sides: JoinSet<()> = JoinSet::new();
     let serving = shutdown.clone();
-    sides.spawn(server::serve(listener, inbox, serving));
+    sides.spawn(server::serve(listener, inbox, serving).with_subscriber(dispatch.clone()));
     let delivering = Arc::clone(&texts);
-    sides.spawn(notifier::run(deliveries, delivering, notifier, opened.history.clone()));
-    let opens = start_opener(&mut sides, &settings, &surroundings);
+    sides.spawn(
+        notifier::run(deliveries, delivering, notifier, opened.history.clone()).with_subscriber(dispatch.clone()),
+    );
+    let opens = start_opener(&mut sides, &settings, &surroundings, &dispatch);
     let gate_parts = gate::GateParts {
         store: Arc::clone(&store),
         clock: setup.clock.clone(),
@@ -253,12 +268,10 @@ pub(crate) async fn run_with_rng(
         agent_path: settings.config.binaries().agent_path.clone(),
         stop_grace: timings.run.stop_grace,
     };
-    sides.spawn(gate::run_recorded(
-        gate_jobs,
-        gate_parts,
-        opened.history.clone(),
-        shutdown.clone(),
-    ));
+    sides.spawn(
+        gate::run_recorded(gate_jobs, gate_parts, opened.history.clone(), shutdown.clone())
+            .with_subscriber(dispatch.clone()),
+    );
 
     let owner = Owner::new(
         OwnerParts {
@@ -282,27 +295,43 @@ pub(crate) async fn run_with_rng(
     )
     .with_gate(gates)
     .with_history(opened.history.clone());
-    let owner = if let Some(pulls) = pulls {
-        owner.with_pulls(pulls)
-    } else {
-        tracing::info!("the home has no GitHub token (github_token in secrets.toml): no pull request is opened");
-        owner
-    };
-    let owned_end = owner.run(requests).await;
+    let owner = attach_pulls(owner, pulls, &dispatch);
+    let owned_end = owner.run(requests).with_subscriber(dispatch.clone()).await;
     // Whatever ended the owner, the rest of the daemon ends with it.
     shutdown.cancel();
-    let mut failure = None;
-    while let Some(joined) = sides.join_next().await {
-        if let Err(source) = joined {
-            tracing::error!(%source, "a task of the daemon failed");
-            failure.get_or_insert(DaemonError::Join(source));
-        }
-    }
+    let failure = join_sides(&mut sides, &dispatch).await;
     // Everything that records has ended.
+    log_layer.detach_history();
     history::close(opened.writer).await;
     server::remove(&setup.home).await.map_err(DaemonError::RemoveSocket)?;
     owned_end?;
     failure.map_or(Ok(()), Err)
+}
+
+/// Attaches `pulls` to `owner`, or logs under `dispatch` that the home has no GitHub token.
+fn attach_pulls(owner: Owner, pulls: Option<Pulls>, dispatch: &tracing::Dispatch) -> Owner {
+    if let Some(pulls) = pulls {
+        owner.with_pulls(pulls)
+    } else {
+        tracing::dispatcher::with_default(dispatch, || {
+            tracing::info!("the home has no GitHub token (github_token in secrets.toml): no pull request is opened");
+        });
+        owner
+    }
+}
+
+/// Waits for every background task in `sides` to finish and returns the first join error, if any.
+async fn join_sides(sides: &mut JoinSet<()>, dispatch: &tracing::Dispatch) -> Option<DaemonError> {
+    let mut failure = None;
+    while let Some(joined) = sides.join_next().await {
+        if let Err(source) = joined {
+            tracing::dispatcher::with_default(dispatch, || {
+                tracing::error!(%source, "a task of the daemon failed");
+            });
+            failure.get_or_insert(DaemonError::Join(source));
+        }
+    }
+    failure
 }
 
 /// How long one command of the bus may take before the owner gives up on it: the bus holds its lock for the length of
@@ -323,12 +352,13 @@ fn start_opener(
     sides: &mut JoinSet<()>,
     settings: &Settings,
     surroundings: &Surroundings,
+    dispatch: &tracing::Dispatch,
 ) -> Option<mpsc::Sender<PathBuf>> {
     match settings.config.questions().open {
         OpenQuestions::Off => None,
         OpenQuestions::Vscode => {
             let (opens, files) = mpsc::channel(opener::QUEUE);
-            sides.spawn(opener::run(files, vscode_opener(settings, surroundings)));
+            sides.spawn(opener::run(files, vscode_opener(settings, surroundings)).with_subscriber(dispatch.clone()));
             Some(opens)
         }
     }

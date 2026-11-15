@@ -6,6 +6,7 @@ use agent_core::history::HistoryEvent;
 use std::num::NonZeroU32;
 
 use agent_core::ids::{BranchName, ItemId, TeamId};
+use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::EventKind;
 use agent_core::state::{CommitId, GateRecord, ItemPhase, PullRequest, Timestamp};
@@ -436,11 +437,20 @@ impl Owner {
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: id,
-                round,
+                round: round.clone(),
                 status: agent_core::status::ItemStatus::InReview,
             });
             look.changed = true;
-            tracing::info!(team = %team_id, item = %id, pr = %published.pr.number, "an item is in review");
+            let span = tracing::error_span!("round", team = %team_id, rounds = %round);
+            let _entered = span.enter();
+            tracing::info!(
+                event = LogEvent::ItemPhaseChanged.as_str(),
+                team = %team_id,
+                item = %id,
+                phase = "in_review",
+                pr = %published.pr.number,
+                "an item is in review"
+            );
         }
         Ok(())
     }
@@ -456,6 +466,15 @@ impl Owner {
         error: &PublishError,
         now: Timestamp,
     ) -> Result<(), OwnerError> {
+        if let PublishError::RepoGone { repo } = error {
+            tracing::error!(
+                event = LogEvent::ConfigurationNameMissing.as_str(),
+                team = %team_id,
+                kind = "repo",
+                name = %repo,
+                "a repository in the state is gone from the configuration"
+            );
+        }
         let reason = error_chain(error);
         tracing::warn!(team = %team_id, branch = %publication.head_branch, %reason, "a branch cannot be published: it is tried again in a minute");
         let retry = Timestamp::from_utc(now.as_utc().saturating_add(PUBLISH_BACKOFF))?;

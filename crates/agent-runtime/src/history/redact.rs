@@ -12,7 +12,7 @@ use serde_json::Value;
 const MARKER: &str = "[REDACTED]";
 
 /// Known values retain `Secret`'s redacted debug representation even in writer diagnostics.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct Redactor {
     /// All credentials configured for GitHub, model CLIs and notifications.
     secrets: Secrets,

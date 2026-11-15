@@ -131,7 +131,9 @@ struct Shared {
     /// How many records were handed in and are not in the database.
     lost: AtomicU64,
     /// Credentials removed on the writer thread before persistence.
-    redactor: Redactor,
+    redactor: Mutex<Redactor>,
+    /// Optional sink for fallback lines on `stderr` in tests.
+    stderr_sink: Mutex<Option<super::log::StderrSink>>,
     /// Whether records are being written.
     state: Mutex<HistoryState>,
     /// The causes already reported.
@@ -162,7 +164,8 @@ impl Shared {
     fn new(state: HistoryState, reporter: Arc<dyn Reporter>, redactor: Redactor) -> Arc<Self> {
         Arc::new(Self {
             lost: AtomicU64::new(0),
-            redactor,
+            redactor: Mutex::new(redactor),
+            stderr_sink: Mutex::new(None),
             state: Mutex::new(state),
             reported: Mutex::new(BTreeSet::new()),
             reported_log: Mutex::new(BTreeSet::new()),
@@ -182,10 +185,18 @@ impl Shared {
     fn report(&self, cause: Cause, detail: impl FnOnce() -> String) {
         let first = locked(&self.reported).insert(cause);
         if first {
-            self.reporter.report(&Problem {
-                cause,
-                detail: self.redactor.text(&detail()),
-            });
+            let detail = locked(&self.redactor).text(&detail());
+            self.reporter.report(&Problem { cause, detail });
+        }
+    }
+
+    /// Writes `line` to the configured fallback sink or directly to `stderr`.
+    fn write_stderr(&self, line: &str) {
+        let sink = locked(&self.stderr_sink).clone();
+        if let Some(sink) = sink {
+            sink(line);
+        } else if std::io::Write::write_all(&mut std::io::stderr(), format!("{line}\n").as_bytes()).is_err() {
+            // Best-effort fallback to stderr when history.db cannot keep a log entry.
         }
     }
 
@@ -194,14 +205,8 @@ impl Shared {
     fn report_log(&self, cause: Cause, detail: impl FnOnce() -> String) {
         let first = locked(&self.reported_log).insert(cause);
         if first {
-            let detail = self.redactor.text(&detail());
-            // Writing to stderr is a best-effort fallback when the history cannot keep a log entry.
-            if std::io::Write::write_all(
-                &mut std::io::stderr(),
-                format!("the history cannot keep a log entry (cause={cause}): {detail}\n").as_bytes(),
-            )
-            .is_err()
-            {}
+            let detail = locked(&self.redactor).text(&detail());
+            self.write_stderr(&format!("the history cannot keep a log entry: {detail}"));
         }
     }
 
@@ -310,9 +315,10 @@ impl History {
         let shared = Shared::new(HistoryState::Writing, setup.reporter, Redactor::new(secrets));
         let (queue, jobs) = sync_channel(setup.capacity.get());
         let writing = Arc::clone(&shared);
+        let dispatch = tracing::dispatcher::get_default(Clone::clone);
         let thread = std::thread::Builder::new()
             .name("history-writer".to_owned())
-            .spawn(move || write_jobs(store, &jobs, &writing))
+            .spawn(move || tracing::dispatcher::with_default(&dispatch, || write_jobs(store, &jobs, &writing)))
             .map_err(StartError)?;
         Ok(Started {
             history: Self {
@@ -321,6 +327,12 @@ impl History {
             },
             writer: Writer { thread, queue },
         })
+    }
+
+    /// Configures the redactor and optional `stderr` sink used when daemon log entries fall back to `stderr`.
+    pub(super) fn configure_log_fallback(&self, redactor: Redactor, sink: Option<super::log::StderrSink>) {
+        *locked(&self.shared.redactor) = redactor;
+        *locked(&self.shared.stderr_sink) = sink;
     }
 
     /// Hands `record` to the writer. Never waits.
@@ -362,18 +374,18 @@ impl History {
             return;
         };
         match queue.try_send(Job::Log(record)) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) => {
+            Err(TrySendError::Full(Job::Log(_))) => {
                 self.shared.report_log(Cause::QueueFull, || {
                     "the writer of the history is slower than the work: log entries are dropped while its queue is full"
                         .to_owned()
                 });
             }
-            Err(TrySendError::Disconnected(_)) => {
+            Err(TrySendError::Disconnected(Job::Log(_))) => {
                 self.shared.report_log(Cause::Unavailable, || {
                     "the writer of the history has stopped".to_owned()
                 });
             }
+            Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
         }
     }
 
@@ -603,7 +615,7 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
         while let Some(job) = next.take() {
             match job {
                 Job::Record(mut record) => {
-                    if shared.redactor.record(&mut record) {
+                    if locked(&shared.redactor).record(&mut record) {
                         batch.push(record);
                     } else {
                         shared.lose(1);
@@ -613,7 +625,7 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
                     }
                 }
                 Job::Log(mut record) => {
-                    if shared.redactor.log_record(&mut record) {
+                    if locked(&shared.redactor).log_record(&mut record) {
                         log_batch.push(record);
                     } else {
                         shared.report_log(Cause::SecretIdentity, || {

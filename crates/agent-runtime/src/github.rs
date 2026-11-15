@@ -1370,10 +1370,20 @@ impl GitHub {
             Idempotency::Idempotent => self.settings.retry.max_attempts.get(),
             Idempotency::Once => 1,
         };
+        let started = std::time::Instant::now();
         let mut attempt = 1_u32;
         loop {
             let failure = match self.attempt(&call).await {
-                Ok(answer) => return Ok(answer),
+                Ok(answer) => {
+                    crate::history::log_outside_call(
+                        "github",
+                        &call.operation.to_string(),
+                        started.elapsed(),
+                        Some(200),
+                        "ok",
+                    );
+                    return Ok(answer);
+                }
                 Err(failure) => failure,
             };
             let next = attempt.saturating_add(1);
@@ -1383,7 +1393,25 @@ impl GitHub {
                 None
             };
             let Some(delay) = delay else {
-                return Err(failure.into_error(call.operation, attempt, self.settings.timeout));
+                let error = failure.into_error(call.operation, attempt, self.settings.timeout);
+                let code = match &error {
+                    GitHubError::Status { status, .. } => Some(i32::from(*status)),
+                    _ => None,
+                };
+                crate::history::log_outside_call(
+                    "github",
+                    &call.operation.to_string(),
+                    started.elapsed(),
+                    code,
+                    "failed",
+                );
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::GithubCallFailed.as_str(),
+                    operation = %call.operation,
+                    error = %error,
+                    "a GitHub API call failed"
+                );
+                return Err(error);
             };
             tracing::debug!(operation = %call.operation, attempt, ?delay, "a call failed and is made again");
             tokio::time::sleep(delay).await;

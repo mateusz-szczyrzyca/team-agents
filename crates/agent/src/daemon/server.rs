@@ -155,7 +155,11 @@ pub(super) async fn serve(listener: UnixListener, inbox: mpsc::Sender<Message>, 
         };
         match accepted {
             Ok((stream, _address)) => {
-                connections.spawn(connection(stream, inbox.clone(), shutdown.clone(), permit));
+                let dispatch = tracing::dispatcher::get_default(Clone::clone);
+                connections.spawn(tracing::instrument::WithSubscriber::with_subscriber(
+                    connection(stream, inbox.clone(), shutdown.clone(), permit),
+                    dispatch,
+                ));
             }
             Err(error) => {
                 // A failed accept (no descriptors left, a client that went away) is not the end of the daemon.
@@ -255,6 +259,11 @@ async fn exchange(stream: UnixStream, inbox: &mpsc::Sender<Message>) {
                     kind: FailureKind::Invalid,
                     message: format!("the request is longer than {max} bytes"),
                 };
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::RequestRefused.as_str(),
+                    reason = %failure.message,
+                    "a client request was refused"
+                );
                 // The stream cannot be told where the next line begins: the answer is the last thing it carries.
                 if let Err(error) = respond(&mut write, Response::error(RequestId(0), failure)).await {
                     tracing::debug!(%error, "cannot tell a client that its request was too long");
@@ -319,6 +328,11 @@ async fn answer(
                 kind: FailureKind::Invalid,
                 message: refusal_text(&error),
             };
+            tracing::warn!(
+                event = agent_core::log::LogEvent::RequestRefused.as_str(),
+                reason = %failure.message,
+                "a client request was refused"
+            );
             return respond(write, Response::error(RequestId(0), failure)).await;
         }
     };

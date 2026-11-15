@@ -561,9 +561,10 @@ impl Unreadable {
     fn report(&self, job: &RunJob) {
         if let Some(first) = &self.first {
             tracing::warn!(
+                event = agent_core::log::LogEvent::CliOutputUnreadable.as_str(),
                 task = %job.task,
                 run = %job.run,
-                count = self.count,
+                unreadable_lines = self.count,
                 first = %first,
                 "lines of the output of a run could not be read",
             );
@@ -613,7 +614,13 @@ impl Follow<'_> {
             self.feed(&[last]).await?;
         }
         if self.tail.dropped() > 0 {
-            tracing::warn!(task = %self.task, dropped = self.tail.dropped(), "lines of the output were too long or not text");
+            tracing::warn!(
+                event = agent_core::log::LogEvent::CliOutputUnreadable.as_str(),
+                task = %self.task,
+                run = %self.run,
+                dropped = self.tail.dropped(),
+                "lines of the output were too long or not text"
+            );
         }
         Ok(())
     }

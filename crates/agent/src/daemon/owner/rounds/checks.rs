@@ -17,6 +17,7 @@ use agent_core::prompt::Variables;
 use agent_core::repo_path::RepoPath;
 use agent_core::state::{Asked, ChecksRecord, PrNumber, Sent, Timestamp};
 use agent_runtime::git::Revision;
+use agent_runtime::history::log_decision;
 use agent_runtime::notify::Notification;
 use agent_runtime::text_file::replace_text_file;
 
@@ -124,7 +125,18 @@ impl Owner {
         let issues = self.round_issues(lead, reviewing, &written, &rules, &record).await?;
         let policy = ChecksPolicy::new(self.parts.settings.config.review());
         let checking = Checking::after(record.passes_of(reviewing.items));
-        match checking.conclude(&issues, &refused, policy) {
+        let step = checking.conclude(&issues, &refused, policy);
+        log_decision(
+            "conclude_checks",
+            &format!(
+                "pr={}, issues={}, refused={}",
+                reviewing.pr,
+                issues.len(),
+                refused.len()
+            ),
+            &format!("{step:?}"),
+        );
+        match step {
             ChecksStep::StartReviews => Ok(None),
             ChecksStep::BackToTeam { pass } => {
                 let text = team_message(

@@ -3,6 +3,7 @@
 
 use agent_core::decide::round::RoundPolicy;
 use agent_core::ids::TeamId;
+use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::EventKind;
 use agent_core::state::{ItemPhase, Timestamp};
@@ -138,6 +139,18 @@ impl Owner {
                 source,
             })?;
             let round = self.round_of_item(team_id, id)?;
+            {
+                let span = tracing::error_span!("round", team = %team_id, rounds = %round);
+                let _entered = span.enter();
+                tracing::info!(
+                    event = LogEvent::ItemPhaseChanged.as_str(),
+                    team = %team_id,
+                    item = %id,
+                    phase = "fixing",
+                    pr = %waits.pr.number,
+                    "an item starts a fix pass after the human answered"
+                );
+            }
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: id,

@@ -4,12 +4,14 @@
 use agent_core::decide::round::{RoundError, RoundPolicy};
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, ItemId, TaskId, TeamId};
+use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::EventKind;
 use agent_core::state::{Completion, ItemPhase, PullRequest, Review, ReviewOutcome, RoundEnd, Team, Timestamp};
 use agent_core::status::ReviewVerdict;
 use agent_runtime::git::Revision;
 use agent_runtime::github::CommentReview;
+use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
@@ -255,7 +257,17 @@ impl Owner {
         let progress = asked.items.first().and_then(|id| team.item(*id))?;
         let policy = RoundPolicy::new(team.merge(), self.parts.settings.config.review());
         match after_verdict(progress, &asked.reviewer, verdict, policy) {
-            Ok(next) => Some(next),
+            Ok(next) => {
+                log_decision(
+                    "after_verdict",
+                    &format!(
+                        "pr={}, reviewer={}, verdict={verdict:?}",
+                        asked.pr.number, asked.reviewer
+                    ),
+                    &format!("{next:?}"),
+                );
+                Some(next)
+            }
             Err(VerdictError::Round(RoundError::NotExpected { .. })) => {
                 tracing::info!(team = %team_id, pr = %asked.pr.number, "a verdict came after the review pass was decided: it is recorded and changes nothing");
                 None
@@ -401,6 +413,18 @@ impl Owner {
                 }
             }
             let round = self.round_of_item(team_id, *id)?;
+            {
+                let span = tracing::error_span!("round", team = %team_id, rounds = %round);
+                let _entered = span.enter();
+                tracing::info!(
+                    event = LogEvent::ItemPhaseChanged.as_str(),
+                    team = %team_id,
+                    item = %id,
+                    phase = %status.as_str(),
+                    pr = %asked.pr.number,
+                    "an item changed phase after a review verdict"
+                );
+            }
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: *id,

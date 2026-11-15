@@ -6,6 +6,7 @@ use agent_core::history::{
     AgentIdentity, EventKind, EventRecord, HistoryEvent, LostCause, LostKind, Record, RunEndRecord, RunStart, RunWhy,
 };
 use agent_core::ids::{ItemId, RoundId, RunId, TaskId, TeamId};
+use agent_core::log::LogEvent;
 use agent_core::protocol::RunRequest;
 use agent_core::state::{ItemPhase, RunState, Timestamp};
 use agent_runtime::history::CaptureKind;
@@ -164,7 +165,13 @@ impl Owner {
             .repo(found.repo())
             .map(|repo| &repo.base_branch)
         else {
-            tracing::warn!(team = %team, "the repository of a new team is not in the configuration: the history has no record of the team");
+            tracing::error!(
+                event = LogEvent::ConfigurationNameMissing.as_str(),
+                team = %team,
+                kind = "repo",
+                name = %found.repo(),
+                "the repository of a new team is not in the configuration: the history has no record of the team"
+            );
             self.history.record_lost();
             return;
         };

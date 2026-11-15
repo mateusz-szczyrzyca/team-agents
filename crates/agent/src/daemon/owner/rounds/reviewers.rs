@@ -8,6 +8,7 @@ use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
 use agent_core::state::{CommitId, ItemPhase, Member, Participant, PullRequest, Review, ReviewOutcome, Timestamp};
 use agent_runtime::git::{Git, Revision, WorktreeBranch};
+use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
@@ -89,6 +90,12 @@ impl Owner {
         let Some(chosen) = choose_reviewers(free, &mut self.parts.rng) else {
             return Ok(false);
         };
+        let chosen_names: Vec<_> = chosen.iter().map(|r| r.name.as_str()).collect();
+        log_decision(
+            "choose_reviewers",
+            &format!("pr={}, among={among:?}", pr.number),
+            &format!("{chosen_names:?}"),
+        );
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let Some(head) = git.branch_tip(&pr.branch).await? else {
             return Ok(false);

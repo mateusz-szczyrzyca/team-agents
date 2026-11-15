@@ -9,6 +9,7 @@ use agent_core::decide::round::{RunStart, TaskRounds, rounds_of_run};
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
+use agent_core::log::LogEvent;
 use agent_core::protocol::EventKind;
 use agent_core::state::{ItemPhase, Participant, ReviewOutcome, RoundEnd, State, Team, Timestamp};
 use agent_core::status::TaskStatus;
@@ -156,7 +157,16 @@ impl Owner {
             item,
         });
         look.changed = true;
-        tracing::info!(team = %team, round = %round, ?item, "a round is opened");
+        let span = tracing::error_span!("round", team = %team, rounds = %round);
+        let _entered = span.enter();
+        tracing::info!(
+            event = LogEvent::RoundChanged.as_str(),
+            team = %team,
+            round = %round,
+            change = "opened",
+            ?item,
+            "a round is opened"
+        );
         Ok(())
     }
 
@@ -235,7 +245,16 @@ impl Owner {
             how,
         });
         look.changed = true;
-        tracing::info!(team = %team, round = %round, ?how, "a round is closed");
+        let span = tracing::error_span!("round", team = %team, rounds = %round);
+        let _entered = span.enter();
+        tracing::info!(
+            event = LogEvent::RoundChanged.as_str(),
+            team = %team,
+            round = %round,
+            change = "closed",
+            ?how,
+            "a round is closed"
+        );
         Ok(())
     }
 

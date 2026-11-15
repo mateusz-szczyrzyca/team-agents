@@ -1238,11 +1238,27 @@ impl AgentBus {
             timeout: self.timeout,
             max_bytes: MAX_OUTPUT_BYTES,
         };
+        let started = std::time::Instant::now();
         let captured = match input {
             Some(bytes) => capture_with_input(process, limits, bytes).await,
             None => capture(process, limits).await,
-        }
-        .map_err(|source| AgentBusError::Run { command, source })?;
+        };
+        let duration = started.elapsed();
+        let captured = match captured {
+            Ok(captured) => {
+                let code = match captured.exit {
+                    ExitReport::Exited { code } => Some(code),
+                    ExitReport::Signaled { .. } => None,
+                };
+                let status = if captured.exit.succeeded() { "ok" } else { "failed" };
+                crate::history::log_outside_call("agentbus", &command.to_string(), duration, code, status);
+                captured
+            }
+            Err(source) => {
+                crate::history::log_outside_call("agentbus", &command.to_string(), duration, None, "error");
+                return Err(AgentBusError::Run { command, source });
+            }
+        };
         outcome(command, captured)
     }
 }
