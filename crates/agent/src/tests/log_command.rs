@@ -284,3 +284,42 @@ fn a_closed_pipe_is_a_failure_that_names_the_story_not_a_panic() {
     assert_eq!(code, ExitCode::FAILURE);
     assert!(String::from_utf8(err).unwrap().contains("cannot write the story"));
 }
+
+/// A sink whose buffered write succeeds but its final flush fails.
+struct FlushFailure;
+
+impl std::io::Write for FlushFailure {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+}
+
+#[test]
+fn every_projection_reports_a_failure_to_flush_output() {
+    let (_dir, home, written) = with_history();
+    for view in [
+        "tasks",
+        "agents",
+        "worktrees",
+        "runs",
+        "prompts",
+        "changes",
+        "reviews",
+        "log",
+        "usage",
+    ] {
+        let mut err = Vec::new();
+        let code = run_in(
+            &environment(&home),
+            ["agent", "log", "--round", written.rounds[0].as_str(), "--show", view],
+            &mut FlushFailure,
+            &mut err,
+        )
+        .unwrap();
+        assert_eq!(code, ExitCode::FAILURE, "{view}");
+    }
+}
