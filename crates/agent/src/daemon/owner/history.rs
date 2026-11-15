@@ -2,10 +2,13 @@
 //! while a run is going. Each is handed to the history after the state holds it; the history never refuses or delays.
 
 use agent_core::cli::ActivityEvent;
-use agent_core::history::{AgentIdentity, EventRecord, HistoryEvent, Record, RunEndRecord, RunStart, RunWhy};
+use agent_core::history::{
+    AgentIdentity, EventKind, EventRecord, HistoryEvent, LostCause, LostKind, Record, RunEndRecord, RunStart, RunWhy,
+};
 use agent_core::ids::{ItemId, RoundId, RunId, TaskId, TeamId};
 use agent_core::protocol::RunRequest;
 use agent_core::state::{ItemPhase, RunState, Timestamp};
+use agent_runtime::history::CaptureKind;
 use agent_runtime::process::error_chain;
 
 use super::Owner;
@@ -22,19 +25,29 @@ impl Owner {
             Ok(at) => self.record_event_at(at, team, rounds, event),
             Err(error) => {
                 tracing::warn!(team = %team, error = %error_chain(&error), "the clock gives a time that cannot be recorded: the history has no record of an event");
-                self.history.record_lost();
+                self.history.capture_failed(CaptureKind::Clock, &error);
+                if let Some(found) = self.parts.state.team(team).filter(|_| self.history.is_writing()) {
+                    let event = HistoryEvent::Lost {
+                        task: None,
+                        what: LostKind::Event(event.kind()),
+                        cause: LostCause::CaptureClock,
+                        detail: error_chain(&error),
+                    };
+                    self.record_event_at(found.created_at(), team, rounds, event);
+                }
             }
         }
     }
 
     /// Records `event` of `team` for `rounds` as having happened at `at`.
     pub(super) fn record_event_at(&self, at: Timestamp, team: &TeamId, rounds: Vec<RoundId>, event: HistoryEvent) {
-        self.history.record(Record::Event(Box::new(EventRecord {
+        let record = EventRecord {
             at,
             team: team.clone(),
             rounds,
             event,
-        })));
+        };
+        self.history.record(Record::Event(Box::new(record)));
     }
 
     /// The rounds of the `items` of `team`, each once, in the order of the items; an item with no round is told and left out.
@@ -69,7 +82,14 @@ impl Owner {
     }
 
     /// The text of the questions file `path` of `task`: what the human sees. A file that cannot be read is a record lost.
-    pub(super) async fn questions_text(&self, task: &TaskId, path: &std::path::Path) -> Option<String> {
+    pub(super) async fn questions_text(
+        &self,
+        at: Timestamp,
+        team: &TeamId,
+        task: &TaskId,
+        path: &std::path::Path,
+        kind: EventKind,
+    ) -> Option<String> {
         if self.history.is_disabled() {
             return None;
         }
@@ -77,7 +97,16 @@ impl Owner {
             Ok(text) => Some(text),
             Err(error) => {
                 tracing::warn!(task = %task, error = %error_chain(&error), "the questions file cannot be read: the history has no record of it");
-                self.history.record_lost();
+                self.history.capture_failed(CaptureKind::Questions, &error);
+                if self.history.is_writing() {
+                    let event = HistoryEvent::Lost {
+                        task: Some(task.clone()),
+                        what: LostKind::Event(kind),
+                        cause: LostCause::CaptureQuestions,
+                        detail: error_chain(&error),
+                    };
+                    self.record_event_at(at, team, self.rounds_of_tasks(std::slice::from_ref(task)), event);
+                }
                 None
             }
         }
@@ -163,28 +192,38 @@ impl Owner {
             | RunWhy::Continuation => None,
         };
         // The findings a fix pass sends the team are what the autopilot added to the lead's prompt.
-        if let (Some(number), Some(findings)) = (fix_pass, &plan.addition) {
-            let pr = team.items().iter().find_map(|progress| match progress.phase() {
-                ItemPhase::Fixing { assignee, pr, .. } if assignee.as_str() == participant.name() => Some(pr.number),
-                ItemPhase::Fixing { .. }
-                | ItemPhase::Pending
-                | ItemPhase::InProgress { .. }
-                | ItemPhase::InReview { .. }
-                | ItemPhase::Approved { .. }
-                | ItemPhase::Done { .. } => None,
-            });
-            if let Some(pr) = pr {
-                self.record_event_at(
-                    at,
-                    team.id(),
-                    rounds.to_vec(),
-                    HistoryEvent::FixPassStarted {
-                        pr,
-                        pass: number,
-                        of: self.parts.settings.config.review().fix_passes,
-                        findings: findings.clone(),
-                    },
-                );
+        if let Some(number) = fix_pass {
+            if let Some(findings) = &plan.addition {
+                let pr = team.items().iter().find_map(|progress| match progress.phase() {
+                    ItemPhase::Fixing { assignee, pr, .. } if assignee.as_str() == participant.name() => {
+                        Some(pr.number)
+                    }
+                    ItemPhase::Fixing { .. }
+                    | ItemPhase::Pending
+                    | ItemPhase::InProgress { .. }
+                    | ItemPhase::InReview { .. }
+                    | ItemPhase::Approved { .. }
+                    | ItemPhase::Done { .. } => None,
+                });
+                if let Some(pr) = pr {
+                    self.record_event_at(
+                        at,
+                        team.id(),
+                        rounds.to_vec(),
+                        HistoryEvent::FixPassStarted {
+                            pr,
+                            pass: number,
+                            of: self.parts.settings.config.review().fix_passes,
+                            findings: findings.clone(),
+                        },
+                    );
+                } else {
+                    tracing::warn!(task = %task, pass = number.get(), "no item is in a fix pass for the run's agent: the history has no record of the fix pass");
+                    self.history.record_lost();
+                }
+            } else {
+                tracing::warn!(task = %task, pass = number.get(), "a fix pass has no findings in its plan: the history has no record of the fix pass");
+                self.history.record_lost();
             }
         }
         self.history.record(Record::Run(Box::new(RunStart {

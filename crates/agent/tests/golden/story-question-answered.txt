@@ -13,6 +13,8 @@ Team started <time>: repo example, base branch main, merge autopilot
 
 Agents
 1. claude-1 — solo — named on the command line
+2. inv-r2 — reviewer — drawn at random among inv-r1, inv-r2
+3. inv-r1 — reviewer — drawn at random among inv-r1, inv-r2
 
 Story
 
@@ -41,11 +43,6 @@ STATUS: QUESTIONS
       uncommitted: added .fake-log (+<n> -<n>)
       uncommitted: added .fake-prompt-1 (+<n> -<n>)
       uncommitted: added .fake-runs (+<n> -<n>)
-<time>  notification sent: claude-1 has questions (<task-4>) (task <task-4>)
-  ----- notification (259 bytes) -----
-Questions number 1 of task <task-4> wait for your answers in <home>/tasks/<task-4>/questions-1.md.
-Answer in the file (put **ANSWERED** on its last line and save) or run `agent answer <task-4>`.
-  ----- end of notification -----
 <time>  task <task-4> asked the human (questions 1)
   ----- questions (467 bytes) -----
 # Questions — fake
@@ -60,6 +57,11 @@ b) leave it to me — I merge or close it
 
 **Verdict:**
   ----- end of questions -----
+<time>  notification sent: claude-1 has questions (<task-4>)
+  ----- notification (259 bytes) -----
+Questions number 1 of task <task-4> wait for your answers in <home>/tasks/<task-4>/questions-1.md.
+Answer in the file (put **ANSWERED** on its last line and save) or run `agent answer <task-4>`.
+  ----- end of notification -----
 <time>  task <task-4>: the human answered questions 1 (command)
   ----- answered questions (483 bytes) -----
 # Questions — fake

@@ -453,7 +453,8 @@ impl RunEngine {
         {
             Ok(head) => Some(head),
             Err(error) => {
-                self.history.capture_failed(CaptureKind::Head, &error);
+                self.history
+                    .capture_run_failed(&job.run, CaptureKind::Head, &self.parts.clock, &error);
                 None
             }
         }
@@ -495,7 +496,7 @@ impl RunEngine {
     /// it started at and the one it ended at, and what it left uncommitted. A worktree git cannot read has none.
     async fn record_changes(&self, job: &RunJob, head_before: Option<CommitId>) {
         self.history
-            .record_captured(CaptureKind::Changes, async {
+            .record_captured(&job.run, CaptureKind::Changes, &self.parts.clock, async {
                 let changes = launch::lookup_git(&job.working_dir)
                     .with_deadline(tokio::time::Instant::now() + HISTORY_CAPTURE_BUDGET)
                     .work_changes(head_before.as_ref())

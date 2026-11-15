@@ -21,14 +21,14 @@ use crate::environment::Environment;
 /// Both outside reviewers approve every review pass.
 const APPROVING: &str = "done:VERDICT: APPROVE\\nSUMMARY: fine";
 
-/// An approving reviewer that ends three seconds after the other, so that the order of the two is not a race.
+/// An approving reviewer that waits for the other reviewer's verdict to be recorded first, so that the order of the two is deterministic.
 const LATE_APPROVING: &str = "late:VERDICT: APPROVE\\nSUMMARY: fine";
 
-/// A reviewer that asks for changes three seconds after the other has approved, and approves the second time.
+/// A reviewer that asks for changes after the other reviewer's verdict is recorded, and approves the second time after the other.
 const LATE_CHANGES_ONCE: &str = "late:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] src/lib.rs:7 — the case is untested,late:VERDICT: APPROVE\\nSUMMARY: fixed";
 
-/// A rig whose watchdog gives the stand-ins time: its clock ticks at every reading, so the minute it waits for a silent run is
-/// a second and a half of the real time, which a stand-in that waits for the test or for another agent must outlast.
+/// A rig whose watchdog does not strike a stand-in waiting on a gate or peer-review barrier while the injected `TickingClock`
+/// advances on each reading.
 pub(super) async fn patient(agents: &[super::rig::Agent], fix_passes: u32, bus: bool) -> Rig {
     let rig = Rig::new(agents, fix_passes, bus).await;
     let text = std::fs::read_to_string(rig.home.config_file()).unwrap();
@@ -76,7 +76,7 @@ pub(super) async fn gate_when_committed(rig: &Rig, task: &agent_core::ids::TaskI
         .await
         .unwrap();
     assert!(matches!(reply, Reply::GateRecorded { .. }), "{reply:?}");
-    std::fs::write(worktree.join(format!(".fake-gate-done-{run}")), "").unwrap();
+    std::fs::write(worktree.join(format!(".fake-gate-done-{run}")), "done\n").unwrap();
 }
 
 /// Asks the daemon for the gate of every run of `task` that commits and waits for it, until `done` holds of the state.
@@ -90,6 +90,12 @@ pub(super) async fn gate_every_run(
     let mut gated = 0;
     while !done(&rig.state()) {
         let next = gated + 1;
+        rig.wait_for("the next commit to gate or the round to finish", || {
+            done(&rig.state())
+                || worktree.join(format!(".fake-committed-{next}")).exists()
+                || (worktree.join(".fake-runs").exists() && gated < 20 && next_is_over(&worktree, next))
+        })
+        .await;
         if worktree.join(format!(".fake-committed-{next}")).exists() {
             let reply = crate::client::Connection::connect(&rig.home.socket_file())
                 .await
@@ -98,13 +104,12 @@ pub(super) async fn gate_every_run(
                 .await
                 .unwrap();
             assert!(matches!(reply, Reply::GateRecorded { .. }), "{reply:?}");
-            std::fs::write(worktree.join(format!(".fake-gate-done-{next}")), "").unwrap();
+            std::fs::write(worktree.join(format!(".fake-gate-done-{next}")), "done\n").unwrap();
             gated = next;
         } else if worktree.join(".fake-runs").exists() && gated < 20 && next_is_over(&worktree, next) {
             // A run that did not commit has no gate to wait for: the next run is the one that may.
             gated = next;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 }
 
@@ -551,7 +556,7 @@ async fn a_no_merge_round_is_told_to_its_approval_and_hand_over_and_the_human_me
 
     assert!(text.contains("approved and handed to the human (--no-merge)"), "{text}");
     assert!(text.contains("closed: approved"), "{text}");
-    assert!(text.contains("merged (the merge commit was not recorded)"), "{text}");
+    assert!(text.contains("pull request #1 merged as "), "{text}");
     golden("story-no-merge.txt", &Normalized::of(&rig, &text, &json));
 }
 

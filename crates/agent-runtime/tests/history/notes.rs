@@ -3,7 +3,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use agent_core::history::{EventKind, HistoryEvent, Record, RoundOpening, RunStart};
+use agent_core::history::{EventKind, EventRecord, HistoryEvent, Record, RoundOpening, RunStart};
+use agent_core::state::{GateOutcome, GateRecord, GateResult, GateTree};
 use agent_runtime::history::{Noting, Reader, RecordKind, Store, WriteError};
 use rusqlite::ffi;
 
@@ -53,8 +54,8 @@ fn lost(batches: &Arc<Mutex<Vec<Vec<Record>>>>) -> Vec<(String, String, String, 
         .filter_map(|record| match record {
             Record::Event(event) => match &event.event {
                 HistoryEvent::Lost { what, cause, .. } => Some((
-                    what.clone(),
-                    cause.clone(),
+                    what.to_string(),
+                    cause.to_string(),
                     event.team.to_string(),
                     event.rounds.iter().map(ToString::to_string).collect(),
                 )),
@@ -183,11 +184,174 @@ fn a_run_the_database_refused_is_noted_in_a_real_history_and_read_back_in_the_st
         })
         .collect();
     assert_eq!(notes.len(), 1, "{read:?}");
-    let HistoryEvent::Lost { what, cause, detail } = &notes[0].0.event else {
+    let HistoryEvent::Lost {
+        what, cause, detail, ..
+    } = &notes[0].0.event
+    else {
         panic!("not a note")
     };
     assert_eq!((what.as_str(), cause.as_str()), ("run", "write_refused"));
     assert_ne!(detail, "");
     assert_eq!(notes[0].1, &[world.rounds[0].round.clone()]);
     assert_eq!(notes[0].0.at, bad.at.max(at(0, 0)));
+}
+
+/// A real store whose chosen call fails with `SQLITE_FULL`.
+struct FailOn<S> {
+    /// The real store.
+    inner: S,
+    /// How many calls there were.
+    calls: usize,
+    /// The call that fails.
+    failing: usize,
+}
+
+impl<S: Store> Store for FailOn<S> {
+    fn write(&mut self, records: &[Record]) -> Result<(), WriteError> {
+        let call = self.calls;
+        self.calls += 1;
+        if call == self.failing {
+            return Err(WriteError::Sqlite {
+                record: RecordKind::Event,
+                source: rusqlite::Error::SqliteFailure(ffi::Error::new(ffi::SQLITE_FULL), None),
+            });
+        }
+        self.inner.write(records)
+    }
+}
+
+#[test]
+fn a_gate_event_without_rounds_that_fails_to_write_is_noted_in_the_rounds_of_its_tasks_latest_run() {
+    let (_dir, path, db) = database();
+    let mut store = Noting::new(FailOn {
+        inner: db,
+        calls: 0,
+        failing: 4,
+    });
+    let world = complete(6);
+    store.write(&[Record::Team(Box::new(world.team.clone()))]).unwrap();
+    let first_round = world.rounds[0].round.clone();
+    let mut extra_opening = world.rounds[0].clone();
+    extra_opening.round = "round-20261118-110640-r002".parse().unwrap();
+    let second_round = extra_opening.round.clone();
+    store
+        .write(&[
+            Record::Round(Box::new(world.rounds[0].clone())),
+            Record::Round(Box::new(extra_opening)),
+        ])
+        .unwrap();
+    let mut first_run = world.runs[0].start.clone();
+    first_run.at = at(1900, 0);
+    first_run.rounds = vec![first_round.clone()];
+    store.write(&[Record::Run(Box::new(first_run.clone()))]).unwrap();
+    let mut second_run = world.runs[1 % world.runs.len()].start.clone();
+    second_run.run = "run-20261118-110640-r002".parse().unwrap();
+    second_run.task = first_run.task.clone();
+    second_run.at = at(1950, 0);
+    second_run.rounds = vec![second_round.clone()];
+    store.write(&[Record::Run(Box::new(second_run.clone()))]).unwrap();
+
+    let gate = Record::Event(Box::new(EventRecord {
+        at: at(2000, 0),
+        team: world.team.team.clone(),
+        rounds: Vec::new(),
+        event: HistoryEvent::Gate {
+            task: first_run.task,
+            started_at: at(1990, 0),
+            record: GateRecord {
+                tree: GateTree::Clean,
+                result: GateResult {
+                    head: "1".repeat(40).parse().unwrap(),
+                    finished_at: at(2000, 0),
+                    outcome: GateOutcome::Passed,
+                    log: "/tmp/gate-1.log".parse().unwrap(),
+                },
+            },
+        },
+    }));
+    assert!(store.write(&[gate]).is_err());
+    store
+        .write(&[Record::Event(Box::new(EventRecord {
+            at: at(2001, 0),
+            team: world.team.team.clone(),
+            rounds: Vec::new(),
+            event: HistoryEvent::TeamEnded {},
+        }))])
+        .unwrap();
+
+    let reader = Reader::open(&path).unwrap();
+    let in_first = reader.round_records(&first_round).unwrap();
+    assert!(
+        !in_first
+            .iter()
+            .any(|stored| matches!(&stored.record, Record::Event(event) if event.event.kind() == EventKind::Lost)),
+        "{in_first:?}"
+    );
+    let read = reader.round_records(&second_round).unwrap();
+    let notes: Vec<_> = read
+        .iter()
+        .filter_map(|stored| match &stored.record {
+            Record::Event(event) if event.event.kind() == EventKind::Lost => Some((event, &stored.rounds)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notes.len(), 1, "{read:?}");
+    let HistoryEvent::Lost { what, cause, .. } = &notes[0].0.event else {
+        panic!("not a note");
+    };
+    assert_eq!((what.as_str(), cause.as_str()), ("gate", "write_disk_full"));
+    assert_eq!(notes[0].1, &[second_round]);
+}
+
+#[test]
+fn a_loss_note_redacts_configured_secrets_from_its_error_detail() {
+    struct SecretErrorStore {
+        written: Arc<Mutex<Vec<Vec<Record>>>>,
+        calls: usize,
+    }
+    impl Store for SecretErrorStore {
+        fn write(&mut self, records: &[Record]) -> Result<(), WriteError> {
+            let call = self.calls;
+            self.calls += 1;
+            if call == 1 {
+                return Err(WriteError::Rule {
+                    record: RecordKind::Step,
+                    rule: "failed while writing ghp_secret_marker_999 to disk",
+                });
+            }
+            self.written.lock().unwrap().push(records.to_vec());
+            Ok(())
+        }
+    }
+
+    let (run, first, second) = run_and_step(7);
+    let written = Arc::new(Mutex::new(Vec::new()));
+    let secrets = agent_core::config::Secrets::parse("github_token = \"ghp_secret_marker_999\"\n", 0o600).unwrap();
+    let mut store = Noting::with_secrets(
+        SecretErrorStore {
+            written: Arc::clone(&written),
+            calls: 0,
+        },
+        secrets,
+    );
+    store.write(&[Record::Run(Box::new(run))]).unwrap();
+    store.write(std::slice::from_ref(&first)).unwrap_err();
+    store.write(std::slice::from_ref(&second)).unwrap();
+
+    let details: Vec<String> = written
+        .lock()
+        .unwrap()
+        .iter()
+        .flatten()
+        .filter_map(|record| match record {
+            Record::Event(event) => match &event.event {
+                HistoryEvent::Lost { detail, .. } => Some(detail.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(details.len(), 1);
+    assert!(details[0].contains("[REDACTED]"), "{details:?}");
+    assert!(!details[0].contains("ghp_secret_marker_999"), "{details:?}");
 }

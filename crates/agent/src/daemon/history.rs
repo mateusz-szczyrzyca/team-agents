@@ -57,7 +57,11 @@ pub(super) async fn open(settings: &Settings, home: &Home) -> Opened {
         reporter: Arc::clone(&reporter),
         capacity: DEFAULT_QUEUE,
     };
-    match History::start_with_secrets(Noting::new(database), setup, settings.secrets.clone()) {
+    match History::start_with_secrets(
+        Noting::with_secrets(database, settings.secrets.clone()),
+        setup,
+        settings.secrets.clone(),
+    ) {
         Ok(started) => Opened {
             history: started.history,
             writer: Some(started.writer),

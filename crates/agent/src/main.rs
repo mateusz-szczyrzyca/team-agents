@@ -611,8 +611,27 @@ async fn execute_steer(environment: &Environment, steer: Steer, out: &mut impl W
 /// # Errors
 /// [`CommandError`].
 fn execute_log(environment: &Environment, args: LogArgs, out: &mut impl Write) -> Result<(), CommandError> {
+    use crate::commands::log::Format;
+    use agent_core::story::{PromptView, StepView, StoryOptions};
+
     let home = environment.home()?;
-    let request = LogRequest::new(args.round, args.team, args.prompts, args.no_steps, args.json)?;
+    let format = if args.json {
+        Format::Json
+    } else {
+        Format::Text(StoryOptions {
+            prompts: if args.prompts {
+                PromptView::Whole
+            } else {
+                PromptView::Preview
+            },
+            steps: if args.no_steps {
+                StepView::LeftOut
+            } else {
+                StepView::Listed
+            },
+        })
+    };
+    let request = LogRequest::new(args.round, args.team, format)?;
     log(&home.history_file(), &request, out)?;
     Ok(())
 }

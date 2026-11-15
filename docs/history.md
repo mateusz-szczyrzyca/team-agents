@@ -65,7 +65,9 @@ among `drawn_among`: the investigators of the team, or when it has none every ag
 ## The file
 
 `history.db` is a SQLite 3 database (3.54, built into the binary: `rusqlite` with `bundled`). It is **append only**: the daemon
-inserts and never updates or deletes a row (item 8.7 decides what is deleted, and when). Its pragmas:
+inserts and never deletes a row (item 8.7 decides what is deleted, and when), and the only column it ever updates is
+`history_records.at` of a `changes` row when its `run_ends` row is written after it (`run_changes` has no timestamp of its own,
+so its ledger row starts with `runs.at` and takes `run_ends.at` once the end is recorded). Its pragmas:
 
 | Pragma | Value | Why |
 |---|---|---|
@@ -337,8 +339,8 @@ The key of each table is an index too: `WITHOUT ROWID` tables are stored in the 
 
 An event is the payload of a row of the ledger: a JSON object whose `event` member is the `kind` of the row. The payload
 is a format that old data must read: a name or a field of one is never changed, only added. The time of the record is
-the time of the happening, the team is the team, and the rounds are the rounds the event is about (none for the end of
-a team, which belongs to the team).
+the time of the happening, the team is the team, and the rounds are the rounds the event is about (`team_ended` is
+linked to every round of its team; a team-wide control or loss note when no round applies has none).
 
 | `kind` | When | Fields of the payload | `key` |
 |---|---|---|---|
@@ -347,20 +349,20 @@ a team, which belongs to the team).
 | `pull_opened` | a pull request was opened | `number`, `branch`, `head`, `title`, `body` whole | `pr N` |
 | `pull_pushed` | the branch was pushed | `pr`, `head` | `pr N head H` |
 | `pull_ready` | the pull request was marked ready | `pr` | `pr N` |
-| `review_asked` | a reviewer was asked | `pr`, `pass` (`0` is the first review), `head`, `reviewer`, `task` | `pr N pass P reviewer R` |
+| `review_asked` | a reviewer was asked | `pr`, `pass` (`0` is the first review), `head`, `reviewer`, `task`, optional `among` (the draw candidates) | `pr N pass P reviewer R` |
 | `review_submitted` | a reviewer submitted | `pr`, `pass`, `reviewer`, `task`, `verdict`, `report` whole | `pr N pass P reviewer R` |
 | `fix_pass_started` | the reviews asked for changes | `pr`, `pass` (from 1), `of`, `findings` whole | `pr N fix pass P` |
 | `pull_approved` | both reviews approved | `pr` | `pr N` |
 | `pull_merged` | the pull request was merged | `pr`, `commit` (`null` when the remote did not say) | `pr N` |
 | `pull_handed_over` | an approved pull request was left to the human (`--no-merge`) | `pr` | `pr N` |
-| `pull_closed` | the pull request was closed without a merge | `pr` | `pr N` |
+| `pull_closed` | an approved pull request was seen closed without a merge while merging or watching `--no-merge` | `pr` | `pr N` |
 | `question_asked` | a task asked the human | `task`, `number`, `text` whole | `task T questions N` |
 | `question_answered` | the human answered | `task`, `number`, `text` whole (every verdict), `via` | `task T questions N` |
 | `controlled` | the human controlled a task or a team | `action`, `target`, `by`, `tasks` reached | — |
 | `notified` | a notification was sent | `task`, `title`, `body` | — |
 | `round_closed` | a round closed | `round`, `end` | `round R` |
 | `team_ended` | a team ended | — | `team` |
-| `lost` | the database refused a record and could be written to again | `what` (the `kind` of the missing record), `cause` (as the writer reports it, `write_disk_full`, ...), `detail` | — |
+| `lost` | a record was refused by the database or could not be captured (starting head, changes, gate, questions file, event clock) while the history could be written to | `what` (the `kind` of the missing record), `cause` (`write_disk_full`, `capture_head`, `capture_changes`, `capture_gate`, `capture_questions`, `capture_clock`, ...), `detail`, optional `task` | — |
 
 Free texts (`issues`, `title`, `body`, `report`, `findings`, `text`, `detail`) are cut at the limit and redacted like every text of
 the history ([What is never in it](#what-is-never-in-it)); `cut` names the fields cut. The review `pass` of the payload
@@ -402,14 +404,15 @@ history: not written: cannot open the history database "/home/you/agents/history
 | the daemon is killed (`SIGKILL`) | what was queued is lost; the file opens, passes `PRAGMA integrity_check`, holds whole records only (a record or batch is one transaction); the next daemon records the end of the runs it finds going |
 
 **Noting what is missing.** The count says how many records were lost, not where the gap is. A record the database refuses
-when it is written alone (the writer tries the records of a refused batch one by one) is noted: the next write that succeeds
-also writes a `lost` event for it, with the kind of the missing record, the cause, what went wrong, and the team and rounds it
-belonged to — those of its run, when the writer saw the run start. A story prints the note in the place of the record. The
-note is a best effort: a record of a run the writer never saw start has no place to be noted, a record dropped because the
-queue was full or held a credential is counted and not noted, a note that cannot be written waits (at most 256 of them), and
-what a history that cannot be written at all loses is not noted either — a story then says what it can see: a run that ended
-with no `changes: ...` says `changes: not recorded`, a launch whose commit could not be read says `unknown (git could not
-say)`, and a round with no pull request says so.
+when it is written alone (the writer tries the records of a refused batch one by one) or that could not be captured while the
+history is writable (starting head, changes, gate, questions file, event clock) is noted: the writer records a `lost` event for it,
+with the kind of the missing record, the cause, what went wrong, and the team and rounds it belonged to — those of its run, when the
+writer saw the run start. A story prints the note in the place of the record (for `capture_head` and `changes`, inline on the run's
+launch and `changes:` lines with the cause and detail). The note is a best effort: a record of a run the writer never saw start has
+no place to be noted, a record dropped because the queue was full or held a credential is counted and not noted, a note that cannot
+be written waits (at most 256 of them), and what a history that cannot be written at all loses is not noted either — a story then
+says what it can see: a run that ended with no `changes: ...` and no loss note says `changes: not recorded`, a launch whose commit
+could not be read and has no loss note says `unknown (git could not say)`, and a round with no pull request says so.
 
 A history that starts after its team (a deleted `history.db`) loses the records that hang on a row it does not have — the steps
 of a run that started before — and counts them.
@@ -537,11 +540,14 @@ A run with no row in `run_ends` is going — or the daemon was killed before it 
 snapshot — never a record the writer is in the middle of:
 
 `team`, `rounds_of_team`, `round`, `runs_of_team`, `runs_of_round`, `run` (each with its start, launch and end), `steps`,
-`changes`, `prompts_of_round` and `schema` (what `docs/history.schema.sql` pins), and `team_records` and `round_records`: every
-record of a team, or of a round with the start of its team, as a `SequencedRecord` in the order it was written — what a story
-is made of. A round no record is linked to has none.
+`changes`, `prompts_of_round` and `schema` (what `docs/history.schema.sql` pins). Every record returned by these table queries
+is wrapped in `Stored<T>`: the value and the set of its fields that were cut.
 
-Every answer is a `Stored<T>`: the record and the set of its fields that were cut. Every row is read through the checks of
+For stories and `--json`, `team_records` and `round_records` return `Vec<SequencedRecord>`: every record of a team, or of a
+round together with the start of its team, in the order it was written, each `SequencedRecord` carrying its `sequence`, `at`,
+`team`, `rounds`, `record` and `cut`. A round no record is linked to has none.
+
+Every row is read through the checks of
 its types and the rules of its record — an ID that is not an ID, a step of a kind that lacks its text, a run that ends before
 it starts, a `cut` that names no field — and a row that breaks one is `ReadError::Value` with the table and the column. A
 file whose version is newer than the build reads is `ReadError::Newer`; one no daemon has written to, `ReadError::Empty`.

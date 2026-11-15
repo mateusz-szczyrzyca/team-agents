@@ -8,7 +8,7 @@ mod story_world;
 
 #[cfg(test)]
 mod story_text {
-    use agent_core::history::{Cut, HistoryEvent, MaxTextBytes, SequencedRecord};
+    use agent_core::history::{Cut, HistoryEvent, LostCause, LostKind, MaxTextBytes, RecordKind, SequencedRecord};
     use agent_core::protocol::{Client, ControlAction, Target};
     use agent_core::state::{AnsweredVia, GateOutcome, GateRecord, GateResult, GateTree};
     use agent_core::story::{PromptView, Selection, StepView, StoryOptions, render};
@@ -371,8 +371,9 @@ mod story_text {
             10,
             &[round(1)],
             HistoryEvent::Lost {
-                what: "step".to_owned(),
-                cause: "write_disk_full".to_owned(),
+                task: None,
+                what: LostKind::Record(RecordKind::Step),
+                cause: LostCause::WriteDiskFull,
                 detail: "the disk is full — zażółć".to_owned(),
             },
         );
@@ -403,5 +404,116 @@ mod story_text {
 
         assert!(text.contains("changes: not recorded\n"), "{text}");
         assert!(!text.contains("changes: head"), "{text}");
+    }
+
+    #[test]
+    fn an_outside_reviewer_is_listed_under_agents_with_the_candidates_it_was_drawn_from() {
+        let text = story(&solo(), PREVIEW);
+
+        assert!(
+            text.contains("3. inv-c — reviewer — drawn at random among inv-c, inv-d\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_story_of_a_team_orders_team_wide_runs_before_team_ended_and_renders_team_ended_only_once() {
+        let mut written = Written::default();
+        written.team(&team(1), 0);
+        written.round(&team(1), &round(1), 1);
+        written.round(&team(1), &round(2), 10);
+        written.run(&team(1), &[round(1)], 1, 2, "round one", 0);
+        written.run(&team(1), &[round(2)], 2, 11, "round two", 0);
+        written.run(&team(1), &[], 3, 20, "team run", 0);
+        written.event(&team(1), 30, &[round(1), round(2)], HistoryEvent::TeamEnded {});
+
+        let text = render(&written.records, &Selection::Team(team(1)), PREVIEW);
+
+        assert_eq!(text.matches("team ended\n").count(), 1, "{text}");
+        assert!(
+            place(&text, "Team events") < place(&text, &format!("run {}:", run(3))),
+            "{text}"
+        );
+        assert!(
+            place(&text, &format!("run {}:", run(3))) < place(&text, "team ended\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_notification_whose_title_already_names_the_task_does_not_repeat_the_task_in_parentheses() {
+        let mut written = Written::default();
+        written.team(&team(1), 0);
+        written.round(&team(1), &round(1), 1);
+        let id = task(1);
+        written.event(
+            &team(1),
+            10,
+            &[round(1)],
+            HistoryEvent::Notified {
+                task: Some(id.clone()),
+                title: format!("Agent dev-1 has questions (task {id})"),
+                body: "Please answer.".to_owned(),
+            },
+        );
+
+        let text = story(&written.records, PREVIEW);
+
+        assert!(
+            text.contains(&format!("notification sent: Agent dev-1 has questions (task {id})\n")),
+            "{text}"
+        );
+        assert!(!text.contains(&format!("(task {id}) (task {id})")), "{text}");
+    }
+
+    #[test]
+    fn a_run_whose_head_and_changes_could_not_be_captured_tells_why_in_their_places() {
+        let mut written = Written::default();
+        written.team(&team(1), 0);
+        written.round(&team(1), &round(1), 1);
+        written.run(&team(1), &[round(1)], 1, 2, "work", 0);
+        written
+            .records
+            .retain(|r| !matches!(r.record, agent_core::history::Record::Changes(_)));
+        for record in &mut written.records {
+            if let agent_core::history::Record::Launch(launch) = &mut record.record {
+                launch.head = None;
+            }
+        }
+        written.event(
+            &team(1),
+            3,
+            &[round(1)],
+            HistoryEvent::Lost {
+                task: Some(task(1)),
+                what: LostKind::Record(RecordKind::Launch),
+                cause: LostCause::CaptureHead,
+                detail: "git rev-parse failed".to_owned(),
+            },
+        );
+        written.event(
+            &team(1),
+            12,
+            &[round(1)],
+            HistoryEvent::Lost {
+                task: Some(task(1)),
+                what: LostKind::Record(RecordKind::Changes),
+                cause: LostCause::CaptureChanges,
+                detail: "git status failed".to_owned(),
+            },
+        );
+
+        let text = story(&written.records, PREVIEW);
+
+        assert!(
+            text.contains("at commit unknown (capture_head: git rev-parse failed)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("changes: not recorded (capture_changes: git status failed)\n"),
+            "{text}"
+        );
+        assert!(!text.contains("a launch record is missing"), "{text}");
+        assert!(!text.contains("a changes record is missing"), "{text}");
     }
 }

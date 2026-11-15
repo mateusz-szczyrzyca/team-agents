@@ -9,46 +9,24 @@ use crate::cli::ActivityEvent;
 use crate::config::{EnvName, ModelName};
 use crate::decide::checks::{Change, FileChange, Lines};
 use crate::history::{
-    EndKind, HistoryEvent, HowChosen, Launch, PlanEntry, Record, RoundOpening, RoundSubject, RunChanges, RunEndRecord,
-    RunSession, RunStart, RunWhy, SequencedRecord, Step, StepKind, TeamStart,
+    EndKind, HistoryEvent, HowChosen, Launch, PlanEntry, Record, RecordKind, RoundOpening, RoundSubject, RunChanges,
+    RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord, Step, StepKind, TeamStart,
 };
 use crate::ids::{AgentName, RoundId, RunId};
 use crate::protocol::Client;
 use crate::state::{CommitId, RunEnd, SessionId};
 
-/// The keywords of the records that have tables of their own, as the ledger keeps them.
-#[derive(Debug, Clone, Copy, strum::Display)]
-#[strum(serialize_all = "snake_case")]
-enum PlainKind {
-    /// A team starting.
-    Team,
-    /// A round opening.
-    Round,
-    /// A run starting.
-    Run,
-    /// The process of a run.
-    Launch,
-    /// A step.
-    Step,
-    /// A run ending.
-    RunEnd,
-    /// What a run changed.
-    Changes,
-    /// A session observed.
-    Session,
-}
-
 /// The record as one JSON object.
 pub(super) fn record_json(stored: &SequencedRecord) -> Value {
     let (kind, record) = match &stored.record {
-        Record::Team(team) => (PlainKind::Team.to_string(), team_json(team)),
-        Record::Round(round) => (PlainKind::Round.to_string(), round_json(round)),
-        Record::Run(run) => (PlainKind::Run.to_string(), run_json(run)),
-        Record::Launch(launch) => (PlainKind::Launch.to_string(), launch_json(launch)),
-        Record::Step(step) => (PlainKind::Step.to_string(), step_json(step)),
-        Record::RunEnd(end) => (PlainKind::RunEnd.to_string(), end_json(end)),
-        Record::Changes(changes) => (PlainKind::Changes.to_string(), changes_json(changes)),
-        Record::Session(session) => (PlainKind::Session.to_string(), session_json(session)),
+        Record::Team(team) => (RecordKind::Team.to_string(), team_json(team)),
+        Record::Round(round) => (RecordKind::Round.to_string(), round_json(round)),
+        Record::Run(run) => (RecordKind::Run.to_string(), run_json(run)),
+        Record::Launch(launch) => (RecordKind::Launch.to_string(), launch_json(launch)),
+        Record::Step(step) => (RecordKind::Step.to_string(), step_json(step)),
+        Record::RunEnd(end) => (RecordKind::RunEnd.to_string(), end_json(end)),
+        Record::Changes(changes) => (RecordKind::Changes.to_string(), changes_json(changes)),
+        Record::Session(session) => (RecordKind::Session.to_string(), session_json(session)),
         Record::Event(event) => (event.event.kind().to_string(), event_json(&event.event)),
     };
     json!({
@@ -99,25 +77,13 @@ fn entry_json(entry: &PlanEntry) -> Value {
 
 fn round_json(round: &RoundOpening) -> Value {
     let (item, brief) = match &round.subject {
-        RoundSubject::Item(item) => (
-            json!({
-                "item": item.item.to_string(),
-                "title": item.title,
-                "description": item.description,
-                "expected_result": item.expected_result,
-                "checks": item.checks,
-            }),
+        RoundSubject::Item(i) => (
+            json!({"item": i.item.to_string(), "title": i.title, "description": i.description, "expected_result": i.expected_result, "checks": i.checks}),
             Value::Null,
         ),
         RoundSubject::Brief(brief) => (Value::Null, Value::String(brief.clone())),
     };
-    json!({
-        "round": round.round.as_str(),
-        "team": round.team.as_str(),
-        "at": round.at.to_string(),
-        "item": item,
-        "brief": brief,
-    })
+    json!({"round": round.round.as_str(), "team": round.team.as_str(), "at": round.at.to_string(), "item": item, "brief": brief})
 }
 
 fn why_json(why: &RunWhy) -> Value {
@@ -139,17 +105,13 @@ fn why_json(why: &RunWhy) -> Value {
 }
 
 fn run_json(run: &RunStart) -> Value {
+    let agent = json!({"name": run.agent.name, "tier": run.agent.tier.to_string(), "cli": run.agent.cli.to_string(), "model": run.agent.model.as_ref().map(ModelName::as_str)});
     json!({
         "run": run.run.as_str(),
         "team": run.team.as_str(),
         "task": run.task.as_str(),
         "at": run.at.to_string(),
-        "agent": {
-            "name": run.agent.name,
-            "tier": run.agent.tier.to_string(),
-            "cli": run.agent.cli.to_string(),
-            "model": run.agent.model.as_ref().map(ModelName::as_str),
-        },
+        "agent": agent,
         "role": run.role.to_string(),
         "rounds": run.rounds.iter().map(RoundId::as_str).collect::<Vec<_>>(),
         "why": why_json(&run.why),
@@ -194,12 +156,7 @@ fn step_json(step: &Step) -> Value {
             json!({"kind": kind, "action": action.to_string(), "by": client_json(by)})
         }
     };
-    json!({
-        "run": step.run.as_str(),
-        "number": step.number.get(),
-        "at": step.at.to_string(),
-        "event": event,
-    })
+    json!({"run": step.run.as_str(), "number": step.number.get(), "at": step.at.to_string(), "event": event})
 }
 
 fn end_json(end: &RunEndRecord) -> Value {
@@ -212,12 +169,7 @@ fn end_json(end: &RunEndRecord) -> Value {
         }
         RunEnd::RateLimited | RunEnd::Hung | RunEnd::Stopped => json!({"kind": kind}),
     };
-    json!({
-        "run": end.run.as_str(),
-        "at": end.at.to_string(),
-        "end": how,
-        "final_message": end.final_message,
-    })
+    json!({"run": end.run.as_str(), "at": end.at.to_string(), "end": how, "final_message": end.final_message})
 }
 
 fn file_json(file: &FileChange) -> Value {
@@ -231,35 +183,26 @@ fn file_json(file: &FileChange) -> Value {
         Lines::Text { added, removed } => json!({"added": added, "removed": removed}),
         Lines::Binary => Value::Null,
     };
-    json!({
-        "path": file.path.as_str(),
-        "change": change,
-        "from": from,
-        "binary": matches!(file.lines, Lines::Binary),
-        "lines": lines,
-    })
+    let binary = matches!(file.lines, Lines::Binary);
+    json!({"path": file.path.as_str(), "change": change, "from": from, "binary": binary, "lines": lines})
 }
 
 fn changes_json(changes: &RunChanges) -> Value {
+    let commits: Vec<_> = changes
+        .commits
+        .iter()
+        .map(|c| json!({"id": c.id.as_str(), "subject": c.subject, "authored_at": c.authored_at.to_string()}))
+        .collect();
     json!({
         "run": changes.run.as_str(),
         "head_before": changes.head_before.as_ref().map(CommitId::as_str),
         "head_after": changes.head_after.as_ref().map(CommitId::as_str),
-        "commits": changes.commits.iter().map(|commit| json!({
-            "id": commit.id.as_str(),
-            "subject": commit.subject,
-            "authored_at": commit.authored_at.to_string(),
-        })).collect::<Vec<_>>(),
+        "commits": commits,
         "files": changes.files.iter().map(file_json).collect::<Vec<_>>(),
         "uncommitted": changes.uncommitted.iter().map(file_json).collect::<Vec<_>>(),
     })
 }
 
 fn session_json(session: &RunSession) -> Value {
-    json!({
-        "run": session.run.as_str(),
-        "number": session.number.get(),
-        "at": session.at.to_string(),
-        "session": session.session.as_str(),
-    })
+    json!({"run": session.run.as_str(), "number": session.number.get(), "at": session.at.to_string(), "session": session.session.as_str()})
 }

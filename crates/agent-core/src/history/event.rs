@@ -4,9 +4,12 @@
 //! An [`EventRecord`] is one such happening with its time, team and rounds. Its payload, a [`HistoryEvent`], is kept as
 //! JSON in the ledger of the history (`docs/history.md`, "Events"), so a variant is a format that old data must read.
 
+use std::fmt;
 use std::num::NonZeroU32;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString, IntoStaticStr, VariantArray, VariantNames};
 
 use crate::decide::round::AskReason;
 use crate::ids::{BranchName, InvestigatorName, RoundId, TaskId, TeamId};
@@ -15,7 +18,93 @@ use crate::protocol::{Client, ControlAction, Target};
 use crate::state::{AnsweredVia, CommitId, GateRecord, PrNumber, RoundEnd, Timestamp};
 use crate::status::ReviewVerdict;
 
-/// The keyword of a [`HistoryEvent`], as the ledger keeps it in its `kind` column.
+/// Which record a write was about, for the message of an error; for the records of a run and a team also the `kind` the
+/// ledger keeps them under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, IntoStaticStr, VariantNames)]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<RecordKind>)]
+pub enum RecordKind {
+    /// A team starting.
+    Team,
+    /// A round opening.
+    Round,
+    /// A run starting.
+    Run,
+    /// The process of a run starting.
+    Launch,
+    /// A session observed in a running CLI.
+    Session,
+    /// A step of a run.
+    Step,
+    /// A run ending.
+    RunEnd,
+    /// What a run changed.
+    Changes,
+    /// An event of a round: a gate, a pull request, a question and the like.
+    Event,
+}
+
+impl Keyword for RecordKind {
+    const WHAT: &'static str = "kind of record";
+}
+
+/// Which record is missing in [`HistoryEvent::Lost`], as the ledger names kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "&'static str")]
+pub enum LostKind {
+    /// A record with tables of its own (`team`, `round`, `run`, `launch`, `session`, `step`, `run_end`, `changes`).
+    Record(RecordKind),
+    /// An event (`gate`, `checked`, `pull_opened`, ...).
+    Event(EventKind),
+}
+
+impl LostKind {
+    /// The keyword as a static string slice.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Record(kind) => kind.into(),
+            Self::Event(kind) => kind.into(),
+        }
+    }
+}
+
+impl fmt::Display for LostKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<LostKind> for &'static str {
+    fn from(kind: LostKind) -> Self {
+        kind.as_str()
+    }
+}
+
+impl FromStr for LostKind {
+    type Err = UnknownKeyword;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match RecordKind::from_str(text) {
+            Ok(RecordKind::Event) => return Err(UnknownKeyword::of::<RecordKind>(text)),
+            Ok(kind) => return Ok(Self::Record(kind)),
+            Err(_) => {}
+        }
+        match EventKind::from_str(text)? {
+            EventKind::Lost => Err(UnknownKeyword::of::<EventKind>(text)),
+            kind => Ok(Self::Event(kind)),
+        }
+    }
+}
+
+impl TryFrom<String> for LostKind {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        Self::from_str(&text)
+    }
+}
+
+/// Why a record is missing in [`HistoryEvent::Lost`], as the writer or capture path reports the cause.
 #[derive(
     Debug,
     Clone,
@@ -23,12 +112,65 @@ use crate::status::ReviewVerdict;
     PartialEq,
     Eq,
     Hash,
-    strum::Display,
-    strum::EnumString,
-    strum::IntoStaticStr,
-    strum::VariantArray,
-    strum::VariantNames,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumString,
+    IntoStaticStr,
+    VariantArray,
+    VariantNames,
 )]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<LostCause>)]
+pub enum LostCause {
+    /// The writer queue was full.
+    QueueFull,
+    /// The history database or writer was unavailable.
+    Unavailable,
+    /// The disk was full.
+    WriteDiskFull,
+    /// The database was locked past the busy timeout.
+    WriteBusy,
+    /// The database or directory was read-only.
+    WriteReadOnly,
+    /// A filesystem I/O error occurred.
+    WriteIo,
+    /// The database was corrupt.
+    WriteCorrupt,
+    /// The database refused the record.
+    WriteRefused,
+    /// The record could not be encoded.
+    WriteEncoding,
+    /// Another SQLite error occurred.
+    WriteOther,
+    /// The launch head could not be read from git.
+    CaptureHead,
+    /// The run changes could not be read from git.
+    CaptureChanges,
+    /// The gate post-command state could not be captured.
+    CaptureGate,
+    /// A questions file could not be read.
+    CaptureQuestions,
+    /// The clock could not give a valid timestamp.
+    CaptureClock,
+    /// A configured secret occurred in a structured identity.
+    SecretIdentity,
+}
+
+impl Keyword for LostCause {
+    const WHAT: &'static str = "cause of a lost record";
+}
+
+impl LostCause {
+    /// The keyword as a static string slice.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+/// The keyword of a [`HistoryEvent`], as the ledger keeps it in its `kind` column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, IntoStaticStr, VariantArray, VariantNames)]
 #[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<EventKind>)]
 pub enum EventKind {
     /// [`HistoryEvent::Gate`].
@@ -158,6 +300,9 @@ pub enum HistoryEvent {
         reviewer: InvestigatorName,
         /// The reviewer's task.
         task: TaskId,
+        /// The free investigators outside the team that the reviewer was drawn among, in configuration order.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        among: Vec<InvestigatorName>,
     },
     /// A reviewer submitted a review.
     ReviewSubmitted {
@@ -258,10 +403,13 @@ pub enum HistoryEvent {
     TeamEnded {},
     /// A record the history could not write: the writer notes what is missing and why, when it can write again.
     Lost {
+        /// The task the missing record was for, when its rounds are resolved from the task's latest run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<TaskId>,
         /// The kind of the missing record, as the ledger names kinds (`step`, `run_end`, `pull_merged`, ...).
-        what: String,
+        what: LostKind,
         /// Why it is missing, as the writer reports the cause (`write_disk_full`, `write_refused`, ...).
-        cause: String,
+        cause: LostCause,
         /// What went wrong, in a line, with its causes.
         detail: String,
     },
@@ -274,7 +422,7 @@ pub struct EventRecord {
     pub at: Timestamp,
     /// The team.
     pub team: TeamId,
-    /// The rounds it belongs to, oldest first: empty for what is not about a round (a team ending).
+    /// The rounds it belongs to, oldest first: the daemon records `TeamEnded` with all the rounds of the team; empty when no round applies.
     pub rounds: Vec<RoundId>,
     /// What happened.
     pub event: HistoryEvent,
@@ -370,12 +518,24 @@ impl HistoryEvent {
     #[must_use]
     pub fn identities(&self) -> Vec<&str> {
         match self {
-            Self::Gate { task, record, .. } => vec![task.as_str(), record.result.head.as_str()],
+            Self::Gate { task, record, .. } => {
+                let mut found = vec![task.as_str(), record.result.head.as_str()];
+                found.extend(record.result.log.as_path().to_str());
+                found
+            }
             Self::Checked { head, .. } | Self::PullPushed { head, .. } => vec![head.as_str()],
             Self::PullOpened { branch, head, .. } => vec![branch.as_str(), head.as_str()],
             Self::ReviewAsked {
-                head, reviewer, task, ..
-            } => vec![head.as_str(), reviewer.as_str(), task.as_str()],
+                head,
+                reviewer,
+                task,
+                among,
+                ..
+            } => {
+                let mut found = vec![head.as_str(), reviewer.as_str(), task.as_str()];
+                found.extend(among.iter().map(InvestigatorName::as_str));
+                found
+            }
             Self::ReviewSubmitted { reviewer, task, .. } => vec![reviewer.as_str(), task.as_str()],
             Self::PullMerged { commit, .. } => commit.iter().map(CommitId::as_str).collect(),
             Self::QuestionAsked { task, .. } | Self::QuestionAnswered { task, .. } => vec![task.as_str()],
@@ -391,14 +551,13 @@ impl HistoryEvent {
                 found.extend(tasks.iter().map(TaskId::as_str));
                 found
             }
-            Self::Notified { task, .. } => task.iter().map(TaskId::as_str).collect(),
+            Self::Notified { task, .. } | Self::Lost { task, .. } => task.iter().map(TaskId::as_str).collect(),
             Self::RoundClosed { round, .. } => vec![round.as_str()],
             Self::PullReady { .. }
             | Self::FixPassStarted { .. }
             | Self::PullApproved { .. }
             | Self::PullHandedOver { .. }
             | Self::PullClosed { .. }
-            | Self::Lost { .. }
             | Self::TeamEnded {} => Vec::new(),
         }
     }

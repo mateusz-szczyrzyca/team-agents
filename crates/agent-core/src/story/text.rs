@@ -11,10 +11,10 @@ use crate::cli::ActivityEvent;
 use crate::decide::checks::{Change, FileChange, Lines};
 use crate::decide::round::AskReason;
 use crate::history::{
-    CheckOutcome, EventRecord, HistoryEvent, HowChosen, Launch, Record, RoundOpening, RoundSubject, RunChanges,
-    RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord, Step, TeamStart,
+    CheckOutcome, EventRecord, HistoryEvent, HowChosen, Launch, LostCause, LostKind, Record, RecordKind, RoundOpening,
+    RoundSubject, RunChanges, RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord, Step, TeamStart,
 };
-use crate::ids::{AgentName, RoundId, RunId, TaskId, TeamId};
+use crate::ids::{AgentName, InvestigatorName, RoundId, RunId, TaskId, TeamId};
 use crate::protocol::{Client, ControlAction, Target};
 use crate::state::{AnsweredVia, CommitId, RunEnd, Timestamp};
 
@@ -75,29 +75,32 @@ pub(super) fn render(chosen: &[&SequencedRecord], selection: &Selection, options
     });
     match (selection, team) {
         (Selection::Round(round), Some(team)) => {
-            round_part(&mut page, chosen, round, &team, options);
-            team_part(&mut page, start, false);
+            round_part(&mut page, chosen, round, &team);
+            team_part(&mut page, start, chosen, false);
             page.line(0, "Story");
             page.blank();
-            blocks(&mut page, &in_round(chosen, round), options);
-            no_pull_request(&mut page, &in_round(chosen, round));
+            let own = in_round(chosen, round, true);
+            blocks(&mut page, &own, options);
+            no_pull_request(&mut page, &own);
         }
         (Selection::Team(team), _) => {
             page.line(0, &format!("Team {team}"));
-            team_part(&mut page, start, true);
+            team_part(&mut page, start, chosen, true);
             for round in rounds_of(chosen) {
                 page.blank();
-                round_part(&mut page, chosen, &round, team, options);
+                round_part(&mut page, chosen, &round, team);
                 page.line(0, "Story");
                 page.blank();
-                let own = in_round(chosen, &round);
+                let own = in_round(chosen, &round, false);
                 blocks(&mut page, &own, options);
                 no_pull_request(&mut page, &own);
             }
             let alone: Vec<&SequencedRecord> = chosen
                 .iter()
                 .copied()
-                .filter(|record| record.rounds.is_empty() && !matches!(record.record, Record::Team(_)))
+                .filter(|record| {
+                    (record.rounds.is_empty() && !matches!(record.record, Record::Team(_))) || is_team_ended(record)
+                })
                 .collect();
             if !alone.is_empty() {
                 page.blank();
@@ -111,12 +114,24 @@ pub(super) fn render(chosen: &[&SequencedRecord], selection: &Selection, options
     page.text
 }
 
-/// The records that belong to `round` and tell what happened in it, not its opening.
-fn in_round<'a>(chosen: &[&'a SequencedRecord], round: &RoundId) -> Vec<&'a SequencedRecord> {
+/// Whether `record` is the end of the team.
+const fn is_team_ended(record: &SequencedRecord) -> bool {
+    matches!(
+        &record.record,
+        Record::Event(event) if matches!(event.event, HistoryEvent::TeamEnded {})
+    )
+}
+
+/// The records that belong to `round` and tell what happened in it, not its opening; `with_team_end` keeps the team end.
+fn in_round<'a>(chosen: &[&'a SequencedRecord], round: &RoundId, with_team_end: bool) -> Vec<&'a SequencedRecord> {
     chosen
         .iter()
         .copied()
-        .filter(|record| record.rounds.contains(round) && !matches!(record.record, Record::Round(_)))
+        .filter(|record| {
+            record.rounds.contains(round)
+                && !matches!(record.record, Record::Round(_))
+                && (with_team_end || !is_team_ended(record))
+        })
         .collect()
 }
 
@@ -141,7 +156,7 @@ fn rounds_of(chosen: &[&SequencedRecord]) -> Vec<RoundId> {
 }
 
 /// The heading of a round and its item in full.
-fn round_part(page: &mut Page, chosen: &[&SequencedRecord], round: &RoundId, team: &TeamId, _options: StoryOptions) {
+fn round_part(page: &mut Page, chosen: &[&SequencedRecord], round: &RoundId, team: &TeamId) {
     page.line(0, &format!("Round {round} of team {team}"));
     let opening = chosen.iter().find_map(|record| match &record.record {
         Record::Round(opening) if &opening.round == round => Some((*record, opening.as_ref())),
@@ -183,46 +198,53 @@ fn subject(page: &mut Page, opening: &RoundOpening) {
 }
 
 /// The start of the team and its agents; `with_list` adds the size of its task list.
-fn team_part(page: &mut Page, start: Option<(&SequencedRecord, &TeamStart)>, with_list: bool) {
+fn team_part(
+    page: &mut Page,
+    start: Option<(&SequencedRecord, &TeamStart)>,
+    chosen: &[&SequencedRecord],
+    with_list: bool,
+) {
     let Some((stored, start)) = start else {
         page.line(0, "(the start of the team was not recorded)");
         page.blank();
         return;
     };
+    let (at, repo, base, merge) = (start.at, &start.repo, start.base_branch.as_str(), start.merge);
     page.line(
         0,
-        &format!(
-            "Team started {}: repo {}, base branch {}, merge {}",
-            start.at,
-            start.repo,
-            start.base_branch.as_str(),
-            start.merge
-        ),
+        &format!("Team started {at}: repo {repo}, base branch {base}, merge {merge}"),
     );
     if with_list {
-        page.line(
-            0,
-            &format!(
-                "Task list: {} lines, {} bytes",
-                start.task_list.lines().count(),
-                start.task_list.len()
-            ),
-        );
+        let (lines, bytes) = (start.task_list.lines().count(), start.task_list.len());
+        page.line(0, &format!("Task list: {lines} lines, {bytes} bytes"));
     }
     page.cut_note(0, stored);
     page.blank();
     page.line(0, "Agents");
     for entry in &start.plan {
-        page.line(
-            0,
-            &format!(
-                "{}. {} — {} — {}",
-                entry.position,
-                entry.agent.as_str(),
-                entry.role,
-                how(&entry.how)
-            ),
-        );
+        let (pos, agent, role, chosen_how) = (entry.position, entry.agent.as_str(), entry.role, how(&entry.how));
+        page.line(0, &format!("{pos}. {agent} — {role} — {chosen_how}"));
+    }
+    let mut next: u32 = start
+        .plan
+        .last()
+        .map_or(1, |entry| entry.position.get().saturating_add(1));
+    let mut seen: Vec<&str> = Vec::new();
+    for record in chosen {
+        if let Record::Event(event) = &record.record
+            && let HistoryEvent::ReviewAsked { reviewer, among, .. } = &event.event
+            && !seen.contains(&reviewer.as_str())
+        {
+            seen.push(reviewer.as_str());
+            let names: Vec<&str> = among.iter().map(InvestigatorName::as_str).collect();
+            let how = if names.is_empty() {
+                "drawn at random".to_owned()
+            } else {
+                format!("drawn at random among {}", names.join(", "))
+            };
+            page.line(0, &format!("{next}. {} — reviewer — {how}", reviewer.as_str()));
+            next = next.saturating_add(1);
+        }
     }
     page.blank();
 }
@@ -243,10 +265,9 @@ fn how(how: &HowChosen) -> String {
 
 /// Says that a round has no pull request in the history, when it has none.
 fn no_pull_request(page: &mut Page, records: &[&SequencedRecord]) {
-    let has = records.iter().any(|record| match &record.record {
-        Record::Event(event) => is_pull_request(&event.event),
-        _ => false,
-    });
+    let has = records
+        .iter()
+        .any(|r| matches!(&r.record, Record::Event(e) if is_pull_request(&e.event)));
     if !has {
         page.blank();
         page.line(0, "no pull request recorded for this round");
@@ -255,27 +276,19 @@ fn no_pull_request(page: &mut Page, records: &[&SequencedRecord]) {
 
 /// Whether an event is about a pull request.
 const fn is_pull_request(event: &HistoryEvent) -> bool {
-    match event {
+    matches!(
+        event,
         HistoryEvent::PullOpened { .. }
-        | HistoryEvent::PullPushed { .. }
-        | HistoryEvent::PullReady { .. }
-        | HistoryEvent::ReviewAsked { .. }
-        | HistoryEvent::ReviewSubmitted { .. }
-        | HistoryEvent::FixPassStarted { .. }
-        | HistoryEvent::PullApproved { .. }
-        | HistoryEvent::PullMerged { .. }
-        | HistoryEvent::PullHandedOver { .. }
-        | HistoryEvent::PullClosed { .. } => true,
-        HistoryEvent::Gate { .. }
-        | HistoryEvent::Checked { .. }
-        | HistoryEvent::QuestionAsked { .. }
-        | HistoryEvent::QuestionAnswered { .. }
-        | HistoryEvent::Controlled { .. }
-        | HistoryEvent::Notified { .. }
-        | HistoryEvent::RoundClosed { .. }
-        | HistoryEvent::Lost { .. }
-        | HistoryEvent::TeamEnded {} => false,
-    }
+            | HistoryEvent::PullPushed { .. }
+            | HistoryEvent::PullReady { .. }
+            | HistoryEvent::ReviewAsked { .. }
+            | HistoryEvent::ReviewSubmitted { .. }
+            | HistoryEvent::FixPassStarted { .. }
+            | HistoryEvent::PullApproved { .. }
+            | HistoryEvent::PullMerged { .. }
+            | HistoryEvent::PullHandedOver { .. }
+            | HistoryEvent::PullClosed { .. }
+    )
 }
 
 /// Everything recorded about one run.
@@ -295,6 +308,10 @@ struct RunBlock<'a> {
     end: Option<(&'a SequencedRecord, &'a RunEndRecord)>,
     /// What it changed.
     changes: Option<&'a RunChanges>,
+    /// Why its starting commit could not be captured.
+    head_lost: Option<(&'a SequencedRecord, LostCause, &'a str)>,
+    /// Why its changes could not be captured or written.
+    changes_lost: Option<(&'a SequencedRecord, LostCause, &'a str)>,
 }
 
 /// One thing the story tells, at its place in time.
@@ -341,7 +358,9 @@ fn blocks(page: &mut Page, records: &[&SequencedRecord], options: StoryOptions) 
                     Record::Team(_) | Record::Round(_) | Record::Event(_) => {}
                 }
             }
-        } else if let Record::Event(event) = &stored.record {
+        } else if let Record::Event(event) = &stored.record
+            && !attach_run_loss(&mut runs, stored, &event.event)
+        {
             items.push(Item::Event(stored, event));
         }
     }
@@ -366,13 +385,11 @@ fn entry(page: &mut Page, at: Timestamp, text: &str) {
 fn run_block(page: &mut Page, block: &RunBlock<'_>, options: StoryOptions) {
     let Some((stored, start)) = block.start else {
         let run = block.run.map_or_else(String::new, ToString::to_string);
-        let at = block
-            .launch
-            .map(|(stored, _)| stored.at)
-            .or_else(|| block.end.map(|(stored, _)| stored.at));
+        let at = block.launch.map(|(s, _)| s.at).or_else(|| block.end.map(|(s, _)| s.at));
+        let missing = format!("run {run}: the start of the run was not recorded");
         match at {
-            Some(at) => entry(page, at, &format!("run {run}: the start of the run was not recorded")),
-            None => page.line(0, &format!("run {run}: the start of the run was not recorded")),
+            Some(at) => entry(page, at, &missing),
+            None => page.line(0, &missing),
         }
         run_rest(page, block, None, options);
         return;
@@ -381,29 +398,16 @@ fn run_block(page: &mut Page, block: &RunBlock<'_>, options: StoryOptions) {
         .agent
         .model
         .as_ref()
-        .map_or_else(String::new, |model| format!(", {model}"));
+        .map_or_else(String::new, |m| format!(", {m}"));
+    let (id, a, role, reason) = (&start.run, &start.agent, start.role, why(&start.why));
+    let (name, tier, cli) = (&a.name, a.tier, a.cli);
     entry(
         page,
         start.at,
-        &format!(
-            "run {}: {} ({}, {}{model}) as {}, because {}",
-            start.run,
-            start.agent.name,
-            start.agent.tier,
-            start.agent.cli,
-            start.role,
-            why(&start.why)
-        ),
+        &format!("run {id}: {name} ({tier}, {cli}{model}) as {role}, because {reason}"),
     );
-    page.line(
-        4,
-        &format!(
-            "task {}; worktree {}, branch {}",
-            start.task,
-            start.worktree.as_path().display(),
-            start.branch.as_str()
-        ),
-    );
+    let (task, wt, branch) = (&start.task, start.worktree.as_path().display(), start.branch.as_str());
+    page.line(4, &format!("task {task}; worktree {wt}, branch {branch}"));
     page.cut_note(4, stored);
     run_rest(page, block, Some(start), options);
 }
@@ -432,23 +436,23 @@ fn run_rest(page: &mut Page, block: &RunBlock<'_>, start: Option<&RunStart>, opt
     match (start, block.end) {
         (Some(start), Some((_, end))) => page.line(4, &took(start.at, end.at)),
         (None, Some(_)) => {}
-        (_, None) => page.line(
-            4,
-            "no end recorded (the run is going, or the daemon did not see it end)",
-        ),
+        (_, None) => {
+            let msg = "no end recorded (the run is going, or the daemon did not see it end)";
+            page.line(4, msg);
+        }
     }
     if let Some(start) = start {
         prompt(page, start, block, options);
     }
     if let Some((stored, launch)) = block.launch {
-        command(page, stored, launch, start);
+        command(page, stored, launch, start, block);
+    } else if let Some((lost, cause, detail)) = block.head_lost {
+        page.line(4, &format!("commit before launch: unknown ({cause}: {detail})"));
+        page.cut_note(4, lost);
     }
     steps(page, block, options);
-    for session in &block.sessions {
-        page.line(
-            4,
-            &format!("session {} observed at {}", session.session.as_str(), session.at),
-        );
+    for s in &block.sessions {
+        page.line(4, &format!("session {} observed at {}", s.session.as_str(), s.at));
     }
     if let Some((stored, end)) = block.end {
         page.line(4, &format!("ended: {}", run_end(&end.end)));
@@ -457,12 +461,51 @@ fn run_rest(page: &mut Page, block: &RunBlock<'_>, start: Option<&RunStart>, opt
         }
         page.cut_note(4, stored);
     }
-    match (block.changes, block.end) {
-        (Some(changes), _) => changed(page, changes),
+    match (block.changes, block.changes_lost, block.end) {
+        (Some(changes), _, _) => changed(page, changes),
+        (None, Some((lost, cause, detail)), _) => {
+            page.line(4, &format!("changes: not recorded ({cause}: {detail})"));
+            page.cut_note(4, lost);
+        }
         // A run that ended has a record of what it changed: the snapshot of it is what is missing.
-        (None, Some(_)) => page.line(4, "changes: not recorded"),
-        (None, None) => {}
+        (None, None, Some(_)) => page.line(4, "changes: not recorded"),
+        (None, None, None) => {}
     }
+}
+
+/// Attaches a task-scoped head or change loss note to its [`RunBlock`] when that run is present.
+fn attach_run_loss<'a>(runs: &mut [RunBlock<'a>], stored: &'a SequencedRecord, event: &'a HistoryEvent) -> bool {
+    let HistoryEvent::Lost {
+        task: Some(task),
+        what,
+        cause,
+        detail,
+    } = event
+    else {
+        return false;
+    };
+    let matches_task = |r: &&mut RunBlock<'a>| r.start.is_some_and(|(_, s)| &s.task == task);
+    if *cause == LostCause::CaptureHead
+        && let Some(run) = runs
+            .iter_mut()
+            .rev()
+            .filter(matches_task)
+            .find(|r| r.head_lost.is_none())
+    {
+        run.head_lost = Some((stored, *cause, detail));
+        return true;
+    }
+    if *what == LostKind::Record(RecordKind::Changes)
+        && let Some(run) = runs
+            .iter_mut()
+            .rev()
+            .filter(matches_task)
+            .find(|r| r.changes.is_none() && r.changes_lost.is_none())
+    {
+        run.changes_lost = Some((stored, *cause, detail));
+        return true;
+    }
+    false
 }
 
 /// How long a run took, in words; a clock that went back is said, not hidden.
@@ -504,36 +547,31 @@ fn prompt(page: &mut Page, start: &RunStart, block: &RunBlock<'_>, options: Stor
 }
 
 /// The command line a process was started with; an argument that is the prompt is shown as `<the prompt>`.
-fn command(page: &mut Page, stored: &SequencedRecord, launch: &Launch, start: Option<&RunStart>) {
-    let args: Vec<String> = launch
-        .args
-        .iter()
-        .map(|arg| match start {
-            Some(start) if !arg.is_empty() && *arg == start.prompt => "<the prompt>".to_owned(),
-            _ => quoted(arg),
-        })
-        .collect();
-    let mut words = vec![quoted(&launch.program)];
-    words.extend(args);
+fn command(page: &mut Page, stored: &SequencedRecord, launch: &Launch, start: Option<&RunStart>, block: &RunBlock<'_>) {
+    let args = launch.args.iter().map(|arg| match start {
+        Some(start) if !arg.is_empty() && *arg == start.prompt => "<the prompt>".to_owned(),
+        _ => quoted(arg),
+    });
+    let words: Vec<String> = std::iter::once(quoted(&launch.program)).chain(args).collect();
     page.line(4, &format!("command: {}", words.join(" ")));
     page.cut_note(4, stored);
-    let head = launch
-        .head
-        .as_ref()
-        .map_or_else(|| "unknown (git could not say)".to_owned(), short);
-    page.line(
-        4,
-        &format!(
-            "started {} in {}, at commit {head}{}",
-            launch.at,
-            launch.working_dir.as_path().display(),
-            if launch.prompt_in_file {
-                ", the prompt in a file"
-            } else {
-                ""
-            }
-        ),
+    let head = launch.head.as_ref().map_or_else(
+        || match block.head_lost {
+            Some((_, cause, detail)) => format!("unknown ({cause}: {detail})"),
+            None => "unknown (git could not say)".to_owned(),
+        },
+        short,
     );
+    let in_file = if launch.prompt_in_file {
+        ", the prompt in a file"
+    } else {
+        ""
+    };
+    let (at, dir) = (launch.at, launch.working_dir.as_path().display());
+    page.line(4, &format!("started {at} in {dir}, at commit {head}{in_file}"));
+    if let Some((lost, _, _)) = block.head_lost {
+        page.cut_note(4, lost);
+    }
 }
 
 /// `text` as a shell would need it written, when that differs.
@@ -566,17 +604,15 @@ fn steps(page: &mut Page, block: &RunBlock<'_>, options: StoryOptions) {
             page.line(4, &format!("steps ({}):", block.steps.len()));
             let mut listed: Vec<&(&SequencedRecord, &Step)> = block.steps.iter().collect();
             listed.sort_by_key(|(_, step)| step.number);
-            for (stored, step) in listed {
+            for (stored, s) in listed {
                 let cut: Vec<&str> = stored.cut.fields().collect();
                 let note = if cut.is_empty() {
                     String::new()
                 } else {
                     format!(" (cut: {})", cut.join(", "))
                 };
-                page.line(
-                    6,
-                    &format!("{}. {} {}{note}", step.number, step.at, step_text(&step.event)),
-                );
+                let (n, at, text) = (s.number, s.at, step_text(&s.event));
+                page.line(6, &format!("{n}. {at} {text}{note}"));
             }
         }
     }
@@ -627,14 +663,8 @@ fn run_end(end: &RunEnd) -> String {
 /// What a run changed: the heads, the commits, the files and what was left uncommitted.
 fn changed(page: &mut Page, changes: &RunChanges) {
     let head = |head: &Option<CommitId>| head.as_ref().map_or_else(|| "unknown".to_owned(), short);
-    page.line(
-        4,
-        &format!(
-            "changes: head {} → {}",
-            head(&changes.head_before),
-            head(&changes.head_after)
-        ),
-    );
+    let (before, after) = (head(&changes.head_before), head(&changes.head_after));
+    page.line(4, &format!("changes: head {before} → {after}"));
     for commit in &changes.commits {
         page.line(6, &format!("commit {} {}", short(&commit.id), commit.subject));
     }
@@ -652,11 +682,12 @@ fn file_text(file: &FileChange) -> String {
         Lines::Text { added, removed } => format!("(+{added} -{removed})"),
         Lines::Binary => "(binary)".to_owned(),
     };
+    let path = file.path.as_str();
     match &file.change {
-        Change::Added => format!("added {} {lines}", file.path.as_str()),
-        Change::Modified => format!("modified {} {lines}", file.path.as_str()),
-        Change::Deleted => format!("deleted {} {lines}", file.path.as_str()),
-        Change::Renamed { from } => format!("renamed {} → {} {lines}", from.as_str(), file.path.as_str()),
+        Change::Added => format!("added {path} {lines}"),
+        Change::Modified => format!("modified {path} {lines}"),
+        Change::Deleted => format!("deleted {path} {lines}"),
+        Change::Renamed { from } => format!("renamed {} → {path} {lines}", from.as_str()),
     }
 }
 
@@ -667,15 +698,14 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         HistoryEvent::Gate {
             task,
             started_at,
-            record: gate,
+            record: g,
         } => {
-            let log = gate.result.log.as_path().display();
-            let how = took(*started_at, gate.result.finished_at);
-            entry(
-                page,
-                at,
-                &format!("gate for task {task}: {} ({how}); output {log}", gate.summary()),
+            let (log, how, sum) = (
+                g.result.log.as_path().display(),
+                took(*started_at, g.result.finished_at),
+                g.summary(),
             );
+            entry(page, at, &format!("gate for task {task}: {sum} ({how}); output {log}"));
         }
         HistoryEvent::Checked {
             head, issues, outcome, ..
@@ -696,33 +726,30 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
             text,
             via,
         } => {
+            let via = channel(*via);
             entry(
                 page,
                 at,
-                &format!("task {task}: the human answered questions {number} ({})", channel(*via)),
+                &format!("task {task}: the human answered questions {number} ({via})"),
             );
             page.raw(2, "answered questions", text);
         }
         HistoryEvent::Notified { task, title, body } => {
-            let about = task.as_ref().map_or_else(String::new, |task| format!(" (task {task})"));
+            let about = match task {
+                Some(task) if !title.contains(task.as_str()) => format!(" (task {task})"),
+                _ => String::new(),
+            };
             entry(page, at, &format!("notification sent: {title}{about}"));
             page.raw(2, "notification", body);
         }
         HistoryEvent::RoundClosed { round, end } => entry(page, at, &format!("round {round} closed: {end}")),
         HistoryEvent::TeamEnded {} => entry(page, at, "team ended"),
-        HistoryEvent::Lost { what, cause, detail } => {
+        HistoryEvent::Lost {
+            what, cause, detail, ..
+        } => {
             entry(page, at, &format!("a {what} record is missing ({cause}): {detail}"));
         }
-        HistoryEvent::PullOpened { .. }
-        | HistoryEvent::PullPushed { .. }
-        | HistoryEvent::PullReady { .. }
-        | HistoryEvent::ReviewAsked { .. }
-        | HistoryEvent::ReviewSubmitted { .. }
-        | HistoryEvent::FixPassStarted { .. }
-        | HistoryEvent::PullApproved { .. }
-        | HistoryEvent::PullMerged { .. }
-        | HistoryEvent::PullHandedOver { .. }
-        | HistoryEvent::PullClosed { .. } => pull_request_event(page, at, &record.event),
+        other => pull_request_event(page, at, other),
     }
     page.cut_note(2, stored);
 }
@@ -730,15 +757,8 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
 /// The checks before a review found issues.
 fn checked(page: &mut Page, at: Timestamp, head: &CommitId, issues: &[String], outcome: &CheckOutcome) {
     let plural = if issues.len() == 1 { "issue" } else { "issues" };
-    entry(
-        page,
-        at,
-        &format!(
-            "checks before a review found {} {plural} at {}:",
-            issues.len(),
-            short(head)
-        ),
-    );
+    let (n, h) = (issues.len(), short(head));
+    entry(page, at, &format!("checks before a review found {n} {plural} at {h}:"));
     for issue in issues {
         page.line(2, &format!("- {issue}"));
     }
@@ -747,22 +767,14 @@ fn checked(page: &mut Page, at: Timestamp, head: &CommitId, issues: &[String], o
 
 /// The human used a control.
 fn controlled(page: &mut Page, at: Timestamp, action: ControlAction, target: &Target, by: &Client, tasks: &[TaskId]) {
-    let reached: Vec<String> = tasks.iter().map(|task| format!("task {task}")).collect();
-    let reached = if reached.is_empty() {
+    let list: Vec<String> = tasks.iter().map(|task| format!("task {task}")).collect();
+    let reached = if list.is_empty() {
         "no task".to_owned()
     } else {
-        reached.join(", ")
+        list.join(", ")
     };
-    entry(
-        page,
-        at,
-        &format!(
-            "the human {} {} ({}); reached {reached}",
-            control_verb(action),
-            target_text(target),
-            client(by)
-        ),
-    );
+    let (v, t, w) = (control_verb(action), target_text(target), client(by));
+    entry(page, at, &format!("the human {v} {t} ({w}); reached {reached}"));
 }
 
 /// An event of a pull request, from its opening to its end; any other event is not told here.
@@ -775,12 +787,8 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             title,
             body,
         } => {
-            let opened = format!(
-                "pull request #{number} opened: branch {} at {}",
-                branch.as_str(),
-                short(head)
-            );
-            entry(page, at, &opened);
+            let (b, h) = (branch.as_str(), short(head));
+            entry(page, at, &format!("pull request #{number} opened: branch {b} at {h}"));
             page.line(2, &format!("title: {title}"));
             page.raw(2, "pull request body", body);
         }
@@ -794,14 +802,13 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             head,
             reviewer,
             task,
+            ..
         } => {
-            let pass = pass.saturating_add(1);
-            let reviewer = reviewer.as_str();
-            let head = short(head);
+            let (p, r, h) = (pass.saturating_add(1), reviewer.as_str(), short(head));
             entry(
                 page,
                 at,
-                &format!("review pass {pass} of #{pr} asked of {reviewer} (task {task}) at {head}"),
+                &format!("review pass {p} of #{pr} asked of {r} (task {task}) at {h}"),
             );
         }
         HistoryEvent::ReviewSubmitted {
@@ -812,12 +819,8 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             report,
             ..
         } => {
-            let pass = pass.saturating_add(1);
-            entry(
-                page,
-                at,
-                &format!("review pass {pass} of #{pr} by {}: {verdict}", reviewer.as_str()),
-            );
+            let (p, r) = (pass.saturating_add(1), reviewer.as_str());
+            entry(page, at, &format!("review pass {p} of #{pr} by {r}: {verdict}"));
             page.raw(2, "review report", report);
         }
         HistoryEvent::FixPassStarted { pr, pass, of, findings } => {
@@ -825,23 +828,16 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             page.raw(2, "findings sent to the team", findings);
         }
         HistoryEvent::PullApproved { pr } => entry(page, at, &format!("pull request #{pr} approved by both reviews")),
-        HistoryEvent::PullMerged {
-            pr,
-            commit: Some(commit),
-        } => entry(page, at, &format!("pull request #{pr} merged as {}", short(commit))),
+        HistoryEvent::PullMerged { pr, commit: Some(c) } => {
+            entry(page, at, &format!("pull request #{pr} merged as {}", short(c)));
+        }
         HistoryEvent::PullMerged { pr, commit: None } => {
-            entry(
-                page,
-                at,
-                &format!("pull request #{pr} merged (the merge commit was not recorded)"),
-            );
+            let msg = format!("pull request #{pr} merged (the merge commit was not recorded)");
+            entry(page, at, &msg);
         }
         HistoryEvent::PullHandedOver { pr } => {
-            entry(
-                page,
-                at,
-                &format!("pull request #{pr} approved and handed to the human (--no-merge)"),
-            );
+            let msg = format!("pull request #{pr} approved and handed to the human (--no-merge)");
+            entry(page, at, &msg);
         }
         HistoryEvent::PullClosed { pr } => entry(page, at, &format!("pull request #{pr} closed without a merge")),
         HistoryEvent::Gate { .. }

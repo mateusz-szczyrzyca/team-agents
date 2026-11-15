@@ -1506,6 +1506,20 @@ mod github_client {
         assert_eq!(list.trusted.len(), 99);
         assert_eq!(server.requests().len(), 1);
     }
+
+    #[tokio::test]
+    async fn get_pull_request_decodes_merge_commit_sha_when_present() {
+        let mut body = pr_json(7);
+        body["state"] = json!("closed");
+        body["merged"] = json!(true);
+        body["merge_commit_sha"] = json!(OTHER_HEAD);
+        let server = FakeServer::always(reply(200, &body)).await.unwrap();
+
+        let pr = github(&server).get_pull_request(number(7)).await.unwrap();
+
+        assert_eq!(pr.state, PullState::Merged);
+        assert_eq!(pr.merge_commit_sha.as_ref().map(CommitId::as_str), Some(OTHER_HEAD));
+    }
 }
 
 #[cfg(test)]

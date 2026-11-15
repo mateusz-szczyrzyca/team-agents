@@ -885,8 +885,18 @@ impl Owner {
         });
         self.prepare_questions(task, &path, &loaded).await;
         // What the human sees is the file with the daemon's instructions in it.
-        if let Some(text) = self.questions_text(task, &path).await {
-            self.record_event(
+        if let Some(text) = self
+            .questions_text(
+                now,
+                &located.team,
+                task,
+                &path,
+                agent_core::history::EventKind::QuestionAsked,
+            )
+            .await
+        {
+            self.record_event_at(
+                now,
                 &located.team,
                 self.rounds_of_tasks(std::slice::from_ref(task)),
                 HistoryEvent::QuestionAsked {

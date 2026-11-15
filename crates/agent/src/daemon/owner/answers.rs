@@ -304,7 +304,16 @@ impl Owner {
         self.unwatch_task(task);
         self.commit(task, &open.located, now, events, None).await?;
         // The file keeps the answers: what the human answered, whole, is what it says now.
-        if let Some(text) = self.questions_text(task, &open.path).await {
+        if let Some(text) = self
+            .questions_text(
+                now,
+                &open.located.team,
+                task,
+                &open.path,
+                agent_core::history::EventKind::QuestionAnswered,
+            )
+            .await
+        {
             self.record_event_at(
                 now,
                 &open.located.team,

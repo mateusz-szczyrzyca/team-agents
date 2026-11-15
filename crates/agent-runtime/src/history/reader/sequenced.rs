@@ -4,14 +4,14 @@
 //! with the shape of the ledger, built from the same SQL as the migration that makes it, so a story reads an old file as
 //! it would read the file after the migration, and the file is not changed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use agent_core::history::{Cut, EventKind, EventRecord, HistoryEvent, Record, RunSession, SequencedRecord};
+use agent_core::history::{Cut, EventKind, EventRecord, HistoryEvent, Record, RunSession, RunStart, SequencedRecord};
 use agent_core::ids::{RoundId, RunId, TeamId};
 use agent_core::kinds::UnknownKeyword;
-use agent_core::state::SessionId;
-use rusqlite::{Connection, Transaction, params};
+use agent_core::state::{SessionId, Timestamp};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{
     ReadError, Row_, Stored, count, query, read_changes, read_end, read_launch, read_round, read_run_start, read_steps,
@@ -22,7 +22,7 @@ use crate::history::error::RecordKind;
 use crate::history::schema::{LEDGER_VERSION, SESSIONS_VERSION, ledger_links, ledger_records};
 
 /// The fields of an event's payload that can be cut.
-const EVENT_CUTS: &[&str] = &["issues", "title", "body", "report", "findings", "text"];
+const EVENT_CUTS: &[&str] = &["issues", "title", "body", "report", "findings", "text", "detail"];
 
 /// What a row of the ledger is of.
 enum LedgerKind {
@@ -157,15 +157,23 @@ fn decode_all(
             rounds: round.into_iter().collect(),
         });
     }
-    let mut steps = HashMap::new();
-    found.iter().map(|raw| decode(snapshot, raw, &mut steps)).collect()
+    let mut caches = Caches::default();
+    found.iter().map(|raw| decode(snapshot, raw, &mut caches)).collect()
 }
 
-/// The steps of the runs read so far, so that a run's steps are read once.
-type StepCache = HashMap<RunId, Vec<Stored<agent_core::history::Step>>>;
+/// Per-query caches used while decoding a sequence of ledger rows in linear time.
+#[derive(Default)]
+struct Caches {
+    /// The starts of the runs read so far.
+    runs: HashMap<RunId, Stored<RunStart>>,
+    /// The steps of the runs read so far, indexed by step number.
+    steps: HashMap<RunId, HashMap<u32, Stored<agent_core::history::Step>>>,
+    /// `(team, round)` pairs already verified to belong to `team`.
+    rounds: HashSet<(String, String)>,
+}
 
 /// The record a row of the ledger stands for.
-fn decode(snapshot: &Transaction<'_>, raw: &Raw, steps: &mut StepCache) -> Result<SequencedRecord, ReadError> {
+fn decode(snapshot: &Transaction<'_>, raw: &Raw, caches: &mut Caches) -> Result<SequencedRecord, ReadError> {
     let here = Row_::of("history_records", raw.sequence.to_string());
     let at = here.value("at", parse_time(&raw.at))?;
     let team = here.value("team", TeamId::from_str(&raw.team))?;
@@ -174,6 +182,7 @@ fn decode(snapshot: &Transaction<'_>, raw: &Raw, steps: &mut StepCache) -> Resul
         .iter()
         .map(|round| here.value("round", RoundId::from_str(round)))
         .collect::<Result<Vec<_>, _>>()?;
+    check_round_owners(snapshot, &here, &raw.team, &raw.rounds, &mut caches.rounds)?;
     let sequence = here.value("sequence", u64::try_from(raw.sequence))?;
     let kind = here.value("kind", LedgerKind::from_str(&raw.kind))?;
     let (record, cut) = match kind {
@@ -190,7 +199,7 @@ fn decode(snapshot: &Transaction<'_>, raw: &Raw, steps: &mut StepCache) -> Resul
         }
         LedgerKind::Record(kind) => {
             here.absent("payload", raw.payload.as_ref())?;
-            record_of(snapshot, &here, raw, kind, steps)?
+            record_of(snapshot, &here, (at, &team, &rounds), raw, kind, caches)?
         }
     };
     Ok(SequencedRecord {
@@ -203,12 +212,47 @@ fn decode(snapshot: &Transaction<'_>, raw: &Raw, steps: &mut StepCache) -> Resul
     })
 }
 
+/// Checks that none of `rounds` belongs to a team other than `team` in `rounds` or in the ledger.
+fn check_round_owners(
+    snapshot: &Transaction<'_>,
+    here: &Row_,
+    team: &str,
+    rounds: &[String],
+    checked: &mut HashSet<(String, String)>,
+) -> Result<(), ReadError> {
+    for round in rounds {
+        if !checked.insert((team.to_owned(), round.clone())) {
+            continue;
+        }
+        let foreign: Option<i64> = snapshot
+            .query_row(
+                "SELECT 1 FROM rounds WHERE round = ?1 AND team <> ?2 \
+                 UNION ALL \
+                 SELECT 1 FROM history_record_rounds AS l \
+                 JOIN history_records AS r ON r.sequence = l.sequence \
+                 WHERE l.round = ?1 AND r.team <> ?2 \
+                 LIMIT 1",
+                params![round, team],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(query("history_record_rounds"))?;
+        if foreign.is_some() {
+            return Err(here.rule("round", "a record is linked to a round of another team"));
+        }
+    }
+    Ok(())
+}
+
 /// The event in the payload of a row of `kind`.
 fn event_of(here: &Row_, raw: &Raw, kind: EventKind) -> Result<HistoryEvent, ReadError> {
     let payload = here.needed("payload", raw.payload.as_deref())?;
     let event: HistoryEvent = here.value("payload", serde_json::from_str(payload))?;
     if event.kind() != kind {
         return Err(here.rule("payload", "the payload is of another kind than the row"));
+    }
+    if raw.key != event.key() {
+        return Err(here.rule("key", "the key of the row does not match the event"));
     }
     Ok(event)
 }
@@ -218,65 +262,117 @@ fn missing(here: &Row_) -> ReadError {
     here.rule("key", "the ledger names a record that its table does not have")
 }
 
+/// Checks that the ledger envelope `(at, team, rounds)` matches the underlying table record.
+fn check_envelope(
+    here: &Row_,
+    (at, team, rounds): (Timestamp, &TeamId, &[RoundId]),
+    (expected_at, expected_team, expected_rounds): (Timestamp, &TeamId, &[RoundId]),
+) -> Result<(), ReadError> {
+    if at != expected_at {
+        return Err(here.rule("at", "the time of the row does not match its record"));
+    }
+    if team != expected_team {
+        return Err(here.rule("team", "the team of the row does not match its record"));
+    }
+    if rounds != expected_rounds {
+        return Err(here.rule("round", "the rounds of the row do not match its record"));
+    }
+    Ok(())
+}
+
+/// Returns the cached [`RunStart`] for `run`, reading it from `runs` on first sight.
+fn cached_run<'a>(
+    snapshot: &Transaction<'_>,
+    here: &Row_,
+    run: &RunId,
+    runs: &'a mut HashMap<RunId, Stored<RunStart>>,
+) -> Result<&'a Stored<RunStart>, ReadError> {
+    if !runs.contains_key(run) {
+        let found = read_run_start(snapshot, run)?.ok_or_else(|| missing(here))?;
+        runs.insert(run.clone(), found);
+    }
+    runs.get(run).ok_or_else(|| missing(here))
+}
+
 /// The record a row of the ledger of `kind` refers to, read from its own tables, with the fields cut.
 fn record_of(
     snapshot: &Transaction<'_>,
     here: &Row_,
+    envelope: (Timestamp, &TeamId, &[RoundId]),
     raw: &Raw,
     kind: RecordKind,
-    steps: &mut StepCache,
+    caches: &mut Caches,
 ) -> Result<(Record, Cut), ReadError> {
     let key = here.needed("key", raw.key.as_deref())?;
+    let run_id = || here.value("key", RunId::from_str(key));
     match kind {
         RecordKind::Team => {
-            let found = read_team(snapshot, &here.value("key", TeamId::from_str(key))?)?;
-            let Stored { value, cut } = found.ok_or_else(|| missing(here))?;
+            let Stored { value, cut } =
+                read_team(snapshot, &here.value("key", TeamId::from_str(key))?)?.ok_or_else(|| missing(here))?;
+            check_envelope(here, envelope, (value.at, &value.team, &[]))?;
             Ok((Record::Team(Box::new(value)), cut))
         }
         RecordKind::Round => {
-            let found = read_round(snapshot, &here.value("key", RoundId::from_str(key))?)?;
-            let Stored { value, cut } = found.ok_or_else(|| missing(here))?;
+            let Stored { value, cut } =
+                read_round(snapshot, &here.value("key", RoundId::from_str(key))?)?.ok_or_else(|| missing(here))?;
+            check_envelope(
+                here,
+                envelope,
+                (value.at, &value.team, std::slice::from_ref(&value.round)),
+            )?;
             Ok((Record::Round(Box::new(value)), cut))
         }
         RecordKind::Run => {
-            let found = read_run_start(snapshot, &here.value("key", RunId::from_str(key))?)?;
-            let Stored { value, cut } = found.ok_or_else(|| missing(here))?;
-            Ok((Record::Run(Box::new(value)), cut))
+            let found = cached_run(snapshot, here, &run_id()?, &mut caches.runs)?;
+            check_envelope(here, envelope, (found.value.at, &found.value.team, &found.value.rounds))?;
+            Ok((Record::Run(Box::new(found.value.clone())), found.cut.clone()))
         }
         RecordKind::Launch => {
-            let found = read_launch(snapshot, &here.value("key", RunId::from_str(key))?)?;
-            let Stored { value, cut } = found.ok_or_else(|| missing(here))?;
+            let run = run_id()?;
+            let start = cached_run(snapshot, here, &run, &mut caches.runs)?;
+            let Stored { value, cut } = read_launch(snapshot, &run)?.ok_or_else(|| missing(here))?;
+            check_envelope(here, envelope, (value.at, &start.value.team, &start.value.rounds))?;
             Ok((Record::Launch(Box::new(value)), cut))
         }
         RecordKind::RunEnd => {
-            let found = read_end(snapshot, &here.value("key", RunId::from_str(key))?)?;
-            let Stored { value, cut } = found.ok_or_else(|| missing(here))?;
+            let run = run_id()?;
+            let start = cached_run(snapshot, here, &run, &mut caches.runs)?;
+            let Stored { value, cut } = read_end(snapshot, &run)?.ok_or_else(|| missing(here))?;
+            check_envelope(here, envelope, (value.at, &start.value.team, &start.value.rounds))?;
             Ok((Record::RunEnd(Box::new(value)), cut))
         }
         RecordKind::Changes => {
-            let found = read_changes(snapshot, &here.value("key", RunId::from_str(key))?)?;
-            let Stored { value, cut } = found.ok_or_else(|| missing(here))?;
+            let run = run_id()?;
+            let start = cached_run(snapshot, here, &run, &mut caches.runs)?;
+            let Stored { value, cut } = read_changes(snapshot, &run)?.ok_or_else(|| missing(here))?;
+            let at = read_end(snapshot, &run)?.map_or(start.value.at, |end| end.value.at);
+            check_envelope(here, envelope, (at, &start.value.team, &start.value.rounds))?;
             Ok((Record::Changes(Box::new(value)), cut))
         }
         RecordKind::Step => {
             let (run, number) = numbered(here, key)?;
-            if !steps.contains_key(&run) {
-                steps.insert(run.clone(), read_steps(snapshot, &run)?);
+            let start = cached_run(snapshot, here, &run, &mut caches.runs)?;
+            if !caches.steps.contains_key(&run) {
+                let by_number = read_steps(snapshot, &run)?
+                    .into_iter()
+                    .map(|step| (step.value.number.get(), step))
+                    .collect();
+                caches.steps.insert(run.clone(), by_number);
             }
-            let found = steps
+            let found = caches
+                .steps
                 .get(&run)
-                .into_iter()
-                .flatten()
-                .find(|step| step.value.number.get() == number)
+                .and_then(|m| m.get(&number))
                 .ok_or_else(|| missing(here))?;
+            check_envelope(here, envelope, (found.value.at, &start.value.team, &start.value.rounds))?;
             Ok((Record::Step(Box::new(found.value.clone())), found.cut.clone()))
         }
         RecordKind::Session => {
             let (run, number) = numbered(here, key)?;
-            Ok((
-                Record::Session(Box::new(read_session(snapshot, &run, number)?)),
-                Cut::default(),
-            ))
+            let start = cached_run(snapshot, here, &run, &mut caches.runs)?;
+            let value = read_session(snapshot, &run, number)?;
+            check_envelope(here, envelope, (value.at, &start.value.team, &start.value.rounds))?;
+            Ok((Record::Session(Box::new(value)), Cut::default()))
         }
         RecordKind::Event => Err(here.rule("kind", "an event is kept under the keyword of its kind")),
     }

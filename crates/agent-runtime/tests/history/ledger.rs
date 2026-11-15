@@ -4,7 +4,9 @@
 
 use std::num::NonZeroU32;
 
-use agent_core::history::{CheckOutcome, EventRecord, HistoryEvent, Record, SequencedRecord};
+use agent_core::history::{
+    CheckOutcome, EventRecord, HistoryEvent, LostCause, LostKind, Record, RecordKind, SequencedRecord,
+};
 use agent_core::ids::RoundId;
 use agent_core::state::{CommitId, PrNumber};
 use agent_runtime::history::schema::MIGRATIONS;
@@ -279,6 +281,46 @@ fn a_text_of_an_event_over_the_limit_is_cut_at_a_character_and_its_field_is_name
     assert_eq!(stored.cut.fields().collect::<Vec<_>>(), ["title"]);
 }
 
+#[test]
+fn a_lost_event_whose_detail_is_over_the_limit_is_cut_and_read_back_through_its_round_and_team() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let mut db = HistoryDb::open(&path, limit(10)).unwrap();
+    let world = complete(8);
+    db.write(&world.records()).unwrap();
+    let round = world.rounds[0].round.clone();
+    let lost = HistoryEvent::Lost {
+        task: None,
+        what: LostKind::Record(RecordKind::Step),
+        cause: LostCause::WriteDiskFull,
+        detail: "日本語日本語".to_owned(),
+    };
+    db.write(&[record(&world, 30, std::slice::from_ref(&round), lost)])
+        .unwrap();
+    let reader = Reader::open(&path).unwrap();
+
+    for read in [
+        reader.round_records(&round).unwrap(),
+        reader.team_records(&world.team.team).unwrap(),
+    ] {
+        let stored = read.last().unwrap();
+        let Record::Event(event) = &stored.record else {
+            panic!("not an event: {stored:?}");
+        };
+        let HistoryEvent::Lost {
+            what, cause, detail, ..
+        } = &event.event
+        else {
+            panic!("not a lost event: {event:?}");
+        };
+        assert_eq!(
+            (what.as_str(), cause.as_str(), detail.as_str()),
+            ("step", "write_disk_full", "日本語")
+        );
+        assert_eq!(stored.cut.fields().collect::<Vec<_>>(), ["detail"]);
+    }
+}
+
 /// A file of version two with `world` written to it, and its path.
 fn version_two(world: &World) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
@@ -439,4 +481,497 @@ fn a_ledger_row_that_was_changed_by_hand_is_refused_when_it_is_read() {
             ..
         })
     ));
+}
+
+#[test]
+fn an_event_linked_to_a_round_of_another_team_is_refused_on_write_and_on_read() {
+    use agent_runtime::history::{RecordKind, WriteError};
+
+    let (_dir, path, mut db) = database();
+    let first = complete(11);
+    let second = complete(12);
+    db.write(&first.records()).unwrap();
+    db.write(&second.records()).unwrap();
+    let foreign_round = second.rounds[0].round.clone();
+    let cross_event = record(
+        &first,
+        50,
+        std::slice::from_ref(&foreign_round),
+        HistoryEvent::PullReady { pr: pr(7) },
+    );
+
+    let err = db.write(&[cross_event]).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            WriteError::Rule {
+                record: RecordKind::Event,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    let reader = Reader::open(&path).unwrap();
+    assert!(
+        reader
+            .round_records(&foreign_round)
+            .unwrap()
+            .iter()
+            .all(|stored| stored.team == second.team.team)
+    );
+
+    db.write(&[record(&first, 51, &[], HistoryEvent::PullReady { pr: pr(8) })])
+        .unwrap();
+    let raw = Connection::open(&path).unwrap();
+    raw.execute(
+        "INSERT INTO history_record_rounds (sequence, position, round) \
+         SELECT sequence, 1, ?1 FROM history_records WHERE team = ?2 AND kind = 'pull_ready'",
+        rusqlite::params![foreign_round.as_str(), first.team.team.as_str()],
+    )
+    .unwrap();
+
+    for read in [
+        reader.round_records(&foreign_round),
+        reader.team_records(&first.team.team),
+    ] {
+        assert!(
+            matches!(
+                read,
+                Err(ReadError::Value {
+                    table: "history_records",
+                    column: "round",
+                    ..
+                })
+            ),
+            "{read:?}"
+        );
+    }
+}
+
+#[test]
+fn many_steps_of_a_run_are_read_in_order_and_a_missing_step_row_is_reported() {
+    use agent_core::cli::ActivityEvent;
+    use agent_core::history::Step;
+
+    let (_dir, path, mut db) = database();
+    let world = complete(13);
+    let round = world.rounds[0].round.clone();
+    let run = world.runs[0].start.clone();
+    db.write(&[
+        Record::Team(Box::new(world.team.clone())),
+        Record::Round(Box::new(world.rounds[0].clone())),
+        Record::Run(Box::new(run.clone())),
+    ])
+    .unwrap();
+    let steps: Vec<Record> = (1..=500_u32)
+        .map(|n| {
+            Record::Step(Box::new(Step {
+                run: run.run.clone(),
+                number: NonZeroU32::new(n).unwrap(),
+                at: at(100 + i64::from(n), 0),
+                event: ActivityEvent::Info(format!("step {n}")),
+            }))
+        })
+        .collect();
+    db.write(&steps).unwrap();
+
+    let reader = Reader::open(&path).unwrap();
+    let read = reader.round_records(&round).unwrap();
+    let read_steps: Vec<Record> = plain(&read).into_iter().skip(3).collect();
+    assert_eq!(read_steps, steps);
+
+    let raw = Connection::open(&path).unwrap();
+    raw.execute(
+        "DELETE FROM steps WHERE run = ?1 AND n = 250",
+        rusqlite::params![run.run.as_str()],
+    )
+    .unwrap();
+
+    let broken = reader.round_records(&round);
+    assert!(
+        matches!(
+            broken,
+            Err(ReadError::Value {
+                table: "history_records",
+                column: "key",
+                ..
+            })
+        ),
+        "{broken:?}"
+    );
+}
+
+#[test]
+fn changes_written_before_the_end_of_a_run_are_given_the_time_of_its_end_when_the_end_is_written() {
+    let (_dir, path, mut db) = database();
+    let world = complete(14);
+    let round = world.rounds[0].round.clone();
+    let run = &world.runs[0];
+    let mut start = run.start.clone();
+    start.at = at(100, 0);
+    let mut end = run.end.clone().unwrap();
+    end.at = at(150, 0);
+    db.write(&[
+        Record::Team(Box::new(world.team.clone())),
+        Record::Round(Box::new(world.rounds[0].clone())),
+        Record::Run(Box::new(start)),
+        Record::Changes(Box::new(run.changes.clone().unwrap())),
+        Record::RunEnd(Box::new(end.clone())),
+    ])
+    .unwrap();
+
+    let reader = Reader::open(&path).unwrap();
+    for read in [
+        reader.round_records(&round).unwrap(),
+        reader.team_records(&world.team.team).unwrap(),
+    ] {
+        let changes = read
+            .iter()
+            .find(|stored| matches!(stored.record, Record::Changes(_)))
+            .unwrap();
+        assert_eq!(changes.at, end.at);
+    }
+}
+
+#[test]
+fn an_unscoped_lost_event_with_a_task_is_linked_to_its_own_tasks_latest_run_not_another_tasks_newer_run() {
+    use agent_core::history::EventKind;
+
+    let (_dir, path, mut db) = database();
+    let world = complete(15);
+    let first_round = world.rounds[0].round.clone();
+    let mut second_opening = world.rounds[0].clone();
+    second_opening.round = "round-20261118-110640-r002".parse().unwrap();
+    let second_round = second_opening.round.clone();
+    let mut first_run = world.runs[0].start.clone();
+    first_run.at = at(100, 0);
+    first_run.rounds = vec![first_round.clone()];
+    let mut second_run = world.runs[0].start.clone();
+    second_run.run = "run-20261118-110640-r002".parse().unwrap();
+    second_run.task = "task-20261118-110640-t002".parse().unwrap();
+    second_run.at = at(200, 0);
+    second_run.rounds = vec![second_round.clone()];
+    db.write(&[
+        Record::Team(Box::new(world.team.clone())),
+        Record::Round(Box::new(world.rounds[0].clone())),
+        Record::Round(Box::new(second_opening)),
+        Record::Run(Box::new(first_run.clone())),
+        Record::Run(Box::new(second_run)),
+        Record::Event(Box::new(EventRecord {
+            at: at(250, 0),
+            team: world.team.team.clone(),
+            rounds: Vec::new(),
+            event: HistoryEvent::Lost {
+                task: Some(first_run.task),
+                what: LostKind::Event(EventKind::Gate),
+                cause: LostCause::CaptureGate,
+                detail: "git after failed".to_owned(),
+            },
+        })),
+    ])
+    .unwrap();
+
+    let reader = Reader::open(&path).unwrap();
+    let in_first = reader.round_records(&first_round).unwrap();
+    assert!(
+        in_first
+            .iter()
+            .any(|stored| matches!(&stored.record, Record::Event(e) if e.event.kind() == EventKind::Lost)),
+        "{in_first:?}"
+    );
+    let in_second = reader.round_records(&second_round).unwrap();
+    assert!(
+        !in_second
+            .iter()
+            .any(|stored| matches!(&stored.record, Record::Event(e) if e.event.kind() == EventKind::Lost)),
+        "{in_second:?}"
+    );
+}
+
+#[test]
+fn an_event_row_with_a_null_or_wrong_key_is_refused_when_it_is_read() {
+    for sql in [
+        "UPDATE history_records SET key = NULL WHERE kind = 'pull_ready'",
+        "UPDATE history_records SET key = 'pr 999' WHERE kind = 'pull_ready'",
+        "UPDATE history_records SET key = 'unexpected' WHERE kind = 'checked'",
+    ] {
+        let (_dir, path, mut db) = database();
+        let world = complete(16);
+        db.write(&world.records()).unwrap();
+        db.write(&events(&world)).unwrap();
+        let raw = Connection::open(&path).unwrap();
+        raw.execute_batch(&format!("PRAGMA ignore_check_constraints = ON; {sql}"))
+            .unwrap();
+
+        let reader = Reader::open(&path).unwrap();
+        for read in [
+            reader.round_records(&world.rounds[0].round),
+            reader.team_records(&world.team.team),
+        ] {
+            assert!(
+                matches!(
+                    read,
+                    Err(ReadError::Value {
+                        table: "history_records",
+                        column: "key",
+                        ..
+                    })
+                ),
+                "{sql}: {read:?}"
+            );
+        }
+    }
+}
+
+/// Every pull-request [`EventKind`](agent_core::history::EventKind), with `text` in every free-text field.
+fn pr_event_kinds(task: &agent_core::ids::TaskId, text: &str) -> Vec<HistoryEvent> {
+    use agent_core::status::ReviewVerdict;
+
+    let num = NonZeroU32::new(1).unwrap();
+    let inv = "inv-a".parse::<agent_core::ids::InvestigatorName>().unwrap();
+    vec![
+        HistoryEvent::PullOpened {
+            number: pr(7),
+            branch: "agents/a/b".parse().unwrap(),
+            head: head('b'),
+            title: text.to_owned(),
+            body: text.to_owned(),
+        },
+        HistoryEvent::PullPushed {
+            pr: pr(7),
+            head: head('c'),
+        },
+        HistoryEvent::PullReady { pr: pr(7) },
+        HistoryEvent::ReviewAsked {
+            pr: pr(7),
+            pass: 1,
+            head: head('c'),
+            reviewer: inv.clone(),
+            task: task.clone(),
+            among: vec![inv.clone()],
+        },
+        HistoryEvent::ReviewSubmitted {
+            pr: pr(7),
+            pass: 1,
+            reviewer: inv,
+            task: task.clone(),
+            verdict: ReviewVerdict::Approve,
+            report: text.to_owned(),
+        },
+        HistoryEvent::FixPassStarted {
+            pr: pr(7),
+            pass: num,
+            of: 5,
+            findings: text.to_owned(),
+        },
+        HistoryEvent::PullApproved { pr: pr(7) },
+        HistoryEvent::PullMerged {
+            pr: pr(7),
+            commit: Some(head('d')),
+        },
+        HistoryEvent::PullHandedOver { pr: pr(7) },
+        HistoryEvent::PullClosed { pr: pr(7) },
+    ]
+}
+
+/// One event of every [`EventKind`](agent_core::history::EventKind), with `text` in every free-text field.
+fn all_event_kinds(world: &World, text: &str) -> Vec<HistoryEvent> {
+    use agent_core::config::TailscaleLogin;
+    use agent_core::protocol::{Client, ControlAction, Target};
+    use agent_core::state::{AnsweredVia, GateOutcome, GateRecord, GateResult, GateTree, RoundEnd};
+
+    let round = world.rounds[0].round.clone();
+    let task = world.runs[0].start.task.clone();
+    let num = NonZeroU32::new(1).unwrap();
+    let mut events = vec![
+        HistoryEvent::Gate {
+            task: task.clone(),
+            started_at: at(10, 0),
+            record: GateRecord {
+                tree: GateTree::Clean,
+                result: GateResult {
+                    head: head('a'),
+                    finished_at: at(12, 0),
+                    outcome: GateOutcome::Passed,
+                    log: "/tmp/gate.log".parse().unwrap(),
+                },
+            },
+        },
+        HistoryEvent::Checked {
+            pr: Some(pr(7)),
+            head: head('b'),
+            issues: vec![text.to_owned()],
+            outcome: CheckOutcome::SentBack { pass: num, of: 2 },
+        },
+    ];
+    events.extend(pr_event_kinds(&task, text));
+    events.extend([
+        HistoryEvent::QuestionAsked {
+            task: task.clone(),
+            number: num,
+            text: text.to_owned(),
+        },
+        HistoryEvent::QuestionAnswered {
+            task: task.clone(),
+            number: num,
+            text: text.to_owned(),
+            via: AnsweredVia::Command,
+        },
+        HistoryEvent::Controlled {
+            action: ControlAction::Pause,
+            target: Target::Task(task.clone()),
+            by: Client::Dashboard {
+                login: "human@example.com".parse::<TailscaleLogin>().unwrap(),
+            },
+            tasks: vec![task.clone()],
+        },
+        HistoryEvent::Notified {
+            task: Some(task.clone()),
+            title: text.to_owned(),
+            body: text.to_owned(),
+        },
+        HistoryEvent::RoundClosed {
+            round,
+            end: RoundEnd::Merged,
+        },
+        HistoryEvent::TeamEnded {},
+        HistoryEvent::Lost {
+            task: Some(task),
+            what: LostKind::Record(RecordKind::Step),
+            cause: LostCause::WriteDiskFull,
+            detail: text.to_owned(),
+        },
+    ]);
+    events
+}
+
+#[test]
+fn every_kind_of_event_reads_back_equal_from_the_database_and_cuts_every_over_limit_text_field() {
+    use agent_core::history::EventKind;
+    use strum::VariantNames;
+
+    let world = complete(17);
+    let round = world.rounds[0].round.clone();
+    let short_events = all_event_kinds(&world, "日本語");
+    assert_eq!(short_events.len(), EventKind::VARIANTS.len());
+    let (_dir, path, mut db) = database();
+    db.write(&[
+        Record::Team(Box::new(world.team.clone())),
+        Record::Round(Box::new(world.rounds[0].clone())),
+    ])
+    .unwrap();
+    let written: Vec<Record> = short_events
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            record(
+                &world,
+                100 + i64::try_from(i).unwrap(),
+                std::slice::from_ref(&round),
+                e.clone(),
+            )
+        })
+        .collect();
+    db.write(&written).unwrap();
+    let read = Reader::open(&path).unwrap().round_records(&round).unwrap();
+    let read_events: Vec<Record> = plain(&read).into_iter().skip(2).collect();
+    assert_eq!(read_events, written);
+
+    let dir2 = tempfile::tempdir().unwrap();
+    let path2 = dir2.path().join("history.db");
+    let mut db2 = HistoryDb::open(&path2, limit(10)).unwrap();
+    db2.write(&[
+        Record::Team(Box::new(world.team.clone())),
+        Record::Round(Box::new(world.rounds[0].clone())),
+    ])
+    .unwrap();
+    let long_written: Vec<Record> = all_event_kinds(&world, "日本語日本語")
+        .into_iter()
+        .enumerate()
+        .map(|(i, e)| record(&world, 100 + i64::try_from(i).unwrap(), std::slice::from_ref(&round), e))
+        .collect();
+    db2.write(&long_written).unwrap();
+    let cut_read = Reader::open(&path2).unwrap().round_records(&round).unwrap();
+    for (stored, expected) in cut_read.iter().skip(2).zip(written.iter()) {
+        assert_eq!(&stored.record, expected);
+    }
+}
+
+#[test]
+fn a_table_backed_ledger_row_whose_time_team_or_rounds_disagree_with_its_table_is_refused_as_corrupt() {
+    let (_dir, path, mut db) = database();
+    let world = complete(18);
+    let round = world.rounds[0].round.clone();
+    let run = world.runs[0].start.run.clone();
+    db.write(&world.records()).unwrap();
+
+    let raw = Connection::open(&path).unwrap();
+    let orig_at: String = raw
+        .query_row(
+            "SELECT at FROM history_records WHERE kind = 'run' AND key = ?1",
+            rusqlite::params![run.as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    raw.execute(
+        "UPDATE history_records SET at = '2030-01-01T00:00:00.000000000Z' WHERE kind = 'run' AND key = ?1",
+        rusqlite::params![run.as_str()],
+    )
+    .unwrap();
+    let bad_at = Reader::open(&path).unwrap().round_records(&round);
+    assert!(
+        matches!(
+            bad_at,
+            Err(ReadError::Value {
+                table: "history_records",
+                column: "at",
+                ..
+            })
+        ),
+        "{bad_at:?}"
+    );
+    raw.execute(
+        "UPDATE history_records SET at = ?1 WHERE kind = 'run' AND key = ?2",
+        rusqlite::params![orig_at, run.as_str()],
+    )
+    .unwrap();
+
+    let orig_team = world.team.team.as_str().to_owned();
+    raw.execute(
+        "UPDATE runs SET team = 'team-20300101-000000-z9z9' WHERE run = ?1",
+        rusqlite::params![run.as_str()],
+    )
+    .unwrap();
+    let bad_team = Reader::open(&path).unwrap().round_records(&round);
+    assert!(
+        matches!(
+            bad_team,
+            Err(ReadError::Value {
+                table: "history_records",
+                column: "team",
+                ..
+            })
+        ),
+        "{bad_team:?}"
+    );
+    raw.execute(
+        "UPDATE runs SET team = ?1 WHERE run = ?2",
+        rusqlite::params![orig_team, run.as_str()],
+    )
+    .unwrap();
+
+    raw.execute("DELETE FROM run_rounds WHERE run = ?1", rusqlite::params![run.as_str()])
+        .unwrap();
+    let bad_rounds = Reader::open(&path).unwrap().round_records(&round);
+    assert!(
+        matches!(
+            bad_rounds,
+            Err(ReadError::Value {
+                table: "history_records",
+                column: "round",
+                ..
+            })
+        ),
+        "{bad_rounds:?}"
+    );
 }

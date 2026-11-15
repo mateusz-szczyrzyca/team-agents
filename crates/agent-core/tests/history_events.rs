@@ -9,7 +9,7 @@ mod history_events {
 
     use agent_core::config::TailscaleLogin;
     use agent_core::decide::round::AskReason;
-    use agent_core::history::{CheckOutcome, EventKind, HistoryEvent};
+    use agent_core::history::{CheckOutcome, EventKind, HistoryEvent, LostCause, LostKind, RecordKind};
     use agent_core::ids::{BranchName, InvestigatorName};
     use agent_core::protocol::{Client, ControlAction, Target};
     use agent_core::state::{AnsweredVia, CommitId, GateOutcome, GateRecord, GateResult, GateTree, PrNumber, RoundEnd};
@@ -105,6 +105,7 @@ mod history_events {
                 head: head('c'),
                 reviewer: reviewer("i1"),
                 task: world::task(2),
+                among: vec![reviewer("i1"), reviewer("i2")],
             },
             HistoryEvent::ReviewSubmitted {
                 pr: pr(7),
@@ -157,8 +158,9 @@ mod history_events {
             },
             HistoryEvent::TeamEnded {},
             HistoryEvent::Lost {
-                what: "step".to_owned(),
-                cause: "write_disk_full".to_owned(),
+                task: Some(world::task(1)),
+                what: LostKind::Record(RecordKind::Step),
+                cause: LostCause::WriteDiskFull,
                 detail: "the disk is full — zażółć".to_owned(),
             },
         ]
@@ -255,6 +257,7 @@ mod history_events {
                 head: head('c'),
                 reviewer: reviewer(name),
                 task: world::task(2),
+                among: Vec::new(),
             }
             .key()
         };
@@ -360,5 +363,37 @@ mod history_events {
             let json = serde_json::to_string(&outcome).unwrap();
             assert_eq!(serde_json::from_str::<CheckOutcome>(&json).unwrap(), outcome, "{json}");
         }
+    }
+
+    #[test]
+    fn a_lost_event_rejects_what_and_cause_keywords_outside_its_vocabulary_and_a_self_referential_kind() {
+        assert_eq!(LostKind::from_str("event").unwrap_err().value, "event");
+        assert_eq!(LostKind::from_str("lost").unwrap_err().value, "lost");
+        assert_eq!(
+            LostKind::from_str("unknown_record").unwrap_err().value,
+            "unknown_record"
+        );
+        assert_eq!(LostCause::from_str("unknown_cause").unwrap_err().value, "unknown_cause");
+        for bad in [
+            serde_json::json!({"event": "lost", "what": "lost", "cause": "write_disk_full", "detail": "x"}),
+            serde_json::json!({"event": "lost", "what": "event", "cause": "write_disk_full", "detail": "x"}),
+            serde_json::json!({"event": "lost", "what": "step", "cause": "made_up", "detail": "x"}),
+        ] {
+            let error = serde_json::from_value::<HistoryEvent>(bad.clone()).unwrap_err();
+            assert_eq!(error.classify(), serde_json::error::Category::Data, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_identities_of_a_gate_a_review_and_a_lost_event_include_the_log_path_the_candidates_and_the_task() {
+        let events = every_event();
+        assert!(gate().identities().contains(&"/tmp/gate.log"));
+        let asked = events
+            .iter()
+            .find(|event| event.kind() == EventKind::ReviewAsked)
+            .unwrap();
+        assert!(asked.identities().contains(&"i2"));
+        let lost = events.iter().find(|event| event.kind() == EventKind::Lost).unwrap();
+        assert!(lost.identities().contains(&world::task(1).as_str()));
     }
 }

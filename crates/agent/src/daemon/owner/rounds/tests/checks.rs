@@ -857,6 +857,53 @@ async fn what_the_human_refuses_is_recorded_as_a_round_sent_back_with_the_refuse
     );
 }
 
+#[tokio::test]
+async fn a_head_pushed_to_an_existing_draft_after_the_checks_sent_it_back_is_recorded_as_a_push() {
+    use agent_core::history::{HistoryEvent, Record};
+
+    let mut rig = checking_rig("script:code-only,script:add-test", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    let events: Vec<HistoryEvent> = agent_runtime::history::Reader::open(&rig.home.history_file())
+        .unwrap()
+        .team_records(&team)
+        .unwrap()
+        .into_iter()
+        .filter_map(|stored| match stored.record {
+            Record::Event(event) => Some(event.event),
+            _ => None,
+        })
+        .collect();
+    let opened_head = events
+        .iter()
+        .find_map(|event| match event {
+            HistoryEvent::PullOpened { head, .. } => Some(head.clone()),
+            _ => None,
+        })
+        .expect("no PullOpened");
+    let reviewed_head = events
+        .iter()
+        .find_map(|event| match event {
+            HistoryEvent::ReviewAsked { head, .. } => Some(head.clone()),
+            _ => None,
+        })
+        .expect("no ReviewAsked");
+    assert_ne!(opened_head, reviewed_head);
+    let pushed_heads: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            HistoryEvent::PullPushed { pr, head } => Some((pr.get().get(), head.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pushed_heads, [(1, reviewed_head)], "{events:?}");
+}
+
 // ---- the story of a round the checks held back --------------------------------------------------------------------------
 
 #[tokio::test]
@@ -893,4 +940,80 @@ async fn a_round_the_checks_send_back_once_and_then_ask_the_human_about_is_told_
     let reviews = text.find("review pass 1 of #1 asked of").expect(&text);
     assert!(sent_back < asked && asked < allowed && allowed < reviews, "{text}");
     golden("story-checks.txt", &Normalized::of(&rig, &text, &json));
+}
+
+#[tokio::test]
+async fn a_mixed_allow_and_refuse_answer_does_not_record_all_issues_allowed() {
+    use agent_core::history::{CheckOutcome, HistoryEvent, Record};
+    use agent_runtime::history::Reader;
+
+    let mut rig = checking_rig("script:edit-two,questions,done,script:restore-other", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    script(
+        &rig,
+        "edit-two",
+        "sed -i 2d tests/existing.txt\nsed -i 2d tests/other.txt\ngit add tests/existing.txt tests/other.txt\ncommit -m 'Change two tests'\n",
+    );
+    script(
+        &rig,
+        "restore-other",
+        "git checkout main -- tests/other.txt\ngit add tests/other.txt\ncommit -m 'Restore the other test'\n",
+    );
+    std::fs::write(rig.repo.join("tests/other.txt"), "x\ny\nz\n").unwrap();
+    git(&rig.repo, &["add", "tests/other.txt"]);
+    git(&rig.repo, &["commit", "-q", "-m", "Seed another test"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let answers = AnswerList::try_from(vec![
+        AnswerInput {
+            question: NonZeroU32::MIN,
+            verdict: Verdict::from_text("allow").unwrap().unwrap(),
+        },
+        AnswerInput {
+            question: NonZeroU32::new(2).unwrap(),
+            verdict: Verdict::from_text("refuse").unwrap().unwrap(),
+        },
+    ])
+    .unwrap();
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: NonZeroU32::MIN,
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    let records = Reader::open(&rig.home.history_file())
+        .unwrap()
+        .team_records(&team)
+        .unwrap();
+    let allowed_events: Vec<_> = records
+        .iter()
+        .filter(|stored| {
+            matches!(
+                &stored.record,
+                Record::Event(event)
+                    if matches!(
+                        &event.event,
+                        HistoryEvent::Checked {
+                            outcome: CheckOutcome::Allowed,
+                            ..
+                        }
+                    )
+            )
+        })
+        .collect();
+    assert!(allowed_events.is_empty(), "{allowed_events:?}");
 }

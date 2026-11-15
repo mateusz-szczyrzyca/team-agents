@@ -8,13 +8,13 @@
 
 use std::collections::HashMap;
 
-use agent_core::history::{EventRecord, HistoryEvent, Record};
-use agent_core::ids::{RoundId, RunId, TeamId};
+use agent_core::history::{EventRecord, HistoryEvent, LostKind, Record};
+use agent_core::ids::{RoundId, RunId, TaskId, TeamId};
 use agent_core::state::Timestamp;
 
 use super::db::Store;
 use super::error::{RecordKind, WriteError};
-use super::handle::Cause;
+use super::redact::Redactor;
 use crate::process::error_chain;
 
 /// How many runs the store remembers the team and rounds of.
@@ -28,10 +28,14 @@ const MAX_PENDING: usize = 256;
 struct Scope {
     /// The team of the run.
     team: TeamId,
+    /// The task of the run.
+    task: TaskId,
     /// The rounds the run works for, each once.
     rounds: Vec<RoundId>,
     /// When the run started.
     at: Timestamp,
+    /// The order in which this run was learned, to break ties when two runs of a task share a start time.
+    order: u64,
 }
 
 /// A store that notes what the store it wraps refused.
@@ -39,8 +43,12 @@ struct Scope {
 pub struct Noting<S> {
     /// The store the records go to.
     inner: S,
+    /// Configured credentials to redact from error details in loss notes.
+    redactor: Redactor,
     /// The team and rounds of the runs this store has seen start, to place the records of a run.
     scopes: HashMap<RunId, Scope>,
+    /// How many runs this store has learned, to order runs of the same task.
+    learned: u64,
     /// The notes that wait for a write that succeeds.
     pending: Vec<EventRecord>,
 }
@@ -49,9 +57,17 @@ impl<S: Store> Noting<S> {
     /// Wraps `inner`.
     #[must_use]
     pub fn new(inner: S) -> Self {
+        Self::with_secrets(inner, agent_core::config::Secrets::default())
+    }
+
+    /// Wraps `inner` and redacts `secrets` from loss notes.
+    #[must_use]
+    pub fn with_secrets(inner: S, secrets: agent_core::config::Secrets) -> Self {
         Self {
             inner,
+            redactor: Redactor::new(secrets),
             scopes: HashMap::new(),
+            learned: 0,
             pending: Vec::new(),
         }
     }
@@ -59,16 +75,32 @@ impl<S: Store> Noting<S> {
     /// Remembers where the records of `run` belong.
     fn learn(&mut self, run: &agent_core::history::RunStart) {
         if self.scopes.len() >= MAX_SCOPES {
+            tracing::warn!(
+                dropped = self.scopes.len(),
+                limit = MAX_SCOPES,
+                "the history note writer reached its run-scope limit and cleared remembered run scopes"
+            );
             self.scopes.clear();
         }
-        self.scopes.insert(
-            run.run.clone(),
-            Scope {
-                team: run.team.clone(),
-                rounds: once_each(&run.rounds),
-                at: run.at,
-            },
-        );
+        self.learned = self.learned.saturating_add(1);
+        let scope = Scope {
+            team: run.team.clone(),
+            task: run.task.clone(),
+            rounds: once_each(&run.rounds),
+            at: run.at,
+            order: self.learned,
+        };
+        self.scopes.insert(run.run.clone(), scope);
+    }
+
+    /// The rounds of the latest run of `task` in `team` that this store has seen start.
+    fn rounds_of_task(&self, team: &TeamId, task: &TaskId) -> Vec<RoundId> {
+        self.scopes
+            .values()
+            .filter(|scope| &scope.team == team && &scope.task == task)
+            .max_by_key(|scope| (scope.at, scope.order))
+            .map(|scope| scope.rounds.clone())
+            .unwrap_or_default()
     }
 
     /// Notes that `record` was refused because of `error`, when it can be placed.
@@ -77,45 +109,48 @@ impl<S: Store> Noting<S> {
             return;
         };
         if self.pending.len() >= MAX_PENDING {
-            self.pending.remove(0);
+            let dropped = self.pending.remove(0);
+            tracing::warn!(team = %dropped.team, limit = MAX_PENDING, "the history note writer reached its pending-note limit and evicted the oldest loss note");
         }
+        let event = HistoryEvent::Lost {
+            task: None,
+            what,
+            cause: error.kind().lost_cause(),
+            detail: self.redactor.text(&error_chain(error)),
+        };
         self.pending.push(EventRecord {
             at,
             team,
             rounds,
-            event: HistoryEvent::Lost {
-                what,
-                cause: Cause::Write(error.kind()).to_string(),
-                detail: error_chain(error),
-            },
+            event,
         });
     }
 
     /// What `record` is, and the team, rounds and time it belongs to; `None` when that cannot be told.
-    fn placed(&self, record: &Record) -> Option<(String, TeamId, Vec<RoundId>, Timestamp)> {
+    fn placed(&self, record: &Record) -> Option<(LostKind, TeamId, Vec<RoundId>, Timestamp)> {
         let of_run = |run: &RunId, at: Option<Timestamp>, kind: RecordKind| {
-            self.scopes.get(run).map(|scope| {
+            self.scopes.get(run).map(|s| {
                 (
-                    kind.to_string(),
-                    scope.team.clone(),
-                    scope.rounds.clone(),
-                    at.unwrap_or(scope.at),
+                    LostKind::Record(kind),
+                    s.team.clone(),
+                    s.rounds.clone(),
+                    at.unwrap_or(s.at),
                 )
             })
         };
         match record {
-            Record::Team(team) => Some((RecordKind::Team.to_string(), team.team.clone(), Vec::new(), team.at)),
-            Record::Round(round) => Some((
-                RecordKind::Round.to_string(),
-                round.team.clone(),
-                vec![round.round.clone()],
-                round.at,
+            Record::Team(t) => Some((LostKind::Record(RecordKind::Team), t.team.clone(), Vec::new(), t.at)),
+            Record::Round(r) => Some((
+                LostKind::Record(RecordKind::Round),
+                r.team.clone(),
+                vec![r.round.clone()],
+                r.at,
             )),
-            Record::Run(run) => Some((
-                RecordKind::Run.to_string(),
-                run.team.clone(),
-                once_each(&run.rounds),
-                run.at,
+            Record::Run(r) => Some((
+                LostKind::Record(RecordKind::Run),
+                r.team.clone(),
+                once_each(&r.rounds),
+                r.at,
             )),
             Record::Launch(launch) => of_run(&launch.run, Some(launch.at), RecordKind::Launch),
             Record::Step(step) => of_run(&step.run, Some(step.at), RecordKind::Step),
@@ -123,13 +158,36 @@ impl<S: Store> Noting<S> {
             Record::Session(session) => of_run(&session.run, Some(session.at), RecordKind::Session),
             Record::Changes(changes) => of_run(&changes.run, None, RecordKind::Changes),
             // A note is not noted: that would never end.
-            Record::Event(event) => match event.event {
+            Record::Event(e) => match &e.event {
                 HistoryEvent::Lost { .. } => None,
-                _ => Some((
-                    event.event.kind().to_string(),
-                    event.team.clone(),
-                    once_each(&event.rounds),
-                    event.at,
+                HistoryEvent::Gate { task, .. } if e.rounds.is_empty() => Some((
+                    LostKind::Event(e.event.kind()),
+                    e.team.clone(),
+                    self.rounds_of_task(&e.team, task),
+                    e.at,
+                )),
+                HistoryEvent::Gate { .. }
+                | HistoryEvent::Checked { .. }
+                | HistoryEvent::PullOpened { .. }
+                | HistoryEvent::PullPushed { .. }
+                | HistoryEvent::PullReady { .. }
+                | HistoryEvent::ReviewAsked { .. }
+                | HistoryEvent::ReviewSubmitted { .. }
+                | HistoryEvent::FixPassStarted { .. }
+                | HistoryEvent::PullApproved { .. }
+                | HistoryEvent::PullMerged { .. }
+                | HistoryEvent::PullHandedOver { .. }
+                | HistoryEvent::PullClosed { .. }
+                | HistoryEvent::QuestionAsked { .. }
+                | HistoryEvent::QuestionAnswered { .. }
+                | HistoryEvent::Controlled { .. }
+                | HistoryEvent::Notified { .. }
+                | HistoryEvent::RoundClosed { .. }
+                | HistoryEvent::TeamEnded {} => Some((
+                    LostKind::Event(e.event.kind()),
+                    e.team.clone(),
+                    once_each(&e.rounds),
+                    e.at,
                 )),
             },
         }

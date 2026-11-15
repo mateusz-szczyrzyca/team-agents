@@ -731,3 +731,410 @@ async fn a_worktree_git_cannot_read_after_the_gate_ran_is_not_a_refusal_and_name
     );
     assert_eq!(error.failure().kind, FailureKind::Internal);
 }
+
+#[derive(Debug, Default)]
+struct SeenProblems(std::sync::Mutex<Vec<agent_runtime::history::Problem>>);
+
+impl agent_runtime::history::Reporter for SeenProblems {
+    fn report(&self, problem: &agent_runtime::history::Problem) {
+        self.0.lock().unwrap().push(problem.clone());
+    }
+}
+
+#[tokio::test]
+async fn a_gate_whose_worktree_git_cannot_read_after_it_ran_counts_a_capture_loss_and_notes_it_in_its_round() {
+    use agent_core::history::{
+        AgentIdentity, HistoryEvent, ItemText, MaxTextBytes, Record, RoundOpening, RoundSubject, RunStart, RunWhy,
+        TeamStart,
+    };
+    use agent_core::ids::{BranchName, ItemId, RoundId, RunId};
+    use agent_core::kinds::{CliKind, Role, Tier};
+    use agent_core::state::MergeMode;
+    use agent_runtime::history::{CaptureKind, Cause, DEFAULT_QUEUE, History, HistoryDb, Noting, Reader, Setup};
+
+    let rig = Rig::new().await;
+    let tree = rig.worktree(1);
+    let db_path = rig.home.history_file();
+    let db = HistoryDb::open(&db_path, MaxTextBytes::default()).unwrap();
+    let seen = Arc::new(SeenProblems::default());
+    let started = History::start(
+        Noting::new(db),
+        Setup {
+            reporter: Arc::clone(&seen) as Arc<dyn agent_runtime::history::Reporter>,
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let round: RoundId = "round-20261118-110640-gate".parse().unwrap();
+    let run_id: RunId = "run-20261118-110640-gate".parse().unwrap();
+    started.history.record(Record::Team(Box::new(TeamStart {
+        team: team_id(1),
+        at: crate::fixtures::at(0),
+        repo: repo().as_str().to_owned(),
+        base_branch: "main".parse::<BranchName>().unwrap(),
+        merge: MergeMode::Autopilot,
+        task_list: "# 1 — Feature\n## 1.1 — Item\nWork.\n".to_owned(),
+        plan: Vec::new(),
+    })));
+    started.history.record(Record::Round(Box::new(RoundOpening {
+        round: round.clone(),
+        team: team_id(1),
+        at: crate::fixtures::at(0),
+        subject: RoundSubject::Item(ItemText {
+            item: "1.1".parse::<ItemId>().unwrap(),
+            title: "Item".to_owned(),
+            description: "Work.".to_owned(),
+            expected_result: None,
+            checks: None,
+        }),
+    })));
+    started.history.record(Record::Run(Box::new(RunStart {
+        run: run_id,
+        team: team_id(1),
+        task: task(1),
+        at: crate::fixtures::at(0),
+        agent: AgentIdentity {
+            name: "claude-1".to_owned(),
+            tier: Tier::Normal,
+            cli: CliKind::Claude,
+            model: None,
+        },
+        role: Role::Solo,
+        rounds: vec![round.clone()],
+        why: RunWhy::FirstRun,
+        prompt: "Work.".to_owned(),
+        worktree: abs(&tree),
+        branch: "main".parse::<BranchName>().unwrap(),
+        session: None,
+    })));
+    let (job, _answer) = rig.job(1, "rm -rf .git", LONG);
+    let mut service = Service::new(rig.parts()).with_history(started.history.clone());
+
+    let error = service.execute(&job).await.unwrap_err();
+    started.writer.close().unwrap();
+
+    assert!(matches!(error, GateError::GitAfter { .. }), "{error:?}");
+    assert_eq!(started.history.health().lost, 1);
+    let problems = seen.0.lock().unwrap().clone();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].cause, Cause::Capture(CaptureKind::Gate));
+    let read = Reader::open(&db_path).unwrap().round_records(&round).unwrap();
+    let notes: Vec<_> = read
+        .iter()
+        .filter_map(|stored| match &stored.record {
+            Record::Event(event) => match &event.event {
+                HistoryEvent::Lost {
+                    what, cause, detail, ..
+                } => Some((what.as_str(), cause.as_str(), detail.as_str(), &stored.rounds)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notes.len(), 1, "{read:?}");
+    assert_eq!((notes[0].0, notes[0].1), ("gate", "capture_gate"));
+    assert_ne!(notes[0].2, "");
+    assert_eq!(notes[0].3, &[round]);
+}
+
+#[tokio::test]
+async fn a_gate_whose_state_record_cannot_be_saved_is_still_recorded_in_the_history() {
+    use agent_core::history::{HistoryEvent, MaxTextBytes, Record};
+    use agent_core::ids::Clock;
+    use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, Noting, Reader, Setup, TracingReporter};
+    use std::sync::atomic::{AtomicI64, Ordering};
+    use time::UtcDateTime;
+
+    /// Advances by 7 seconds on each reading so `Service::execute` records a 7-second gate duration.
+    struct SevenSecondClock(AtomicI64);
+    impl Clock for SevenSecondClock {
+        fn now(&self) -> UtcDateTime {
+            let secs = self.0.fetch_add(7, Ordering::SeqCst);
+            UtcDateTime::from_unix_timestamp(1_762_992_000 + secs).unwrap()
+        }
+    }
+
+    let rig = Rig::new().await;
+    rig.worktree(1);
+    std::fs::create_dir_all(rig.record_file(1)).unwrap();
+    let db_path = rig.home.history_file();
+    let db = HistoryDb::open(&db_path, MaxTextBytes::default()).unwrap();
+    let started = History::start(
+        Noting::new(db),
+        Setup {
+            reporter: Arc::new(TracingReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let (job, _answer) = rig.job(1, "true", LONG);
+    let mut parts = rig.parts();
+    parts.clock = SharedClock::new(SevenSecondClock(AtomicI64::new(0)));
+    let mut service = Service::new(parts).with_history(started.history.clone());
+
+    let error = service.execute(&job).await.unwrap_err();
+    started.writer.close().unwrap();
+
+    assert!(matches!(error, GateError::Record { .. }), "{error:?}");
+    assert_eq!(started.history.health().lost, 0);
+    let read = Reader::open(&db_path).unwrap().team_records(&team_id(1)).unwrap();
+    assert!(
+        read.iter().any(|stored| matches!(
+            &stored.record,
+            Record::Event(event)
+                if matches!(
+                    &event.event,
+                    HistoryEvent::Gate { task: recorded_task, started_at, record }
+                        if *recorded_task == task(1)
+                            && record.result.outcome == GateOutcome::Passed
+                            && event.at.as_utc() - started_at.as_utc() == time::Duration::seconds(7)
+                )
+        )),
+        "{read:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_gate_capture_loss_in_a_two_task_team_is_linked_to_its_own_tasks_round_not_another_tasks_newer_round() {
+    use agent_core::history::{
+        AgentIdentity, HistoryEvent, MaxTextBytes, Record, RoundOpening, RoundSubject, RunStart, RunWhy, TeamStart,
+    };
+    use agent_core::ids::{BranchName, RoundId, RunId};
+    use agent_core::kinds::{CliKind, Role, Tier};
+    use agent_core::state::MergeMode;
+    use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, Noting, Reader, Setup, TracingReporter};
+
+    let rig = Rig::new().await;
+    let tree = rig.worktree(1);
+    let db_path = rig.home.history_file();
+    let db = HistoryDb::open(&db_path, MaxTextBytes::default()).unwrap();
+    let started = History::start(
+        Noting::new(db),
+        Setup {
+            reporter: Arc::new(TracingReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let round_1: RoundId = "round-20261111-193001-q1w2".parse().unwrap();
+    let round_2: RoundId = "round-20261111-193002-q1w2".parse().unwrap();
+    started.history.record(Record::Team(Box::new(TeamStart {
+        team: team_id(1),
+        at: crate::fixtures::at(0),
+        repo: repo().to_string(),
+        base_branch: "main".parse::<BranchName>().unwrap(),
+        merge: MergeMode::Autopilot,
+        task_list: "Work.".to_owned(),
+        plan: Vec::new(),
+    })));
+    for round in [&round_1, &round_2] {
+        started.history.record(Record::Round(Box::new(RoundOpening {
+            round: round.clone(),
+            team: team_id(1),
+            at: crate::fixtures::at(0),
+            subject: RoundSubject::Brief("Work.".to_owned()),
+        })));
+    }
+    let make_run = |id: &str, task_num: u32, round: &RoundId, when: u32| {
+        Record::Run(Box::new(RunStart {
+            run: id.parse::<RunId>().unwrap(),
+            team: team_id(1),
+            task: task(task_num),
+            at: crate::fixtures::at(when),
+            agent: AgentIdentity {
+                name: "claude-1".to_owned(),
+                tier: Tier::Normal,
+                cli: CliKind::Claude,
+                model: None,
+            },
+            role: Role::Solo,
+            rounds: vec![round.clone()],
+            why: RunWhy::FirstRun,
+            prompt: "Work.".to_owned(),
+            worktree: abs(&tree),
+            branch: "main".parse::<BranchName>().unwrap(),
+            session: None,
+        }))
+    };
+    started
+        .history
+        .record(make_run("run-20261111-193001-r7q2", 1, &round_1, 10));
+    started
+        .history
+        .record(make_run("run-20261111-193002-r7q2", 2, &round_2, 20));
+
+    let (job, _answer) = rig.job(1, "rm -rf .git", LONG);
+    let mut service = Service::new(rig.parts()).with_history(started.history.clone());
+    let error = service.execute(&job).await.unwrap_err();
+    assert!(matches!(error, GateError::GitAfter { .. }), "{error:?}");
+    started.writer.close().unwrap();
+
+    let reader = Reader::open(&db_path).unwrap();
+    let in_first = reader.round_records(&round_1).unwrap();
+    assert!(
+        in_first
+            .iter()
+            .any(|s| matches!(&s.record, Record::Event(e) if matches!(e.event, HistoryEvent::Lost { .. }))),
+        "{in_first:?}"
+    );
+    let in_second = reader.round_records(&round_2).unwrap();
+    assert!(
+        !in_second
+            .iter()
+            .any(|s| matches!(&s.record, Record::Event(e) if matches!(e.event, HistoryEvent::Lost { .. }))),
+        "{in_second:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_gate_whose_log_path_contains_a_configured_secret_is_omitted_from_the_database_and_wal() {
+    use agent_core::config::Secrets;
+    use agent_core::history::MaxTextBytes;
+    use agent_runtime::history::{Cause, DEFAULT_QUEUE, History, HistoryDb, Noting, Problem, Reporter, Setup};
+    use std::sync::Mutex;
+
+    #[derive(Debug, Default)]
+    struct Seen(Mutex<Vec<Problem>>);
+    impl Reporter for Seen {
+        fn report(&self, problem: &Problem) {
+            self.0.lock().unwrap().push(problem.clone());
+        }
+    }
+
+    let rig = Rig::new().await;
+    rig.worktree(1);
+    let marker = rig.home.root().file_name().unwrap().to_str().unwrap().to_owned();
+    let secrets = Secrets::parse(&format!("github_token = {marker:?}\n"), 0o600).unwrap();
+    let db_path = rig.home.history_file();
+    let db = HistoryDb::open(&db_path, MaxTextBytes::default()).unwrap();
+    let seen = Arc::new(Seen::default());
+    let started = History::start_with_secrets(
+        Noting::with_secrets(db, secrets.clone()),
+        Setup {
+            reporter: Arc::clone(&seen) as Arc<dyn Reporter>,
+            capacity: DEFAULT_QUEUE,
+        },
+        secrets,
+    )
+    .unwrap();
+    let (job, _answer) = rig.job(1, "true", LONG);
+    let mut service = Service::new(rig.parts()).with_history(started.history.clone());
+
+    let record = service.execute(&job).await.unwrap();
+    started.writer.close().unwrap();
+
+    assert_eq!(record.result.outcome, GateOutcome::Passed);
+    assert_eq!(started.history.health().lost, 1);
+    let problems = seen.0.lock().unwrap().clone();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].cause, Cause::SecretIdentity);
+    let db_bytes = std::fs::read(&db_path).unwrap();
+    assert!(
+        !db_bytes.windows(marker.len()).any(|w| w == marker.as_bytes()),
+        "secret marker leaked into history.db"
+    );
+    let wal_path = db_path.with_extension("db-wal");
+    if let Ok(wal_bytes) = std::fs::read(&wal_path) {
+        assert!(
+            !wal_bytes.windows(marker.len()).any(|w| w == marker.as_bytes()),
+            "secret marker leaked into history.db-wal"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_gate_whose_worktree_git_cannot_read_before_it_ran_counts_a_capture_loss_and_notes_it_in_its_round() {
+    use agent_core::history::{
+        AgentIdentity, HistoryEvent, ItemText, MaxTextBytes, Record, RoundOpening, RoundSubject, RunStart, RunWhy,
+        TeamStart,
+    };
+    use agent_core::ids::{BranchName, ItemId, RoundId, RunId};
+    use agent_core::kinds::{CliKind, Role, Tier};
+    use agent_core::state::MergeMode;
+    use agent_runtime::history::{CaptureKind, Cause, DEFAULT_QUEUE, History, HistoryDb, Noting, Reader, Setup};
+
+    let rig = Rig::new().await;
+    let tree = rig.worktree(1);
+    let db_path = rig.home.history_file();
+    let db = HistoryDb::open(&db_path, MaxTextBytes::default()).unwrap();
+    let seen = Arc::new(SeenProblems::default());
+    let started = History::start(
+        Noting::new(db),
+        Setup {
+            reporter: Arc::clone(&seen) as Arc<dyn agent_runtime::history::Reporter>,
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let round: RoundId = "round-20261118-110640-pre1".parse().unwrap();
+    let run_id: RunId = "run-20261118-110640-pre1".parse().unwrap();
+    started.history.record(Record::Team(Box::new(TeamStart {
+        team: team_id(1),
+        at: crate::fixtures::at(0),
+        repo: repo().as_str().to_owned(),
+        base_branch: "main".parse::<BranchName>().unwrap(),
+        merge: MergeMode::Autopilot,
+        task_list: "# 1 — Feature\n## 1.1 — Item\nWork.\n".to_owned(),
+        plan: Vec::new(),
+    })));
+    started.history.record(Record::Round(Box::new(RoundOpening {
+        round: round.clone(),
+        team: team_id(1),
+        at: crate::fixtures::at(0),
+        subject: RoundSubject::Item(ItemText {
+            item: "1.1".parse::<ItemId>().unwrap(),
+            title: "Item".to_owned(),
+            description: "Work.".to_owned(),
+            expected_result: None,
+            checks: None,
+        }),
+    })));
+    started.history.record(Record::Run(Box::new(RunStart {
+        run: run_id,
+        team: team_id(1),
+        task: task(1),
+        at: crate::fixtures::at(0),
+        agent: AgentIdentity {
+            name: "claude-1".to_owned(),
+            tier: Tier::Normal,
+            cli: CliKind::Claude,
+            model: None,
+        },
+        role: Role::Solo,
+        rounds: vec![round.clone()],
+        why: RunWhy::FirstRun,
+        prompt: "Work.".to_owned(),
+        worktree: abs(&tree),
+        branch: "main".parse::<BranchName>().unwrap(),
+        session: None,
+    })));
+    std::fs::remove_dir_all(tree.join(".git")).unwrap();
+    let (job, _answer) = rig.job(1, "true", LONG);
+    let mut service = Service::new(rig.parts()).with_history(started.history.clone());
+
+    let error = service.execute(&job).await.unwrap_err();
+    started.writer.close().unwrap();
+
+    assert!(matches!(error, GateError::Git { .. }), "{error:?}");
+    assert_eq!(started.history.health().lost, 1);
+    let problems = seen.0.lock().unwrap().clone();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].cause, Cause::Capture(CaptureKind::Gate));
+    let read = Reader::open(&db_path).unwrap().round_records(&round).unwrap();
+    let notes: Vec<_> = read
+        .iter()
+        .filter_map(|stored| match &stored.record {
+            Record::Event(event) => match &event.event {
+                HistoryEvent::Lost {
+                    what, cause, detail, ..
+                } => Some((what.as_str(), cause.as_str(), detail.as_str(), &stored.rounds)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notes.len(), 1, "{read:?}");
+    assert_eq!((notes[0].0, notes[0].1), ("gate", "capture_gate"));
+    assert_ne!(notes[0].2, "");
+    assert_eq!(notes[0].3, &[round]);
+}

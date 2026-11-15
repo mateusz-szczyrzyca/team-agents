@@ -67,6 +67,7 @@ fn sql(record: RecordKind) -> impl Fn(rusqlite::Error) -> WriteError {
 pub(super) fn append(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes) -> Result<(), WriteError> {
     let kind = kind_of(record);
     let entry = entry_of(tx, record, limit)?;
+    check_rounds(tx, &entry.team, &entry.rounds, kind)?;
     let added = tx
         .execute(
             "INSERT INTO history_records (kind, key, at, team, payload, cut) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
@@ -78,6 +79,13 @@ pub(super) fn append(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes)
         return Ok(());
     }
     let sequence = tx.last_insert_rowid();
+    if let Record::RunEnd(end) = record {
+        tx.execute(
+            "UPDATE history_records SET at = ?1 WHERE kind = 'changes' AND key = ?2",
+            params![&entry.at, end.run.as_str()],
+        )
+        .map_err(sql(kind))?;
+    }
     for (index, round) in entry.rounds.iter().enumerate() {
         let position = u32::try_from(index + 1).map_err(|source| WriteError::Number { record: kind, source })?;
         tx.execute(
@@ -85,6 +93,32 @@ pub(super) fn append(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes)
             params![sequence, position, round],
         )
         .map_err(sql(kind))?;
+    }
+    Ok(())
+}
+
+/// Checks that none of `rounds` is recorded as belonging to a team other than `team`.
+fn check_rounds(tx: &Transaction<'_>, team: &str, rounds: &[String], kind: RecordKind) -> Result<(), WriteError> {
+    for round in rounds {
+        let foreign: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM rounds WHERE round = ?1 AND team <> ?2 \
+                 UNION ALL \
+                 SELECT 1 FROM history_record_rounds AS l \
+                 JOIN history_records AS r ON r.sequence = l.sequence \
+                 WHERE l.round = ?1 AND r.team <> ?2 \
+                 LIMIT 1",
+                params![round, team],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sql(kind))?;
+        if foreign.is_some() {
+            return Err(WriteError::Rule {
+                record: kind,
+                rule: "a record cannot belong to a round of another team",
+            });
+        }
     }
     Ok(())
 }
@@ -106,39 +140,35 @@ fn entry_of(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes) -> Resul
         Ok(plain(kind, key, at, scope.team, scope.rounds))
     };
     match record {
-        Record::Team(team) => Ok(plain(
+        Record::Team(t) => Ok(plain(
             kind,
-            team.team.to_string(),
-            time_text(team.at),
-            team.team.to_string(),
+            t.team.to_string(),
+            time_text(t.at),
+            t.team.to_string(),
             Vec::new(),
         )),
-        Record::Round(round) => Ok(plain(
+        Record::Round(r) => Ok(plain(
             kind,
-            round.round.to_string(),
-            time_text(round.at),
-            round.team.to_string(),
-            vec![round.round.to_string()],
+            r.round.to_string(),
+            time_text(r.at),
+            r.team.to_string(),
+            vec![r.round.to_string()],
         )),
-        Record::Run(run) => Ok(plain(
-            kind,
-            run.run.to_string(),
-            time_text(run.at),
-            run.team.to_string(),
-            run.rounds.iter().map(ToString::to_string).collect(),
-        )),
+        Record::Run(r) => {
+            let rounds = r.rounds.iter().map(ToString::to_string).collect();
+            Ok(plain(
+                kind,
+                r.run.to_string(),
+                time_text(r.at),
+                r.team.to_string(),
+                rounds,
+            ))
+        }
         Record::Launch(launch) => of_run(&launch.run, launch.run.to_string(), time_text(launch.at)),
         Record::Step(step) => of_run(&step.run, format!("{}/{}", step.run, step.number), time_text(step.at)),
         Record::RunEnd(end) => of_run(&end.run, end.run.to_string(), time_text(end.at)),
-        Record::Session(session) => of_run(
-            &session.run,
-            format!("{}/{}", session.run, session.number),
-            time_text(session.at),
-        ),
-        Record::Changes(changes) => {
-            let at = changed_at(tx, changes.run.as_str(), kind)?;
-            of_run(&changes.run, changes.run.to_string(), at)
-        }
+        Record::Session(s) => of_run(&s.run, format!("{}/{}", s.run, s.number), time_text(s.at)),
+        Record::Changes(c) => of_run(&c.run, c.run.to_string(), changed_at(tx, c.run.as_str(), kind)?),
         Record::Event(event) => event_entry(tx, event, limit),
     }
 }
@@ -204,8 +234,28 @@ fn event_entry(tx: &Transaction<'_>, record: &EventRecord, limit: MaxTextBytes) 
     let payload = serde_json::to_string(&event).map_err(|source| WriteError::Json { record: kind, source })?;
     // A gate runs where no state of rounds is at hand: it belongs to the rounds of the run of its task that waits for it.
     let rounds = match &event {
-        HistoryEvent::Gate { task, .. } if record.rounds.is_empty() => rounds_of_task(tx, task.as_str(), kind)?,
-        _ => record.rounds.iter().map(ToString::to_string).collect(),
+        HistoryEvent::Gate { task, .. } | HistoryEvent::Lost { task: Some(task), .. } if record.rounds.is_empty() => {
+            rounds_of_task(tx, task.as_str(), kind)?
+        }
+        HistoryEvent::Gate { .. }
+        | HistoryEvent::Checked { .. }
+        | HistoryEvent::PullOpened { .. }
+        | HistoryEvent::PullPushed { .. }
+        | HistoryEvent::PullReady { .. }
+        | HistoryEvent::ReviewAsked { .. }
+        | HistoryEvent::ReviewSubmitted { .. }
+        | HistoryEvent::FixPassStarted { .. }
+        | HistoryEvent::PullApproved { .. }
+        | HistoryEvent::PullMerged { .. }
+        | HistoryEvent::PullHandedOver { .. }
+        | HistoryEvent::PullClosed { .. }
+        | HistoryEvent::QuestionAsked { .. }
+        | HistoryEvent::QuestionAnswered { .. }
+        | HistoryEvent::Controlled { .. }
+        | HistoryEvent::Notified { .. }
+        | HistoryEvent::RoundClosed { .. }
+        | HistoryEvent::TeamEnded {}
+        | HistoryEvent::Lost { .. } => record.rounds.iter().map(ToString::to_string).collect(),
     };
     Ok(Entry {
         kind: event.kind().to_string(),

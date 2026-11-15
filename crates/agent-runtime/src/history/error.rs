@@ -3,8 +3,10 @@
 use std::path::PathBuf;
 
 use agent_core::config::InvalidValue;
+use agent_core::history::LostCause;
+pub use agent_core::history::RecordKind;
 use agent_core::ids::{InvalidId, InvalidItemId, InvalidName};
-use agent_core::kinds::{Keyword, UnknownKeyword};
+use agent_core::kinds::UnknownKeyword;
 use agent_core::repo_path::InvalidRepoPath;
 use agent_core::state::{InvalidCommitId, InvalidTimestamp};
 
@@ -61,36 +63,6 @@ pub enum OpenError {
     },
 }
 
-/// Which record a write was about, for the message of an error; for the records of a run and a team also the `kind` the
-/// ledger keeps them under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, strum::VariantNames)]
-#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<RecordKind>)]
-pub enum RecordKind {
-    /// A team starting.
-    Team,
-    /// A round opening.
-    Round,
-    /// A run starting.
-    Run,
-    /// The process of a run starting.
-    Launch,
-    /// A session observed in a running CLI.
-    Session,
-    /// A step of a run.
-    Step,
-    /// A run ending.
-    RunEnd,
-    /// What a run changed.
-    Changes,
-    /// An event of a round: a gate, a pull request, a question and the like. The ledger keeps these under the keyword of
-    /// the event, not under this one.
-    Event,
-}
-
-impl Keyword for RecordKind {
-    const WHAT: &'static str = "kind of record";
-}
-
 /// How a write failed, as far as anyone can act on it: the writer reports each kind once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::Display)]
 #[strum(serialize_all = "snake_case")]
@@ -111,6 +83,23 @@ pub enum WriteKind {
     Encoding,
     /// Anything else SQLite reports.
     Other,
+}
+
+impl WriteKind {
+    /// The [`LostCause`] for this write failure.
+    #[must_use]
+    pub const fn lost_cause(self) -> LostCause {
+        match self {
+            Self::DiskFull => LostCause::WriteDiskFull,
+            Self::Busy => LostCause::WriteBusy,
+            Self::ReadOnly => LostCause::WriteReadOnly,
+            Self::Io => LostCause::WriteIo,
+            Self::Corrupt => LostCause::WriteCorrupt,
+            Self::Refused => LostCause::WriteRefused,
+            Self::Encoding => LostCause::WriteEncoding,
+            Self::Other => LostCause::WriteOther,
+        }
+    }
 }
 
 /// Why a record cannot be written.
