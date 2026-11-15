@@ -289,6 +289,45 @@ pub enum ExcludeCause {
     },
 }
 
+/// The callsite for directly constructed model CLI operation spans.
+static MODEL_CLI_CALLSITE: tracing::callsite::DefaultCallsite =
+    tracing::callsite::DefaultCallsite::new(&MODEL_CLI_METADATA);
+
+/// The stable metadata and scope fields of a model CLI operation span.
+static MODEL_CLI_METADATA: tracing::Metadata<'static> = tracing::Metadata::new(
+    "model_cli",
+    module_path!(),
+    tracing::Level::DEBUG,
+    Some(file!()),
+    Some(line!()),
+    Some(module_path!()),
+    tracing::field::FieldSet::new(
+        &["task", "run", "cli"],
+        tracing::callsite::Identifier(&MODEL_CLI_CALLSITE),
+    ),
+    tracing::metadata::Kind::SPAN,
+);
+
+/// Opens a model operation span without consulting the process-wide macro-interest cache.
+fn model_cli_span(task: &TaskId, run: &RunId, cli: &str) -> tracing::Span {
+    let task = task.to_string();
+    let run = run.to_string();
+    let task_text = task.as_str();
+    let run_text = run.as_str();
+    let fields = MODEL_CLI_METADATA.fields();
+    let field_list = fields.iter().collect::<Vec<_>>();
+    let [task_field, run_field, cli_field] = field_list.as_slice() else {
+        // The static metadata and this destructuring must change together.
+        return tracing::Span::none();
+    };
+    let entries = [
+        (task_field, Some(&task_text as &dyn tracing::field::Value)),
+        (run_field, Some(&run_text as &dyn tracing::field::Value)),
+        (cli_field, Some(&cli as &dyn tracing::field::Value)),
+    ];
+    tracing::Span::new(&MODEL_CLI_METADATA, &fields.value_set(&entries))
+}
+
 /// Carries out runs of model CLIs.
 #[derive(Debug, Clone)]
 pub struct RunEngine {
@@ -340,12 +379,7 @@ impl RunEngine {
     ) -> Result<RunVerdict, RunError> {
         let started = std::time::Instant::now();
         let tool = job.cli.as_str();
-        let span = tracing::debug_span!(
-            "model_cli",
-            task = %job.task,
-            run = %job.run,
-            cli = tool,
-        );
+        let span = model_cli_span(&job.task, &job.run, tool);
         let operation = async {
             let result = self.run_held_lifecycle(job, cancel, hold).await;
             let (exit_code, outcome) = match &result {
