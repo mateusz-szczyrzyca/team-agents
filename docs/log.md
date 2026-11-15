@@ -1,8 +1,8 @@
-# `agent log`: the story of a round
+# `agent log`: the story of a round and the daemon's own log
 
 `agent log` tells what happened from [the history](history.md). It opens `history.db` read-only and asks no daemon, so it
-works when the daemon is stopped, crashed or never started. This page is about the story; the daemon's own log (8.6) and
-questions, search and following (8.7) come with their items.
+works when the daemon is stopped, crashed or never started. This page describes the story of a round or team and the
+daemon's own structured log; questions, search and following (8.7) come with their item.
 
 ```sh
 agent log --round round-20261114-164520-ab12        # one round, from its item to its end
@@ -66,3 +66,160 @@ the kinds of an [event](history.md#events). `record` holds every field whole; `-
 
 The text of a story is pinned by golden files under `crates/agent/tests/golden/`, each made by a daemon run with fake CLIs and
 a fake GitHub server, IDs and times normalised.
+
+## The daemon's own log
+
+`agent daemon` runs unattended under `systemd --user`. When something goes wrong inside the daemon itself — a model CLI
+prints a line that is not JSON, a `git` or GitHub call fails, `agentbus` is unreachable, a gate times out, or a task
+panics — the daemon records a structured log entry in two places at once:
+
+1. **Standard error (`stderr`)** — one human-readable line per event, captured by the `systemd` journal
+   (`journalctl --user -u agent-daemon`).
+2. **`history.db` (`daemon_logs` and `daemon_log_rounds`)** — a structured row in the same SQLite database that holds
+   the history of teams, rounds, and runs ([`history.md`](history.md)), carrying the `team`, open `rounds`, `task`, and
+   `run` from the enclosing `tracing` spans so a failure can be queried alongside the work that was running when it
+   happened.
+
+### Configuration (`[log]`)
+
+In `agents.toml` ([`configuration.md`](configuration.md)):
+
+```toml
+[log]
+level = "info"
+```
+
+`level` sets the lowest severity kept by both `stderr` and `history.db`:
+
+| Level | Keeps | Default | What it records |
+|---|---|---|---|
+| `error` | `error` | no | unrecoverable daemon errors: state save failures, missing configured names, panics |
+| `warn` | `error`, `warn` | no | every degraded condition, retry, invalid client request, or abnormal run stop |
+| `info` | `error`, `warn`, `info` | **yes** | every lifecycle change of a team, round, item, task, or run — and nothing on an idle tick |
+| `debug` | `error`, `warn`, `info`, `debug` | no | every decision of `agent_core::decide` that takes action (`input` and `result`) and every outside call (`git`, `agentbus`, GitHub API, model CLI) with its duration and outcome |
+
+When `[history] enabled = false`, the daemon still writes its log to `stderr` at the configured `[log] level`, and
+opens no `history.db`.
+
+### Spans and scope
+
+Every unit of work in the daemon runs inside a `tracing` span that carries its identifiers:
+
+- `team` (`TeamId`) and `round` (`RoundId`, or comma-separated open rounds when a team has more than one open round)
+  around team, round, check, publication, review, and merge operations;
+- `task` (`TaskId`) around task lifecycle, gate, and worktree operations;
+- `run` (`RunId`) around each model CLI invocation.
+
+The tracing layer walks the active span stack from root to leaf (and any explicit `team`, `round`, `rounds`, `task`, or
+`run` fields on the event itself) and attaches them to the `LogRecord`:
+
+- `team` and `rounds` are stored in `daemon_logs.team` and `daemon_log_rounds(log, round)` (strictly ascending, never
+  present without a `team`);
+- `task` and `run` are stored in `daemon_logs.task` and `daemon_logs.run` (`run` is never present without a `task`).
+
+An event emitted outside any team or task (such as a refused client request or a startup check) has `team = NULL`, no
+`daemon_log_rounds` rows, `task = NULL`, and `run = NULL`.
+
+### Coalescing repeated warnings
+
+A broken external dependency (`agentbus` down, a failing `git` remote, a rate-limited GitHub endpoint) can fail on every
+tick while a team waits. Instead of writing thousands of identical rows:
+
+- When a `warn` event has the same `(event, team, rounds, task, run, message, fields)` as an existing `warn` row in
+  `daemon_logs`, the writer increments `count` by `1`, sets `first_at` to the earliest timestamp and `at` to the latest,
+  regardless of the order in which concurrent producers enqueue their events.
+- `error`, `info`, and `debug` rows never coalesce (`count` is always `1` and `first_at == at`).
+
+### Decisions and outside calls (`debug`)
+
+At `level = "debug"`:
+
+- `decision_taken` is emitted whenever a pure decision function in `agent_core::decide` takes action (forming a team,
+  assigning an item, starting or advancing a round, acting on a run outcome, scheduling a retry or pause, evaluating
+  round checks, or choosing a merge action). Its `fields` carry `decision`, `input`, and `result`. A decision check on
+  an idle team or task that produces no action logs nothing.
+- `outside_call_completed` is emitted whenever an external call (`git`, `agentbus`, the GitHub API, or a model CLI
+  process) finishes, with `tool`, `operation`, `duration_ms`, `outcome`, and, when available, `exit_code` in `fields`.
+  For a GitHub call, `exit_code` is the actual HTTP response status.
+
+### What only `stderr` has
+
+Every event of the daemon has one of the names above and goes to both places, with these exceptions, which go to `stderr`
+only:
+
+- a failure of the history itself (the writer cannot keep a record, a loss note cannot be written, the writer does not
+  close cleanly): a failure to write the log is never logged into the history, so that it cannot loop;
+- an event of a time the clock cannot give: it has no time to be stored with;
+- `trace` events, which no `[log] level` keeps in the history;
+- the note of the GitHub client that it left out what accounts that are not trusted wrote, which no call of the daemon
+  makes yet.
+
+Events from before the history is open (such as `restart_corrected` for an unknown time zone at the start of `agent daemon`)
+and after it is closed are on `stderr` only.
+
+### Panic hook
+
+When the daemon starts, it installs a panic hook before spawning its tasks. If any thread or task panics, the hook emits
+a `daemon_panicked` (`error`) event with the redacted panic message and `location` (`file:line:column`) so both `stderr`
+and `history.db` record the fault before unwinding.
+
+### Redaction, bounds, and storage failures
+
+- **No secrets.** Before any line is written to `stderr` or queued for `history.db`, every configured secret from
+  `secrets.toml` (`github_token`, `[agent_env]`, and `[notification_env]`) is replaced with `[REDACTED]` in the event's
+  `message`, structured `fields`, and span fields.
+- **Size bounds.** `message` and `fields` are bounded by `[history] max_text_bytes`. A longer `message` is cut at a
+  UTF-8 character boundary and `"message"` is recorded in `cut`; a `fields` JSON object whose serialized form exceeds
+  `max_text_bytes` is replaced with `{"truncated":true}` and `"fields"` is recorded in `cut`.
+- **Non-blocking and non-looping.** If `history.db` cannot be opened or written, or if the writer queue is full, the
+  event still goes to `stderr`, the writer prints a rate-limited line (`the history cannot keep a log entry`) directly
+  to `stderr` without re-entering `tracing`, and the daemon continues its work.
+
+## Events (`agent_core::log::LogEvent`)
+
+Every daemon log entry uses one of the fixed `LogEvent` names below. A test compares this table against
+`LogEvent::ALL` and `LogEvent::level`.
+
+| Event | Level | Meaning |
+|---|---|---|
+| `cli_output_unreadable` | `warn` | A line of a model CLI's output cannot be read as its event format. |
+| `run_ended_without_status` | `warn` | A model CLI run cannot start, ends without reporting a status or a reviewer's verdict, or fails. |
+| `run_hung` | `warn` | The hang watchdog stops a silent run, or process cleanup cannot kill or reap a process so that its end is known. |
+| `run_quota_exhausted` | `warn` | A run stops because its model quota is exhausted. |
+| `run_rate_limited` | `warn` | A run stops because of a rate limit. |
+| `bus_down` | `warn` | An `agentbus` operation fails and what waits for it is retried or dropped. |
+| `git_call_failed` | `warn` | A `git` call, worktree operation or branch operation fails or is retried. |
+| `github_call_failed` | `warn` | A GitHub API call, a publication or a merge fails or is retried, or the home has no GitHub token. |
+| `gate_cannot_start` | `warn` | A gate command cannot start or be recorded. |
+| `gate_timed_out` | `warn` | A gate command exceeds its timeout and is killed. |
+| `gate_dirty_tree` | `warn` | A gate runs on or leaves a dirty worktree or moves `HEAD`. |
+| `state_save_failed` | `error` | The daemon's state file or the activity log of a task cannot be saved. |
+| `questions_file_invalid` | `warn` | A questions file is missing or not valid, or cannot be prepared, watched or opened. |
+| `configuration_name_missing` | `error` | An agent, investigator, or repository named in the state or a request is no longer in `agents.toml`. |
+| `restart_corrected` | `warn` | A start or restart of the daemon found an interrupted run or a host fallback and corrected it. |
+| `request_refused` | `warn` | A client connection, subscription or request cannot be accepted or is refused. |
+| `daemon_panicked` | `error` | A task or thread in the daemon panicked, with its message and location. |
+| `daemon_task_failed` | `error` | A task of the daemon (a side task or the task of a client connection) ends with an error it does not handle, such as a panic, with `error`. |
+| `team_not_started` | `error` | A team that was formed is not started because of a fault of the daemon (the state refuses it, its events cannot be made, or forming it failed inside); the client is told to see this log. |
+| `notification_failed` | `error` | A notification for the human cannot be made, timed, queued or delivered. |
+| `history_record_incomplete` | `warn` | A record of the history cannot be made as it should: it is left out, counted as lost, or made with a fallback (such as a run's reason recorded as a continuation). |
+| `team_changed` | `info` | A team is started or closed. |
+| `round_changed` | `info` | A round is opened or closed. |
+| `item_phase_changed` | `info` | An item's phase changes. |
+| `task_status_changed` | `info` | A task's status changes. |
+| `run_started` | `info` | A model CLI run starts. |
+| `run_ended` | `info` | A model CLI run ends. |
+| `daemon_started` | `info` | The daemon has opened its state and its history and serves its socket, with `home`. |
+| `daemon_stop_requested` | `info` | A signal asks the daemon to stop, with `signal` (`SIGTERM` or `SIGINT`). |
+| `daemon_stopped` | `info` | Everything of the daemon but its history has ended, with `outcome`: the last record of a daemon that ended; its absence after a `daemon_started` means the daemon was killed. |
+| `request_delegated` | `info` | A request for a worker is given to a worker, with `request` and `worker`. |
+| `questions_answered` | `info` | The open questions of a task are answered, with `number` and `channel`. |
+| `control_used` | `info` | The human used a control (stop, pause, unpause, resume), with `action` and the number of `tasks` it reached. |
+| `checks_decided` | `info` | The checks before a review send a round back to its team, ask the human, or take the human's answer, with `outcome`. |
+| `reviews_requested` | `info` | The reviews of a pull request are asked for, with `pr` and the number of `reviewers`. |
+| `review_report_late` | `info` | A reviewer's report comes when no review waits for it: it is kept or left out, and changes nothing. |
+| `notification_sent` | `info` | A notification for the human is delivered, with the `file` it was written to. |
+| `questions_file_opened` | `info` | A new questions file is opened in the editor, or is not because the editor is not there, with `outcome`. |
+| `decision_taken` | `debug` | A pure decision of `agent_core::decide` takes action, with `decision`, `input`, and `result`. |
+| `outside_call_completed` | `debug` | An outside call (`git`, `agentbus`, GitHub API, model CLI) completes, with `tool`, `operation`, `duration_ms`, `outcome`, and, when available, `exit_code`. |
+| `peer_gone` | `debug` | The other end of an answer (a client of the socket, or a task of the daemon) was gone before the answer. |

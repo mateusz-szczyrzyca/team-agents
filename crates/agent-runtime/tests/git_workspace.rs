@@ -1,5 +1,8 @@
 //! What the daemon asks git about the checkout a `run` comes from, and the branch it starts for a member's next item.
 
+#[path = "support/scopes.rs"]
+mod scopes;
+
 #[cfg(test)]
 mod git_workspace {
     use std::path::Path;
@@ -9,6 +12,9 @@ mod git_workspace {
     use agent_core::config::AbsolutePath;
     use agent_core::ids::BranchName;
     use agent_runtime::git::{CommitIdentity, Git, GitError, GitOperation, Revision};
+    use tracing_subscriber::layer::SubscriberExt;
+
+    use crate::scopes::ScopeRecorder;
 
     /// Runs real git for the setup of a test and returns its trimmed output.
     fn raw(dir: &Path, args: &[&str]) -> String {
@@ -139,6 +145,25 @@ mod git_workspace {
         assert_eq!(raw(&linked, &["rev-parse", "--abbrev-ref", "HEAD"]), "second-work");
         assert_eq!(raw(&linked, &["rev-parse", "HEAD"]), raw(&repo, &["rev-parse", "main"]));
         assert_ne!(raw(&linked, &["rev-parse", "HEAD"]), first);
+    }
+
+    #[tokio::test]
+    async fn completion_is_emitted_inside_the_git_operation_span() {
+        let (_tmp, repo) = repository();
+        let recorder = ScopeRecorder::default();
+        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(recorder.clone()));
+
+        tracing::instrument::WithSubscriber::with_subscriber(handle(&repo).toplevel(), dispatch)
+            .await
+            .unwrap();
+
+        let events = recorder.events();
+        assert!(
+            events
+                .iter()
+                .any(|event| event.name == "outside_call_completed" && event.spans.contains(&"git".to_owned())),
+            "the git completion has no git operation span: {events:?}"
+        );
     }
 
     #[tokio::test]

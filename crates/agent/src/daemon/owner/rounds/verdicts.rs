@@ -4,12 +4,14 @@
 use agent_core::decide::round::{RoundError, RoundPolicy};
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, ItemId, TaskId, TeamId};
+use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::EventKind;
 use agent_core::state::{Completion, ItemPhase, PullRequest, Review, ReviewOutcome, RoundEnd, Team, Timestamp};
 use agent_core::status::ReviewVerdict;
 use agent_runtime::git::Revision;
 use agent_runtime::github::CommentReview;
+use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
@@ -99,7 +101,12 @@ impl Owner {
             Some(Answer::Current(asked)) => asked,
             Some(Answer::Late(late)) => return self.keep_late_review(&pulls, task, located, &late, message).await,
             None => {
-                tracing::debug!(task = %task, "a reviewer ended with nothing that it was asked to review: its report is not taken");
+                tracing::info!(
+                    event = LogEvent::ReviewReportLate.as_str(),
+                    team = %located.team,
+                    task = %task,
+                    "a reviewer ended with nothing that it was asked to review: its report is not taken"
+                );
                 return Ok(());
             }
         };
@@ -129,7 +136,13 @@ impl Owner {
         late: &Late,
         message: &str,
     ) -> Result<(), OwnerError> {
-        tracing::info!(task = %task, pr = %late.pr.number, "a reviewer ended a review of a review pass that is decided: its report is kept and posted");
+        tracing::info!(
+            event = LogEvent::ReviewReportLate.as_str(),
+            team = %located.team,
+            task = %task,
+            pr = %late.pr.number,
+            "a reviewer ended a review of a review pass that is decided: its report is kept and posted"
+        );
         let report = report_text(message);
         let pass = count(late.pass);
         self.parts
@@ -158,7 +171,13 @@ impl Owner {
                 );
             }
             Err(problem) => {
-                tracing::info!(task = %task, ?problem, "a late report has no verdict: the history records no review of it");
+                tracing::info!(
+                    event = LogEvent::ReviewReportLate.as_str(),
+                    team = %located.team,
+                    task = %task,
+                    ?problem,
+                    "a late report has no verdict: the history records no review of it"
+                );
             }
         }
         let lead = self.lead_of(&located.team)?;
@@ -185,7 +204,14 @@ impl Owner {
         let count = self.watch.bounces.entry(task.clone()).or_insert(0);
         *count = count.saturating_add(1);
         let count = *count;
-        tracing::warn!(task = %task, pr = %asked.pr.number, ?problem, count, "a reviewer's report has no verdict");
+        tracing::warn!(
+            event = LogEvent::RunEndedWithoutStatus.as_str(),
+            task = %task,
+            pr = %asked.pr.number,
+            ?problem,
+            count,
+            "a reviewer's report has no verdict"
+        );
         if count <= MAX_VERDICT_BOUNCES {
             let mut look = Look::default();
             self.release(task, Why::VerdictMissing, &mut look)?;
@@ -255,13 +281,34 @@ impl Owner {
         let progress = asked.items.first().and_then(|id| team.item(*id))?;
         let policy = RoundPolicy::new(team.merge(), self.parts.settings.config.review());
         match after_verdict(progress, &asked.reviewer, verdict, policy) {
-            Ok(next) => Some(next),
+            Ok(next) => {
+                log_decision(
+                    "after_verdict",
+                    &format!(
+                        "pr={}, reviewer={}, verdict={verdict:?}",
+                        asked.pr.number, asked.reviewer
+                    ),
+                    &format!("{next:?}"),
+                );
+                Some(next)
+            }
             Err(VerdictError::Round(RoundError::NotExpected { .. })) => {
-                tracing::info!(team = %team_id, pr = %asked.pr.number, "a verdict came after the review pass was decided: it is recorded and changes nothing");
+                tracing::info!(
+                    event = LogEvent::ReviewReportLate.as_str(),
+                    team = %team_id,
+                    pr = %asked.pr.number,
+                    "a verdict came after the review pass was decided: it is recorded and changes nothing"
+                );
                 None
             }
             Err(error) => {
-                tracing::warn!(team = %team_id, pr = %asked.pr.number, error = %error_chain(&error), "the round does not take a verdict: it is recorded and changes nothing");
+                tracing::warn!(
+                    event = LogEvent::RunEndedWithoutStatus.as_str(),
+                    team = %team_id,
+                    pr = %asked.pr.number,
+                    error = %error_chain(&error),
+                    "the round does not take a verdict: it is recorded and changes nothing"
+                );
                 None
             }
         }
@@ -313,7 +360,13 @@ impl Owner {
     /// task's directory.
     pub(super) async fn post_review(&mut self, pulls: &Pulls, lead: &Lead, task: &TaskId, asked: &Asked, report: &str) {
         if let Err(error) = self.try_post_review(pulls, lead, task, asked, report).await {
-            tracing::warn!(task = %task, pr = %asked.pr.number, error = %error_chain(&error), "a review cannot be posted on the pull request: its verdict counts and its report is kept");
+            tracing::warn!(
+                event = LogEvent::GithubCallFailed.as_str(),
+                task = %task,
+                pr = %asked.pr.number,
+                error = %error_chain(&error),
+                "a review cannot be posted on the pull request: its verdict counts and its report is kept"
+            );
         }
     }
 
@@ -401,6 +454,18 @@ impl Owner {
                 }
             }
             let round = self.round_of_item(team_id, *id)?;
+            {
+                let span = tracing::error_span!("round", team = %team_id, rounds = %round);
+                let _entered = span.enter();
+                tracing::info!(
+                    event = LogEvent::ItemPhaseChanged.as_str(),
+                    team = %team_id,
+                    item = %id,
+                    phase = %status.as_str(),
+                    pr = %asked.pr.number,
+                    "an item changed phase after a review verdict"
+                );
+            }
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: *id,

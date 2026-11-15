@@ -6,8 +6,10 @@ use std::str::FromStr;
 use agent_core::config::AbsolutePath;
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
+use agent_core::log::LogEvent;
 use agent_core::state::{CommitId, ItemPhase, Member, Participant, PullRequest, Review, ReviewOutcome, Timestamp};
 use agent_runtime::git::{Git, Revision, WorktreeBranch};
+use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
@@ -43,7 +45,13 @@ impl Owner {
                 // Fewer than two investigators are free: the pull request waits for them.
                 Ok(false) => {}
                 Err(error) => {
-                    tracing::warn!(team = %team_id, pr = %pr.number, error = %error_chain(&error), "the reviews of a pull request cannot be asked for: it is tried again at the next look");
+                    tracing::warn!(
+                        event = LogEvent::GitCallFailed.as_str(),
+                        team = %team_id,
+                        pr = %pr.number,
+                        error = %error_chain(&error),
+                        "the reviews of a pull request cannot be asked for: it is tried again at the next look"
+                    );
                 }
             }
         }
@@ -89,6 +97,12 @@ impl Owner {
         let Some(chosen) = choose_reviewers(free, &mut self.parts.rng) else {
             return Ok(false);
         };
+        let chosen_names: Vec<_> = chosen.iter().map(|r| r.name.as_str()).collect();
+        log_decision(
+            "choose_reviewers",
+            &format!("pr={}, among={among:?}", pr.number),
+            &format!("{chosen_names:?}"),
+        );
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let Some(head) = git.branch_tip(&pr.branch).await? else {
             return Ok(false);
@@ -123,7 +137,13 @@ impl Owner {
                 },
             );
         }
-        tracing::info!(team = %team_id, pr = %pr.number, reviewers = prepared.reviews.len(), "reviews are asked for");
+        tracing::info!(
+            event = LogEvent::ReviewsRequested.as_str(),
+            team = %team_id,
+            pr = %pr.number,
+            reviewers = prepared.reviews.len(),
+            "reviews are asked for"
+        );
         Ok(true)
     }
 
@@ -209,13 +229,23 @@ impl Owner {
                 .worktree_remove(&gone.path, agent_runtime::git::RemoveMode::Force)
                 .await
             {
-                tracing::warn!(task = %task, error = %error_chain(&error), "the worktree of a reviewer that was not asked cannot be removed");
+                tracing::warn!(
+                    event = LogEvent::GitCallFailed.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the worktree of a reviewer that was not asked cannot be removed"
+                );
             }
             if let Err(error) = git
                 .branch_delete(&gone.branch, agent_runtime::git::DeleteMode::Force)
                 .await
             {
-                tracing::warn!(task = %task, error = %error_chain(&error), "the branch of a reviewer that was not asked cannot be removed");
+                tracing::warn!(
+                    event = LogEvent::GitCallFailed.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the branch of a reviewer that was not asked cannot be removed"
+                );
             }
         }
     }

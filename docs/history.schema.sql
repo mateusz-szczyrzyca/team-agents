@@ -1,6 +1,6 @@
--- The schema of history.db at user_version 3: what `sqlite_master` holds after the migrations of
+-- The schema of history.db at user_version 4: what `sqlite_master` holds after the migrations of
 -- crates/agent-runtime/src/history/schema.rs, in the order they create it. A test compares it with a fresh database.
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -218,3 +218,70 @@ CREATE TABLE history_record_rounds (
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX history_record_rounds_by_round ON history_record_rounds (round, sequence);
+
+CREATE TABLE daemon_logs (
+    id INTEGER PRIMARY KEY,
+    first_at TEXT NOT NULL,
+    at TEXT NOT NULL,
+    level TEXT NOT NULL CHECK (level IN ('error', 'warn', 'info', 'debug')),
+    module TEXT NOT NULL CHECK (module <> ''),
+    event TEXT NOT NULL CHECK (event IN (
+        'cli_output_unreadable', 'run_ended_without_status', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
+        'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out', 'gate_dirty_tree',
+        'state_save_failed', 'questions_file_invalid', 'configuration_name_missing', 'restart_corrected',
+        'request_refused', 'daemon_panicked', 'daemon_task_failed', 'team_not_started', 'notification_failed',
+        'history_record_incomplete', 'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed',
+        'run_started', 'run_ended', 'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated',
+        'questions_answered', 'control_used', 'checks_decided', 'reviews_requested', 'review_report_late',
+        'notification_sent', 'questions_file_opened', 'decision_taken', 'outside_call_completed', 'peer_gone'
+    )),
+    team TEXT,
+    task TEXT,
+    run TEXT,
+    message TEXT NOT NULL,
+    fields TEXT NOT NULL CHECK (json_valid(fields) AND json_type(fields) = 'object'),
+    count INTEGER NOT NULL CHECK (count >= 1 AND (level = 'warn' OR count = 1)),
+    cut TEXT NOT NULL,
+    CHECK (first_at <= at),
+    CHECK (run IS NULL OR task IS NOT NULL),
+    CHECK (
+        (level = 'error' AND event IN (
+            'state_save_failed', 'configuration_name_missing', 'daemon_panicked', 'daemon_task_failed',
+            'team_not_started', 'notification_failed'
+        ))
+        OR (level = 'warn' AND event IN (
+            'cli_output_unreadable', 'run_ended_without_status', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
+            'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out',
+            'gate_dirty_tree', 'questions_file_invalid', 'restart_corrected', 'request_refused',
+            'history_record_incomplete'
+        ))
+        OR (level = 'info' AND event IN (
+            'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
+            'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated', 'questions_answered',
+            'control_used', 'checks_decided', 'reviews_requested', 'review_report_late', 'notification_sent',
+            'questions_file_opened'
+        ))
+        OR (level = 'debug' AND event IN ('decision_taken', 'outside_call_completed', 'peer_gone'))
+    )
+) STRICT;
+
+CREATE INDEX daemon_logs_by_team ON daemon_logs (team, id) WHERE team IS NOT NULL;
+
+CREATE INDEX daemon_logs_by_task ON daemon_logs (task, id) WHERE task IS NOT NULL;
+
+CREATE INDEX daemon_logs_by_run ON daemon_logs (run, id) WHERE run IS NOT NULL;
+
+CREATE INDEX daemon_logs_by_level ON daemon_logs (level, id);
+
+CREATE INDEX daemon_logs_warn_coalescing ON daemon_logs (event, team, task, run, message, fields, cut)
+    WHERE level = 'warn';
+
+CREATE TABLE daemon_log_rounds (
+    log INTEGER NOT NULL REFERENCES daemon_logs (id),
+    position INTEGER NOT NULL CHECK (position >= 1),
+    round TEXT NOT NULL,
+    PRIMARY KEY (log, position),
+    UNIQUE (log, round)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);

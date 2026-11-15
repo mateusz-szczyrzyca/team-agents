@@ -44,16 +44,40 @@ pub(super) async fn run(
     history: History,
 ) {
     while let Some(delivery) = queue.recv().await {
+        let rounds = delivery
+            .rounds
+            .iter()
+            .map(RoundId::as_str)
+            .collect::<Vec<_>>()
+            .join(",");
+        let delivery_span = tracing::error_span!(
+            "notification",
+            team = %delivery.team,
+            rounds = %rounds,
+            task = %delivery.task
+        );
         let notification = match delivery.notice.render(&texts, &delivery.agent, &delivery.task) {
             Ok(notification) => notification,
             Err(error) => {
-                tracing::error!(task = %delivery.task, error = %error_chain(&error), "cannot render a notification");
+                tracing::error!(
+                    parent: &delivery_span,
+                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
+                    task = %delivery.task,
+                    error = %error_chain(&error),
+                    "cannot render a notification"
+                );
                 continue;
             }
         };
         match notifier.notify(delivery.at, &notification).await {
             Ok(file) => {
-                tracing::info!(task = %delivery.task, file = %file.display(), "notification written");
+                tracing::info!(
+                    parent: &delivery_span,
+                    event = agent_core::log::LogEvent::NotificationSent.as_str(),
+                    task = %delivery.task,
+                    file = %file.display(),
+                    "notification written"
+                );
                 history.record(Record::Event(Box::new(EventRecord {
                     at: delivery.at,
                     team: delivery.team.clone(),
@@ -66,7 +90,13 @@ pub(super) async fn run(
                 })));
             }
             Err(error) => {
-                tracing::error!(task = %delivery.task, error = %error_chain(&error), "cannot deliver a notification");
+                tracing::error!(
+                    parent: &delivery_span,
+                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
+                    task = %delivery.task,
+                    error = %error_chain(&error),
+                    "cannot deliver a notification"
+                );
             }
         }
     }

@@ -16,6 +16,7 @@ use agent_core::protocol::{AgentList, Client, Command, Reply, RunRequest};
 use agent_core::state::{ItemPhase, MergeMode, State, TaskListText};
 use agent_core::status::TaskStatus;
 use agent_runtime::clock::SharedClock;
+use agent_runtime::history::HistoryLayer;
 use agent_runtime::run::RunTimings;
 use agent_runtime::store::Home;
 use time::UtcDateTime;
@@ -24,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::fake_github::{ACCOUNT, FakeGitHub};
 use crate::client::Connection;
-use crate::daemon::{DaemonError, DaemonSetup, Timings, run};
+use crate::daemon::{DaemonError, DaemonSetup, Timings, run, run_with_log_layer};
 
 /// The longest any wait of these tests lasts.
 pub(super) const PATIENCE: Duration = Duration::from_secs(30);
@@ -233,6 +234,31 @@ impl Rig {
         let deadline = Instant::now() + PATIENCE;
         'attempts: loop {
             let daemon = tokio::spawn(run(self.setup(), self.shutdown.clone()));
+            while !socket.exists() {
+                if daemon.is_finished() {
+                    match daemon.await.unwrap() {
+                        Err(DaemonError::AlreadyRunning { .. }) if Instant::now() < deadline => {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            continue 'attempts;
+                        }
+                        ended => panic!("the daemon ended at its start: {ended:?}"),
+                    }
+                }
+                assert!(Instant::now() < deadline, "timed out waiting for the socket");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            self.daemon = Some(daemon);
+            return;
+        }
+    }
+
+    /// Starts the daemon with an explicit log layer, retaining its stderr sink and applying the loaded settings.
+    pub(super) async fn start_with_log_layer(&mut self, layer: HistoryLayer) {
+        self.shutdown = CancellationToken::new();
+        let socket = self.home.socket_file();
+        let deadline = Instant::now() + PATIENCE;
+        'attempts: loop {
+            let daemon = tokio::spawn(run_with_log_layer(self.setup(), self.shutdown.clone(), layer.clone()));
             while !socket.exists() {
                 if daemon.is_finished() {
                     match daemon.await.unwrap() {

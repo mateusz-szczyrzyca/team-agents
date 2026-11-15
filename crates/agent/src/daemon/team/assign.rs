@@ -78,6 +78,19 @@ pub(in crate::daemon) fn assignable(team: &Team) -> Result<Vec<Assigned>, Assign
         merge: team.merge(),
         available: &available,
     })?;
+    if !decided.is_empty() {
+        let span = tracing::error_span!("team", team = %team.id());
+        let _entered = span.enter();
+        let formatted: Vec<String> = decided
+            .iter()
+            .map(|given| format!("{} -> {}", given.item, given.member))
+            .collect();
+        agent_runtime::history::log_decision(
+            "assignable",
+            &format!("team={}, available={available:?}", team.id()),
+            &formatted,
+        );
+    }
     decided
         .into_iter()
         .map(|given| {

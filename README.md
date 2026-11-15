@@ -1034,11 +1034,18 @@ secret-bearing structured identities cause counted omissions. Raw CLI/activity f
 Git attribution may briefly hold a run at its boundaries: each snapshot has a `2`-second budget plus bounded process cleanup;
 timeouts are counted and the work continues.
 
+The daemon's own structured diagnostics go to both `stderr` and `history.db`. The optional `[log] level` setting in
+`agents.toml` keeps `error`, `warn`, `info` (the default), or `debug` and more severe events; disabling history still
+leaves `stderr` logging, and a history write failure is reported on `stderr` without stopping the daemon's work.
+Repeated identical warnings are coalesced with a count. [`docs/log.md`](docs/log.md) describes the event vocabulary,
+team/round/task/run scope, redaction, decisions and outside-call records; [`docs/configuration.md`](docs/configuration.md)
+documents the setting.
+
 Read a round with `target/debug/agent log --round <round-id>`, or a team's rounds with
 `target/debug/agent log --team <team-id>`. Both read the history directly and work with the daemon stopped.
 Use `--prompts` for whole prompts, `--no-steps` to omit individual steps, or `--json` for every record exactly once
 as JSON lines. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
-ordering and exit codes. Schema version `3` adds the event ledger; older history files remain readable without migration
+ordering and exit codes. Schema version `4` adds the daemon log; older history files remain readable without migration
 by `agent log`, and the daemon migrates them when it opens them for writing.
 
 How the human answers the agents and steers a task or a team, through the daemon (`agent daemon`) that owns the state:

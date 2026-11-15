@@ -18,6 +18,7 @@ use agent_core::history::{
     EventRecord, HistoryEvent, HistoryHealth, HistoryState, LostCause, LostKind, Record, RecordKind, RunSession, Step,
 };
 use agent_core::ids::{Clock, RoundId, RunId, TaskId, TeamId};
+use agent_core::log::LogRecord;
 use agent_core::state::Timestamp;
 
 use super::db::Store;
@@ -117,6 +118,8 @@ pub struct Setup {
 enum Job {
     /// A record to write.
     Record(Record),
+    /// A daemon log entry to write.
+    Log(LogRecord),
     /// The writer is to answer on this channel when everything before it is written.
     Flush(SyncSender<()>),
     /// The writer is to stop.
@@ -128,11 +131,15 @@ struct Shared {
     /// How many records were handed in and are not in the database.
     lost: AtomicU64,
     /// Credentials removed on the writer thread before persistence.
-    redactor: Redactor,
+    redactor: Mutex<Redactor>,
+    /// Optional sink for fallback lines on `stderr` in tests.
+    stderr_sink: Mutex<Option<super::log::StderrSink>>,
     /// Whether records are being written.
     state: Mutex<HistoryState>,
     /// The causes already reported.
     reported: Mutex<BTreeSet<Cause>>,
+    /// The daemon-log causes already reported directly to `stderr`.
+    reported_log: Mutex<BTreeSet<Cause>>,
     /// The number the next step of each run that is going gets, less one: how many steps it has had.
     steps: Mutex<HashMap<RunId, u32>>,
     /// Where problems are told.
@@ -157,9 +164,11 @@ impl Shared {
     fn new(state: HistoryState, reporter: Arc<dyn Reporter>, redactor: Redactor) -> Arc<Self> {
         Arc::new(Self {
             lost: AtomicU64::new(0),
-            redactor,
+            redactor: Mutex::new(redactor),
+            stderr_sink: Mutex::new(None),
             state: Mutex::new(state),
             reported: Mutex::new(BTreeSet::new()),
+            reported_log: Mutex::new(BTreeSet::new()),
             steps: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
             runs: Mutex::new(HashMap::new()),
@@ -176,10 +185,28 @@ impl Shared {
     fn report(&self, cause: Cause, detail: impl FnOnce() -> String) {
         let first = locked(&self.reported).insert(cause);
         if first {
-            self.reporter.report(&Problem {
-                cause,
-                detail: self.redactor.text(&detail()),
-            });
+            let detail = locked(&self.redactor).text(&detail());
+            self.reporter.report(&Problem { cause, detail });
+        }
+    }
+
+    /// Writes `line` to the configured fallback sink or directly to `stderr`.
+    fn write_stderr(&self, line: &str) {
+        let sink = locked(&self.stderr_sink).clone();
+        if let Some(sink) = sink {
+            sink(line);
+        } else if std::io::Write::write_all(&mut std::io::stderr(), format!("{line}\n").as_bytes()).is_err() {
+            // Best-effort fallback to stderr when history.db cannot keep a log entry.
+        }
+    }
+
+    /// Reports a dropped or failed daemon-log entry directly to `stderr` once per [`Cause`], without re-entering
+    /// `tracing` or incrementing [`Self::lost`].
+    fn report_log(&self, cause: Cause, detail: impl FnOnce() -> String) {
+        let first = locked(&self.reported_log).insert(cause);
+        if first {
+            let detail = locked(&self.redactor).text(&detail());
+            self.write_stderr(&format!("the history cannot keep a log entry: {detail}"));
         }
     }
 
@@ -288,9 +315,10 @@ impl History {
         let shared = Shared::new(HistoryState::Writing, setup.reporter, Redactor::new(secrets));
         let (queue, jobs) = sync_channel(setup.capacity.get());
         let writing = Arc::clone(&shared);
+        let dispatch = tracing::dispatcher::get_default(Clone::clone);
         let thread = std::thread::Builder::new()
             .name("history-writer".to_owned())
-            .spawn(move || write_jobs(store, &jobs, &writing))
+            .spawn(move || tracing::dispatcher::with_default(&dispatch, || write_jobs(store, &jobs, &writing)))
             .map_err(StartError)?;
         Ok(Started {
             history: Self {
@@ -299,6 +327,12 @@ impl History {
             },
             writer: Writer { thread, queue },
         })
+    }
+
+    /// Configures the redactor and optional `stderr` sink used when daemon log entries fall back to `stderr`.
+    pub(super) fn configure_log_fallback(&self, redactor: Redactor, sink: Option<super::log::StderrSink>) {
+        *locked(&self.shared.redactor) = redactor;
+        *locked(&self.shared.stderr_sink) = sink;
     }
 
     /// Hands `record` to the writer. Never waits.
@@ -326,6 +360,32 @@ impl History {
                 self.shared.lose(1);
                 self.stopped();
             }
+        }
+    }
+
+    /// Hands a daemon log `record` to the writer without counting drops in [`HistoryHealth::lost`].
+    pub fn record_log(&self, record: LogRecord) {
+        if self.is_disabled() {
+            return;
+        }
+        let Some(queue) = &self.queue else {
+            self.shared
+                .report_log(Cause::Unavailable, || "the history database is unavailable".to_owned());
+            return;
+        };
+        match queue.try_send(Job::Log(record)) {
+            Err(TrySendError::Full(Job::Log(_))) => {
+                self.shared.report_log(Cause::QueueFull, || {
+                    "the writer of the history is slower than the work: log entries are dropped while its queue is full"
+                        .to_owned()
+                });
+            }
+            Err(TrySendError::Disconnected(Job::Log(_))) => {
+                self.shared.report_log(Cause::Unavailable, || {
+                    "the writer of the history has stopped".to_owned()
+                });
+            }
+            Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
         }
     }
 
@@ -549,12 +609,13 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
             return;
         };
         let mut batch: Vec<Record> = Vec::new();
+        let mut log_batch: Vec<LogRecord> = Vec::new();
         let mut flushes: Vec<SyncSender<()>> = Vec::new();
         let mut next = Some(first);
         while let Some(job) = next.take() {
             match job {
                 Job::Record(mut record) => {
-                    if shared.redactor.record(&mut record) {
+                    if locked(&shared.redactor).record(&mut record) {
                         batch.push(record);
                     } else {
                         shared.lose(1);
@@ -563,10 +624,19 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
                         });
                     }
                 }
+                Job::Log(mut record) => {
+                    if locked(&shared.redactor).log_record(&mut record) {
+                        log_batch.push(record);
+                    } else {
+                        shared.report_log(Cause::SecretIdentity, || {
+                            "a daemon log entry contains a credential in a structured identity".to_owned()
+                        });
+                    }
+                }
                 Job::Flush(answer) => flushes.push(answer),
                 Job::Close => closing = true,
             }
-            if closing || batch.len() >= MAX_BATCH {
+            if closing || batch.len().saturating_add(log_batch.len()) >= MAX_BATCH {
                 break;
             }
             match jobs.try_recv() {
@@ -575,6 +645,7 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
             }
         }
         write_batch(&mut store, shared, batch);
+        write_log_batch(&mut store, shared, log_batch);
         for answer in flushes {
             // The one who flushes may have given up waiting; there is nobody to tell then.
             if answer.send(()).is_err() {
@@ -595,7 +666,7 @@ fn count_what_is_left(jobs: &Receiver<Job>, shared: &Shared) {
                     tracing::debug!("a flush of the history was not waited for");
                 }
             }
-            Job::Close => {}
+            Job::Log(_) | Job::Close => {}
         }
     }
 }
@@ -616,6 +687,26 @@ fn write_batch(store: &mut impl Store, shared: &Shared, batch: Vec<Record>) {
     for record in batch {
         if let Err(error) = store.write(std::slice::from_ref(&record)) {
             shared.lose_to(1, &error);
+        }
+    }
+}
+
+/// Writes daemon log `batch`; when the batch as a whole fails, writes its entries one by one and reports failures directly
+/// to `stderr` without incrementing [`Shared::lost`].
+fn write_log_batch(store: &mut impl Store, shared: &Shared, batch: Vec<LogRecord>) {
+    if batch.is_empty() {
+        return;
+    }
+    let Err(error) = store.write_logs(&batch) else {
+        return;
+    };
+    if batch.len() == 1 {
+        shared.report_log(Cause::Write(error.kind()), || error_chain(&error));
+        return;
+    }
+    for record in batch {
+        if let Err(error) = store.write_logs(std::slice::from_ref(&record)) {
+            shared.report_log(Cause::Write(error.kind()), || error_chain(&error));
         }
     }
 }

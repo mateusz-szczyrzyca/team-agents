@@ -8,6 +8,7 @@
 use agent_core::cli::ActivityEvent;
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, TaskId, TeamId};
+use agent_core::log::LogEvent;
 use agent_core::protocol::{Client, ControlAction, EventKind, Failure, FailureKind, Reply, SayRequest, Target};
 use agent_core::state::{RunEnd, Timestamp};
 use agent_core::status::TaskStatus;
@@ -310,7 +311,12 @@ impl Owner {
             self.record_control_step(task, now, &event);
             self.log_activity(task, now, event).await;
         }
-        tracing::info!(action = ?action, tasks = reached.len(), "the human used a control");
+        tracing::info!(
+            event = LogEvent::ControlUsed.as_str(),
+            action = ?action,
+            tasks = reached.len(),
+            "the human used a control"
+        );
         Ok(())
     }
 
@@ -349,6 +355,11 @@ impl Owner {
         };
         for recipient in &recipients {
             if let Err(error) = self.parts.bus.send(&from, recipient, &message).await {
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    error = %error_chain(&error),
+                    "cannot put a message on the agentbus"
+                );
                 return Ok(Err(Failure {
                     kind: FailureKind::Internal,
                     message: format!("cannot put the message on the agentbus: {}", error_chain(&error)),

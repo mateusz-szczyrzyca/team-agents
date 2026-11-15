@@ -17,14 +17,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_core::config::OpenQuestions;
+use agent_core::log::LogEvent;
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, AutopilotPromptsError};
 use agent_runtime::checks_prompts::{ChecksPrompts, ChecksPromptsError};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::editor::{SocketDirs, VscodeOpener};
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
+use agent_runtime::history::{HistoryLayer, Scoped};
 use agent_runtime::notify::Notifier;
 use agent_runtime::process::Supervisor;
+use agent_runtime::process::error_chain;
 use agent_runtime::prompts::{PromptLoadError, PromptLoader};
 use agent_runtime::questions_prompts::{QuestionsPrompts, QuestionsPromptsError};
 use agent_runtime::run::{EngineParts, RunEngine, RunTimings};
@@ -37,6 +40,8 @@ use time::UtcOffset;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::sync::CancellationToken;
+use tracing::instrument::WithSubscriber;
+use tracing_subscriber::layer::SubscriberExt;
 
 use self::owner::{EVENT_BACKLOG, INBOX, MAX_RUNS, Owner, OwnerError, OwnerParts, Pulls, PullsError};
 use self::server::ServerError;
@@ -174,32 +179,56 @@ impl Surroundings {
 ///
 /// # Errors
 /// [`DaemonError`].
+#[cfg(test)]
 pub(crate) async fn run(setup: DaemonSetup, shutdown: CancellationToken) -> Result<(), DaemonError> {
     run_in(setup, Surroundings::from_process(), shutdown).await
+}
+
+/// Runs the daemon with the explicitly installed process logging layer.
+pub(crate) async fn run_with_log_layer(
+    setup: DaemonSetup,
+    shutdown: CancellationToken,
+    log_layer: HistoryLayer,
+) -> Result<(), DaemonError> {
+    let rng = StdRng::try_from_rng(&mut SysRng).map_err(DaemonError::Entropy)?;
+    run_with_rng_and_log_layer(setup, Surroundings::from_process(), rng, shutdown, Some(log_layer)).await
 }
 
 /// Runs the daemon until `shutdown` is cancelled, in `surroundings`.
 ///
 /// # Errors
 /// [`DaemonError`].
+#[cfg(test)]
 pub(crate) async fn run_in(
     setup: DaemonSetup,
     surroundings: Surroundings,
     shutdown: CancellationToken,
 ) -> Result<(), DaemonError> {
     let rng = StdRng::try_from_rng(&mut SysRng).map_err(DaemonError::Entropy)?;
-    run_with_rng(setup, surroundings, rng, shutdown).await
+    run_with_rng_and_log_layer(setup, surroundings, rng, shutdown, None).await
 }
 
 /// Runs the daemon with the caller's random source for team selection and identifiers.
 ///
 /// # Errors
 /// [`DaemonError`].
+#[cfg(test)]
 pub(crate) async fn run_with_rng(
     setup: DaemonSetup,
     surroundings: Surroundings,
     rng: StdRng,
     shutdown: CancellationToken,
+) -> Result<(), DaemonError> {
+    run_with_rng_and_log_layer(setup, surroundings, rng, shutdown, None).await
+}
+
+/// Runs the daemon with either the process-wide logging layer supplied by the command or a scoped test layer.
+async fn run_with_rng_and_log_layer(
+    setup: DaemonSetup,
+    surroundings: Surroundings,
+    rng: StdRng,
+    shutdown: CancellationToken,
+    installed_log_layer: Option<HistoryLayer>,
 ) -> Result<(), DaemonError> {
     let store = match StateStore::open(setup.home.clone()).await {
         Ok(store) => Arc::new(store),
@@ -207,6 +236,8 @@ pub(crate) async fn run_with_rng(
         Err(error) => return Err(error.into()),
     };
     let settings = Arc::new(Settings::load(&setup.home).await?);
+    let log_layer = daemon_log_layer(&settings, &setup, installed_log_layer);
+    let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(log_layer.clone()).into();
     let language = settings.config.language().clone();
     let texts = Arc::new(HarnessPrompts::load(&setup.prompts_dir, &language).await?);
     let team_texts = Arc::new(TeamPrompts::load(&setup.prompts_dir, &language).await?);
@@ -221,7 +252,10 @@ pub(crate) async fn run_with_rng(
         tick: TICK,
         run: RunTimings::from_config(settings.config.watchdog()),
     });
-    let opened = history::open(&settings, &setup.home).await;
+    let opened = history::open(&settings, &setup.home)
+        .with_subscriber(dispatch.clone())
+        .await;
+    log_layer.attach_history(opened.history.clone());
     let engine = RunEngine::new(EngineParts {
         store: Arc::clone(&store),
         texts: Arc::clone(&texts),
@@ -242,10 +276,15 @@ pub(crate) async fn run_with_rng(
     let (gates, gate_jobs) = gate::GateQueue::new();
     let mut sides: JoinSet<()> = JoinSet::new();
     let serving = shutdown.clone();
-    sides.spawn(server::serve(listener, inbox, serving));
+    // The side tasks are scoped, not only polled with the subscriber: one that is still going when the daemon ends is
+    // dropped with it, and its spans close in the registry that made them.
+    sides.spawn(Scoped::new(server::serve(listener, inbox, serving), dispatch.clone()));
     let delivering = Arc::clone(&texts);
-    sides.spawn(notifier::run(deliveries, delivering, notifier, opened.history.clone()));
-    let opens = start_opener(&mut sides, &settings, &surroundings);
+    sides.spawn(Scoped::new(
+        notifier::run(deliveries, delivering, notifier, opened.history.clone()),
+        dispatch.clone(),
+    ));
+    let opens = start_opener(&mut sides, &settings, &surroundings, &dispatch);
     let gate_parts = gate::GateParts {
         store: Arc::clone(&store),
         clock: setup.clock.clone(),
@@ -253,11 +292,9 @@ pub(crate) async fn run_with_rng(
         agent_path: settings.config.binaries().agent_path.clone(),
         stop_grace: timings.run.stop_grace,
     };
-    sides.spawn(gate::run_recorded(
-        gate_jobs,
-        gate_parts,
-        opened.history.clone(),
-        shutdown.clone(),
+    sides.spawn(Scoped::new(
+        gate::run_recorded(gate_jobs, gate_parts, opened.history.clone(), shutdown.clone()),
+        dispatch.clone(),
     ));
 
     let owner = Owner::new(
@@ -282,27 +319,100 @@ pub(crate) async fn run_with_rng(
     )
     .with_gate(gates)
     .with_history(opened.history.clone());
-    let owner = if let Some(pulls) = pulls {
-        owner.with_pulls(pulls)
-    } else {
-        tracing::info!("the home has no GitHub token (github_token in secrets.toml): no pull request is opened");
-        owner
-    };
-    let owned_end = owner.run(requests).await;
+    let owner = attach_pulls(owner, pulls, &dispatch);
+    log_start(&setup.home, &dispatch);
+    let owned_end = Scoped::new(owner.run(requests), dispatch.clone()).await;
     // Whatever ended the owner, the rest of the daemon ends with it.
     shutdown.cancel();
-    let mut failure = None;
-    while let Some(joined) = sides.join_next().await {
-        if let Err(source) = joined {
-            tracing::error!(%source, "a task of the daemon failed");
-            failure.get_or_insert(DaemonError::Join(source));
-        }
-    }
+    let failure = join_sides(&mut sides, &dispatch).await;
+    log_stop(owned_end.as_ref().err(), failure.as_ref(), &dispatch);
     // Everything that records has ended.
+    log_layer.detach_history();
     history::close(opened.writer).await;
     server::remove(&setup.home).await.map_err(DaemonError::RemoveSocket)?;
     owned_end?;
     failure.map_or(Ok(()), Err)
+}
+
+/// Configures the installed process layer, or creates the isolated layer used by daemon tests.
+fn daemon_log_layer(settings: &Settings, setup: &DaemonSetup, installed: Option<HistoryLayer>) -> HistoryLayer {
+    let layer = installed.unwrap_or_else(|| {
+        HistoryLayer::deferred(
+            settings.config.log().level,
+            setup.clock.clone(),
+            settings.secrets.clone(),
+        )
+    });
+    layer.configure(
+        settings.config.log().level,
+        setup.clock.clone(),
+        settings.secrets.clone(),
+    );
+    layer
+}
+
+/// Attaches `pulls` to `owner`, or logs under `dispatch` that the home has no GitHub token.
+fn attach_pulls(owner: Owner, pulls: Option<Pulls>, dispatch: &tracing::Dispatch) -> Owner {
+    if let Some(pulls) = pulls {
+        owner.with_pulls(pulls)
+    } else {
+        tracing::dispatcher::with_default(dispatch, || {
+            tracing::warn!(
+                event = agent_core::log::LogEvent::GithubCallFailed.as_str(),
+                "the home has no GitHub token (github_token in secrets.toml): no pull request is opened"
+            );
+        });
+        owner
+    }
+}
+
+/// Waits for every background task in `sides` to finish and returns the first join error, if any.
+async fn join_sides(sides: &mut JoinSet<()>, dispatch: &tracing::Dispatch) -> Option<DaemonError> {
+    let mut failure = None;
+    while let Some(joined) = sides.join_next().await {
+        if let Err(source) = joined {
+            tracing::dispatcher::with_default(dispatch, || {
+                tracing::error!(
+                    event = LogEvent::DaemonTaskFailed.as_str(),
+                    error = %error_chain(&source),
+                    "a task of the daemon failed"
+                );
+            });
+            failure.get_or_insert(DaemonError::Join(source));
+        }
+    }
+    failure
+}
+
+/// Logs under `dispatch` that the daemon of `home` starts: its state, its history and its socket are open.
+fn log_start(home: &Home, dispatch: &tracing::Dispatch) {
+    tracing::dispatcher::with_default(dispatch, || {
+        tracing::info!(
+            event = LogEvent::DaemonStarted.as_str(),
+            home = %home.root().display(),
+            "the daemon starts"
+        );
+    });
+}
+
+/// Logs under `dispatch` how the daemon stops: the error that ended its owner, if one did, and then `daemon_stopped` with
+/// its outcome, the last record of the history. The errors are returned all the same, for the exit status.
+fn log_stop(owner: Option<&OwnerError>, side: Option<&DaemonError>, dispatch: &tracing::Dispatch) {
+    tracing::dispatcher::with_default(dispatch, || {
+        if let Some(error) = owner {
+            tracing::error!(
+                event = LogEvent::DaemonTaskFailed.as_str(),
+                error = %error_chain(error),
+                "the owner of the state failed: the daemon stops"
+            );
+        }
+        let outcome = if owner.is_some() || side.is_some() {
+            "failed"
+        } else {
+            "requested"
+        };
+        tracing::info!(event = LogEvent::DaemonStopped.as_str(), outcome, "the daemon stops");
+    });
 }
 
 /// How long one command of the bus may take before the owner gives up on it: the bus holds its lock for the length of
@@ -323,12 +433,16 @@ fn start_opener(
     sides: &mut JoinSet<()>,
     settings: &Settings,
     surroundings: &Surroundings,
+    dispatch: &tracing::Dispatch,
 ) -> Option<mpsc::Sender<PathBuf>> {
     match settings.config.questions().open {
         OpenQuestions::Off => None,
         OpenQuestions::Vscode => {
             let (opens, files) = mpsc::channel(opener::QUEUE);
-            sides.spawn(opener::run(files, vscode_opener(settings, surroundings)));
+            sides.spawn(Scoped::new(
+                opener::run(files, vscode_opener(settings, surroundings)),
+                dispatch.clone(),
+            ));
             Some(opens)
         }
     }

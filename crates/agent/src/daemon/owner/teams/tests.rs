@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use agent_core::config::{AbsolutePath, Program};
 use agent_core::ids::{AgentName, TaskId, TeamId};
+use agent_core::log::LogEvent;
 use agent_core::protocol::{AgentList, Client, Command, FailureKind, Reply, RunRequest, StatusRequest, Target};
 use agent_core::state::{ItemPhase, MergeMode, PrNumber, PullRequest, State, TaskListText, Timestamp};
 use agent_core::status::TaskStatus;
@@ -17,6 +18,7 @@ use agent_runtime::agentbus::{
     AgentBus, Delegation, DelegationRequest, DelegationStatus, MemberState, Outgoing, Recipient, RequestId,
 };
 use agent_runtime::clock::SharedClock;
+use agent_runtime::history::Reader;
 use agent_runtime::run::RunTimings;
 use agent_runtime::store::Home;
 use tokio::task::JoinHandle;
@@ -1018,6 +1020,74 @@ async fn a_request_for_a_worker_goes_to_the_first_free_worker_and_its_result_ret
     assert_eq!(f.runs(&tasks[3]), 1, "the second worker was not needed");
     let messages = f.messages();
     assert!(messages.contains("helper_result"), "{messages}");
+}
+
+#[tokio::test]
+async fn a_usable_worker_request_logs_one_decision_and_idle_polls_log_none() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        worker("glm-1", "sleep,done:Result: three files."),
+        worker("glm-2", "sleep,done:Result: other."),
+    ]);
+    let mut config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    config.push_str("\n[log]\nlevel = \"debug\"\n");
+    std::fs::write(f.home.config_file(), config).unwrap();
+    f.start().await;
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1", "glm-1", "glm-2"], PLAIN).await;
+    for task in &tasks {
+        f.status_is(task, TaskStatus::Waiting).await;
+    }
+    f.answered().await;
+
+    let marker = "private-delegation-marker";
+    let id = f
+        .bus()
+        .delegate(&Delegation {
+            team,
+            requester: agent("claude-1"),
+            task: tasks[1].clone(),
+            repo: "example".parse().unwrap(),
+            branch: format!("agents/claude-1/{}", tasks[1]).parse().unwrap(),
+            worktree: abs(&f.worktree(&tasks[1])),
+            dispatcher: Program::from_str("true").unwrap(),
+            request: format!("Do not log this request: {marker}"),
+            context: format!("Nor this context: {marker}"),
+        })
+        .await
+        .unwrap();
+    f.prompt(&tasks[2], 2).await;
+    f.request_with(id, DelegationStatus::Done).await;
+    f.answered().await;
+    f.stop().await.unwrap();
+
+    let logs = Reader::open(&f.home.history_file()).unwrap().daemon_logs().unwrap();
+    let decisions: Vec<_> = logs
+        .iter()
+        .filter(|row| {
+            row.event() == LogEvent::DecisionTaken
+                && row.fields().get("decision").and_then(|value| value.as_str()) == Some("first_free_worker")
+        })
+        .collect();
+    assert_eq!(
+        decisions.len(),
+        1,
+        "idle polls and one usable request must produce exactly one row: {decisions:?}"
+    );
+    let row = decisions[0];
+    let input = row.fields().get("input").unwrap().to_string();
+    let result = row.fields().get("result").unwrap().to_string();
+    assert!(input.contains("glm-1") && input.contains("glm-2"), "{input}");
+    assert!(
+        result.contains("glm-1") && result.contains("\"request_id\":1"),
+        "{result}"
+    );
+    assert!(
+        !format!("{:?}", row.fields()).contains(marker),
+        "delegation text leaked into {row:?}"
+    );
 }
 
 #[tokio::test]

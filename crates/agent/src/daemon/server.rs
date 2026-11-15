@@ -15,12 +15,14 @@ use agent_core::protocol::{
     Client, Command, Event, EventKind, Failure, FailureKind, Frame, MAX_REQUEST_BYTES, ProtocolError, Reply, Request,
     RequestId, Response, TeamSummary,
 };
+use agent_runtime::process::error_chain;
 use agent_runtime::store::Home;
 use tokio::io::BufReader;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 use super::owner::Message;
 use crate::lines::{LineError, read_line_into, write_line};
@@ -144,7 +146,11 @@ pub(super) async fn serve(listener: UnixListener, inbox: mpsc::Sender<Message>, 
                 Ok(permit) => permit,
                 // The semaphore is never closed: this does not happen, and the loop would only spin.
                 Err(error) => {
-                    tracing::error!(%error, "the connection limit of the daemon is closed");
+                    tracing::error!(
+                        event = agent_core::log::LogEvent::DaemonTaskFailed.as_str(),
+                        %error,
+                        "the connection limit of the daemon is closed"
+                    );
                     break;
                 }
             },
@@ -155,11 +161,20 @@ pub(super) async fn serve(listener: UnixListener, inbox: mpsc::Sender<Message>, 
         };
         match accepted {
             Ok((stream, _address)) => {
-                connections.spawn(connection(stream, inbox.clone(), shutdown.clone(), permit));
+                let dispatch = tracing::dispatcher::get_default(Clone::clone);
+                // Scoped: a connection still open when the daemon ends is dropped with its subscriber.
+                connections.spawn(agent_runtime::history::Scoped::new(
+                    connection(stream, inbox.clone(), shutdown.clone(), permit),
+                    dispatch,
+                ));
             }
             Err(error) => {
                 // A failed accept (no descriptors left, a client that went away) is not the end of the daemon.
-                tracing::warn!(%error, "cannot accept a connection");
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::RequestRefused.as_str(),
+                    %error,
+                    "cannot accept a connection"
+                );
                 tokio::time::sleep(ACCEPT_RETRY).await;
             }
         }
@@ -180,7 +195,11 @@ fn reap(connections: &mut JoinSet<()>) {
 /// Logs a connection task that panicked.
 fn report(joined: Result<(), tokio::task::JoinError>) {
     if let Err(error) = joined {
-        tracing::error!(%error, "a connection task failed");
+        tracing::error!(
+            event = agent_core::log::LogEvent::DaemonTaskFailed.as_str(),
+            error = %error_chain(&error),
+            "a connection task failed"
+        );
     }
 }
 
@@ -255,25 +274,46 @@ async fn exchange(stream: UnixStream, inbox: &mpsc::Sender<Message>) {
                     kind: FailureKind::Invalid,
                     message: format!("the request is longer than {max} bytes"),
                 };
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::RequestRefused.as_str(),
+                    reason = %failure.message,
+                    "a client request was refused"
+                );
                 // The stream cannot be told where the next line begins: the answer is the last thing it carries.
                 if let Err(error) = respond(&mut write, Response::error(RequestId(0), failure)).await {
-                    tracing::debug!(%error, "cannot tell a client that its request was too long");
+                    tracing::debug!(
+                        event = agent_core::log::LogEvent::PeerGone.as_str(),
+                        %error,
+                        "cannot tell a client that its request was too long"
+                    );
                 }
                 return;
             }
             Step::Line(Err(error)) => {
-                tracing::debug!(%error, "a connection ended with an error");
+                tracing::debug!(
+                    event = agent_core::log::LogEvent::PeerGone.as_str(),
+                    %error,
+                    "a connection ended with an error"
+                );
                 return;
             }
             Step::Event(Ok(event)) => forward(subscription.as_ref(), event, &mut write).await,
             Step::Event(Err(error)) => {
                 // A subscriber that cannot keep up is let go: it subscribes again and starts from the state.
-                tracing::warn!(%error, "a subscription ended");
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::RequestRefused.as_str(),
+                    %error,
+                    "a subscription ended"
+                );
                 return;
             }
         };
         if let Err(error) = sent {
-            tracing::debug!(%error, "a client went away");
+            tracing::debug!(
+                event = agent_core::log::LogEvent::PeerGone.as_str(),
+                %error,
+                "a client went away"
+            );
             return;
         }
     }
@@ -305,6 +345,30 @@ async fn forward(
     send(write, &Frame::Event(event)).await
 }
 
+/// The callsite for directly constructed socket request spans.
+static SERVER_REQUEST_CALLSITE: tracing::callsite::DefaultCallsite =
+    tracing::callsite::DefaultCallsite::new(&SERVER_REQUEST_METADATA);
+
+/// The stable metadata and scope fields of a socket request span.
+static SERVER_REQUEST_METADATA: tracing::Metadata<'static> = tracing::Metadata::new(
+    "request",
+    module_path!(),
+    tracing::Level::DEBUG,
+    Some(file!()),
+    Some(line!()),
+    Some(module_path!()),
+    tracing::field::FieldSet::new(&["request_id"], tracing::callsite::Identifier(&SERVER_REQUEST_CALLSITE)),
+    tracing::metadata::Kind::SPAN,
+);
+
+/// Opens a socket request span without consulting the process-wide macro-interest cache.
+fn server_request_span() -> tracing::Span {
+    agent_runtime::history::ensure_scoped_callsites();
+    let fields = SERVER_REQUEST_METADATA.fields();
+    let entries: [(&tracing::field::Field, Option<&dyn tracing::field::Value>); 0] = [];
+    tracing::Span::new(&SERVER_REQUEST_METADATA, &fields.value_set(&entries))
+}
+
 /// Reads `line` as a request, has the owner answer it and writes the answer.
 async fn answer(
     line: &str,
@@ -312,27 +376,38 @@ async fn answer(
     subscription: &mut Option<Subscription>,
     write: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Result<(), LineError> {
-    let request = match Request::from_line(line) {
-        Ok(request) => request,
-        Err(error) => {
-            let failure = Failure {
-                kind: FailureKind::Invalid,
-                message: refusal_text(&error),
-            };
-            return respond(write, Response::error(RequestId(0), failure)).await;
-        }
-    };
-    let id = request.id;
-    let client = request.client;
-    let result = match request.command {
-        Command::Subscribe(subscribe) => subscribe_to(inbox, subscribe.team, subscription).await,
-        command => ask(inbox, client, command).await,
-    };
-    let response = match result {
-        Ok(reply) => Response::ok(id, reply),
-        Err(failure) => Response::error(id, failure),
-    };
-    respond(write, response).await
+    let span = server_request_span();
+    async move {
+        let request = match Request::from_line(line) {
+            Ok(request) => request,
+            Err(error) => {
+                let failure = Failure {
+                    kind: FailureKind::Invalid,
+                    message: refusal_text(&error),
+                };
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::RequestRefused.as_str(),
+                    reason = %failure.message,
+                    "a client request was refused"
+                );
+                return respond(write, Response::error(RequestId(0), failure)).await;
+            }
+        };
+        let id = request.id;
+        tracing::Span::current().record("request_id", id.0);
+        let client = request.client;
+        let result = match request.command {
+            Command::Subscribe(subscribe) => subscribe_to(inbox, subscribe.team, subscription).await,
+            command => ask(inbox, client, command).await,
+        };
+        let response = match result {
+            Ok(reply) => Response::ok(id, reply),
+            Err(failure) => Response::error(id, failure),
+        };
+        respond(write, response).await
+    }
+    .instrument(span)
+    .await
 }
 
 /// What a client is told about a line that is not a request.
@@ -394,4 +469,59 @@ async fn send(write: &mut tokio::net::unix::OwnedWriteHalf, frame: &Frame) -> Re
         LineError::Write(io::Error::new(io::ErrorKind::InvalidData, error))
     })?;
     write_line(write, &line).await
+}
+
+#[cfg(test)]
+mod request_span_tests {
+    use std::sync::{Arc, Mutex};
+
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::registry::LookupSpan;
+
+    use super::{Subscription, answer};
+
+    /// Records the spans around server events.
+    #[derive(Clone, Default)]
+    struct ServerScopes(Arc<Mutex<Vec<Vec<String>>>>);
+
+    impl<S> Layer<S> for ServerScopes
+    where
+        S: tracing::Subscriber + for<'lookup> LookupSpan<'lookup>,
+    {
+        fn on_event(&self, event: &tracing::Event<'_>, context: Context<'_, S>) {
+            if event.metadata().target() != "agent::daemon::server" {
+                return;
+            }
+            let spans = context
+                .event_scope(event)
+                .into_iter()
+                .flatten()
+                .map(|span| span.name().to_owned())
+                .collect();
+            self.0.lock().unwrap().push(spans);
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_request_diagnostics_are_inside_a_request_span() {
+        let (_client, server) = tokio::net::UnixStream::pair().unwrap();
+        let (_read, mut write) = server.into_split();
+        let (inbox, _messages) = tokio::sync::mpsc::channel(1);
+        let mut subscription: Option<Subscription> = None;
+        let scopes = ServerScopes::default();
+        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(scopes.clone()));
+
+        answer("not-json", &inbox, &mut subscription, &mut write)
+            .with_subscriber(dispatch)
+            .await
+            .unwrap();
+
+        let events = scopes.0.lock().unwrap();
+        assert!(
+            events.iter().any(|spans| spans.contains(&"request".to_owned())),
+            "server refusal has no request span: {events:?}"
+        );
+    }
 }

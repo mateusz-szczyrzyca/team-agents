@@ -16,7 +16,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use agent_core::cli::{ActivityEvent, BuildRunError, McpServerKind, OutputError, OutputParser, RunMode, SessionId};
+use agent_core::cli::{
+    ActivityEvent, BuildRunError, McpServerKind, OutputError, OutputParser, RunMode, RunOutput, SessionId,
+};
 use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValue, ModelName, Secrets, Watchdog};
 use agent_core::decide::outcome::{
     Classified, ClassifyError, ExitStatus, LimitContext, RunFinish, StoppedBy, classify_outcome,
@@ -26,6 +28,7 @@ use agent_core::ids::{RunId, TaskId};
 use agent_core::kinds::CliKind;
 use agent_core::prompt::VariablesError;
 use agent_core::state::{CommitId, InvalidTimestamp, Timestamp};
+use serde_json::json;
 use time::UtcOffset;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
@@ -33,7 +36,7 @@ use tokio_util::sync::CancellationToken;
 use crate::clock::SharedClock;
 use crate::git::{GitError, Revision};
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
-use crate::history::{CaptureKind, History};
+use crate::history::{CaptureKind, History, log_decision};
 use crate::process::{ExitReport, ProcessError, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
 
@@ -289,6 +292,82 @@ pub enum ExcludeCause {
     },
 }
 
+/// The callsite for directly constructed model CLI operation spans.
+static MODEL_CLI_CALLSITE: tracing::callsite::DefaultCallsite =
+    tracing::callsite::DefaultCallsite::new(&MODEL_CLI_METADATA);
+
+/// The stable metadata and scope fields of a model CLI operation span.
+static MODEL_CLI_METADATA: tracing::Metadata<'static> = tracing::Metadata::new(
+    "model_cli",
+    module_path!(),
+    tracing::Level::DEBUG,
+    Some(file!()),
+    Some(line!()),
+    Some(module_path!()),
+    tracing::field::FieldSet::new(
+        &["task", "run", "cli"],
+        tracing::callsite::Identifier(&MODEL_CLI_CALLSITE),
+    ),
+    tracing::metadata::Kind::SPAN,
+);
+
+/// Opens a model operation span without consulting the process-wide macro-interest cache.
+fn model_cli_span(task: &TaskId, run: &RunId, cli: &str) -> tracing::Span {
+    crate::history::ensure_scoped_callsites();
+    let task = task.to_string();
+    let run = run.to_string();
+    let task_text = task.as_str();
+    let run_text = run.as_str();
+    let fields = MODEL_CLI_METADATA.fields();
+    let field_list = fields.iter().collect::<Vec<_>>();
+    let [task_field, run_field, cli_field] = field_list.as_slice() else {
+        // The static metadata and this destructuring must change together.
+        return tracing::Span::none();
+    };
+    let entries = [
+        (task_field, Some(&task_text as &dyn tracing::field::Value)),
+        (run_field, Some(&run_text as &dyn tracing::field::Value)),
+        (cli_field, Some(&cli as &dyn tracing::field::Value)),
+    ];
+    tracing::Span::new(&MODEL_CLI_METADATA, &fields.value_set(&entries))
+}
+
+/// Classifies a completed stream and records bounded projections, never its raw output or pause evidence.
+fn classify_and_log(
+    output: &RunOutput,
+    finish: RunFinish,
+    context: &LimitContext<'_>,
+) -> Result<Classified, ClassifyError> {
+    let classified = classify_outcome(output, finish, context)?;
+    let input = json!({
+        "stream": match output.stream {
+            agent_core::cli::StreamOutcome::Succeeded => "succeeded",
+            agent_core::cli::StreamOutcome::Failed => "failed",
+            agent_core::cli::StreamOutcome::Incomplete => "incomplete",
+        },
+        "exit": match finish.exit {
+            ExitStatus::Code(code) => json!({"code": code}),
+            ExitStatus::Signal => json!("signal"),
+        },
+        "stopped_by": match finish.stopped_by {
+            StoppedBy::Nobody => "nobody",
+            StoppedBy::Watchdog => "watchdog",
+            StoppedBy::Human => "human",
+        },
+        "now": context.now,
+        "local_offset_seconds": context.local_offset.whole_seconds(),
+    });
+    let result = json!({
+        "end": &classified.end,
+        "pause": classified.pause.as_ref().map(|pause| json!({
+            "until": &pause.until,
+            "reason": pause.reason.to_string(),
+        })),
+    });
+    log_decision("classify_outcome", &input, &result);
+    Ok(classified)
+}
+
 /// Carries out runs of model CLIs.
 #[derive(Debug, Clone)]
 pub struct RunEngine {
@@ -333,6 +412,36 @@ impl RunEngine {
     /// # Errors
     /// [`RunError`], as for [`RunEngine::run`].
     pub async fn run_held(
+        &self,
+        job: RunJob,
+        cancel: &CancellationToken,
+        hold: &WatchdogHold,
+    ) -> Result<RunVerdict, RunError> {
+        let started = std::time::Instant::now();
+        let tool = job.cli.as_str();
+        let span = model_cli_span(&job.task, &job.run, tool);
+        let operation = async {
+            let result = self.run_held_lifecycle(job, cancel, hold).await;
+            let (exit_code, outcome) = match &result {
+                Ok(RunVerdict::Finished(run)) => {
+                    let code = match run.finish.exit {
+                        ExitStatus::Code(code) => Some(code),
+                        ExitStatus::Signal => None,
+                    };
+                    let outcome = if code == Some(0) { "ok" } else { "failed" };
+                    (code, outcome)
+                }
+                Ok(RunVerdict::Interrupted { .. }) => (None, "cancelled"),
+                Err(_) => (None, "error"),
+            };
+            crate::history::log_outside_call(tool, "run", started.elapsed(), exit_code, outcome);
+            result
+        };
+        tracing::Instrument::instrument(operation, span).await
+    }
+
+    /// Carries out the process lifecycle whose completion is logged by [`Self::run_held`].
+    async fn run_held_lifecycle(
         &self,
         job: RunJob,
         cancel: &CancellationToken,
@@ -428,7 +537,7 @@ impl RunEngine {
             now: Timestamp::now(&self.parts.clock)?,
             local_offset: self.parts.local_offset,
         };
-        let classified = classify_outcome(&output, finish, &context).map_err(|source| RunError::Classify {
+        let classified = classify_and_log(&output, finish, &context).map_err(|source| RunError::Classify {
             task: job.task.clone(),
             source,
         })?;
@@ -470,13 +579,24 @@ impl RunEngine {
         let at = match Timestamp::now(&self.parts.clock) {
             Ok(at) => at,
             Err(error) => {
-                tracing::warn!(task = %job.task, run = %job.run, error = %error_chain(&error), "the launch of a run cannot be stamped: the history has none for it");
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %job.task,
+                    run = %job.run,
+                    error = %error_chain(&error),
+                    "the launch of a run cannot be stamped: the history has none for it"
+                );
                 self.history.record_lost();
                 return;
             }
         };
         let Some(program) = process.program.as_path().to_str() else {
-            tracing::warn!(task = %job.task, run = %job.run, "the program of a run is not text: the history has no launch for it");
+            tracing::warn!(
+                event = agent_core::log::LogEvent::HistoryRecordIncomplete.as_str(),
+                task = %job.task,
+                run = %job.run,
+                "the program of a run is not text: the history has no launch for it"
+            );
             self.history.record_lost();
             return;
         };
@@ -561,9 +681,10 @@ impl Unreadable {
     fn report(&self, job: &RunJob) {
         if let Some(first) = &self.first {
             tracing::warn!(
+                event = agent_core::log::LogEvent::CliOutputUnreadable.as_str(),
                 task = %job.task,
                 run = %job.run,
-                count = self.count,
+                unreadable_lines = self.count,
                 first = %first,
                 "lines of the output of a run could not be read",
             );
@@ -613,7 +734,13 @@ impl Follow<'_> {
             self.feed(&[last]).await?;
         }
         if self.tail.dropped() > 0 {
-            tracing::warn!(task = %self.task, dropped = self.tail.dropped(), "lines of the output were too long or not text");
+            tracing::warn!(
+                event = agent_core::log::LogEvent::CliOutputUnreadable.as_str(),
+                task = %self.task,
+                run = %self.run,
+                dropped = self.tail.dropped(),
+                "lines of the output were too long or not text"
+            );
         }
         Ok(())
     }

@@ -3,6 +3,7 @@
 
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, TeamId};
+use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::EventKind;
 use agent_core::state::{CommitId, Completion, ItemPhase, PullRequest, RoundEnd, Timestamp};
@@ -106,7 +107,13 @@ impl Owner {
                 }
                 Ok(Merge::Waits) => {}
                 Err(error) => {
-                    tracing::warn!(team = %team_id, pr = %pr.number, error = %error_chain(&error), "an approved pull request cannot be merged: it is looked at again in a while");
+                    tracing::warn!(
+                        event = LogEvent::GithubCallFailed.as_str(),
+                        team = %team_id,
+                        pr = %pr.number,
+                        error = %error_chain(&error),
+                        "an approved pull request cannot be merged: it is looked at again in a while"
+                    );
                 }
             }
         }
@@ -282,12 +289,21 @@ impl Owner {
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: *id,
-                round,
+                round: round.clone(),
                 status: agent_core::status::ItemStatus::Done,
             });
             look.changed = true;
             self.close_item_round(team_id, *id, RoundEnd::Merged, now, look)?;
-            tracing::info!(team = %team_id, item = %id, pr = %pr.number, "an item is merged");
+            let span = tracing::error_span!("round", team = %team_id, rounds = %round);
+            let _entered = span.enter();
+            tracing::info!(
+                event = LogEvent::ItemPhaseChanged.as_str(),
+                team = %team_id,
+                item = %id,
+                phase = "done",
+                pr = %pr.number,
+                "an item is merged"
+            );
         }
         self.fetch_base(lead).await;
         Ok(())
@@ -304,7 +320,12 @@ impl Owner {
         }
         .await;
         if let Err(error) = result {
-            tracing::warn!(repo = %lead.repo, error = %error_chain(&error), "the base branch cannot be fetched after a merge: the next item starts from the checkout's");
+            tracing::warn!(
+                event = LogEvent::GitCallFailed.as_str(),
+                repo = %lead.repo,
+                error = %error_chain(&error),
+                "the base branch cannot be fetched after a merge: the next item starts from the checkout's"
+            );
         }
     }
 }

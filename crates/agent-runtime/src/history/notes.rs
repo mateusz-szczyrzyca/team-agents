@@ -255,4 +255,8 @@ impl<S: Store> Store for Noting<S> {
             }
         }
     }
+
+    fn write_logs(&mut self, records: &[agent_core::log::LogRecord]) -> Result<(), WriteError> {
+        self.inner.write_logs(records)
+    }
 }

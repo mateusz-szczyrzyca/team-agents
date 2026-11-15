@@ -22,6 +22,7 @@ use agent_core::ids::{AgentName, BranchName};
 use agent_core::repo_path::InvalidRepoPath;
 use agent_core::state::{CommitId, InvalidCommitId};
 use tokio::process::Command;
+use tracing::Instrument;
 
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture, capture_until};
 
@@ -884,21 +885,42 @@ impl Git {
 
     /// Runs git with `args` and returns what it did, whether it succeeded or not.
     async fn run(&self, operation: GitOperation, reach: Reach, args: &[&OsStr]) -> Result<Captured, GitError> {
-        let timeout = match reach {
-            Reach::Local => self.limits.local_timeout,
-            Reach::Network => self.limits.network_timeout,
-        };
-        let limits = CaptureLimits {
-            timeout: self.deadline.map_or(timeout, |deadline| {
-                timeout.min(deadline.saturating_duration_since(tokio::time::Instant::now()))
-            }),
-            max_bytes: self.limits.max_output_bytes,
-        };
-        let captured = match self.deadline {
-            Some(deadline) => capture_until(self.command(args), limits, deadline).await,
-            None => capture(self.command(args), limits).await,
-        };
-        captured.map_err(|source| GitError::Run { operation, source })
+        let span = git_span(operation);
+        async move {
+            let timeout = match reach {
+                Reach::Local => self.limits.local_timeout,
+                Reach::Network => self.limits.network_timeout,
+            };
+            let limits = CaptureLimits {
+                timeout: self.deadline.map_or(timeout, |deadline| {
+                    timeout.min(deadline.saturating_duration_since(tokio::time::Instant::now()))
+                }),
+                max_bytes: self.limits.max_output_bytes,
+            };
+            let started = std::time::Instant::now();
+            let captured = match self.deadline {
+                Some(deadline) => capture_until(self.command(args), limits, deadline).await,
+                None => capture(self.command(args), limits).await,
+            };
+            let duration = started.elapsed();
+            match captured {
+                Ok(captured) => {
+                    let code = match captured.exit {
+                        ExitReport::Exited { code } => Some(code),
+                        ExitReport::Signaled { .. } => None,
+                    };
+                    let outcome = if captured.exit.succeeded() { "ok" } else { "failed" };
+                    crate::history::log_outside_call("git", &operation.to_string(), duration, code, outcome);
+                    Ok(captured)
+                }
+                Err(source) => {
+                    crate::history::log_outside_call("git", &operation.to_string(), duration, None, "error");
+                    Err(GitError::Run { operation, source })
+                }
+            }
+        }
+        .instrument(span)
+        .await
     }
 
     /// Runs git with `args`; a command that ends with a failure is an error.
@@ -910,6 +932,36 @@ impl Git {
             Err(failed(operation, &captured))
         }
     }
+}
+
+/// The callsite for directly constructed `git` operation spans.
+static GIT_CALLSITE: tracing::callsite::DefaultCallsite = tracing::callsite::DefaultCallsite::new(&GIT_METADATA);
+
+/// The stable metadata and fields of a `git` operation span.
+static GIT_METADATA: tracing::Metadata<'static> = tracing::Metadata::new(
+    "git",
+    module_path!(),
+    tracing::Level::DEBUG,
+    Some(file!()),
+    Some(line!()),
+    Some(module_path!()),
+    tracing::field::FieldSet::new(&["operation"], tracing::callsite::Identifier(&GIT_CALLSITE)),
+    tracing::metadata::Kind::SPAN,
+);
+
+/// Opens a `git` operation span without consulting the process-wide macro-interest cache.
+fn git_span(operation: GitOperation) -> tracing::Span {
+    crate::history::ensure_scoped_callsites();
+    let operation = operation.to_string();
+    let operation_text = operation.as_str();
+    let fields = GIT_METADATA.fields();
+    let field_list = fields.iter().collect::<Vec<_>>();
+    let [operation_field] = field_list.as_slice() else {
+        // The static metadata and this destructuring must change together.
+        return tracing::Span::none();
+    };
+    let entries = [(operation_field, Some(&operation_text as &dyn tracing::field::Value))];
+    tracing::Span::new(&GIT_METADATA, &fields.value_set(&entries))
 }
 
 /// Where a command goes, which decides its time.
@@ -938,10 +990,18 @@ fn diagnostic(bytes: &[u8]) -> String {
 
 /// The error for a command that ended with a failure.
 fn failed(operation: GitOperation, captured: &Captured) -> GitError {
+    let stderr = diagnostic(&captured.stderr.bytes);
+    tracing::warn!(
+        event = agent_core::log::LogEvent::GitCallFailed.as_str(),
+        operation = %operation,
+        exit = ?captured.exit,
+        stderr = %stderr,
+        "a git command failed"
+    );
     GitError::Failed {
         operation,
         exit: captured.exit,
-        stderr: diagnostic(&captured.stderr.bytes),
+        stderr,
     }
 }
 

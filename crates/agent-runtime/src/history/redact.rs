@@ -1,25 +1,51 @@
 //! Remove configured credentials before records reach the store, without changing CLI input.
 
+use std::fmt;
+
 use agent_core::cli::ActivityEvent;
 use agent_core::config::{Secret, Secrets};
 use agent_core::decide::checks::Change;
 use agent_core::history::{HowChosen, Record, RoundSubject, RunStart, RunWhy, TeamStart};
+use agent_core::log::LogRecord;
 use agent_core::protocol::Client;
+use serde_json::Value;
 
 /// The explicit replacement for a credential in free text.
 const MARKER: &str = "[REDACTED]";
 
 /// Known values retain `Secret`'s redacted debug representation even in writer diagnostics.
-#[derive(Debug, Default)]
+#[derive(Clone, Default)]
 pub(super) struct Redactor {
     /// All credentials configured for GitHub, model CLIs and notifications.
     secrets: Secrets,
+    /// Debug-escaped forms of credentials whose representation differs from their original value.
+    escaped: Vec<String>,
+}
+
+impl fmt::Debug for Redactor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The cached escaped forms are still credentials and must never enter diagnostics.
+        formatter
+            .debug_struct("Redactor")
+            .field("secrets", &self.secrets)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Redactor {
     /// Owns the configured credentials for the writer's lifetime.
-    pub(super) const fn new(secrets: Secrets) -> Self {
-        Self { secrets }
+    pub(super) fn new(secrets: Secrets) -> Self {
+        let escaped = secrets
+            .github_token()
+            .into_iter()
+            .chain(secrets.agent_env().values())
+            .chain(secrets.notification_env().values())
+            .filter_map(|value| {
+                let escaped = value.expose().escape_debug().to_string();
+                (escaped != value.expose()).then_some(escaped)
+            })
+            .collect();
+        Self { secrets, escaped }
     }
 
     /// Values retain their protected type until matching is necessary.
@@ -31,9 +57,16 @@ impl Redactor {
             .chain(self.secrets.notification_env().values())
     }
 
+    /// Every literal representation that a debug-formatted event field can contain.
+    fn patterns(&self) -> impl Iterator<Item = &str> {
+        self.values()
+            .map(Secret::expose)
+            .chain(self.escaped.iter().map(String::as_str))
+    }
+
     /// Whether `text` contains a configured value, without printing the value in diagnostics.
     fn contains(&self, text: &str) -> bool {
-        self.values().any(|value| text.contains(value.expose()))
+        self.patterns().any(|pattern| text.contains(pattern))
     }
 
     /// Replaces the union of overlapping matches, so a shorter match cannot hide a longer one.
@@ -45,11 +78,11 @@ impl Redactor {
         let mut covered = 0;
         for (at, character) in text.char_indices() {
             let end = self
-                .values()
-                .filter_map(|value| {
+                .patterns()
+                .filter_map(|pattern| {
                     text.get(at..)
-                        .is_some_and(|rest| rest.starts_with(value.expose()))
-                        .then_some(at + value.expose().len())
+                        .is_some_and(|rest| rest.starts_with(pattern))
+                        .then_some(at + pattern.len())
                 })
                 .max()
                 .unwrap_or(at);
@@ -202,5 +235,53 @@ impl Redactor {
             ActivityEvent::Control { by: Client::Cli, .. } => {}
         }
         true
+    }
+
+    /// Redacts free text and structured JSON fields in `record`; returns `false` if a credential occurs in an identity
+    /// or the replacement marker itself.
+    pub(super) fn log_record(&self, record: &mut LogRecord) -> bool {
+        if self.values().next().is_none() {
+            return true;
+        }
+        if self.contains(MARKER) {
+            return false;
+        }
+        record.module = self.text(&record.module);
+        record.message = self.text(&record.message);
+        let fields = std::mem::take(&mut record.fields);
+        record.fields = fields
+            .into_iter()
+            .map(|(key, mut value)| {
+                self.json_value(&mut value);
+                (self.text(&key), value)
+            })
+            .collect();
+        let team_safe = record.team.as_ref().is_none_or(|scope| {
+            !self.contains(scope.team().as_str()) && !scope.rounds().iter().any(|round| self.contains(round.as_str()))
+        });
+        let task_safe = record.task.as_ref().is_none_or(|scope| {
+            !self.contains(scope.task().as_str()) && !scope.run().is_some_and(|run| self.contains(run.as_str()))
+        });
+        team_safe && task_safe
+    }
+
+    /// Recursively redacts strings and object keys inside `value`.
+    pub(super) fn json_value(&self, value: &mut Value) {
+        match value {
+            Value::Null | Value::Bool(_) | Value::Number(_) => {}
+            Value::String(text) => *text = self.text(text),
+            Value::Array(items) => {
+                for item in items {
+                    self.json_value(item);
+                }
+            }
+            Value::Object(map) => {
+                let entries = std::mem::take(map);
+                for (key, mut child) in entries {
+                    self.json_value(&mut child);
+                    map.insert(self.text(&key), child);
+                }
+            }
+        }
     }
 }

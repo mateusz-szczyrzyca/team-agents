@@ -16,15 +16,19 @@ use agent_core::decide::assign::first_free_worker;
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
 use agent_core::kinds::Role;
+use agent_core::log::LogEvent;
 use agent_core::protocol::{EventKind, Failure, FailureKind, Reply, RunRequest, TeamSummary};
-use agent_core::state::{RunEnd, Timestamp};
+use agent_core::state::{ItemPhase, RunEnd, Timestamp};
 use agent_core::status::{ItemStatus, TaskStatus};
 use agent_runtime::agentbus::{
     AgentBusError, DelegationStatus, DelegationUpdate, FailureClass, MemberState, Recipient, RequestId, Woken,
 };
 use agent_runtime::git::{CommitIdentity, DeleteMode, Git, GitError, RemoveMode, Revision, WorktreeBranch};
+use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 use agent_runtime::team_prompts::TeamPrompts;
+use serde_json::json;
+use tracing::Instrument;
 
 use super::{Located, Notice, Owner, OwnerError};
 use crate::daemon::team::{
@@ -91,24 +95,36 @@ impl Owner {
             Ok(formed) => formed,
             Err(refusal) => return Ok(Err(refusal_of(&refusal))),
         };
+        let team_span = tracing::debug_span!("team", team = %formed.team.id());
         // The team goes into a copy of the state first: a team the state refuses leaves nothing behind, and the state the
         // owner holds changes only once the copy is saved.
         let mut next = self.parts.state.clone();
         if let Err(error) = next.insert_team(formed.team.clone()) {
-            tracing::error!(team = %formed.team.id(), error = %error_chain(&error), "the state refuses the new team");
+            log_not_started(formed.team.id(), &error_chain(&error), "the state refuses the new team");
             return Ok(Err(internal(&format!(
                 "the new team does not fit the state: {}",
                 error_chain(&error)
             ))));
         }
-        if let Err(failure) = self.make_workspaces(&request, &formed).await {
+        if let Err(failure) = self
+            .make_workspaces(&request, &formed)
+            .instrument(team_span.clone())
+            .await
+        {
             return Ok(Err(failure));
         }
         if let Some(bus_team) = &formed.bus
-            && let Err(error) = self.parts.bus.team_create(bus_team).await
+            && let Err(error) = self.parts.bus.team_create(bus_team).instrument(team_span.clone()).await
         {
-            tracing::error!(team = %formed.team.id(), error = %error_chain(&error), "the team cannot be created on the bus");
-            self.remove_workspaces(&request, &formed.workspaces).await;
+            tracing::warn!(
+                event = LogEvent::BusDown.as_str(),
+                team = %formed.team.id(),
+                error = %error_chain(&error),
+                "the team cannot be created on the bus"
+            );
+            self.remove_workspaces(&request, &formed.workspaces)
+                .instrument(team_span.clone())
+                .await;
             return Ok(Err(Failure {
                 kind: FailureKind::Internal,
                 message: format!("cannot create the team on the agentbus: {}", error_chain(&error)),
@@ -125,8 +141,12 @@ impl Owner {
         let started = match started_events(team) {
             Ok(started) => started,
             Err(error) => {
-                tracing::error!(team = %id, error = %error_chain(&error), "the events of the new team cannot be made: the team is not started");
-                self.undo_start(&request, &formed).await;
+                log_not_started(
+                    &id,
+                    &error_chain(&error),
+                    "the events of the new team cannot be made: the team is not started",
+                );
+                self.undo_start(&request, &formed).instrument(team_span.clone()).await;
                 return Ok(Err(internal(&format!(
                     "the new team has no round for an item it started: {}",
                     error_chain(&error)
@@ -134,14 +154,20 @@ impl Owner {
             }
         };
         if let Err(error) = self.parts.store.save(&next).await {
-            tracing::error!(team = %id, error = %error_chain(&error), "the state with the new team cannot be saved: the team is not started");
-            self.undo_start(&request, &formed).await;
+            tracing::error!(
+                event = LogEvent::StateSaveFailed.as_str(),
+                team = %id,
+                error = %error_chain(&error),
+                "the state with the new team cannot be saved: the team is not started"
+            );
+            self.undo_start(&request, &formed).instrument(team_span.clone()).await;
             return Ok(Err(internal(&format!(
                 "cannot save the state with the new team: {}",
                 error_chain(&error)
             ))));
         }
         self.parts.state = next;
+        log_initial_lifecycle(&formed);
         self.record_team_start(&request, &id);
         let now = Timestamp::now(&self.parts.clock)?;
         self.publish(now, EventKind::TeamStarted { team: id.clone() });
@@ -149,7 +175,13 @@ impl Owner {
             self.publish(now, event);
         }
         self.publish_summary(now, &id);
-        tracing::info!(team = %id, tasks = tasks.len(), "a team is started");
+        tracing::info!(
+            event = LogEvent::TeamChanged.as_str(),
+            team = %id,
+            change = "started",
+            tasks = tasks.len(),
+            "a team is started"
+        );
         self.look_at(&id);
         Ok(Ok(Reply::Started { team: id, tasks }))
     }
@@ -181,7 +213,11 @@ impl Owner {
                 branch: workspace.branch.clone(),
                 start: Revision::Branch(formed.base.clone()),
             };
-            if let Err(error) = git.worktree_add(&workspace.path, &branch).await {
+            if let Err(error) = git
+                .worktree_add(&workspace.path, &branch)
+                .instrument(tracing::debug_span!("workspace", task = %workspace.task))
+                .await
+            {
                 self.remove_workspaces(request, &made).await;
                 return Err(git_failure(
                     &format!("cannot make the worktree of task {}", workspace.task),
@@ -201,7 +237,12 @@ impl Owner {
             && let Err(error) = self.parts.bus.team_done(formed.team.id()).await
         {
             // A refusal that is being returned already: a bus team that cannot be closed is told, and left for the human.
-            tracing::warn!(team = %formed.team.id(), error = %error_chain(&error), "the bus team of a refused team cannot be closed");
+            tracing::warn!(
+                event = LogEvent::BusDown.as_str(),
+                team = %formed.team.id(),
+                error = %error_chain(&error),
+                "the bus team of a refused team cannot be closed"
+            );
         }
     }
 
@@ -212,12 +253,31 @@ impl Owner {
         };
         let git = checkout_git(&self.parts.settings.config, request, &lead.agent);
         for workspace in made {
+            let span = tracing::debug_span!("workspace", task = %workspace.task);
             // A refusal that is being returned already: what cannot be removed is told, and left for the human.
-            if let Err(error) = git.worktree_remove(&workspace.path, RemoveMode::Force).await {
-                tracing::warn!(task = %workspace.task, error = %error_chain(&error), "a worktree of a refused team cannot be removed");
+            if let Err(error) = git
+                .worktree_remove(&workspace.path, RemoveMode::Force)
+                .instrument(span.clone())
+                .await
+            {
+                tracing::warn!(
+                    event = LogEvent::GitCallFailed.as_str(),
+                    task = %workspace.task,
+                    error = %error_chain(&error),
+                    "a worktree of a refused team cannot be removed"
+                );
             }
-            if let Err(error) = git.branch_delete(&workspace.branch, DeleteMode::Force).await {
-                tracing::warn!(task = %workspace.task, error = %error_chain(&error), "a branch of a refused team cannot be removed");
+            if let Err(error) = git
+                .branch_delete(&workspace.branch, DeleteMode::Force)
+                .instrument(span)
+                .await
+            {
+                tracing::warn!(
+                    event = LogEvent::GitCallFailed.as_str(),
+                    task = %workspace.task,
+                    error = %error_chain(&error),
+                    "a branch of a refused team cannot be removed"
+                );
             }
         }
     }
@@ -274,21 +334,26 @@ impl Owner {
         if self.closed.contains(team) || self.parts.state.team(team).is_none() {
             return Ok(());
         }
-        let mut look = Look::default();
-        self.reconcile_bus(team, &mut look).await?;
-        self.pull_requests(team, &mut look).await?;
-        self.assign_items(team, &mut look).await?;
-        self.serve_requests(team, &mut look).await?;
-        self.close_if_finished(team, &mut look)?;
-        if look.changed {
-            self.save().await?;
-            let now = Timestamp::now(&self.parts.clock)?;
-            for event in look.events {
-                self.publish(now, event);
+        let span = tracing::error_span!("team", team = %team);
+        async {
+            let mut look = Look::default();
+            self.reconcile_bus(team, &mut look).await?;
+            self.pull_requests(team, &mut look).await?;
+            self.assign_items(team, &mut look).await?;
+            self.serve_requests(team, &mut look).await?;
+            self.close_if_finished(team, &mut look)?;
+            if look.changed {
+                self.save().await?;
+                let now = Timestamp::now(&self.parts.clock)?;
+                for event in look.events {
+                    self.publish(now, event);
+                }
+                self.publish_summary(now, team);
             }
-            self.publish_summary(now, team);
+            Ok(())
         }
-        Ok(())
+        .instrument(span)
+        .await
     }
 
     /// Tells the subscribers the team's summary as it is.
@@ -314,11 +379,22 @@ impl Owner {
                 }
                 // What the bus refuses for good would block everything behind it for ever: it is dropped, once told.
                 Err(error) if !is_transient(&error) => {
-                    tracing::error!(team = %next.team, error = %error_chain(&error), job = ?next.job, "the bus refuses a request for good: it is dropped");
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        team = %next.team,
+                        error = %error_chain(&error),
+                        job = ?next.job,
+                        "the bus refuses a request for good: it is dropped"
+                    );
                     self.outbox.pop_front();
                 }
                 Err(error) => {
-                    tracing::warn!(team = %next.team, error = %error_chain(&error), "the bus does not answer: what is waiting for it is tried again at the next look");
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        team = %next.team,
+                        error = %error_chain(&error),
+                        "the bus does not answer: what is waiting for it is tried again at the next look"
+                    );
                     break;
                 }
             }
@@ -351,7 +427,12 @@ impl Owner {
         let on_bus = match self.parts.bus.team_get(team_id).await {
             Ok(on_bus) => on_bus,
             Err(error) => {
-                tracing::warn!(team = %team_id, error = %error_chain(&error), "the team cannot be read from the bus: it is tried again at the next look");
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    team = %team_id,
+                    error = %error_chain(&error),
+                    "the team cannot be read from the bus: it is tried again at the next look"
+                );
                 return Ok(());
             }
         };
@@ -369,7 +450,13 @@ impl Owner {
                 }
                 Ok(Woken::Message | Woken::Board | Woken::No) => {}
                 Err(error) => {
-                    tracing::warn!(team = %team_id, %member, error = %error_chain(&error), "the state of a member cannot be set on the bus: it is tried again at the next look");
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        team = %team_id,
+                        %member,
+                        error = %error_chain(&error),
+                        "the state of a member cannot be set on the bus: it is tried again at the next look"
+                    );
                     break;
                 }
             }
@@ -437,11 +524,25 @@ impl Owner {
                 .repo(&repo)
                 .map(|repo| repo.base_branch.clone())
             else {
-                tracing::error!(team = %team_id, %repo, "the repository of the team is not in the configuration: no item is given out");
+                tracing::error!(
+                    event = LogEvent::ConfigurationNameMissing.as_str(),
+                    team = %team_id,
+                    kind = "repo",
+                    name = %repo,
+                    "the repository of the team is not in the configuration: no item is given out"
+                );
                 return Ok(());
             };
             if let Err(error) = self.switch_branch(&repo, &assigned, base).await {
-                tracing::warn!(team = %team_id, item = %assigned.item, member = %assigned.agent, error = %error_chain(&error), "the worktree of a member cannot take the branch of its next item: the item waits and is tried again at the next look");
+                tracing::warn!(
+                    event = LogEvent::GitCallFailed.as_str(),
+                    team = %team_id,
+                    task = %assigned.task,
+                    item = %assigned.item,
+                    member = %assigned.agent,
+                    error = %error_chain(&error),
+                    "the worktree of a member cannot take the branch of its next item: the item waits and is tried again at the next look"
+                );
                 continue;
             }
             let now = Timestamp::now(&self.parts.clock)?;
@@ -451,11 +552,26 @@ impl Owner {
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: assigned.item,
-                round,
+                round: round.clone(),
                 status: ItemStatus::InProgress,
             });
             look.changed = true;
-            tracing::info!(team = %team_id, item = %assigned.item, member = %assigned.agent, "an item is given to a member");
+            let span = tracing::error_span!(
+                "item_assign",
+                team = %team_id,
+                rounds = %round,
+                task = %assigned.task
+            );
+            {
+                let _entered = span.enter();
+                tracing::info!(
+                    event = LogEvent::ItemPhaseChanged.as_str(),
+                    item = %assigned.item,
+                    phase = "in_progress",
+                    member = %assigned.agent,
+                    "an item is given to a member"
+                );
+            }
             self.release(&assigned.task, Why::Assigned(assigned.item), look)?;
         }
         Ok(())
@@ -524,7 +640,13 @@ impl Owner {
                 Ok(Some(request)) => request,
                 Ok(None) => break,
                 Err(error) => {
-                    tracing::warn!(team = %team_id, %worker, error = %error_chain(&error), "the queue of requests for workers cannot be read: it is tried again at the next look");
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        team = %team_id,
+                        %worker,
+                        error = %error_chain(&error),
+                        "the queue of requests for workers cannot be read: it is tried again at the next look"
+                    );
                     break;
                 }
             };
@@ -535,6 +657,11 @@ impl Owner {
                 held.push(request.id);
                 continue;
             }
+            log_decision(
+                "first_free_worker",
+                &json!({"workers": &names, "busy": &busy}),
+                &json!({"worker": &worker, "request_id": request.id}),
+            );
             self.release(&task, Why::Delegated(Box::new(request.clone())), look)?;
             self.serving.insert(
                 task.clone(),
@@ -548,7 +675,13 @@ impl Owner {
                 team_id,
                 request_update(request.id, DelegationStatus::Running, Some(task)),
             );
-            tracing::info!(team = %team_id, request = %request.id, %worker, "a request is given to a worker");
+            tracing::info!(
+                event = LogEvent::RequestDelegated.as_str(),
+                team = %team_id,
+                request = %request.id,
+                %worker,
+                "a request is given to a worker"
+            );
             busy.push(worker);
         }
         self.put_back(team_id, held).await;
@@ -565,7 +698,13 @@ impl Owner {
                 summary: None,
             };
             if let Err(error) = self.parts.bus.helper_set(request, &update).await {
-                tracing::warn!(team = %team_id, %request, error = %error_chain(&error), "a request of another team cannot be put back now: it is tried again at the next turn");
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    team = %team_id,
+                    %request,
+                    error = %error_chain(&error),
+                    "a request of another team cannot be put back now: it is tried again at the next turn"
+                );
                 self.tell_bus(team_id, BusJob::Answer { request, update });
             }
         }
@@ -746,7 +885,12 @@ impl Owner {
         let located = self.locate(&lead)?;
         let now = Timestamp::now(&self.parts.clock)?;
         self.notify(now, &located, &lead, Notice::Prepared(notification));
-        tracing::info!(team = %team_id, "a team is finished and closed");
+        tracing::info!(
+            event = LogEvent::TeamChanged.as_str(),
+            team = %team_id,
+            change = "closed",
+            "a team is finished and closed"
+        );
         Ok(())
     }
 }
@@ -797,9 +941,18 @@ fn checkout_git(config: &Config, request: &RunRequest, agent: &AgentName) -> Git
 fn refusal_of(error: &FormError) -> Failure {
     let failure = error.failure();
     if failure.kind == FailureKind::Internal {
-        tracing::error!(error = %error_chain(error), "a team cannot be formed");
+        tracing::error!(
+            event = LogEvent::TeamNotStarted.as_str(),
+            error = %error_chain(error),
+            "a team cannot be formed"
+        );
     }
     failure
+}
+
+/// Logs that the team `team`, which the daemon formed, is not started because of `error`, as `what` says.
+fn log_not_started(team: &TeamId, error: &str, what: &str) {
+    tracing::error!(event = LogEvent::TeamNotStarted.as_str(), team = %team, error, "{what}");
 }
 
 /// An internal failure with `message`.
@@ -825,6 +978,48 @@ fn is_transient(error: &AgentBusError) -> bool {
         error.class(),
         None | Some(FailureClass::Storage | FailureClass::Process | FailureClass::Unclassified)
     )
+}
+
+/// Logs the transitions that `form` already applied and the successful state save has now made durable.
+fn log_initial_lifecycle(formed: &Formed) {
+    let team = &formed.team;
+    for round in team.rounds() {
+        let span = tracing::error_span!("round", team = %team.id(), rounds = %round.id());
+        let _entered = span.enter();
+        tracing::info!(
+            event = LogEvent::RoundChanged.as_str(),
+            team = %team.id(),
+            round = %round.id(),
+            change = "opened",
+            item = ?round.item(),
+            "a round is opened"
+        );
+    }
+    for progress in team.items() {
+        let ItemPhase::InProgress { assignee, .. } = progress.phase() else {
+            continue;
+        };
+        let Some(round) = team.round_of(progress.id()) else {
+            continue;
+        };
+        let Some(workspace) = formed.workspaces.iter().find(|workspace| workspace.agent == *assignee) else {
+            continue;
+        };
+        let span = tracing::error_span!(
+            "item_assign",
+            team = %team.id(),
+            rounds = %round.id(),
+            task = %workspace.task
+        );
+        let _entered = span.enter();
+        tracing::info!(
+            event = LogEvent::ItemPhaseChanged.as_str(),
+            item = %progress.id(),
+            phase = "in_progress",
+            member = %assignee,
+            "an item is given to a member"
+        );
+    }
 }
 
 /// The events of a new team: its rounds, which were opened with it, and the items it starts with — those that have a

@@ -27,6 +27,7 @@ use agent_core::kinds::{Keyword, UnknownKeyword};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
+use tracing::Instrument;
 
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, capture, capture_with_input};
 
@@ -1227,24 +1228,76 @@ impl AgentBus {
     /// wins over `AGENTBUS_DIR` of the environment, and in `AGENTS_HOME`, where the command writes its log: nothing
     /// but this `AgentBus` decides which bus a command works on.
     async fn run(&self, command: BusCommand, args: Args, input: Option<&[u8]>) -> Result<String, AgentBusError> {
-        let mut process = tokio::process::Command::new(self.program.as_path());
-        process
-            .arg(command.to_string())
-            .arg("--dir")
-            .arg(self.bus_dir())
-            .args(args.0)
-            .env("AGENTS_HOME", self.home.as_path());
-        let limits = CaptureLimits {
-            timeout: self.timeout,
-            max_bytes: MAX_OUTPUT_BYTES,
-        };
-        let captured = match input {
-            Some(bytes) => capture_with_input(process, limits, bytes).await,
-            None => capture(process, limits).await,
+        let span = agentbus_span(command);
+        async move {
+            let mut process = tokio::process::Command::new(self.program.as_path());
+            process
+                .arg(command.to_string())
+                .arg("--dir")
+                .arg(self.bus_dir())
+                .args(args.0)
+                .env("AGENTS_HOME", self.home.as_path());
+            let limits = CaptureLimits {
+                timeout: self.timeout,
+                max_bytes: MAX_OUTPUT_BYTES,
+            };
+            let started = std::time::Instant::now();
+            let captured = match input {
+                Some(bytes) => capture_with_input(process, limits, bytes).await,
+                None => capture(process, limits).await,
+            };
+            let duration = started.elapsed();
+            let captured = match captured {
+                Ok(captured) => {
+                    let code = match captured.exit {
+                        ExitReport::Exited { code } => Some(code),
+                        ExitReport::Signaled { .. } => None,
+                    };
+                    let status = if captured.exit.succeeded() { "ok" } else { "failed" };
+                    crate::history::log_outside_call("agentbus", &command.to_string(), duration, code, status);
+                    captured
+                }
+                Err(source) => {
+                    crate::history::log_outside_call("agentbus", &command.to_string(), duration, None, "error");
+                    return Err(AgentBusError::Run { command, source });
+                }
+            };
+            outcome(command, captured)
         }
-        .map_err(|source| AgentBusError::Run { command, source })?;
-        outcome(command, captured)
+        .instrument(span)
+        .await
     }
+}
+
+/// The callsite for directly constructed `agentbus` operation spans.
+static AGENTBUS_CALLSITE: tracing::callsite::DefaultCallsite =
+    tracing::callsite::DefaultCallsite::new(&AGENTBUS_METADATA);
+
+/// The stable metadata and fields of an `agentbus` operation span.
+static AGENTBUS_METADATA: tracing::Metadata<'static> = tracing::Metadata::new(
+    "agentbus",
+    module_path!(),
+    tracing::Level::DEBUG,
+    Some(file!()),
+    Some(line!()),
+    Some(module_path!()),
+    tracing::field::FieldSet::new(&["operation"], tracing::callsite::Identifier(&AGENTBUS_CALLSITE)),
+    tracing::metadata::Kind::SPAN,
+);
+
+/// Opens an `agentbus` operation span without consulting the process-wide macro-interest cache.
+fn agentbus_span(command: BusCommand) -> tracing::Span {
+    crate::history::ensure_scoped_callsites();
+    let operation = command.to_string();
+    let operation_text = operation.as_str();
+    let fields = AGENTBUS_METADATA.fields();
+    let field_list = fields.iter().collect::<Vec<_>>();
+    let [operation_field] = field_list.as_slice() else {
+        // The static metadata and this destructuring must change together.
+        return tracing::Span::none();
+    };
+    let entries = [(operation_field, Some(&operation_text as &dyn tracing::field::Value))];
+    tracing::Span::new(&AGENTBUS_METADATA, &fields.value_set(&entries))
 }
 
 /// Decodes the JSON a command printed.

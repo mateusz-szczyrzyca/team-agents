@@ -359,14 +359,24 @@ impl Owner {
         let notification = match made {
             Ok(notification) => notification,
             Err(error) => {
-                tracing::error!(?prompt, error = %error_chain(&error), "a notification of the autopilot cannot be made");
+                tracing::error!(
+                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
+                    ?prompt,
+                    error = %error_chain(&error),
+                    "a notification of the autopilot cannot be made"
+                );
                 return;
             }
         };
         match self.locate(&lead.task) {
             Ok(located) => self.notify(now, &located, &lead.task, Notice::Prepared(notification)),
             Err(error) => {
-                tracing::error!(task = %lead.task, %error, "a notification of the autopilot has no task to be about");
+                tracing::error!(
+                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
+                    task = %lead.task,
+                    %error,
+                    "a notification of the autopilot has no task to be about"
+                );
             }
         }
     }
@@ -453,3 +463,11 @@ mod history_acceptance_tests;
 #[cfg(test)]
 #[path = "rounds/tests/history_deadline.rs"]
 mod history_deadline_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/daemon_log.rs"]
+mod daemon_log_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/daemon_log_causes.rs"]
+mod daemon_log_cause_tests;

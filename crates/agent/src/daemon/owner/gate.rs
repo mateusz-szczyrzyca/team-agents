@@ -134,9 +134,18 @@ impl Owner {
 
 /// Answers the client of a gate with `failure`.
 fn answer(reply: oneshot::Sender<Result<Reply, Failure>>, failure: Failure) {
+    tracing::warn!(
+        event = agent_core::log::LogEvent::RequestRefused.as_str(),
+        kind = ?failure.kind,
+        reason = %failure.message,
+        "a client request was refused"
+    );
     if reply.send(Err(failure)).is_err() {
         // The connection closed while its request waited: nobody is left to answer.
-        tracing::debug!("the connection of a gate closed before the answer");
+        tracing::debug!(
+            event = agent_core::log::LogEvent::PeerGone.as_str(),
+            "the connection of a gate closed before the answer"
+        );
     }
 }
 

@@ -17,16 +17,18 @@ use agent_core::cli::ActivityEvent;
 use agent_core::config::{AbsolutePath, CommandLine, EnvName, InvalidValue};
 use agent_core::history::{EventRecord, HistoryEvent, LostCause, LostKind, Record};
 use agent_core::ids::{TaskId, TeamId};
+use agent_core::log::LogEvent;
 use agent_core::protocol::{Event, EventKind, Failure, FailureKind, Reply};
 use agent_core::state::{CommitId, GateOutcome, GateRecord, GateResult, GateTree, InvalidTimestamp, Timestamp};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::git::{CommitIdentity, Git, GitError, MergeState, Revision, TreeState};
-use agent_runtime::history::{CaptureKind, History};
+use agent_runtime::history::{CaptureKind, History, log_outside_call};
 use agent_runtime::process::{ExitReport, ProcessError, ProcessSpec, Supervisor, error_chain};
 use agent_runtime::run::HoldGuard;
 use agent_runtime::store::{StateStore, StoreError};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 /// How many gates may wait for their turn; a gate asked for beyond that is refused.
 pub(super) const QUEUE: usize = 16;
@@ -281,20 +283,40 @@ impl Service {
 
     /// Runs `job` and answers its client.
     async fn serve(&mut self, job: GateJob) {
-        let outcome = self.execute(&job).await;
+        let span = tracing::error_span!("gate", team = %job.team, task = %job.task);
+        let outcome = self.execute(&job).instrument(span.clone()).await;
         let GateJob { task, reply, hold, .. } = job;
         // The run's silence is counted from here on: whatever the client does with the answer is the run's own.
         drop(hold);
         let answer = match outcome {
             Ok(record) => Ok(Reply::GateRecorded { record }),
             Err(error) => {
-                tracing::warn!(task = %task, error = %error_chain(&error), "a gate was not run or not recorded");
+                let _entered = span.enter();
+                if matches!(error, GateError::Cancelled) {
+                    tracing::warn!(
+                        event = LogEvent::RequestRefused.as_str(),
+                        task = %task,
+                        error = %error_chain(&error),
+                        "a gate was not run or not recorded"
+                    );
+                } else {
+                    tracing::error!(
+                        event = LogEvent::GateCannotStart.as_str(),
+                        task = %task,
+                        error = %error_chain(&error),
+                        "a gate was not run or not recorded"
+                    );
+                }
                 Err(error.failure())
             }
         };
         if reply.send(answer).is_err() {
             // The client went away while it waited: nobody is left to tell. The record, if any, is kept all the same.
-            tracing::debug!(task = %task, "the client of a gate went away before its answer");
+            tracing::debug!(
+                event = LogEvent::PeerGone.as_str(),
+                task = %task,
+                "the client of a gate went away before its answer"
+            );
         }
     }
 
@@ -313,6 +335,14 @@ impl Service {
             .inspect_err(|error| self.record_capture_loss_or_clock(job, started_at.as_ref().ok().copied(), error))?;
         let (log, log_text) = self.open_log(&job.task).await?;
         let outcome = self.run_command(job, &log).await?;
+        if matches!(outcome, GateOutcome::TimedOut) {
+            tracing::warn!(
+                event = LogEvent::GateTimedOut.as_str(),
+                task = %job.task,
+                timeout_ms = u64::try_from(job.timeout.as_millis()).unwrap_or(u64::MAX),
+                "a gate timed out"
+            );
+        }
         let finished_at = Timestamp::now(&self.parts.clock)
             .inspect_err(|error| self.record_capture_loss_or_clock(job, started_at.as_ref().ok().copied(), error))?;
         // The command has ended with its whole group: what it left in the worktree is final. A gate that changed the
@@ -337,6 +367,13 @@ impl Service {
                 log: log_text,
             },
         };
+        if matches!(record.tree, GateTree::NotClean) {
+            tracing::warn!(
+                event = LogEvent::GateDirtyTree.as_str(),
+                task = %job.task,
+                "a gate left a dirty worktree or moved HEAD"
+            );
+        }
         match started_at {
             Ok(started_at) => self.record(job, started_at, &record),
             Err(ref error) => self.record_capture_loss(job, finished_at, error),
@@ -425,6 +462,11 @@ impl Service {
     /// Runs the command of `job` to its end, its timeout or its cancellation.
     async fn run_command(&self, job: &GateJob, log: &Path) -> Result<GateOutcome, GateError> {
         let spec = self.spec(job, log)?;
+        let started = std::time::Instant::now();
+        let command_args: String = std::iter::once(spec.program.as_path().display().to_string())
+            .chain(spec.args.iter().cloned())
+            .collect::<Vec<_>>()
+            .join(" ");
         let mut process = self
             .supervisor
             .spawn(&spec)
@@ -435,6 +477,7 @@ impl Service {
             () = tokio::time::sleep(job.timeout) => Ended::TimedOut,
             () = job.cancel.cancelled() => Ended::Cancelled,
         };
+        let duration = started.elapsed();
         let supervise = |source| GateError::Supervise { source };
         let grace = self.parts.stop_grace;
         match ended {
@@ -442,14 +485,21 @@ impl Service {
                 let exit = exit.map_err(supervise)?;
                 // What the command started may outlive it; the gate is over, so the rest of its group goes too.
                 process.stop(grace).await.map_err(supervise)?;
+                let code = match exit {
+                    ExitReport::Exited { code } => Some(code),
+                    ExitReport::Signaled { .. } => None,
+                };
+                log_outside_call("gate", &command_args, duration, code, "exited");
                 Ok(outcome_of(exit))
             }
             Ended::TimedOut => {
                 process.stop(grace).await.map_err(supervise)?;
+                log_outside_call("gate", &command_args, duration, None, "timed_out");
                 Ok(GateOutcome::TimedOut)
             }
             Ended::Cancelled => {
                 process.stop(grace).await.map_err(supervise)?;
+                log_outside_call("gate", &command_args, duration, None, "cancelled");
                 Err(GateError::Cancelled)
             }
         }
@@ -512,7 +562,12 @@ impl Service {
             .await
         {
             // The log explains to a person what happened; the record does not depend on it.
-            tracing::warn!(task = %job.task, error = %error_chain(&error), "the activity log cannot be written");
+            tracing::error!(
+                event = LogEvent::StateSaveFailed.as_str(),
+                task = %job.task,
+                error = %error_chain(&error),
+                "the activity log cannot be written"
+            );
         }
         let finished = EventKind::GateFinished {
             team: job.team.clone(),

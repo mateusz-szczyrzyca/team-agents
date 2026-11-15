@@ -5,7 +5,8 @@
 //! the row named, not half believed. Each answer is read in one transaction: it is a whole snapshot, never a record the
 //! writer was in the middle of.
 
-use std::num::NonZeroU32;
+use std::collections::BTreeMap;
+use std::num::{NonZeroU32, NonZeroU64};
 use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
@@ -20,6 +21,7 @@ use agent_core::history::{
 };
 use agent_core::ids::{AgentName, BranchName, ItemId, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{CliKind, Role, Tier};
+use agent_core::log::{InvalidLogEntry, LogEntry, LogEntryParts, LogEvent, LogLevel};
 use agent_core::protocol::{Client, ControlAction};
 use agent_core::repo_path::RepoPath;
 use agent_core::state::{CommitId, MergeMode, PrNumber, RunEnd, SessionId, Timestamp};
@@ -31,7 +33,7 @@ mod sequenced;
 use super::codec::parse_time;
 use super::error::{ReadError, ValueProblem};
 use super::migrate::{latest, version_of};
-use super::schema::MIGRATIONS;
+use super::schema::{DAEMON_LOGS_VERSION, MIGRATIONS};
 
 /// How long a reader waits for the lock of a database that is being checkpointed.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -248,6 +250,79 @@ impl Reader {
     pub fn team(&self, team: &TeamId) -> Result<Option<Stored<TeamStart>>, ReadError> {
         let snapshot = self.snapshot("teams")?;
         read_team(&snapshot, team)
+    }
+
+    /// Every entry of `daemon_logs`, in write order (`id ASC`); databases before version 4 have none.
+    ///
+    /// # Errors
+    /// [`ReadError`] if a row or the database cannot be read.
+    pub fn daemon_logs(&self) -> Result<Vec<LogEntry>, ReadError> {
+        let snapshot = self.snapshot("daemon_logs")?;
+        read_daemon_logs(
+            &snapshot,
+            "SELECT id, first_at, at, level, module, event, team, task, run, message, fields, count, cut \
+             FROM daemon_logs ORDER BY id ASC",
+            None,
+        )
+    }
+
+    /// The entries of `daemon_logs` for `team`, in write order (`id ASC`).
+    ///
+    /// # Errors
+    /// [`ReadError`] if a row or the database cannot be read.
+    pub fn daemon_logs_for_team(&self, team: &TeamId) -> Result<Vec<LogEntry>, ReadError> {
+        let snapshot = self.snapshot("daemon_logs")?;
+        read_daemon_logs(
+            &snapshot,
+            "SELECT id, first_at, at, level, module, event, team, task, run, message, fields, count, cut \
+             FROM daemon_logs WHERE team = ?1 ORDER BY id ASC",
+            Some(team.as_str()),
+        )
+    }
+
+    /// The entries of `daemon_logs` linked to `round`, in write order (`id ASC`).
+    ///
+    /// # Errors
+    /// [`ReadError`] if a row or the database cannot be read.
+    pub fn daemon_logs_for_round(&self, round: &RoundId) -> Result<Vec<LogEntry>, ReadError> {
+        let snapshot = self.snapshot("daemon_logs")?;
+        read_daemon_logs(
+            &snapshot,
+            "SELECT l.id, l.first_at, l.at, l.level, l.module, l.event, l.team, l.task, l.run, \
+                    l.message, l.fields, l.count, l.cut \
+             FROM daemon_log_rounds AS r \
+             JOIN daemon_logs AS l ON l.id = r.log \
+             WHERE r.round = ?1 ORDER BY l.id ASC",
+            Some(round.as_str()),
+        )
+    }
+
+    /// The entries of `daemon_logs` for `task`, in write order (`id ASC`).
+    ///
+    /// # Errors
+    /// [`ReadError`] if a row or the database cannot be read.
+    pub fn daemon_logs_for_task(&self, task: &TaskId) -> Result<Vec<LogEntry>, ReadError> {
+        let snapshot = self.snapshot("daemon_logs")?;
+        read_daemon_logs(
+            &snapshot,
+            "SELECT id, first_at, at, level, module, event, team, task, run, message, fields, count, cut \
+             FROM daemon_logs WHERE task = ?1 ORDER BY id ASC",
+            Some(task.as_str()),
+        )
+    }
+
+    /// The entries of `daemon_logs` for `run`, in write order (`id ASC`).
+    ///
+    /// # Errors
+    /// [`ReadError`] if a row or the database cannot be read.
+    pub fn daemon_logs_for_run(&self, run: &RunId) -> Result<Vec<LogEntry>, ReadError> {
+        let snapshot = self.snapshot("daemon_logs")?;
+        read_daemon_logs(
+            &snapshot,
+            "SELECT id, first_at, at, level, module, event, team, task, run, message, fields, count, cut \
+             FROM daemon_logs WHERE run = ?1 ORDER BY id ASC",
+            Some(run.as_str()),
+        )
     }
 
     /// The rounds of `team`, oldest first.
@@ -1130,4 +1205,118 @@ fn read_files(snapshot: &Transaction<'_>, run: &RunId) -> Result<(Vec<FileChange
         }
     }
     Ok((committed, uncommitted))
+}
+
+/// Reads and validates daemon log entries selected by `sql` (with optional `param`).
+fn read_daemon_logs(snapshot: &Transaction<'_>, sql: &str, param: Option<&str>) -> Result<Vec<LogEntry>, ReadError> {
+    let table = "daemon_logs";
+    if version_of(snapshot).map_err(query(table))? < DAEMON_LOGS_VERSION {
+        return Ok(Vec::new());
+    }
+    let mut statement = snapshot.prepare(sql).map_err(query(table))?;
+    let mut rows = match param {
+        Some(key) => statement.query(params![key]),
+        None => statement.query([]),
+    }
+    .map_err(query(table))?;
+    let mut entries = Vec::new();
+    while let Some(row) = rows.next().map_err(query(table))? {
+        entries.push(decode_daemon_log(snapshot, row)?);
+    }
+    Ok(entries)
+}
+
+/// Decodes and validates one row of `daemon_logs` and its rounds in `daemon_log_rounds`.
+fn decode_daemon_log(snapshot: &Transaction<'_>, row: &Row<'_>) -> Result<LogEntry, ReadError> {
+    let table = "daemon_logs";
+    let id: i64 = row.get(0).map_err(query(table))?;
+    let here = Row_::of(table, id.to_string());
+    if id < 1 {
+        return Err(here.rule("id", "a daemon log id starts at 1"));
+    }
+    let first_at = here.value("first_at", parse_time(&row.get::<_, String>(1).map_err(query(table))?))?;
+    let at = here.value("at", parse_time(&row.get::<_, String>(2).map_err(query(table))?))?;
+    let level = here.value(
+        "level",
+        LogLevel::from_str(&row.get::<_, String>(3).map_err(query(table))?),
+    )?;
+    let module: String = row.get(4).map_err(query(table))?;
+    if module.is_empty() {
+        return Err(here.rule("module", "a daemon log module cannot be empty"));
+    }
+    let event = here.value(
+        "event",
+        LogEvent::from_str(&row.get::<_, String>(5).map_err(query(table))?),
+    )?;
+    let team = match row.get::<_, Option<String>>(6).map_err(query(table))? {
+        Some(text) => Some(here.value("team", TeamId::from_str(&text))?),
+        None => None,
+    };
+    let rounds = read_daemon_log_rounds(snapshot, id)?;
+    let task = match row.get::<_, Option<String>>(7).map_err(query(table))? {
+        Some(text) => Some(here.value("task", TaskId::from_str(&text))?),
+        None => None,
+    };
+    let run = match row.get::<_, Option<String>>(8).map_err(query(table))? {
+        Some(text) => Some(here.value("run", RunId::from_str(&text))?),
+        None => None,
+    };
+    let message: String = row.get(9).map_err(query(table))?;
+    let fields_text: String = row.get(10).map_err(query(table))?;
+    let fields: BTreeMap<String, serde_json::Value> = here.value("fields", serde_json::from_str(&fields_text))?;
+    let count_raw: i64 = row.get(11).map_err(query(table))?;
+    let count_u64 = here.value("count", u64::try_from(count_raw))?;
+    let count = NonZeroU64::new(count_u64).ok_or_else(|| here.rule("count", "a daemon log count starts at 1"))?;
+    let cut: String = row.get(12).map_err(query(table))?;
+    LogEntry::try_new(LogEntryParts {
+        id,
+        first_at,
+        at,
+        level,
+        module,
+        event,
+        team,
+        rounds,
+        task,
+        run,
+        message,
+        fields,
+        count,
+        cut,
+    })
+    .map_err(|err| match err {
+        InvalidLogEntry::LevelMismatch { .. } => here.rule("level", "the level does not match the event's level"),
+        InvalidLogEntry::NonWarnRepeated { .. } => here.rule("count", "only warn entries may have count > 1"),
+        InvalidLogEntry::FirstAfterLast { .. } => here.rule("first_at", "first_at cannot be after at"),
+        InvalidLogEntry::RunWithoutTask { .. } => {
+            here.rule("run", "a daemon log entry cannot name a run without a task")
+        }
+        InvalidLogEntry::RoundsWithoutTeam => here.rule("team", "a daemon log entry with rounds must name a team"),
+        InvalidLogEntry::UnsortedRounds => Row_::of("daemon_log_rounds", id.to_string())
+            .rule("round", "rounds must be strictly ascending without duplicates"),
+        InvalidLogEntry::Cut(source) => here.problem("cut", ValueProblem::from(source)),
+    })
+}
+
+/// Reads and validates the rounds in `daemon_log_rounds` for `log_id`.
+fn read_daemon_log_rounds(snapshot: &Transaction<'_>, log_id: i64) -> Result<Vec<RoundId>, ReadError> {
+    let table = "daemon_log_rounds";
+    let mut statement = snapshot
+        .prepare("SELECT position, round FROM daemon_log_rounds WHERE log = ?1 ORDER BY position ASC")
+        .map_err(query(table))?;
+    let mut rows = statement.query(params![log_id]).map_err(query(table))?;
+    let mut rounds = Vec::new();
+    let mut index = 0_usize;
+    while let Some(row) = rows.next().map_err(query(table))? {
+        index = index.saturating_add(1);
+        let pos_raw: i64 = row.get(0).map_err(query(table))?;
+        let here = Row_::of(table, format!("{log_id}/{pos_raw}"));
+        let pos = position(&here, pos_raw)?;
+        if pos.get() as usize != index {
+            return Err(here.rule("position", "positions must count 1, 2, 3, ... without gaps"));
+        }
+        let round_text: String = row.get(1).map_err(query(table))?;
+        rounds.push(here.value("round", RoundId::from_str(&round_text))?);
+    }
+    Ok(rounds)
 }
