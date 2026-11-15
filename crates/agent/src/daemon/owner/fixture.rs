@@ -441,10 +441,24 @@ impl Daemon {
 
     /// The lines of the activity log of task `n`.
     pub(super) fn activity(&self, n: u32) -> Vec<serde_json::Value> {
-        std::fs::read_to_string(self.home.activity_log(&task(n)))
-            .unwrap_or_default()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
+        let state = self.state();
+        let found = state.find_task(&task(n)).unwrap();
+        agent_runtime::history::Reader::open(&self.home.history_file())
+            .unwrap()
+            .team_records(found.team.id())
+            .unwrap()
+            .into_iter()
+            .filter_map(|row| match row.record {
+                agent_core::history::Record::Event(event) => match event.event {
+                    agent_core::history::HistoryEvent::Controlled { action, by, tasks, .. }
+                        if tasks.contains(&task(n)) =>
+                    {
+                        Some(serde_json::json!({"at": event.at, "kind":"control", "action":action,"by":by}))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
             .collect()
     }
 

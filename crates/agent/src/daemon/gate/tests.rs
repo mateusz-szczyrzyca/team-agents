@@ -427,7 +427,33 @@ async fn the_gates_of_a_task_have_a_log_each_and_the_record_is_the_last() {
 async fn a_gate_that_ends_is_told_to_the_subscribers_and_logged_in_the_activity_of_the_task() {
     let mut rig = Rig::new().await;
     rig.worktree(1);
-    rig.start();
+    use agent_core::history::{HistoryEvent, Record, TeamStart};
+    use agent_runtime::history::{History, HistoryDb, Reader, Setup, Store, TracingReporter};
+    let mut db = HistoryDb::open(&rig.home.history_file(), agent_core::history::MaxTextBytes::default()).unwrap();
+    db.write(&[Record::Team(Box::new(TeamStart {
+        team: team_id(1),
+        at: crate::fixtures::at(0),
+        repo: "example".to_owned(),
+        base_branch: "main".parse().unwrap(),
+        merge: agent_core::state::MergeMode::NoMerge,
+        task_list: "Run the gate.".to_owned(),
+        plan: Vec::new(),
+    }))])
+    .unwrap();
+    let recorded_history = History::start(
+        db,
+        Setup {
+            reporter: Arc::new(TracingReporter),
+            capacity: 100.try_into().unwrap(),
+        },
+    )
+    .unwrap();
+    rig.service = Some(tokio::spawn(run_recorded(
+        rig.waiting.take().unwrap(),
+        rig.parts(),
+        recorded_history.history,
+        rig.shutdown.clone(),
+    )));
 
     let record = recorded(rig.ask(1, "exit 2", LONG)).await;
 
@@ -443,12 +469,18 @@ async fn a_gate_that_ends_is_told_to_the_subscribers_and_logged_in_the_activity_
             outcome: record.result.outcome,
         }
     );
-    let activity = std::fs::read_to_string(rig.home.activity_log(&task(1))).unwrap();
-    let line: serde_json::Value = serde_json::from_str(activity.lines().last().unwrap()).unwrap();
-    assert_eq!(line["kind"], serde_json::json!("info"), "{line}");
+    rig.shutdown.cancel();
+    rig.service.take().unwrap().await.unwrap();
+    recorded_history.writer.close().unwrap();
+    let records = Reader::open(&rig.home.history_file())
+        .unwrap()
+        .team_records(&team_id(1))
+        .unwrap();
+    let Record::Event(event) = &records.last().unwrap().record else {
+        panic!("expected gate event")
+    };
     assert!(
-        line["message"].as_str().unwrap().contains("gate failed (exit 2)"),
-        "{line}"
+        matches!(&event.event, HistoryEvent::Gate { task: recorded_task, record: kept, .. } if *recorded_task == task(1) && *kept == record)
     );
 }
 

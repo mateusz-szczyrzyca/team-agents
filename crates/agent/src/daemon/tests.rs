@@ -264,8 +264,16 @@ async fn the_activity_of_the_run_is_in_the_task_directory() {
     f.status_is(TaskStatus::Done).await;
     f.stop().await.unwrap();
 
-    let log = std::fs::read_to_string(f.home.activity_log(&task(1))).unwrap();
-    assert!(log.contains("\"working\""), "{log}");
+    let steps = agent_runtime::history::Reader::open(&f.home.history_file())
+        .unwrap()
+        .steps_of_task(&task(1))
+        .unwrap();
+    assert!(
+        steps
+            .iter()
+            .any(|row| row.value.event == agent_core::cli::ActivityEvent::Text("working".to_owned())),
+        "{steps:?}"
+    );
 }
 
 #[tokio::test]

@@ -7,6 +7,7 @@ use agent_core::protocol::{
 use agent_core::state::{RunEnd, RunState, State};
 use agent_core::status::TaskStatus;
 use serde_json::json;
+use std::time::{Duration, Instant};
 
 use super::super::fixture::{Daemon, agentbus_binary, pair_state, reviewed_pair_state};
 use crate::client::ClientError;
@@ -69,16 +70,27 @@ fn last_end(state: &State, n: u32) -> RunEnd {
 }
 
 /// The control lines of the activity log of task `n`.
-fn controls(daemon: &Daemon, n: u32) -> Vec<serde_json::Value> {
-    daemon
-        .activity(n)
-        .into_iter()
-        .filter(|line| line["kind"] == "control")
-        .map(|mut line| {
-            line.as_object_mut().unwrap().remove("at");
-            line
-        })
-        .collect()
+async fn controls(daemon: &Daemon, n: u32, expected: usize) -> Vec<serde_json::Value> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let controls: Vec<_> = daemon
+            .activity(n)
+            .into_iter()
+            .filter(|line| line["kind"] == "control")
+            .map(|mut line| {
+                line.as_object_mut().unwrap().remove("at");
+                line
+            })
+            .collect();
+        if controls.len() >= expected {
+            return controls;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "history controls did not arrive: {controls:?}"
+        );
+        tokio::task::yield_now().await;
+    }
 }
 
 #[tokio::test]
@@ -102,7 +114,7 @@ async fn the_activity_names_who_stopped_the_task_and_the_event_is_published() {
     daemon.ask(control(ControlAction::Stop, of_task(1))).await.unwrap();
 
     assert_eq!(
-        controls(&daemon, 1),
+        controls(&daemon, 1, 1).await,
         [json!({"kind": "control", "action": "stop", "by": {"kind": "cli"}})]
     );
     let (task_of, action, by) = events
@@ -130,7 +142,7 @@ async fn the_activity_names_the_dashboard_login_that_paused_the_task() {
         .unwrap();
 
     assert_eq!(
-        controls(&daemon, 1),
+        controls(&daemon, 1, 1).await,
         [json!({"kind": "control", "action": "pause", "by": {"kind": "dashboard", "login": "you@example.com"}})]
     );
     daemon.stop().await.unwrap();
@@ -167,7 +179,8 @@ async fn pause_holds_the_task_and_unpause_resumes_its_session() {
     let session = session.expect("Claude Code is given its session when the run starts");
     assert!(args.contains("--resume") && args.contains(session.as_str()), "{args}");
     assert_eq!(
-        controls(&daemon, 1)
+        controls(&daemon, 1, 2)
+            .await
             .iter()
             .map(|line| line["action"].clone())
             .collect::<Vec<_>>(),
@@ -187,7 +200,8 @@ async fn resume_starts_a_stopped_task_again() {
     assert_eq!(reply, Reply::Applied { tasks: vec![task(1)] });
     daemon.status_is(1, TaskStatus::Done).await;
     assert_eq!(
-        controls(&daemon, 1)
+        controls(&daemon, 1, 2)
+            .await
             .iter()
             .map(|line| line["action"].clone())
             .collect::<Vec<_>>(),
@@ -226,7 +240,7 @@ async fn stopping_a_team_stops_every_task_of_it_and_the_event_is_for_the_team() 
     assert_eq!((task_of, action), (None, ControlAction::Stop));
     for n in [1, 2] {
         assert_eq!(
-            controls(&daemon, n),
+            controls(&daemon, n, 1).await,
             [json!({"kind": "control", "action": "stop", "by": {"kind": "cli"}})],
             "task {n}"
         );
@@ -351,7 +365,7 @@ async fn a_control_that_does_nothing_to_a_task_says_why() {
     assert_eq!(kind, FailureKind::Conflict);
     assert!(message.contains("already stopped"), "{message}");
     assert_eq!(
-        controls(&daemon, 1).len(),
+        controls(&daemon, 1, 1).await.len(),
         1,
         "a control that did nothing is not in the activity"
     );
@@ -420,7 +434,7 @@ async fn a_word_to_a_task_is_a_message_to_its_agent_from_the_human() {
         "{held}"
     );
     assert_eq!(
-        controls(&daemon, 1),
+        controls(&daemon, 1, 1).await,
         [json!({"kind": "control", "action": "say", "by": {"kind": "cli"}})]
     );
     assert_eq!(
@@ -485,7 +499,7 @@ async fn a_word_that_the_bus_does_not_take_is_refused_and_not_recorded() {
 
     assert_eq!(kind, FailureKind::Internal);
     assert!(message.contains("agentbus"), "{message}");
-    assert_eq!(controls(&daemon, 1), Vec::<serde_json::Value>::new());
+    assert_eq!(controls(&daemon, 1, 0).await, Vec::<serde_json::Value>::new());
     daemon.stop().await.unwrap();
 }
 

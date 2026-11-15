@@ -2,6 +2,9 @@
 //! end, the files and the environment it gets, its activity, the watchdog and the stop of a whole process group.
 
 #[cfg(test)]
+mod activity_support;
+
+#[cfg(test)]
 mod run_engine {
     use std::collections::BTreeMap;
     use std::num::NonZeroUsize;
@@ -234,16 +237,33 @@ mod run_engine {
 
     #[tokio::test]
     async fn the_activity_of_a_run_is_logged_in_the_task_directory_in_order() {
-        let env = env().await;
-
+        let mut env = env().await;
+        let run = "run-20261112-100001-r1r1".parse().unwrap();
+        let recorded = super::activity_support::start(&env.home, env.task.clone(), run);
+        env.engine = env.engine.with_history(recorded.history);
         env.finished("done").await;
-
-        let log = std::fs::read_to_string(env.home.activity_log(&env.task)).unwrap();
-        let events: Vec<serde_json::Value> = log.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
-        let kinds: Vec<&str> = events.iter().map(|event| event["kind"].as_str().unwrap()).collect();
-        assert_eq!(kinds, ["info", "text", "info"]);
-        assert_eq!(events[1]["text"], "working");
-        assert_eq!(events[0]["at"], NOW);
+        recorded.writer.close().unwrap();
+        let events = agent_runtime::history::Reader::open(&env.home.history_file())
+            .unwrap()
+            .steps_of_task(&env.task)
+            .unwrap();
+        let kinds: Vec<_> = events
+            .iter()
+            .map(|row| agent_core::history::StepKind::of(&row.value.event))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                agent_core::history::StepKind::Info,
+                agent_core::history::StepKind::Message,
+                agent_core::history::StepKind::Info
+            ]
+        );
+        assert_eq!(
+            events[1].value.event,
+            agent_core::cli::ActivityEvent::Text("working".to_owned())
+        );
+        assert_eq!(events[0].value.at.to_string(), NOW);
     }
 
     #[tokio::test]
