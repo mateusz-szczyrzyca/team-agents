@@ -802,6 +802,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
         log_decision("assignable", &json!({"team": team.as_str()}), &json!([]));
         daemon.clock.advance(time::Duration::seconds(1));
         log_outside_call("git", "status", Duration::from_millis(5), Some(0), "ok");
+        emit_the_names_of_the_daemon_causes(&daemon);
     });
 
     started.writer.close().unwrap();
@@ -816,6 +817,36 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
         assert_eq!(row.rounds(), std::slice::from_ref(&round));
         assert_eq!(row.task(), Some(&task_id));
         assert_eq!(row.run(), Some(&run));
+    }
+}
+
+/// Emits, a second apart and each at its level, the names that `daemon_log_cause_tests` provokes by their causes.
+fn emit_the_names_of_the_daemon_causes(daemon: &Daemon) {
+    for variant in [
+        LogEvent::DaemonTaskFailed,
+        LogEvent::TeamNotStarted,
+        LogEvent::NotificationFailed,
+        LogEvent::HistoryRecordIncomplete,
+        LogEvent::DaemonStarted,
+        LogEvent::DaemonStopRequested,
+        LogEvent::DaemonStopped,
+        LogEvent::RequestDelegated,
+        LogEvent::QuestionsAnswered,
+        LogEvent::ControlUsed,
+        LogEvent::ChecksDecided,
+        LogEvent::ReviewsRequested,
+        LogEvent::ReviewReportLate,
+        LogEvent::NotificationSent,
+        LogEvent::QuestionsFileOpened,
+        LogEvent::PeerGone,
+    ] {
+        daemon.clock.advance(time::Duration::seconds(1));
+        match variant.level() {
+            LogLevel::Error => tracing::error!(event = variant.as_str(), "error event"),
+            LogLevel::Warn => tracing::warn!(event = variant.as_str(), "warning event"),
+            LogLevel::Info => tracing::info!(event = variant.as_str(), "info event"),
+            LogLevel::Debug => tracing::debug!(event = variant.as_str(), "debug event"),
+        }
     }
 }
 
