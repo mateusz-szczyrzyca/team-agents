@@ -943,7 +943,7 @@ async fn a_round_the_checks_send_back_once_and_then_ask_the_human_about_is_told_
 }
 
 #[tokio::test]
-async fn a_mixed_allow_and_refuse_answer_does_not_record_all_issues_allowed() {
+async fn a_mixed_allow_and_refuse_answer_records_the_issues_the_human_allowed() {
     use agent_core::history::{CheckOutcome, HistoryEvent, Record};
     use agent_runtime::history::Reader;
 
@@ -999,21 +999,19 @@ async fn a_mixed_allow_and_refuse_answer_does_not_record_all_issues_allowed() {
         .unwrap()
         .team_records(&team)
         .unwrap();
-    let allowed_events: Vec<_> = records
+    let allowed_issues: Vec<Vec<String>> = records
         .iter()
-        .filter(|stored| {
-            matches!(
-                &stored.record,
-                Record::Event(event)
-                    if matches!(
-                        &event.event,
-                        HistoryEvent::Checked {
-                            outcome: CheckOutcome::Allowed,
-                            ..
-                        }
-                    )
-            )
+        .filter_map(|stored| match &stored.record {
+            Record::Event(event) => match &event.event {
+                HistoryEvent::Checked {
+                    issues,
+                    outcome: CheckOutcome::Allowed,
+                    ..
+                } => Some(issues.clone()),
+                _ => None,
+            },
+            _ => None,
         })
         .collect();
-    assert!(allowed_events.is_empty(), "{allowed_events:?}");
+    assert_eq!(allowed_issues, [vec!["`tests/existing.txt`".to_owned()]]);
 }
