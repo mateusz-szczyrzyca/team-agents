@@ -355,3 +355,47 @@ fn a_loss_note_redacts_configured_secrets_from_its_error_detail() {
     assert!(details[0].contains("[REDACTED]"), "{details:?}");
     assert!(!details[0].contains("ghp_secret_marker_999"), "{details:?}");
 }
+
+#[test]
+fn a_loss_note_refused_as_foreign_does_not_hold_back_a_later_valid_note() {
+    let (_dir, path, db) = database();
+    let mut store = Noting::new(db);
+    let world = complete(8);
+    let other_team: agent_core::ids::TeamId = "team-20261118-110640-r002".parse().unwrap();
+    store.write(&[Record::Team(Box::new(world.team.clone()))]).unwrap();
+    let mut other = world.team.clone();
+    other.team = other_team.clone();
+    store.write(&[Record::Team(Box::new(other))]).unwrap();
+    store
+        .write(&[Record::Round(Box::new(world.rounds[0].clone()))])
+        .unwrap();
+
+    let mut foreign = world.runs[0].start.clone();
+    foreign.team = other_team;
+    foreign.rounds = vec![world.rounds[0].round.clone()];
+    assert!(store.write(&[Record::Run(Box::new(foreign))]).is_err());
+
+    let mut duplicate = world.runs[0].start.clone();
+    duplicate.run = "run-20261118-110640-r002".parse().unwrap();
+    duplicate.rounds = vec![world.rounds[0].round.clone(), world.rounds[0].round.clone()];
+    assert!(store.write(&[Record::Run(Box::new(duplicate))]).is_err());
+
+    let mut valid = world.runs[0].start.clone();
+    valid.run = "run-20261118-110640-r003".parse().unwrap();
+    store.write(&[Record::Run(Box::new(valid))]).unwrap();
+
+    let read = Reader::open(&path).unwrap().team_records(&world.team.team).unwrap();
+    let notes: Vec<(&EventRecord, &Vec<agent_core::ids::RoundId>)> = read
+        .iter()
+        .filter_map(|stored| match &stored.record {
+            Record::Event(event) if event.event.kind() == EventKind::Lost => Some((event.as_ref(), &stored.rounds)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notes.len(), 1, "{read:?}");
+    let HistoryEvent::Lost { what, cause, .. } = &notes[0].0.event else {
+        panic!("not a note")
+    };
+    assert_eq!((what.as_str(), cause.as_str()), ("run", "write_refused"));
+    assert_eq!(notes[0].1, &[world.rounds[0].round.clone()]);
+}
