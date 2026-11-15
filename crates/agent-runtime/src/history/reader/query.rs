@@ -142,35 +142,10 @@ impl Reader {
         if filter.grep.is_some() && version_of(&snapshot).map_err(query("daemon_logs"))? < 5 {
             return Ok(Vec::new());
         }
-        let mut selection = Selection::new(filter);
-        let (order, limit) = match window {
-            LogWindow::Newest(limit) => ("DESC", limit),
-            LogWindow::After { id, limit } => {
-                selection.add("l.id > ?", id);
-                ("ASC", limit)
-            }
-        };
-        if selection.predicates.is_empty() {
-            selection.predicates.push("l.id > 0".to_owned());
-        }
-        let prefix = if let Some(text) = &filter.grep {
-            selection
-                .values
-                .insert(0, format!("\"{}\"", text.replace('"', "\"\"")).into());
-            selection.predicates.push("(l.id IN (SELECT log FROM hits) OR l.run IN (SELECT run FROM hits) OR l.task IN (SELECT task FROM hits WHERE run IS NULL) OR l.id IN (SELECT d.log FROM daemon_log_rounds d JOIN history_record_rounds h ON h.round=d.round WHERE h.sequence IN (SELECT sequence FROM hits WHERE run IS NULL AND task IS NULL)))".to_owned());
-            "WITH hits AS MATERIALIZED (SELECT sequence,log,run,task FROM history_search WHERE history_search MATCH ?) "
-        } else {
-            ""
-        };
-        let sql = format!(
-            "{prefix}SELECT l.id,l.first_at,l.at,l.level,l.module,l.event,l.team,l.task,l.run,l.message,l.fields,l.count,l.cut \
-             FROM daemon_logs l WHERE {} ORDER BY l.id {order} LIMIT ?",
-            selection.predicates.join(" AND ")
-        );
-        selection.values.push(i64::from(limit).into());
+        let (sql, values) = log_query(filter, window);
         let mut statement = snapshot.prepare(&sql).map_err(query("daemon_logs"))?;
         let mut rows = statement
-            .query(params_from_iter(selection.values))
+            .query(params_from_iter(values))
             .map_err(query("daemon_logs"))?;
         let mut entries = Vec::new();
         while let Some(row) = rows.next().map_err(query("daemon_logs"))? {
@@ -182,3 +157,37 @@ impl Reader {
         Ok(entries)
     }
 }
+
+/// Builds the bound query shared by execution and query-plan verification.
+fn log_query(filter: &LogFilter, window: LogWindow) -> (String, Vec<Value>) {
+    let mut selection = Selection::new(filter);
+    let (order, limit) = match window {
+        LogWindow::Newest(limit) => ("DESC", limit),
+        LogWindow::After { id, limit } => {
+            selection.add("l.id > ?", id);
+            ("ASC", limit)
+        }
+    };
+    if selection.predicates.is_empty() {
+        selection.predicates.push("l.id > 0".to_owned());
+    }
+    let prefix = if let Some(text) = &filter.grep {
+        selection
+            .values
+            .insert(0, format!("\"{}\"", text.replace('"', "\"\"")).into());
+        selection.predicates.push("(l.id IN (SELECT log FROM hits) OR l.run IN (SELECT run FROM hits) OR l.task IN (SELECT task FROM hits WHERE run IS NULL) OR l.id IN (SELECT d.log FROM daemon_log_rounds d JOIN history_record_rounds h ON h.round=d.round WHERE h.sequence IN (SELECT sequence FROM hits WHERE run IS NULL AND task IS NULL)))".to_owned());
+        "WITH hits AS MATERIALIZED (SELECT sequence,log,run,task FROM history_search WHERE history_search MATCH ?) "
+    } else {
+        ""
+    };
+    let sql = format!(
+        "{prefix}SELECT l.id,l.first_at,l.at,l.level,l.module,l.event,l.team,l.task,l.run,l.message,l.fields,l.count,l.cut \
+             FROM daemon_logs l WHERE {} ORDER BY l.id {order} LIMIT ?",
+        selection.predicates.join(" AND ")
+    );
+    selection.values.push(i64::from(limit).into());
+    (sql, selection.values)
+}
+
+#[cfg(test)]
+mod tests;
