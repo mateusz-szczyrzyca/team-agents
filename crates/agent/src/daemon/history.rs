@@ -171,10 +171,34 @@ mod tests;
 
 /// Computes maintenance cutoffs once per day of the injected clock, including startup.
 pub(super) fn retention_due(
-    _config: &Config,
-    _home: &Home,
-    _now: agent_core::state::Timestamp,
-    _last: &mut Option<agent_core::state::Timestamp>,
+    config: &Config,
+    home: &Home,
+    now: agent_core::state::Timestamp,
+    last: &mut Option<agent_core::state::Timestamp>,
 ) -> Option<agent_runtime::history::Retention> {
-    None
+    if last.is_some_and(|previous| now.as_utc() - previous.as_utc() < time::Duration::days(1)) {
+        return None;
+    }
+    *last = Some(now);
+    Some(agent_runtime::history::Retention {
+        closed_before: cutoff(now, config.history().keep_days),
+        logs_before: cutoff(now, config.log().keep_days),
+        home: home.root().to_path_buf(),
+    })
+}
+
+/// A cutoff before the representable calendar keeps everything, as no stored record can be that old.
+fn cutoff(now: agent_core::state::Timestamp, days: u32) -> Option<agent_core::state::Timestamp> {
+    if days == 0 {
+        return None;
+    }
+    let at = now.as_utc().checked_sub(time::Duration::days(i64::from(days)))?;
+    match agent_core::state::Timestamp::from_utc(at) {
+        Ok(at) => Some(at),
+        Err(agent_core::state::InvalidTimestamp::YearOutOfRange { .. }) => None,
+        Err(error) => {
+            tracing::warn!(error = %error_chain(&error), "cannot calculate history retention cutoff");
+            None
+        }
+    }
 }

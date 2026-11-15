@@ -36,6 +36,10 @@ const MAX_BATCH: usize = 256;
 /// What can go wrong with the history, as the reporter is told: one cause is reported once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::Display)]
 pub enum Cause {
+    /// Retention failed; work continues and cleanup can be retried.
+    #[strum(serialize = "retention")]
+    Retention,
+
     /// The queue was full: the writer is slower than the work.
     #[strum(serialize = "queue_full")]
     QueueFull,
@@ -116,6 +120,9 @@ pub struct Setup {
 
 /// What the queue carries.
 enum Job {
+    /// Scheduled cleanup, ordered after records already handed in.
+    Retain(super::Retention),
+
     /// A record to write.
     Record(Record),
     /// A daemon log entry to write.
@@ -569,7 +576,20 @@ impl History {
     }
 
     /// Queues retention on the sole database writer without blocking work.
-    pub fn retain(&self, _request: super::Retention) {}
+    pub fn retain(&self, request: super::Retention) {
+        let Some(queue) = &self.queue else {
+            return;
+        };
+        match queue.try_send(Job::Retain(request)) {
+            Ok(()) => (),
+            Err(TrySendError::Full(_)) => self.shared.report(Cause::Retention, || {
+                "retention deferred: history queue is full".to_owned()
+            }),
+            Err(TrySendError::Disconnected(_)) => self.shared.report(Cause::Retention, || {
+                "retention deferred: history writer has stopped".to_owned()
+            }),
+        }
+    }
 
     /// Waits until everything handed in before is written or lost.
     pub fn flush(&self) {
@@ -636,6 +656,14 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
                         });
                     }
                 }
+                Job::Retain(request) => {
+                    write_batch(&mut store, shared, std::mem::take(&mut batch));
+                    write_log_batch(&mut store, shared, std::mem::take(&mut log_batch));
+                    if let Err(error) = store.retain(&request) {
+                        // History cleanup must not stop active tasks or later writes.
+                        shared.report(Cause::Retention, || error_chain(&error));
+                    }
+                }
                 Job::Flush(answer) => flushes.push(answer),
                 Job::Close => closing = true,
             }
@@ -669,6 +697,7 @@ fn count_what_is_left(jobs: &Receiver<Job>, shared: &Shared) {
                     tracing::debug!("a flush of the history was not waited for");
                 }
             }
+            Job::Retain(_) => shared.report(Cause::Retention, || "writer stopped before retention".to_owned()),
             Job::Log(_) | Job::Close => {}
         }
     }

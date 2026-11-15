@@ -20,6 +20,14 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Where records are written: the database, or whatever stands in for it where a test needs the writer to stall or
 /// fail.
 pub trait Store: Send + 'static {
+    /// Deletes expired records on the writer connection.
+    ///
+    /// # Errors
+    /// [`super::RetainError`] when cleanup fails; later writes remain possible.
+    fn retain(&mut self, _request: &super::Retention) -> Result<(), super::RetainError> {
+        Ok(())
+    }
+
     /// Writes `records` as one unit: all of them or none.
     ///
     /// # Errors
@@ -142,6 +150,10 @@ impl HistoryDb {
 }
 
 impl Store for HistoryDb {
+    fn retain(&mut self, request: &super::Retention) -> Result<(), super::RetainError> {
+        Self::retain(self, request)
+    }
+
     fn write(&mut self, records: &[Record]) -> Result<(), WriteError> {
         let transaction = self
             .connection

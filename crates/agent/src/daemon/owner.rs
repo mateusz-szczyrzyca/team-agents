@@ -474,9 +474,18 @@ impl Owner {
     pub(super) async fn run(mut self, mut inbox: mpsc::Receiver<Message>) -> Result<(), OwnerError> {
         self.recover().await?;
         self.adopt_open_questions().await?;
+        let mut retained_at = None;
         let mut tick = tokio::time::interval(self.parts.tick.max(Duration::from_millis(1)));
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
+            if let Some(request) = super::history::retention_due(
+                &self.parts.settings.config,
+                self.parts.store.home(),
+                Timestamp::now(&self.parts.clock)?,
+                &mut retained_at,
+            ) {
+                self.history.retain(request);
+            }
             self.team_life().await?;
             self.start_queued().await?;
             tokio::select! {
