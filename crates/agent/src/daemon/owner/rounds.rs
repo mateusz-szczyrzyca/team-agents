@@ -471,3 +471,7 @@ mod daemon_log_tests;
 #[cfg(test)]
 #[path = "rounds/tests/daemon_log_causes.rs"]
 mod daemon_log_cause_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/history_queries.rs"]
+mod history_queries_tests;
