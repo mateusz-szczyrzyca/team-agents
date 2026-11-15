@@ -82,7 +82,7 @@ fn remove_gate_files(tx: &rusqlite::Transaction<'_>, request: &Retention) -> Res
                 ),
             });
         }
-        match std::fs::remove_file(&path) {
+        match remove_beneath(&request.home, &path) {
             Ok(()) => (),
             // A previous interrupted cleanup may have removed the output before committing its rows.
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => (),
@@ -138,4 +138,32 @@ fn time_key(at: Timestamp) -> String {
     let utc = text.trim_end_matches('Z');
     let (seconds, fraction) = utc.split_once('.').unwrap_or((utc, ""));
     format!("{seconds}.{fraction:0<9}")
+}
+
+/// Resolves parents relative to owned directory descriptors without following symlinks.
+/// The final unlink removes a symlink itself, never its target.
+fn remove_beneath(home: &std::path::Path, path: &std::path::Path) -> Result<(), std::io::Error> {
+    use rustix::fs::{AtFlags, Mode, OFlags, open, openat, unlinkat};
+    let relative = path
+        .strip_prefix(home)
+        .map_err(|source| std::io::Error::new(std::io::ErrorKind::PermissionDenied, source))?;
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let mut directory = open(home, flags, Mode::empty())?;
+    let mut parts = relative.components().peekable();
+    while let Some(part) = parts.next() {
+        let std::path::Component::Normal(name) = part else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "invalid gate output path",
+            ));
+        };
+        if parts.peek().is_none() {
+            return unlinkat(&directory, name, AtFlags::empty()).map_err(Into::into);
+        }
+        directory = openat(&directory, name, flags | OFlags::NOFOLLOW, Mode::empty())?;
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "gate output has no filename",
+    ))
 }
