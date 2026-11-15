@@ -180,9 +180,23 @@ fn log_query(filter: &LogFilter, window: LogWindow) -> (String, Vec<Value>) {
     } else {
         ""
     };
+    // ORDER BY id can otherwise make SQLite prefer an unindexed scan for time-only windows.
+    let index = if (filter.since.is_some() || filter.until.is_some())
+        && filter.team.is_none()
+        && filter.round.is_none()
+        && filter.task.is_none()
+        && filter.run.is_none()
+        && filter.agent.is_none()
+        && filter.level.is_none()
+        && filter.event.is_none()
+    {
+        " INDEXED BY daemon_logs_by_time"
+    } else {
+        ""
+    };
     let sql = format!(
         "{prefix}SELECT l.id,l.first_at,l.at,l.level,l.module,l.event,l.team,l.task,l.run,l.message,l.fields,l.count,l.cut \
-             FROM daemon_logs l WHERE {} ORDER BY l.id {order} LIMIT ?",
+             FROM daemon_logs l{index} WHERE {} ORDER BY l.id {order} LIMIT ?",
         selection.predicates.join(" AND ")
     );
     selection.values.push(i64::from(limit).into());
