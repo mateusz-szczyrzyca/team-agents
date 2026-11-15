@@ -204,8 +204,11 @@ struct RunArgs {
 
 /// The arguments of `agent log`.
 #[derive(Debug, Args)]
-#[command(group = clap::ArgGroup::new("what").required(true).multiple(false).args(["round", "team"]))]
+#[command(group = clap::ArgGroup::new("what").multiple(true).args(["round", "team"]))]
 struct LogArgs {
+    /// Predicates that select daemon log rows instead of a story.
+    #[command(flatten)]
+    rows: commands::log::rows::RowArgs,
     /// The round to tell (`round-…`): its item, its agents, every run, the pull request and the reviews, to its end.
     #[arg(long, value_parser = parse_round, value_name = "ROUND")]
     round: Option<RoundId>,
@@ -631,6 +634,11 @@ fn execute_log(environment: &Environment, args: LogArgs, out: &mut impl Write) -
             },
         })
     };
+    if args.rows.requested() || args.round.is_some() == args.team.is_some() {
+        args.rows
+            .print(&home.history_file(), args.round, args.team, format, out)?;
+        return Ok(());
+    }
     let request = LogRequest::new(args.round, args.team, format)?;
     log(&home.history_file(), &request, out)?;
     Ok(())

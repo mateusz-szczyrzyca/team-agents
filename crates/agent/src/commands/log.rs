@@ -1,5 +1,9 @@
 //! `agent log`: tell the story of a round or a team from the history database, which is read directly: no daemon is asked.
 
+pub(crate) mod rows;
+#[cfg(test)]
+mod tests;
+
 use std::io::Write;
 use std::path::Path;
 

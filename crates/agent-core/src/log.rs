@@ -578,3 +578,16 @@ impl LogEntry {
     getter!("How many times this entry was recorded.", pub const fn count(&self) -> NonZeroU64 = self.count);
     getter!("Which of `message` or `fields` were cut.", pub const fn cut(&self) -> &Cut = &self.cut);
 }
+
+/// The single subject printed by a scoped history query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, strum::VariantNames)]
+#[strum(parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<LogView>)]
+pub enum LogView {
+    /// Daemon log rows.
+    #[strum(serialize = "log")]
+    Log,
+}
+
+impl Keyword for LogView {
+    const WHAT: &'static str = "history view";
+}

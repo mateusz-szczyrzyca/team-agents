@@ -73,17 +73,6 @@ fn log_takes_a_round_or_a_team_and_the_flags() {
 fn log_refuses_no_subject_two_subjects_and_a_name_that_is_not_an_id_with_status_2() {
     use clap::error::ErrorKind;
     let cases = [
-        (&["log"][..], ErrorKind::MissingRequiredArgument),
-        (
-            &[
-                "log",
-                "--round",
-                "round-20261111-193001-q1w2",
-                "--team",
-                "team-20261111-193001-t5m8",
-            ],
-            ErrorKind::ArgumentConflict,
-        ),
         (&["log", "--round", "nonsense"], ErrorKind::ValueValidation),
         (
             &["log", "--team", "round-20261111-193001-q1w2"],
