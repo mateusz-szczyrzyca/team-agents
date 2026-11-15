@@ -48,7 +48,7 @@ pub(super) async fn run(
             Ok(notification) => notification,
             Err(error) => {
                 tracing::error!(
-                    event = agent_core::log::LogEvent::StateSaveFailed.as_str(),
+                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
                     task = %delivery.task,
                     error = %error_chain(&error),
                     "cannot render a notification"
@@ -58,7 +58,12 @@ pub(super) async fn run(
         };
         match notifier.notify(delivery.at, &notification).await {
             Ok(file) => {
-                tracing::info!(task = %delivery.task, file = %file.display(), "notification written");
+                tracing::info!(
+                    event = agent_core::log::LogEvent::NotificationSent.as_str(),
+                    task = %delivery.task,
+                    file = %file.display(),
+                    "notification written"
+                );
                 history.record(Record::Event(Box::new(EventRecord {
                     at: delivery.at,
                     team: delivery.team.clone(),
@@ -72,7 +77,7 @@ pub(super) async fn run(
             }
             Err(error) => {
                 tracing::error!(
-                    event = agent_core::log::LogEvent::StateSaveFailed.as_str(),
+                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
                     task = %delivery.task,
                     error = %error_chain(&error),
                     "cannot deliver a notification"

@@ -15,6 +15,7 @@ use agent_core::protocol::{
     Client, Command, Event, EventKind, Failure, FailureKind, Frame, MAX_REQUEST_BYTES, ProtocolError, Reply, Request,
     RequestId, Response, TeamSummary,
 };
+use agent_runtime::process::error_chain;
 use agent_runtime::store::Home;
 use tokio::io::BufReader;
 use tokio::net::{UnixListener, UnixStream};
@@ -146,7 +147,7 @@ pub(super) async fn serve(listener: UnixListener, inbox: mpsc::Sender<Message>, 
                 // The semaphore is never closed: this does not happen, and the loop would only spin.
                 Err(error) => {
                     tracing::error!(
-                        event = agent_core::log::LogEvent::DaemonPanicked.as_str(),
+                        event = agent_core::log::LogEvent::DaemonTaskFailed.as_str(),
                         %error,
                         "the connection limit of the daemon is closed"
                     );
@@ -161,7 +162,8 @@ pub(super) async fn serve(listener: UnixListener, inbox: mpsc::Sender<Message>, 
         match accepted {
             Ok((stream, _address)) => {
                 let dispatch = tracing::dispatcher::get_default(Clone::clone);
-                connections.spawn(tracing::instrument::WithSubscriber::with_subscriber(
+                // Scoped: a connection still open when the daemon ends is dropped with its subscriber.
+                connections.spawn(agent_runtime::history::Scoped::new(
                     connection(stream, inbox.clone(), shutdown.clone(), permit),
                     dispatch,
                 ));
@@ -194,8 +196,8 @@ fn reap(connections: &mut JoinSet<()>) {
 fn report(joined: Result<(), tokio::task::JoinError>) {
     if let Err(error) = joined {
         tracing::error!(
-            event = agent_core::log::LogEvent::DaemonPanicked.as_str(),
-            %error,
+            event = agent_core::log::LogEvent::DaemonTaskFailed.as_str(),
+            error = %error_chain(&error),
             "a connection task failed"
         );
     }
@@ -279,12 +281,20 @@ async fn exchange(stream: UnixStream, inbox: &mpsc::Sender<Message>) {
                 );
                 // The stream cannot be told where the next line begins: the answer is the last thing it carries.
                 if let Err(error) = respond(&mut write, Response::error(RequestId(0), failure)).await {
-                    tracing::debug!(%error, "cannot tell a client that its request was too long");
+                    tracing::debug!(
+                        event = agent_core::log::LogEvent::PeerGone.as_str(),
+                        %error,
+                        "cannot tell a client that its request was too long"
+                    );
                 }
                 return;
             }
             Step::Line(Err(error)) => {
-                tracing::debug!(%error, "a connection ended with an error");
+                tracing::debug!(
+                    event = agent_core::log::LogEvent::PeerGone.as_str(),
+                    %error,
+                    "a connection ended with an error"
+                );
                 return;
             }
             Step::Event(Ok(event)) => forward(subscription.as_ref(), event, &mut write).await,
@@ -299,7 +309,11 @@ async fn exchange(stream: UnixStream, inbox: &mpsc::Sender<Message>) {
             }
         };
         if let Err(error) = sent {
-            tracing::debug!(%error, "a client went away");
+            tracing::debug!(
+                event = agent_core::log::LogEvent::PeerGone.as_str(),
+                %error,
+                "a client went away"
+            );
             return;
         }
     }

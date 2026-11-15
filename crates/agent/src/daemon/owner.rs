@@ -40,7 +40,7 @@ use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::harness_prompts::HarnessPrompts;
-use agent_runtime::history::{History, log_decision};
+use agent_runtime::history::{History, Scoped, log_decision};
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunVerdict, WatchdogHold};
@@ -53,7 +53,6 @@ use tokio::task::{Id as JoinId, JoinError, JoinSet};
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
-use tracing::instrument::WithSubscriber;
 
 pub(crate) use self::rounds::{Pulls, PullsError};
 use self::start::{Context, Plan, StartProblem, next_number, plan, run_why};
@@ -673,11 +672,12 @@ impl Owner {
         self.holds.insert(task.clone(), hold.clone());
         let job = plan.job;
         let dispatch = tracing::dispatcher::get_default(Clone::clone);
-        let handle = self.runs.spawn(
-            async move { engine.run_held(job, &cancel, &hold).await }
-                .instrument(run_span)
-                .with_subscriber(dispatch),
-        );
+        // Scoped, not only polled with the subscriber: a run that is aborted is dropped by the runtime, and its spans must
+        // close in the registry that made them.
+        let handle = self.runs.spawn(Scoped::new(
+            async move { engine.run_held(job, &cancel, &hold).await }.instrument(run_span),
+            dispatch,
+        ));
         self.running.insert(handle.id(), task.clone());
         self.in_flight.insert(task.clone());
         Ok(())
@@ -1131,7 +1131,10 @@ impl Owner {
                     }
                     if reply.send(answer).is_err() {
                         // The connection closed while its request waited: nobody is left to answer.
-                        tracing::debug!("the connection of a request closed before the answer");
+                        tracing::debug!(
+                            event = LogEvent::PeerGone.as_str(),
+                            "the connection of a request closed before the answer"
+                        );
                     }
                 }
                 Message::Subscribe { team, reply } => {
@@ -1139,7 +1142,10 @@ impl Owner {
                     let events = self.parts.events.subscribe();
                     let teams = self.summaries(team.as_ref());
                     if reply.send((teams, events)).is_err() {
-                        tracing::debug!("the connection of a subscription closed before the answer");
+                        tracing::debug!(
+                            event = LogEvent::PeerGone.as_str(),
+                            "the connection of a subscription closed before the answer"
+                        );
                     }
                 }
             }
@@ -1507,7 +1513,7 @@ impl Owner {
             // The human is told through files and a command, not through the state: a notification that cannot be
             // queued is logged, and the task goes on.
             tracing::error!(
-                event = LogEvent::StateSaveFailed.as_str(),
+                event = LogEvent::NotificationFailed.as_str(),
                 task = %task,
                 %error,
                 "a notification could not be queued"

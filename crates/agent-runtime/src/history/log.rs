@@ -5,7 +5,9 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::future::Future;
 use std::panic::PanicHookInfo;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, Once, PoisonError};
 use std::time::Duration;
 
@@ -260,8 +262,16 @@ impl HistoryLayer {
                 state.dual_stderr,
             )
         };
-        let Ok(at) = Timestamp::now(&clock) else {
-            return;
+        let at = match Timestamp::now(&clock) {
+            Ok(at) => at,
+            Err(error) => {
+                // A record without a time cannot be stored: it is told on `stderr`, with why it is not in the history.
+                self.write_plain_stderr(&format!(
+                    "{} {module} event={event} message={message:?} fields={fields:?} (not in the history: {error})",
+                    event.level()
+                ));
+                return;
+            }
         };
         let team = scope.team.map(|team_id| LogTeamScope::new(team_id, scope.rounds));
         let task = scope.task.map(|task_id| LogTaskScope::new(task_id, scope.run));
@@ -724,6 +734,67 @@ pub fn log_outside_call(tool: &str, operation: &str, duration: Duration, exit_co
     // Direct dispatch still reaches the active subscriber, whose layer filters by level, but does not let another
     // scoped dispatcher's cached macro interest suppress this completion record.
     tracing::Event::dispatch(&OUTSIDE_CALL_METADATA, &values);
+}
+
+/// A future that is polled — and dropped — with `dispatch` as the default subscriber.
+///
+/// `WithSubscriber` sets the subscriber only while the future is polled. A task that is aborted is dropped by the runtime
+/// outside of that, and the registry of `tracing-subscriber` closes the parent of a span through the default subscriber of
+/// the moment: the spans of a future dropped under another registry would be closed in the wrong one.
+pub struct Scoped<F> {
+    /// The subscriber of the future.
+    dispatch: tracing::Dispatch,
+    /// The future, until it has finished or is dropped.
+    inner: Option<Pin<Box<F>>>,
+}
+
+impl<F> fmt::Debug for Scoped<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The future itself need not be `Debug`: whether it is still there is what a reader can use.
+        f.debug_struct("Scoped")
+            .field("dispatch", &self.dispatch)
+            .field("finished", &self.inner.is_none())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<F: Future> Scoped<F> {
+    /// `future`, polled and dropped with `dispatch` as the default subscriber.
+    #[must_use]
+    pub fn new(future: F, dispatch: tracing::Dispatch) -> Self {
+        Self {
+            dispatch,
+            inner: Some(Box::pin(future)),
+        }
+    }
+}
+
+impl<F: Future> Future for Scoped<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<F::Output> {
+        let Self { dispatch, inner } = self.get_mut();
+        tracing::dispatcher::with_default(dispatch, || {
+            let polled = match inner.as_mut() {
+                Some(future) => future.as_mut().poll(cx),
+                // Polled again after it finished: a future may answer anything then, and this one never ends again.
+                None => return std::task::Poll::Pending,
+            };
+            if polled.is_ready() {
+                // What the future held is dropped here, under its subscriber.
+                *inner = None;
+            }
+            polled
+        })
+    }
+}
+
+impl<F> Drop for Scoped<F> {
+    fn drop(&mut self) {
+        if let Some(future) = self.inner.take() {
+            tracing::dispatcher::with_default(&self.dispatch, || drop(future));
+        }
+    }
 }
 
 #[cfg(test)]

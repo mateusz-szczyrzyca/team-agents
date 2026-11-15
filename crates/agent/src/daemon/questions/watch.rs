@@ -157,7 +157,10 @@ impl Reporter {
             Ok(()) | Err(mpsc::error::TrySendError::Full(())) => {}
             // The owner is gone when the daemon shuts down.
             Err(mpsc::error::TrySendError::Closed(())) => {
-                tracing::debug!("a questions file was saved after the owner ended");
+                tracing::debug!(
+                    event = agent_core::log::LogEvent::PeerGone.as_str(),
+                    "a questions file was saved after the owner ended"
+                );
             }
         }
     }

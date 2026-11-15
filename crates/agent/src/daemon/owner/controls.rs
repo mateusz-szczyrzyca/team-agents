@@ -311,7 +311,12 @@ impl Owner {
             self.record_control_step(task, now, &event);
             self.log_activity(task, now, event).await;
         }
-        tracing::info!(action = ?action, tasks = reached.len(), "the human used a control");
+        tracing::info!(
+            event = LogEvent::ControlUsed.as_str(),
+            action = ?action,
+            tasks = reached.len(),
+            "the human used a control"
+        );
         Ok(())
     }
 

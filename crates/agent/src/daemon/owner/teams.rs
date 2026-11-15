@@ -100,7 +100,7 @@ impl Owner {
         // owner holds changes only once the copy is saved.
         let mut next = self.parts.state.clone();
         if let Err(error) = next.insert_team(formed.team.clone()) {
-            tracing::error!(team = %formed.team.id(), error = %error_chain(&error), "the state refuses the new team");
+            log_not_started(formed.team.id(), &error_chain(&error), "the state refuses the new team");
             return Ok(Err(internal(&format!(
                 "the new team does not fit the state: {}",
                 error_chain(&error)
@@ -141,7 +141,11 @@ impl Owner {
         let started = match started_events(team) {
             Ok(started) => started,
             Err(error) => {
-                tracing::error!(team = %id, error = %error_chain(&error), "the events of the new team cannot be made: the team is not started");
+                log_not_started(
+                    &id,
+                    &error_chain(&error),
+                    "the events of the new team cannot be made: the team is not started",
+                );
                 self.undo_start(&request, &formed).instrument(team_span.clone()).await;
                 return Ok(Err(internal(&format!(
                     "the new team has no round for an item it started: {}",
@@ -669,7 +673,13 @@ impl Owner {
                 team_id,
                 request_update(request.id, DelegationStatus::Running, Some(task)),
             );
-            tracing::info!(team = %team_id, request = %request.id, %worker, "a request is given to a worker");
+            tracing::info!(
+                event = LogEvent::RequestDelegated.as_str(),
+                team = %team_id,
+                request = %request.id,
+                %worker,
+                "a request is given to a worker"
+            );
             busy.push(worker);
         }
         self.put_back(team_id, held).await;
@@ -929,9 +939,18 @@ fn checkout_git(config: &Config, request: &RunRequest, agent: &AgentName) -> Git
 fn refusal_of(error: &FormError) -> Failure {
     let failure = error.failure();
     if failure.kind == FailureKind::Internal {
-        tracing::error!(error = %error_chain(error), "a team cannot be formed");
+        tracing::error!(
+            event = LogEvent::TeamNotStarted.as_str(),
+            error = %error_chain(error),
+            "a team cannot be formed"
+        );
     }
     failure
+}
+
+/// Logs that the team `team`, which the daemon formed, is not started because of `error`, as `what` says.
+fn log_not_started(team: &TeamId, error: &str, what: &str) {
+    tracing::error!(event = LogEvent::TeamNotStarted.as_str(), team = %team, error, "{what}");
 }
 
 /// An internal failure with `message`.

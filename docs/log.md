@@ -142,6 +142,25 @@ At `level = "debug"`:
   process) finishes, with `tool`, `operation`, `duration_ms`, `outcome`, and, when available, `exit_code` in `fields`.
   For a GitHub call, `exit_code` is the actual HTTP response status.
 
+### What only `stderr` has
+
+Every event of the daemon has one of the names above and goes to both places, with these exceptions, which go to `stderr`
+only:
+
+- a failure of the history itself (the writer cannot keep a record, a loss note cannot be written, the writer does not
+  close cleanly): a failure to write the log is never logged into the history, so that it cannot loop;
+- an event of a time the clock cannot give: it has no time to be stored with;
+- `trace` events, which no `[log] level` keeps in the history;
+- the three cleanup warnings of `agent_runtime::process` (a dropped run whose process group cannot be killed, a killed
+  captured process that cannot be reaped or does not end): they have no event name, because no test can provoke them;
+- the warning that the worktree of a member cannot take the branch of its next item, which repeats at every look while
+  it fails: it has no event name yet;
+- the note of the GitHub client that it left out what accounts that are not trusted wrote, which no call of the daemon
+  makes yet.
+
+Events from before the history is open (such as `restart_corrected` for an unknown time zone at the start of `agent daemon`)
+and after it is closed are on `stderr` only.
+
 ### Panic hook
 
 When the daemon starts, it installs a panic hook before spawning its tasks. If any thread or task panics, the hook emits
@@ -168,27 +187,43 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | Event | Level | Meaning |
 |---|---|---|
 | `cli_output_unreadable` | `warn` | A line of a model CLI's output cannot be read as its event format. |
-| `run_ended_without_status` | `warn` | A model CLI run cannot start, ends without reporting a status or verdict, or fails. |
+| `run_ended_without_status` | `warn` | A model CLI run cannot start, ends without reporting a status or a reviewer's verdict, or fails. |
 | `run_hung` | `warn` | The hang watchdog stops a silent run. |
 | `run_quota_exhausted` | `warn` | A run stops because its model quota is exhausted. |
 | `run_rate_limited` | `warn` | A run stops because of a rate limit. |
 | `bus_down` | `warn` | An `agentbus` operation fails and what waits for it is retried or dropped. |
-| `git_call_failed` | `warn` | A `git` call, worktree operation, or branch operation fails or is retried. |
-| `github_call_failed` | `warn` | A GitHub API call, pull-request publication, or merge fails, is retried, or has no token configured. |
+| `git_call_failed` | `warn` | A `git` call, worktree operation or branch operation fails or is retried. |
+| `github_call_failed` | `warn` | A GitHub API call, a publication or a merge fails or is retried, or the home has no GitHub token. |
 | `gate_cannot_start` | `warn` | A gate command cannot start or be recorded. |
 | `gate_timed_out` | `warn` | A gate command exceeds its timeout and is killed. |
 | `gate_dirty_tree` | `warn` | A gate runs on or leaves a dirty worktree or moves `HEAD`. |
-| `state_save_failed` | `error` | The daemon's state file, activity log, or notification cannot be saved or delivered. |
-| `questions_file_invalid` | `warn` | A questions file is missing, invalid, or cannot be prepared, watched, or opened. |
+| `state_save_failed` | `error` | The daemon's state file or the activity log of a task cannot be saved. |
+| `questions_file_invalid` | `warn` | A questions file is missing or not valid, or cannot be prepared, watched or opened. |
 | `configuration_name_missing` | `error` | An agent, investigator, or repository named in the state or a request is no longer in `agents.toml`. |
-| `restart_corrected` | `warn` | A daemon start or restart found an interrupted run or host environment fallback and corrected it. |
-| `request_refused` | `warn` | A client connection, subscription, or request cannot be accepted or is refused. |
-| `daemon_panicked` | `error` | A task or thread in the daemon panicked or failed unexpectedly, with its message and location. |
+| `restart_corrected` | `warn` | A start or restart of the daemon found an interrupted run or a host fallback and corrected it. |
+| `request_refused` | `warn` | A client connection, subscription or request cannot be accepted or is refused. |
+| `daemon_panicked` | `error` | A task or thread in the daemon panicked, with its message and location. |
+| `daemon_task_failed` | `error` | A task of the daemon (a side task or the task of a client connection) ends with an error it does not handle, such as a panic, with `error`. |
+| `team_not_started` | `error` | A team that was formed is not started because of a fault of the daemon (the state refuses it, its events cannot be made, or forming it failed inside); the client is told to see this log. |
+| `notification_failed` | `error` | A notification for the human cannot be made, timed, queued or delivered. |
+| `history_record_incomplete` | `warn` | A record of the history cannot be made as it should: it is left out, counted as lost, or made with a fallback (such as a run's reason recorded as a continuation). |
 | `team_changed` | `info` | A team is started or closed. |
 | `round_changed` | `info` | A round is opened or closed. |
 | `item_phase_changed` | `info` | An item's phase changes. |
 | `task_status_changed` | `info` | A task's status changes. |
 | `run_started` | `info` | A model CLI run starts. |
 | `run_ended` | `info` | A model CLI run ends. |
+| `daemon_started` | `info` | The daemon has opened its state and its history and serves its socket, with `home`. |
+| `daemon_stop_requested` | `info` | A signal asks the daemon to stop, with `signal` (`SIGTERM` or `SIGINT`). |
+| `daemon_stopped` | `info` | Everything of the daemon but its history has ended, with `outcome`: the last record of a daemon that ended; its absence after a `daemon_started` means the daemon was killed. |
+| `request_delegated` | `info` | A request for a worker is given to a worker, with `request` and `worker`. |
+| `questions_answered` | `info` | The open questions of a task are answered, with `number` and `channel`. |
+| `control_used` | `info` | The human used a control (stop, pause, unpause, resume), with `action` and the number of `tasks` it reached. |
+| `checks_decided` | `info` | The checks before a review send a round back to its team, ask the human, or take the human's answer, with `outcome`. |
+| `reviews_requested` | `info` | The reviews of a pull request are asked for, with `pr` and the number of `reviewers`. |
+| `review_report_late` | `info` | A reviewer's report comes when no review waits for it: it is kept or left out, and changes nothing. |
+| `notification_sent` | `info` | A notification for the human is delivered, with the `file` it was written to. |
+| `questions_file_opened` | `info` | A new questions file is opened in the editor, or is not because the editor is not there, with `outcome`. |
 | `decision_taken` | `debug` | A pure decision of `agent_core::decide` takes action, with `decision`, `input`, and `result`. |
 | `outside_call_completed` | `debug` | An outside call (`git`, `agentbus`, GitHub API, model CLI) completes, with `tool`, `operation`, `duration_ms`, `outcome`, and, when available, `exit_code`. |
+| `peer_gone` | `debug` | The other end of an answer (a client of the socket, or a task of the daemon) was gone before the answer. |
