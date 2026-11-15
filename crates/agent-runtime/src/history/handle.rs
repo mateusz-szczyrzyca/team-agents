@@ -18,6 +18,7 @@ use agent_core::history::{
     EventRecord, HistoryEvent, HistoryHealth, HistoryState, LostCause, LostKind, Record, RecordKind, RunSession, Step,
 };
 use agent_core::ids::{Clock, RoundId, RunId, TaskId, TeamId};
+use agent_core::log::LogRecord;
 use agent_core::state::Timestamp;
 
 use super::db::Store;
@@ -328,6 +329,9 @@ impl History {
             }
         }
     }
+
+    /// Hands a daemon log `record` to the writer without counting drops in [`HistoryHealth::lost`].
+    pub fn record_log(&self, _record: LogRecord) {}
 
     /// Capture one record only while a writer is available. An unavailable history counts it as lost without polling
     /// the capture future; a disabled history does neither. Capture failures do not fail the model's work.

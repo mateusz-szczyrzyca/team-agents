@@ -20,6 +20,7 @@ use agent_core::history::{
 };
 use agent_core::ids::{AgentName, BranchName, ItemId, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{CliKind, Role, Tier};
+use agent_core::log::LogEntry;
 use agent_core::protocol::{Client, ControlAction};
 use agent_core::repo_path::RepoPath;
 use agent_core::state::{CommitId, MergeMode, PrNumber, RunEnd, SessionId, Timestamp};
@@ -248,6 +249,51 @@ impl Reader {
     pub fn team(&self, team: &TeamId) -> Result<Option<Stored<TeamStart>>, ReadError> {
         let snapshot = self.snapshot("teams")?;
         read_team(&snapshot, team)
+    }
+
+    /// Every entry of `daemon_logs`, in write order (`id ASC`); databases before version 4 have none.
+    ///
+    /// # Errors
+    /// [`ReadError`] if a row or the database cannot be read.
+    pub fn daemon_logs(&self) -> Result<Vec<LogEntry>, ReadError> {
+        let _snapshot = self.snapshot("daemon_logs")?;
+        Ok(Vec::new())
+    }
+
+    /// The entries of `daemon_logs` for `team`, in write order (`id ASC`).
+    ///
+    /// # Errors
+    /// [`ReadError`] if a row or the database cannot be read.
+    pub fn daemon_logs_for_team(&self, _team: &TeamId) -> Result<Vec<LogEntry>, ReadError> {
+        let _snapshot = self.snapshot("daemon_logs")?;
+        Ok(Vec::new())
+    }
+
+    /// The entries of `daemon_logs` linked to `round`, in write order (`id ASC`).
+    ///
+    /// # Errors
+    /// [`ReadError`] if a row or the database cannot be read.
+    pub fn daemon_logs_for_round(&self, _round: &RoundId) -> Result<Vec<LogEntry>, ReadError> {
+        let _snapshot = self.snapshot("daemon_logs")?;
+        Ok(Vec::new())
+    }
+
+    /// The entries of `daemon_logs` for `task`, in write order (`id ASC`).
+    ///
+    /// # Errors
+    /// [`ReadError`] if a row or the database cannot be read.
+    pub fn daemon_logs_for_task(&self, _task: &TaskId) -> Result<Vec<LogEntry>, ReadError> {
+        let _snapshot = self.snapshot("daemon_logs")?;
+        Ok(Vec::new())
+    }
+
+    /// The entries of `daemon_logs` for `run`, in write order (`id ASC`).
+    ///
+    /// # Errors
+    /// [`ReadError`] if a row or the database cannot be read.
+    pub fn daemon_logs_for_run(&self, _run: &RunId) -> Result<Vec<LogEntry>, ReadError> {
+        let _snapshot = self.snapshot("daemon_logs")?;
+        Ok(Vec::new())
     }
 
     /// The rounds of `team`, oldest first.

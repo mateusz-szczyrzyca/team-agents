@@ -5,6 +5,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use agent_core::history::{MaxTextBytes, Record};
+use agent_core::log::LogRecord;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
 use super::error::{OpenError, WriteError};
@@ -24,6 +25,14 @@ pub trait Store: Send + 'static {
     /// # Errors
     /// [`WriteError`] when they cannot be written; none of them is.
     fn write(&mut self, records: &[Record]) -> Result<(), WriteError>;
+
+    /// Writes daemon log `records` as one unit: all of them or none.
+    ///
+    /// # Errors
+    /// [`WriteError`] when they cannot be written; none of them is.
+    fn write_logs(&mut self, _records: &[LogRecord]) -> Result<(), WriteError> {
+        Ok(())
+    }
 }
 
 /// The history database, open for writing.

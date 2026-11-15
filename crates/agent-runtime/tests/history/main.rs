@@ -13,6 +13,8 @@ mod kill;
 #[cfg(test)]
 mod ledger;
 #[cfg(test)]
+mod logs;
+#[cfg(test)]
 mod records;
 #[cfg(test)]
 mod schema;
