@@ -2,6 +2,8 @@
 //! each one as a handler says. It speaks just enough HTTP/1.1 for `reqwest`: one request per connection, a body
 //! given by `Content-Length`, `Connection: close` in every answer.
 
+pub(crate) mod scopes;
+
 use std::future::pending;
 use std::io;
 use std::net::SocketAddr;

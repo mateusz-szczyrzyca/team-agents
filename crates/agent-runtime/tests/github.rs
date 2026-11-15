@@ -8,7 +8,7 @@ mod github_client {
     use std::num::NonZeroU32;
     use std::time::Duration;
 
-    use super::support::{self, FakeServer, Reply};
+    use super::support::{self, FakeServer, Reply, scopes::ScopeRecorder};
     use agent_core::config::{GithubLogin, Secret};
     use agent_core::ids::BranchName;
     use agent_core::state::{CommitId, PrNumber};
@@ -19,6 +19,7 @@ mod github_client {
         Readiness, Rejection, RemotePullRequest, RepoSlug, RetryPolicy, ReviewState, StateChange,
     };
     use serde_json::{Value, json};
+    use tracing_subscriber::layer::SubscriberExt;
 
     const TOKEN: &str = "ghp_example_token_0123";
     const HEAD: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -1563,6 +1564,32 @@ mod github_client {
             .unwrap_or_default();
         assert!(completed.contains("\"exit_code\":201"), "{joined}");
         assert!(completed.contains("\"outcome\":\"ok\""), "{joined}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retries_and_completion_share_the_github_operation_span() {
+        let server = FakeServer::sequence(vec![
+            reply(429, &json!({"message": "slow down"})).with_header("Retry-After", "1"),
+            reply(201, &pr_json(7)),
+        ])
+        .await
+        .unwrap();
+        let recorder = ScopeRecorder::default();
+        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(recorder.clone()));
+
+        tracing::instrument::WithSubscriber::with_subscriber(github(&server).get_pull_request(number(7)), dispatch)
+            .await
+            .unwrap();
+
+        let events = recorder.events();
+        for name in ["github_call_failed", "outside_call_completed"] {
+            assert!(
+                events
+                    .iter()
+                    .any(|event| event.name == name && event.spans.contains(&"github".to_owned())),
+                "{name} has no github operation span: {events:?}"
+            );
+        }
     }
 
     #[tokio::test(start_paused = true)]

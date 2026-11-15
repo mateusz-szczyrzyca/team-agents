@@ -1,6 +1,9 @@
 //! The `agentbus` wrapper against the real binary, built from `agentbus/` and run in a temporary `AGENTS_HOME`:
 //! every command, and the exit statuses that become typed errors. Nothing here touches `~/agents`.
 
+#[path = "support/scopes.rs"]
+mod scopes;
+
 #[cfg(test)]
 mod agentbus_commands {
     use std::collections::BTreeMap;
@@ -23,6 +26,9 @@ mod agentbus_commands {
     use rustix::fs::{FlockOperation, flock};
     use tokio::io::AsyncWriteExt;
     use tokio::process::Command;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    use crate::scopes::ScopeRecorder;
 
     /// How long a wait for something another process does lasts at most.
     const PATIENCE: Duration = Duration::from_secs(20);
@@ -929,6 +935,25 @@ mod agentbus_commands {
         let status = fixture.bus.status().await.unwrap();
 
         assert_eq!((status.agents, status.reservations), (Vec::new(), Vec::<String>::new()));
+    }
+
+    #[tokio::test]
+    async fn completion_is_emitted_inside_the_agentbus_operation_span() {
+        let fixture = fixture();
+        let recorder = ScopeRecorder::default();
+        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(recorder.clone()));
+
+        tracing::instrument::WithSubscriber::with_subscriber(fixture.bus.status(), dispatch)
+            .await
+            .unwrap();
+
+        let events = recorder.events();
+        assert!(
+            events
+                .iter()
+                .any(|event| event.name == "outside_call_completed" && event.spans.contains(&"agentbus".to_owned())),
+            "the agentbus completion has no agentbus operation span: {events:?}"
+        );
     }
 
     #[tokio::test]
