@@ -215,8 +215,8 @@ mod editor {
     async fn directory_links_at_both_server_levels_still_find_the_remote_command() {
         for layout in ["cli/servers", "bin"] {
             let mut host = Host::new();
-            let build = host._dir.path().join("linked-build");
-            let commands = host._dir.path().join("linked-commands");
+            let build = host.servers.parent().unwrap().join("linked-build");
+            let commands = host.servers.parent().unwrap().join("linked-commands");
             std::fs::create_dir(&commands).unwrap();
             symlink(fake_cli(), commands.join("code")).unwrap();
             let parent = build.join(if layout == "cli/servers" { "server/bin" } else { "bin" });
