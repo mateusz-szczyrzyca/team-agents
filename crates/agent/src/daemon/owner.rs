@@ -955,7 +955,7 @@ impl Owner {
     }
 
     /// Decide continuation from the persisted suffix, so a restart never resets its budget.
-    pub(super) fn turn_limit(&self, task: &TaskId) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+    fn turn_limit(&self, task: &TaskId) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
         let found = self
             .parts
             .state
