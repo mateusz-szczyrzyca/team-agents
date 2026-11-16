@@ -153,6 +153,116 @@ mod editor {
     }
 
     #[tokio::test]
+    async fn plain_files_beside_builds_do_not_prevent_opening_the_file() {
+        for layout in ["cli/servers", "bin"] {
+            let mut host = Host::new();
+            let remote = if layout == "cli/servers" {
+                "server/bin/remote-cli"
+            } else {
+                "bin/remote-cli"
+            };
+            let commands = host.servers.join(layout).join("Stable-1").join(remote);
+            std::fs::create_dir_all(&commands).unwrap();
+            symlink(fake_cli(), commands.join("code")).unwrap();
+            std::fs::write(host.servers.join(layout).join("lru.json"), "{}").unwrap();
+            let socket = host.window(&host.runtime.clone(), "a", 0);
+
+            let opened = host.opener().open(Path::new("/questions-1.md")).await;
+
+            assert!(
+                matches!(&opened, Ok(Opened::Window { socket: found }) if *found == socket),
+                "{layout}: {opened:?}"
+            );
+            assert_eq!(opened_through(&socket), ["/questions-1.md"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_plain_file_in_place_of_remote_cli_is_skipped_for_another_build() {
+        for remote in ["cli/servers/broken/server/bin/remote-cli", "bin/broken/bin/remote-cli"] {
+            let mut host = Host::new();
+            host.server("Stable-1", "code");
+            let not_a_directory = host.servers.join(remote);
+            std::fs::create_dir_all(not_a_directory.parent().unwrap()).unwrap();
+            std::fs::write(&not_a_directory, "not a directory").unwrap();
+            let socket = host.window(&host.runtime.clone(), "a", 0);
+
+            let opened = host.opener().open(Path::new("/questions-1.md")).await;
+
+            assert!(
+                matches!(&opened, Ok(Opened::Window { socket: found }) if *found == socket),
+                "{remote}: {opened:?}"
+            );
+            assert_eq!(opened_through(&socket), ["/questions-1.md"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn server_layouts_containing_only_plain_files_have_no_server() {
+        let host = Host::new();
+        for layout in ["cli/servers", "bin"] {
+            let builds = host.servers.join(layout);
+            std::fs::create_dir_all(&builds).unwrap();
+            std::fs::write(builds.join("lru.json"), "{}").unwrap();
+        }
+
+        let opened = host.opener().open(Path::new("/questions-1.md")).await;
+
+        assert!(matches!(opened, Ok(Opened::NoServer)), "{opened:?}");
+    }
+
+    #[tokio::test]
+    async fn other_server_listing_errors_preserve_the_path_and_cause() {
+        for relative in [
+            "cli/servers",
+            "bin",
+            "cli/servers/Stable-1/server/bin/remote-cli",
+            "bin/Stable-1/bin/remote-cli",
+        ] {
+            let host = Host::new();
+            let broken = host.servers.join(relative);
+            std::fs::create_dir_all(broken.parent().unwrap()).unwrap();
+            // A self-referencing link produces ELOOP without depending on the user's permissions.
+            symlink(broken.file_name().unwrap(), &broken).unwrap();
+
+            let opened = host.opener().open(Path::new("/questions-1.md")).await;
+
+            assert!(
+                matches!(&opened, Err(OpenError::List { path, source })
+                    if *path == broken && source.raw_os_error() == Some(rustix::io::Errno::LOOP.raw_os_error())),
+                "{relative}: {opened:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn directory_links_at_both_server_levels_still_find_the_remote_command() {
+        for layout in ["cli/servers", "bin"] {
+            let mut host = Host::new();
+            let build = host.servers.parent().unwrap().join("linked-build");
+            let commands = host.servers.parent().unwrap().join("linked-commands");
+            std::fs::create_dir(&commands).unwrap();
+            symlink(fake_cli(), commands.join("code")).unwrap();
+            let parent = build.join(if layout == "cli/servers" { "server/bin" } else { "bin" });
+            std::fs::create_dir_all(&parent).unwrap();
+            symlink(&commands, parent.join("remote-cli")).unwrap();
+            let builds = host.servers.join(layout);
+            std::fs::create_dir_all(&builds).unwrap();
+            symlink(&build, builds.join("Stable-1")).unwrap();
+            std::fs::write(builds.join("lru.json"), "{}").unwrap();
+            let socket = host.window(&host.runtime.clone(), "a", 0);
+
+            let opened = host.opener().open(Path::new("/questions-1.md")).await;
+
+            assert!(
+                matches!(&opened, Ok(Opened::Window { socket: found }) if *found == socket),
+                "{layout}: {opened:?}"
+            );
+            assert_eq!(opened_through(&socket), ["/questions-1.md"]);
+        }
+    }
+
+    #[tokio::test]
     async fn without_a_server_there_is_nothing_to_open_the_file_in() {
         let mut host = Host::new();
         host.window(&host.runtime.clone(), "a", 10);

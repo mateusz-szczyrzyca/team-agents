@@ -1082,6 +1082,9 @@ A run that ends with questions leaves `questions-<round>.md` in the task's direc
 down is found when it starts). A task that waits for answers is not stopped, paused or resumed: answer it first. Every
 control is written to the activity log of each task it reached, with who did it, and `agent status` shows the new status.
 
+VS Code server discovery skips plain files beside builds (such as `cli/servers/lru.json`) and in place of a build's
+`remote-cli` directory in either server layout. Directory symlinks are followed; other listing errors are reported.
+
 With a `github_token` in `secrets.toml` the daemon runs the autopilot: when an item's branch has a green gate it opens the pull
 request, two investigators from outside the team review it (their reports are posted on it), and two approvals merge it and
 start the next item. `agent run --no-merge` stops before the merge and tells you; after `[review] fix_passes` rounds of "changes
