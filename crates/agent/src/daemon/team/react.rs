@@ -148,6 +148,7 @@ pub(in crate::daemon) fn notice_for(
             message: end_of(message.unwrap_or_default()),
         },
         RunEnd::NoStatus { .. } => BusNotice::MemberNoStatus { member: who },
+        RunEnd::TurnLimit if member.status() == TaskStatus::Failed => BusNotice::MemberNoStatus { member: who },
         RunEnd::Reported { .. }
         | RunEnd::QuotaExhausted { .. }
         | RunEnd::RateLimited

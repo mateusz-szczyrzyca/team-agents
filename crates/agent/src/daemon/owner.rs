@@ -966,14 +966,13 @@ impl Owner {
         let limits = self.parts.settings.config.limits();
         let next = match after_turn_limit(count, session, limits) {
             AfterTurnLimit::Resume => (TaskStatus::Queued, None),
-            AfterTurnLimit::Exhausted => (
+            AfterTurnLimit::Exhausted | AfterTurnLimit::NoSession => (
                 TaskStatus::Failed,
                 Some(Notice::TurnLimitExhausted {
                     count,
                     limit: limits.turn_limit_resumes,
                 }),
             ),
-            AfterTurnLimit::NoSession => (TaskStatus::Failed, Some(Notice::NoStatus { exit: None })),
         };
         Ok(next)
     }

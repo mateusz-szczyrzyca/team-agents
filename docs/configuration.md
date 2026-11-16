@@ -113,8 +113,9 @@ and an investigator.
 
 A turn-limit ending queues the task and resumes the same session with a short continuation prompt. With the default
 `turn_limit_resumes = 3`, the fourth consecutive exhaustion fails the task and sends one notification with the count.
-Every other run ending resets the count. The count is derived from saved runs and survives daemon restarts. Provider
-quota exhaustion takes precedence over a turn limit and uses the quota pause instead.
+Every other run ending resets the count (resuming a failed task with `agent resume` continues in the same session without
+resetting the count until a run ends in another way). The count is derived from saved runs and survives daemon restarts.
+Provider quota exhaustion takes precedence over a turn limit and uses the quota pause instead.
 
 ### `[review]`
 

@@ -43,6 +43,9 @@ const SETTINGS_FILE: &str = "claude-settings.json";
 /// The subtype of a `result` that ended well.
 const SUCCESS_SUBTYPE: &str = "success";
 
+/// The subtype of a `result` that used up the run's `--max-turns`.
+const MAX_TURNS_SUBTYPE: &str = "error_max_turns";
+
 /// The adapter of Claude Code.
 #[derive(Debug, Clone, Copy)]
 pub struct ClaudeAdapter;
@@ -353,7 +356,7 @@ impl OutputParser for ClaudeParser {
                 if let Some(id) = finish.session_id.as_deref().filter(|id| !id.is_empty()) {
                     self.progress.note_session(line, id)?;
                 }
-                self.progress.stream = if finish.subtype.as_deref() == Some("error_max_turns") {
+                self.progress.stream = if finish.subtype.as_deref() == Some(MAX_TURNS_SUBTYPE) {
                     StreamOutcome::TurnLimit
                 } else if finish.failed() {
                     StreamOutcome::Failed

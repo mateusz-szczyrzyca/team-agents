@@ -229,7 +229,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         rules: ctx.rules,
     };
     let prompt = compose(&texts, &input)?;
-    let (prompt, addition) = if kind == PromptKind::Resume(ResumeReason::TurnLimit) {
+    let (prompt, addition) = if kind == PromptKind::Resume(ResumeReason::TurnLimit) && ctx.why.is_none() {
         (prompt, None)
     } else {
         let answers = answers_text(ctx, member).await?;
@@ -586,15 +586,6 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
         return RunWhy::Continuation;
     };
     let (team, member) = (found.team, found.member);
-    if matches!(
-        member.runs().last().map(Run::state),
-        Some(RunState::Ended {
-            end: RunEnd::TurnLimit,
-            ..
-        })
-    ) {
-        return RunWhy::TurnLimit;
-    }
     match why {
         Some(Why::Woken) => RunWhy::WakeUp,
         Some(Why::Assigned(item)) => RunWhy::Item { item: *item },
@@ -619,6 +610,16 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
         ),
         Some(Why::AskHuman) => RunWhy::AskHuman,
         Some(Why::Checks) => RunWhy::Checks,
+        None if matches!(
+            member.runs().last().map(Run::state),
+            Some(RunState::Ended {
+                end: RunEnd::TurnLimit,
+                ..
+            })
+        ) =>
+        {
+            RunWhy::TurnLimit
+        }
         None if found.role == Role::Reviewer => review_why(team, task),
         None if answered_questions(member).is_some() => RunWhy::Answers,
         None => match member.runs().last().map(Run::state) {
