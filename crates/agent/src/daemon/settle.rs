@@ -42,6 +42,7 @@ pub(super) fn settle(role: Role, end: &RunEnd, pause: Option<&Pause>, final_mess
             // A member the coordinator excluded acknowledges it and stops for good.
             RunOutcome::Excluded => Settled::Status(TaskStatus::Done),
         },
+        RunEnd::TurnLimit => Settled::Failed(Notice::NoStatus { exit: None }),
         RunEnd::NoStatus { exit_code } => Settled::Failed(Notice::NoStatus { exit: *exit_code }),
         RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited => pause.map_or(
             // The classifier gives every limit a pause, so this is not reached; a limit that cannot be waited for is
@@ -94,7 +95,9 @@ pub(super) fn wake_time(
         }
         RunEnd::QuotaExhausted { .. } => default_pause(limits.quota_pause_minutes)?,
         RunEnd::RateLimited => default_pause(limits.rate_limit_pause_minutes)?,
-        RunEnd::Reported { .. } | RunEnd::NoStatus { .. } | RunEnd::Hung | RunEnd::Stopped => return Ok(None),
+        RunEnd::Reported { .. } | RunEnd::NoStatus { .. } | RunEnd::Hung | RunEnd::Stopped | RunEnd::TurnLimit => {
+            return Ok(None);
+        }
     };
     let until = ended
         .checked_add(wait)

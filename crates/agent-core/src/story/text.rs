@@ -669,6 +669,7 @@ fn run_end(end: &RunEnd) -> String {
         RunEnd::NoStatus { exit_code: None } => "no STATUS line (ended by a signal)".to_owned(),
         RunEnd::QuotaExhausted { resets_at: Some(at) } => format!("quota exhausted (back at {at})"),
         RunEnd::QuotaExhausted { resets_at: None } => "quota exhausted".to_owned(),
+        RunEnd::TurnLimit => "turn limit reached".to_owned(),
         RunEnd::RateLimited => "rate limited".to_owned(),
         RunEnd::Hung => "hung: stopped by the watchdog".to_owned(),
         RunEnd::Stopped => "stopped by the human".to_owned(),

@@ -274,6 +274,8 @@ impl ChangeKind {
 )]
 #[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<EndKind>)]
 pub enum EndKind {
+    /// The CLI used its per-run turn budget.
+    TurnLimit,
     /// The agent reported a status.
     Reported,
     /// The CLI ended without one.
@@ -297,6 +299,7 @@ impl EndKind {
     #[must_use]
     pub const fn of(end: &RunEnd) -> Self {
         match end {
+            RunEnd::TurnLimit => Self::TurnLimit,
             RunEnd::Reported { .. } => Self::Reported,
             RunEnd::NoStatus { .. } => Self::NoStatus,
             RunEnd::QuotaExhausted { .. } => Self::QuotaExhausted,

@@ -296,6 +296,7 @@ fn answered_questions(member: &Member) -> Option<&Question> {
                     }
                     | RunEnd::QuotaExhausted { .. }
                     | RunEnd::RateLimited
+                    | RunEnd::TurnLimit
                     | RunEnd::Hung
                     | RunEnd::Stopped,
                 ..
@@ -402,9 +403,10 @@ fn prompt_kind(member: &Member, session: Option<&SessionId>, config: &Config) ->
         }),
         Some(RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited) => PromptKind::Resume(ResumeReason::Limit),
         // Any other end (a failure the human lets the agent retry, a stop) gets the whole task again.
-        Some(RunEnd::Reported { .. } | RunEnd::NoStatus { exit_code: Some(_) } | RunEnd::Stopped) | None => {
-            PromptKind::First
-        }
+        Some(
+            RunEnd::Reported { .. } | RunEnd::NoStatus { exit_code: Some(_) } | RunEnd::Stopped | RunEnd::TurnLimit,
+        )
+        | None => PromptKind::First,
     }
 }
 

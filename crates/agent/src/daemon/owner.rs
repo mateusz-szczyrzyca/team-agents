@@ -1546,7 +1546,7 @@ fn log_unusual_end(end: &RunEnd) {
                 "a run hung and was stopped by the watchdog"
             );
         }
-        RunEnd::Reported { .. } | RunEnd::Stopped => {}
+        RunEnd::Reported { .. } | RunEnd::Stopped | RunEnd::TurnLimit => {}
     }
 }
 

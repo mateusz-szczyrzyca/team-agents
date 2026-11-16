@@ -306,6 +306,9 @@ pub fn classify_outcome(
             return limit.classify(context);
         }
     }
+    if output.stream == StreamOutcome::TurnLimit {
+        return done(RunEnd::TurnLimit);
+    }
     // After the limits: a run the watchdog killed while the provider refused it is paused until the reset, not resumed
     // straight into the limit.
     if finish.stopped_by == StoppedBy::Watchdog {

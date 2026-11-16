@@ -151,6 +151,7 @@ pub(in crate::daemon) fn notice_for(
         RunEnd::Reported { .. }
         | RunEnd::QuotaExhausted { .. }
         | RunEnd::RateLimited
+        | RunEnd::TurnLimit
         | RunEnd::Hung
         | RunEnd::Stopped => return Ok(None),
     };
@@ -184,7 +185,9 @@ pub(in crate::daemon) fn request_outcome(
             outcome: RunOutcome::Sleeping | RunOutcome::Excluded | RunOutcome::Questions,
         } => fail(WorkerEnd::NoResult),
         // A provider's limit that cannot be waited for is settled as a run without a status.
-        RunEnd::NoStatus { .. } | RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited => fail(WorkerEnd::NoStatus),
+        RunEnd::TurnLimit | RunEnd::NoStatus { .. } | RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited => {
+            fail(WorkerEnd::NoStatus)
+        }
         RunEnd::Stopped => fail(WorkerEnd::Stopped),
         RunEnd::Hung => Some(RequestOutcome::Failed {
             how: WorkerEnd::Hung,
@@ -202,6 +205,7 @@ const fn goes_on(end: &RunEnd) -> bool {
             outcome: RunOutcome::Questions,
         } | RunEnd::QuotaExhausted { .. }
             | RunEnd::RateLimited
+            | RunEnd::TurnLimit
             | RunEnd::Hung
     )
 }

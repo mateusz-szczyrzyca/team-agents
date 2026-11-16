@@ -167,7 +167,7 @@ fn end_json(end: &RunEndRecord) -> Value {
         RunEnd::QuotaExhausted { resets_at } => {
             json!({"kind": kind, "resets_at": resets_at.map(|at| at.to_string())})
         }
-        RunEnd::RateLimited | RunEnd::Hung | RunEnd::Stopped => json!({"kind": kind}),
+        RunEnd::TurnLimit | RunEnd::RateLimited | RunEnd::Hung | RunEnd::Stopped => json!({"kind": kind}),
     };
     json!({"run": end.run.as_str(), "at": end.at.to_string(), "end": how, "final_message": end.final_message})
 }

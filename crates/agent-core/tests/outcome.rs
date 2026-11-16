@@ -160,6 +160,7 @@ mod outcome {
             RunEnd::RateLimited => "rate_limited".to_owned(),
             RunEnd::Hung => "hung".to_owned(),
             RunEnd::Stopped => "stopped".to_owned(),
+            RunEnd::TurnLimit => "turn_limit".to_owned(),
         }
     }
 
@@ -208,7 +209,8 @@ mod outcome {
                     | RunEnd::NoStatus { .. }
                     | RunEnd::RateLimited
                     | RunEnd::Hung
-                    | RunEnd::Stopped => None,
+                    | RunEnd::Stopped
+                    | RunEnd::TurnLimit => None,
                 })
                 .collect();
             assert!(resets.contains(&true), "{}: no quota with a reset time", fixture.cli);
