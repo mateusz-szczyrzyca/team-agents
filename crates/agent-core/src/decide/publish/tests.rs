@@ -26,6 +26,13 @@ fn failed(exit_code: i32) -> GateOutcome {
     }
 }
 
+type TestCase<'a> = (
+    Option<&'a CommitId>,
+    Option<&'a GateRecord>,
+    Option<PublicationWaitReason>,
+    &'static str,
+);
+
 #[test]
 fn publication_wait_reason_decides_every_reason_and_the_precedence_order() {
     let tip_commit: CommitId = TIP.parse().unwrap();
@@ -42,12 +49,7 @@ fn publication_wait_reason_decides_every_reason_and_the_precedence_order() {
     let dirty_failed_at_other = make_record(OTHER, GateTree::NotClean, failed(2));
 
     // Table of (tip, record, expected reason, description)
-    let cases: &[(
-        Option<&CommitId>,
-        Option<&GateRecord>,
-        Option<PublicationWaitReason>,
-        &str,
-    )] = &[
+    let cases: &[TestCase<'_>] = &[
         // Missing tip
         (
             None,
