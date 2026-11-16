@@ -75,16 +75,10 @@ async fn returning_to_a_previous_wait_reason_does_not_emit_it_again() {
             PublicationWaitReason::GateFailed,
             PublicationWaitReason::NoGateRecord,
         ] {
-            owner.log_publication_waits(site, (&publication).into(), Some(&tip), None, reason);
+            owner.log_publication_waits(site, &publication, Some(&tip), None, reason);
         }
     });
     assert_eq!(*warnings.0.lock().unwrap(), ["no_gate_record", "gate_failed"]);
-}
-
-impl<'a> From<&'a Publication> for &'a BranchName {
-    fn from(publication: &'a Publication) -> Self {
-        &publication.head_branch
-    }
 }
 
 #[test]
