@@ -41,6 +41,12 @@ const DEFAULT_QUOTA_PAUSE_MINUTES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 /// Minutes a task is paused by a rate limit, by default.
 const DEFAULT_RATE_LIMIT_PAUSE_MINUTES: NonZeroU32 = NonZeroU32::new(5).unwrap();
 
+/// Turns allowed per model invocation by default; checked at compile time.
+const DEFAULT_MAX_TURNS: NonZeroU32 = NonZeroU32::new(300).unwrap();
+
+/// Consecutive automatic continuations allowed after turn exhaustion.
+const DEFAULT_TURN_LIMIT_RESUMES: u32 = 3;
+
 /// Lines of a run's error output read to recognise limits, by default.
 const DEFAULT_TAIL_LINES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 
@@ -253,8 +259,8 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            max_turns: NonZeroU32::MIN,
-            turn_limit_resumes: 0,
+            max_turns: DEFAULT_MAX_TURNS,
+            turn_limit_resumes: DEFAULT_TURN_LIMIT_RESUMES,
             quota_pause_minutes: Minutes::literal(DEFAULT_QUOTA_PAUSE_MINUTES),
             rate_limit_pause_minutes: Minutes::literal(DEFAULT_RATE_LIMIT_PAUSE_MINUTES),
             tail_lines: DEFAULT_TAIL_LINES,
