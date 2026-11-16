@@ -8,6 +8,7 @@
 pub mod assign;
 pub mod checks;
 pub mod outcome;
+pub mod publish;
 pub mod round;
 pub mod team;
 
