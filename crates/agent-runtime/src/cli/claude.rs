@@ -350,7 +350,9 @@ impl OutputParser for ClaudeParser {
                 if let Some(id) = finish.session_id.as_deref().filter(|id| !id.is_empty()) {
                     self.progress.note_session(line, id)?;
                 }
-                self.progress.stream = if finish.failed() {
+                self.progress.stream = if finish.subtype.as_deref() == Some("error_max_turns") {
+                    StreamOutcome::TurnLimit
+                } else if finish.failed() {
                     StreamOutcome::Failed
                 } else {
                     StreamOutcome::Succeeded
