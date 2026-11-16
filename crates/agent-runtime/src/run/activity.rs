@@ -28,6 +28,29 @@ pub struct ActivityError {
 /// [`ActivityError`] when the directory of the runs or an output file cannot be read; a directory or a file that is
 /// not there is no error.
 pub fn last_activity(home: &Home, task: &TaskId) -> Result<Option<SystemTime>, ActivityError> {
-    let _ = (home, task);
-    Ok(None)
+    let runs = home.runs_dir(task);
+    let cannot_read = |path: &std::path::Path| {
+        let path = path.to_path_buf();
+        move |source| ActivityError { path, source }
+    };
+    let entries = match std::fs::read_dir(&runs) {
+        Ok(entries) => entries,
+        // A task that has not run has no directory of runs.
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(cannot_read(&runs)(source)),
+    };
+    let mut newest: Option<SystemTime> = None;
+    for entry in entries {
+        let output = entry.map_err(cannot_read(&runs))?.path().join(STDOUT_FILE);
+        let changed = match std::fs::metadata(&output) {
+            Ok(metadata) => metadata.modified().map_err(cannot_read(&output))?,
+            // A run that has written nothing yet, or an entry that is no run.
+            Err(source) if matches!(source.kind(), io::ErrorKind::NotFound | io::ErrorKind::NotADirectory) => {
+                continue;
+            }
+            Err(source) => return Err(cannot_read(&output)(source)),
+        };
+        newest = Some(newest.map_or(changed, |known| known.max(changed)));
+    }
+    Ok(newest)
 }

@@ -178,7 +178,7 @@ mod steering_process {
     fn pause_unpause_and_stop_change_the_status_and_the_activity_names_the_client() {
         let (_dir, home) = seeded("busy");
         let daemon = start_daemon(&home);
-        eventually("the task to run", || task_line(&home).ends_with("  running"));
+        eventually("the task to run", || task_line(&home).contains("  running"));
 
         let paused = run(&home, &["pause", TASK]);
         assert!(paused.status.success(), "{paused:?}");
@@ -187,7 +187,7 @@ mod steering_process {
 
         let unpaused = run(&home, &["unpause", TASK]);
         assert!(unpaused.status.success(), "{unpaused:?}");
-        eventually("the task to run again", || task_line(&home).ends_with("  running"));
+        eventually("the task to run again", || task_line(&home).contains("  running"));
 
         let stopped = run(&home, &["stop", TASK]);
         assert!(stopped.status.success(), "{stopped:?}");

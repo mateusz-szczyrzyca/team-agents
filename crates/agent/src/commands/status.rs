@@ -61,8 +61,8 @@ impl Activity {
 
 /// `at` as a time of day, `HH:MM:SS`, at `offset` from UTC.
 pub(crate) fn clock_time(at: SystemTime, offset: UtcOffset) -> String {
-    let _ = (at, offset);
-    String::new()
+    let local = time::OffsetDateTime::from(at).to_offset(offset);
+    format!("{:02}:{:02}:{:02}", local.hour(), local.minute(), local.second())
 }
 
 /// Asks the daemon for the status of `target` (every team without one) and writes it to `out`; the tasks that run say
@@ -185,12 +185,15 @@ pub(super) const fn kind_of(reply: &Reply) -> &'static str {
     }
 }
 
-/// The teams as text: a line for each team, and under it a line for each of its tasks.
+/// The teams as text: a line for each team, and under it a line for each of its tasks, without the last activity of the
+/// tasks: what the tests of the layout compare.
+#[cfg(test)]
 pub(crate) fn render(teams: &[TeamSummary]) -> String {
     render_active(teams, &|_| None)
 }
 
-/// [`render`], with what `activity` says of each task that runs after its status.
+/// The teams as text: a line for each team, and under it a line for each of its tasks, with what `activity` says of each
+/// task that runs after its status.
 pub(crate) fn render_active(teams: &[TeamSummary], activity: &dyn Fn(&TaskId) -> Option<String>) -> String {
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
