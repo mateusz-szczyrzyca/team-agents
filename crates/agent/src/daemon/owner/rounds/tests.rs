@@ -362,7 +362,28 @@ async fn two_approving_reviews_merge_the_pull_request_through_the_api_at_the_hea
     let state = rig
         .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
         .await;
+    let merged_notice = rig.notification_with("Status: 🟣 merged").await;
+    assert!(merged_notice.starts_with("🟣 example\n"), "{merged_notice}");
+    assert!(merged_notice.contains("Status: 🟣 merged"), "{merged_notice}");
+    assert!(merged_notice.contains("Note: Pull request 1 of "), "{merged_notice}");
+    assert!(merged_notice.contains("/pull/1"), "{merged_notice}");
+    assert!(merged_notice.contains("1.1"), "{merged_notice}");
+
     rig.stop().await.unwrap();
+    rig.start().await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    let merged_notifications: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|n| n.starts_with("🟣 example\n"))
+        .collect();
+    assert_eq!(
+        merged_notifications.len(),
+        1,
+        "merged notification was repeated after restart: {merged_notifications:?}"
+    );
 
     let ItemPhase::Done { completion } = phase_of(&state, "1.1") else {
         panic!("item 1.1 is not done");
@@ -788,6 +809,9 @@ async fn when_the_fix_passes_are_used_up_the_lead_is_asked_to_put_the_question_t
     let state = rig.status_is(&tasks[0], TaskStatus::Questions).await;
     let prompt = rig.prompt(&tasks[0], 3).await;
     let notice = rig.notification_with("has questions").await;
+    assert!(notice.starts_with("❓ example\n"), "{notice}");
+    assert!(notice.contains("Status: ❓ waiting for answers"), "{notice}");
+    assert!(notice.contains("Task: "), "{notice}");
     rig.stop().await.unwrap();
 
     assert!(
@@ -884,8 +908,12 @@ async fn with_no_merge_nothing_is_merged_and_the_human_is_told_that_the_pull_req
     rig.stop().await.unwrap();
 
     assert!(notice.starts_with("✅✅ example\n"), "{notice}");
+    assert!(notice.contains("\nStatus: ✅✅ approved: ready to merge\n"), "{notice}");
+    assert!(
+        notice.contains("\nPR: https://github.example.com/octo/example/pull/1\n"),
+        "{notice}"
+    );
     assert!(notice.contains("Note: Pull request 1 of "), "{notice}");
-    assert!(notice.contains("pull/1"), "{notice}");
     assert!(notice.contains("--no-merge"), "{notice}");
     assert_eq!(rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")), []);
     assert!(matches!(phase_of(&state, "1.1"), ItemPhase::Approved { .. }));
@@ -922,13 +950,39 @@ async fn the_item_is_done_and_the_team_ends_when_the_human_merges_the_approved_p
     rig.start().await;
 
     rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
-    rig.notification_with("is approved").await;
+    let approved = rig.notification_with("is approved").await;
+    assert!(approved.starts_with("✅✅ example\n"), "{approved}");
+    assert!(
+        approved.contains("\nPR: https://github.example.com/octo/example/pull/1\n"),
+        "{approved}"
+    );
+
     rig.github.merged_by_a_human(1);
     let state = rig
         .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
         .await;
+    let merged_notice = rig.notification_with("Status: 🟣 merged").await;
+    assert!(merged_notice.starts_with("🟣 example\n"), "{merged_notice}");
+    assert!(merged_notice.contains("Status: 🟣 merged"), "{merged_notice}");
+    assert!(merged_notice.contains("Note: Pull request 1 of "), "{merged_notice}");
+    assert!(merged_notice.contains("/pull/1"), "{merged_notice}");
+    assert!(merged_notice.contains("1.1"), "{merged_notice}");
+
+    rig.stop().await.unwrap();
+    rig.start().await;
     let finished = rig.notification_with("is finished").await;
     rig.stop().await.unwrap();
+
+    let merged_notifications: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|n| n.starts_with("🟣 example\n"))
+        .collect();
+    assert_eq!(
+        merged_notifications.len(),
+        1,
+        "human merged notification was repeated after restart: {merged_notifications:?}"
+    );
 
     let ItemPhase::Done { completion } = phase_of(&state, "1.1") else {
         panic!("item 1.1 is not done");
