@@ -90,7 +90,7 @@ mod log_process {
                 .contains("round-20990101-000000-zzzz")
         );
         assert_eq!(bad.status.code(), Some(2));
-        assert_eq!(none.status.code(), Some(2));
+        assert_eq!(none.status.code(), Some(0));
         assert_eq!(missing.status.code(), Some(1));
         assert_eq!(unknown.stdout, b"");
     }

@@ -578,3 +578,40 @@ impl LogEntry {
     getter!("How many times this entry was recorded.", pub const fn count(&self) -> NonZeroU64 = self.count);
     getter!("Which of `message` or `fields` were cut.", pub const fn cut(&self) -> &Cut = &self.cut);
 }
+
+/// The single subject printed by a scoped history query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, strum::VariantNames)]
+#[strum(parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<LogView>)]
+pub enum LogView {
+    /// Tasks with the latest recorded run status.
+    #[strum(serialize = "tasks")]
+    Tasks,
+    /// Participants and how they were chosen.
+    #[strum(serialize = "agents")]
+    Agents,
+    /// Worktree paths, branches and recorded heads.
+    #[strum(serialize = "worktrees")]
+    Worktrees,
+    /// Run starts.
+    #[strum(serialize = "runs")]
+    Runs,
+    /// Whole recorded prompts.
+    #[strum(serialize = "prompts")]
+    Prompts,
+    /// Recorded changes.
+    #[strum(serialize = "changes")]
+    Changes,
+    /// Review requests and reports.
+    #[strum(serialize = "reviews")]
+    Reviews,
+    /// Availability of token accounting.
+    #[strum(serialize = "usage")]
+    Usage,
+    /// Daemon log rows.
+    #[strum(serialize = "log")]
+    Log,
+}
+
+impl Keyword for LogView {
+    const WHAT: &'static str = "history view";
+}

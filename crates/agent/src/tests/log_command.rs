@@ -73,17 +73,6 @@ fn log_takes_a_round_or_a_team_and_the_flags() {
 fn log_refuses_no_subject_two_subjects_and_a_name_that_is_not_an_id_with_status_2() {
     use clap::error::ErrorKind;
     let cases = [
-        (&["log"][..], ErrorKind::MissingRequiredArgument),
-        (
-            &[
-                "log",
-                "--round",
-                "round-20261111-193001-q1w2",
-                "--team",
-                "team-20261111-193001-t5m8",
-            ],
-            ErrorKind::ArgumentConflict,
-        ),
         (&["log", "--round", "nonsense"], ErrorKind::ValueValidation),
         (
             &["log", "--team", "round-20261111-193001-q1w2"],
@@ -294,4 +283,64 @@ fn a_closed_pipe_is_a_failure_that_names_the_story_not_a_panic() {
 
     assert_eq!(code, ExitCode::FAILURE);
     assert!(String::from_utf8(err).unwrap().contains("cannot write the story"));
+}
+
+/// A sink whose buffered write succeeds but its final flush fails.
+struct FlushFailure;
+
+impl std::io::Write for FlushFailure {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+}
+
+#[test]
+fn every_projection_reports_a_failure_to_flush_output() {
+    let (_dir, home, written) = with_history();
+    for view in [
+        "tasks",
+        "agents",
+        "worktrees",
+        "runs",
+        "prompts",
+        "changes",
+        "reviews",
+        "log",
+        "usage",
+    ] {
+        let mut err = Vec::new();
+        let code = run_in(
+            &environment(&home),
+            ["agent", "log", "--round", written.rounds[0].as_str(), "--show", view],
+            &mut FlushFailure,
+            &mut err,
+        )
+        .unwrap();
+        assert_eq!(code, ExitCode::FAILURE, "{view}");
+    }
+}
+
+#[test]
+fn focused_views_refuse_an_unknown_round_or_team_with_status_3() {
+    let (_dir, home, _) = with_history();
+    let other_round = "round-20990101-000000-zzzz";
+    let other_team = "team-20990101-000000-zzzz";
+
+    let (code_round, out_round, err_round) = agent(
+        &environment(&home),
+        &["log", "--round", other_round, "--show", "prompts"],
+    );
+    let (code_team, out_team, err_team) = agent(
+        &environment(&home),
+        &["log", "--team", other_team, "--show", "tasks", "--json"],
+    );
+
+    assert_eq!((code_round, out_round.as_str()), (ExitCode::from(3), ""));
+    assert!(err_round.contains(other_round), "{err_round}");
+    assert_eq!((code_team, out_team.as_str()), (ExitCode::from(3), ""));
+    assert!(err_team.contains(other_team), "{err_team}");
 }

@@ -377,6 +377,8 @@ pub struct Questions {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct History {
+    /// Days to keep closed rounds; zero keeps all history (the default).
+    pub keep_days: u32,
     /// Whether the daemon writes the history (`history.db` in the home).
     pub enabled: bool,
     /// The longest text of one field, in bytes: a longer one is cut at a character boundary and marked cut.
@@ -386,6 +388,7 @@ pub struct History {
 impl Default for History {
     fn default() -> Self {
         Self {
+            keep_days: 0,
             enabled: true,
             max_text_bytes: MaxTextBytes::default(),
         }
@@ -396,6 +399,8 @@ impl Default for History {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Log {
+    /// Days to keep logs without a round; zero keeps all (the default).
+    pub keep_days: u32,
     /// The lowest level kept: `error`, `warn`, `info` (default), or `debug`.
     pub level: LogLevel,
 }

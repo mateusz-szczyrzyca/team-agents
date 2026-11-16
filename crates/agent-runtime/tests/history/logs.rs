@@ -487,7 +487,7 @@ fn older_databases_read_empty_daemon_logs_and_upgrade_to_version_four_without_lo
         );
         drop(old_reader);
 
-        // Opening with HistoryDb::open migrates to version 4 without losing existing data.
+        // Opening with HistoryDb::open migrates to the pinned schema without losing existing data.
         let mut upgraded = HistoryDb::open(&path, roomy()).unwrap();
         upgraded
             .write_logs(&[LogRecord {
@@ -514,7 +514,13 @@ fn older_databases_read_empty_daemon_logs_and_upgrade_to_version_four_without_lo
 
         let raw = Connection::open(&path).unwrap();
         let version: u32 = raw.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(
+            format!("PRAGMA user_version = {version};"),
+            include_str!("../../../../docs/history.schema.sql")
+                .lines()
+                .find(|line| line.starts_with("PRAGMA user_version = "))
+                .unwrap()
+        );
     }
 }
 

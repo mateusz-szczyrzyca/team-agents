@@ -28,7 +28,9 @@ use agent_core::state::{CommitId, MergeMode, PrNumber, RunEnd, SessionId, Timest
 use agent_core::status::RunOutcome;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, Transaction, params};
 
+pub(super) mod query;
 mod sequenced;
+mod stats;
 
 use super::codec::parse_time;
 use super::error::{ReadError, ValueProblem};
@@ -402,6 +404,28 @@ impl Reader {
     pub fn steps(&self, run: &RunId) -> Result<Vec<Stored<Step>>, ReadError> {
         let snapshot = self.snapshot("steps")?;
         read_steps(&snapshot, run)
+    }
+
+    /// The recorded steps of a task across all runs, ordered by run start and step number.
+    ///
+    /// # Errors
+    /// [`ReadError`] for unreadable or invalid stored records.
+    pub fn steps_of_task(&self, task: &TaskId) -> Result<Vec<Stored<Step>>, ReadError> {
+        let snapshot = self.snapshot("steps")?;
+        let mut statement = snapshot
+            .prepare(
+                "SELECT s.n,s.at,s.kind,s.text,s.path,s.tool,s.detail,s.action,s.client,s.login,s.cut,s.run \
+             FROM runs r JOIN steps s ON s.run=r.run WHERE r.task=?1 ORDER BY r.at,r.rowid,s.n",
+            )
+            .map_err(query("steps"))?;
+        let mut rows = statement.query(params![task.as_str()]).map_err(query("steps"))?;
+        let mut steps = Vec::new();
+        while let Some(row) = rows.next().map_err(query("steps"))? {
+            let id: String = row.get(11).map_err(query("steps"))?;
+            let run = Row_::of("runs", &id).value("run", RunId::from_str(&id))?;
+            steps.push(decode_step(&run, row)?);
+        }
+        Ok(steps)
     }
 
     /// What `run` changed; `None` when nothing was recorded about it.

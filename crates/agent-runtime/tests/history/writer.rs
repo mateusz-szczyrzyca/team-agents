@@ -485,3 +485,87 @@ fn a_reader_that_reads_while_the_writer_writes_sees_whole_records_only() {
     assert_eq!(started.history.health().lost, 0);
     started.writer.close().unwrap();
 }
+
+#[test]
+fn full_or_closed_retention_queue_reports_once_without_losing_records() {
+    let reporter = Arc::new(Collect::default());
+    let batches = Batches::default();
+    let (entered, entered_rx) = channel();
+    let (release_tx, release) = channel();
+    let started = History::start(
+        Gated {
+            written: Arc::clone(&batches),
+            entered,
+            release: Some(release),
+            poison: None,
+        },
+        setup(&reporter, 1),
+    )
+    .unwrap();
+    let run = run_id(8761);
+    started.history.record(step(&run, 1));
+    entered_rx.recv().unwrap();
+    started.history.record(step(&run, 2));
+    let dir = tempfile::tempdir().unwrap();
+    let request = agent_runtime::history::Retention {
+        closed_before: Some(at(2000, 0)),
+        logs_before: None,
+        home: dir.path().to_path_buf(),
+    };
+    started.history.retain(request.clone());
+    started.history.retain(request.clone());
+    assert_eq!(reporter.causes(), [Cause::Retention]);
+    assert_eq!(started.history.health().lost, 0);
+    release_tx.send(()).unwrap();
+    started.history.flush();
+    started.history.record(step(&run, 3));
+    started.history.flush();
+    assert_eq!(written(&batches), (1..=3).map(|n| step(&run, n)).collect::<Vec<_>>());
+    started.writer.close().unwrap();
+    started.history.retain(request);
+    assert_eq!(reporter.causes(), [Cause::Retention]);
+    assert_eq!(started.history.health().lost, 0);
+}
+
+/// A store whose maintenance fails, while ordinary writes remain available.
+struct RefusedRetention(Memory);
+
+impl Store for RefusedRetention {
+    fn write(&mut self, records: &[Record]) -> Result<(), WriteError> {
+        self.0.write(records)
+    }
+
+    fn retain(
+        &mut self,
+        request: &agent_runtime::history::Retention,
+    ) -> Result<(), agent_runtime::history::RetainError> {
+        Err(agent_runtime::history::RetainError::File {
+            path: request.home.join("gate.log"),
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        })
+    }
+}
+
+#[test]
+fn refused_retention_is_reported_once_and_later_records_are_written() {
+    let reporter = Arc::new(Collect::default());
+    let batches = Batches::default();
+    let started = History::start(RefusedRetention(Memory(Arc::clone(&batches))), setup(&reporter, 8)).unwrap();
+    let run = run_id(8762);
+    let dir = tempfile::tempdir().unwrap();
+    let request = agent_runtime::history::Retention {
+        closed_before: Some(at(2000, 0)),
+        logs_before: None,
+        home: dir.path().to_path_buf(),
+    };
+    started.history.record(step(&run, 1));
+    started.history.retain(request.clone());
+    started.history.record(step(&run, 2));
+    started.history.retain(request);
+    started.history.record(step(&run, 3));
+    started.history.flush();
+    assert_eq!(written(&batches), (1..=3).map(|n| step(&run, n)).collect::<Vec<_>>());
+    assert_eq!(reporter.causes(), [Cause::Retention]);
+    assert_eq!(started.history.health().lost, 0);
+    started.writer.close().unwrap();
+}

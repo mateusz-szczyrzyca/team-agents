@@ -506,4 +506,96 @@ mod history_process {
             assert_eq!(reader.changes(&runs[0].start.value.run).unwrap(), None);
         }
     }
+    #[test]
+    fn log_follow_observes_runs_once_across_daemon_kill_restart_and_retention() {
+        use agent_core::history::MaxTextBytes;
+        use agent_runtime::history::{HistoryDb, Retention};
+        use std::io::{BufRead, BufReader};
+        use std::sync::mpsc;
+        let mut world = World::new("gated,gated");
+        world.start();
+        let mut follower = agent()
+            .args(["log", "-f", "--json"])
+            .env("AGENTS_HOME", &world.home)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdout = follower.stdout.take().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                sender.send(line.unwrap()).unwrap();
+            }
+        });
+        let next = || serde_json::from_str::<serde_json::Value>(&receiver.recv_timeout(PATIENCE).unwrap()).unwrap();
+        let mut seen = vec![next()];
+        while seen.last().unwrap()["event"] != "daemon_started" {
+            seen.push(next());
+        }
+        let output = world.agent(&["run", "claude-1", "Watch this run."]);
+        assert!(output.status.success(), "{output:?}");
+        loop {
+            seen.push(next());
+            if seen.last().unwrap()["event"] == "run_started" {
+                break;
+            }
+        }
+        let first_run = seen.last().unwrap()["run"].clone();
+        let task = first_task(&output);
+        let worktree = world.home.join("worktrees/example").join(task.as_str());
+        eventually("the fake CLI barrier", || worktree.join(".fake-committed-1").exists());
+        world.end(Signal::KILL);
+        // SIGKILL cannot clean up its child: release this test's fake CLI before restarting.
+        std::fs::write(worktree.join(".fake-gate-done-1"), "done\n").unwrap();
+        let path = world.home.join("history.db");
+        let mut db = HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
+        db.retain(&Retention {
+            closed_before: None,
+            logs_before: Some("2099-01-01T00:00:00Z".parse().unwrap()),
+            home: world.home.clone(),
+        })
+        .unwrap();
+        drop(db);
+        world.start();
+        loop {
+            seen.push(next());
+            if seen.last().unwrap()["event"] == "run_started" {
+                break;
+            }
+        }
+        assert_ne!(seen.last().unwrap()["run"], first_run);
+        world.end(Signal::TERM);
+        loop {
+            seen.push(next());
+            if seen.last().unwrap()["event"] == "daemon_stopped" {
+                break;
+            }
+        }
+        follower.kill().unwrap();
+        follower.wait().unwrap();
+        reader.join().unwrap();
+        seen.extend(
+            receiver
+                .try_iter()
+                .map(|line| serde_json::from_str::<serde_json::Value>(&line).unwrap()),
+        );
+        let ids: Vec<_> = seen.iter().map(|row| row["id"].as_i64().unwrap()).collect();
+        assert!(ids.windows(2).all(|pair| pair[0] < pair[1]), "{ids:?}");
+        let starts: Vec<_> = seen
+            .iter()
+            .filter(|row| row["event"] == "run_started")
+            .map(|row| row["run"].as_str().unwrap().to_owned())
+            .collect();
+        let recorded: Vec<_> = Reader::open(&path)
+            .unwrap()
+            .daemon_logs()
+            .unwrap()
+            .iter()
+            .filter(|row| row.event() == agent_core::log::LogEvent::RunStarted)
+            .map(|row| row.run().unwrap().to_string())
+            .collect();
+        assert_eq!(starts, recorded);
+        assert_eq!(starts.len(), 2);
+    }
 }

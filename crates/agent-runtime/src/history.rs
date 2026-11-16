@@ -14,6 +14,7 @@ pub mod migrate;
 mod notes;
 mod reader;
 mod redact;
+mod retention;
 pub mod schema;
 mod write;
 
@@ -26,3 +27,7 @@ pub use log::{HistoryLayer, Scoped, ensure_scoped_callsites, install_panic_hook,
 pub use migrate::Migration;
 pub use notes::Noting;
 pub use reader::{Reader, RoundPrompt, RunRow, Stored};
+
+pub use reader::query::{LogFilter, LogWindow};
+
+pub use retention::{RetainError, Retention};

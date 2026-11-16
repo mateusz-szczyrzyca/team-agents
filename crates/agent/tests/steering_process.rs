@@ -196,11 +196,25 @@ mod steering_process {
         let again = run(&home, &["stop", TASK]);
         assert_eq!(again.status.code(), Some(1));
         assert!(text(again.stderr).contains("already stopped"));
-        let log = std::fs::read_to_string(home.activity_log(&task())).unwrap();
-        let controls: Vec<serde_json::Value> = log
-            .lines()
-            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-            .filter(|line| line["kind"] == "control")
+        stop_daemon(daemon);
+        let state = agent_core::state::State::from_json(&std::fs::read_to_string(home.state_file()).unwrap()).unwrap();
+        let found = state.find_task(&task()).unwrap();
+        let controls: Vec<serde_json::Value> = agent_runtime::history::Reader::open(&home.history_file())
+            .unwrap()
+            .team_records(found.team.id())
+            .unwrap()
+            .into_iter()
+            .filter_map(|row| match row.record {
+                agent_core::history::Record::Event(event) => match event.event {
+                    agent_core::history::HistoryEvent::Controlled { action, by, tasks, .. }
+                        if tasks.contains(&task()) =>
+                    {
+                        Some(serde_json::json!({"kind":"control", "action":action,"by":by}))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
             .collect();
         let actions: Vec<&str> = controls.iter().map(|line| line["action"].as_str().unwrap()).collect();
         assert_eq!(actions, ["pause", "unpause", "stop"]);
@@ -210,6 +224,5 @@ mod steering_process {
                 .all(|line| line["by"] == serde_json::json!({"kind": "cli"})),
             "{controls:?}"
         );
-        stop_daemon(daemon);
     }
 }

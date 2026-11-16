@@ -94,7 +94,7 @@ const GATE_ABOUT: &str =
 const LOG: &str = "log";
 
 /// What `agent log` is for, as the help says.
-const LOG_ABOUT: &str = "Tells the story of a round or a team from the history, with no daemon needed";
+const LOG_ABOUT: &str = "Reads history directly, with no daemon needed. With only --round or --team and optional --prompts, --no-steps, --json: tells the story. With no scope, both scopes, --show log, or any row filter: prints daemon log rows. Row filters are --task, --run, --agent, --level, --event, --since, --until, --grep, -n and -f.";
 
 /// What `agent run` is for, as the help says.
 const RUN_ABOUT: &str = "Starts a task or a team on the repository the current directory is in";
@@ -204,8 +204,11 @@ struct RunArgs {
 
 /// The arguments of `agent log`.
 #[derive(Debug, Args)]
-#[command(group = clap::ArgGroup::new("what").required(true).multiple(false).args(["round", "team"]))]
+#[command(group = clap::ArgGroup::new("what").multiple(true).args(["round", "team"]))]
 struct LogArgs {
+    /// Predicates that select daemon log rows instead of a story.
+    #[command(flatten)]
+    rows: commands::log::rows::RowArgs,
     /// The round to tell (`round-…`): its item, its agents, every run, the pull request and the reviews, to its end.
     #[arg(long, value_parser = parse_round, value_name = "ROUND")]
     round: Option<RoundId>,
@@ -631,6 +634,11 @@ fn execute_log(environment: &Environment, args: LogArgs, out: &mut impl Write) -
             },
         })
     };
+    if args.rows.requested() || args.round.is_some() == args.team.is_some() {
+        args.rows
+            .print(&home.history_file(), args.round, args.team, format, out)?;
+        return Ok(());
+    }
     let request = LogRequest::new(args.round, args.team, format)?;
     log(&home.history_file(), &request, out)?;
     Ok(())

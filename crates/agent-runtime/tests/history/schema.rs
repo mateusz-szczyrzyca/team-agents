@@ -51,8 +51,15 @@ fn the_pinned_file_is_the_version_of_the_last_migration_and_every_table_of_it_is
             "commits",
             "daemon_log_rounds",
             "daemon_logs",
+            "history_cursors",
             "history_record_rounds",
             "history_records",
+            "history_search",
+            "history_search_config",
+            "history_search_content",
+            "history_search_data",
+            "history_search_docsize",
+            "history_search_idx",
             "launches",
             "plan",
             "rounds",
@@ -65,7 +72,39 @@ fn the_pinned_file_is_the_version_of_the_last_migration_and_every_table_of_it_is
             "teams"
         ]
     );
-    assert!(tables.iter().all(|(_, strict)| *strict == 1), "{tables:?}");
+    for (name, strict) in &tables {
+        let expected = match name.as_str() {
+            "history_search"
+            | "history_search_config"
+            | "history_search_content"
+            | "history_search_data"
+            | "history_search_docsize"
+            | "history_search_idx" => 0,
+            _ => 1,
+        };
+        assert_eq!(*strict, expected, "{name}");
+    }
+    let fts_types: Vec<(String, String)> = raw.prepare("SELECT name, type FROM pragma_table_list WHERE name IN ('history_search','history_search_config','history_search_content','history_search_data','history_search_docsize','history_search_idx') ORDER BY name").unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().collect::<Result<_, _>>().unwrap();
+    assert_eq!(
+        fts_types,
+        [
+            ("history_search".to_owned(), "virtual".to_owned()),
+            ("history_search_config".to_owned(), "shadow".to_owned()),
+            ("history_search_content".to_owned(), "shadow".to_owned()),
+            ("history_search_data".to_owned(), "shadow".to_owned()),
+            ("history_search_docsize".to_owned(), "shadow".to_owned()),
+            ("history_search_idx".to_owned(), "shadow".to_owned()),
+        ]
+    );
+    let sql: String = raw
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name = 'history_search'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(sql.contains("USING fts5("), "{sql}");
 }
 
 #[test]

@@ -1,5 +1,10 @@
 //! `agent log`: tell the story of a round or a team from the history database, which is read directly: no daemon is asked.
 
+pub(crate) mod rows;
+#[cfg(test)]
+mod tests;
+mod views;
+
 use std::io::Write;
 use std::path::Path;
 
@@ -31,6 +36,10 @@ pub(crate) struct LogRequest {
 /// Why `agent log` failed.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum LogError {
+    /// The timer for following could not be started.
+    #[error("cannot start log following")]
+    FollowRuntime(#[source] std::io::Error),
+
     /// Neither a round nor a team was named.
     #[error("name a round (--round round-...) or a team (--team team-...)")]
     NoSubject,
@@ -62,7 +71,7 @@ impl LogError {
     pub(crate) const fn exit_code(&self) -> u8 {
         match self {
             Self::UnknownRound { .. } | Self::UnknownTeam { .. } => UNKNOWN_ID_EXIT,
-            Self::NoSubject | Self::TwoSubjects | Self::Read(_) | Self::Output(_) => 1,
+            Self::NoSubject | Self::TwoSubjects | Self::Read(_) | Self::Output(_) | Self::FollowRuntime(_) => 1,
         }
     }
 }

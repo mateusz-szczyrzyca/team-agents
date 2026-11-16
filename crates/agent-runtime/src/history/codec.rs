@@ -25,3 +25,31 @@ pub(super) fn time_text(at: Timestamp) -> String {
 pub(super) fn parse_time(text: &str) -> Result<Timestamp, InvalidTimestamp> {
     text.parse()
 }
+
+/// Normalizes the variable fractional precision of a persisted timestamp for nanosecond-ordered comparisons.
+pub(super) fn time_key(at: Timestamp) -> String {
+    let text = at.to_string();
+    let utc = text.trim_end_matches('Z');
+    let (seconds, fraction) = utc.split_once('.').unwrap_or((utc, ""));
+    format!("{seconds}.{fraction:0<9}")
+}
+
+/// SQL expression normalizing `column` to nanosecond precision (`YYYY-MM-DDTHH:MM:SS.fffffffff`) so text order is
+/// timestamp order and matches `daemon_logs_by_time`.
+macro_rules! time_key_sql {
+    ($column:literal) => {
+        concat!(
+            "substr(",
+            $column,
+            ",1,19)||'.'||substr(CASE WHEN substr(",
+            $column,
+            ",20,1)='.' THEN substr(",
+            $column,
+            ",21,length(",
+            $column,
+            ")-21) ELSE '' END||'000000000',1,9)"
+        )
+    };
+}
+
+pub(super) use time_key_sql;
