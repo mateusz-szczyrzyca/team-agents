@@ -1483,7 +1483,66 @@ async fn record_publication_waits(observed: &mut BTreeSet<LogEvent>) {
     assert_eq!(first.fields().get("gate_head"), None);
     observed.insert(LogEvent::PublicationWaits);
 
-    // After agent gate passes the pull request is opened and no further row is written
+    // First gate ran on the tree with stand-in files, so gate_tree_not_clean is logged
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request_until_answered(
+            Client::Cli,
+            Command::Gate(agent_core::protocol::GateRequest { task: tasks[0].clone() }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::GateRecorded { .. }));
+
+    rig.wait_for("the second publication_waits row", || {
+        reader
+            .daemon_logs()
+            .map(|l| l.iter().filter(|r| r.event() == LogEvent::PublicationWaits).count() >= 2)
+            .unwrap_or(false)
+    })
+    .await;
+
+    for _ in 0..3 {
+        let reply = crate::client::Connection::connect(&rig.home.socket_file())
+            .await
+            .unwrap()
+            .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+            .await
+            .unwrap();
+        assert!(matches!(reply, Reply::Teams { .. }));
+    }
+
+    let logs_dirty = reader.daemon_logs().unwrap();
+    let waits_dirty: Vec<_> = logs_dirty
+        .iter()
+        .filter(|r| r.event() == LogEvent::PublicationWaits)
+        .collect();
+    assert_eq!(
+        waits_dirty.len(),
+        2,
+        "second row for gate_tree_not_clean expected: {logs_dirty:?}"
+    );
+    let second = waits_dirty[1];
+    assert_eq!(second.level(), LogLevel::Warn);
+    assert_eq!(second.team(), Some(&team));
+    assert_eq!(second.task(), Some(&tasks[0]));
+    assert_eq!(
+        second.fields().get("reason").and_then(|v| v.as_str()),
+        Some("gate_tree_not_clean")
+    );
+    assert_eq!(
+        second.fields().get("tip").and_then(|v| v.as_str()),
+        Some(first_tip.as_str())
+    );
+    assert_eq!(
+        second.fields().get("gate_head").and_then(|v| v.as_str()),
+        Some(first_tip.as_str())
+    );
+
+    // After cleaning the tree and passing agent gate, the pull request is opened and no further row is written
+    let worktree = rig.worktree(&tasks[0]);
+    super::rig::git(&worktree, &["clean", "-fd"]);
     let reply = crate::client::Connection::connect(&rig.home.socket_file())
         .await
         .unwrap()
@@ -1515,51 +1574,8 @@ async fn record_publication_waits(observed: &mut BTreeSet<LogEvent>) {
         .collect();
     assert_eq!(
         waits_after_gate.len(),
-        1,
-        "no further row is written after pull request opened: {logs_after_gate:?}"
-    );
-
-    // A gate that passed before one more commit gives gate_at_another_commit with both commits
-    let worktree = rig.worktree(&tasks[0]);
-    super::rig::git(&worktree, &["commit", "--allow-empty", "-m", "one more commit"]);
-    let second_tip = super::rig::git(&worktree, &["rev-parse", "HEAD"]);
-    assert_ne!(first_tip, second_tip);
-
-    for _ in 0..3 {
-        let reply = crate::client::Connection::connect(&rig.home.socket_file())
-            .await
-            .unwrap()
-            .request(Client::Cli, Command::Status(StatusRequest { target: None }))
-            .await
-            .unwrap();
-        assert!(matches!(reply, Reply::Teams { .. }));
-    }
-
-    let logs_after_commit = reader.daemon_logs().unwrap();
-    let waits_after_commit: Vec<_> = logs_after_commit
-        .iter()
-        .filter(|r| r.event() == LogEvent::PublicationWaits)
-        .collect();
-    assert_eq!(
-        waits_after_commit.len(),
         2,
-        "second row for gate_at_another_commit expected: {logs_after_commit:?}"
-    );
-    let second = waits_after_commit[1];
-    assert_eq!(second.level(), LogLevel::Warn);
-    assert_eq!(second.team(), Some(&team));
-    assert_eq!(second.task(), Some(&tasks[0]));
-    assert_eq!(
-        second.fields().get("reason").and_then(|v| v.as_str()),
-        Some("gate_at_another_commit")
-    );
-    assert_eq!(
-        second.fields().get("tip").and_then(|v| v.as_str()),
-        Some(second_tip.as_str())
-    );
-    assert_eq!(
-        second.fields().get("gate_head").and_then(|v| v.as_str()),
-        Some(first_tip.as_str())
+        "no further row is written after pull request opened: {logs_after_gate:?}"
     );
 
     rig.stop().await.unwrap();
