@@ -263,6 +263,75 @@ fn notice_kind_maps_to_expected_status() {
     }
 }
 
+#[tokio::test]
+async fn actual_notice_templates_render_expected_notes_and_statuses() {
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(CliKind::Claude),
+        model: None,
+        time: at(0),
+        offset: time::UtcOffset::UTC,
+        task: &task_id,
+        team: None,
+        pr: None,
+    };
+    let texts = texts().await;
+
+    // Notice::Questions
+    let notice = Notice::Questions {
+        number: NonZeroU32::new(1).unwrap(),
+        file: PathBuf::from("/tasks/t/questions-1.md"),
+    };
+    let rendered = notice.render(&texts, &context).unwrap();
+    assert_eq!(rendered.title(), "❓ team-agents");
+    assert!(rendered.body().contains("Status: ❓ waiting for answers"));
+    assert!(
+        rendered
+            .body()
+            .contains(&format!("Note: claude-1 has questions ({task_id})"))
+    );
+
+    // Notice::Hung
+    let notice = Notice::Hung {
+        minutes: 30,
+        strikes: 3,
+    };
+    let rendered = notice.render(&texts, &context).unwrap();
+    assert_eq!(rendered.title(), "⌛ team-agents");
+    assert!(rendered.body().contains("Status: ⌛ hung"));
+    assert!(rendered.body().contains(&format!("Note: claude-1 is hung ({task_id})")));
+
+    // Notice::Paused
+    let notice = Notice::Paused {
+        until: at(3600),
+        reason: PauseReason::Quota,
+        evidence: "quota exceeded".to_owned(),
+    };
+    let rendered = notice.render(&texts, &context).unwrap();
+    assert_eq!(rendered.title(), "⏸ team-agents");
+    assert!(rendered.body().contains("Status: ⏸ paused"));
+    assert!(rendered.body().contains("Note: claude-1 is paused until "));
+    assert!(rendered.body().contains(&format!("({task_id})")));
+
+    // Notice::Failed
+    let notice = Notice::Failed {
+        message: "run failed".to_owned(),
+    };
+    let rendered = notice.render(&texts, &context).unwrap();
+    assert_eq!(rendered.title(), "❌ team-agents");
+    assert!(rendered.body().contains("Status: ❌ failed"));
+    assert!(rendered.body().contains(&format!("Note: claude-1 failed ({task_id})")));
+
+    // Notice::TurnLimitExhausted
+    let notice = Notice::TurnLimitExhausted { count: 4, limit: 3 };
+    let rendered = notice.render(&texts, &context).unwrap();
+    assert_eq!(rendered.title(), "❌ team-agents");
+    assert!(rendered.body().contains("Status: ❌ failed"));
+    assert!(rendered.body().contains("Note: claude-1: turn limit resumes exhausted"));
+}
+
 fn assert_notice_renders(
     notice: &Notice,
     texts: &HarnessPrompts,
@@ -275,6 +344,7 @@ fn assert_notice_renders(
     assert_eq!(rendered.title(), expected_title);
     assert!(rendered.body().contains(expected_status_fragment));
     assert!(rendered.body().contains(expected_note));
+    assert!(rendered.body().contains(context.task.as_str()));
 }
 
 #[tokio::test]
@@ -563,6 +633,47 @@ async fn actual_autopilot_lifecycle_notices_render_expected_notes_and_statuses()
     ];
 
     check_autopilot_notices(&cases).await;
+}
+
+#[tokio::test]
+async fn actual_checks_not_asked_notice_renders_expected_note_and_status() {
+    use agent_core::prompt::ChecksPrompt;
+    use agent_runtime::checks_prompts::ChecksPrompts;
+
+    let team_id: TeamId = "team-20261111-191500-1111".parse().unwrap();
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(CliKind::Claude),
+        model: None,
+        time: at(0),
+        offset: time::UtcOffset::UTC,
+        task: &task_id,
+        team: Some(&team_id),
+        pr: None,
+    };
+    let texts = ChecksPrompts::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &Language::default(),
+    )
+    .await
+    .unwrap();
+
+    let values = agent_core::prompt::Variables::new()
+        .with("team", "team-1")
+        .unwrap()
+        .with("task", "task-1")
+        .unwrap();
+    let rendered = texts.render(ChecksPrompt::NoticeNotAsked, &values).unwrap();
+    let notification = layout_notification(NoticeKind::NotAsked, &context, &rendered).unwrap();
+    assert_eq!(notification.title(), "❓ team-agents");
+    assert!(notification.body().contains("Status: ❓ needs your decision"));
+    assert!(
+        notification
+            .body()
+            .contains("Note: The checks of team team-1 wait for you, but no question was put to you")
+    );
 }
 
 #[tokio::test]

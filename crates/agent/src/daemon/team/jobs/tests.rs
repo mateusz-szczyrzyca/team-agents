@@ -197,6 +197,14 @@ async fn the_notification_that_a_team_is_finished_names_the_team_the_repository_
     let notification = team_done_notification(&texts, &team, &context).unwrap();
 
     assert_eq!(notification.title(), format!("✅ {}", team.repo()));
+    assert!(notification.body().contains("Status: ✅ done"));
+    assert!(
+        notification
+            .body()
+            .contains(&format!("Note: Team {} is finished", team.id())),
+        "{}",
+        notification.body()
+    );
     assert!(
         notification
             .body()

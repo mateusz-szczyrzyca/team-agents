@@ -279,6 +279,11 @@ async fn the_notification_of_incomplete_answers_names_the_agent_the_task_the_fil
     .unwrap();
 
     assert_eq!(note.title(), "❓ team-agents");
+    assert!(note.body().contains("Status: ❓ waiting for answers"));
+    assert!(
+        note.body()
+            .contains(&format!("Note: claude-1: the answers are not complete ({task_id})"))
+    );
     assert!(note.body().contains("claude-1 (claude)"), "{}", note.body());
     assert!(note.body().contains(task(1).as_str()), "{}", note.body());
     assert!(note.body().contains("/h/tasks/t/questions-1.md"), "{}", note.body());
