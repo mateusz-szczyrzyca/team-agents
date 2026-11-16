@@ -10,7 +10,7 @@ use agent_core::ids::{BranchName, ItemId, RoundId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::EventKind;
-use agent_core::state::{CommitId, GateRecord, ItemPhase, PullRequest, Timestamp};
+use agent_core::state::{CommitId, GateRecord, ItemPhase, PullRequest, Team, Timestamp};
 use agent_runtime::git::{Git, Revision};
 use agent_runtime::github::{NewPullRequest, PullRequestUpdate, Readiness};
 use agent_runtime::process::error_chain;
@@ -87,6 +87,19 @@ pub(super) async fn contained(git: &Git, items: &[Joining], tip: &CommitId) -> R
     Ok(found)
 }
 
+/// The open round that publication `publication` of `team` is for, if any.
+fn publication_round(team: &Team, publication: &Publication) -> Option<RoundId> {
+    let from_item = match &publication.publish {
+        Publish::Open { items } => items.iter().find_map(|j| team.round_of(j.item)).filter(|r| r.is_open()),
+        Publish::Update { fixing, joining, .. } => fixing
+            .iter()
+            .find_map(|item| team.round_of(*item))
+            .or_else(|| joining.iter().find_map(|j| team.round_of(j.item)))
+            .filter(|r| r.is_open()),
+    };
+    from_item.or_else(|| team.open_rounds().next()).map(|r| r.id().clone())
+}
+
 impl Owner {
     /// Publishes the branches of `team_id` that are ready: its pull requests are opened or updated, and its items go in
     /// review.
@@ -153,7 +166,7 @@ impl Owner {
         let tip = git.branch_tip(&publication.head_branch).await?;
         let record = self.parts.store.load_gate_record(&lead.task).await?;
         if let Some(reason) = publication_wait_reason(tip.as_ref(), record.as_ref()) {
-            self.log_publication_waits(site, &publication.head_branch, tip.as_ref(), record.as_ref(), reason);
+            self.log_publication_waits(site, publication, tip.as_ref(), record.as_ref(), reason);
             return Ok(Attempt::Nothing);
         }
         let (Some(tip), Some(record)) = (tip, record) else {
@@ -171,15 +184,16 @@ impl Owner {
         }
     }
 
-    /// Logs that publication of `branch` waits, once per branch, tip, and reason.
+    /// Logs that publication of `publication.head_branch` waits, once per branch, tip, and reason.
     fn log_publication_waits(
         &mut self,
         site: Site<'_>,
-        branch: &BranchName,
+        publication: &Publication,
         tip: Option<&CommitId>,
         record: Option<&GateRecord>,
         reason: PublicationWaitReason,
     ) {
+        let branch = &publication.head_branch;
         let key = (site.team.clone(), branch.clone(), tip.cloned(), reason);
         if !self.watch.publication_waited.insert(key) {
             return;
@@ -190,7 +204,7 @@ impl Owner {
             .parts
             .state
             .team(site.team)
-            .and_then(|team| team.open_rounds().next().map(|round| round.id().clone()));
+            .and_then(|team| publication_round(team, publication));
 
         let span = if let Some(round) = open_round {
             tracing::error_span!("publish", team = %site.team, round = %round, task = %lead.task)
@@ -576,8 +590,3 @@ impl Owner {
 
 #[cfg(test)]
 mod tests;
-
-/// Selects the open round to which the publication belongs.
-fn publication_round(team: &agent_core::state::Team, _publication: &Publication) -> Option<RoundId> {
-    team.open_rounds().next().map(|round| round.id().clone())
-}
