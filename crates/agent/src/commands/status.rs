@@ -39,16 +39,50 @@ pub(crate) async fn status(
     if let Some(Target::Round(round)) = target {
         return show_round(connection, round, out).await;
     }
+    let (teams, history) = teams(connection, target).await?;
+    write(out, &render(&teams), history.as_ref())
+}
+
+/// Asks the daemon for every team and writes to `out` those that have a round that goes on, with those rounds only:
+/// what is being worked on now.
+///
+/// # Errors
+/// [`StatusError`].
+pub(crate) async fn status_running(connection: &mut Connection, out: &mut impl Write) -> Result<(), StatusError> {
+    let (teams, history) = teams(connection, None).await?;
+    let teams = running(teams);
+    let text = if teams.is_empty() {
+        NO_OPEN_ROUNDS.to_owned()
+    } else {
+        render(&teams)
+    };
+    write(out, &text, history.as_ref())
+}
+
+/// The teams of `teams` that have an open round, each with its open rounds only.
+pub(crate) fn running(teams: Vec<TeamSummary>) -> Vec<TeamSummary> {
+    teams
+}
+
+/// The teams the daemon answers a status request for `target` with, and what it says of the history.
+async fn teams(
+    connection: &mut Connection,
+    target: Option<Target>,
+) -> Result<(Vec<TeamSummary>, Option<HistoryHealth>), StatusError> {
     let reply = connection
         .request(Client::Cli, Command::Status(StatusRequest { target }))
         .await?;
-    let (teams, history) = match reply {
-        Reply::Teams { teams } => (teams, None),
-        Reply::Overview { teams, history } => (teams, Some(history)),
-        other => return Err(StatusError::UnexpectedReply { kind: kind_of(&other) }),
-    };
-    out.write_all(render(&teams).as_bytes()).map_err(StatusError::Output)?;
-    out.write_all(render_history(history.as_ref()).as_bytes())
+    match reply {
+        Reply::Teams { teams } => Ok((teams, None)),
+        Reply::Overview { teams, history } => Ok((teams, Some(history))),
+        other => Err(StatusError::UnexpectedReply { kind: kind_of(&other) }),
+    }
+}
+
+/// Writes `text`, then the line about the history when it is not whole.
+fn write(out: &mut impl Write, text: &str, history: Option<&HistoryHealth>) -> Result<(), StatusError> {
+    out.write_all(text.as_bytes()).map_err(StatusError::Output)?;
+    out.write_all(render_history(history).as_bytes())
         .map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)
 }
@@ -200,6 +234,9 @@ pub(crate) fn render_round(detail: &RoundDetail) -> String {
 
 /// What is written when the daemon knows no team.
 const NO_TEAMS: &str = "no teams\n";
+
+/// What `agent status --running` writes when no round goes on.
+const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 
 #[cfg(test)]
 #[path = "status/history/tests.rs"]

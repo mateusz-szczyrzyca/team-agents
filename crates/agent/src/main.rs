@@ -53,7 +53,7 @@ use crate::commands::pause::pause;
 use crate::commands::resume::resume;
 use crate::commands::run::{RunError, RunInput, prepare, start};
 use crate::commands::say::{say, text as say_text};
-use crate::commands::status::{StatusError, status};
+use crate::commands::status::{StatusError, status, status_running};
 use crate::commands::stop::stop;
 use crate::commands::unpause::unpause;
 use crate::environment::{EditorError, Environment, EnvironmentError};
@@ -333,6 +333,9 @@ struct StatusArgs {
     /// A team (`team-…`), a task (`task-…`) or a round (`round-…`) to show; every team without one.
     #[arg(value_parser = parse_view_target)]
     target: Option<Target>,
+    /// Only the teams that have a round that goes on, with those rounds: what is being worked on now.
+    #[arg(long, conflicts_with = "target")]
+    running: bool,
 }
 
 /// Why a text is neither a team nor a task.
@@ -574,7 +577,11 @@ async fn execute(environment: &Environment, command: Command, out: &mut impl Wri
         Command::Status(args) => {
             let home = environment.home()?;
             let mut connection = Connection::connect(&home.socket_file()).await?;
-            status(&mut connection, args.target, out).await?;
+            if args.running {
+                status_running(&mut connection, out).await?;
+            } else {
+                status(&mut connection, args.target, out).await?;
+            }
             Ok(())
         }
     }

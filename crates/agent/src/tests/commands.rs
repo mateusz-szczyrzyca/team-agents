@@ -71,7 +71,10 @@ async fn status_prints_the_teams_the_daemon_lists() {
 
     let result = execute(
         &environment(&dir),
-        Command::Status(StatusArgs { target: None }),
+        Command::Status(StatusArgs {
+            target: None,
+            running: false,
+        }),
         &mut out,
     )
     .await;

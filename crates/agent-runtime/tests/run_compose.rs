@@ -14,7 +14,7 @@ mod run_compose {
     use agent_core::task_list::{Item, ItemMark};
     use agent_runtime::harness_prompts::HarnessPrompts;
     use agent_runtime::prompts::PromptLoader;
-    use agent_runtime::run::compose::{PromptInput, PromptKind, PromptTexts, ResumeReason, compose};
+    use agent_runtime::run::compose::{PromptInput, PromptKind, PromptTexts, ResumeReason, TeamItem, compose};
 
     /// The stand-in for a file: its path in brackets, then each of its variables as `name={{name}}`.
     fn stand_in(path: &str, variables: &[&str]) -> String {
@@ -75,6 +75,7 @@ mod run_compose {
                 number: NonZeroU32::new(2).unwrap(),
                 brief: "",
                 item: None,
+                team_items: &[],
                 checkpoint: None,
             }
         }
@@ -174,6 +175,48 @@ mod run_compose {
             "{with}"
         );
         assert!(!blank.contains("brief.md"), "{blank}");
+    }
+
+    // Rule: a coordinator has the items of its team in full, each with who has it; nobody else is given them.
+    #[tokio::test]
+    async fn a_coordinator_is_given_every_item_of_its_team_in_full_with_who_has_it() {
+        let f = fixture().await;
+        let first = item(Some("it works"), Some("run it"));
+        let second = Item {
+            id: "2.4".parse().unwrap(),
+            title: "The socket".to_owned(),
+            ..item(None, None)
+        };
+        let items = [
+            TeamItem {
+                item: &first,
+                assignee: Some("gemini-1"),
+            },
+            TeamItem {
+                item: &second,
+                assignee: None,
+            },
+        ];
+        let mut input = f.input(Role::Coordinator, Tier::Normal);
+        input.team_items = &items;
+
+        let prompt = f.compose(&input);
+
+        assert!(
+            prompt.ends_with(
+                "[harness/run/team-items.md]\n\n\
+                 [harness/run/team-item.md] item_id=2.3 item_title=The daemon item_description=Build it. \
+                 who=gemini-1 works on it\n\n\
+                 [harness/run/item-expected.md] expected=it works\n\n\
+                 [harness/run/item-checks.md] checks=run it\n\n\
+                 [harness/run/team-item.md] item_id=2.4 item_title=The socket item_description=Build it. \
+                 who=nobody has it yet\n"
+            ),
+            "{prompt}"
+        );
+        // Without items of a team the prompt has no such part.
+        let plain = f.compose(&f.input(Role::Coordinator, Tier::Normal));
+        assert!(!plain.contains("team-item"), "{plain}");
     }
 
     #[tokio::test]

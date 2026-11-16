@@ -28,7 +28,9 @@ use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::RunJob;
-use agent_runtime::run::compose::{ComposeError, PromptInput, PromptKind, PromptTexts, ResumeReason, compose};
+use agent_runtime::run::compose::{
+    ComposeError, PromptInput, PromptKind, PromptTexts, ResumeReason, TeamItem, compose,
+};
 use agent_runtime::settings::Settings;
 use agent_runtime::store::Home;
 use agent_runtime::team_prompts::TeamPrompts;
@@ -210,6 +212,11 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         .transpose()?;
     let kind = prompt_kind(member, session.as_ref(), config);
     let item = assigned_item(team, participant);
+    let team_items = if role == Role::Coordinator {
+        items_of_team(team)
+    } else {
+        Vec::new()
+    };
     let input = PromptInput {
         kind,
         agent: participant.name(),
@@ -222,6 +229,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         number,
         brief: team.task_list().list().brief(),
         item,
+        team_items: &team_items,
         // Checkpoints live on the agentbus, which a team's life (the next item) creates: none yet.
         checkpoint: None,
     };
@@ -433,6 +441,26 @@ pub(super) fn assigned_item<'a>(team: &'a Team, participant: &Participant) -> Op
         | ItemPhase::Approved { .. }
         | ItemPhase::Done { .. } => None,
     })
+}
+
+/// Every item of the task list of `team`, with the member that works on it now: what its coordinator is given.
+fn items_of_team(team: &Team) -> Vec<TeamItem<'_>> {
+    team.items()
+        .iter()
+        .filter_map(|progress| {
+            let assignee = match progress.phase() {
+                ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } => Some(assignee.as_str()),
+                ItemPhase::Pending
+                | ItemPhase::InReview { .. }
+                | ItemPhase::Approved { .. }
+                | ItemPhase::Done { .. } => None,
+            };
+            team.task_list()
+                .list()
+                .item(progress.id())
+                .map(|item| TeamItem { item, assignee })
+        })
+        .collect()
 }
 
 /// The branch `member` works on: the branch of its item, or the branch its task started on.

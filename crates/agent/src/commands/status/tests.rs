@@ -282,6 +282,65 @@ team-20261111-153000-t5m8  team-agents  autopilot  0 pending, 1 in progress, 0 i
     );
 }
 
+// Rule: `--running` shows what is being worked on: the teams with a round that goes on, and those rounds only.
+#[test]
+fn the_running_view_keeps_the_teams_with_an_open_round_and_their_open_rounds_only() {
+    let mut state = team_with_rounds();
+    state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .close_round(&round_id(1), at(41), RoundEnd::Abandoned)
+        .unwrap();
+    let working = TeamSummary::from(&state.teams()[0]);
+    // A team whose every round is closed, and one that never had a round.
+    let mut over = working.clone();
+    over.id = team_id(1);
+    over.rounds.retain(|round| *round.life() != RoundLife::Open);
+    let mut without = working.clone();
+    without.id = team_id(2);
+    without.rounds.clear();
+
+    let shown = running(vec![over, working.clone(), without]);
+
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].id, working.id);
+    assert_eq!(
+        shown[0].rounds.iter().map(Round::id).collect::<Vec<_>>(),
+        [&round_id(2)]
+    );
+    assert_eq!(shown[0].members, working.members);
+    assert_eq!(
+        render(&shown).lines().nth(1),
+        Some("  round-20261111-153002-q1w2  item 1.2  open")
+    );
+}
+
+// Rule: with nothing going on, `--running` says so instead of listing what is over.
+#[tokio::test]
+async fn the_running_view_of_a_daemon_with_no_open_round_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut over = TeamSummary::from(&team_state().teams()[0]);
+    over.rounds.clear();
+    let daemon = FakeDaemon::serve(&socket(&dir), move |request| {
+        let reply = Reply::Teams {
+            teams: vec![over.clone()],
+        };
+        Answer::Lines(vec![
+            Frame::Response(Response::ok(request.id, reply)).to_line().unwrap(),
+        ])
+    });
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+    let mut out = Vec::new();
+
+    status_running(&mut connection, &mut out).await.unwrap();
+
+    assert_eq!(String::from_utf8(out).unwrap(), "no team has an open round\n");
+    assert_eq!(
+        daemon.requests()[0].command,
+        Command::Status(StatusRequest { target: None })
+    );
+}
+
 #[test]
 fn a_round_is_one_line_and_the_round_of_a_whole_task_list_has_no_item() {
     let state = team_with_rounds();

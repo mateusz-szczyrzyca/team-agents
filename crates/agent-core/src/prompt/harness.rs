@@ -30,6 +30,10 @@ pub enum HarnessPrompt {
     ItemExpected,
     /// The checks of an item, for an item that has them.
     ItemChecks,
+    /// What comes before the items of a team, for its coordinator.
+    TeamItems,
+    /// An item of the team a coordinator leads: its number, title, description and who has it.
+    TeamItem,
     /// The last checkpoint of an agent, for a run that has one.
     Checkpoint,
     /// What a run resumed after the watchdog killed it is told.
@@ -79,6 +83,8 @@ impl HarnessPrompt {
         Self::Item,
         Self::ItemExpected,
         Self::ItemChecks,
+        Self::TeamItems,
+        Self::TeamItem,
         Self::Checkpoint,
         Self::ResumeHang,
         Self::ResumeRestart,
@@ -120,6 +126,12 @@ impl HarnessPrompt {
             ),
             Self::ItemExpected => PromptSpec::new("harness/run/item-expected.md", Audience::Model, &["expected"]),
             Self::ItemChecks => PromptSpec::new("harness/run/item-checks.md", Audience::Model, &["checks"]),
+            Self::TeamItems => PromptSpec::new("harness/run/team-items.md", Audience::Model, &[]),
+            Self::TeamItem => PromptSpec::new(
+                "harness/run/team-item.md",
+                Audience::Model,
+                &["item_id", "item_title", "item_description", "who"],
+            ),
             Self::Checkpoint => PromptSpec::new("harness/run/checkpoint.md", Audience::Model, &["checkpoint"]),
             Self::ResumeHang => PromptSpec::new("harness/run/resume-hang.md", Audience::Model, &["minutes"]),
             Self::ResumeRestart => PromptSpec::new("harness/run/resume-restart.md", Audience::Model, &[]),

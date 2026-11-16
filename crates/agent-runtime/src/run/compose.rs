@@ -67,8 +67,19 @@ pub struct PromptInput<'a> {
     pub brief: &'a str,
     /// The item the agent works on, if it has one.
     pub item: Option<&'a Item>,
+    /// The items of the team, for the coordinator that leads it; empty for everybody else.
+    pub team_items: &'a [TeamItem<'a>],
     /// The agent's last checkpoint, if there is one.
     pub checkpoint: Option<&'a str>,
+}
+
+/// An item of the team a coordinator leads, and who has it.
+#[derive(Debug, Clone, Copy)]
+pub struct TeamItem<'a> {
+    /// The item.
+    pub item: &'a Item,
+    /// The member that works on it now; `None` when nobody does.
+    pub assignee: Option<&'a str>,
 }
 
 /// The two loaded catalogs a prompt is made from.
@@ -143,7 +154,14 @@ fn first_sections(texts: &PromptTexts<'_>, input: &PromptInput<'_>) -> Result<Ve
     if let Some(item) = input.item {
         sections.extend(item_sections(texts, item)?);
     }
+    sections.extend(team_item_sections(texts, input.team_items)?);
     Ok(sections)
+}
+
+/// The sections of the items of a team, for its coordinator: none when there are no items.
+fn team_item_sections(texts: &PromptTexts<'_>, items: &[TeamItem<'_>]) -> Result<Vec<String>, ComposeError> {
+    let _ = (texts, items);
+    Ok(Vec::new())
 }
 
 /// The sections of an item: the item itself, then its expected result and its checks, those it has.
