@@ -47,6 +47,7 @@ The workspace exists with its four crates; the other files of this list arrive w
 | `ids` | `AgentName`, `InvestigatorName` (normal and worker agents, investigators), `TeamId`, `TaskId`, `RunId` (`team-`/`task-`/`run-YYYYMMDD-HHMMSS-xxxx`, UTC, generated from an injected `Clock` and `Rng`), `ItemId` (`2.3`), `BranchName` (literal git branch names, with the bounds below) |
 | `kinds` | `CliKind` (`claude`, `codex`, `gemini`, `opencode`), `Tier` (`normal`, `worker`, `investigator`), `Role` (`solo`, `coordinator`, `member`, `worker`, `reviewer`) |
 | `status` | `RunOutcome` (`DONE`, `QUESTIONS`, `FAILED`, `SLEEPING`, `EXCLUDED`), `ReviewVerdict` (`APPROVE`, `REQUEST_CHANGES`), `TaskStatus` and `ItemStatus` with their transition tables |
+| `notice_status` | `NoticeStatus` (`Questions`, `Decision`, `Failed`, `Hung`, `Paused`, `Approved`, `NotMerged`, `Closed`, `NotPublished`, `NoVerdict`, `Merged`, `Asleep`, `Done`) with its icon and label (`strum`) |
 
 Each is made only through its check (`FromStr`, `TryFrom<String>`, serde), its documentation lists what it refuses,
 and its text form parses back to an equal value. Branch names follow Git's literal ref rules, with a
@@ -656,6 +657,45 @@ so no save is lost for good.
 (`agent answer` and the dashboard still work); the daemon says so in its log. A save in the middle of a write can be read
 half-way: the next event of the save has the whole file. The words of a `say` to a solo task that is `waiting` are read
 when it next runs; nothing wakes it. A human's stop of a worker that serves a request answers the request as failed.
+
+### Notifications
+
+Every notification sent to the human follows a standardized layout rendered through `layout_notification`:
+
+- **Title**: `<icon> <repo>` (or `<icon> <repo> (task <task>)` when the notification names a task)
+- **Body**:
+  ```text
+  Repo: <repo>
+  Agent: <agent> (<cli>, <model>)
+  Time: <YYYY-MM-DD HH:MM>
+  Task: <task>
+  Team: <team>
+  Status: <icon> <label>
+  Note: <summary sentence>
+  PR: <pull request URL>
+
+  <details / body text>
+  ```
+
+The `Team` field is omitted for solo tasks (and worker tasks without an assigned team), and `PR` is omitted when no pull request URL is provided; neither is printed empty. When an agent configuration has no model specified, `Agent:` prints `<agent> (<cli>)`. `Time:` formats the local time using the daemon's host `local_offset`.
+
+The notification statuses, icons and labels:
+
+| Status | Icon | Label | When used |
+|---|---|---|---|
+| `Questions` | `❓` | `waiting for answers` | Questions are open: waiting for answers |
+| `Decision` | `❓` | `needs your decision` | Human decision needed (e.g. check allowance, review limit exceeded) |
+| `Failed` | `❌` | `failed` | Task or run failed |
+| `Hung` | `⌛` | `hung` | Watchdog detected hang and stopped task |
+| `Paused` | `⏸` | `paused` | Task paused for provider limits or rate limits |
+| `Approved` | `✅✅` | `approved: ready to merge` | Pull request approved by reviewers under `--no-merge` |
+| `NotMerged` | `❌` | `not merged` | Pull request merge failed |
+| `Closed` | `🚫` | `pull request closed` | Pull request closed without merge |
+| `NotPublished` | `📕` | `not published` | Branch publish failed |
+| `NoVerdict` | `❗` | `review without a verdict` | Reviewer ended without a verdict |
+| `Merged` | `🟣` | `merged` | Pull request merged on GitHub by the daemon autopilot |
+| `Asleep` | `💤` | `team asleep` | Team asleep |
+| `Done` | `✅` | `done` | Task or team finished |
 
 ## Process model
 
