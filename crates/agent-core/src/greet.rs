@@ -2,8 +2,8 @@
 
 /// Returns `Hello, <name>!`, preserving the supplied name exactly.
 #[must_use]
-pub fn greet(_name: &str) -> String {
-    String::new()
+pub fn greet(name: &str) -> String {
+    format!("Hello, {name}!")
 }
 
 #[cfg(test)]

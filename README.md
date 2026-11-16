@@ -1018,6 +1018,9 @@ team ID (`<timestamp>-team`) or any member's task ID.
 
 ## The Rust rewrite (trial)
 
+The pure Rust library exposes `agent_core::greet::greet(name: &str) -> String`, returning
+`Hello, <name>!` and preserving the name exactly, including empty names and Unicode.
+
 A Claude Code run that exhausts its turn budget now resumes in the same session. Configure `[limits] max_turns`
 (default `300`) and `turn_limit_resumes` (default `3`); after that many consecutive resumes the task fails and
 notifies you with the count. Any other ending resets the count. `agent log` records `turn_limit` and the reason
