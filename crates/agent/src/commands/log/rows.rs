@@ -133,7 +133,20 @@ impl RowArgs {
 /// Writes one row in the same format for the initial window and follow pages.
 fn print_row(row: &agent_core::log::LogEntry, format: Format, out: &mut impl Write) -> Result<(), LogError> {
     let text = match format {
-        Format::Text(_) => format!("{} {} {} {}", row.at(), row.level(), row.event(), row.message()),
+        Format::Text(_) => {
+            let mut text = format!("{} {} {} {}", row.at(), row.level(), row.event(), row.message());
+            if row.event() == LogEvent::PublicationWaits {
+                for field in ["branch", "reason", "tip", "gate_head"] {
+                    if let Some(value) = row.fields().get(field).and_then(serde_json::Value::as_str) {
+                        text.push(' ');
+                        text.push_str(field);
+                        text.push('=');
+                        text.push_str(value);
+                    }
+                }
+            }
+            text
+        }
         Format::Json => serde_json::json!({
             "id": row.id(), "first_at": row.first_at(), "at": row.at(), "level": row.level(),
             "event": row.event(), "module": row.module(), "team": row.team(), "rounds": row.rounds(),
