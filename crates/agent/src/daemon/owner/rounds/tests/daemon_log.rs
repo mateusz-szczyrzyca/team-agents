@@ -1382,10 +1382,10 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     );
     let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(layer).into();
 
-    async {
-        record_owner_and_runtime_failure_events(dir.path(), &base_daemon).await;
+    Box::pin(async {
+        Box::pin(record_owner_and_runtime_failure_events(dir.path(), &base_daemon)).await;
         record_gate_failure_events(dir.path(), started.history.clone()).await;
-    }
+    })
     .with_subscriber(dispatch)
     .await;
 

@@ -1,16 +1,12 @@
 //! The notifier: delivers the notifications the owner asks for, so that a slow command never holds up the state.
 
-use std::sync::Arc;
-
 use agent_core::history::{EventRecord, HistoryEvent, Record};
 use agent_core::ids::{RoundId, TaskId, TeamId};
 use agent_core::state::Timestamp;
-use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::history::History;
-use agent_runtime::notify::Notifier;
+use agent_runtime::notify::{Notification, Notifier};
 use tokio::sync::mpsc;
 
-use super::notice::Notice;
 use agent_runtime::process::error_chain;
 
 /// How many notifications may wait for delivery; more are dropped and logged.
@@ -25,24 +21,17 @@ pub(super) struct Delivery {
     pub(super) team: TeamId,
     /// The rounds the task works for: the history links the notification to them.
     pub(super) rounds: Vec<RoundId>,
-    /// The agent it is about.
-    pub(super) agent: String,
     /// The task it is about.
     pub(super) task: TaskId,
     /// What to tell.
-    pub(super) notice: Notice,
+    pub(super) notification: Notification,
 }
 
 /// Delivers what arrives on `queue` until it is closed and empty.
 ///
 /// A notification that cannot be rendered or delivered is logged and goes no further: it tells the human about
 /// something that already happened, and the daemon does not stop for it.
-pub(super) async fn run(
-    mut queue: mpsc::Receiver<Delivery>,
-    texts: Arc<HarnessPrompts>,
-    notifier: Notifier,
-    history: History,
-) {
+pub(super) async fn run(mut queue: mpsc::Receiver<Delivery>, notifier: Notifier, history: History) {
     while let Some(delivery) = queue.recv().await {
         let rounds = delivery
             .rounds
@@ -56,20 +45,7 @@ pub(super) async fn run(
             rounds = %rounds,
             task = %delivery.task
         );
-        let notification = match delivery.notice.render(&texts, &delivery.agent, &delivery.task) {
-            Ok(notification) => notification,
-            Err(error) => {
-                tracing::error!(
-                    parent: &delivery_span,
-                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
-                    task = %delivery.task,
-                    error = %error_chain(&error),
-                    "cannot render a notification"
-                );
-                continue;
-            }
-        };
-        match notifier.notify(delivery.at, &notification).await {
+        match notifier.notify(delivery.at, &delivery.notification).await {
             Ok(file) => {
                 tracing::info!(
                     parent: &delivery_span,
@@ -84,8 +60,8 @@ pub(super) async fn run(
                     rounds: delivery.rounds.clone(),
                     event: HistoryEvent::Notified {
                         task: Some(delivery.task.clone()),
-                        title: notification.title().to_owned(),
-                        body: notification.body().to_owned(),
+                        title: delivery.notification.title().to_owned(),
+                        body: delivery.notification.body().to_owned(),
                     },
                 })));
             }

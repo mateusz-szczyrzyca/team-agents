@@ -257,20 +257,30 @@ async fn the_notification_of_incomplete_answers_names_the_agent_the_task_the_fil
     let file = marked(ASKED);
     let problems = [(n(2), AnswerProblem::MissingVerdict)];
 
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(agent_core::kinds::CliKind::Claude),
+        model: None,
+        time: crate::fixtures::at(0),
+        offset: time::UtcOffset::UTC,
+        task: &task_id,
+        team: None,
+        pr: None,
+    };
+
     let note = incomplete_notification(
         &texts().await,
-        "claude-1",
-        &task(1),
+        &context,
         Path::new("/h/tasks/t/questions-1.md"),
         &describe(&file, &problems),
     )
     .unwrap();
 
-    assert!(
-        note.title().contains("claude-1") && note.title().contains(task(1).as_str()),
-        "{}",
-        note.title()
-    );
+    assert_eq!(note.title(), "❓ team-agents");
+    assert!(note.body().contains("claude-1 (claude)"), "{}", note.body());
+    assert!(note.body().contains(task(1).as_str()), "{}", note.body());
     assert!(note.body().contains("/h/tasks/t/questions-1.md"), "{}", note.body());
     assert!(
         note.body().contains("question 2 (Which name?): no verdict"),

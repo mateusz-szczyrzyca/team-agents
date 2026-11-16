@@ -161,17 +161,17 @@ pub(super) struct Plan {
 }
 
 /// How the CLI of an agent is run.
-struct AgentSetup {
+pub(super) struct AgentSetup {
     /// The CLI.
-    cli: CliKind,
+    pub(super) cli: CliKind,
     /// The model.
-    model: Option<ModelName>,
+    pub(super) model: Option<ModelName>,
     /// The extra arguments.
-    args: CliArgs,
+    pub(super) args: CliArgs,
 }
 
 /// The CLI, model and arguments the configuration gives `participant`.
-fn agent_setup(config: &Config, participant: &Participant) -> Option<AgentSetup> {
+pub(super) fn agent_setup(config: &Config, participant: &Participant) -> Option<AgentSetup> {
     match participant {
         Participant::Normal(name) | Participant::Worker(name) => config.agent(name).map(|agent| AgentSetup {
             cli: agent.cli,

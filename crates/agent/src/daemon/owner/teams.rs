@@ -30,7 +30,7 @@ use agent_runtime::team_prompts::TeamPrompts;
 use serde_json::json;
 use tracing::Instrument;
 
-use super::{Located, Notice, Owner, OwnerError};
+use super::{Located, Owner, OwnerError};
 use crate::daemon::team::{
     Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace, assignable,
     closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for, reconcile, render_notice,
@@ -840,13 +840,15 @@ impl Owner {
         }
         let transitions = closing_transitions(team);
         let has_bus = team.crew().coordinator().is_some();
-        let notification = team_done_notification(&self.parts.team_texts, team)?;
         let lead = team
             .crew()
             .roster()
             .first()
             .map(|(_, member)| member.task().clone())
             .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+        let now = Timestamp::now(&self.parts.clock)?;
+        let context = self.notice_context(&lead, now, None)?;
+        let notification = team_done_notification(&self.parts.team_texts, team, &context)?;
         for (task, status) in transitions {
             self.move_to(&task, team_id, status, &mut look.events)?;
             look.changed = true;
@@ -884,7 +886,7 @@ impl Owner {
         self.record_event_at(now, team_id, rounds, HistoryEvent::TeamEnded {});
         let located = self.locate(&lead)?;
         let now = Timestamp::now(&self.parts.clock)?;
-        self.notify(now, &located, &lead, Notice::Prepared(notification));
+        self.notify(now, &located, &lead, notification);
         tracing::info!(
             event = LogEvent::TeamChanged.as_str(),
             team = %team_id,

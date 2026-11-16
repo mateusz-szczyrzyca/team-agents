@@ -263,7 +263,7 @@ impl<'a> Normalized<'a> {
         self.text = out;
     }
 
-    /// RFC 3339 times.
+    /// RFC 3339 times and minute-precision notification times.
     fn times(&mut self) {
         let mut out = String::with_capacity(self.text.len());
         let chars: Vec<char> = self.text.chars().collect();
@@ -271,6 +271,9 @@ impl<'a> Normalized<'a> {
         while at < chars.len() {
             let rest: String = chars[at..chars.len().min(at + 40)].iter().collect();
             if let Some(length) = time_length(&rest) {
+                out.push_str("<time>");
+                at += length;
+            } else if let Some(length) = minute_time_length(&rest) {
                 out.push_str("<time>");
                 at += length;
             } else {
@@ -355,6 +358,26 @@ fn time_length(text: &str) -> Option<usize> {
         }
     }
     (bytes.get(length) == Some(&b'Z')).then_some(length + 1)
+}
+
+/// The length of a minute-precision local time `text` starts with: `YYYY-MM-DD HH:MM`.
+fn minute_time_length(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let digits = |from: usize, count: usize| {
+        bytes
+            .get(from..from + count)
+            .is_some_and(|part| part.iter().all(u8::is_ascii_digit))
+    };
+    let shape = digits(0, 4)
+        && bytes.get(4) == Some(&b'-')
+        && digits(5, 2)
+        && bytes.get(7) == Some(&b'-')
+        && digits(8, 2)
+        && bytes.get(10) == Some(&b' ')
+        && digits(11, 2)
+        && bytes.get(13) == Some(&b':')
+        && digits(14, 2);
+    shape.then_some(16)
 }
 
 /// `line` with every UUID replaced.

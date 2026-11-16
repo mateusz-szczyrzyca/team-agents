@@ -279,9 +279,8 @@ async fn run_with_rng_and_log_layer(
     // The side tasks are scoped, not only polled with the subscriber: one that is still going when the daemon ends is
     // dropped with it, and its spans close in the registry that made them.
     sides.spawn(Scoped::new(server::serve(listener, inbox, serving), dispatch.clone()));
-    let delivering = Arc::clone(&texts);
     sides.spawn(Scoped::new(
-        notifier::run(deliveries, delivering, notifier, opened.history.clone()),
+        notifier::run(deliveries, notifier, opened.history.clone()),
         dispatch.clone(),
     ));
     let opens = start_opener(&mut sides, &settings, &surroundings, &dispatch);
@@ -313,6 +312,7 @@ async fn run_with_rng_and_log_layer(
             rng,
             notices,
             events,
+            local_offset: setup.local_offset,
             tick: timings.tick,
         },
         shutdown.clone(),

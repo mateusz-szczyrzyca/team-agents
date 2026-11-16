@@ -150,18 +150,23 @@ pub(super) fn layout_notification(
         (None, None) => context.agent.to_string(),
     };
 
-    use std::fmt::Write as _;
     let mut body = format!(
         "Repo: {}\nAgent: {agent_str}\nTime: {time_str}\nTask: {}",
         context.repo, context.task
     );
     if let Some(team) = context.team {
-        let _ = write!(body, "\nTeam: {team}");
+        body.push_str("\nTeam: ");
+        body.push_str(team.as_str());
     }
-    let _ = write!(body, "\nStatus: {} {}", status.icon(), status.label());
-    let _ = write!(body, "\nNote: {note}");
+    body.push_str("\nStatus: ");
+    body.push_str(status.icon());
+    body.push(' ');
+    body.push_str(status.label());
+    body.push_str("\nNote: ");
+    body.push_str(note);
     if let Some(pr) = context.pr {
-        let _ = write!(body, "\nPR: {pr}");
+        body.push_str("\nPR: ");
+        body.push_str(pr);
     }
 
     if !original_body.is_empty() {
@@ -234,8 +239,6 @@ pub(super) enum Notice {
         /// Why, as the chain of its errors.
         reason: String,
     },
-    /// A notification that was made where its text is known, such as the one of a team that is finished.
-    Prepared(Notification),
 }
 
 /// Why a notice cannot be made into a notification.
@@ -260,37 +263,45 @@ impl Notice {
     pub(super) fn render(
         &self,
         texts: &HarnessPrompts,
-        agent: &str,
-        task: &TaskId,
+        context: &NoticeContext<'_>,
     ) -> Result<Notification, NoticeError> {
-        let common = Variables::new().with("agent", agent)?.with("task", task.as_str())?;
-        let (text, values) = match self {
-            Self::Prepared(notification) => return Ok(notification.clone()),
+        let common = Variables::new()
+            .with("agent", context.agent)?
+            .with("task", context.task.as_str())?;
+        let (text, values, kind) = match self {
             Self::Questions { number, file } => (
                 HarnessPrompt::NoticeQuestions,
                 common
                     .with("number", number.to_string())?
                     .with("file", file.display().to_string())?,
+                NoticeKind::Questions,
             ),
             Self::QuestionsMissing { file, reason } => (
                 HarnessPrompt::NoticeQuestionsMissing,
                 common
                     .with("file", file.display().to_string())?
                     .with("reason", reason)?,
+                NoticeKind::QuestionsMissing,
             ),
             Self::Hung { minutes, strikes } => (
                 HarnessPrompt::NoticeHung,
                 common
                     .with("minutes", minutes.to_string())?
                     .with("strikes", strikes.to_string())?,
+                NoticeKind::Hung,
             ),
             Self::TurnLimitExhausted { count, limit } => (
                 HarnessPrompt::NoticeTurnLimitExhausted,
                 common
                     .with("count", count.to_string())?
                     .with("limit", limit.to_string())?,
+                NoticeKind::TurnLimitExhausted,
             ),
-            Self::TurnLimitNoSession => (HarnessPrompt::NoticeTurnLimitNoSession, common),
+            Self::TurnLimitNoSession => (
+                HarnessPrompt::NoticeTurnLimitNoSession,
+                common,
+                NoticeKind::TurnLimitNoSession,
+            ),
             Self::Paused {
                 until,
                 reason,
@@ -301,19 +312,32 @@ impl Notice {
                     .with("until", until.to_string())?
                     .with("reason", reason.to_string())?
                     .with("evidence", evidence)?,
+                NoticeKind::Paused,
             ),
-            Self::Failed { message } => (HarnessPrompt::NoticeFailed, common.with("message", message)?),
-            Self::NoStatus { exit: Some(code) } => {
-                (HarnessPrompt::NoticeNoStatus, common.with("exit", code.to_string())?)
-            }
-            Self::NoStatus { exit: None } => (HarnessPrompt::NoticeNoStatusSignal, common),
-            Self::StartFailed { reason } => (HarnessPrompt::NoticeStartFailed, common.with("reason", reason)?),
-            Self::RunFailed { reason } => (HarnessPrompt::NoticeRunFailed, common.with("reason", reason)?),
+            Self::Failed { message } => (
+                HarnessPrompt::NoticeFailed,
+                common.with("message", message)?,
+                NoticeKind::Failed,
+            ),
+            Self::NoStatus { exit: Some(code) } => (
+                HarnessPrompt::NoticeNoStatus,
+                common.with("exit", code.to_string())?,
+                NoticeKind::NoStatus,
+            ),
+            Self::NoStatus { exit: None } => (HarnessPrompt::NoticeNoStatusSignal, common, NoticeKind::NoStatusSignal),
+            Self::StartFailed { reason } => (
+                HarnessPrompt::NoticeStartFailed,
+                common.with("reason", reason)?,
+                NoticeKind::StartFailed,
+            ),
+            Self::RunFailed { reason } => (
+                HarnessPrompt::NoticeRunFailed,
+                common.with("reason", reason)?,
+                NoticeKind::RunFailed,
+            ),
         };
         let rendered = texts.render(text, &values)?;
-        // The first line is the title, what follows is the body.
-        let (title, body) = rendered.split_once('\n').unwrap_or((rendered.as_str(), ""));
-        Ok(Notification::new(title.trim_end(), body.trim())?)
+        Ok(layout_notification(kind, context, &rendered)?)
     }
 }
 

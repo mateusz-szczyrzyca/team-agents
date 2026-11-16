@@ -33,7 +33,8 @@ use agent_runtime::settings::Settings;
 use agent_runtime::store::StoreError;
 use agent_runtime::text_file::ReplaceError;
 
-use super::{Notice, Owner, OwnerError};
+use super::{Owner, OwnerError};
+use crate::daemon::notice::{NoticeContext, NoticeKind, layout_notification};
 
 use super::teams::Look;
 use crate::daemon::checks::ChecksTextError;
@@ -154,6 +155,13 @@ pub(super) enum Announcement {
     },
     /// The pull request was closed without being merged.
     Closed {
+        /// The team.
+        team: TeamId,
+        /// The pull request.
+        pr: PrNumber,
+    },
+    /// The pull request was merged.
+    Merged {
         /// The team.
         team: TeamId,
         /// The pull request.
@@ -298,10 +306,11 @@ fn notification(
     texts: &AutopilotPrompts,
     prompt: AutopilotPrompt,
     values: &Variables,
+    notice: NoticeKind,
+    context: &NoticeContext<'_>,
 ) -> Result<Notification, PublishError> {
     let rendered = texts.render(prompt, values)?;
-    let (title, body) = rendered.split_once('\n').unwrap_or((rendered.as_str(), ""));
-    Ok(Notification::new(title.trim_end(), body.trim())?)
+    Ok(layout_notification(notice, context, &rendered)?)
 }
 
 impl Owner {
@@ -388,9 +397,45 @@ impl Owner {
         lead: &Lead,
         now: Timestamp,
     ) {
-        let made = values
-            .map_err(PublishError::from)
-            .and_then(|values| notification(&pulls.texts, prompt, &values));
+        let notice = match prompt {
+            AutopilotPrompt::NoticeDecision => NoticeKind::Decision,
+            AutopilotPrompt::NoticeNoVerdict => NoticeKind::NoVerdict,
+            AutopilotPrompt::NoticePublishFailed => NoticeKind::PublishFailed,
+            AutopilotPrompt::NoticeTeamAsleep => NoticeKind::TeamAsleep,
+            AutopilotPrompt::NoticeClosed => NoticeKind::Closed,
+            AutopilotPrompt::NoticeApproved => NoticeKind::Approved,
+            AutopilotPrompt::NoticeMergeFailed => NoticeKind::MergeFailed,
+            AutopilotPrompt::NoticeMerged => NoticeKind::Merged,
+            _ => {
+                tracing::error!(
+                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
+                    ?prompt,
+                    "unknown autopilot notice prompt"
+                );
+                return;
+            }
+        };
+        let pr = values
+            .as_ref()
+            .ok()
+            .and_then(|v| v.names().find(|n| n.as_str() == "url").and_then(|n| v.get(n)))
+            .map(str::to_owned);
+        let context = match self.notice_context(&lead.task, now, pr.as_deref()) {
+            Ok(c) => c,
+            Err(error) => {
+                tracing::error!(
+                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
+                    task = %lead.task,
+                    %error,
+                    "a notification of the autopilot has no task context"
+                );
+                return;
+            }
+        };
+        let made = match values {
+            Ok(v) => notification(&pulls.texts, prompt, &v, notice, &context),
+            Err(e) => Err(PublishError::from(e)),
+        };
         let notification = match made {
             Ok(notification) => notification,
             Err(error) => {
@@ -404,7 +449,7 @@ impl Owner {
             }
         };
         match self.locate(&lead.task) {
-            Ok(located) => self.notify(now, &located, &lead.task, Notice::Prepared(notification)),
+            Ok(located) => self.notify(now, &located, &lead.task, notification),
             Err(error) => {
                 tracing::error!(
                     event = agent_core::log::LogEvent::NotificationFailed.as_str(),

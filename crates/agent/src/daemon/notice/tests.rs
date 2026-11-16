@@ -17,7 +17,19 @@ async fn texts() -> HarnessPrompts {
 
 /// The title and the body of the notification of `notice` about task 1 of `claude-1`.
 async fn rendered(notice: &Notice) -> (String, String) {
-    let notification = notice.render(&texts().await, "claude-1", &task(1)).unwrap();
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(agent_core::kinds::CliKind::Claude),
+        model: None,
+        time: at(0),
+        offset: time::UtcOffset::UTC,
+        task: &task_id,
+        team: None,
+        pr: None,
+    };
+    let notification = notice.render(&texts().await, &context).unwrap();
     (notification.title().to_owned(), notification.body().to_owned())
 }
 
@@ -53,8 +65,9 @@ async fn every_notice_has_a_title_that_names_the_agent_and_the_task() {
     for notice in notices {
         let (title, body) = rendered(&notice).await;
 
-        assert!(title.contains("claude-1"), "{notice:?}: {title}");
-        assert!(title.contains(task(1).as_str()), "{notice:?}: {title}");
+        assert!(title.ends_with("team-agents"), "{notice:?}: {title}");
+        assert!(body.contains("claude-1"), "{notice:?}: {body}");
+        assert!(body.contains(task(1).as_str()), "{notice:?}: {body}");
         assert!(!body.trim().is_empty(), "{notice:?}");
     }
 }
@@ -71,7 +84,7 @@ async fn the_body_of_a_notice_has_the_facts_of_it() {
         strikes: 3,
     })
     .await;
-    let (title, paused) = rendered(&Notice::Paused {
+    let (_, paused) = rendered(&Notice::Paused {
         until: at(3600),
         reason: PauseReason::RateLimit,
         evidence: "HTTP 429".to_owned(),
@@ -85,7 +98,7 @@ async fn the_body_of_a_notice_has_the_facts_of_it() {
         "{questions}"
     );
     assert!(hung.contains("30 minutes") && hung.contains("3 times"), "{hung}");
-    assert!(title.contains("2026-11-11T20:15:00Z"), "{title}");
+    assert!(paused.contains("2026-11-11T20:15:00Z"), "{paused}");
     assert!(paused.contains("rate_limit") && paused.contains("HTTP 429"), "{paused}");
     assert!(none.contains("exit: signal"), "{none}");
     assert!(code.contains("exit: 3"), "{code}");
@@ -103,12 +116,12 @@ async fn a_value_that_looks_like_a_placeholder_is_shown_as_it_is() {
 
 #[tokio::test]
 async fn a_run_that_failed_after_its_start_is_not_told_as_a_start() {
-    let (title, body) = rendered(&Notice::RunFailed {
+    let (_, body) = rendered(&Notice::RunFailed {
         reason: "cannot write the activity".to_owned(),
     })
     .await;
 
-    assert!(title.contains("failed while it ran"), "{title}");
+    assert!(body.contains("failed while it ran"), "{body}");
     assert!(!body.contains("could not be started"), "{body}");
     assert!(body.contains("cannot write the activity"), "{body}");
 }

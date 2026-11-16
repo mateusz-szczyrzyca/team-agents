@@ -501,7 +501,8 @@ async fn when_every_item_is_merged_the_team_ends_its_reviewers_are_closed_and_th
         .await;
     rig.stop().await.unwrap();
 
-    assert!(notice.starts_with(&format!("Team {team} is finished\n")), "{notice}");
+    assert!(notice.starts_with("✅ example\n"), "{notice}");
+    assert!(notice.contains(&format!("Note: Team {team} is finished")), "{notice}");
     let found = state.team(&team).unwrap();
     for id in ["1.1", "1.2"] {
         assert!(
@@ -882,7 +883,8 @@ async fn with_no_merge_nothing_is_merged_and_the_human_is_told_that_the_pull_req
     looked_again(&rig).await;
     rig.stop().await.unwrap();
 
-    assert!(notice.starts_with("Pull request 1 of "), "{notice}");
+    assert!(notice.starts_with("✅✅ example\n"), "{notice}");
+    assert!(notice.contains("Note: Pull request 1 of "), "{notice}");
     assert!(notice.contains("pull/1"), "{notice}");
     assert!(notice.contains("--no-merge"), "{notice}");
     assert_eq!(rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")), []);
@@ -949,7 +951,8 @@ async fn a_merge_that_github_refuses_is_told_to_the_human_once_and_is_not_tried_
     looked_again(&rig).await;
     rig.stop().await.unwrap();
 
-    assert!(notice.starts_with("Pull request 1 of "), "{notice}");
+    assert!(notice.starts_with("❌ example\n"), "{notice}");
+    assert!(notice.contains("Note: Pull request 1 of "), "{notice}");
     assert!(notice.contains("Pull Request is not mergeable"), "{notice}");
     assert!(matches!(phase_of(&state, "1.1"), ItemPhase::Approved { .. }));
     assert_eq!(

@@ -60,14 +60,16 @@ use self::teams::{Outbound, Served};
 use super::control::{Halt, Steer, after_halt, halted_status};
 use super::gate::GateQueue;
 use super::history::health_to_tell;
-use super::notice::Notice;
+use super::notice::{Notice, NoticeContext};
 use super::notifier::Delivery;
 use super::questions;
 use super::questions::watch::{Report, Saves, Watcher};
 use super::recovery::{RecoveryError, recover};
 use super::settle::{Settled, settle};
 use super::team::{AssignmentError, DoneNoticeError, NoticeRenderError, Why};
+use agent_runtime::notify::Notification;
 use agent_runtime::process::error_chain;
+use time::UtcOffset;
 
 /// How many runs may go at once.
 pub(super) const MAX_RUNS: NonZeroUsize = NonZeroUsize::new(16).unwrap();
@@ -296,6 +298,8 @@ pub(super) struct OwnerParts {
     pub(super) notices: mpsc::Sender<Delivery>,
     /// Where the events go.
     pub(super) events: broadcast::Sender<Event>,
+    /// The machine's offset from UTC.
+    pub(super) local_offset: UtcOffset,
     /// How often paused tasks are looked at.
     pub(super) tick: Duration,
 }
@@ -1358,6 +1362,44 @@ impl Owner {
         })
     }
 
+    /// The context needed to lay out a notification about `task`.
+    pub(super) fn notice_context<'a>(
+        &'a self,
+        task: &'a TaskId,
+        time: Timestamp,
+        pr: Option<&'a str>,
+    ) -> Result<NoticeContext<'a>, OwnerError> {
+        let found = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let (cli, model) = match found.member.agent() {
+            agent_core::state::Participant::Normal(name) | agent_core::state::Participant::Worker(name) => {
+                self.parts.settings.config.agent(name).map_or((None, None), |a| {
+                    (Some(a.cli), a.model.as_ref().map(agent_core::config::ModelName::as_str))
+                })
+            }
+            agent_core::state::Participant::Investigator(name) => {
+                self.parts.settings.config.investigator(name).map_or((None, None), |a| {
+                    (Some(a.cli), a.model.as_ref().map(agent_core::config::ModelName::as_str))
+                })
+            }
+        };
+        let team = found.team.crew().coordinator().is_some().then_some(found.team.id());
+        Ok(NoticeContext {
+            repo: found.team.repo().as_str(),
+            agent: found.member.agent().name(),
+            cli,
+            model,
+            time,
+            offset: self.parts.local_offset,
+            task,
+            team,
+            pr,
+        })
+    }
+
     /// The member of `task`, to change.
     fn member_mut(&mut self, task: &TaskId) -> Result<(Role, agent_core::state::MemberMut<'_>), OwnerError> {
         self.parts
@@ -1497,7 +1539,23 @@ impl Owner {
             );
         }
         if let Some(notice) = notice {
-            self.notify(at, located, task, notice);
+            match self.notice_context(task, at, None) {
+                Ok(context) => match notice.render(&self.parts.texts, &context) {
+                    Ok(notification) => self.notify(at, located, task, notification),
+                    Err(error) => tracing::error!(
+                        event = LogEvent::NotificationFailed.as_str(),
+                        task = %task,
+                        error = %error_chain(&error),
+                        "the notification of a task cannot be made"
+                    ),
+                },
+                Err(error) => tracing::error!(
+                    event = LogEvent::NotificationFailed.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "a notification has no task context"
+                ),
+            }
         }
         Ok(())
     }
@@ -1523,14 +1581,13 @@ impl Owner {
     }
 
     /// Queues a notification for the human.
-    fn notify(&self, at: Timestamp, located: &Located, task: &TaskId, notice: Notice) {
+    fn notify(&self, at: Timestamp, located: &Located, task: &TaskId, notification: Notification) {
         let delivery = Delivery {
             at,
             team: located.team.clone(),
             rounds: self.rounds_of_tasks(std::slice::from_ref(task)),
-            agent: located.agent.clone(),
             task: task.clone(),
-            notice,
+            notification,
         };
         if let Err(error) = self.parts.notices.try_send(delivery) {
             // The human is told through files and a command, not through the state: a notification that cannot be

@@ -48,7 +48,12 @@ struct About<'a> {
 /// What was found of an approved pull request.
 pub(super) enum Merge {
     /// It is merged, by the harness or by someone else; the merge commit when GitHub reports it.
-    Merged(Option<CommitId>),
+    Merged {
+        /// The merge commit sha, if reported by GitHub.
+        commit: Option<CommitId>,
+        /// The address of the pull request on GitHub.
+        url: String,
+    },
     /// It is not merged and is left as it is for now.
     Waits,
 }
@@ -95,7 +100,7 @@ impl Owner {
                 lead: &lead,
             };
             match self.try_merge(site, &pr, now).await {
-                Ok(Merge::Merged(commit)) => {
+                Ok(Merge::Merged { commit, url }) => {
                     self.watch.polled.remove(&(team_id.clone(), pr.number));
                     self.record_event_at(
                         now,
@@ -103,7 +108,17 @@ impl Owner {
                         self.rounds_of_items(team_id, &items),
                         HistoryEvent::PullMerged { pr: pr.number, commit },
                     );
-                    self.complete(team_id, &lead, &pr, &items, now, look).await?;
+                    self.complete(
+                        &About {
+                            site,
+                            pr: &pr,
+                            url: &url,
+                            now,
+                        },
+                        &items,
+                        look,
+                    )
+                    .await?;
                 }
                 Ok(Merge::Waits) => {}
                 Err(error) => {
@@ -172,7 +187,10 @@ impl Owner {
             now,
         };
         match remote.state {
-            PullState::Merged => Ok(Merge::Merged(remote.merge_commit_sha)),
+            PullState::Merged => Ok(Merge::Merged {
+                commit: remote.merge_commit_sha,
+                url: remote.url,
+            }),
             PullState::Closed => {
                 let team = site.team;
                 let items = self
@@ -216,7 +234,10 @@ impl Owner {
             commit_message: None,
         };
         match github.merge_pull_request(pr.number, &request).await {
-            Ok(merged) => Ok(Merge::Merged(Some(merged.commit))),
+            Ok(merged) => Ok(Merge::Merged {
+                commit: Some(merged.commit),
+                url: about.url.to_string(),
+            }),
             Err(error) if refuses(&error) => {
                 self.watch.refused.insert(key);
                 self.tell_about(about, Telling::MergeFailed(&error_chain(&error)));
@@ -255,23 +276,36 @@ impl Owner {
 
     /// Completes the items of the merged pull request `pr`; the checkout learns what the merge made of the base branch, so
     /// that the next item builds on it.
-    pub(super) async fn complete(
-        &mut self,
-        team_id: &TeamId,
-        lead: &Lead,
-        pr: &PullRequest,
-        items: &[ItemId],
-        now: Timestamp,
-        look: &mut Look,
-    ) -> Result<(), OwnerError> {
+    async fn complete(&mut self, about: &About<'_>, items: &[ItemId], look: &mut Look) -> Result<(), OwnerError> {
+        let About { site, pr, url, now } = *about;
+        let announcement = Announcement::Merged {
+            team: site.team.clone(),
+            pr: pr.number,
+        };
+        let items_text = items.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+        let values = Variables::new()
+            .with("team", site.team.as_str())
+            .and_then(|v| v.with("pr", pr.number.to_string()))
+            .and_then(|v| v.with("url", url))
+            .and_then(|v| v.with("items", items_text));
+        self.announce(
+            site.pulls,
+            site.lead,
+            announcement,
+            AutopilotPrompt::NoticeMerged,
+            values,
+            now,
+        );
         for id in items {
             let mut team_mut = self
                 .parts
                 .state
-                .team_mut(team_id)
-                .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+                .team_mut(site.team)
+                .ok_or_else(|| OwnerError::LostTeam {
+                    team: site.team.clone(),
+                })?;
             let mut item = team_mut.item_mut(*id).ok_or_else(|| OwnerError::LostItem {
-                team: team_id.clone(),
+                team: site.team.clone(),
                 item: *id,
             })?;
             item.advance(ItemPhase::Done {
@@ -281,31 +315,31 @@ impl Owner {
                 },
             })
             .map_err(|source| OwnerError::Item {
-                team: team_id.clone(),
+                team: site.team.clone(),
                 item: *id,
                 source,
             })?;
-            let round = self.round_of_item(team_id, *id)?;
+            let round = self.round_of_item(site.team, *id)?;
             look.events.push(EventKind::ItemStatus {
-                team: team_id.clone(),
+                team: site.team.clone(),
                 item: *id,
                 round: round.clone(),
                 status: agent_core::status::ItemStatus::Done,
             });
             look.changed = true;
-            self.close_item_round(team_id, *id, RoundEnd::Merged, now, look)?;
-            let span = tracing::error_span!("round", team = %team_id, rounds = %round);
+            self.close_item_round(site.team, *id, RoundEnd::Merged, now, look)?;
+            let span = tracing::error_span!("round", team = %site.team, rounds = %round);
             let _entered = span.enter();
             tracing::info!(
                 event = LogEvent::ItemPhaseChanged.as_str(),
-                team = %team_id,
+                team = %site.team,
                 item = %id,
                 phase = "done",
                 pr = %pr.number,
                 "an item is merged"
             );
         }
-        self.fetch_base(lead).await;
+        self.fetch_base(site.lead).await;
         Ok(())
     }
 

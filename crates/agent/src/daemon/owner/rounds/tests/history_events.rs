@@ -903,7 +903,9 @@ async fn a_task_with_runs_in_two_rounds_links_second_round_events_only_to_the_se
     let question_notified = events
         .iter()
         .find_map(|(_, e)| match &e.event {
-            HistoryEvent::Notified { title, .. } if title.contains("questions") => Some(&e.rounds),
+            HistoryEvent::Notified { title, body, .. } if title.starts_with("❓ ") || body.contains("questions") => {
+                Some(&e.rounds)
+            }
             _ => None,
         })
         .unwrap();

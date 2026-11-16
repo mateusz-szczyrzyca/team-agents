@@ -77,6 +77,7 @@ async fn stepped(rig: &Rig) -> Stepped {
         rng: StdRng::seed_from_u64(88),
         notices,
         events,
+        local_offset: time::UtcOffset::UTC,
         tick: Duration::from_millis(25),
         store,
         settings,
@@ -199,8 +200,8 @@ async fn turn_limit_without_a_session_fails_with_its_own_notice() {
     let Reply::Started { team, tasks } = receive.await.unwrap().unwrap() else {
         panic!("team did not start")
     };
+    let now = "2026-11-16T00:00:00Z".parse().unwrap();
     {
-        let now = "2026-11-16T00:00:00Z".parse().unwrap();
         let mut team_mut = step.owner.parts.state.team_mut(&team).unwrap();
         let (_, mut member) = team_mut.find_mut(&tasks[0]).unwrap();
         member
@@ -212,11 +213,14 @@ async fn turn_limit_without_a_session_fails_with_its_own_notice() {
     let (status, notice) = step.owner.turn_limit(&tasks[0]).unwrap();
     assert_eq!(status, TaskStatus::Failed);
     assert_eq!(notice, Some(Notice::TurnLimitNoSession));
-    let rendered = notice
-        .unwrap()
-        .render(&step.owner.parts.texts, "claude-1", &tasks[0])
-        .unwrap();
-    assert_eq!(rendered.title(), "claude-1: turn limit reached without a session");
+    let context = step.owner.notice_context(&tasks[0], now, None).unwrap();
+    let rendered = notice.unwrap().render(&step.owner.parts.texts, &context).unwrap();
+    assert_eq!(rendered.title(), format!("❌ {}", context.repo));
+    assert!(
+        rendered
+            .body()
+            .contains("Note: claude-1: turn limit reached without a session")
+    );
     assert!(rendered.body().contains("no session ID to resume"));
     assert!(!rendered.body().contains("consecutive turn-limit endings"));
 }
