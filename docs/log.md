@@ -29,6 +29,9 @@ The newest matching rows are printed oldest first by database insertion ID. Row-
 and `cut`. A filter that matches nothing succeeds with empty output. Older schemas without daemon logs also
 produce empty row output, without changing the database.
 
+In text mode, `agent log --event publication_waits` includes `branch`, `reason`, `tip` and, when a gate record
+exists, `gate_head` after the message. The warning therefore explains what prevents publication without requiring `--json`.
+
 | Exit | Meaning |
 |---|---|
 | `0` | the story or matching log rows were printed |

@@ -299,7 +299,8 @@ at its start) and the items stay where they are; `[github] api_base` points it a
 in its life is worked out at every look at a team from the items' phases and reviews, the runs and questions of the tasks and
 two files of the task directories (`daemon/merge.rs`), so a daemon that restarts goes on with the same round. What is in memory
 is only when to try again, what the human was told once, how often a report was sent back and when an approved pull request was
-last read.
+last read. The daemon also remembers which publication-wait branch, tip and reason tuples it has already warned about;
+these warnings can be emitted again after a restart.
 
 **Publishing** (`daemon/pr.rs`, `plan_publications`). A pull request is made of the branch of the lead: the coordinator's, which
 integrates the members' branches and gets the gate green on it, or a solo agent's item branch. A branch is published when the lead
