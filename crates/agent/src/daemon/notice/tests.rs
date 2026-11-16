@@ -263,8 +263,22 @@ fn notice_kind_maps_to_expected_status() {
     }
 }
 
+fn assert_notice_renders(
+    notice: &Notice,
+    texts: &HarnessPrompts,
+    context: &NoticeContext<'_>,
+    expected_title: &str,
+    expected_status_fragment: &str,
+    expected_note: &str,
+) {
+    let rendered = notice.render(texts, context).unwrap();
+    assert_eq!(rendered.title(), expected_title);
+    assert!(rendered.body().contains(expected_status_fragment));
+    assert!(rendered.body().contains(expected_note));
+}
+
 #[tokio::test]
-async fn actual_notice_templates_render_expected_notes_and_statuses() {
+async fn actual_task_state_notices_render_expected_notes_and_statuses() {
     let task_id = task(1);
     let context = NoticeContext {
         repo: "team-agents",
@@ -279,57 +293,312 @@ async fn actual_notice_templates_render_expected_notes_and_statuses() {
     };
     let texts = texts().await;
 
-    // Notice::Questions
-    let notice = Notice::Questions {
-        number: NonZeroU32::new(1).unwrap(),
-        file: PathBuf::from("/tasks/t/questions-1.md"),
-    };
-    let rendered = notice.render(&texts, &context).unwrap();
-    assert_eq!(rendered.title(), "❓ team-agents");
-    assert!(rendered.body().contains("Status: ❓ waiting for answers"));
-    assert!(
-        rendered
-            .body()
-            .contains(&format!("Note: claude-1 has questions ({task_id})"))
-    );
+    let cases = [
+        (
+            Notice::Questions {
+                number: NonZeroU32::new(1).unwrap(),
+                file: PathBuf::from("/tasks/t/questions-1.md"),
+            },
+            "❓ team-agents",
+            "Status: ❓ waiting for answers",
+            format!("Note: claude-1 has questions ({task_id})"),
+        ),
+        (
+            Notice::Hung {
+                minutes: 30,
+                strikes: 3,
+            },
+            "⌛ team-agents",
+            "Status: ⌛ hung",
+            format!("Note: claude-1 is hung ({task_id})"),
+        ),
+        (
+            Notice::Paused {
+                until: at(3600),
+                reason: PauseReason::Quota,
+                evidence: "quota exceeded".to_owned(),
+            },
+            "⏸ team-agents",
+            "Status: ⏸ paused",
+            "Note: claude-1 is paused until ".to_owned(),
+        ),
+        (
+            Notice::Failed {
+                message: "run failed".to_owned(),
+            },
+            "❌ team-agents",
+            "Status: ❌ failed",
+            format!("Note: claude-1 failed ({task_id})"),
+        ),
+        (
+            Notice::TurnLimitExhausted { count: 4, limit: 3 },
+            "❌ team-agents",
+            "Status: ❌ failed",
+            "Note: claude-1: turn limit resumes exhausted".to_owned(),
+        ),
+        (
+            Notice::TurnLimitNoSession,
+            "❌ team-agents",
+            "Status: ❌ failed",
+            "Note: claude-1: turn limit reached without a session".to_owned(),
+        ),
+    ];
 
-    // Notice::Hung
-    let notice = Notice::Hung {
-        minutes: 30,
-        strikes: 3,
-    };
-    let rendered = notice.render(&texts, &context).unwrap();
-    assert_eq!(rendered.title(), "⌛ team-agents");
-    assert!(rendered.body().contains("Status: ⌛ hung"));
-    assert!(rendered.body().contains(&format!("Note: claude-1 is hung ({task_id})")));
+    for (notice, title, status, note) in &cases {
+        assert_notice_renders(notice, &texts, &context, title, status, note);
+    }
+}
 
-    // Notice::Paused
-    let notice = Notice::Paused {
-        until: at(3600),
-        reason: PauseReason::Quota,
-        evidence: "quota exceeded".to_owned(),
+#[tokio::test]
+async fn actual_run_error_notices_render_expected_notes_and_statuses() {
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(CliKind::Claude),
+        model: None,
+        time: at(0),
+        offset: time::UtcOffset::UTC,
+        task: &task_id,
+        team: None,
+        pr: None,
     };
-    let rendered = notice.render(&texts, &context).unwrap();
-    assert_eq!(rendered.title(), "⏸ team-agents");
-    assert!(rendered.body().contains("Status: ⏸ paused"));
-    assert!(rendered.body().contains("Note: claude-1 is paused until "));
-    assert!(rendered.body().contains(&format!("({task_id})")));
+    let texts = texts().await;
 
-    // Notice::Failed
-    let notice = Notice::Failed {
-        message: "run failed".to_owned(),
+    let cases = [
+        (
+            Notice::QuestionsMissing {
+                file: PathBuf::from("/tasks/t/questions-1.md"),
+                reason: "corrupt".to_owned(),
+            },
+            "❌ team-agents",
+            "Status: ❌ failed",
+            format!("Note: claude-1 ended with questions that cannot be read ({task_id})"),
+        ),
+        (
+            Notice::NoStatus { exit: Some(42) },
+            "❌ team-agents",
+            "Status: ❌ failed",
+            format!("Note: claude-1 ended without a status ({task_id})"),
+        ),
+        (
+            Notice::NoStatus { exit: None },
+            "❌ team-agents",
+            "Status: ❌ failed",
+            format!("Note: claude-1 ended without a status ({task_id})"),
+        ),
+        (
+            Notice::StartFailed {
+                reason: "failed to spawn".to_owned(),
+            },
+            "❌ team-agents",
+            "Status: ❌ failed",
+            format!("Note: claude-1 could not be started ({task_id})"),
+        ),
+        (
+            Notice::RunFailed {
+                reason: "connection reset".to_owned(),
+            },
+            "❌ team-agents",
+            "Status: ❌ failed",
+            format!("Note: claude-1 failed while it ran ({task_id})"),
+        ),
+    ];
+
+    for (notice, title, status, note) in &cases {
+        assert_notice_renders(notice, &texts, &context, title, status, note);
+    }
+}
+
+async fn check_autopilot_notices(
+    cases: &[(
+        agent_core::prompt::AutopilotPrompt,
+        NoticeKind,
+        NoticeStatus,
+        agent_core::prompt::Variables,
+        &'static str,
+    )],
+) {
+    use agent_runtime::autopilot_prompts::AutopilotPrompts;
+
+    let team_id: TeamId = "team-20261111-191500-1111".parse().unwrap();
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(CliKind::Claude),
+        model: None,
+        time: at(0),
+        offset: time::UtcOffset::UTC,
+        task: &task_id,
+        team: Some(&team_id),
+        pr: Some("https://github.example.com/octo/example/pull/1"),
     };
-    let rendered = notice.render(&texts, &context).unwrap();
-    assert_eq!(rendered.title(), "❌ team-agents");
-    assert!(rendered.body().contains("Status: ❌ failed"));
-    assert!(rendered.body().contains(&format!("Note: claude-1 failed ({task_id})")));
+    let texts = AutopilotPrompts::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &Language::default(),
+    )
+    .await
+    .unwrap();
 
-    // Notice::TurnLimitExhausted
-    let notice = Notice::TurnLimitExhausted { count: 4, limit: 3 };
-    let rendered = notice.render(&texts, &context).unwrap();
-    assert_eq!(rendered.title(), "❌ team-agents");
-    assert!(rendered.body().contains("Status: ❌ failed"));
-    assert!(rendered.body().contains("Note: claude-1: turn limit resumes exhausted"));
+    for (prompt, kind, expected_status, vars, expected_note) in cases {
+        let rendered = texts.render(*prompt, vars).unwrap();
+        let notification = layout_notification(*kind, &context, &rendered).unwrap();
+        assert_eq!(
+            notification.title(),
+            format!("{} team-agents", expected_status.icon()),
+            "{prompt:?} title"
+        );
+        assert!(
+            notification.body().contains(&format!(
+                "Status: {} {}",
+                expected_status.icon(),
+                expected_status.label()
+            )),
+            "{prompt:?} status"
+        );
+        assert!(
+            notification.body().contains(expected_note),
+            "{prompt:?} note: {}",
+            notification.body()
+        );
+    }
+}
+
+#[tokio::test]
+async fn actual_autopilot_lifecycle_notices_render_expected_notes_and_statuses() {
+    use agent_core::prompt::AutopilotPrompt;
+
+    let cases = [
+        (
+            AutopilotPrompt::NoticeTeamAsleep,
+            NoticeKind::TeamAsleep,
+            NoticeStatus::Asleep,
+            agent_core::prompt::Variables::new()
+                .with("team", "team-1")
+                .unwrap()
+                .with("items", "1.1")
+                .unwrap()
+                .with("minutes", "15")
+                .unwrap()
+                .with("tasks", "task-1")
+                .unwrap()
+                .with("woken", "1")
+                .unwrap()
+                .with("lead", "claude-1")
+                .unwrap(),
+            "Note: Team team-1 sleeps with item 1.1 unfinished",
+        ),
+        (
+            AutopilotPrompt::NoticeApproved,
+            NoticeKind::Approved,
+            NoticeStatus::Approved,
+            agent_core::prompt::Variables::new()
+                .with("team", "team-1")
+                .unwrap()
+                .with("repo", "example")
+                .unwrap()
+                .with("pr", "1")
+                .unwrap()
+                .with("url", "https://github.example.com/octo/example/pull/1")
+                .unwrap(),
+            "Note: Pull request 1 of team-1 is approved",
+        ),
+        (
+            AutopilotPrompt::NoticePublishFailed,
+            NoticeKind::PublishFailed,
+            NoticeStatus::NotPublished,
+            agent_core::prompt::Variables::new()
+                .with("team", "team-1")
+                .unwrap()
+                .with("items", "1.1")
+                .unwrap()
+                .with("reason", "git push rejected")
+                .unwrap(),
+            "Note: The pull request of team-1 could not be published",
+        ),
+        (
+            AutopilotPrompt::NoticeMergeFailed,
+            NoticeKind::MergeFailed,
+            NoticeStatus::NotMerged,
+            agent_core::prompt::Variables::new()
+                .with("team", "team-1")
+                .unwrap()
+                .with("pr", "1")
+                .unwrap()
+                .with("url", "https://github.example.com/octo/example/pull/1")
+                .unwrap()
+                .with("reason", "conflict")
+                .unwrap(),
+            "Note: Pull request 1 of team-1 could not be merged",
+        ),
+        (
+            AutopilotPrompt::NoticeClosed,
+            NoticeKind::Closed,
+            NoticeStatus::Closed,
+            agent_core::prompt::Variables::new()
+                .with("team", "team-1")
+                .unwrap()
+                .with("pr", "1")
+                .unwrap()
+                .with("url", "https://github.example.com/octo/example/pull/1")
+                .unwrap(),
+            "Note: Pull request 1 of team-1 was closed",
+        ),
+        (
+            AutopilotPrompt::NoticeMerged,
+            NoticeKind::Merged,
+            NoticeStatus::Merged,
+            agent_core::prompt::Variables::new()
+                .with("team", "team-1")
+                .unwrap()
+                .with("pr", "1")
+                .unwrap()
+                .with("url", "https://github.example.com/octo/example/pull/1")
+                .unwrap()
+                .with("items", "1.1")
+                .unwrap(),
+            "Note: Pull request 1 of team-1 is merged",
+        ),
+    ];
+
+    check_autopilot_notices(&cases).await;
+}
+
+#[tokio::test]
+async fn actual_autopilot_review_notices_render_expected_notes_and_statuses() {
+    use agent_core::prompt::AutopilotPrompt;
+
+    let cases = [
+        (
+            AutopilotPrompt::NoticeNoVerdict,
+            NoticeKind::NoVerdict,
+            NoticeStatus::NoVerdict,
+            agent_core::prompt::Variables::new()
+                .with("reviewer", "claude-2")
+                .unwrap()
+                .with("pr", "1")
+                .unwrap()
+                .with("task", "task-2")
+                .unwrap(),
+            "Note: claude-2 gave no verdict on pull request 1",
+        ),
+        (
+            AutopilotPrompt::NoticeDecision,
+            NoticeKind::Decision,
+            NoticeStatus::Decision,
+            agent_core::prompt::Variables::new()
+                .with("team", "team-1")
+                .unwrap()
+                .with("pr", "1")
+                .unwrap()
+                .with("passes", "3")
+                .unwrap(),
+            "Note: Pull request 1 of team-1 needs your decision",
+        ),
+    ];
+
+    check_autopilot_notices(&cases).await;
 }
 
 #[test]
