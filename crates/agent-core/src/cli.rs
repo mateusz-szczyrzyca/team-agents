@@ -344,6 +344,8 @@ pub enum StreamOutcome {
     Succeeded,
     /// The stream ended with a result that reports an error, whatever the exit status.
     Failed,
+    /// The CLI exhausted its per-run turn budget; the session can continue.
+    TurnLimit,
     /// The stream has no result: the run was killed or the CLI broke off.
     Incomplete,
 }

@@ -233,11 +233,11 @@ fn the_error_tail_comes_from_stderr() -> TestResult {
 }
 
 #[test]
-fn a_run_that_hit_its_turn_limit_failed_and_has_no_final_message() -> TestResult {
+fn a_run_that_hit_its_turn_limit_has_a_distinct_outcome_and_no_final_message() -> TestResult {
     let replay = replay(&ClaudeAdapter, &fixture("claude", "max-turns.jsonl")?, "")?;
 
     assert!(replay.errors.is_empty(), "{:?}", replay.errors);
-    assert_eq!(replay.output.stream, StreamOutcome::Failed);
+    assert_eq!(replay.output.stream, StreamOutcome::TurnLimit);
     assert_eq!(replay.output.final_message, None);
     assert_eq!(
         replay.output.session_id,
