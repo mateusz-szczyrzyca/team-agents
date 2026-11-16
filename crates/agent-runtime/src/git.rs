@@ -48,6 +48,16 @@ const MAX_DIAGNOSTIC_CHARS: usize = 2048;
 /// The remote branches are pushed to.
 const REMOTE: &str = "origin";
 
+/// Where the harness keeps, for each branch it put in review, the tip the reviewers were asked to look at.
+const REVIEWED_REFS: &str = "refs/team-agents/reviewed";
+
+/// What git says of a reference `origin` did not take because of the commits it has: not a fast-forward, or not the
+/// commit a lease names. The messages are in one language, see [`Git::command`].
+const REJECTED: &str = "[rejected]";
+
+/// Where the harness keeps, for each branch it pushed, the tip it pushed last. A fetch does not move these references.
+const PUBLISHED_REFS: &str = "refs/team-agents/published";
+
 /// The commits an agent makes: who they are by, and the key that signs them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitIdentity {
@@ -137,6 +147,10 @@ pub enum Revision {
     RemoteBranch(BranchName),
     /// A commit.
     Commit(CommitId),
+    /// The tip of a branch the harness itself pushed to `origin` last: what a later push may write over.
+    Published(BranchName),
+    /// The tip of a branch the reviewers were last asked to look at.
+    Reviewed(BranchName),
 }
 
 impl fmt::Display for Revision {
@@ -148,6 +162,8 @@ impl fmt::Display for Revision {
             Self::Branch(branch) => write!(f, "refs/heads/{branch}"),
             Self::RemoteBranch(branch) => write!(f, "refs/remotes/{REMOTE}/{branch}"),
             Self::Commit(commit) => write!(f, "{commit}"),
+            Self::Published(branch) => write!(f, "{PUBLISHED_REFS}/{branch}"),
+            Self::Reviewed(branch) => write!(f, "{REVIEWED_REFS}/{branch}"),
         }
     }
 }
@@ -185,6 +201,9 @@ pub enum GitOperation {
     /// `git push`.
     #[strum(serialize = "push")]
     Push,
+    /// `git update-ref`.
+    #[strum(serialize = "update-ref")]
+    UpdateRef,
     /// `git rev-parse --git-path`, to find a file inside the repository's directory.
     #[strum(serialize = "git path")]
     GitPath,
@@ -264,6 +283,19 @@ pub enum GitError {
         /// How git ended.
         exit: ExitReport,
         /// What git said, cut; invalid UTF-8 in it is replaced, because it is for a human to read.
+        stderr: String,
+    },
+    /// `origin` did not take the branch: it has commits there that the harness did not push, so nothing was written
+    /// over.
+    #[error(
+        "origin refused the push of {branch}: the branch has commits there that the harness did not push, or its \
+         history was rewritten before the harness kept track of what it pushed; nothing was written over, a human \
+         has to look at the branch (git said: {stderr})"
+    )]
+    PushRefused {
+        /// The branch.
+        branch: BranchName,
+        /// What git said, cut.
         stderr: String,
     },
     /// The revision names no commit.
@@ -564,8 +596,11 @@ impl Git {
             Reach::Local,
             &[arg("branch"), arg(flag), arg(branch.as_str())],
         )
-        .await
-        .map(drop)
+        .await?;
+        // A later branch of the same name is another branch: it may not be pushed over what this one was, and nobody
+        // reviewed it.
+        self.forget(&Revision::Published(branch.clone())).await?;
+        self.forget(&Revision::Reviewed(branch.clone())).await
     }
 
     /// Adds a worktree at `path` with `branch` out.
@@ -729,18 +764,107 @@ impl Git {
 
     /// Pushes `branch` to `origin` and makes it the branch's upstream.
     ///
+    /// A branch whose history was rewritten since the harness pushed it is written over what the harness pushed, and
+    /// over nothing else: when `origin` has it at another commit, the push is refused.
+    ///
     /// # Errors
-    /// [`GitError::Failed`] when there is no `origin`, the remote refuses (a branch that is not a fast-forward), or
-    /// the credentials fail; [`GitError::Run`], for example when the command ran over its time.
+    /// [`GitError::PushRefused`] when `origin` has commits of the branch the harness did not push;
+    /// [`GitError::Failed`] when there is no `origin` or the credentials fail; [`GitError::UnknownRevision`] when
+    /// there is no such branch; [`GitError::Run`], for example when the command ran over its time.
     pub async fn push(&self, branch: &BranchName) -> Result<(), GitError> {
+        let operation = GitOperation::Push;
+        let tip = self.rev_parse(&Revision::Branch(branch.clone())).await?;
         let reference = format!("refs/heads/{branch}:refs/heads/{branch}");
+        // The lease names the commit `origin` must still have: git writes over that one and over no other.
+        let lease = self
+            .rewritten_since_pushed(branch, &tip)
+            .await?
+            .map(|pushed| format!("--force-with-lease=refs/heads/{branch}:{pushed}"));
+        let mut args = vec![arg("push"), arg("--set-upstream")];
+        if let Some(lease) = &lease {
+            args.push(arg(lease));
+        }
+        args.extend([arg(REMOTE), arg(&reference)]);
+        let captured = self.run(operation, Reach::Network, &args).await?;
+        if captured.exit != (ExitReport::Exited { code: 0 }) {
+            let error = failed(operation, &captured);
+            return Err(match error {
+                GitError::Failed { stderr, .. } if stderr.contains(REJECTED) => GitError::PushRefused {
+                    branch: branch.clone(),
+                    stderr,
+                },
+                other => other,
+            });
+        }
+        self.keep(&Revision::Published(branch.clone()), &tip).await
+    }
+
+    /// Takes `tip` as pushed by the harness: `origin` has it on `branch` already, whoever pushed it there, and it is
+    /// the commit the harness was about to push.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when `tip` is no commit of the repository; [`GitError::Run`].
+    pub async fn adopt_pushed(&self, branch: &BranchName, tip: &CommitId) -> Result<(), GitError> {
+        self.keep(&Revision::Published(branch.clone()), tip).await
+    }
+
+    /// Keeps `tip` as what the reviewers of `branch` were asked to look at.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when `tip` is no commit of the repository; [`GitError::Run`].
+    pub async fn record_reviewed(&self, branch: &BranchName, tip: &CommitId) -> Result<(), GitError> {
+        self.keep(&Revision::Reviewed(branch.clone()), tip).await
+    }
+
+    /// The tip of `branch` the reviewers were last asked to look at; `None` when the harness kept none.
+    ///
+    /// # Errors
+    /// The errors of [`Git::rev_parse`] other than an unknown revision.
+    pub async fn reviewed_tip(&self, branch: &BranchName) -> Result<Option<CommitId>, GitError> {
+        match self.rev_parse(&Revision::Reviewed(branch.clone())).await {
+            Ok(tip) => Ok(Some(tip)),
+            // A branch that was not in review under this harness is the answer, not a failure.
+            Err(GitError::UnknownRevision { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Makes `reference`, a reference of the harness, point at `tip`.
+    async fn keep(&self, reference: &Revision, tip: &CommitId) -> Result<(), GitError> {
+        let reference = reference.to_string();
         self.run_ok(
-            GitOperation::Push,
-            Reach::Network,
-            &[arg("push"), arg("--set-upstream"), arg(REMOTE), arg(&reference)],
+            GitOperation::UpdateRef,
+            Reach::Local,
+            &[arg("update-ref"), arg(&reference), arg(tip.as_str())],
         )
         .await
         .map(drop)
+    }
+
+    /// Removes `reference`, a reference of the harness; one that is not there is removed already.
+    async fn forget(&self, reference: &Revision) -> Result<(), GitError> {
+        let reference = reference.to_string();
+        self.run_ok(
+            GitOperation::UpdateRef,
+            Reach::Local,
+            &[arg("update-ref"), arg("-d"), arg(&reference)],
+        )
+        .await
+        .map(drop)
+    }
+
+    /// The tip the harness pushed of `branch` last, when `tip` does not continue it: the history was rewritten since.
+    async fn rewritten_since_pushed(&self, branch: &BranchName, tip: &CommitId) -> Result<Option<CommitId>, GitError> {
+        let pushed = match self.rev_parse(&Revision::Published(branch.clone())).await {
+            Ok(pushed) => pushed,
+            // A branch the harness has not pushed is pushed as it is: `origin` refuses what is no fast-forward.
+            Err(GitError::UnknownRevision { .. }) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let continues = self
+            .is_ancestor(&Revision::Commit(pushed.clone()), &Revision::Commit(tip.clone()))
+            .await?;
+        Ok((!continues).then_some(pushed))
     }
 
     /// The file `info/exclude` that keeps paths out of git for every worktree of the repository.
@@ -1686,35 +1810,163 @@ mod tests {
         assert_eq!(raw(&fixture.repo, &["config", "branch.topic.remote"]), "origin");
     }
 
-    // Rule: a push that is not a fast-forward is refused, never forced.
-    #[tokio::test]
-    async fn a_push_that_is_not_a_fast_forward_fails() {
-        let fixture = Fixture::new();
-        let origin = with_origin(&fixture);
-        let git = fixture.git();
-        git.push(&branch("main")).await.unwrap();
-        raw(&fixture.repo, &["reset", "-q", "--hard", "HEAD"]);
+    /// Another clone of `origin` that pushes one commit of its own to `branch_name`.
+    fn pushed_from_elsewhere(fixture: &Fixture, origin: &Path, branch_name: &str) {
         let other = fixture.sibling("other");
         raw(
             fixture.repo.parent().unwrap(),
             &["clone", "-q", origin.to_str().unwrap(), other.to_str().unwrap()],
         );
+        raw(&other, &["checkout", "-q", branch_name]);
         commit_in(&other, "elsewhere.txt", "x", "Elsewhere");
-        raw(&other, &["push", "-q", "origin", "main"]);
+        raw(&other, &["push", "-q", "origin", branch_name]);
+    }
+
+    /// Makes the one commit of `topic` again with another message: the same work, another history.
+    fn rewrite_topic(fixture: &Fixture) {
+        raw(&fixture.repo, &["checkout", "-q", "topic"]);
+        raw(
+            &fixture.repo,
+            &["commit", "-q", "--amend", "-m", "Topic work, told better"],
+        );
+        raw(&fixture.repo, &["checkout", "-q", "main"]);
+    }
+
+    fn refused(result: &Result<(), GitError>, name: &str) -> bool {
+        matches!(result, Err(GitError::PushRefused { branch, .. }) if branch.as_str() == name)
+    }
+
+    // Rule: a push that is not a fast-forward is refused when origin has commits the harness did not push.
+    #[tokio::test]
+    async fn a_push_over_commits_of_others_is_refused() {
+        let fixture = Fixture::new();
+        let origin = with_origin(&fixture);
+        let git = fixture.git();
+        git.push(&branch("main")).await.unwrap();
+        pushed_from_elsewhere(&fixture, &origin, "main");
+        let theirs = raw(&origin, &["rev-parse", "refs/heads/main"]);
         fixture.commit("here.txt", "y", "Here");
 
         let result = git.push(&branch("main")).await;
 
-        assert!(
-            matches!(
-                &result,
-                Err(GitError::Failed {
-                    operation: GitOperation::Push,
-                    ..
-                })
-            ),
-            "{result:?}"
+        assert!(refused(&result, "main"), "{result:?}");
+        assert_eq!(raw(&origin, &["rev-parse", "refs/heads/main"]), theirs);
+    }
+
+    // Rule: a branch whose history was rewritten since the harness pushed it is written over what the harness pushed.
+    #[tokio::test]
+    async fn a_rewritten_branch_is_pushed_over_what_the_harness_pushed() {
+        let fixture = Fixture::new();
+        let origin = with_origin(&fixture);
+        topic_branch(&fixture);
+        let git = fixture.git();
+        git.push(&branch("topic")).await.unwrap();
+        rewrite_topic(&fixture);
+
+        git.push(&branch("topic")).await.unwrap();
+
+        assert_eq!(
+            raw(&origin, &["rev-parse", "refs/heads/topic"]),
+            raw(&fixture.repo, &["rev-parse", "topic"])
         );
+        // What was pushed last is what the next rewrite may be pushed over.
+        rewrite_topic(&fixture);
+        git.push(&branch("topic")).await.unwrap();
+        assert_eq!(
+            raw(&origin, &["rev-parse", "refs/heads/topic"]),
+            raw(&fixture.repo, &["rev-parse", "topic"])
+        );
+    }
+
+    // Rule: a rewritten branch is not pushed over commits somebody else pushed after the harness.
+    #[tokio::test]
+    async fn a_rewritten_branch_is_not_pushed_over_commits_of_others() {
+        let fixture = Fixture::new();
+        let origin = with_origin(&fixture);
+        topic_branch(&fixture);
+        let git = fixture.git();
+        git.push(&branch("topic")).await.unwrap();
+        pushed_from_elsewhere(&fixture, &origin, "topic");
+        let theirs = raw(&origin, &["rev-parse", "refs/heads/topic"]);
+        rewrite_topic(&fixture);
+
+        let result = git.push(&branch("topic")).await;
+
+        assert!(refused(&result, "topic"), "{result:?}");
+        assert_eq!(raw(&origin, &["rev-parse", "refs/heads/topic"]), theirs);
+    }
+
+    // Rule: a rewritten branch the harness never pushed is not pushed over what origin has, even after a fetch.
+    #[tokio::test]
+    async fn a_rewritten_branch_the_harness_did_not_push_is_refused() {
+        let fixture = Fixture::new();
+        let origin = with_origin(&fixture);
+        topic_branch(&fixture);
+        raw(&fixture.repo, &["push", "-q", "origin", "topic"]);
+        let theirs = raw(&origin, &["rev-parse", "refs/heads/topic"]);
+        rewrite_topic(&fixture);
+        raw(&fixture.repo, &["fetch", "-q", "origin"]);
+
+        let result = fixture.git().push(&branch("topic")).await;
+
+        assert!(refused(&result, "topic"), "{result:?}");
+        assert_eq!(raw(&origin, &["rev-parse", "refs/heads/topic"]), theirs);
+    }
+
+    // Rule: a tip that origin has already is taken as pushed: a later rewrite is pushed over it.
+    #[tokio::test]
+    async fn a_tip_origin_has_already_is_adopted_and_a_later_rewrite_is_pushed_over_it() {
+        let fixture = Fixture::new();
+        let origin = with_origin(&fixture);
+        topic_branch(&fixture);
+        raw(&fixture.repo, &["push", "-q", "origin", "topic"]);
+        let git = fixture.git();
+        let tip: CommitId = raw(&fixture.repo, &["rev-parse", "topic"]).parse().unwrap();
+
+        git.adopt_pushed(&branch("topic"), &tip).await.unwrap();
+        rewrite_topic(&fixture);
+        git.push(&branch("topic")).await.unwrap();
+
+        assert_eq!(
+            raw(&origin, &["rev-parse", "refs/heads/topic"]),
+            raw(&fixture.repo, &["rev-parse", "topic"])
+        );
+    }
+
+    // Rule: what the reviewers were asked to look at is kept for a branch, and forgotten with the branch.
+    #[tokio::test]
+    async fn the_reviewed_tip_of_a_branch_is_kept_and_forgotten_with_the_branch() {
+        let fixture = Fixture::new();
+        topic_branch(&fixture);
+        let git = fixture.git();
+        let tip: CommitId = raw(&fixture.repo, &["rev-parse", "topic"]).parse().unwrap();
+        assert_eq!(git.reviewed_tip(&branch("topic")).await.unwrap(), None);
+
+        git.record_reviewed(&branch("topic"), &tip).await.unwrap();
+        assert_eq!(git.reviewed_tip(&branch("topic")).await.unwrap(), Some(tip));
+
+        git.branch_delete(&branch("topic"), DeleteMode::Force).await.unwrap();
+        assert_eq!(git.reviewed_tip(&branch("topic")).await.unwrap(), None);
+    }
+
+    // Rule: a deleted branch leaves nothing a later branch of the same name could be pushed over.
+    #[tokio::test]
+    async fn deleting_a_branch_forgets_what_was_pushed_of_it() {
+        let fixture = Fixture::new();
+        let origin = with_origin(&fixture);
+        topic_branch(&fixture);
+        let git = fixture.git();
+        git.push(&branch("topic")).await.unwrap();
+        let pushed = raw(&origin, &["rev-parse", "refs/heads/topic"]);
+
+        git.branch_delete(&branch("topic"), DeleteMode::Force).await.unwrap();
+        raw(&fixture.repo, &["checkout", "-q", "--orphan", "topic"]);
+        fixture.commit("again.txt", "again\n", "Another beginning");
+        raw(&fixture.repo, &["checkout", "-q", "main"]);
+        let result = git.push(&branch("topic")).await;
+
+        assert!(refused(&result, "topic"), "{result:?}");
+        assert_eq!(raw(&origin, &["rev-parse", "refs/heads/topic"]), pushed);
     }
 
     // Rule: a repository without origin cannot be pushed to.
