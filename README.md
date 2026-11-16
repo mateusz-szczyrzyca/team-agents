@@ -1108,7 +1108,9 @@ with everything it started, after `gate_timeout_minutes` (default 30, counted fr
 wait) and is recorded as failed; stopping or pausing the task stops its gate too. The result is recorded with the commit
 (`HEAD`) and whether the tree was clean, in `tasks/<task>/gate.json` and the task's activity log, and the full output is
 in `tasks/<task>/gate-<n>.log`. A tree is not clean when a file is changed or untracked, when a merge waits to be committed
-or when the gate itself changed the tree or `HEAD`: such a gate may run, but its pass is not a pass of the commit. A run
+or when the gate itself changed the tree or `HEAD`: such a gate may run, but its pass is not a pass of the commit. When a
+finished branch waits for publication because there is no branch tip, no gate record, the gate was at another commit, the
+gate failed, or the gate tree was not clean, the daemon logs a `publication_waits` warning with the reason, branch, and tip. A run
 that waits for its own gate is never cut by the watchdog. The command succeeds for a pass and fails (status 1) for a
 failure, a timeout and a refusal. The command says first where the result is recorded: a model CLI cuts a shell command that runs long (the Bash tool of Claude Code has a time limit, in minutes, and a gate may take 30) while the gate goes on, and the agent then reads `tasks/<task>/gate.json`. Details: [`docs/architecture.md`](docs/architecture.md), "The gate".
 
