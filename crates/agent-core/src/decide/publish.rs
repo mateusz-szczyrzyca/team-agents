@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::state::{CommitId, GateRecord};
+use crate::state::{CommitId, GateOutcome, GateRecord, GateTree};
 
 /// Why a finished branch is not published yet.
 #[derive(
@@ -67,7 +67,21 @@ pub type PublishWaitReason = PublicationWaitReason;
 /// 5. Gate passed on dirty tree ([`PublicationWaitReason::GateTreeNotClean`]).
 #[must_use]
 pub fn publication_wait_reason(tip: Option<&CommitId>, record: Option<&GateRecord>) -> Option<PublicationWaitReason> {
-    let _ = (tip, record);
+    let Some(tip) = tip else {
+        return Some(PublicationWaitReason::NoBranchTip);
+    };
+    let Some(record) = record else {
+        return Some(PublicationWaitReason::NoGateRecord);
+    };
+    if record.result.head != *tip {
+        return Some(PublicationWaitReason::GateAtAnotherCommit);
+    }
+    if record.result.outcome != GateOutcome::Passed {
+        return Some(PublicationWaitReason::GateFailed);
+    }
+    if record.tree != GateTree::Clean {
+        return Some(PublicationWaitReason::GateTreeNotClean);
+    }
     None
 }
 
