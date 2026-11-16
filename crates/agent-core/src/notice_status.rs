@@ -7,43 +7,43 @@ mod tests;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, strum::IntoStaticStr)]
 pub enum NoticeStatus {
     /// Questions are open: waiting for answers.
-    #[strum(serialize = "wrong")]
+    #[strum(serialize = "waiting for answers")]
     Questions,
     /// Human decision needed.
-    #[strum(serialize = "wrong")]
+    #[strum(serialize = "needs your decision")]
     Decision,
     /// Task or run failed.
-    #[strum(serialize = "wrong")]
+    #[strum(serialize = "failed")]
     Failed,
     /// Watchdog hung.
-    #[strum(serialize = "wrong")]
+    #[strum(serialize = "hung")]
     Hung,
     /// Task paused for provider limits.
-    #[strum(serialize = "wrong")]
+    #[strum(serialize = "paused")]
     Paused,
     /// Pull request approved.
-    #[strum(serialize = "wrong")]
+    #[strum(serialize = "approved: ready to merge")]
     Approved,
     /// Pull request merge failed.
-    #[strum(serialize = "wrong")]
+    #[strum(serialize = "not merged")]
     NotMerged,
     /// Pull request closed without merge.
-    #[strum(serialize = "wrong")]
+    #[strum(serialize = "pull request closed")]
     Closed,
     /// Branch publish failed.
-    #[strum(serialize = "wrong")]
+    #[strum(serialize = "not published")]
     NotPublished,
     /// Reviewer ended without a verdict.
-    #[strum(serialize = "wrong")]
+    #[strum(serialize = "review without a verdict")]
     NoVerdict,
     /// Pull request merged.
-    #[strum(serialize = "wrong")]
+    #[strum(serialize = "merged")]
     Merged,
     /// Team asleep.
-    #[strum(serialize = "wrong")]
+    #[strum(serialize = "team asleep")]
     Asleep,
     /// Team done.
-    #[strum(serialize = "wrong")]
+    #[strum(serialize = "done")]
     Done,
 }
 
@@ -51,7 +51,19 @@ impl NoticeStatus {
     /// The icon of this status.
     #[must_use]
     pub const fn icon(self) -> &'static str {
-        ""
+        match self {
+            Self::Questions | Self::Decision => "❓",
+            Self::Failed | Self::NotMerged => "❌",
+            Self::Hung => "⌛",
+            Self::Paused => "⏸",
+            Self::Approved => "✅✅",
+            Self::Closed => "🚫",
+            Self::NotPublished => "📕",
+            Self::NoVerdict => "❗",
+            Self::Merged => "🟣",
+            Self::Asleep => "💤",
+            Self::Done => "✅",
+        }
     }
 
     /// The label of this status.
