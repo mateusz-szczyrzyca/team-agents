@@ -1,6 +1,7 @@
 //! Publishing: pushing the branch of the lead, opening or updating its pull request, and putting the items in review.
 
 use agent_core::config::RepoName;
+use agent_core::decide::publish::{PublicationWaitReason, publication_wait_reason};
 use agent_core::decide::round::{RoundEvent, RoundPolicy, RoundState, Stage};
 use agent_core::history::HistoryEvent;
 use std::num::NonZeroU32;
@@ -121,10 +122,12 @@ impl Owner {
                 Ok(Attempt::Nothing) => {}
                 Ok(Attempt::Published(published)) => {
                     self.watch.retry_at.remove(&key);
+                    self.watch.publication_waited.remove(&key);
                     self.record_publication(team_id, &publication, &published, look)?;
                 }
                 Ok(Attempt::Held(held)) => {
                     self.watch.retry_at.remove(&key);
+                    self.watch.publication_waited.remove(&key);
                     self.hold_round(pulls, team_id, &lead, held, look)?;
                 }
                 Err(error) => self.publish_failed(pulls, team_id, &lead, &publication, &error, now)?,
@@ -143,15 +146,15 @@ impl Owner {
     ) -> Result<Attempt, PublishError> {
         let lead = site.lead;
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        let Some(tip) = git.branch_tip(&publication.head_branch).await? else {
-            return Ok(Attempt::Nothing);
-        };
-        let Some(record) = self.parts.store.load_gate_record(&lead.task).await? else {
-            return Ok(Attempt::Nothing);
-        };
-        if !record.counts_as_pass() || record.result.head != tip {
+        let tip = git.branch_tip(&publication.head_branch).await?;
+        let record = self.parts.store.load_gate_record(&lead.task).await?;
+        if let Some(reason) = publication_wait_reason(tip.as_ref(), record.as_ref()) {
+            self.log_publication_waits(site, &publication.head_branch, tip.as_ref(), record.as_ref(), reason);
             return Ok(Attempt::Nothing);
         }
+        let (Some(tip), Some(record)) = (tip, record) else {
+            return Ok(Attempt::Nothing);
+        };
         let ready = Ready { git, tip, record };
         match &publication.publish {
             Publish::Open { items } => {
@@ -161,6 +164,56 @@ impl Owner {
             Publish::Update { pr, fixing, joining } => {
                 self.update_pull_request(site, (pr, fixing), joining, &ready, now).await
             }
+        }
+    }
+
+    /// Logs that publication of `branch` waits, once per branch, tip, and reason.
+    fn log_publication_waits(
+        &mut self,
+        site: Site<'_>,
+        branch: &BranchName,
+        tip: Option<&CommitId>,
+        record: Option<&GateRecord>,
+        reason: PublicationWaitReason,
+    ) {
+        let key = (site.team.clone(), branch.clone());
+        let current = (tip.cloned(), reason);
+        if self.watch.publication_waited.get(&key) == Some(&current) {
+            return;
+        }
+        self.watch.publication_waited.insert(key, current);
+
+        let lead = site.lead;
+        let open_round = self
+            .parts
+            .state
+            .team(site.team)
+            .and_then(|team| team.open_rounds().next().map(|round| round.id().clone()));
+
+        let span = match open_round {
+            Some(round) => tracing::error_span!("publish", team = %site.team, round = %round, task = %lead.task),
+            None => tracing::error_span!("publish", team = %site.team, task = %lead.task),
+        };
+        let _entered = span.enter();
+
+        let tip_str = tip.map_or("", CommitId::as_str);
+        if let Some(record) = record {
+            tracing::warn!(
+                event = LogEvent::PublicationWaits.as_str(),
+                branch = %branch,
+                reason = %reason,
+                tip = %tip_str,
+                gate_head = %record.result.head,
+                "a finished branch is not published yet"
+            );
+        } else {
+            tracing::warn!(
+                event = LogEvent::PublicationWaits.as_str(),
+                branch = %branch,
+                reason = %reason,
+                tip = %tip_str,
+                "a finished branch is not published yet"
+            );
         }
     }
 

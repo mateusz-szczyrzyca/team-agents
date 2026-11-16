@@ -19,9 +19,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use agent_core::config::{AbsolutePath, GithubLogin, InvalidValue, RepoName, Secret};
+use agent_core::decide::publish::PublicationWaitReason;
 use agent_core::ids::{AgentName, BranchName, GenerateIdError, InvalidBranchName, InvalidName, TaskId, TeamId};
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
-use agent_core::state::{PrNumber, Timestamp};
+use agent_core::state::{CommitId, PrNumber, Timestamp};
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextError};
 use agent_runtime::checks_prompts::ChecksPrompts;
 use agent_runtime::git::{CommitIdentity, Git, GitError};
@@ -126,6 +127,8 @@ pub(super) struct PullWatch {
     polled: HashMap<(TeamId, PrNumber), Timestamp>,
     /// The pull requests whose merge GitHub refused: they are not merged again, only looked at for the human's merge.
     refused: HashSet<(TeamId, PrNumber)>,
+    /// When a branch that waited for publication was last logged, so that the same branch, tip, and reason are logged once.
+    pub(super) publication_waited: HashMap<(TeamId, BranchName), (Option<CommitId>, PublicationWaitReason)>,
 }
 
 /// Something the human is told once.

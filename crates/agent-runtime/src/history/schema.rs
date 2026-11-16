@@ -320,7 +320,7 @@ CREATE TABLE daemon_logs (
     module TEXT NOT NULL CHECK (module <> ''),
     event TEXT NOT NULL CHECK (event IN (
         'cli_output_unreadable', 'run_ended_without_status', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
-        'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out', 'gate_dirty_tree',
+        'bus_down', 'git_call_failed', 'github_call_failed', 'publication_waits', 'gate_cannot_start', 'gate_timed_out', 'gate_dirty_tree',
         'state_save_failed', 'questions_file_invalid', 'configuration_name_missing', 'restart_corrected',
         'request_refused', 'daemon_panicked', 'daemon_task_failed', 'team_not_started', 'notification_failed',
         'history_record_incomplete', 'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed',
@@ -344,7 +344,7 @@ CREATE TABLE daemon_logs (
         ))
         OR (level = 'warn' AND event IN (
             'cli_output_unreadable', 'run_ended_without_status', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
-            'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out',
+            'bus_down', 'git_call_failed', 'github_call_failed', 'publication_waits', 'gate_cannot_start', 'gate_timed_out',
             'gate_dirty_tree', 'questions_file_invalid', 'restart_corrected', 'request_refused',
             'history_record_incomplete'
         ))
