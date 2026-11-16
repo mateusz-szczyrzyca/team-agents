@@ -127,8 +127,8 @@ pub(super) struct PullWatch {
     polled: HashMap<(TeamId, PrNumber), Timestamp>,
     /// The pull requests whose merge GitHub refused: they are not merged again, only looked at for the human's merge.
     refused: HashSet<(TeamId, PrNumber)>,
-    /// When a branch that waited for publication was last logged, so that the same branch, tip, and reason are logged once.
-    pub(super) publication_waited: HashMap<(TeamId, BranchName), (Option<CommitId>, PublicationWaitReason)>,
+    /// Which branch, tip, and reason already waited for publication, so each tuple is logged once.
+    pub(super) publication_waited: HashSet<(TeamId, BranchName, Option<CommitId>, PublicationWaitReason)>,
 }
 
 /// Something the human is told once.

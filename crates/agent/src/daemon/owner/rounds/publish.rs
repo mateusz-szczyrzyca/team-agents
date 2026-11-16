@@ -122,12 +122,16 @@ impl Owner {
                 Ok(Attempt::Nothing) => {}
                 Ok(Attempt::Published(published)) => {
                     self.watch.retry_at.remove(&key);
-                    self.watch.publication_waited.remove(&key);
+                    self.watch
+                        .publication_waited
+                        .retain(|(t, b, _, _)| t != team_id || b != &publication.head_branch);
                     self.record_publication(team_id, &publication, &published, look)?;
                 }
                 Ok(Attempt::Held(held)) => {
                     self.watch.retry_at.remove(&key);
-                    self.watch.publication_waited.remove(&key);
+                    self.watch
+                        .publication_waited
+                        .retain(|(t, b, _, _)| t != team_id || b != &publication.head_branch);
                     self.hold_round(pulls, team_id, &lead, held, look)?;
                 }
                 Err(error) => self.publish_failed(pulls, team_id, &lead, &publication, &error, now)?,
@@ -176,12 +180,10 @@ impl Owner {
         record: Option<&GateRecord>,
         reason: PublicationWaitReason,
     ) {
-        let key = (site.team.clone(), branch.clone());
-        let current = (tip.cloned(), reason);
-        if self.watch.publication_waited.get(&key) == Some(&current) {
+        let key = (site.team.clone(), branch.clone(), tip.cloned(), reason);
+        if !self.watch.publication_waited.insert(key) {
             return;
         }
-        self.watch.publication_waited.insert(key, current);
 
         let lead = site.lead;
         let open_round = self

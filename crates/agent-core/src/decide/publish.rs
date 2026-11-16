@@ -54,9 +54,6 @@ impl PublicationWaitReason {
     }
 }
 
-/// Alias for [`PublicationWaitReason`].
-pub type PublishWaitReason = PublicationWaitReason;
-
 /// Decides why a branch with `tip` and recorded `record` cannot be published yet, or `None` if it is ready.
 ///
 /// Order of precedence when multiple reasons apply:
@@ -83,12 +80,6 @@ pub fn publication_wait_reason(tip: Option<&CommitId>, record: Option<&GateRecor
         return Some(PublicationWaitReason::GateTreeNotClean);
     }
     None
-}
-
-/// Alias for [`publication_wait_reason`].
-#[must_use]
-pub fn why_publication_waits(tip: Option<&CommitId>, record: Option<&GateRecord>) -> Option<PublicationWaitReason> {
-    publication_wait_reason(tip, record)
 }
 
 #[cfg(test)]
