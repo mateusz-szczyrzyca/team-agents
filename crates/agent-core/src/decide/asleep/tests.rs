@@ -1,6 +1,6 @@
 use super::*;
 
-const MAY_SLEEP: Duration = Duration::from_secs(300);
+const MAY_SLEEP: Duration = Duration::from_mins(5);
 
 /// A team of a coordinator and a member that both sleep, with an item unfinished, for longer than it may.
 fn asleep(tasks: &[TaskStatus]) -> Team<'_> {
@@ -89,7 +89,7 @@ fn a_lead_that_is_done_is_not_asleep() {
 fn a_team_is_given_the_time_it_may_sleep() {
     let tasks = [TaskStatus::Waiting, TaskStatus::Waiting];
     let just_slept = Team {
-        quiet_for: MAY_SLEEP - Duration::from_secs(1),
+        quiet_for: MAY_SLEEP.saturating_sub(Duration::from_secs(1)),
         ..asleep(&tasks)
     };
     let long_enough = Team {

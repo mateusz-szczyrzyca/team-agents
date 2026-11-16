@@ -323,6 +323,15 @@ waits. A lead that ended with `STATUS: SLEEPING` waits for its team and is not d
 and is published only when the gate it ran itself passed at the tip. What the harness remembers of its own gates and of the
 times it sent a lead back is not in the state: a daemon that restarts starts over.
 
+**A team that sleeps** (`agent_core::decide::asleep::asleep_step`, `owner/rounds/asleep.rs`). A coordinator that gives work to a
+member and sleeps, and a member that wakes, does nothing and sleeps again, leave a team in which each waits for another. At every
+look the harness asks: is an item in progress or being fixed, does every task of the crew wait (none queued, running, asking the
+human or paused), did the lead's last run end otherwise than with `STATUS: DONE` (a lead that is done handed its branch to the
+harness), and did the last run of the crew end `[watchdog] asleep_minutes` ago or more. Then the lead is woken with a run whose
+prompt (`harness/pr/team-asleep.md`) says that nobody works and how every task ended; after two such wake-ups in a row
+(`ASLEEP_WAKES`) the human is told instead (`harness/pr/notice-team-asleep.md`), once for every time the team falls asleep again.
+The count starts over when the lead ends with `STATUS: DONE`, and with the daemon.
+
 **Reviewers** (`daemon/review.rs`). The review pass of an item in review starts empty and is filled once (`ItemMut::ask_reviews`) with
 two investigators drawn at random among the free ones: configured, not in the crew, with no task that is going, asking or paused,
 no review to give and no team to lead that is not finished; the pull request waits for them. A reviewer is a task of the team

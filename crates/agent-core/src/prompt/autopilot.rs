@@ -106,12 +106,12 @@ impl AutopilotPrompt {
                 &["branch", "reason", "sent", "limit"],
             ),
             Self::TeamAsleep => PromptSpec::new(
-                "harness/team/asleep.md",
+                "harness/pr/team-asleep.md",
                 Audience::Model,
                 &["team", "items", "minutes", "tasks", "woken", "limit"],
             ),
             Self::NoticeTeamAsleep => PromptSpec::new(
-                "harness/team/notice-asleep.md",
+                "harness/pr/notice-team-asleep.md",
                 Audience::Human,
                 &["team", "items", "minutes", "tasks", "woken", "lead"],
             ),

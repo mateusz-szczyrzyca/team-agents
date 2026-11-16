@@ -21,7 +21,7 @@ use crate::status::TaskStatus;
 pub struct Team<'a> {
     /// Whether an item of the team is in progress or being fixed.
     pub unfinished: bool,
-    /// The status of every task of the crew: the lead, the members and the workers.
+    /// The status of every task of the crew, the lead first: the lead, the members and the workers.
     pub tasks: &'a [TaskStatus],
     /// Whether the lead's last run ended with `STATUS: DONE`.
     pub lead_done: bool,
@@ -49,8 +49,25 @@ pub enum AsleepStep {
 /// What the harness does about `team`.
 #[must_use]
 pub fn asleep_step(team: &Team<'_>) -> AsleepStep {
-    let _ = team;
-    AsleepStep::Nothing
+    let busy = |status: &TaskStatus| match status {
+        TaskStatus::Queued | TaskStatus::Running | TaskStatus::Questions | TaskStatus::Paused => true,
+        TaskStatus::Waiting | TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stopped => false,
+    };
+    // A lead that is over cannot be woken; one that does not wait works, asks or will.
+    let lead_sleeps = team.tasks.first() == Some(&TaskStatus::Waiting);
+    if !team.unfinished
+        || !lead_sleeps
+        || team.tasks.iter().any(busy)
+        || team.lead_done
+        || team.quiet_for < team.may_sleep
+    {
+        return AsleepStep::Nothing;
+    }
+    if team.woken >= team.wake_limit {
+        AsleepStep::TellHuman
+    } else {
+        AsleepStep::WakeLead
+    }
 }
 
 #[cfg(test)]
