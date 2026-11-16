@@ -48,6 +48,10 @@ const MAX_DIAGNOSTIC_CHARS: usize = 2048;
 /// The remote branches are pushed to.
 const REMOTE: &str = "origin";
 
+/// What git says of a reference `origin` did not take because of the commits it has: not a fast-forward, or not the
+/// commit a lease names. The messages are in one language, see [`Git::command`].
+const REJECTED: &str = "[rejected]";
+
 /// Where the harness keeps, for each branch it pushed, the tip it pushed last. A fetch does not move these references.
 const PUBLISHED_REFS: &str = "refs/team-agents/published";
 
@@ -586,6 +590,14 @@ impl Git {
             Reach::Local,
             &[arg("branch"), arg(flag), arg(branch.as_str())],
         )
+        .await?;
+        // A later branch of the same name is another branch: it may not be pushed over what this one was.
+        let published = Revision::Published(branch.clone()).to_string();
+        self.run_ok(
+            GitOperation::UpdateRef,
+            Reach::Local,
+            &[arg("update-ref"), arg("-d"), arg(&published)],
+        )
         .await
         .map(drop)
     }
@@ -759,14 +771,52 @@ impl Git {
     /// [`GitError::Failed`] when there is no `origin` or the credentials fail; [`GitError::UnknownRevision`] when
     /// there is no such branch; [`GitError::Run`], for example when the command ran over its time.
     pub async fn push(&self, branch: &BranchName) -> Result<(), GitError> {
+        let operation = GitOperation::Push;
+        let tip = self.rev_parse(&Revision::Branch(branch.clone())).await?;
         let reference = format!("refs/heads/{branch}:refs/heads/{branch}");
+        // The lease names the commit `origin` must still have: git writes over that one and over no other.
+        let lease = self
+            .rewritten_since_pushed(branch, &tip)
+            .await?
+            .map(|pushed| format!("--force-with-lease=refs/heads/{branch}:{pushed}"));
+        let mut args = vec![arg("push"), arg("--set-upstream")];
+        if let Some(lease) = &lease {
+            args.push(arg(lease));
+        }
+        args.extend([arg(REMOTE), arg(&reference)]);
+        let captured = self.run(operation, Reach::Network, &args).await?;
+        if captured.exit != (ExitReport::Exited { code: 0 }) {
+            let error = failed(operation, &captured);
+            return Err(match error {
+                GitError::Failed { stderr, .. } if stderr.contains(REJECTED) => GitError::PushRefused {
+                    branch: branch.clone(),
+                    stderr,
+                },
+                other => other,
+            });
+        }
+        let published = Revision::Published(branch.clone()).to_string();
         self.run_ok(
-            GitOperation::Push,
-            Reach::Network,
-            &[arg("push"), arg("--set-upstream"), arg(REMOTE), arg(&reference)],
+            GitOperation::UpdateRef,
+            Reach::Local,
+            &[arg("update-ref"), arg(&published), arg(tip.as_str())],
         )
         .await
         .map(drop)
+    }
+
+    /// The tip the harness pushed of `branch` last, when `tip` does not continue it: the history was rewritten since.
+    async fn rewritten_since_pushed(&self, branch: &BranchName, tip: &CommitId) -> Result<Option<CommitId>, GitError> {
+        let pushed = match self.rev_parse(&Revision::Published(branch.clone())).await {
+            Ok(pushed) => pushed,
+            // A branch the harness has not pushed is pushed as it is: `origin` refuses what is no fast-forward.
+            Err(GitError::UnknownRevision { .. }) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let continues = self
+            .is_ancestor(&Revision::Commit(pushed.clone()), &Revision::Commit(tip.clone()))
+            .await?;
+        Ok((!continues).then_some(pushed))
     }
 
     /// The file `info/exclude` that keeps paths out of git for every worktree of the repository.
