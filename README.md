@@ -1075,6 +1075,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
 | `agent resume <task\|team>` | starts a stopped, failed or waiting task again |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus |
+| `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now |
 
 A run that ends with questions leaves `questions-<round>.md` in the task's directory and a notification file; with
 `[questions] open = "vscode"` the file is also opened in the VS Code window connected to the host. Saving that file with the

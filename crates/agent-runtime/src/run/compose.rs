@@ -1,7 +1,7 @@
 //! The prompt of a run: its sections, each rendered from its template, joined.
 //!
-//! A first run gets the working context, its role, the rules of its tier, the brief of the task list, its item and
-//! its last checkpoint; a run that resumes a session gets what the interruption was, because the session already holds
+//! A first run gets the working context, its role, the rules of its tier, the brief of the task list, its item — a
+//! coordinator, the items of its team in full, each with who has it — and its last checkpoint; a run that resumes a session gets what the interruption was, because the session already holds
 //! the rest. No wording lives here: every section is a template of the catalogs (`prompts/harness/run/`,
 //! `prompts/agent/` and its siblings), and this module only chooses and fills them.
 
@@ -160,9 +160,32 @@ fn first_sections(texts: &PromptTexts<'_>, input: &PromptInput<'_>) -> Result<Ve
 
 /// The sections of the items of a team, for its coordinator: none when there are no items.
 fn team_item_sections(texts: &PromptTexts<'_>, items: &[TeamItem<'_>]) -> Result<Vec<String>, ComposeError> {
-    let _ = (texts, items);
-    Ok(Vec::new())
+    if items.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut sections = vec![texts.harness.render(HarnessPrompt::TeamItems, &Variables::new())?];
+    for TeamItem { item, assignee } in items {
+        let who = assignee.map_or_else(|| NOBODY_HAS_IT.to_owned(), |name| format!("{name} works on it"));
+        let values = Variables::new()
+            .with("item_id", item.id.to_string())?
+            .with("item_title", &item.title)?
+            .with("item_description", &item.description)?
+            .with("who", who)?;
+        sections.push(texts.harness.render(HarnessPrompt::TeamItem, &values)?);
+        if let Some(expected) = &item.expected_result {
+            let values = Variables::new().with("expected", expected)?;
+            sections.push(texts.harness.render(HarnessPrompt::ItemExpected, &values)?);
+        }
+        if let Some(checks) = &item.checks {
+            let values = Variables::new().with("checks", checks)?;
+            sections.push(texts.harness.render(HarnessPrompt::ItemChecks, &values)?);
+        }
+    }
+    Ok(sections)
 }
+
+/// What a coordinator is told of an item no member works on: it is pending, in review or done.
+const NOBODY_HAS_IT: &str = "nobody has it yet";
 
 /// The sections of an item: the item itself, then its expected result and its checks, those it has.
 ///

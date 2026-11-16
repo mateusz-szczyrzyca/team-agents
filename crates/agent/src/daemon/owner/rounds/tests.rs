@@ -1021,6 +1021,28 @@ async fn team_rig(reviewer: &'static str) -> Rig {
     .await
 }
 
+// Rule: the coordinator's first prompt holds the items of its team in full; a member's holds its own item only.
+#[tokio::test]
+async fn the_coordinator_is_given_the_items_of_its_team_in_its_first_prompt() {
+    let mut rig = team_rig(APPROVING).await;
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let lead = rig.prompt(&tasks[0], 1).await;
+    let member = rig.prompt(&tasks[1], 1).await;
+    rig.stop().await.unwrap();
+
+    assert!(lead.contains("## The items of your team"), "{lead}");
+    assert!(lead.contains("### Item 1.1 — The first item ("), "{lead}");
+    assert!(lead.contains("Do the first thing in the repository."), "{lead}");
+    assert!(lead.contains("the first thing works"), "{lead}");
+    assert!(lead.contains("run the first thing"), "{lead}");
+    assert!(!member.contains("## The items of your team"), "{member}");
+    assert!(member.contains("## Your item: 1.1 — The first item"), "{member}");
+}
+
 #[tokio::test]
 async fn the_branch_of_the_coordinator_that_integrated_the_members_work_is_published_reviewed_and_merged() {
     let mut rig = team_rig(APPROVING).await;

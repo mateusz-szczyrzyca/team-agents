@@ -62,6 +62,12 @@ pub(crate) async fn status_running(connection: &mut Connection, out: &mut impl W
 /// The teams of `teams` that have an open round, each with its open rounds only.
 pub(crate) fn running(teams: Vec<TeamSummary>) -> Vec<TeamSummary> {
     teams
+        .into_iter()
+        .filter_map(|mut team| {
+            team.rounds.retain(|round| *round.life() == RoundLife::Open);
+            (!team.rounds.is_empty()).then_some(team)
+        })
+        .collect()
 }
 
 /// The teams the daemon answers a status request for `target` with, and what it says of the history.

@@ -455,7 +455,7 @@ approved or done as merged; a round is not closed before it was opened; a run na
 in [`state.md`](state.md).
 
 **The CLI.** `agent run` prints the round of each item it started, after the tasks; `agent status` lists the rounds of every team under
-its line; `agent status <round>` (the protocol's `show` of a round) shows its item, its state, the tasks that worked for it with their
+its line, and `agent status --running` only the teams that have an open round, with those rounds; `agent status <round>` (the protocol's `show` of a round) shows its item, its state, the tasks that worked for it with their
 role, agent, worktree and branch and their runs, its pull request and its review passes (the reviews of the pass that was approved are
 not kept once the item is done: the history of a later item has them).
 
