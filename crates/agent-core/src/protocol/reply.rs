@@ -665,11 +665,11 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_value(&ok).unwrap(),
-            json!({"protocol": 2, "id": 3, "result": {"status": "ok", "reply": {"kind": "subscribed", "teams": []}}})
+            json!({"protocol": 3, "id": 3, "result": {"status": "ok", "reply": {"kind": "subscribed", "teams": []}}})
         );
         assert_eq!(
             serde_json::to_value(&failed).unwrap(),
-            json!({"protocol": 2, "id": 4, "result": {"status": "error", "error": {"kind": "not_found", "message": "no task task-x; see agent status"}}})
+            json!({"protocol": 3, "id": 4, "result": {"status": "error", "error": {"kind": "not_found", "message": "no task task-x; see agent status"}}})
         );
         for response in [ok, failed] {
             let value = serde_json::to_value(&response).unwrap();
@@ -690,7 +690,7 @@ mod tests {
             assert_eq!(serde_json::from_value::<FailureKind>(json!(text)).unwrap(), kind);
         }
         assert_refused::<FailureKind>(&json!("oops"));
-        assert_refused::<Response>(&json!({"protocol": 2, "id": 1, "result": {"status": "maybe"}}));
+        assert_refused::<Response>(&json!({"protocol": 3, "id": 1, "result": {"status": "maybe"}}));
         assert_refused::<Response>(
             &json!({"protocol": 1, "id": 1, "result": {"status": "ok", "reply": {"kind": "subscribed", "teams": []}}}),
         );

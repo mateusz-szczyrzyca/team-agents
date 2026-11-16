@@ -53,7 +53,7 @@ mod history_health {
 
         assert_eq!(
             line.trim_end(),
-            r#"{"type":"response","protocol":2,"id":4,"result":{"status":"ok","reply":{"kind":"overview","teams":[],"history":{"state":{"kind":"unavailable","reason":"no disk"},"lost":3}}}}"#
+            r#"{"type":"response","protocol":3,"id":4,"result":{"status":"ok","reply":{"kind":"overview","teams":[],"history":{"state":{"kind":"unavailable","reason":"no disk"},"lost":3}}}}"#
         );
         assert_eq!(
             Frame::from_line(&line).unwrap(),

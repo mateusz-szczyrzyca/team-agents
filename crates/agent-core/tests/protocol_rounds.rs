@@ -1,5 +1,5 @@
-//! The lines of the control protocol that are about rounds, version 2: `tests/fixtures/protocol-v2-round-requests.jsonl`
-//! and `protocol-v2-round-frames.jsonl`. They read and write back to the same lines; the lines of version 1 are refused as
+//! The lines of the control protocol that are about rounds, version 3: `tests/fixtures/protocol-v3-round-requests.jsonl`
+//! and `protocol-v3-round-frames.jsonl`. They read and write back to the same lines; the lines of version 1 are refused as
 //! the unsupported version they are, whatever they say.
 
 #[cfg(test)]
@@ -11,9 +11,9 @@ mod protocol_rounds {
     use agent_core::state::{RoundEnd, RoundLife};
 
     /// The requests about rounds, one per line.
-    const REQUESTS: &str = include_str!("fixtures/protocol-v2-round-requests.jsonl");
+    const REQUESTS: &str = include_str!("fixtures/protocol-v3-round-requests.jsonl");
     /// The daemon's lines about rounds, one per line.
-    const FRAMES: &str = include_str!("fixtures/protocol-v2-round-frames.jsonl");
+    const FRAMES: &str = include_str!("fixtures/protocol-v3-round-frames.jsonl");
     /// The requests of version 1.
     const V1_REQUESTS: &str = include_str!("fixtures/protocol-v1-requests.jsonl");
     /// The daemon's lines of version 1.
