@@ -1,4 +1,4 @@
-//! Migration eight: adds publication_waits warning event to daemon_logs,
+//! Migration eight: adds `publication_waits` warning event to `daemon_logs`,
 //! preserving existing records, daemon logs, links, search, and foreign keys.
 
 use std::collections::BTreeMap;
