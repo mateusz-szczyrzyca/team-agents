@@ -86,3 +86,28 @@ impl<'a> From<&'a Publication> for &'a BranchName {
         &publication.head_branch
     }
 }
+
+#[test]
+fn a_publication_uses_its_items_round_when_an_older_round_is_also_open() {
+    let mut state = solo_state();
+    let mut team = state.team_mut(&team_id(0)).unwrap();
+    let older: RoundId = "round-20261111-153001-k3x9".parse().unwrap();
+    let relevant: RoundId = "round-20261111-153002-k3x9".parse().unwrap();
+    team.open_round(older, Some("1.1".parse().unwrap()), crate::fixtures::at(1))
+        .unwrap();
+    team.open_round(relevant.clone(), Some("1.2".parse().unwrap()), crate::fixtures::at(2))
+        .unwrap();
+    let publication = Publication {
+        head_branch: "agents/claude-1/second".parse().unwrap(),
+        publish: Publish::Open {
+            items: vec![Joining {
+                item: "1.2".parse().unwrap(),
+                branch: "agents/claude-1/second".parse().unwrap(),
+            }],
+        },
+    };
+    assert_eq!(
+        publication_round(state.team(&team_id(0)).unwrap(), &publication),
+        Some(relevant)
+    );
+}

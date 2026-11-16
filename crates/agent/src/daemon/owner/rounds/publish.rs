@@ -6,7 +6,7 @@ use agent_core::decide::round::{RoundEvent, RoundPolicy, RoundState, Stage};
 use agent_core::history::HistoryEvent;
 use std::num::NonZeroU32;
 
-use agent_core::ids::{BranchName, ItemId, TeamId};
+use agent_core::ids::{BranchName, ItemId, RoundId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::EventKind;
@@ -576,3 +576,8 @@ impl Owner {
 
 #[cfg(test)]
 mod tests;
+
+/// Selects the open round to which the publication belongs.
+fn publication_round(team: &agent_core::state::Team, _publication: &Publication) -> Option<RoundId> {
+    team.open_rounds().next().map(|round| round.id().clone())
+}
