@@ -124,6 +124,8 @@ pub enum LogEvent {
     GitCallFailed,
     /// A GitHub API call, a publication or a merge fails or is retried, or the home has no GitHub token.
     GithubCallFailed,
+    /// A finished branch is not published: waiting for a passing gate at the tip on a clean tree.
+    PublicationWaits,
     /// A gate command cannot start or be recorded.
     GateCannotStart,
     /// A gate command exceeds its timeout and is killed.
@@ -232,6 +234,7 @@ impl LogEvent {
             | Self::RequestRefused
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
+            | Self::PublicationWaits
             | Self::RoundChanged
             | Self::ItemPhaseChanged
             | Self::TaskStatusChanged
