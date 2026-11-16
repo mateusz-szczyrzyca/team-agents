@@ -479,3 +479,11 @@ mod history_queries_tests;
 #[cfg(test)]
 #[path = "rounds/tests/turn_limits.rs"]
 mod turn_limits_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/turn_limit_restart.rs"]
+mod turn_limit_restart_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/turn_limit_round.rs"]
+mod turn_limit_round_tests;

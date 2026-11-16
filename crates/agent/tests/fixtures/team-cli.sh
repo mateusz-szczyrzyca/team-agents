@@ -146,6 +146,10 @@ wait_for_peer_review() {
 init
 read_messages
 case $action in
+  turn-limit-quota)
+    printf '%s\n' 'quota exhausted' >&2
+    printf '{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"%s"}\n' "$session"
+    ;;
   turn-limit)
     printf '{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"%s"}\n' "$session"
     ;;

@@ -73,3 +73,37 @@ fn version_six_upgrade_keeps_records_links_search_and_foreign_keys() {
         assert_eq!(search_before, search_after, "seed {seed}");
     }
 }
+
+#[test]
+fn turn_limit_fields_of_other_variants_are_refused_by_sql_and_reader() {
+    for (table, column, value) in [
+        ("runs", "why_item", "1.1"),
+        ("runs", "why_asked_by", "run-20261116-000000-0000"),
+        ("runs", "why_pass", "1"),
+        ("runs", "why_pr", "1"),
+        ("run_ends", "outcome", "DONE"),
+        ("run_ends", "exit_code", "0"),
+        ("run_ends", "resets_at", "2026-11-16T00:00:00Z"),
+    ] {
+        let (_dir, path, mut db) = database();
+        let mut world = complete(88);
+        world.runs[0].start.why = RunWhy::TurnLimit;
+        world.runs[0].end.as_mut().unwrap().end = RunEnd::TurnLimit;
+        db.write(&world.records()).unwrap();
+        let raw = Connection::open(&path).unwrap();
+        let sql = format!("UPDATE {table} SET {column} = ?1 WHERE run = ?2");
+        let id = world.runs[0].start.run.as_str();
+        let error = raw.execute(&sql, [value, id]).unwrap_err();
+        assert_eq!(
+            error.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::ConstraintViolation)
+        );
+        raw.execute_batch("PRAGMA ignore_check_constraints = ON").unwrap();
+        raw.execute(&sql, [value, id]).unwrap();
+        let error = Reader::open(&path).unwrap().run(&world.runs[0].start.run).unwrap_err();
+        assert!(
+            matches!(error, agent_runtime::history::ReadError::Value { table: t, column: c, .. } if t == table && c == column),
+            "{table}.{column}: {error:?}"
+        );
+    }
+}
