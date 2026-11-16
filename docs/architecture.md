@@ -304,7 +304,10 @@ last read.
 **Publishing** (`daemon/pr.rs`, `plan_publications`). A pull request is made of the branch of the lead: the coordinator's, which
 integrates the members' branches and gets the gate green on it, or a solo agent's item branch. A branch is published when the lead
 waits, its last gate record (`tasks/<lead>/gate.json`) passed on a clean tree at the tip of the branch, and the tip has the branch
-of the finished item in its history (`git merge-base --is-ancestor`). The branch is pushed (git's own credentials, not the
+of the finished item in its history (`git merge-base --is-ancestor`). Until then, when publication waits because there is no
+branch tip, no gate record, the gate was at another commit, the gate failed, or the gate tree was not clean, the daemon logs a
+`publication_waits` warning once per branch, tip, and reason in the scope of the team, the open round, and the task. The branch is
+pushed (git's own credentials, not the
 token), the open pull request of the branch is found or opened as a draft with a title and a description from the item (its text,
 expected result and checks) and the gate's summary, and marked ready; the round machine checks that GitHub says the pull request
 carries the commit the gate passed on, and the items are `in_review` (`pull_request_opened`). A branch has one pull request at a
