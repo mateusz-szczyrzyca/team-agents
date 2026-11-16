@@ -79,6 +79,24 @@ impl CommitIdentity {
             config.signing_key.clone(),
         )
     }
+
+    /// The name of the author and the committer.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The e-mail of the author and the committer.
+    #[must_use]
+    pub fn email(&self) -> &str {
+        &self.email
+    }
+
+    /// The SSH key the commits are signed with, when they are signed.
+    #[must_use]
+    pub fn signing_key(&self) -> Option<&AbsolutePath> {
+        self.signing_key.as_ref()
+    }
 }
 
 /// What a command may take: its time, and the bytes of its output that are kept.

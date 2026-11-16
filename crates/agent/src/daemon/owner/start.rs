@@ -23,6 +23,7 @@ use agent_runtime::agentbus::{AgentBus, BusTier};
 use agent_runtime::autopilot_prompts::AutopilotPrompts;
 use agent_runtime::checks_prompts::ChecksPrompts;
 use agent_runtime::clock::SharedClock;
+use agent_runtime::git::CommitIdentity;
 use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
@@ -258,6 +259,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         (RunMode::New { session_id }, recorded)
     };
     let mcp_servers = mcp_servers(ctx, team, participant, task, &working, &work_branch(team, member)?)?;
+    let identity = CommitIdentity::for_agent(config.git(), &participant.name().parse()?);
     Ok(Plan {
         run: run.clone(),
         recorded_session,
@@ -271,6 +273,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
             mode,
             prompt,
             working_dir,
+            identity,
             mcp_servers,
         },
     })

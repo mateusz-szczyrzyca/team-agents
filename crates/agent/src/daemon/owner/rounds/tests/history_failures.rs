@@ -12,6 +12,7 @@ use agent_core::ids::RunId;
 use agent_core::kinds::CliKind;
 use agent_core::protocol::{Client, Command, Reply, StatusRequest};
 use agent_core::state::{Completion, ItemPhase, MergeMode};
+use agent_runtime::git::CommitIdentity;
 use agent_runtime::history::{HistoryDb, Reader};
 use agent_runtime::history::{Problem, Reporter};
 use agent_runtime::run::RunJob;
@@ -279,6 +280,7 @@ async fn a_fix_pass_whose_event_cannot_be_built_is_counted_as_lost() {
     use agent_core::history::{Record, RunWhy};
     use agent_core::ids::RunId;
     use agent_core::kinds::CliKind;
+    use agent_runtime::git::CommitIdentity;
     use agent_runtime::history::{History, Problem, Reporter, Setup, Store, WriteError};
     use agent_runtime::run::RunJob;
 
@@ -328,6 +330,7 @@ async fn a_fix_pass_whose_event_cannot_be_built_is_counted_as_lost() {
             },
             prompt: "Fix.".to_owned(),
             working_dir: AbsolutePath::from_str("/work/example").unwrap(),
+            identity: CommitIdentity::new("claude-1".to_owned(), "agents@example.com".to_owned(), None),
             mcp_servers: BTreeMap::new(),
         },
     };
@@ -383,6 +386,7 @@ fn fix_pass_plan(run_id: &str, addition: Option<String>) -> crate::daemon::owner
             },
             prompt: "Fix.".to_owned(),
             working_dir: AbsolutePath::from_str("/work/example").unwrap(),
+            identity: CommitIdentity::new("claude-1".to_owned(), "agents@example.com".to_owned(), None),
             mcp_servers: BTreeMap::new(),
         },
     }

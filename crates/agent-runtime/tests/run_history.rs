@@ -21,6 +21,7 @@ mod run_history {
     use agent_core::state::{CommitId, RunEnd, Timestamp};
     use agent_core::status::RunOutcome;
     use agent_runtime::clock::SharedClock;
+    use agent_runtime::git::CommitIdentity;
     use agent_runtime::harness_prompts::HarnessPrompts;
     use agent_runtime::history::{History, HistoryDb, OpenError, Reader, Setup, Started, TracingReporter};
     use agent_runtime::process::Supervisor;
@@ -220,6 +221,7 @@ mod run_history {
                 },
                 prompt: prompt.to_owned(),
                 working_dir: abs(self.worktree.path()),
+                identity: CommitIdentity::new("claude-1 (agent)".to_owned(), "agents@example.com".to_owned(), None),
                 mcp_servers: BTreeMap::<McpServerKind, agent_core::config::CommandLine>::new(),
             }
         }

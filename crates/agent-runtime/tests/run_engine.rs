@@ -22,6 +22,7 @@ mod run_engine {
     use agent_core::state::{RunEnd, Timestamp};
     use agent_core::status::RunOutcome;
     use agent_runtime::clock::SharedClock;
+    use agent_runtime::git::CommitIdentity;
     use agent_runtime::harness_prompts::HarnessPrompts;
     use agent_runtime::process::Supervisor;
     use agent_runtime::run::{
@@ -147,6 +148,7 @@ mod run_engine {
                 mode,
                 prompt: "Do the item.".to_owned(),
                 working_dir: abs(self.worktree.path()),
+                identity: CommitIdentity::new("claude-1 (agent)".to_owned(), "agents@example.com".to_owned(), None),
                 mcp_servers: BTreeMap::new(),
             }
         }
@@ -633,6 +635,45 @@ mod run_engine {
         assert_eq!(
             env.recorded(".fake-env"),
             "PATH=/usr/local/bin:/usr/bin:/bin\nFAKE_SECRET=s3cret\n"
+        );
+    }
+
+    // Rule: the commits an agent makes in its run are the agent's, not the human's whose configuration git reads.
+    #[tokio::test]
+    async fn the_git_of_a_run_commits_as_the_agent_and_does_not_sign_without_a_key() {
+        let env = env().await;
+
+        env.finished("env-git").await;
+
+        // The format and the key are the machine's own: without signing nothing reads them.
+        let recorded = env.recorded(".fake-git");
+        assert_eq!(
+            recorded.lines().take(3).collect::<Vec<_>>(),
+            [
+                "author=claude-1 (agent) <agents@example.com>",
+                "committer=claude-1 (agent) <agents@example.com>",
+                "gpgsign=false",
+            ]
+        );
+    }
+
+    // Rule: with a signing key the commits of a run are signed with it.
+    #[tokio::test]
+    async fn the_git_of_a_run_signs_with_the_key_of_the_identity() {
+        let env = env().await;
+        let mut job = env.job("env-git", Env::new_session());
+        job.identity = CommitIdentity::new(
+            "codex-1".to_owned(),
+            "bot@example.com".to_owned(),
+            Some(AbsolutePath::from_str("/keys/agents.pub").unwrap()),
+        );
+
+        env.engine.run(job, &CancellationToken::new()).await.unwrap();
+
+        assert_eq!(
+            env.recorded(".fake-git"),
+            "author=codex-1 <bot@example.com>\ncommitter=codex-1 <bot@example.com>\n\
+             gpgsign=true\nformat=ssh\nkey=/keys/agents.pub\n"
         );
     }
 

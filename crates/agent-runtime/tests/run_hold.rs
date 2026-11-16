@@ -17,6 +17,7 @@ mod run_hold {
     use agent_core::kinds::CliKind;
     use agent_core::state::RunEnd;
     use agent_runtime::clock::SharedClock;
+    use agent_runtime::git::CommitIdentity;
     use agent_runtime::harness_prompts::HarnessPrompts;
     use agent_runtime::process::Supervisor;
     use agent_runtime::run::{EngineParts, RunEngine, RunJob, RunTimings, RunVerdict, WatchdogHold};
@@ -109,6 +110,7 @@ mod run_hold {
                 },
                 prompt: "Do the item.".to_owned(),
                 working_dir: abs(self.worktree.path()),
+                identity: CommitIdentity::new("claude-1 (agent)".to_owned(), "agents@example.com".to_owned(), None),
                 mcp_servers: BTreeMap::new(),
             }
         }

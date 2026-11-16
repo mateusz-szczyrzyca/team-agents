@@ -63,6 +63,12 @@ fn env_name(name: &'static str) -> Result<EnvName, RunError> {
     EnvName::from_str(name).map_err(|source| RunError::EnvName { name, source })
 }
 
+/// What makes the `git` an agent runs commit as `identity`: the author and the committer, and whether and with which
+/// key a commit is signed. Without it the commits of a run are the human's, whose configuration git reads.
+fn identity_env(_identity: &CommitIdentity) -> Result<Vec<(&'static str, String)>, RunError> {
+    Ok(Vec::new())
+}
+
 /// Writes `content` to `path`, with its directories.
 async fn write_file(path: &Path, content: &str) -> Result<(), RunError> {
     let lay_down = |source| RunError::LayDown {
@@ -107,6 +113,10 @@ pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch,
     env.insert(env_name(PATH_VARIABLE)?, agent_path(parts)?);
     // The `agent` commands the run starts (`agent gate`) find the daemon of this home.
     env.insert(env_name(HOME_VARIABLE)?, utf8(parts.store.home().root())?.to_owned());
+    // The commits of the run are the agent's: this wins over a secret of the same name.
+    for (name, value) in identity_env(&job.identity)? {
+        env.insert(env_name(name)?, value);
+    }
     // What the adapter sets is what its CLI needs to work: it wins over a secret of the same name.
     env.extend(spec.env);
     Ok(Launch {
