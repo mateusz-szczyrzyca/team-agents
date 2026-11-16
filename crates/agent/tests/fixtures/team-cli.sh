@@ -19,6 +19,7 @@
 #   late:TEXT       waits until the other reviewer of the pass has its verdict in `state.json`, then ends with TEXT and STATUS: DONE
 #   work            commits a file in the worktree, records that the repository's gate passed at the new head (the file
 #                   `gate.json` in the task's directory in the home the configuration names) and ends with STATUS: DONE
+#   work-pushed     like `work`, and pushes the branch to origin itself before it ends
 #   commit          commits a file in the worktree, records no gate and ends with STATUS: DONE: the gate that was recorded
 #                   is of an older commit
 #   ask             writes a questions file to the path the prompt names (the first `.../questions-N.md` in it) and ends
@@ -165,6 +166,13 @@ case $action in
     commit_work
     record_gate
     result 'Finished the item.\nSTATUS: DONE'
+    ;;
+  work-pushed)
+    # Like `work`, and pushes the branch itself, as an agent that does not leave the push to the harness.
+    commit_work
+    record_gate
+    git "${GIT_FIXTURE[@]}" push -q origin HEAD
+    result 'Finished the item and pushed it.\nSTATUS: DONE'
     ;;
   commit)
     commit_work

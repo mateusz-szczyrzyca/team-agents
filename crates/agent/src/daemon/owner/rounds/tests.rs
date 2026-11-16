@@ -514,6 +514,34 @@ async fn a_fixed_branch_updates_the_pull_request_and_is_reviewed_again_until_it_
     }
 }
 
+// Rule: a fix that origin has already (the agent pushed it itself, or GitHub was slow to show the harness's own push)
+// is still a fix the reviewers have not seen: it goes to them.
+#[tokio::test]
+async fn a_fix_that_is_on_origin_already_is_still_reviewed_again() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,work-pushed"),
+            investigator("inv-r1", CHANGES_ONCE),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let comments = rig.github.comments(1);
+    assert_eq!(comments.len(), 1, "{comments:?}");
+    let branch = format!("agents/claude-1/{}-1.1", tasks[0]);
+    assert!(comments[0].contains(&rig.remote_tip(&branch)), "{}", comments[0]);
+    assert_eq!(rig.github.reviews(1).len(), 4);
+}
+
 #[tokio::test]
 async fn a_fix_pass_whose_gate_has_not_passed_does_not_update_the_pull_request() {
     let mut rig = Rig::new(
