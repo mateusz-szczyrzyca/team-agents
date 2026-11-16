@@ -17,7 +17,7 @@ use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
 use agent_runtime::notify::{InvalidNotification, Notification};
 
 /// Every notice that can be sent to the human.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::VariantArray)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum NoticeKind {
     /// Questions were asked (`run/notice-questions`).
     Questions,
