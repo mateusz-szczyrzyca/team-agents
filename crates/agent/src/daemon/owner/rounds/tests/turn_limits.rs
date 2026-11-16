@@ -143,3 +143,43 @@ async fn one_resume_allows_two_turn_limits_then_fails_and_notifies_once() {
             .all(|r| r.end.as_ref().unwrap().value.end == RunEnd::TurnLimit)
     );
 }
+
+#[tokio::test]
+async fn exhausted_team_member_notifies_the_coordinator_on_the_bus() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "turn-limit"),
+            investigator("inv-coord", "done"),
+            investigator("inv-r1", "done"),
+            investigator("inv-r2", "done"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.pin_turn_limit_clock();
+    let path = rig.home.config_file();
+    let config = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(path, format!("{config}\n[limits]\nturn_limit_resumes = 0\n")).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(
+            &["inv-coord", "claude-1"],
+            super::rig::ONE,
+            MergeMode::Autopilot,
+            Some("inv-coord"),
+        )
+        .await;
+    let member_task = tasks
+        .iter()
+        .find(|id| rig.state().find_task(id).unwrap().member.agent().name() == "claude-1")
+        .unwrap()
+        .clone();
+    rig.status_is(&member_task, TaskStatus::Failed).await;
+    rig.stop().await.unwrap();
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
+    assert!(
+        messages.contains("\"to\":\"inv-coord\"") && messages.contains("claude-1"),
+        "{messages}"
+    );
+}
