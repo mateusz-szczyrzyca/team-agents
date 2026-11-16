@@ -801,7 +801,8 @@ pub enum AfterTurnLimit {
 /// Counts consecutive turn-limit endings at the tail of persisted runs.
 #[must_use]
 pub fn consecutive_turn_limits(runs: &[crate::state::Run]) -> u64 {
-    runs.iter()
+    let count = runs
+        .iter()
         .rev()
         .take_while(|run| {
             matches!(
@@ -812,7 +813,8 @@ pub fn consecutive_turn_limits(runs: &[crate::state::Run]) -> u64 {
                 }
             )
         })
-        .fold(0_u64, |count, _| count.saturating_add(1))
+        .count();
+    u64::try_from(count).unwrap_or(u64::MAX)
 }
 
 /// Decides whether the current turn-limit ending may be followed by another run.

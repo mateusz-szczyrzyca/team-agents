@@ -45,7 +45,6 @@ pub(super) enum Notice {
         limit: u32,
     },
     /// A turn-limited run had no session ID to continue.
-    #[cfg_attr(not(test), expect(dead_code, reason = "wired in the following GREEN commit"))]
     TurnLimitNoSession,
     /// The task waits for a provider's limit to end.
     Paused {

@@ -490,7 +490,9 @@ These choices are in the model and are expensive to change once state files exis
 7. **One run at a time per task; questions are numbered 1, 2, 3, …** without gaps, and earlier questions must be
    answered first.
 8. **`RunEnd` lists what ends a run** (reported status, no status, quota, rate limit, turn limit, hung, stopped). Item 3.1
-   classifies a final message and an exit status into it; a new kind of ending is a new variant and a schema change.
+   classifies a final message and an exit status into it. Adding a variant without changing existing variants or fields keeps
+   old state files valid under the current `schema_version` ("Reading and its rules" above: `schema_version` rises only for a
+   change that old files do not satisfy), while raising the protocol version and migrating the history schema.
 9. **Time is RFC 3339 in UTC** as text, not Unix seconds: a human can read a state file.
 10. **The protocol carries `repo` and `checkout`** in `run`: the daemon creates the worktrees from the client's checkout
     and takes the base branch and the gate from the configuration by the repository's name.

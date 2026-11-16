@@ -333,7 +333,6 @@ fn team_prompt(
     answers: Option<&str>,
 ) -> Result<String, StartProblem> {
     let (team, member) = (found.team, found.member);
-
     let base = ctx
         .settings
         .config
