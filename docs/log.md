@@ -256,6 +256,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `bus_down` | `warn` | An `agentbus` operation fails and what waits for it is retried or dropped. |
 | `git_call_failed` | `warn` | A `git` call, worktree operation or branch operation fails or is retried. |
 | `github_call_failed` | `warn` | A GitHub API call, a publication or a merge fails or is retried, or the home has no GitHub token. |
+| `publication_waits` | `warn` | A finished branch is not published: waiting for a passing gate at the tip on a clean tree, with `branch`, `reason`, `tip` and, when there is a record, `gate_head`. |
 | `gate_cannot_start` | `warn` | A gate command cannot start or be recorded. |
 | `gate_timed_out` | `warn` | A gate command exceeds its timeout and is killed. |
 | `gate_dirty_tree` | `warn` | A gate runs on or leaves a dirty worktree or moves `HEAD`. |

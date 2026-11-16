@@ -226,6 +226,7 @@ impl LogEvent {
             | Self::BusDown
             | Self::GitCallFailed
             | Self::GithubCallFailed
+            | Self::PublicationWaits
             | Self::GateCannotStart
             | Self::GateTimedOut
             | Self::GateDirtyTree
@@ -234,7 +235,6 @@ impl LogEvent {
             | Self::RequestRefused
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
-            | Self::PublicationWaits
             | Self::RoundChanged
             | Self::ItemPhaseChanged
             | Self::TaskStatusChanged
