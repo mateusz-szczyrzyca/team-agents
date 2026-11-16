@@ -54,6 +54,7 @@ and when (8.7); tokens (11.1).
 | `checks` | the checks before a review sent the round back or put a question to the human | |
 | `answers` | the human answered the task's questions | |
 | `resumed_by_human` | the human stopped the task and let it go on (`agent resume`, `unpause`) | |
+| `turn_limit` | the preceding run exhausted its turn budget; this run resumes that session | |
 | `continuation` | the task goes on after a restart of the daemon, a hang or a limit | |
 
 ### How a participant got its role
@@ -273,7 +274,7 @@ when the next daemon finds it going and ends it with no status.
 |---|---|---|
 | `run` | TEXT, key | the run (foreign key to `runs`) |
 | `at` | TEXT | when it ended; never before `runs.at` |
-| `how` | TEXT | `reported` (the agent's last line was `STATUS: …`), `no_status`, `quota_exhausted`, `rate_limited`, `hung` (the watchdog), `stopped` (the human) |
+| `how` | TEXT | `reported` (the agent's last line was `STATUS: …`), `no_status`, `quota_exhausted`, `rate_limited`, `turn_limit` (the CLI turn budget), `hung` (the watchdog), `stopped` (the human) |
 | `outcome` | TEXT | for `reported`: `DONE`, `QUESTIONS`, `FAILED`, `SLEEPING` or `EXCLUDED` |
 | `exit_code` | INTEGER | for `no_status`: the CLI's exit code; `NULL` when a signal ended it (or the daemon was killed) |
 | `resets_at` | TEXT | for `quota_exhausted`: when the CLI says the quota is back, if it says |
@@ -689,3 +690,7 @@ Rust tasks no longer write `activity.jsonl`. Their steps are recorded once in th
 returns the task's steps across its runs in run order and step order. Existing activity consumers and their tests
 now use that API. Legacy activity paths may remain on disk and are not read or migrated. Raw CLI output files are
 unchanged and have a separate confidentiality contract. Disabling history consequently disables stored task steps.
+
+Schema `7` adds `turn_limit` to run endings and run-start reasons through a forward migration. Existing histories
+retain all run IDs, links, records and search entries. The reason has no associated fields; the ending has no
+outcome, exit code or reset timestamp. SQL constraints and the reading API both reject those extra fields.

@@ -76,6 +76,10 @@ hang_strikes = 3
 # are read to recognise these limits.
 
 [limits]
+# Per-run turn budget for CLIs that support one (currently Claude Code); must be positive.
+max_turns = 300
+# Consecutive turn-limit continuations in the same session; 0 disables automatic continuation.
+turn_limit_resumes = 3
 quota_pause_minutes = 30
 rate_limit_pause_minutes = 5
 tail_lines = 30

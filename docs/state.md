@@ -130,6 +130,7 @@ none; its state is `running` or `ended` with a time and **how**:
 | `no_status` | `exit_code?` | the CLI ended without a `STATUS:` line (no code: a signal) |
 | `quota_exhausted` | `resets_at?` | the quota is used up; the time the CLI gave, if it gave one |
 | `rate_limited` | | the provider limited the rate of requests |
+| `turn_limit` | | the CLI exhausted its per-run turn budget; queued for bounded same-session continuation |
 | `hung` | | no activity for too long; the watchdog stopped it |
 | `stopped` | | the human stopped it |
 
@@ -276,9 +277,9 @@ A client sends a **request**; the daemon answers with a **response** carrying th
 
 | Direction | Line | Limit |
 |---|---|---|
-| client → daemon | `{"protocol":2,"id":N,"client":{…},"request":{"command":"…",…}}` | 2 MiB (a task list is at most 1 MiB) |
-| daemon → client | `{"type":"response","protocol":2,"id":N,"result":{…}}` | 32 MiB |
-| daemon → client | `{"type":"event","protocol":2,"at":"…","event":{"kind":"…",…}}` | 32 MiB |
+| client → daemon | `{"protocol":3,"id":N,"client":{…},"request":{"command":"…",…}}` | 2 MiB (a task list is at most 1 MiB) |
+| daemon → client | `{"type":"response","protocol":3,"id":N,"result":{…}}` | 32 MiB |
+| daemon → client | `{"type":"event","protocol":3,"at":"…","event":{"kind":"…",…}}` | 32 MiB |
 
 The `id` is the client's number for the request, any `u64`, echoed so that a client can match answers. The `client`
 says who asks — `{"kind":"cli"}` or `{"kind":"dashboard","login":"you@example.com"}` — and the daemon names it in the
@@ -286,9 +287,9 @@ activity of a control (who paused, who answered).
 
 ### Versions
 
-Every line carries `"protocol": 2`. A reader looks at **the version first** and refuses a line of another version with
-`ProtocolError::UnsupportedVersion { found }`, whatever else the line says: a client of version 3 that sends a request
-this daemon does not know gets that answer and not a parse error, and so does a line of version 1. A line without a usable
+Every line carries `"protocol": 3`. A reader looks at **the version first** and refuses a line of another version with
+`ProtocolError::UnsupportedVersion { found }`, whatever else the line says: a client of version 4 that sends a request
+this daemon does not know gets that answer and not a parse error, and so does a line of version 1 or 2. A line without a usable
 version, or not JSON, is `Malformed` (with the parser's reason); a line over the limit is `TooLong`. A change to a message that
 old peers cannot read raises the version.
 
@@ -394,10 +395,10 @@ wrong and what to do — and carries no internals.
 | `gate_finished` | `task`, `outcome` |
 | `controlled` | `task?` (absent: the whole team), `action` (`stop`, `pause`, `unpause`, `resume`, `say`), `by` (the client) |
 
-The lines of version 2 are pinned by [`protocol-v2-requests.jsonl`](../crates/agent-core/tests/fixtures/protocol-v2-requests.jsonl)
-and [`protocol-v2-frames.jsonl`](../crates/agent-core/tests/fixtures/protocol-v2-frames.jsonl), and the lines about rounds by
-[`protocol-v2-round-requests.jsonl`](../crates/agent-core/tests/fixtures/protocol-v2-round-requests.jsonl) and
-[`protocol-v2-round-frames.jsonl`](../crates/agent-core/tests/fixtures/protocol-v2-round-frames.jsonl): a test reads each line
+The lines of version 3 are pinned by [`protocol-v3-requests.jsonl`](../crates/agent-core/tests/fixtures/protocol-v3-requests.jsonl)
+and [`protocol-v3-frames.jsonl`](../crates/agent-core/tests/fixtures/protocol-v3-frames.jsonl), and the lines about rounds by
+[`protocol-v3-round-requests.jsonl`](../crates/agent-core/tests/fixtures/protocol-v3-round-requests.jsonl) and
+[`protocol-v3-round-frames.jsonl`](../crates/agent-core/tests/fixtures/protocol-v3-round-frames.jsonl): a test reads each line
 and writes it back to the same text. The lines of version 1 ([`protocol-v1-requests.jsonl`](../crates/agent-core/tests/fixtures/protocol-v1-requests.jsonl),
 [`protocol-v1-frames.jsonl`](../crates/agent-core/tests/fixtures/protocol-v1-frames.jsonl)) are kept: a test checks that each is
 refused as an unsupported version.
@@ -488,7 +489,7 @@ These choices are in the model and are expensive to change once state files exis
    counter.
 7. **One run at a time per task; questions are numbered 1, 2, 3, …** without gaps, and earlier questions must be
    answered first.
-8. **`RunEnd` lists what ends a run** (reported status, no status, quota, rate limit, hung, stopped). Item 3.1
+8. **`RunEnd` lists what ends a run** (reported status, no status, quota, rate limit, turn limit, hung, stopped). Item 3.1
    classifies a final message and an exit status into it; a new kind of ending is a new variant and a schema change.
 9. **Time is RFC 3339 in UTC** as text, not Unix seconds: a human can read a state file.
 10. **The protocol carries `repo` and `checkout`** in `run`: the daemon creates the worktrees from the client's checkout
@@ -528,3 +529,15 @@ These choices are in the model and are expensive to change once state files exis
     the record of the checks (`checks.json`) reads the old key as well as the new.
 22. **A round is looked at with `status` and `show`, not controlled.** A control of a round is `invalid`: stop its team or one of
     its tasks.
+
+### Turn-limit compatibility (item 8.8)
+
+State schema `2` is unchanged: old state files still satisfy the contract, including runs without a turn-limit
+ending. No counter field is added. The count is the consecutive suffix of `turn_limit` endings of the task;
+any other ending resets it. A queued task with such a last end resumes once in that run's session after restart.
+Older binaries cannot read a state containing the new end and must not be used to downgrade a running installation.
+
+Protocol `3` adds the `turn_limit` end in run events and status details. Both peers must use version `3`;
+version `1` and `2` fixtures are retained unchanged and are rejected before their payload is parsed. This follows
+the protocol rule for messages old peers cannot read. History schema `7` migrates the closed keyword constraints
+for run endings and reasons while preserving existing rows and references. A newer history is refused untouched.
