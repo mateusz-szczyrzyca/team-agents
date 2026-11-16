@@ -179,11 +179,11 @@ impl VscodeOpener {
     fn discover(&self) -> Result<Found, OpenError> {
         let mut clis = Vec::new();
         for server in &self.server_dirs {
-            for build in children(&server.join("cli/servers"))? {
-                clis.extend(children(&build.join("server/bin/remote-cli"))?);
+            for build in server_children(&server.join("cli/servers"))? {
+                clis.extend(server_children(&build.join("server/bin/remote-cli"))?);
             }
-            for build in children(&server.join("bin"))? {
-                clis.extend(children(&build.join("bin/remote-cli"))?);
+            for build in server_children(&server.join("bin"))? {
+                clis.extend(server_children(&build.join("bin/remote-cli"))?);
             }
         }
         let program = newest(clis)?;
@@ -207,6 +207,15 @@ struct Found {
 /// What a window that did not answer is said to have said: the failure and its causes, so that a human sees why.
 fn said_by_a_failed_capture(error: &CaptureError) -> String {
     error_chain(error)
+}
+
+/// Server entries, treating a path through a non-directory as an absent server layout.
+fn server_children(dir: &Path) -> Result<Vec<PathBuf>, OpenError> {
+    match children(dir) {
+        // Plain files beside builds or in place of remote-cli are not server layouts.
+        Err(OpenError::List { source, .. }) if source.kind() == io::ErrorKind::NotADirectory => Ok(Vec::new()),
+        result => result,
+    }
 }
 
 /// The entries of `dir`; none when the directory is not there.
