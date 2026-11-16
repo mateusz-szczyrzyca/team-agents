@@ -190,9 +190,10 @@ impl Owner {
             .team(site.team)
             .and_then(|team| team.open_rounds().next().map(|round| round.id().clone()));
 
-        let span = match open_round {
-            Some(round) => tracing::error_span!("publish", team = %site.team, round = %round, task = %lead.task),
-            None => tracing::error_span!("publish", team = %site.team, task = %lead.task),
+        let span = if let Some(round) = open_round {
+            tracing::error_span!("publish", team = %site.team, round = %round, task = %lead.task)
+        } else {
+            tracing::error_span!("publish", team = %site.team, task = %lead.task)
         };
         let _entered = span.enter();
 
