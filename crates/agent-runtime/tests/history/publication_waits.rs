@@ -56,6 +56,12 @@ fn version_seven_fixture_remains_readable_and_migrates_to_version_eight() {
          'publication_waits', 'waits', '{}', 1, '');",
     );
     assert!(check_fails.is_err(), "v7 schema must reject publication_waits");
+    assert!(matches!(
+        check_fails,
+        Err(rusqlite::Error::SqliteFailure(source, _))
+            if source.code == rusqlite::ErrorCode::ConstraintViolation
+                && source.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_CHECK
+    ));
     drop(raw);
 
     // Before migration, Reader can read existing records and logs with round links
