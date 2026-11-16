@@ -283,7 +283,21 @@ mod run_history {
         assert_eq!(launch.at, now());
         assert!(!launch.prompt_in_file);
         let names: Vec<&str> = launch.env_names.iter().map(EnvName::as_str).collect();
-        assert_eq!(names, ["AGENTS_HOME", "FAKE_SECRET", "PATH"]);
+        assert_eq!(
+            names,
+            [
+                "AGENTS_HOME",
+                "FAKE_SECRET",
+                "GIT_AUTHOR_EMAIL",
+                "GIT_AUTHOR_NAME",
+                "GIT_COMMITTER_EMAIL",
+                "GIT_COMMITTER_NAME",
+                "GIT_CONFIG_COUNT",
+                "GIT_CONFIG_KEY_0",
+                "GIT_CONFIG_VALUE_0",
+                "PATH",
+            ]
+        );
     }
 
     // Rule: a prompt too long for a command line is recorded as sent through a file; the CLI saw the pointer.

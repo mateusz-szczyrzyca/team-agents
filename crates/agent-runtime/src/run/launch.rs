@@ -65,8 +65,32 @@ fn env_name(name: &'static str) -> Result<EnvName, RunError> {
 
 /// What makes the `git` an agent runs commit as `identity`: the author and the committer, and whether and with which
 /// key a commit is signed. Without it the commits of a run are the human's, whose configuration git reads.
-fn identity_env(_identity: &CommitIdentity) -> Result<Vec<(&'static str, String)>, RunError> {
-    Ok(Vec::new())
+fn identity_env(identity: &CommitIdentity) -> Result<Vec<(&'static str, String)>, RunError> {
+    let mut env = vec![
+        ("GIT_AUTHOR_NAME", identity.name().to_owned()),
+        ("GIT_AUTHOR_EMAIL", identity.email().to_owned()),
+        ("GIT_COMMITTER_NAME", identity.name().to_owned()),
+        ("GIT_COMMITTER_EMAIL", identity.email().to_owned()),
+    ];
+    // Configuration given in the environment wins over the files of the human and of the repository.
+    match identity.signing_key() {
+        Some(key) => env.extend([
+            ("GIT_CONFIG_COUNT", "3".to_owned()),
+            ("GIT_CONFIG_KEY_0", "commit.gpgsign".to_owned()),
+            ("GIT_CONFIG_VALUE_0", "true".to_owned()),
+            ("GIT_CONFIG_KEY_1", "gpg.format".to_owned()),
+            ("GIT_CONFIG_VALUE_1", "ssh".to_owned()),
+            ("GIT_CONFIG_KEY_2", "user.signingkey".to_owned()),
+            ("GIT_CONFIG_VALUE_2", utf8(key.as_path())?.to_owned()),
+        ]),
+        // The human's own configuration may sign every commit with a key the agent does not have.
+        None => env.extend([
+            ("GIT_CONFIG_COUNT", "1".to_owned()),
+            ("GIT_CONFIG_KEY_0", "commit.gpgsign".to_owned()),
+            ("GIT_CONFIG_VALUE_0", "false".to_owned()),
+        ]),
+    }
+    Ok(env)
 }
 
 /// Writes `content` to `path`, with its directories.
