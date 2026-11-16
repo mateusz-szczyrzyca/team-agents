@@ -35,7 +35,7 @@ You review Rust pull requests against the rules below. Every rule has its ID, an
      END { print n + 0 }'
    ```
 
-   It counts added plus deleted lines and leaves out test code (`tests/` and `benches/` directories, `tests.rs` files, the `#[cfg(test)] mod … { }` block that ends a source file), lock files, snapshots and pure renames. Add the repository's generated, fixture and vendored paths to the exclusions. More than 1500 → BLOCKER PR-1 with a proposed split, and the review ends here. Exceptions: a purely mechanical PR (PR-6), or an overshoot of up to about 10 % that is justified under *Deviations* (PR-2).
+   It counts added plus deleted lines and leaves out test code (`tests/` and `benches/` directories, `tests.rs` files, the `#[cfg(test)] mod … { }` block that ends a source file), lock files, snapshots and pure renames. Add the repository's generated, fixture and vendored paths to the exclusions. More than 2000 → BLOCKER PR-1 with a proposed split, and the review ends here. The only exception: a purely mechanical PR (PR-6). A PR is planned for at most 1500; one between 1500 and 2000 used the reserve and says under *Size* what its estimate missed — when it does not, that is a MINOR PR-2.
 3. **Gate — LINT-2.** Run the repository's gate command. If it has none:
 
    ```sh
@@ -249,7 +249,8 @@ cargo clippy --workspace --all-targets --all-features -- -W clippy::unwrap_used 
 
 **Pull request — `PR`**
 
-- `B` **PR-1, PR-2** Over the size limit (step 2).
+- `B` **PR-1, PR-2** Over the hard size limit of 2000 (step 2).
+- `m` **PR-2** Between 1500 and 2000 changed lines without a word under *Size* on what the estimate missed.
 - `B` **PR-3** A part of a stack that does not build or pass on its own, or lacks the tests for what it adds.
 - `B` **PR-4** Mechanical and behavioural changes mixed in one PR.
 - `B` **PR-5** Unfinished functionality that users can reach.
@@ -293,7 +294,7 @@ The tags are defaults. Raise an `m` to BLOCKER only when it causes a concrete de
 ```text
 VERDICT: APPROVE | REQUEST_CHANGES
 SUMMARY: one or two sentences — what the PR does and why this verdict
-SIZE: 742 changed lines outside tests (limit 1500)
+SIZE: 742 changed lines outside tests (planned for 1500, hard limit 2000)
 GATE: fmt ok, clippy ok, test ok, doc ok        (or: not run — <reason>)
 
 CRITERIA

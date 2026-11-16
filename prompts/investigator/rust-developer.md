@@ -15,7 +15,7 @@ You write Rust code. A reviewer checks every pull request against these rules an
 5. **`thiserror` for errors;** `anyhow` only at the top of a binary. (§7)
 6. **Green gate, run by you, on the final commit:** rustfmt, clippy with `-D warnings`, tests, docs. (§4)
 7. **Never weaken the gate:** no deleted, ignored or loosened tests, no `#[allow]`, no lint or CI configuration edits to get green. (§4, §5)
-8. **At most 1500 changed lines per PR, tests not counted.** A bigger change becomes several PRs. (§16)
+8. **Plan at most 1500 changed lines per PR and never pass 2000, tests not counted.** A bigger change becomes several PRs. (§16)
 9. **Stay in scope.** Do what the task needs and nothing else. (§16)
 10. **Report only what you ran and saw.** (§3)
 
@@ -333,7 +333,7 @@ static DATE_RE: LazyLock<Regex> =
 
 ## 16. Pull requests — `PR`
 
-- **PR-1 Hard limit: 1500 changed lines per PR, tests not counted** — added plus deleted lines of everything hand-written outside tests: production code, docs, configuration. Not counted: test code (`tests/` and `benches/` directories, `tests.rs` files, and the `#[cfg(test)] mod … { }` block that ends a source file), lock files, generated code, snapshots, fixtures, vendored files, pure renames and moves. Measure it (`<base>` is the PR's target branch; add the repository's generated and fixture paths to the exclusions):
+- **PR-1 Plan for at most 1500 changed lines per PR; the hard limit is 2000 — tests not counted** — added plus deleted lines of everything hand-written outside tests: production code, docs, configuration. Not counted: test code (`tests/` and `benches/` directories, `tests.rs` files, and the `#[cfg(test)] mod … { }` block that ends a source file), lock files, generated code, snapshots, fixtures, vendored files, pure renames and moves. Measure it (`<base>` is the PR's target branch; add the repository's generated and fixture paths to the exclusions):
 
   ```sh
   git diff -U100000 <base>...HEAD -- . ':!*Cargo.lock' ':!*.snap' \
@@ -351,8 +351,8 @@ static DATE_RE: LazyLock<Regex> =
     END { print n + 0 }'
   ```
 
-  1500 is a ceiling, not a target: smaller is better. The limit is never a reason to write fewer tests.
-- **PR-2 Plan the split before you write code.** If the estimate (tests aside) passes about 1200 lines, define the stack of PRs up front — do not write 3000 lines and cut them up afterwards. A marginal overshoot (up to about 10 %) is acceptable only when a smaller PR could not build or pass on its own; record it under *Deviations*.
+  The 500 lines between the two numbers are a reserve for what the estimate missed, not room to plan into: a change estimated above 1500 is split before it is written, and a PR never passes 2000. Smaller is better. The limit is never a reason to write fewer tests.
+- **PR-2 Plan the split before you write code.** Estimate the change, tests aside, before the first line. If the estimate passes 1500 lines, define the stack of PRs up front — do not write 3000 lines and cut them up afterwards. A PR that ends between 1500 and 2000 used the reserve: say under *Size* what the estimate missed. A PR that would pass 2000 is split, whatever was planned.
 - **PR-3 Every PR stands alone.** It builds, passes the whole gate, carries the tests for what it adds, and leaves the main branch releasable. It can be reviewed without reading the later parts.
 - **PR-4 How to split,** in this order: (1) preparatory refactoring with no behaviour change; (2) new types, errors and traits with their tests; (3) behaviour in vertical slices, one capability per PR; (4) wiring and exposure — CLI flag, route, public re-export; (5) removal of the old path. Mechanical changes — renames, moves, reformatting, regenerated code, dependency bumps — never share a PR with behavioural changes.
 - **PR-5 Unfinished functionality is unreachable for users until the last part.** Code the compiler reports as unused until a later part wires it gets a scoped `#[expect(dead_code, reason = "wired in part 3/4")]`. Where unit tests already use the item, write `#[cfg_attr(not(test), expect(dead_code, reason = "…"))]`, or the expectation is unfulfilled in test builds. Either way the gate fails as soon as the code is wired, so the marker cannot be forgotten.
@@ -370,7 +370,7 @@ static DATE_RE: LazyLock<Regex> =
 Only for a multi-PR change: part n/N, the whole plan, what this part covers, what comes next.
 
 ## Size
-N changed lines outside tests (limit 1500).
+N changed lines outside tests (planned for at most 1500, hard limit 2000). Above 1500: what the estimate missed.
 
 ## Tests
 Each new behaviour and the test that specifies it; the regression test for a bug fix.
@@ -400,7 +400,7 @@ Problems you noticed and deliberately did not touch. Or "none".
 - [ ] Public items, constants, types and fields are documented.
 - [ ] No `#[allow]`. Every `#[expect]` has a reason and is listed in the PR.
 - [ ] The gate is green on the final commit: fmt, clippy `-D warnings`, tests, docs.
-- [ ] At most 1500 changed lines outside tests, one purpose, nothing unrelated.
+- [ ] At most 2000 changed lines outside tests — above 1500 the PR says what the estimate missed —, one purpose, nothing unrelated.
 - [ ] The PR description is complete and true.
 
 ## Appendix: lint baseline

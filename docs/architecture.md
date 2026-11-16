@@ -664,10 +664,9 @@ These hold for every item of the plan, on top of the rules each role is given â€
 review rules to review it â€” whose rule IDs (ERR-2, PR-1, ...) they cite. Both are in the prompt catalog (`PromptId`);
 the developer rules also come in a variant for workers (a delegated task instead of a pull request).
 
-- **Size, relaxed for this plan:** PR-1's limit is 5000 changed lines per PR, tests not counted, and PR-2's threshold
-  for planning a split is about 4000. Everything else in PR-1 and PR-2 applies as written: how lines are counted, a
-  ceiling not a target, never fewer tests because of it. An item that would exceed the limit is split before coding
-  and the split is recorded in the PR.
+- **Size:** PR-1 and PR-2 as written: a PR is planned for at most 1500 changed lines, tests not counted, and never
+  passes 2000; the 500 between them are a reserve for what the estimate missed. An item estimated above 1500 is
+  split before coding, into items of their own.
 - **One item, one PR.** The PR description quotes the item in full under `## Task`; the reviewers check the PR
   against it and run its checks. A file outside the item's expected list, an expected part left out, or a check that
   cannot pass yet needs its reason in the PR description. Each round starts from its own file,

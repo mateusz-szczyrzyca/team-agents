@@ -232,11 +232,11 @@ model and the rules every item of the plan "Rewrite `bin/agent` in Rust" follows
 - **Rules:** each role is given its own rules by the harness — the developer rules to write Rust, the review rules to
   review it — cited by rule ID (ERR-2, PR-1, ...). For code under `crates/` they take the place of the Go and Bash sections of this
   file; the rules of "Never", "Tests", "Commits and pull requests" and "Definition of done" still hold.
-- **Size of a PR of the Rust plan — relaxed:** PR-1's limit is **5000** changed lines per PR, tests not counted, and
-  PR-2's threshold for planning a split is about **4000**. Everything else in PR-1 and PR-2 applies as written: how
-  lines are counted (the PR-1 command, not `agent round-size`), a ceiling not a target, never fewer tests because of
-  it. For these PRs this limit replaces the 3000 lines of "Rounds". An item that would exceed it is split before
-  coding, and the split is recorded in the PR.
+- **Size of a PR of the Rust plan:** PR-1 and PR-2 as written, with no relaxation: a PR is planned for at most
+  **1500** changed lines, tests not counted, and never passes **2000** — the 500 between them are a reserve for what
+  the estimate missed, not room to plan into. Lines are counted with the PR-1 command, not `agent round-size`. For
+  these PRs this replaces the 3000 lines of "Rounds". A task estimated above 1500 is split before coding, into
+  tasks of their own.
 - **Check:** `make rust` — `cargo fmt --check`, clippy with `-D warnings`, the tests and `cargo doc` with warnings
   denied, all `--locked`. `make gate` runs it, and nothing else; the existing CI workflow runs
   `make lint`, including the Rust gate. The lint baseline is `[workspace.lints]` in `Cargo.toml`; a lint is suppressed only with `#[expect(..., reason = "...")]` on the smallest
@@ -296,8 +296,8 @@ A PR changes at most 3000 lines (added + deleted, tests included, generated and 
 round `main` builds and passes `make gate`; unfinished work is dead code or a stub returning a typed "not
 implemented" error; no test is written ahead of its round, and a skip is an exception
 with a reason outside the code, listed in the PR's `## Skipped tests` section (`docs/tdd.md`, "Skipped tests").
-Check the size with `agent round-size <task>`. A PR of the Rust plan counts and limits its size as PR-1 does, with the
-relaxed limit of "Rust".
+Check the size with `agent round-size <task>`. A PR of the Rust plan counts and limits its size as PR-1 does (section
+"Rust").
 
 ## Definition of done
 

@@ -335,7 +335,7 @@ static DATE_RE: LazyLock<Regex> =
 
 The requester opens the pull request; these rules decide what you hand over.
 
-- **PR-1 The size limit is the pull request's, not yours to spend.** At most 1500 changed lines per PR outside tests, unless the task or `AGENTS.md` says another number. Your part is a small slice of it: count your changed lines outside tests, and if they approach a third of the limit, stop and report. The limit is never a reason to write fewer tests.
+- **PR-1 The size limit is the pull request's, not yours to spend.** A pull request is planned for at most 1500 changed lines outside tests and never passes 2000, unless the task or `AGENTS.md` says other numbers. Your part is a small slice of it: count your changed lines outside tests, and if they approach a third of the limit, stop and report. The limit is never a reason to write fewer tests.
 - **PR-2 Plan the split before you write code.** If the estimate (tests aside) shows the task is bigger than a small slice, do not start: say so in your result and propose the stack of changes.
 - **PR-3 Your work stands alone.** It builds, passes the whole gate, carries the tests for what it adds, and can be reviewed without reading anything you did not hand over.
 - **PR-4 How to split,** in this order: (1) preparatory refactoring with no behaviour change; (2) new types, errors and traits with their tests; (3) behaviour in vertical slices, one capability at a time; (4) wiring and exposure; (5) removal of the old path. Mechanical changes — renames, moves, reformatting, regenerated code, dependency bumps — never share a change with behavioural ones.

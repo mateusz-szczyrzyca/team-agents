@@ -7,11 +7,10 @@ Ground rules
 
 - Each role is given its own rules (the developer rules to write code, the review rules to review it); they are
   binding, and their rule IDs (ERR-2, PR-1, ...) are the ones this plan cites.
-- Size, relaxed for this plan: the new `agent` is needed fast, so PR-1's limit is 5000 changed lines per PR, tests
-  not counted, and PR-2's threshold for planning a split is about 4000. Everything else in PR-1 and PR-2 applies as
-  written: how lines are counted, a ceiling not a target, never fewer tests because of it. Task 1.1 records this in
-  `AGENTS.md`, which the reviewers read first. An item that would exceed the limit is split before coding and the
-  split is recorded in the PR.
+- Size: PR-1 and PR-2 apply as written. A PR is planned for at most 1500 changed lines, tests not counted, and
+  never passes 2000: the 500 between them are a reserve for what the estimate missed, not room to plan into. An
+  item whose estimate passes 1500 is not started: its lead says so and proposes the split into items of their own.
+  (The items up to 8.8 were done under a relaxed limit of 5000, which no longer holds.)
 - Every item ends with its expected result (the files it creates or changes, what it adds, its tests, and why)
   and its checks (what anyone can run or look at to see that it works, and what they should see). The PR
   description quotes the item in full under `## Task`; the reviewers check the PR against it and run its checks.
