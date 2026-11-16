@@ -238,6 +238,10 @@ impl Default for Watchdog {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Limits {
+    /// Maximum turns of a single CLI invocation; must be positive.
+    pub max_turns: NonZeroU32,
+    /// Automatic continuations after consecutive turn-limit endings; zero disables them.
+    pub turn_limit_resumes: u32,
     /// The pause of an exhausted quota when the CLI does not say when it resets.
     pub quota_pause_minutes: Minutes,
     /// The pause of a rate limit.
@@ -249,6 +253,8 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            max_turns: NonZeroU32::MIN,
+            turn_limit_resumes: 0,
             quota_pause_minutes: Minutes::literal(DEFAULT_QUOTA_PAUSE_MINUTES),
             rate_limit_pause_minutes: Minutes::literal(DEFAULT_RATE_LIMIT_PAUSE_MINUTES),
             tail_lines: DEFAULT_TAIL_LINES,
