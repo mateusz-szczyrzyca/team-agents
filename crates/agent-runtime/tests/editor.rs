@@ -212,6 +212,30 @@ mod editor {
     }
 
     #[tokio::test]
+    async fn other_server_listing_errors_preserve_the_path_and_cause() {
+        for relative in [
+            "cli/servers",
+            "bin",
+            "cli/servers/Stable-1/server/bin/remote-cli",
+            "bin/Stable-1/bin/remote-cli",
+        ] {
+            let host = Host::new();
+            let broken = host.servers.join(relative);
+            std::fs::create_dir_all(broken.parent().unwrap()).unwrap();
+            // A self-referencing link produces ELOOP without depending on the user's permissions.
+            symlink(broken.file_name().unwrap(), &broken).unwrap();
+
+            let opened = host.opener().open(Path::new("/questions-1.md")).await;
+
+            assert!(
+                matches!(&opened, Err(OpenError::List { path, source })
+                    if *path == broken && source.raw_os_error() == Some(rustix::io::Errno::LOOP.raw_os_error())),
+                "{relative}: {opened:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn directory_links_at_both_server_levels_still_find_the_remote_command() {
         for layout in ["cli/servers", "bin"] {
             let mut host = Host::new();
