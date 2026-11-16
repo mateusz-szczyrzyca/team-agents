@@ -2,66 +2,87 @@
 
 ## Result
 
-Implementation is paused for a second, separate existing-test conflict. The human authorized the Claude adapter assertion update in clarification round `1`. That authorization remains valid. No production code or existing tests have been changed; this report is a clarification checkpoint, not the implementation of item `8.8`.
+Partial implementation is committed on `agents/inv-astra/20261116-015620`. Implementation is paused at a third existing-test conflict: the history schema needs migration `7`, but an existing test explicitly rejects version `7`. This is a clarification checkpoint, not a completed implementation of item `8.8`.
 
-## Resolved clarification
+## Implemented
 
-The human selected option `a`: rename `a_run_that_hit_its_turn_limit_failed_and_has_no_final_message` and change its stream-outcome assertion to the distinct turn-limit outcome, preserving its final-message, session and activity assertions. The test is in [`crates/agent-runtime/tests/cli_adapters/claude.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent-runtime/tests/cli_adapters/claude.rs#L235-L251).
+- Claude's `error_max_turns` produces `StreamOutcome::TurnLimit`; execution failures and successful final messages keep their existing behavior.
+- `RunEnd::TurnLimit` is classified separately, with provider quota taking precedence.
+- Protocol version `3` rejects version `2` peers; historical fixtures remain unchanged.
+- Configuration accepts `max_turns` (default `300`, nonzero) and `turn_limit_resumes` (default `3`, zero allowed).
+- Claude's adapter accepts a configured budget for both new and resumed runs; adapters without a turn budget retain their commands.
+- The pure resume policy counts consecutive turn-limit ends from persisted runs, resets after another end, bounds automatic resumes and refuses a missing session.
 
-## Blocking protocol contract
+The daemon does not yet use the continuation policy or configured turn budget. Its interim settlement still fails a turn-limit task. The history reader understands the new end, but the database schema does not yet permit recording it. Do not merge or deploy this checkpoint as completed item `8.8`.
 
-- [`docs/state.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/docs/state.md#L287-L293) requires: “A change to a message that old peers cannot read raises the version.”
-- `EventKind::RunEnded` carries `RunEnd` in [`crates/agent-core/src/protocol/event.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent-core/src/protocol/event.rs#L134-L149). Adding `turn_limit` produces an event a version `2` peer cannot deserialize.
-- `the_protocol_version_is_one_and_is_written_as_a_number` in [`crates/agent-core/src/protocol.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent-core/src/protocol.rs#L159-L179) pins the current version to `2`, despite the historical test name.
-- `a_request_with_an_unknown_protocol_version_is_refused_with_a_typed_error` in [`crates/agent-core/tests/protocol.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent-core/tests/protocol.rs#L134-L148) explicitly rejects protocol `3`.
-- Additional protocol-bearing tests and golden lines require a mechanical version update. The clarification enumerates the known files and limits permission to version inputs, expectations, fixture references and compatibility coverage.
+## Resolved clarifications
 
-[`AGENTS.md`, Never rule 1](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/AGENTS.md#L61-L65) explicitly requires stopping and asking when requested behavior conflicts with an existing test. The adapter-only authorization does not cover these protocol assertions.
+- Round `1`, option `a`: rename the existing Claude turn-limit regression test and change its outcome assertion, preserving its other assertions.
+- Round `2`, option `a`: mechanically update protocol-version assertions, inputs and fixture references for version `3`; preserve previous fixtures and unrelated assertions.
 
-## Requested decision
+## Blocking history contract
 
-The task's `questions-2.md` asks permission to update protocol-version tests for version `3`, preserve historical fixtures unchanged, add new version `3` fixtures, and test rejection of version `2` plus round trips of `turn_limit`. No authorization is assumed. The question is written in the prescribed task directory; its complete text follows for a durable copy.
+- [`crates/agent-runtime/src/history/schema.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/631f1cf6a01234c6c02deb9f4efaa5a708de4d5f/crates/agent-runtime/src/history/schema.rs) contains migrations `1`–`6`, with closed sets for run reasons and endings. Its contract requires every schema change to use a new migration.
+- [`crates/agent-runtime/tests/history/schema.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/631f1cf6a01234c6c02deb9f4efaa5a708de4d5f/crates/agent-runtime/tests/history/schema.rs#L246-L274) treats version `7` as unsupported and requires rejection without modifying the database or creating a journal.
+- [`AGENTS.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/631f1cf6a01234c6c02deb9f4efaa5a708de4d5f/AGENTS.md#L61-L65), Never rule `1`, says: “If the task requires behaviour that an existing test forbids, stop and ask the human in your questions file; wait for the answer.” The previous authorizations cover adapter and protocol tests, not this history assertion.
+
+The task's third questions file requests a narrowly scoped version-boundary update. Its complete text follows.
 
 # Questions — 20261116-015620-inv-astra
 
-## 1. May item 8.8 update existing protocol tests for the required version bump?
-Your answer to question 1 authorizes the Claude adapter assertion change; that permission remains in force. A separate compatibility conflict appears in the protocol: `EventKind::RunEnded` carries `RunEnd`, so a version 2 peer cannot deserialize the new `turn_limit` variant. [`docs/state.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/docs/state.md), “Versions”, requires: “A change to a message that old peers cannot read raises the version.” Existing tests instead pin protocol 2 and reject protocol 3. For example, [`crates/agent-core/src/protocol.rs:162`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent-core/src/protocol.rs#L162) asserts `PROTOCOL_VERSION == 2`, and [`crates/agent-core/tests/protocol.rs:135`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent-core/tests/protocol.rs#L135) requires a protocol 3 request to be rejected. [`AGENTS.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/AGENTS.md), Never rule 1, requires authorization before changing these contracts.
+## 1. May item 8.8 advance the history test's unsupported schema version?
+The authorizations from clarification rounds `1` and `2` remain in force. Recording the new `turn_limit` end and continuation reason requires a new history migration: the existing SQLite `CHECK` constraints reject those values, and shipped migrations must remain unchanged. The current schema is version `6`, so the next migration is version `7`. However, `a_database_of_a_newer_version_is_refused_and_left_byte_for_byte_as_it_was` in [`crates/agent-runtime/tests/history/schema.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/631f1cf6a01234c6c02deb9f4efaa5a708de4d5f/crates/agent-runtime/tests/history/schema.rs#L246-L274) explicitly requires version `7` to be rejected. [`AGENTS.md`](https://github.com/mateusz-szczyrzyca/team-agents/blob/631f1cf6a01234c6c02deb9f4efaa5a708de4d5f/AGENTS.md), Never rule `1`, requires authorization before changing this existing test contract.
 
-a) Authorize the protocol 2 → 3 update to existing test inputs, assertions, fixture references and descriptive names/comments — retain the existing version 1 and 2 fixtures unchanged, add version 3 fixtures, preserve all non-version assertions, and add tests that reject version 2 and round-trip `turn_limit` under version 3. This permits implementing the documented version rule and continuing item 8.8 test-first.
-b) Keep the existing protocol tests unchanged — pause item 8.8 until you provide a revised compatibility contract, since leaving protocol 2 unchanged would conflict with the documented version rule.
+a) Authorize changing this test's unsupported-version input and matching assertion from `7` to `8`, plus equivalent history-version-only updates if another existing test pins the same boundary — preserve all byte-for-byte, typed-error and no-journal assertions; preserve shipped migrations and historical fixtures; add migration and recording tests for version `7`. This allows item `8.8` to continue test-first.
+b) Keep the existing history-version test unchanged — leave item `8.8` paused until a different history compatibility contract is supplied.
 
-Known affected test files are [`crates/agent-core/src/protocol.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent-core/src/protocol.rs), [`crates/agent-core/src/protocol/event.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent-core/src/protocol/event.rs), [`crates/agent-core/src/protocol/reply.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent-core/src/protocol/reply.rs), [`crates/agent-core/tests/protocol.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent-core/tests/protocol.rs), [`crates/agent-core/tests/protocol_rounds.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent-core/tests/protocol_rounds.rs), [`crates/agent-core/tests/public_client.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent-core/tests/public_client.rs), [`crates/agent-core/tests/history_health.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent-core/tests/history_health.rs), and [`crates/agent/src/client/tests.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/1b0ff0fc44762780900369a95275d281caecfd3e/crates/agent/src/client/tests.rs). The requested permission is limited to protocol-version changes and the corresponding compatibility coverage, including any additional protocol-bearing test discovered during compilation; it does not authorize weakening unrelated assertions.
-
-**Recommended:** a) — follows the version policy required by item 8.8, preserves historical fixtures, and keeps mismatched peers from receiving messages they cannot decode. (investigator)
+**Recommended:** a) — keeps the rejection test testing a genuinely newer schema while preserving existing databases through an additive migration. (investigator)
 
 **Verdict:**
 
+## Tests
+
+Each behavior was exercised in a compiling assertion-failing $\color{red}{\textbf{RED}}$ commit before its $\color{green}{\textbf{GREEN}}$ implementation.
+
+| Behavior | Evidence |
+|---|---|
+| Claude distinguishes turn exhaustion | Authorized regression in [`crates/agent-runtime/tests/cli_adapters/claude.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/631f1cf6a01234c6c02deb9f4efaa5a708de4d5f/crates/agent-runtime/tests/cli_adapters/claude.rs); `25` Claude tests passed. |
+| Version `3` contract and rejection of version `2` | [`crates/agent-core/tests/protocol_v3.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/631f1cf6a01234c6c02deb9f4efaa5a708de4d5f/crates/agent-core/tests/protocol_v3.rs) and authorized protocol tests; targeted protocol runs passed. |
+| Configuration defaults and boundaries | [`crates/agent-core/tests/config_turn_limits.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/631f1cf6a01234c6c02deb9f4efaa5a708de4d5f/crates/agent-core/tests/config_turn_limits.rs); `3` tests passed. |
+| Adapter budgets and unchanged unsupported CLIs | [`crates/agent-runtime/tests/turn_limits.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/631f1cf6a01234c6c02deb9f4efaa5a708de4d5f/crates/agent-runtime/tests/turn_limits.rs); `2` tests passed. |
+| Turn-limit classification, quota and stop precedence | [`crates/agent-core/tests/turn_limit_outcomes.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/631f1cf6a01234c6c02deb9f4efaa5a708de4d5f/crates/agent-core/tests/turn_limit_outcomes.rs); `1` table-driven test passed. |
+| First, last allowed and refused resumes; reset and missing session | [`crates/agent-core/tests/turn_limit_policy.rs`](https://github.com/mateusz-szczyrzyca/team-agents/blob/631f1cf6a01234c6c02deb9f4efaa5a708de4d5f/crates/agent-core/tests/turn_limit_policy.rs); `2` table-driven tests passed. |
+
 ## Checks
 
-The existing version assertion was selected for a baseline run under the machine-wide test lock:
-
-```bash
-tools/test-lock.sh rust-agent-8.8-protocol-contract cargo test -p agent-core the_protocol_version_is_one_and_is_written_as_a_number --locked
-```
-
-Result: `1` passed, `0` failed, `0` ignored. This confirms the version `2` assertion is an active baseline contract. The final-commit gate result is recorded in the handoff after verification. No old Bash or Go suites or real model CLIs are run.
+- `cargo check --workspace --all-targets --locked`: passed during implementation.
+- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`: passed with `0` findings at this checkpoint.
+- `GATE_WAIT=1 make gate`: final checkpoint verification follows this report commit; the handoff records its actual result.
+- No old Bash or Go suites, real model CLIs, hardware devices or live installation were used.
 
 ## Acceptance
 
 | Criterion | Status | Evidence |
 |---|---|---|
-| `A1`: turn-limit run resumes and ends `done`, never `failed` | Not met | Implementation paused at the protocol test conflict. |
-| `A2`: configured `max_turns = 50` reaches the CLI | Not met | No configuration or launch changes made. |
+| `A1`: two runs end `done`, never `failed` | Not met | Daemon continuation and end-to-end tests remain to be implemented. |
+| `A2`: configured `max_turns = 50` reaches the fake CLI | Not met | Adapter arguments are tested; engine wiring and daemon launch evidence remain. |
+
+## Deviations
+
+- The adapter-budget RED commit [`18fe46a6`](https://github.com/mateusz-szczyrzyca/team-agents/commit/18fe46a6a5e0f0b6a5f7d05cf2a3f73a59c669db) identifies RED in its body but omits the required subject prefix. Its test failed before implementation; history was not rewritten.
+- Existing exhaustive test helpers received additive `TurnLimit` match arms required by the new enum variant; previous branches and expectations remain unchanged.
+- No tests changed after their RED commit; no new lint suppressions or dependencies.
 
 ## Skipped tests
 
-None added or changed. Implementation tests await clarification.
+None added or changed. Remaining item-specific tests are not yet implemented.
 
 ## Not done
 
-- Distinct turn-limit stream outcome and run end.
-- Configurable maximum turns and consecutive resume budget.
-- Same-session continuation prompt and daemon settlement/recovery.
-- Exhaustion notification and history recording of the continuation reason.
-- Protocol version update, compatibility tests and user documentation.
-- Pull request: intentionally not opened, as instructed.
+- History migration, continuation start reason and compatibility tests.
+- Daemon queuing, same-session prompt, configured launch budget and exhaustion notification.
+- Restart boundary, end-to-end history readback, secret-marker and golden coverage.
+- Full protocol/state round trips and generated-input invariant coverage.
+- User documentation and example configuration updates.
+- Complete behavior-to-test acceptance mapping and final implementation gate.
+- Pull request intentionally not opened, as instructed.
