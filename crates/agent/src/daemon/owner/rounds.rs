@@ -490,3 +490,7 @@ mod turn_limit_restart_tests;
 #[cfg(test)]
 #[path = "rounds/tests/turn_limit_round.rs"]
 mod turn_limit_round_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/publication_stale_gate.rs"]
+mod publication_stale_gate_tests;
