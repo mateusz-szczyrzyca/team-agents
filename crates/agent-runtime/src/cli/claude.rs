@@ -18,6 +18,7 @@ use agent_core::cli::{
     ActivityEvent, BuildRunError, CliAdapter, OutputError, OutputParser, RunMode, RunOutput, RunRequest, RunSpec,
     StreamOutcome,
 };
+use agent_core::config::Limits;
 use agent_core::kinds::CliKind;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,9 +27,6 @@ use super::{
     Progress, json_file, mcp_file, path_text, path_under, read_event, refused, serena_excludes, servers, text_event,
     tool_activity,
 };
-
-/// The turns after which Claude Code stops a headless run: a safety limit against a loop.
-const MAX_TURNS: &str = "300";
 
 /// The longest a command of the agent's Bash tool may run, by default and at most: a gate runs in the foreground.
 const BASH_TIMEOUT: Duration = Duration::from_mins(20);
@@ -44,6 +42,9 @@ const SETTINGS_FILE: &str = "claude-settings.json";
 
 /// The subtype of a `result` that ended well.
 const SUCCESS_SUBTYPE: &str = "success";
+
+/// The subtype of a `result` that used up the run's `--max-turns`.
+const MAX_TURNS_SUBTYPE: &str = "error_max_turns";
 
 /// The adapter of Claude Code.
 #[derive(Debug, Clone, Copy)]
@@ -91,6 +92,11 @@ impl CliAdapter for ClaudeAdapter {
     }
 
     fn build_run(&self, request: &RunRequest) -> Result<RunSpec, BuildRunError> {
+        self.build_run_with_max_turns(request, Limits::default().max_turns)
+    }
+
+    fn build_run_with_max_turns(&self, request: &RunRequest, max_turns: NonZeroU32) -> Result<RunSpec, BuildRunError> {
+        let max_turns = max_turns.to_string();
         let servers = servers(CliKind::Claude, request, SERENA_CONTEXT)?;
         let mcp_path = path_under(CliKind::Claude, &request.run_dir, MCP_FILE)?;
         let settings_path = path_under(CliKind::Claude, &request.run_dir, SETTINGS_FILE)?;
@@ -104,7 +110,7 @@ impl CliAdapter for ClaudeAdapter {
             "--mcp-config",
             path_text(CliKind::Claude, mcp_path.as_path())?,
             "--max-turns",
-            MAX_TURNS,
+            &max_turns,
         ]
         .map(str::to_owned)
         .into();
@@ -350,7 +356,9 @@ impl OutputParser for ClaudeParser {
                 if let Some(id) = finish.session_id.as_deref().filter(|id| !id.is_empty()) {
                     self.progress.note_session(line, id)?;
                 }
-                self.progress.stream = if finish.failed() {
+                self.progress.stream = if finish.subtype.as_deref() == Some(MAX_TURNS_SUBTYPE) {
+                    StreamOutcome::TurnLimit
+                } else if finish.failed() {
                     StreamOutcome::Failed
                 } else {
                     StreamOutcome::Succeeded

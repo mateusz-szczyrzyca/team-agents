@@ -441,7 +441,7 @@ mod tests {
 
         assert_eq!(
             value,
-            json!({"protocol": 2, "at": "2026-11-11T19:15:30Z", "event": {"kind": "team_started", "team": TEAM}})
+            json!({"protocol": 3, "at": "2026-11-11T19:15:30Z", "event": {"kind": "team_started", "team": TEAM}})
         );
         assert_eq!(serde_json::from_value::<Event>(value).unwrap(), event);
         assert_eq!(
@@ -499,7 +499,7 @@ mod tests {
             &json!({"protocol": 1, "at": "2026-11-11T19:15:30Z", "event": {"kind": "team_started", "team": TEAM}}),
         );
         assert_refused::<Event>(
-            &json!({"protocol": 2, "at": "yesterday", "event": {"kind": "team_started", "team": TEAM}}),
+            &json!({"protocol": 3, "at": "yesterday", "event": {"kind": "team_started", "team": TEAM}}),
         );
     }
 }

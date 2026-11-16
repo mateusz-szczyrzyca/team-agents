@@ -216,7 +216,8 @@ fn why_columns(why: &RunWhy) -> (Option<String>, Option<String>, Option<u32>, Op
         | RunWhy::Checks
         | RunWhy::Answers
         | RunWhy::ResumedByHuman
-        | RunWhy::Continuation => (None, None, None, None),
+        | RunWhy::Continuation
+        | RunWhy::TurnLimit => (None, None, None, None),
     }
 }
 
@@ -378,7 +379,7 @@ fn insert_end(tx: &Transaction<'_>, end: &RunEndRecord, limit: MaxTextBytes) -> 
         RunEnd::Reported { outcome } => (Some(outcome.to_string()), None, None),
         RunEnd::NoStatus { exit_code } => (None, *exit_code, None),
         RunEnd::QuotaExhausted { resets_at } => (None, None, resets_at.map(time_text)),
-        RunEnd::RateLimited | RunEnd::Hung | RunEnd::Stopped => (None, None, None),
+        RunEnd::TurnLimit | RunEnd::RateLimited | RunEnd::Hung | RunEnd::Stopped => (None, None, None),
     };
     tx.execute(
         "INSERT INTO run_ends (run, at, how, outcome, exit_code, resets_at, final_message, cut) \

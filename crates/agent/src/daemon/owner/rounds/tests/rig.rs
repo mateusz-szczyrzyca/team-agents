@@ -543,3 +543,13 @@ impl Rig {
             .fetch_add(days.checked_mul(86_400).unwrap(), Ordering::SeqCst);
     }
 }
+
+impl Rig {
+    /// Pins the injected clock for turn-budget tests without consulting wall time.
+    pub(super) fn pin_turn_limit_clock(&mut self) {
+        self.clock = TickingClock {
+            start: 1_795_000_000,
+            ticks: Arc::new(AtomicU32::new(0)),
+        };
+    }
+}

@@ -344,6 +344,8 @@ pub enum StreamOutcome {
     Succeeded,
     /// The stream ended with a result that reports an error, whatever the exit status.
     Failed,
+    /// The CLI exhausted its per-run turn budget; the session can continue.
+    TurnLimit,
     /// The stream has no result: the run was killed or the CLI broke off.
     Incomplete,
 }
@@ -390,6 +392,14 @@ pub trait CliAdapter: Send + Sync {
     /// # Errors
     /// [`BuildRunError`] when a file of the run cannot be produced.
     fn build_run(&self, request: &RunRequest) -> Result<RunSpec, BuildRunError>;
+
+    /// Builds a run with the configured turn budget. CLIs without such a limit keep their normal command.
+    ///
+    /// # Errors
+    /// [`BuildRunError`] when a file of the run cannot be produced.
+    fn build_run_with_max_turns(&self, request: &RunRequest, _max_turns: NonZeroU32) -> Result<RunSpec, BuildRunError> {
+        self.build_run(request)
+    }
 
     /// A new parser for the output of one run. It is a trait object because the CLI is chosen at run time, from
     /// the configuration.

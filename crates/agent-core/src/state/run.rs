@@ -97,6 +97,8 @@ pub enum RunEnd {
     RateLimited,
     /// The run showed no activity for too long and was stopped by the watchdog.
     Hung,
+    /// The CLI exhausted its per-run turn budget.
+    TurnLimit,
     /// The human stopped it.
     Stopped,
 }
@@ -139,6 +141,8 @@ enum RunEndWire {
     RateLimited,
     /// See [`RunEnd::Hung`].
     Hung,
+    /// See [`RunEnd::TurnLimit`].
+    TurnLimit,
     /// See [`RunEnd::Stopped`].
     Stopped,
 }
@@ -146,7 +150,12 @@ enum RunEndWire {
 strict_enum!(RunState, RunStateWire);
 strict_enum!(RunEnd, RunEndWire, |end| match end {
     RunEnd::QuotaExhausted { .. } => &["resets_at"][..],
-    RunEnd::Reported { .. } | RunEnd::NoStatus { .. } | RunEnd::RateLimited | RunEnd::Hung | RunEnd::Stopped => &[],
+    RunEnd::Reported { .. }
+    | RunEnd::NoStatus { .. }
+    | RunEnd::RateLimited
+    | RunEnd::Hung
+    | RunEnd::Stopped
+    | RunEnd::TurnLimit => &[],
 });
 
 /// Why a run could not be started, ended or given a session.

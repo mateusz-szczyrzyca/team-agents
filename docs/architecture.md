@@ -127,7 +127,7 @@ engine relies on:
   (`claude-code`, `codex`, `antigravity`, `ide`). A server that is not in the request is not configured.
 - The error tail is the CLI's stderr followed by the lines of the stream that report an error: the classifier of run
   outcomes reads only the tail, and opencode reports a provider's refusal on stdout.
-- The quirk settings are constants of the adapters: Claude's turn limit (300) and Bash timeout (20 minutes), `agy`'s
+- Claude's turn budget comes from `[limits] max_turns` (default `300`). Other quirk settings remain adapter constants: Claude's Bash timeout (20 minutes), `agy`'s
   print timeout (8 hours), opencode's Bash timeout (10 minutes). Other flags, such as `--effort high`, are the
   agent's `args`.
 - Not in the adapters, because they are not pure: laying down a `RunFile` (creating its directories), keeping
@@ -145,7 +145,7 @@ engine relies on:
 | `decide::checks` | `assess`: from the facts of a round's diff (its files, the files whose mode changed, its commits with their parents, the lines it added, the description of its pull request) and the repository's `checks` lists, the `Issue`s — an existing test file that loses lines or is removed or renamed and a protected file that changes (only the human may allow them); a test of a `RED:` commit edited by a later commit unless a named `TEST-FIX:`; production code with no added test line and no `Test-First: not possible — <reason>`; an added line that skips a test, suppresses a lint or asks whether the code runs under test, in a file the description does not name (the built-in `markers` table per extension). See "Round checks before the review" |
 | `decide::round` | `RoundState`, `RoundEvent` and `RoundState::transition`: member work, integration, gate green at the head, pull request published for that head, two reviews, merge or hand-over to the human, item done; "changes requested" starts a fix pass until `[review] fix_passes`, then the human is asked, and the answer grants one more pass. Each transition says what the daemon does next (`RoundAction`); `Checking` is the phase before the reviews are asked: what the issues of the checks come to — the reviews start, the round goes back to the team (at most `[review] check_passes` times) or the human is asked |
 | `decide::round::rounds_of_run` | `rounds_of_run`: from the role of a task, why its run starts (`RunStart`: its own work, a request for a worker, a review, a continuation) and what the state says of its team's rounds (`TaskRounds`), the rounds the run works for. See "Rounds" |
-| `decide::outcome` | `classify_outcome`: from the final message, the exit status, the error tail and who ended the run, the `RunEnd` to record — reported status, no status, quota exhausted (with the reset time when the CLI gives one), rate limited, hung, stopped — and the `Pause` it implies; `after_hang` for the watchdog's strikes. The CLIs' outputs are fixtures in `crates/agent-core/tests/fixtures/cli-outputs/` |
+| `decide::outcome` | `classify_outcome`: from the final message, the exit status, the error tail and who ended the run, the `RunEnd` to record — reported status, no status, quota exhausted (with the reset time when the CLI gives one), rate limited, turn limit, hung, stopped — and the `Pause` it implies; `after_hang` for the watchdog's strikes; `after_turn_limit` for bounded same-session continuation. The CLIs' outputs are fixtures in `crates/agent-core/tests/fixtures/cli-outputs/` |
 
 The daemon feeds these functions what it observed and carries out what they return; none of them touches a file, a process or
 the network. The order of the checks and the rules each follows are in the documentation of its module.
@@ -195,6 +195,7 @@ end does (`settle.rs`):
 | `STATUS: FAILED`, no `STATUS:` line | `failed` | the human is told |
 | `STATUS: SLEEPING` / `EXCLUDED` | `waiting` / `done` | |
 | quota exhausted, rate limited | `paused` | woken at the time the CLI gave (plus a minute), else after the `[limits]` minutes; the human is told |
+| turn limit | `queued`: resumed in the same session with a short continuation prompt | at most `[limits] turn_limit_resumes` consecutive automatic resumes (default `3`); the next exhaustion fails and notifies with the count; any other end resets the count |
 | hung | `queued`: resumed from its session | after `[watchdog] hang_strikes` hangs in a row without progress, `failed` and the human is told; a run that did something before it went silent starts the count again |
 | the daemon shut down | `queued` | the run is recorded as ended with no status and no exit code |
 
@@ -737,3 +738,13 @@ subject starting with `TEST-FIX:`, listed in the PR under `## Tests changed afte
 RED commit with the head and run one of them (the review rules, steps 4 and 6). The unit tests of a new module live
 in its `tests.rs` (`#[cfg(test)] mod tests;`), so a change of the tests is a change of test files (TDD-10); an inline
 `mod tests { }` that is already there stays.
+
+### Turn budgets (item 8.8)
+
+Claude Code `error_max_turns` is `StreamOutcome::TurnLimit`, recorded as `RunEnd::TurnLimit`;
+`error_during_execution` remains a failure. Provider quota exhaustion wins when both are present.
+The launch layer passes `[limits] max_turns` (default `300`) through the adapter contract; adapters without a CLI
+turn limit ignore it and never emit this outcome. The owner saves the end and queued status together before the
+next launch. It derives the consecutive count from the suffix of persisted run endings, so a restart between
+settlement and scheduling neither resets the budget nor duplicates the continuation. Without a resumable session
+the task fails instead of silently starting over. The resumed run records `why = turn_limit` in the history.

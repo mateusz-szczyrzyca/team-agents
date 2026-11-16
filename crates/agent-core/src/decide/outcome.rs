@@ -306,6 +306,9 @@ pub fn classify_outcome(
             return limit.classify(context);
         }
     }
+    if output.stream == StreamOutcome::TurnLimit {
+        return done(RunEnd::TurnLimit);
+    }
     // After the limits: a run the watchdog killed while the provider refused it is paused until the reset, not resumed
     // straight into the limit.
     if finish.stopped_by == StoppedBy::Watchdog {
@@ -781,6 +784,48 @@ pub fn after_hang(hangs_in_a_row: u32, session: Option<&SessionId>, watchdog: &W
         AfterHang::MarkHung
     } else {
         AfterHang::Resume
+    }
+}
+
+/// Whether a turn-limited session can continue automatically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterTurnLimit {
+    /// Queue another invocation in the same session.
+    Resume,
+    /// All configured consecutive continuations have been used.
+    Exhausted,
+    /// The CLI supplied no session to continue.
+    NoSession,
+}
+
+/// Counts consecutive turn-limit endings at the tail of persisted runs.
+#[must_use]
+pub fn consecutive_turn_limits(runs: &[crate::state::Run]) -> u64 {
+    let count = runs
+        .iter()
+        .rev()
+        .take_while(|run| {
+            matches!(
+                run.state(),
+                crate::state::RunState::Ended {
+                    end: RunEnd::TurnLimit,
+                    ..
+                }
+            )
+        })
+        .count();
+    u64::try_from(count).unwrap_or(u64::MAX)
+}
+
+/// Decides whether the current turn-limit ending may be followed by another run.
+#[must_use]
+pub fn after_turn_limit(count: u64, session: Option<&crate::state::SessionId>, limits: &Limits) -> AfterTurnLimit {
+    if session.is_none() {
+        AfterTurnLimit::NoSession
+    } else if count <= u64::from(limits.turn_limit_resumes) {
+        AfterTurnLimit::Resume
+    } else {
+        AfterTurnLimit::Exhausted
     }
 }
 

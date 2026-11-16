@@ -94,3 +94,23 @@ fn inconsistent_state_falls_back_to_continuation_and_logs_a_warning() {
         "{review_log}"
     );
 }
+
+#[test]
+fn turn_limit_run_why_yields_to_an_explicit_team_reason() {
+    use agent_core::status::TaskStatus;
+
+    use crate::fixtures::{at, run, task, team_id, team_state};
+
+    let mut state = team_state();
+    {
+        let mut team = state.team_mut(&team_id(0)).unwrap();
+        let (_, mut member) = team.find_mut(&task(2)).unwrap();
+        member.begin_run(run(1), at(1), None).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.end_run(at(2), RunEnd::TurnLimit).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+
+    assert_eq!(run_why(&state, &task(2), None), RunWhy::TurnLimit);
+    assert_eq!(run_why(&state, &task(2), Some(&Why::Woken)), RunWhy::WakeUp);
+}

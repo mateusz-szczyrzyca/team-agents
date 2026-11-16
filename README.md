@@ -1018,6 +1018,13 @@ team ID (`<timestamp>-team`) or any member's task ID.
 
 ## The Rust rewrite (trial)
 
+A Claude Code run that exhausts its turn budget now resumes in the same session. Configure `[limits] max_turns`
+(default `300`) and `turn_limit_resumes` (default `3`); after that many consecutive resumes the task fails and
+notifies you with the count. Any other ending resets the count. `agent log` records `turn_limit` and the reason
+of its continuation. This build uses socket protocol `3` (upgrade clients and daemon together), reads existing
+state schema `2`, and migrates history to schema `7`. See [configuration](docs/configuration.md) and
+[state compatibility](docs/state.md#turn-limit-compatibility-item-88).
+
 `bin/agent` is being rewritten in Rust (the Cargo workspace in `crates/`; the plan and the layout are in
 [`docs/architecture.md`](docs/architecture.md)). The new `agent` is **not installed** by `install.sh` and is not what
 `agent` means in the rest of this README: it runs only against a separate `AGENTS_HOME` and never touches the home of the

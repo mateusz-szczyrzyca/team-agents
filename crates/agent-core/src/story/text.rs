@@ -443,6 +443,7 @@ fn why(why: &RunWhy) -> String {
         RunWhy::Answers => "the human answered the questions of the task".to_owned(),
         RunWhy::ResumedByHuman => "the human stopped the task and let it go on".to_owned(),
         RunWhy::Continuation => "the task goes on after a restart, a hang or a limit".to_owned(),
+        RunWhy::TurnLimit => "the previous run reached its turn limit".to_owned(),
     }
 }
 
@@ -669,6 +670,7 @@ fn run_end(end: &RunEnd) -> String {
         RunEnd::NoStatus { exit_code: None } => "no STATUS line (ended by a signal)".to_owned(),
         RunEnd::QuotaExhausted { resets_at: Some(at) } => format!("quota exhausted (back at {at})"),
         RunEnd::QuotaExhausted { resets_at: None } => "quota exhausted".to_owned(),
+        RunEnd::TurnLimit => "turn limit reached".to_owned(),
         RunEnd::RateLimited => "rate limited".to_owned(),
         RunEnd::Hung => "hung: stopped by the watchdog".to_owned(),
         RunEnd::Stopped => "stopped by the human".to_owned(),

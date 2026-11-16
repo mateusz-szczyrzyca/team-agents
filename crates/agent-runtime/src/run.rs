@@ -336,6 +336,7 @@ fn classify_and_log(
             agent_core::cli::StreamOutcome::Succeeded => "succeeded",
             agent_core::cli::StreamOutcome::Failed => "failed",
             agent_core::cli::StreamOutcome::Incomplete => "incomplete",
+            agent_core::cli::StreamOutcome::TurnLimit => "turn_limit",
         },
         "exit": match finish.exit {
             ExitStatus::Code(code) => json!({"code": code}),

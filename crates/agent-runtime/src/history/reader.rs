@@ -759,6 +759,7 @@ fn read_why(
         WhyKind::Answers => Ok(RunWhy::Answers),
         WhyKind::ResumedByHuman => Ok(RunWhy::ResumedByHuman),
         WhyKind::Continuation => Ok(RunWhy::Continuation),
+        WhyKind::TurnLimit => Ok(RunWhy::TurnLimit),
     }
 }
 
@@ -972,11 +973,12 @@ fn read_end(snapshot: &Transaction<'_>, run: &RunId) -> Result<Option<Stored<Run
                     .transpose()?,
             }
         }
-        kind @ (EndKind::RateLimited | EndKind::Hung | EndKind::Stopped) => {
+        kind @ (EndKind::TurnLimit | EndKind::RateLimited | EndKind::Hung | EndKind::Stopped) => {
             here.absent("outcome", outcome.as_ref())?;
             here.absent("exit_code", exit_code.as_ref())?;
             here.absent("resets_at", resets_at.as_ref())?;
             match kind {
+                EndKind::TurnLimit => RunEnd::TurnLimit,
                 EndKind::RateLimited => RunEnd::RateLimited,
                 EndKind::Hung => RunEnd::Hung,
                 EndKind::Reported | EndKind::NoStatus | EndKind::QuotaExhausted | EndKind::Stopped => RunEnd::Stopped,

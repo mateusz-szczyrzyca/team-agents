@@ -1,4 +1,4 @@
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -40,44 +40,6 @@ CREATE TABLE rounds (
 ) STRICT;
 
 CREATE INDEX rounds_by_team ON rounds (team, at);
-
-CREATE TABLE runs (
-    run TEXT NOT NULL PRIMARY KEY,
-    team TEXT NOT NULL,
-    task TEXT NOT NULL,
-    at TEXT NOT NULL,
-    agent TEXT NOT NULL,
-    tier TEXT NOT NULL CHECK (tier IN ('normal', 'worker', 'investigator')),
-    cli TEXT NOT NULL CHECK (cli IN ('claude', 'codex', 'gemini', 'opencode')),
-    model TEXT,
-    role TEXT NOT NULL CHECK (role IN ('solo', 'coordinator', 'member', 'worker', 'reviewer')),
-    why TEXT NOT NULL CHECK (why IN (
-        'first_run', 'item', 'wake_up', 'request', 'fix_pass', 'review', 'ask_human', 'verdict_missing', 'checks',
-        'answers', 'resumed_by_human', 'continuation'
-    )),
-    why_item TEXT,
-    why_asked_by TEXT,
-    why_pass INTEGER,
-    why_pr INTEGER,
-    prompt TEXT NOT NULL,
-    worktree TEXT NOT NULL,
-    branch TEXT NOT NULL,
-    session TEXT,
-    cut TEXT NOT NULL,
-    CHECK (
-        (why = 'item') = (why_item IS NOT NULL)
-        AND (why = 'request' OR why_asked_by IS NULL)
-        AND ((why IN ('fix_pass', 'review')) = (why_pass IS NOT NULL))
-        AND ((why = 'review') = (why_pr IS NOT NULL))
-        AND (why <> 'fix_pass' OR why_pass >= 1)
-        AND (why_pass IS NULL OR why_pass >= 0)
-        AND (why_pr IS NULL OR why_pr >= 1)
-    )
-) STRICT;
-
-CREATE INDEX runs_by_team ON runs (team, at);
-
-CREATE INDEX runs_by_task ON runs (task, at);
 
 CREATE TABLE run_rounds (
     run TEXT NOT NULL REFERENCES runs (run),
@@ -127,20 +89,6 @@ CREATE TABLE steps (
             AND tool IS NULL AND detail IS NULL AND ((client = 'dashboard') = (login IS NOT NULL)))
     ),
     PRIMARY KEY (run, n)
-) STRICT, WITHOUT ROWID;
-
-CREATE TABLE run_ends (
-    run TEXT NOT NULL PRIMARY KEY REFERENCES runs (run),
-    at TEXT NOT NULL,
-    how TEXT NOT NULL CHECK (how IN ('reported', 'no_status', 'quota_exhausted', 'rate_limited', 'hung', 'stopped')),
-    outcome TEXT CHECK (outcome IS NULL OR outcome IN ('DONE', 'QUESTIONS', 'FAILED', 'SLEEPING', 'EXCLUDED')),
-    exit_code INTEGER,
-    resets_at TEXT,
-    final_message TEXT,
-    cut TEXT NOT NULL,
-    CHECK ((how = 'reported') = (outcome IS NOT NULL)),
-    CHECK (exit_code IS NULL OR how = 'no_status'),
-    CHECK (resets_at IS NULL OR how = 'quota_exhausted')
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE run_changes (
@@ -346,8 +294,6 @@ END;
 
 CREATE INDEX daemon_logs_by_event ON daemon_logs(event,id);
 
-CREATE INDEX runs_by_agent ON runs(agent,run);
-
 CREATE INDEX daemon_logs_by_time ON daemon_logs((substr(at,1,19)||'.'||substr(CASE WHEN substr(at,20,1)='.' THEN substr(at,21,length(at)-21) ELSE '' END||'000000000',1,9)),id);
 
 CREATE TABLE history_cursors (
@@ -358,3 +304,58 @@ CREATE TABLE history_cursors (
 CREATE TRIGGER daemon_logs_cursor AFTER INSERT ON daemon_logs BEGIN
  UPDATE history_cursors SET value = max(value, new.id) WHERE name = 'daemon_logs';
 END;
+
+CREATE TABLE runs (
+    run TEXT NOT NULL PRIMARY KEY,
+    team TEXT NOT NULL,
+    task TEXT NOT NULL,
+    at TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    tier TEXT NOT NULL CHECK (tier IN ('normal', 'worker', 'investigator')),
+    cli TEXT NOT NULL CHECK (cli IN ('claude', 'codex', 'gemini', 'opencode')),
+    model TEXT,
+    role TEXT NOT NULL CHECK (role IN ('solo', 'coordinator', 'member', 'worker', 'reviewer')),
+    why TEXT NOT NULL CHECK (why IN (
+        'first_run', 'item', 'wake_up', 'request', 'fix_pass', 'review', 'ask_human', 'verdict_missing', 'checks',
+        'answers', 'resumed_by_human', 'continuation', 'turn_limit'
+    )),
+    why_item TEXT,
+    why_asked_by TEXT,
+    why_pass INTEGER,
+    why_pr INTEGER,
+    prompt TEXT NOT NULL,
+    worktree TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    session TEXT,
+    cut TEXT NOT NULL,
+    CHECK (
+        (why = 'item') = (why_item IS NOT NULL)
+        AND (why = 'request' OR why_asked_by IS NULL)
+        AND ((why IN ('fix_pass', 'review')) = (why_pass IS NOT NULL))
+        AND ((why = 'review') = (why_pr IS NOT NULL))
+        AND (why <> 'fix_pass' OR why_pass >= 1)
+        AND (why_pass IS NULL OR why_pass >= 0)
+        AND (why_pr IS NULL OR why_pr >= 1)
+    )
+) STRICT;
+
+CREATE TABLE run_ends (
+    run TEXT NOT NULL PRIMARY KEY REFERENCES runs (run),
+    at TEXT NOT NULL,
+    how TEXT NOT NULL CHECK (how IN ('reported', 'no_status', 'quota_exhausted', 'rate_limited', 'hung', 'stopped', 'turn_limit')),
+    outcome TEXT CHECK (outcome IS NULL OR outcome IN ('DONE', 'QUESTIONS', 'FAILED', 'SLEEPING', 'EXCLUDED')),
+    exit_code INTEGER,
+    resets_at TEXT,
+    final_message TEXT,
+    cut TEXT NOT NULL,
+    CHECK ((how = 'reported') = (outcome IS NOT NULL)),
+    CHECK (exit_code IS NULL OR how = 'no_status'),
+    CHECK (resets_at IS NULL OR how = 'quota_exhausted')
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX runs_by_team ON runs (team, at);
+
+CREATE INDEX runs_by_task ON runs (task, at);
+
+CREATE INDEX runs_by_agent ON runs(agent,run);
+

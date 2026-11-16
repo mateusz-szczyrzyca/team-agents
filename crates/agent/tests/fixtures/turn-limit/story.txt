@@ -1,0 +1,4 @@
+ended: turn limit reached
+ended: turn limit reached
+solo, because the previous run reached its turn limit
+reviewer, because the previous run reached its turn limit

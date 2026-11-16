@@ -229,15 +229,20 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         rules: ctx.rules,
     };
     let prompt = compose(&texts, &input)?;
-    let answers = answers_text(ctx, member).await?;
-    let prompt = team_prompt(ctx, &texts, &found, prompt, answers.as_deref())?;
-    let (prompt, addition) = match ctx.autopilot {
-        Some(autopilot) => match sections_for(ctx, autopilot, &found, &working, ctx.why).await? {
-            Some(Addition::Append(sections)) => (format!("{}\n\n{sections}", prompt.trim_end()), Some(sections)),
-            Some(Addition::Replace(text)) => (format!("{text}\n"), Some(text)),
+    let (prompt, addition) = if kind == PromptKind::Resume(ResumeReason::TurnLimit) && ctx.why.is_none() {
+        (prompt, None)
+    } else {
+        let answers = answers_text(ctx, member).await?;
+        let prompt = team_prompt(ctx, &texts, &found, prompt, answers.as_deref())?;
+        let (prompt, addition) = match ctx.autopilot {
+            Some(autopilot) => match sections_for(ctx, autopilot, &found, &working, ctx.why).await? {
+                Some(Addition::Append(sections)) => (format!("{}\n\n{sections}", prompt.trim_end()), Some(sections)),
+                Some(Addition::Replace(text)) => (format!("{text}\n"), Some(text)),
+                None => (prompt, None),
+            },
             None => (prompt, None),
-        },
-        None => (prompt, None),
+        };
+        (prompt, addition)
     };
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
@@ -296,6 +301,7 @@ fn answered_questions(member: &Member) -> Option<&Question> {
                     }
                     | RunEnd::QuotaExhausted { .. }
                     | RunEnd::RateLimited
+                    | RunEnd::TurnLimit
                     | RunEnd::Hung
                     | RunEnd::Stopped,
                 ..
@@ -401,6 +407,7 @@ fn prompt_kind(member: &Member, session: Option<&SessionId>, config: &Config) ->
             after: config.watchdog().hang_minutes,
         }),
         Some(RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited) => PromptKind::Resume(ResumeReason::Limit),
+        Some(RunEnd::TurnLimit) => PromptKind::Resume(ResumeReason::TurnLimit),
         // Any other end (a failure the human lets the agent retry, a stop) gets the whole task again.
         Some(RunEnd::Reported { .. } | RunEnd::NoStatus { exit_code: Some(_) } | RunEnd::Stopped) | None => {
             PromptKind::First
@@ -602,6 +609,16 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
         ),
         Some(Why::AskHuman) => RunWhy::AskHuman,
         Some(Why::Checks) => RunWhy::Checks,
+        None if matches!(
+            member.runs().last().map(Run::state),
+            Some(RunState::Ended {
+                end: RunEnd::TurnLimit,
+                ..
+            })
+        ) =>
+        {
+            RunWhy::TurnLimit
+        }
         None if found.role == Role::Reviewer => review_why(team, task),
         None if answered_questions(member).is_some() => RunWhy::Answers,
         None => match member.runs().last().map(Run::state) {

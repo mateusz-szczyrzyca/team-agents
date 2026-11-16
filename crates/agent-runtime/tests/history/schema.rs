@@ -249,7 +249,7 @@ fn a_database_of_a_newer_version_is_refused_and_left_byte_for_byte_as_it_was() {
     let path = dir.path().join("newer.db");
     {
         let raw = Connection::open(&path).unwrap();
-        raw.execute_batch("create table from_the_future (x TEXT); PRAGMA user_version = 7;")
+        raw.execute_batch("create table from_the_future (x TEXT); PRAGMA user_version = 8;")
             .unwrap();
     }
     let before = std::fs::read(&path).unwrap();
@@ -258,7 +258,7 @@ fn a_database_of_a_newer_version_is_refused_and_left_byte_for_byte_as_it_was() {
 
     let latest = MIGRATIONS.last().unwrap().version;
     assert!(
-        matches!(error, OpenError::Newer { found: 7, supported, .. } if supported == latest),
+        matches!(error, OpenError::Newer { found: 8, supported, .. } if supported == latest),
         "{error:?}"
     );
     assert_eq!(std::fs::read(&path).unwrap(), before);

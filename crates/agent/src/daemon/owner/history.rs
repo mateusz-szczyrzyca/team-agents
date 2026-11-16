@@ -264,7 +264,8 @@ impl Owner {
             | RunWhy::Checks
             | RunWhy::Answers
             | RunWhy::ResumedByHuman
-            | RunWhy::Continuation => None,
+            | RunWhy::Continuation
+            | RunWhy::TurnLimit => None,
         };
         // The findings a fix pass sends the team are what the autopilot added to the lead's prompt.
         if let Some(number) = fix_pass {

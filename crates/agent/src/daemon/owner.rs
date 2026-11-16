@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, InvalidValue};
-use agent_core::decide::outcome::{AfterHang, after_hang};
+use agent_core::decide::outcome::{AfterHang, AfterTurnLimit, after_hang, after_turn_limit, consecutive_turn_limits};
 use agent_core::history::{HistoryEvent, RunWhy};
 use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
@@ -828,7 +828,7 @@ impl Owner {
         // limit's pause or a hang it wins entirely: the run ended by the human's word, with no wake-up, no strike and no
         // notice of a pause that nobody waits for.
         let halt = self.halts.remove(task);
-        let overruled = halt.filter(|_| matches!(settled, Settled::Paused(_) | Settled::Hung));
+        let overruled = halt.filter(|_| matches!(settled, Settled::Paused(_) | Settled::Hung | Settled::TurnLimit));
         let end = if overruled.is_some() {
             RunEnd::Stopped
         } else {
@@ -946,6 +946,34 @@ impl Owner {
                 (TaskStatus::Paused, Some(notice))
             }
             Settled::Hung => self.hung(task, progress)?,
+            Settled::TurnLimit => {
+                self.hangs.remove(task);
+                self.turn_limit(task)?
+            }
+        };
+        Ok(next)
+    }
+
+    /// Decide continuation from the persisted suffix, so a restart never resets its budget.
+    fn turn_limit(&self, task: &TaskId) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+        let found = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let count = consecutive_turn_limits(found.member.runs());
+        let session = found.member.runs().last().and_then(|run| run.session());
+        let limits = self.parts.settings.config.limits();
+        let next = match after_turn_limit(count, session, limits) {
+            AfterTurnLimit::Resume => (TaskStatus::Queued, None),
+            AfterTurnLimit::Exhausted => (
+                TaskStatus::Failed,
+                Some(Notice::TurnLimitExhausted {
+                    count,
+                    limit: limits.turn_limit_resumes,
+                }),
+            ),
+            AfterTurnLimit::NoSession => (TaskStatus::Failed, Some(Notice::TurnLimitNoSession)),
         };
         Ok(next)
     }
@@ -1546,7 +1574,7 @@ fn log_unusual_end(end: &RunEnd) {
                 "a run hung and was stopped by the watchdog"
             );
         }
-        RunEnd::Reported { .. } | RunEnd::Stopped => {}
+        RunEnd::Reported { .. } | RunEnd::Stopped | RunEnd::TurnLimit => {}
     }
 }
 

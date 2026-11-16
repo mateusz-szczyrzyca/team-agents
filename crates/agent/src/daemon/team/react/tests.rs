@@ -247,3 +247,27 @@ fn a_request_goes_on_while_the_worker_is_paused_asks_or_is_queued_to_continue() 
         assert_eq!(outcome(&end, status, None), None, "{end:?}");
     }
 }
+
+#[test]
+fn turn_limit_tells_the_coordinator_and_ends_a_worker_request_only_when_the_task_failed() {
+    let mut team = working();
+    assert_eq!(told(&team, 2, &RunEnd::TurnLimit, None), None);
+    ran(&mut team, 2, 1, RunEnd::TurnLimit, &[TaskStatus::Failed]);
+    assert_eq!(
+        told(&team, 2, &RunEnd::TurnLimit, None).unwrap(),
+        Told {
+            to: agent("inv-opus"),
+            notice: BusNotice::MemberNoStatus {
+                member: agent("claude-1"),
+            },
+        }
+    );
+    assert_eq!(outcome(&RunEnd::TurnLimit, TaskStatus::Queued, None), None);
+    assert_eq!(
+        outcome(&RunEnd::TurnLimit, TaskStatus::Failed, Some("partial work")),
+        Some(RequestOutcome::Failed {
+            how: WorkerEnd::NoStatus,
+            said: Some("partial work".to_owned()),
+        })
+    );
+}

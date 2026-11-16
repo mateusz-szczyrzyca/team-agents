@@ -274,6 +274,8 @@ impl ChangeKind {
 )]
 #[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<EndKind>)]
 pub enum EndKind {
+    /// The CLI used its per-run turn budget.
+    TurnLimit,
     /// The agent reported a status.
     Reported,
     /// The CLI ended without one.
@@ -297,6 +299,7 @@ impl EndKind {
     #[must_use]
     pub const fn of(end: &RunEnd) -> Self {
         match end {
+            RunEnd::TurnLimit => Self::TurnLimit,
             RunEnd::Reported { .. } => Self::Reported,
             RunEnd::NoStatus { .. } => Self::NoStatus,
             RunEnd::QuotaExhausted { .. } => Self::QuotaExhausted,
@@ -600,6 +603,8 @@ pub enum RunWhy {
     ResumedByHuman,
     /// The task goes on after a restart of the daemon, a hang or a limit.
     Continuation,
+    /// The previous run exhausted its turn budget.
+    TurnLimit,
 }
 
 /// The keyword of a [`RunWhy`], as the database keeps it.
@@ -642,6 +647,8 @@ pub enum WhyKind {
     ResumedByHuman,
     /// [`RunWhy::Continuation`].
     Continuation,
+    /// The previous run exhausted its turn budget.
+    TurnLimit,
 }
 
 impl Keyword for WhyKind {
@@ -665,6 +672,7 @@ impl RunWhy {
             Self::Answers => WhyKind::Answers,
             Self::ResumedByHuman => WhyKind::ResumedByHuman,
             Self::Continuation => WhyKind::Continuation,
+            Self::TurnLimit => WhyKind::TurnLimit,
         }
     }
 }

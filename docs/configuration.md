@@ -105,9 +105,17 @@ and an investigator.
 |---|---|---|
 | `watchdog.hang_minutes` | `30` | no activity for this long: the run is killed and resumed from its session |
 | `watchdog.hang_strikes` | `3` | this many hangs in a row without progress: the task is marked hung |
+| `limits.max_turns` | `300` | positive per-run turn budget, passed as `--max-turns` to Claude Code; CLIs without a turn limit ignore it |
+| `limits.turn_limit_resumes` | `3` | maximum consecutive automatic resumes after a turn limit; `0` fails on the first exhaustion |
 | `limits.quota_pause_minutes` | `30` | the pause of an exhausted quota when the CLI gives no reset time |
 | `limits.rate_limit_pause_minutes` | `5` | the pause of a rate limit (HTTP 429) |
 | `limits.tail_lines` | `30` | how many of a run's last lines of error output are read to recognise a limit |
+
+A turn-limit ending queues the task and resumes the same session with a short continuation prompt. With the default
+`turn_limit_resumes = 3`, the fourth consecutive exhaustion fails the task and sends one notification with the count.
+Every other run ending resets the count (resuming a failed task with `agent resume` continues in the same session without
+resetting the count until a run ends in another way). The count is derived from saved runs and survives daemon restarts.
+Provider quota exhaustion takes precedence over a turn limit and uses the quota pause instead.
 
 ### `[review]`
 

@@ -1,0 +1,2 @@
+claude-1: turn limit resumes exhausted
+Task <TASK> failed after 1 consecutive turn-limit endings and 0 automatic resumes. Inspect its work and resume the task when ready.
