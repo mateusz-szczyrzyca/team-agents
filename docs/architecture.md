@@ -312,6 +312,17 @@ time: items integrated into the same head share it and move together; a finished
 same branch (a solo agent's items each have a branch). A branch that cannot be published is tried again after a minute, and the
 human is told once.
 
+**The gate of a lead that is done** (`agent_core::decide::publish::gate_step`, `owner/rounds/publish.rs`). A lead need not have
+run the gate. When its last run ended with `STATUS: DONE` and no record passes at the tip of its branch, the harness acts instead
+of waiting: with no record of the tip it runs the gate itself, once for a tip, through the gate service (the record and the
+history are those of any gate); with a record of the tip that is no pass — failed, timed out, or passed on a tree that was not
+clean — it sends the lead back with a run whose prompt (`harness/pr/gate-not-passed.md`) says what the gate said and where its
+output is; a branch with no commit of its own, and a gate that ran on another commit than the tip (the worktree has another
+branch out), send it back as well. After three times in a row (`GATE_SEND_BACKS`) the human is told, once for a tip, and the lead
+waits. A lead that ended with `STATUS: SLEEPING` waits for its team and is not done: its branch is neither gated nor sent back,
+and is published only when the gate it ran itself passed at the tip. What the harness remembers of its own gates and of the
+times it sent a lead back is not in the state: a daemon that restarts starts over.
+
 **Reviewers** (`daemon/review.rs`). The review pass of an item in review starts empty and is filled once (`ItemMut::ask_reviews`) with
 two investigators drawn at random among the free ones: configured, not in the crew, with no task that is going, asking or paused,
 no review to give and no team to lead that is not finished; the pull request waits for them. A reviewer is a task of the team

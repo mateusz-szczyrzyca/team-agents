@@ -99,8 +99,28 @@ impl fmt::Display for GateHold {
 /// What the harness does with the branch `waiting` describes.
 #[must_use]
 pub fn gate_step(waiting: &Waiting<'_>) -> GateStep {
-    let _ = waiting;
-    GateStep::Wait
+    let at_tip = waiting.record.filter(|record| record.result.head == *waiting.tip);
+    if !waiting.lead_done {
+        return match at_tip {
+            Some(record) if record.counts_as_pass() => GateStep::Publish,
+            Some(_) | None => GateStep::Wait,
+        };
+    }
+    if !waiting.own_work {
+        return GateStep::SendBack(GateHold::NoCommit);
+    }
+    match at_tip {
+        Some(record) if record.counts_as_pass() => GateStep::Publish,
+        Some(record) => GateStep::SendBack(GateHold::NotPassed {
+            summary: record.summary(),
+            log: record.result.log.clone(),
+        }),
+        None if waiting.gated_for_tip => GateStep::SendBack(GateHold::NotAtTip {
+            tip: waiting.tip.clone(),
+            gated: waiting.record.map(|record| record.result.head.clone()),
+        }),
+        None => GateStep::Run,
+    }
 }
 
 #[cfg(test)]

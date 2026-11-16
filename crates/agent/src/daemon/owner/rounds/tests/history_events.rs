@@ -404,7 +404,8 @@ async fn a_pull_request_the_human_closed_is_recorded_once_however_often_it_is_lo
 async fn a_gate_the_daemon_ran_is_recorded_with_its_task_head_outcome_and_log_and_linked_to_the_round_of_its_task() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "commit"),
+            // The lead sleeps: a lead that is done would have the gate run by the harness as well.
+            normal("claude-1", "sleep"),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
         ],
