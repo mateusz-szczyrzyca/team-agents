@@ -61,6 +61,29 @@ mod autopilot_prompts {
     }
 
     #[tokio::test]
+    async fn notice_merged_renders_with_its_variables() {
+        let loader = AutopilotPrompts::load(&repository_prompts(), &Language::default())
+            .await
+            .unwrap();
+
+        let text = loader
+            .render(
+                AutopilotPrompt::NoticeMerged,
+                &values(&[
+                    ("team", "team-1"),
+                    ("pr", "42"),
+                    ("url", "https://github.com/org/repo/pull/42"),
+                    ("items", "1.1, 1.2"),
+                ]),
+            )
+            .unwrap();
+
+        assert!(text.contains("Pull request 42 of team-1 is merged"), "{text}");
+        assert!(text.contains("https://github.com/org/repo/pull/42"), "{text}");
+        assert!(text.contains("1.1, 1.2"), "{text}");
+    }
+
+    #[tokio::test]
     async fn a_value_is_put_in_the_text_where_its_variable_is() {
         let dir = catalog_dir();
         let loader = AutopilotPrompts::load(dir.path(), &Language::default()).await.unwrap();
