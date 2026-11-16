@@ -2,7 +2,7 @@
 //! its Unix socket (see `docs/state.md`).
 //!
 //! A client sends one [`Request`] per line; the daemon answers each with a [`Response`] and, to a client that
-//! subscribed, sends [`Event`]s as the state changes — a [`Frame`] is either. Every line carries `"protocol": 2`
+//! subscribed, sends [`Event`]s as the state changes — a [`Frame`] is either. Every line carries `"protocol": 3`
 //! ([`PROTOCOL_VERSION`]); a line of another version is refused with [`ProtocolError::UnsupportedVersion`] before
 //! anything else of it is read, so a client and a daemon of different versions say so and do not misread each other.
 //! The types here only describe lines and read and write them; the socket is the daemon's.
@@ -28,7 +28,7 @@ pub use request::{
 };
 
 /// The protocol version that this build speaks.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Longest line a client may send, in bytes: a task list (1 MiB at most) with room for the rest of the request.
 pub const MAX_REQUEST_BYTES: usize = 2 << 20;
