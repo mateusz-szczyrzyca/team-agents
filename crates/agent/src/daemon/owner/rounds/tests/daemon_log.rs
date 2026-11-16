@@ -1361,6 +1361,7 @@ fn assert_owner_and_gate_failure_logs(logs: &[agent_core::log::LogEntry], observ
 async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_ids() {
     let mut observed = BTreeSet::new();
     record_autopilot_round_events(&mut observed).await;
+    record_publication_waits(&mut observed).await;
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("history.db");
@@ -1418,4 +1419,148 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
         observed, expected,
         "every LogEvent variant must be produced by a real production cause"
     );
+}
+
+#[tokio::test]
+async fn solo_agent_without_gate_logs_publication_waits_and_opens_pr_after_gate_passes() {
+    let mut observed = BTreeSet::new();
+    record_publication_waits(&mut observed).await;
+}
+
+async fn record_publication_waits(observed: &mut BTreeSet<LogEvent>) {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "commit"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Waiting).await;
+
+    // Three attempts of the daemon
+    for _ in 0..3 {
+        let reply = crate::client::Connection::connect(&rig.home.socket_file())
+            .await
+            .unwrap()
+            .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+            .await
+            .unwrap();
+        assert!(matches!(reply, Reply::Teams { .. }), "{reply:?}");
+    }
+
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let logs = reader.daemon_logs().unwrap();
+    let waits: Vec<_> = logs
+        .iter()
+        .filter(|r| r.event() == LogEvent::PublicationWaits)
+        .collect();
+    assert_eq!(
+        waits.len(),
+        1,
+        "leaves exactly one publication_waits row after three attempts: {logs:?}"
+    );
+    let first = waits[0];
+    assert_eq!(first.level(), LogLevel::Warn);
+    assert_eq!(first.team(), Some(&team));
+    assert_eq!(first.task(), Some(&tasks[0]));
+    assert_eq!(first.rounds().len(), 1);
+    assert_eq!(
+        first.fields().get("reason").and_then(|v| v.as_str()),
+        Some("no_gate_record")
+    );
+    let branch = format!("agents/claude-1/{}-1.1", tasks[0]);
+    assert_eq!(
+        first.fields().get("branch").and_then(|v| v.as_str()),
+        Some(branch.as_str())
+    );
+    let first_tip = first.fields().get("tip").and_then(|v| v.as_str()).unwrap().to_owned();
+    assert!(!first_tip.is_empty());
+    assert_eq!(first.fields().get("gate_head"), None);
+    observed.insert(LogEvent::PublicationWaits);
+
+    // After agent gate passes the pull request is opened and no further row is written
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request_until_answered(
+            Client::Cli,
+            Command::Gate(agent_core::protocol::GateRequest { task: tasks[0].clone() }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::GateRecorded { .. }));
+
+    // Wait for the pull request to be opened
+    rig.wait_for("the pull request to be opened", || !rig.github.requests().is_empty())
+        .await;
+    for _ in 0..3 {
+        let reply = crate::client::Connection::connect(&rig.home.socket_file())
+            .await
+            .unwrap()
+            .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+            .await
+            .unwrap();
+        assert!(matches!(reply, Reply::Teams { .. }));
+    }
+
+    let logs_after_gate = reader.daemon_logs().unwrap();
+    let waits_after_gate: Vec<_> = logs_after_gate
+        .iter()
+        .filter(|r| r.event() == LogEvent::PublicationWaits)
+        .collect();
+    assert_eq!(
+        waits_after_gate.len(),
+        1,
+        "no further row is written after pull request opened: {logs_after_gate:?}"
+    );
+
+    // A gate that passed before one more commit gives gate_at_another_commit with both commits
+    let worktree = rig.worktree(&tasks[0]);
+    super::rig::git(&worktree, &["commit", "--allow-empty", "-m", "one more commit"]);
+    let second_tip = super::rig::git(&worktree, &["rev-parse", "HEAD"]);
+    assert_ne!(first_tip, second_tip);
+
+    for _ in 0..3 {
+        let reply = crate::client::Connection::connect(&rig.home.socket_file())
+            .await
+            .unwrap()
+            .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+            .await
+            .unwrap();
+        assert!(matches!(reply, Reply::Teams { .. }));
+    }
+
+    let logs_after_commit = reader.daemon_logs().unwrap();
+    let waits_after_commit: Vec<_> = logs_after_commit
+        .iter()
+        .filter(|r| r.event() == LogEvent::PublicationWaits)
+        .collect();
+    assert_eq!(
+        waits_after_commit.len(),
+        2,
+        "second row for gate_at_another_commit expected: {logs_after_commit:?}"
+    );
+    let second = waits_after_commit[1];
+    assert_eq!(second.level(), LogLevel::Warn);
+    assert_eq!(second.team(), Some(&team));
+    assert_eq!(second.task(), Some(&tasks[0]));
+    assert_eq!(
+        second.fields().get("reason").and_then(|v| v.as_str()),
+        Some("gate_at_another_commit")
+    );
+    assert_eq!(
+        second.fields().get("tip").and_then(|v| v.as_str()),
+        Some(second_tip.as_str())
+    );
+    assert_eq!(
+        second.fields().get("gate_head").and_then(|v| v.as_str()),
+        Some(first_tip.as_str())
+    );
+
+    rig.stop().await.unwrap();
 }
