@@ -69,6 +69,17 @@ pub(super) struct Published {
     pub(super) items: Vec<ItemId>,
 }
 
+/// Makes `origin` carry `ready.tip` on `branch`: pushes it, unless `origin` has it there already (`carried`, what
+/// GitHub says the branch is at), which a push over a rewritten history would be refused for.
+async fn carry(ready: &Ready, branch: &BranchName, carried: Option<&CommitId>) -> Result<(), PublishError> {
+    if carried == Some(&ready.tip) {
+        ready.git.adopt_pushed(branch, &ready.tip).await?;
+    } else {
+        ready.git.push(branch).await?;
+    }
+    Ok(())
+}
+
 /// The items of `items` whose branch is part of the history of `tip`.
 pub(super) async fn contained(git: &Git, items: &[Joining], tip: &CommitId) -> Result<Vec<ItemId>, PublishError> {
     let mut found = Vec::new();
@@ -121,7 +132,10 @@ impl Owner {
                 Ok(Attempt::Nothing) => {}
                 Ok(Attempt::Published(published)) => {
                     self.watch.retry_at.remove(&key);
-                    self.record_publication(team_id, &publication, &published, look)?;
+                    if self.record_publication(team_id, &publication, &published, look)? {
+                        self.note_reviewed(&lead, &publication.head_branch, &published.gated)
+                            .await;
+                    }
                 }
                 Ok(Attempt::Held(held)) => {
                     self.watch.retry_at.remove(&key);
@@ -181,7 +195,7 @@ impl Owner {
         }
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
         let existing = github.find_open_pull_request(head_branch).await?;
-        ready.git.push(head_branch).await?;
+        carry(ready, head_branch, existing.as_ref().map(|found| &found.head)).await?;
         let text = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record)?;
         let base = self.base_branch(&lead.repo)?;
         let remote = if let Some(mut found) = existing {
@@ -263,7 +277,15 @@ impl Owner {
         let joined = contained(&ready.git, joining, &ready.tip).await?;
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
         let before = github.get_pull_request(pr.number).await?;
-        if before.head == ready.tip && joined.is_empty() {
+        // What the reviewers saw is what the harness put in review, not what GitHub carries: a fix may be on `origin`
+        // before the harness looks (the agent pushed it, or GitHub showed the harness's own push late). A branch that
+        // went in review before the harness kept this is judged by what GitHub carries.
+        let reviewed = ready
+            .git
+            .reviewed_tip(&pr.branch)
+            .await?
+            .unwrap_or_else(|| before.head.clone());
+        if reviewed == ready.tip && joined.is_empty() {
             return Ok(Attempt::Nothing);
         }
         let mut ids = fixing.to_vec();
@@ -279,7 +301,7 @@ impl Owner {
         if let Some(held) = self.check_before_review(site, &reviewing, now).await? {
             return Ok(Attempt::Held(held));
         }
-        ready.git.push(&pr.branch).await?;
+        carry(ready, &pr.branch, Some(&before.head)).await?;
         self.record_event(
             team,
             self.rounds_of_items(team, &ids),
@@ -402,15 +424,17 @@ impl Owner {
     }
 
     /// Records that the items of `published` are in review, after the round machine checked that the pull request carries
-    /// the commit the gate passed on.
+    /// the commit the gate passed on. Returns whether any item went in review.
     pub(super) fn record_publication(
         &mut self,
         team_id: &TeamId,
         publication: &Publication,
         published: &Published,
         look: &mut Look,
-    ) -> Result<(), OwnerError> {
-        for id in self.confirmed(team_id, publication, published) {
+    ) -> Result<bool, OwnerError> {
+        let confirmed = self.confirmed(team_id, publication, published);
+        let in_review = !confirmed.is_empty();
+        for id in confirmed {
             let mut team_mut = self
                 .parts
                 .state
@@ -458,7 +482,24 @@ impl Owner {
                 "an item is in review"
             );
         }
-        Ok(())
+        Ok(in_review)
+    }
+
+    /// Keeps `tip` as what the reviewers of `branch` were asked to look at. A tip that cannot be kept costs at most a fix
+    /// that waits for the next commit of the lead, so the round goes on; git said why in the log.
+    async fn note_reviewed(&self, lead: &Lead, branch: &BranchName, tip: &CommitId) {
+        let kept = match self.worktree_git(&lead.repo, &lead.task, &lead.agent) {
+            Ok(git) => git.record_reviewed(branch, tip).await.map_err(PublishError::from),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = kept {
+            tracing::warn!(
+                event = LogEvent::GitCallFailed.as_str(),
+                branch = %branch,
+                reason = %error_chain(&error),
+                "what the reviewers were asked to look at cannot be kept"
+            );
+        }
     }
 
     /// What follows a branch that could not be published: it is logged, tried again after a while, and the human is told

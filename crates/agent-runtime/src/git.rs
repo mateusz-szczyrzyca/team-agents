@@ -597,15 +597,10 @@ impl Git {
             &[arg("branch"), arg(flag), arg(branch.as_str())],
         )
         .await?;
-        // A later branch of the same name is another branch: it may not be pushed over what this one was.
-        let published = Revision::Published(branch.clone()).to_string();
-        self.run_ok(
-            GitOperation::UpdateRef,
-            Reach::Local,
-            &[arg("update-ref"), arg("-d"), arg(&published)],
-        )
-        .await
-        .map(drop)
+        // A later branch of the same name is another branch: it may not be pushed over what this one was, and nobody
+        // reviewed it.
+        self.forget(&Revision::Published(branch.clone())).await?;
+        self.forget(&Revision::Reviewed(branch.clone())).await
     }
 
     /// Adds a worktree at `path` with `branch` out.
@@ -801,14 +796,7 @@ impl Git {
                 other => other,
             });
         }
-        let published = Revision::Published(branch.clone()).to_string();
-        self.run_ok(
-            GitOperation::UpdateRef,
-            Reach::Local,
-            &[arg("update-ref"), arg(&published), arg(tip.as_str())],
-        )
-        .await
-        .map(drop)
+        self.keep(&Revision::Published(branch.clone()), &tip).await
     }
 
     /// Takes `tip` as pushed by the harness: `origin` has it on `branch` already, whoever pushed it there, and it is
@@ -816,24 +804,53 @@ impl Git {
     ///
     /// # Errors
     /// [`GitError::Failed`] when `tip` is no commit of the repository; [`GitError::Run`].
-    pub async fn adopt_pushed(&self, _branch: &BranchName, _tip: &CommitId) -> Result<(), GitError> {
-        Ok(())
+    pub async fn adopt_pushed(&self, branch: &BranchName, tip: &CommitId) -> Result<(), GitError> {
+        self.keep(&Revision::Published(branch.clone()), tip).await
     }
 
     /// Keeps `tip` as what the reviewers of `branch` were asked to look at.
     ///
     /// # Errors
     /// [`GitError::Failed`] when `tip` is no commit of the repository; [`GitError::Run`].
-    pub async fn record_reviewed(&self, _branch: &BranchName, _tip: &CommitId) -> Result<(), GitError> {
-        Ok(())
+    pub async fn record_reviewed(&self, branch: &BranchName, tip: &CommitId) -> Result<(), GitError> {
+        self.keep(&Revision::Reviewed(branch.clone()), tip).await
     }
 
     /// The tip of `branch` the reviewers were last asked to look at; `None` when the harness kept none.
     ///
     /// # Errors
     /// The errors of [`Git::rev_parse`] other than an unknown revision.
-    pub async fn reviewed_tip(&self, _branch: &BranchName) -> Result<Option<CommitId>, GitError> {
-        Ok(None)
+    pub async fn reviewed_tip(&self, branch: &BranchName) -> Result<Option<CommitId>, GitError> {
+        match self.rev_parse(&Revision::Reviewed(branch.clone())).await {
+            Ok(tip) => Ok(Some(tip)),
+            // A branch that was not in review under this harness is the answer, not a failure.
+            Err(GitError::UnknownRevision { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Makes `reference`, a reference of the harness, point at `tip`.
+    async fn keep(&self, reference: &Revision, tip: &CommitId) -> Result<(), GitError> {
+        let reference = reference.to_string();
+        self.run_ok(
+            GitOperation::UpdateRef,
+            Reach::Local,
+            &[arg("update-ref"), arg(&reference), arg(tip.as_str())],
+        )
+        .await
+        .map(drop)
+    }
+
+    /// Removes `reference`, a reference of the harness; one that is not there is removed already.
+    async fn forget(&self, reference: &Revision) -> Result<(), GitError> {
+        let reference = reference.to_string();
+        self.run_ok(
+            GitOperation::UpdateRef,
+            Reach::Local,
+            &[arg("update-ref"), arg("-d"), arg(&reference)],
+        )
+        .await
+        .map(drop)
     }
 
     /// The tip the harness pushed of `branch` last, when `tip` does not continue it: the history was rewritten since.
