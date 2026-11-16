@@ -6,6 +6,7 @@
 //! final message, the error tail and the exit status are classified (`agent_core::decide::outcome`). The engine
 //! touches no state: what the end means for the task is the daemon's decision.
 
+pub mod activity;
 pub mod compose;
 mod hold;
 mod launch;
