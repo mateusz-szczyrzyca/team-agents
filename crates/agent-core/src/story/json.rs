@@ -100,7 +100,8 @@ fn why_json(why: &RunWhy) -> Value {
         | RunWhy::Checks
         | RunWhy::Answers
         | RunWhy::ResumedByHuman
-        | RunWhy::Continuation => json!({"kind": kind}),
+        | RunWhy::Continuation
+        | RunWhy::TurnLimit => json!({"kind": kind}),
     }
 }
 

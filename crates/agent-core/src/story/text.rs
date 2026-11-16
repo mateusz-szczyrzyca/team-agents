@@ -443,6 +443,7 @@ fn why(why: &RunWhy) -> String {
         RunWhy::Answers => "the human answered the questions of the task".to_owned(),
         RunWhy::ResumedByHuman => "the human stopped the task and let it go on".to_owned(),
         RunWhy::Continuation => "the task goes on after a restart, a hang or a limit".to_owned(),
+        RunWhy::TurnLimit => "the previous run reached its turn limit".to_owned(),
     }
 }
 

@@ -216,7 +216,8 @@ fn why_columns(why: &RunWhy) -> (Option<String>, Option<String>, Option<u32>, Op
         | RunWhy::Checks
         | RunWhy::Answers
         | RunWhy::ResumedByHuman
-        | RunWhy::Continuation => (None, None, None, None),
+        | RunWhy::Continuation
+        | RunWhy::TurnLimit => (None, None, None, None),
     }
 }
 

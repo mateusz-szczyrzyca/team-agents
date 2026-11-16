@@ -603,6 +603,8 @@ pub enum RunWhy {
     ResumedByHuman,
     /// The task goes on after a restart of the daemon, a hang or a limit.
     Continuation,
+    /// The previous run exhausted its turn budget.
+    TurnLimit,
 }
 
 /// The keyword of a [`RunWhy`], as the database keeps it.
@@ -645,6 +647,8 @@ pub enum WhyKind {
     ResumedByHuman,
     /// [`RunWhy::Continuation`].
     Continuation,
+    /// The previous run exhausted its turn budget.
+    TurnLimit,
 }
 
 impl Keyword for WhyKind {
@@ -668,6 +672,7 @@ impl RunWhy {
             Self::Answers => WhyKind::Answers,
             Self::ResumedByHuman => WhyKind::ResumedByHuman,
             Self::Continuation => WhyKind::Continuation,
+            Self::TurnLimit => WhyKind::TurnLimit,
         }
     }
 }

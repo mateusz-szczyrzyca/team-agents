@@ -759,6 +759,7 @@ fn read_why(
         WhyKind::Answers => Ok(RunWhy::Answers),
         WhyKind::ResumedByHuman => Ok(RunWhy::ResumedByHuman),
         WhyKind::Continuation => Ok(RunWhy::Continuation),
+        WhyKind::TurnLimit => Ok(RunWhy::TurnLimit),
     }
 }
 
