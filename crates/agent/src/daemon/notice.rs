@@ -37,6 +37,13 @@ pub(super) enum Notice {
         /// The strikes that were allowed.
         strikes: u32,
     },
+    /// Consecutive turn-limit endings exhausted the automatic resumes.
+    TurnLimitExhausted {
+        /// Number of consecutive endings, including the refused continuation.
+        count: u64,
+        /// Configured maximum automatic continuations.
+        limit: u32,
+    },
     /// The task waits for a provider's limit to end.
     Paused {
         /// When the task goes on.
@@ -115,6 +122,12 @@ impl Notice {
                 common
                     .with("minutes", minutes.to_string())?
                     .with("strikes", strikes.to_string())?,
+            ),
+            Self::TurnLimitExhausted { count, limit } => (
+                HarnessPrompt::NoticeTurnLimitExhausted,
+                common
+                    .with("count", count.to_string())?
+                    .with("limit", limit.to_string())?,
             ),
             Self::Paused {
                 until,

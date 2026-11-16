@@ -38,6 +38,10 @@ pub enum HarnessPrompt {
     ResumeRestart,
     /// What a run resumed after a provider's limit is told.
     ResumeLimit,
+    /// Continue a session after its turn budget ran out.
+    ResumeTurnLimit,
+    /// Tell the human that consecutive turn-limit resumes are exhausted.
+    NoticeTurnLimitExhausted,
     /// The short prompt that sends the agent to a file when its task is too long for a command line.
     PromptFile,
     /// The notification that an agent has questions.
@@ -77,6 +81,8 @@ impl HarnessPrompt {
         Self::ResumeHang,
         Self::ResumeRestart,
         Self::ResumeLimit,
+        Self::ResumeTurnLimit,
+        Self::NoticeTurnLimitExhausted,
         Self::PromptFile,
         Self::NoticeQuestions,
         Self::NoticeQuestionsMissing,
@@ -114,6 +120,12 @@ impl HarnessPrompt {
             Self::Checkpoint => PromptSpec::new("harness/run/checkpoint.md", Audience::Model, &["checkpoint"]),
             Self::ResumeHang => PromptSpec::new("harness/run/resume-hang.md", Audience::Model, &["minutes"]),
             Self::ResumeRestart => PromptSpec::new("harness/run/resume-restart.md", Audience::Model, &[]),
+            Self::ResumeTurnLimit => PromptSpec::new("harness/run/resume-turn-limit.md", Audience::Model, &[]),
+            Self::NoticeTurnLimitExhausted => PromptSpec::new(
+                "harness/run/notice-turn-limit-exhausted.md",
+                Audience::Human,
+                &["agent", "task", "count", "limit"],
+            ),
             Self::ResumeLimit => PromptSpec::new("harness/run/resume-limit.md", Audience::Model, &[]),
             Self::PromptFile => PromptSpec::new("harness/run/prompt-file.md", Audience::Model, &["path"]),
             Self::NoticeQuestions => PromptSpec::new(

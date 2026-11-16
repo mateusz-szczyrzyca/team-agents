@@ -29,6 +29,8 @@ pub enum ResumeReason {
     Restart,
     /// The run stopped on a provider's limit, which is over now.
     Limit,
+    /// The previous run exhausted its own turn budget.
+    TurnLimit,
 }
 
 /// Whether the prompt starts a session or continues one.
@@ -174,6 +176,9 @@ fn resume_section(texts: &PromptTexts<'_>, reason: ResumeReason) -> Result<Strin
             texts.harness.render(HarnessPrompt::ResumeHang, &values)?
         }
         ResumeReason::Restart => texts.harness.render(HarnessPrompt::ResumeRestart, &Variables::new())?,
+        ResumeReason::TurnLimit => texts
+            .harness
+            .render(HarnessPrompt::ResumeTurnLimit, &Variables::new())?,
         ResumeReason::Limit => texts.harness.render(HarnessPrompt::ResumeLimit, &Variables::new())?,
     };
     Ok(section)

@@ -26,6 +26,8 @@ pub(super) enum Settled {
     Paused(Pause),
     /// The watchdog killed the run: whether it is resumed is [`agent_core::decide::outcome::after_hang`]'s decision.
     Hung,
+    /// The run exhausted its turn budget: the persisted streak decides whether it continues.
+    TurnLimit,
 }
 
 /// What the end `end` of a run of the member of role `role` does to its task; `pause` is what the classifier made
@@ -42,7 +44,7 @@ pub(super) fn settle(role: Role, end: &RunEnd, pause: Option<&Pause>, final_mess
             // A member the coordinator excluded acknowledges it and stops for good.
             RunOutcome::Excluded => Settled::Status(TaskStatus::Done),
         },
-        RunEnd::TurnLimit => Settled::Failed(Notice::NoStatus { exit: None }),
+        RunEnd::TurnLimit => Settled::TurnLimit,
         RunEnd::NoStatus { exit_code } => Settled::Failed(Notice::NoStatus { exit: *exit_code }),
         RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited => pause.map_or(
             // The classifier gives every limit a pause, so this is not reached; a limit that cannot be waited for is

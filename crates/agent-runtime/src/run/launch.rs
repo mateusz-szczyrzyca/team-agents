@@ -90,10 +90,12 @@ pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch,
         mcp_servers: job.mcp_servers.clone(),
     };
     let adapter = adapter_for(job.cli);
-    let spec = adapter.build_run(&request).map_err(|source| RunError::Build {
-        task: job.task.clone(),
-        source,
-    })?;
+    let spec = adapter
+        .build_run_with_max_turns(&request, parts.config.limits().max_turns)
+        .map_err(|source| RunError::Build {
+            task: job.task.clone(),
+            source,
+        })?;
     for file in &spec.files {
         write_file(file.path.as_path(), &file.content).await?;
     }
