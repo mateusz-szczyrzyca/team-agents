@@ -98,6 +98,10 @@ The gate, run **once**, on the commit you hand over (and again on the last commi
 make gate
 ```
 
+**In the worktree of a task, run it as `agent gate`**, not as `make gate`: `agent gate` runs the same gate and records
+its result, and the harness opens the pull request only for a branch whose recorded gate passed at its tip on a clean
+tree. A gate run in any other way is not recorded, and the round waits.
+
 `make gate` runs the Rust workspace's checks (`make rust`: fmt, clippy, the tests, the docs) with short output: one
 line per step, for a failed step only the lines that tell what failed, the full logs in `build/gate/`. When you
 need more, read the log with `grep -n` or `tail` — never print a whole log: everything a command prints stays in
