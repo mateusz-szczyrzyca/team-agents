@@ -48,6 +48,9 @@ const MAX_DIAGNOSTIC_CHARS: usize = 2048;
 /// The remote branches are pushed to.
 const REMOTE: &str = "origin";
 
+/// Where the harness keeps, for each branch it put in review, the tip the reviewers were asked to look at.
+const REVIEWED_REFS: &str = "refs/team-agents/reviewed";
+
 /// What git says of a reference `origin` did not take because of the commits it has: not a fast-forward, or not the
 /// commit a lease names. The messages are in one language, see [`Git::command`].
 const REJECTED: &str = "[rejected]";
@@ -146,6 +149,8 @@ pub enum Revision {
     Commit(CommitId),
     /// The tip of a branch the harness itself pushed to `origin` last: what a later push may write over.
     Published(BranchName),
+    /// The tip of a branch the reviewers were last asked to look at.
+    Reviewed(BranchName),
 }
 
 impl fmt::Display for Revision {
@@ -158,6 +163,7 @@ impl fmt::Display for Revision {
             Self::RemoteBranch(branch) => write!(f, "refs/remotes/{REMOTE}/{branch}"),
             Self::Commit(commit) => write!(f, "{commit}"),
             Self::Published(branch) => write!(f, "{PUBLISHED_REFS}/{branch}"),
+            Self::Reviewed(branch) => write!(f, "{REVIEWED_REFS}/{branch}"),
         }
     }
 }
@@ -803,6 +809,31 @@ impl Git {
         )
         .await
         .map(drop)
+    }
+
+    /// Takes `tip` as pushed by the harness: `origin` has it on `branch` already, whoever pushed it there, and it is
+    /// the commit the harness was about to push.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when `tip` is no commit of the repository; [`GitError::Run`].
+    pub async fn adopt_pushed(&self, _branch: &BranchName, _tip: &CommitId) -> Result<(), GitError> {
+        Ok(())
+    }
+
+    /// Keeps `tip` as what the reviewers of `branch` were asked to look at.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when `tip` is no commit of the repository; [`GitError::Run`].
+    pub async fn record_reviewed(&self, _branch: &BranchName, _tip: &CommitId) -> Result<(), GitError> {
+        Ok(())
+    }
+
+    /// The tip of `branch` the reviewers were last asked to look at; `None` when the harness kept none.
+    ///
+    /// # Errors
+    /// The errors of [`Git::rev_parse`] other than an unknown revision.
+    pub async fn reviewed_tip(&self, _branch: &BranchName) -> Result<Option<CommitId>, GitError> {
+        Ok(None)
     }
 
     /// The tip the harness pushed of `branch` last, when `tip` does not continue it: the history was rewritten since.
@@ -1863,6 +1894,42 @@ mod tests {
 
         assert!(refused(&result, "topic"), "{result:?}");
         assert_eq!(raw(&origin, &["rev-parse", "refs/heads/topic"]), theirs);
+    }
+
+    // Rule: a tip that origin has already is taken as pushed: a later rewrite is pushed over it.
+    #[tokio::test]
+    async fn a_tip_origin_has_already_is_adopted_and_a_later_rewrite_is_pushed_over_it() {
+        let fixture = Fixture::new();
+        let origin = with_origin(&fixture);
+        topic_branch(&fixture);
+        raw(&fixture.repo, &["push", "-q", "origin", "topic"]);
+        let git = fixture.git();
+        let tip: CommitId = raw(&fixture.repo, &["rev-parse", "topic"]).parse().unwrap();
+
+        git.adopt_pushed(&branch("topic"), &tip).await.unwrap();
+        rewrite_topic(&fixture);
+        git.push(&branch("topic")).await.unwrap();
+
+        assert_eq!(
+            raw(&origin, &["rev-parse", "refs/heads/topic"]),
+            raw(&fixture.repo, &["rev-parse", "topic"])
+        );
+    }
+
+    // Rule: what the reviewers were asked to look at is kept for a branch, and forgotten with the branch.
+    #[tokio::test]
+    async fn the_reviewed_tip_of_a_branch_is_kept_and_forgotten_with_the_branch() {
+        let fixture = Fixture::new();
+        topic_branch(&fixture);
+        let git = fixture.git();
+        let tip: CommitId = raw(&fixture.repo, &["rev-parse", "topic"]).parse().unwrap();
+        assert_eq!(git.reviewed_tip(&branch("topic")).await.unwrap(), None);
+
+        git.record_reviewed(&branch("topic"), &tip).await.unwrap();
+        assert_eq!(git.reviewed_tip(&branch("topic")).await.unwrap(), Some(tip));
+
+        git.branch_delete(&branch("topic"), DeleteMode::Force).await.unwrap();
+        assert_eq!(git.reviewed_tip(&branch("topic")).await.unwrap(), None);
     }
 
     // Rule: a deleted branch leaves nothing a later branch of the same name could be pushed over.
