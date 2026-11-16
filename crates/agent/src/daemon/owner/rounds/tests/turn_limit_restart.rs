@@ -163,3 +163,60 @@ async fn restart_after_the_saved_turn_limit_resumes_once_and_keeps_the_budget() 
         );
     }
 }
+
+#[tokio::test]
+async fn turn_limit_without_a_session_fails_with_its_own_notice() {
+    use crate::daemon::notice::Notice;
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "turn-limit"),
+            investigator("inv-r1", "done"),
+            investigator("inv-r2", "done"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.pin_turn_limit_clock();
+    let mut step = stepped(&rig).await;
+    let (reply, receive) = oneshot::channel();
+    step.owner
+        .handle(Message::Request {
+            client: Client::Cli,
+            command: Command::Run(RunRequest {
+                repo: "example".parse().unwrap(),
+                checkout: rig.repo.to_str().unwrap().parse().unwrap(),
+                agents: AgentList::try_from(vec!["claude-1".parse().unwrap()]).unwrap(),
+                task_list: TaskListText::new("Finish the work.".to_owned()).unwrap(),
+                coordinator: None,
+                merge: MergeMode::Autopilot,
+            }),
+            reply,
+        })
+        .await
+        .unwrap();
+    let Reply::Started { team, tasks } = receive.await.unwrap().unwrap() else {
+        panic!("team did not start")
+    };
+    {
+        let now = "2026-11-16T00:00:00Z".parse().unwrap();
+        let mut team_mut = step.owner.parts.state.team_mut(&team).unwrap();
+        let (_, mut member) = team_mut.find_mut(&tasks[0]).unwrap();
+        member
+            .begin_run("run-20261116-000000-0001".parse().unwrap(), now, None)
+            .unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.end_run(now, RunEnd::TurnLimit).unwrap();
+    }
+    let (status, notice) = step.owner.turn_limit(&tasks[0]).unwrap();
+    assert_eq!(status, TaskStatus::Failed);
+    assert_eq!(notice, Some(Notice::TurnLimitNoSession));
+    let rendered = notice
+        .unwrap()
+        .render(&step.owner.parts.texts, "claude-1", &tasks[0])
+        .unwrap();
+    assert_eq!(rendered.title(), "claude-1: turn limit reached without a session");
+    assert!(rendered.body().contains("no session ID to resume"));
+    assert!(!rendered.body().contains("consecutive turn-limit endings"));
+}

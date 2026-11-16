@@ -44,6 +44,9 @@ pub(super) enum Notice {
         /// Configured maximum automatic continuations.
         limit: u32,
     },
+    /// A turn-limited run had no session ID to continue.
+    #[cfg_attr(not(test), expect(dead_code, reason = "wired in the following GREEN commit"))]
+    TurnLimitNoSession,
     /// The task waits for a provider's limit to end.
     Paused {
         /// When the task goes on.
@@ -129,6 +132,7 @@ impl Notice {
                     .with("count", count.to_string())?
                     .with("limit", limit.to_string())?,
             ),
+            Self::TurnLimitNoSession => (HarnessPrompt::NoticeTurnLimitNoSession, common),
             Self::Paused {
                 until,
                 reason,

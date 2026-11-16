@@ -42,6 +42,8 @@ pub enum HarnessPrompt {
     ResumeTurnLimit,
     /// Tell the human that consecutive turn-limit resumes are exhausted.
     NoticeTurnLimitExhausted,
+    /// Tell the human that a turn-limited run had no session to resume.
+    NoticeTurnLimitNoSession,
     /// The short prompt that sends the agent to a file when its task is too long for a command line.
     PromptFile,
     /// The notification that an agent has questions.
@@ -83,6 +85,7 @@ impl HarnessPrompt {
         Self::ResumeLimit,
         Self::ResumeTurnLimit,
         Self::NoticeTurnLimitExhausted,
+        Self::NoticeTurnLimitNoSession,
         Self::PromptFile,
         Self::NoticeQuestions,
         Self::NoticeQuestionsMissing,
@@ -125,6 +128,11 @@ impl HarnessPrompt {
                 "harness/run/notice-turn-limit-exhausted.md",
                 Audience::Human,
                 &["agent", "task", "count", "limit"],
+            ),
+            Self::NoticeTurnLimitNoSession => PromptSpec::new(
+                "harness/run/notice-turn-limit-no-session.md",
+                Audience::Human,
+                &["agent", "task"],
             ),
             Self::ResumeLimit => PromptSpec::new("harness/run/resume-limit.md", Audience::Model, &[]),
             Self::PromptFile => PromptSpec::new("harness/run/prompt-file.md", Audience::Model, &["path"]),
