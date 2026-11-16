@@ -1622,9 +1622,58 @@ its tools interface, dashboard, language servers).
 
 ## Notifications
 
-After every run (and on a few team events) the script writes a notification file — the first line is a title
-(the repository), the rest is the body — and calls `NOTIFY_CMD <file>`. Ready-made hooks are in
-`examples/notify/`:
+After every run (and on team events) a notification file is written — the first line is the title,
+starting with the status icon of what happened and the repository name (`<icon> <repo>`), followed by
+a standardized structured header block and the message body — and calls `NOTIFY_CMD <file>`.
+
+### Format
+
+A notification consists of a single-line title, a table-like header block, and an optional body:
+
+```
+<icon> <repo>
+Repo: <repo>
+Agent: <agent> (<cli>, <model>)
+Time: YYYY-MM-DD HH:MM
+Task: <task-id>
+Team: <team-id>
+Status: <icon> <label>
+Note: <summary of the event>
+PR: <pull-request-url>
+
+<details / message text>
+```
+
+- **Title:** `<icon> <repo>` (for example, `✅✅ example` or `🟣 example`).
+- **Header block:**
+  - `Repo:` the repository name.
+  - `Agent:` agent name with CLI kind and model when configured (e.g. `claude-1 (claude, sonnet)` or `gemini-1 (gemini)`).
+  - `Time:` event timestamp formatted as `YYYY-MM-DD HH:MM` in the host's local time offset.
+  - `Task:` task identifier.
+  - `Team:` team identifier (omitted when the task is not part of a team).
+  - `Status:` status icon and human-readable label (`<icon> <label>`).
+  - `Note:` one-line summary of what happened.
+  - `PR:` pull request URL (omitted when no pull request is associated with the event).
+- **Body:** free-form details, prompt text, or error output when present.
+
+### Status icons and labels
+
+| Status | Icon | Label | Description |
+|---|---|---|---|
+| `Questions` | ❓ | `waiting for answers` | Agent has open questions for the human |
+| `Decision` | ❓ | `needs your decision` | Human decision required |
+| `Approved` | ✅✅ | `approved: ready to merge` | Pull request approved by reviewers |
+| `Merged` | 🟣 | `merged` | Pull request merged into target branch |
+| `Done` | ✅ | `done` | Task or team finished successfully |
+| `Asleep` | 💤 | `team asleep` | Team has paused / gone to sleep |
+| `Paused` | ⏸ | `paused` | Task paused due to provider rate limits or cost |
+| `Hung` | ⌛ | `hung` | Watchdog detected a hung or killed process |
+| `Closed` | 🚫 | `pull request closed` | Pull request closed without merging |
+| `NotPublished` | 📕 | `not published` | Branch publication failed |
+| `NoVerdict` | ❗ | `review without a verdict` | Review completed without an explicit verdict |
+| `Failed` / `NotMerged` | ❌ | `failed` / `not merged` | Run or merge failed |
+
+Ready-made hooks are in `examples/notify/`:
 
 ```bash
 # agents.conf
