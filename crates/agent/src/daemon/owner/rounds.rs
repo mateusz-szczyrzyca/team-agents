@@ -124,6 +124,10 @@ pub(super) struct PullWatch {
     bounces: HashMap<TaskId, u32>,
     /// When each approved pull request was last looked at, so that one that waits is not asked about at every look.
     polled: HashMap<(TeamId, PrNumber), Timestamp>,
+    /// The gates the harness runs or ran by itself for the leads that were done without one.
+    own_gates: HashMap<TaskId, publish::OwnGate>,
+    /// How many times in a row each lead was sent back because the gate had not passed at the tip of its branch.
+    gate_sent_back: HashMap<TaskId, u32>,
     /// The pull requests whose merge GitHub refused: they are not merged again, only looked at for the human's merge.
     refused: HashSet<(TeamId, PrNumber)>,
 }
@@ -179,6 +183,15 @@ pub(super) enum Announcement {
         team: TeamId,
         /// The branch.
         branch: BranchName,
+    },
+    /// The gate still does not pass at this tip after the lead was sent back as often as it is.
+    GateNotPassed {
+        /// The team.
+        team: TeamId,
+        /// The branch.
+        branch: BranchName,
+        /// The tip the gate does not pass at.
+        tip: agent_core::state::CommitId,
     },
 }
 
@@ -266,6 +279,8 @@ struct Lead {
     task: TaskId,
     /// The lead's agent.
     agent: AgentName,
+    /// Whether the lead's last run ended with `STATUS: DONE`: it says its work is finished, not that it waits for its team.
+    done: bool,
 }
 
 /// The notification of the text `prompt` rendered with `values`: its first line is the title, the rest the body.
@@ -312,6 +327,15 @@ impl Owner {
             repo: found.repo().clone(),
             task: lead.task().clone(),
             agent: agent_name(lead.agent())?,
+            done: matches!(
+                lead.runs().last().map(agent_core::state::Run::state),
+                Some(agent_core::state::RunState::Ended {
+                    end: agent_core::state::RunEnd::Reported {
+                        outcome: agent_core::status::RunOutcome::Done
+                    },
+                    ..
+                })
+            ),
         })
     }
 

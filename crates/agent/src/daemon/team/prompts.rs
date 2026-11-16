@@ -28,6 +28,8 @@ pub(in crate::daemon) enum Why {
     /// The checks before a review hold the round back: the lead is sent back with the reasons, or put the question of the
     /// checks to the human; what its prompt says is made from the record of the checks.
     Checks,
+    /// The lead is done and the gate has not passed at the tip of its branch: it is sent back with this text.
+    Gate(String),
 }
 
 /// What a run is shaped from.
@@ -95,7 +97,9 @@ pub(in crate::daemon) fn shape(
     }
     let reason = match run.why {
         // What the autopilot tells a run is added to its prompt from the state, not from the reason (`owner/rounds.rs`).
-        None | Some(Why::Review | Why::FixPass | Why::AskHuman | Why::VerdictMissing | Why::Checks) => Vec::new(),
+        None | Some(Why::Review | Why::FixPass | Why::AskHuman | Why::VerdictMissing | Why::Checks | Why::Gate(_)) => {
+            Vec::new()
+        }
         Some(Why::Woken) => vec![wake(texts, run)?],
         // The prompt of a session that starts names the item its member has; only a resumed one is told of a new item.
         Some(Why::Assigned(_)) if run.new_session => Vec::new(),

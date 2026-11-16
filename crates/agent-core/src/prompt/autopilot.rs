@@ -24,6 +24,8 @@ pub enum AutopilotPrompt {
     PrBodyChecks,
     /// The comment that tells the reviewers a fix pass updated the pull request.
     PrUpdate,
+    /// What the lead is told when it is done and the gate has not passed at the tip of its branch.
+    GateNotPassed,
     /// The notification that a pull request is approved and waits for the human to merge it.
     NoticeApproved,
     /// The notification that a pull request could not be opened or updated.
@@ -59,6 +61,7 @@ impl AutopilotPrompt {
         Self::PrBodyExpected,
         Self::PrBodyChecks,
         Self::PrUpdate,
+        Self::GateNotPassed,
         Self::NoticeApproved,
         Self::NoticePublishFailed,
         Self::NoticeMergeFailed,
@@ -91,6 +94,11 @@ impl AutopilotPrompt {
             Self::PrBodyExpected => PromptSpec::new("harness/pr/body-expected.md", Audience::Model, &["expected"]),
             Self::PrBodyChecks => PromptSpec::new("harness/pr/body-checks.md", Audience::Model, &["checks"]),
             Self::PrUpdate => PromptSpec::new("harness/pr/update.md", Audience::Model, &["head", "pass", "gate"]),
+            Self::GateNotPassed => PromptSpec::new(
+                "harness/pr/gate-not-passed.md",
+                Audience::Model,
+                &["branch", "reason", "sent", "limit"],
+            ),
             Self::NoticeApproved => PromptSpec::new(
                 "harness/pr/notice-approved.md",
                 Audience::Human,

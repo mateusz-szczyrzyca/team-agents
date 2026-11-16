@@ -99,6 +99,8 @@ pub(in crate::daemon::owner) async fn sections_for(
             Ok(Some(Addition::Replace(text.trim_end().to_owned())))
         }
         (Role::Reviewer, _) => Ok(review_request(ctx, texts, found, working).await?.map(Addition::Append)),
+        // The gate comes before everything else of the round: a branch whose gate has not passed is not looked at further.
+        (Role::Solo | Role::Coordinator, Some(Why::Gate(text))) => Ok(Some(Addition::Append(text.clone()))),
         (Role::Solo | Role::Coordinator, _) => {
             // What the checks before a review tell the lead comes first: it is the last thing that happened to its round.
             let text = match checks_notice(ctx, found).await? {

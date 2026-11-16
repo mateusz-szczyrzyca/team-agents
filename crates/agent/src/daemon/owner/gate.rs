@@ -82,6 +82,42 @@ impl Owner {
         }
     }
 
+    /// Queues a gate of `task` that nobody asked for: the harness runs it for a lead that is done and whose branch has no
+    /// gate at its tip. The gate is recorded as any other; the answer comes on the returned end when it is over.
+    ///
+    /// # Errors
+    /// The refusal, when the gate cannot be queued: no gate service, a full queue, a task or a repository that is gone.
+    pub(super) fn own_gate(&mut self, task: &TaskId) -> Result<oneshot::Receiver<Result<Reply, Failure>>, Failure> {
+        let planned = self.plan_gate(task)?;
+        let queue = self.gate.clone().ok_or_else(|| Failure {
+            kind: FailureKind::Internal,
+            message: "this daemon runs without a gate service: it cannot run a gate".to_owned(),
+        })?;
+        let (reply, answer) = oneshot::channel();
+        let job = GateJob {
+            // The lead waits: no run of it is going that the watchdog could take for hung.
+            hold: None,
+            cancel: self.gate_cancel(task),
+            task: task.clone(),
+            team: planned.team,
+            worktree: planned.worktree,
+            command: planned.command,
+            timeout: planned.timeout,
+            reply,
+        };
+        queue.enqueue(job).map_err(|not_queued| match not_queued {
+            NotQueued::Full(_) => Failure {
+                kind: FailureKind::Refused,
+                message: format!("the gate queue is full: {QUEUE} gates are waiting"),
+            },
+            NotQueued::Stopped(_) => Failure {
+                kind: FailureKind::Internal,
+                message: "the daemon is shutting down".to_owned(),
+            },
+        })?;
+        Ok(answer)
+    }
+
     /// The team, the worktree and the repository's gate of `task`.
     fn plan_gate(&self, task: &TaskId) -> Result<Planned, Failure> {
         let found = self

@@ -158,6 +158,95 @@ async fn nothing_is_published_while_the_gate_has_not_passed_at_the_tip_of_the_br
     assert_eq!(rig.state().teams()[0].reviewers().len(), 0);
 }
 
+// ---- the gate the harness runs ---------------------------------------------------------------------------------
+
+/// A rig with a solo agent that does what `scenario` says and two reviewers that approve.
+async fn gate_rig(scenario: &'static str) -> Rig {
+    Rig::new(
+        &[
+            normal("claude-1", scenario),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await
+}
+
+// Rule: a lead that ends DONE without having run the gate gets it run by the harness, and its branch is published.
+#[tokio::test]
+async fn a_lead_that_is_done_without_a_gate_has_the_gate_run_by_the_harness_and_its_branch_published() {
+    let mut rig = gate_rig("commit-clean").await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    // The agent ran once: nobody had to tell it to run the gate.
+    assert_eq!(rig.runs(&tasks[0]), 1);
+    let record = std::fs::read_to_string(rig.home.gate_record_file(&tasks[0])).unwrap();
+    assert!(record.contains("\"kind\": \"passed\""), "{record}");
+    assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
+}
+
+// Rule: a gate that fails sends the lead back with what the gate said; the fix is gated and published.
+#[tokio::test]
+async fn a_gate_that_fails_sends_the_lead_back_with_the_reason_and_the_fix_is_published() {
+    let mut rig = gate_rig("break,mend").await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    let prompt = rig.prompt(&tasks[0], 2).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        prompt.contains("THE GATE HAS NOT PASSED (sent back 1 of 3)"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("the gate failed (exit 1) at "), "{prompt}");
+    assert!(prompt.contains("gate-1.log"), "{prompt}");
+    assert!(
+        prompt.contains(&format!("agents/claude-1/{}-1.1", tasks[0])),
+        "{prompt}"
+    );
+    assert_eq!(rig.runs(&tasks[0]), 2);
+    // Only what passed the gate went to GitHub.
+    assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
+}
+
+// Rule: a lead whose gate never passes is sent back three times; then the human is told, once, and it waits.
+#[tokio::test]
+async fn a_lead_whose_gate_never_passes_is_sent_back_three_times_and_then_the_human_is_told_once() {
+    let mut rig = gate_rig("break").await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let notice = rig.notification_with("could not be published").await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        notice.contains("the gate has not passed at the tip of the branch"),
+        "{notice}"
+    );
+    assert!(notice.contains("failed (exit 1)"), "{notice}");
+    assert!(notice.contains("sent back 3 times"), "{notice}");
+    // The first run and the three it was sent back for.
+    assert_eq!(rig.runs(&tasks[0]), 4);
+    let told: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("could not be published"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 0);
+}
+
 // ---- reviews and the merge -----------------------------------------------------------------------------------
 
 use agent_core::state::Completion;

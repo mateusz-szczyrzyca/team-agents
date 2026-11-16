@@ -20,6 +20,11 @@
 #   work            commits a file in the worktree, records that the repository's gate passed at the new head (the file
 #                   `gate.json` in the task's directory in the home the configuration names) and ends with STATUS: DONE
 #   work-pushed     like `work`, and pushes the branch to origin itself before it ends
+#   commit-clean    commits a file in the worktree, keeps its own `.fake-*` files out of git's sight, records no gate and
+#                   ends with STATUS: DONE: the tree is clean and nobody ran the gate
+#   break           like `commit-clean`, and what it commits is the file `gate-fails`, with which the gate of the tests'
+#                   repository fails
+#   mend            removes the file `gate-fails`, commits and ends with STATUS: DONE, without a gate
 #   commit          commits a file in the worktree, records no gate and ends with STATUS: DONE: the gate that was recorded
 #                   is of an older commit
 #   ask             writes a questions file to the path the prompt names (the first `.../questions-N.md` in it) and ends
@@ -102,6 +107,13 @@ commit_work() {
   git "${GIT_FIXTURE[@]}" commit -q -m "Work of run $n of $name"
 }
 
+# Keeps the stand-in's own files out of git's sight, so that a gate the daemon runs sees a clean tree.
+hide_own_files() {
+  local exclude
+  exclude=$(git rev-parse --git-path info/exclude)
+  grep -qxF '.fake-*' "$exclude" 2> /dev/null || printf '%s\n' '.fake-*' >> "$exclude"
+}
+
 # Records that the repository's gate passed on a clean tree at the head, where the daemon looks for it: the task is the
 # name of the worktree's directory.
 record_gate() {
@@ -177,6 +189,24 @@ case $action in
   commit)
     commit_work
     result 'Changed something.\nSTATUS: DONE'
+    ;;
+  commit-clean)
+    hide_own_files
+    commit_work
+    result 'Changed something and left the tree clean.\nSTATUS: DONE'
+    ;;
+  break)
+    hide_own_files
+    echo "run $n" > gate-fails
+    git add gate-fails
+    git "${GIT_FIXTURE[@]}" commit -q -m "Break the gate in run $n of $name"
+    result 'Changed something.\nSTATUS: DONE'
+    ;;
+  mend)
+    hide_own_files
+    git rm -q gate-fails
+    git "${GIT_FIXTURE[@]}" commit -q -m "Mend the gate in run $n of $name"
+    result 'Fixed what the gate found.\nSTATUS: DONE'
     ;;
   gated)
     # Commits like `work`, keeps its own files out of git's sight so that a gate sees a clean tree, says it has committed

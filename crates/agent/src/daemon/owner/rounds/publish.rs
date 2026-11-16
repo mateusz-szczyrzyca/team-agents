@@ -1,18 +1,22 @@
 //! Publishing: pushing the branch of the lead, opening or updating its pull request, and putting the items in review.
 
 use agent_core::config::RepoName;
+use agent_core::decide::publish::{GateHold, GateStep, Waiting, gate_step};
 use agent_core::decide::round::{RoundEvent, RoundPolicy, RoundState, Stage};
 use agent_core::history::HistoryEvent;
 use std::num::NonZeroU32;
 
-use agent_core::ids::{BranchName, ItemId, TeamId};
+use agent_core::ids::{BranchName, ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
-use agent_core::protocol::EventKind;
+use agent_core::protocol::{EventKind, Failure, Reply};
 use agent_core::state::{CommitId, GateRecord, ItemPhase, PullRequest, Timestamp};
 use agent_runtime::git::{Git, Revision};
 use agent_runtime::github::{NewPullRequest, PullRequestUpdate, Readiness};
 use agent_runtime::process::error_chain;
+use tokio::sync::oneshot;
+
+use crate::daemon::team::Why;
 
 use super::super::teams::Look;
 use crate::daemon::pr::{Joining, Publication, Publish, plan_publications, pull_text};
@@ -22,6 +26,38 @@ use crate::daemon::merge::count;
 
 use super::checks::{Held, Reviewing};
 use super::{Announcement, Lead, PublishError, Pulls};
+
+/// How many times in a row a lead is sent back because the gate has not passed at the tip of its branch; after that the
+/// human is told.
+pub(super) const GATE_SEND_BACKS: u32 = 3;
+
+/// A gate the harness runs by itself, for a lead that was done without one at the tip of its branch.
+#[derive(Debug)]
+pub(super) enum OwnGate {
+    /// It waits or runs.
+    Running {
+        /// The tip it was started for.
+        tip: CommitId,
+        /// Where the gate service answers when it is over.
+        answer: oneshot::Receiver<Result<Reply, Failure>>,
+    },
+    /// It ran: the record says what it found.
+    Ran {
+        /// The tip it was started for.
+        tip: CommitId,
+    },
+}
+
+/// Where the harness's own gate for the tip of a lead's branch is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Own {
+    /// None ran for this tip, or the one that was started could not run.
+    NotRun,
+    /// One waits or runs; it may be for an earlier tip.
+    Running,
+    /// One ran for this tip.
+    Ran,
+}
 
 /// How long a branch that could not be published is left alone before the next attempt.
 pub(super) const PUBLISH_BACKOFF: time::Duration = time::Duration::seconds(60);
@@ -55,6 +91,13 @@ pub(super) enum Attempt {
     Published(Published),
     /// The checks before the review hold the round back; the owner does what they ask.
     Held(Held),
+    /// The lead is done and the gate has not passed at `tip`: it is sent back.
+    SentBack {
+        /// The tip of its branch.
+        tip: CommitId,
+        /// Why the gate does not count.
+        hold: GateHold,
+    },
 }
 
 /// A pull request that was opened or updated.
@@ -78,6 +121,19 @@ async fn carry(ready: &Ready, branch: &BranchName, carried: Option<&CommitId>) -
         ready.git.push(branch).await?;
     }
     Ok(())
+}
+
+/// The numbers of the items `publication` is for.
+fn items_of(publication: &Publication) -> Vec<String> {
+    match &publication.publish {
+        Publish::Open { items } => items.iter().map(|joining| joining.item.to_string()).collect(),
+        Publish::Update { fixing, joining, .. } => fixing
+            .iter()
+            .copied()
+            .chain(joining.iter().map(|joining| joining.item))
+            .map(|id| id.to_string())
+            .collect(),
+    }
 }
 
 /// The items of `items` whose branch is part of the history of `tip`.
@@ -132,6 +188,8 @@ impl Owner {
                 Ok(Attempt::Nothing) => {}
                 Ok(Attempt::Published(published)) => {
                     self.watch.retry_at.remove(&key);
+                    self.watch.gate_sent_back.remove(&lead.task);
+                    self.watch.own_gates.remove(&lead.task);
                     if self.record_publication(team_id, &publication, &published, look)? {
                         self.note_reviewed(&lead, &publication.head_branch, &published.gated)
                             .await;
@@ -140,6 +198,9 @@ impl Owner {
                 Ok(Attempt::Held(held)) => {
                     self.watch.retry_at.remove(&key);
                     self.hold_round(pulls, team_id, &lead, held, look)?;
+                }
+                Ok(Attempt::SentBack { tip, hold }) => {
+                    self.send_back_for_gate(site, &publication, (&tip, &hold), now, look)?;
                 }
                 Err(error) => self.publish_failed(pulls, team_id, &lead, &publication, &error, now)?,
             }
@@ -160,12 +221,30 @@ impl Owner {
         let Some(tip) = git.branch_tip(&publication.head_branch).await? else {
             return Ok(Attempt::Nothing);
         };
-        let Some(record) = self.parts.store.load_gate_record(&lead.task).await? else {
-            return Ok(Attempt::Nothing);
-        };
-        if !record.counts_as_pass() || record.result.head != tip {
+        // A gate of the harness that still runs decides nothing yet; the record is read after it, so that it is not older.
+        let own = self.own_gate_state(&lead.task, &tip);
+        if own == Own::Running {
             return Ok(Attempt::Nothing);
         }
+        let record = self.parts.store.load_gate_record(&lead.task).await?;
+        let base = Revision::Branch(self.base_branch(&lead.repo)?);
+        let waiting = Waiting {
+            tip: &tip,
+            lead_done: lead.done,
+            // A tip the base branch has is the base branch: the lead committed nothing.
+            own_work: !git.is_ancestor(&Revision::Commit(tip.clone()), &base).await?,
+            record: record.as_ref(),
+            gated_for_tip: own == Own::Ran,
+        };
+        let record = match (gate_step(&waiting), record) {
+            (GateStep::Publish, Some(record)) => record,
+            (GateStep::Publish | GateStep::Wait, _) => return Ok(Attempt::Nothing),
+            (GateStep::Run, _) => {
+                self.start_own_gate(&lead.task, &tip);
+                return Ok(Attempt::Nothing);
+            }
+            (GateStep::SendBack(hold), _) => return Ok(Attempt::SentBack { tip, hold }),
+        };
         let ready = Ready { git, tip, record };
         match &publication.publish {
             Publish::Open { items } => {
@@ -502,6 +581,129 @@ impl Owner {
         }
     }
 
+    /// Where the gate the harness started by itself for `task` is, for the branch tip `tip`. A gate that is over is taken
+    /// off the service: one that ran is remembered with its tip, one that could not run is forgotten and started again.
+    fn own_gate_state(&mut self, task: &TaskId, tip: &CommitId) -> Own {
+        let over = match self.watch.own_gates.get_mut(task) {
+            Some(OwnGate::Running { tip: started, answer }) => match answer.try_recv() {
+                Err(oneshot::error::TryRecvError::Empty) => return Own::Running,
+                Ok(Ok(_)) => Some(Ok(started.clone())),
+                Ok(Err(failure)) => Some(Err(failure.message)),
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    Some(Err("the gate service ended before it answered".to_owned()))
+                }
+            },
+            Some(OwnGate::Ran { .. }) | None => None,
+        };
+        match over {
+            Some(Ok(started)) => {
+                self.watch.own_gates.insert(task.clone(), OwnGate::Ran { tip: started });
+            }
+            Some(Err(reason)) => {
+                tracing::warn!(
+                    event = LogEvent::GateCannotStart.as_str(),
+                    task = %task,
+                    %reason,
+                    "the gate the harness runs for a lead that is done did not run: it is started again"
+                );
+                self.watch.own_gates.remove(task);
+            }
+            None => {}
+        }
+        match self.watch.own_gates.get(task) {
+            Some(OwnGate::Ran { tip: ran }) if ran == tip => Own::Ran,
+            Some(OwnGate::Ran { .. } | OwnGate::Running { .. }) | None => Own::NotRun,
+        }
+    }
+
+    /// Starts the gate of `task` for the branch tip `tip`: nobody ran one, and the lead says it is done.
+    fn start_own_gate(&mut self, task: &TaskId, tip: &CommitId) {
+        match self.own_gate(task) {
+            Ok(answer) => {
+                tracing::info!(
+                    event = LogEvent::ChecksDecided.as_str(),
+                    outcome = "gate_started",
+                    task = %task,
+                    tip = %tip,
+                    "the lead is done and no gate passed at the tip of its branch: the harness runs the gate"
+                );
+                self.watch.own_gates.insert(
+                    task.clone(),
+                    OwnGate::Running {
+                        tip: tip.clone(),
+                        answer,
+                    },
+                );
+            }
+            Err(failure) => {
+                tracing::warn!(
+                    event = LogEvent::GateCannotStart.as_str(),
+                    task = %task,
+                    reason = %failure.message,
+                    "the gate the harness runs for a lead that is done cannot be started: it is tried again"
+                );
+            }
+        }
+    }
+
+    /// Sends the lead back because the gate has not passed at `tip`, the tip of its branch, for the reason `hold`; after
+    /// [`GATE_SEND_BACKS`] times in a row the human is told instead, once for a tip.
+    fn send_back_for_gate(
+        &mut self,
+        site: Site<'_>,
+        publication: &Publication,
+        (tip, hold): (&CommitId, &GateHold),
+        now: Timestamp,
+        look: &mut Look,
+    ) -> Result<(), OwnerError> {
+        let Site { pulls, team, lead } = site;
+        let sent = self.watch.gate_sent_back.get(&lead.task).copied().unwrap_or(0);
+        if sent >= GATE_SEND_BACKS {
+            let announcement = Announcement::GateNotPassed {
+                team: team.clone(),
+                branch: publication.head_branch.clone(),
+                tip: tip.clone(),
+            };
+            if self.watch.announced.insert(announcement) {
+                let reason = format!(
+                    "the gate has not passed at the tip of the branch {}: {hold} The lead was sent back {sent} times \
+                     and ended again without a gate that passes; it waits for you.",
+                    publication.head_branch
+                );
+                let values = Variables::new()
+                    .with("team", team.as_str())
+                    .and_then(|values| values.with("items", items_of(publication).join(", ")))
+                    .and_then(|values| values.with("reason", &reason));
+                self.tell_human(pulls, AutopilotPrompt::NoticePublishFailed, values, lead, now);
+            }
+            return Ok(());
+        }
+        let sent = sent.saturating_add(1);
+        let text = Variables::new()
+            .with("branch", publication.head_branch.as_str())
+            .and_then(|values| values.with("reason", hold.to_string()))
+            .and_then(|values| values.with("sent", sent.to_string()))
+            .and_then(|values| values.with("limit", GATE_SEND_BACKS.to_string()))
+            .map_err(PublishError::from)
+            .and_then(|values| Ok(pulls.texts.render(AutopilotPrompt::GateNotPassed, &values)?));
+        let text = match text {
+            Ok(text) => text,
+            Err(error) => return self.publish_failed(pulls, team, lead, publication, &error, now),
+        };
+        tracing::info!(
+            event = LogEvent::ChecksDecided.as_str(),
+            outcome = "gate_sent_back",
+            team = %team,
+            task = %lead.task,
+            tip = %tip,
+            sent,
+            reason = %hold,
+            "the lead is done and the gate has not passed at the tip of its branch: it is sent back"
+        );
+        self.watch.gate_sent_back.insert(lead.task.clone(), sent);
+        self.release(&lead.task, Why::Gate(text.trim_end().to_owned()), look)
+    }
+
     /// What follows a branch that could not be published: it is logged, tried again after a while, and the human is told
     /// once.
     pub(super) fn publish_failed(
@@ -541,18 +743,9 @@ impl Owner {
         if !self.watch.announced.insert(announcement) {
             return Ok(());
         }
-        let items = match &publication.publish {
-            Publish::Open { items } => items.iter().map(|joining| joining.item.to_string()).collect::<Vec<_>>(),
-            Publish::Update { fixing, joining, .. } => fixing
-                .iter()
-                .copied()
-                .chain(joining.iter().map(|joining| joining.item))
-                .map(|id| id.to_string())
-                .collect(),
-        };
         let values = Variables::new()
             .with("team", team_id.as_str())
-            .and_then(|values| values.with("items", items.join(", ")))
+            .and_then(|values| values.with("items", items_of(publication).join(", ")))
             .and_then(|values| values.with("reason", &reason));
         self.tell_human(pulls, AutopilotPrompt::NoticePublishFailed, values, lead, now);
         Ok(())
