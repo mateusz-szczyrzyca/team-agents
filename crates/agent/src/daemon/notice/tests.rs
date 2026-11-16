@@ -112,3 +112,179 @@ async fn a_run_that_failed_after_its_start_is_not_told_as_a_start() {
     assert!(!body.contains("could not be started"), "{body}");
     assert!(body.contains("cannot write the activity"), "{body}");
 }
+
+#[test]
+fn layout_as_a_table_every_field_present() {
+    let task_id: TaskId = "task-20261111-191500-1111".parse().unwrap();
+    let team_id: TeamId = "team-20261111-153001-t5m8".parse().unwrap();
+    let time = at(0);
+    let offset = time::UtcOffset::from_hms(2, 0, 0).unwrap();
+
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "codex-1",
+        cli: Some(CliKind::Codex),
+        model: Some("o3-mini"),
+        time,
+        offset,
+        task: &task_id,
+        team: Some(&team_id),
+        pr: Some("https://github.com/org/team-agents/pull/42"),
+    };
+
+    let rendered = "Pull request 42 of team-agents is approved\nBoth reviewers approved pull request #42.";
+    let notification = layout_notification(NoticeKind::Approved, &context, rendered).unwrap();
+
+    assert_eq!(notification.title(), "✅✅ team-agents");
+    let expected_body = "\
+Repo: team-agents
+Agent: codex-1 (codex, o3-mini)
+Time: 2026-11-11 21:15
+Task: task-20261111-191500-1111
+Team: team-20261111-153001-t5m8
+Status: ✅✅ approved: ready to merge
+Note: Pull request 42 of team-agents is approved
+PR: https://github.com/org/team-agents/pull/42
+
+Both reviewers approved pull request #42.";
+
+    assert_eq!(notification.body(), expected_body);
+}
+
+#[test]
+fn layout_optional_fields_absent() {
+    let task_id: TaskId = "task-20261111-191500-1111".parse().unwrap();
+    let time = at(0);
+    let offset = time::UtcOffset::UTC;
+
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "codex-1",
+        cli: Some(CliKind::Codex),
+        model: None,
+        time,
+        offset,
+        task: &task_id,
+        team: None,
+        pr: None,
+    };
+
+    let rendered = "codex-1 ended without a status (task-20261111-191500-1111)\nThe run ended without a status line.";
+    let notification = layout_notification(NoticeKind::NoStatus, &context, rendered).unwrap();
+
+    assert_eq!(notification.title(), "❌ team-agents");
+    let expected_body = "\
+Repo: team-agents
+Agent: codex-1 (codex)
+Time: 2026-11-11 19:15
+Task: task-20261111-191500-1111
+Status: ❌ failed
+Note: codex-1 ended without a status (task-20261111-191500-1111)
+
+The run ended without a status line.";
+
+    assert_eq!(notification.body(), expected_body);
+}
+
+#[test]
+fn layout_empty_body() {
+    let task_id: TaskId = "task-20261111-191500-1111".parse().unwrap();
+    let time = at(0);
+    let offset = time::UtcOffset::UTC;
+
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "codex-1",
+        cli: Some(CliKind::Codex),
+        model: None,
+        time,
+        offset,
+        task: &task_id,
+        team: None,
+        pr: None,
+    };
+
+    let rendered = "Single line notice title with no body";
+    let notification = layout_notification(NoticeKind::NoStatus, &context, rendered).unwrap();
+
+    assert_eq!(notification.title(), "❌ team-agents");
+    let expected_body = "\
+Repo: team-agents
+Agent: codex-1 (codex)
+Time: 2026-11-11 19:15
+Task: task-20261111-191500-1111
+Status: ❌ failed
+Note: Single line notice title with no body";
+
+    assert_eq!(notification.body(), expected_body);
+}
+
+#[test]
+fn every_notice_has_its_status_icon_label_and_first_line() {
+    use strum::VariantArray;
+
+    let task_id: TaskId = "task-20261111-191500-1111".parse().unwrap();
+    let time = at(0);
+    let offset = time::UtcOffset::from_hms(1, 0, 0).unwrap();
+
+    for notice in NoticeKind::VARIANTS {
+        let context = NoticeContext {
+            repo: "my-repo",
+            agent: "agent-1",
+            cli: Some(CliKind::Claude),
+            model: None,
+            time,
+            offset,
+            task: &task_id,
+            team: None,
+            pr: None,
+        };
+        let status = notice.status();
+        let rendered = "First line of notice text\nBody line 1\nBody line 2";
+        let notification = layout_notification(*notice, &context, rendered).unwrap();
+
+        assert_eq!(
+            notification.title(),
+            format!("{} my-repo", status.icon()),
+            "{notice:?} title"
+        );
+        assert!(
+            notification
+                .body()
+                .contains(&format!("Status: {} {}", status.icon(), status.label())),
+            "{notice:?} status"
+        );
+        assert!(
+            notification.body().contains("Note: First line of notice text"),
+            "{notice:?} note"
+        );
+        assert!(
+            notification.body().contains("Body line 1\nBody line 2"),
+            "{notice:?} body"
+        );
+    }
+}
+
+#[test]
+fn longest_allowed_repository_name_stays_within_notification_limit() {
+    let task_id: TaskId = "task-20261111-191500-1111".parse().unwrap();
+    let time = at(0);
+    let offset = time::UtcOffset::UTC;
+    let long_repo = "a".repeat(100);
+
+    let context = NoticeContext {
+        repo: &long_repo,
+        agent: "agent-1",
+        cli: Some(CliKind::Claude),
+        model: None,
+        time,
+        offset,
+        task: &task_id,
+        team: None,
+        pr: None,
+    };
+
+    let notification = layout_notification(NoticeKind::Approved, &context, "Title\nBody").unwrap();
+    assert!(notification.title().len() <= agent_runtime::notify::MAX_TITLE_BYTES);
+    assert_eq!(notification.title(), format!("✅✅ {long_repo}"));
+}

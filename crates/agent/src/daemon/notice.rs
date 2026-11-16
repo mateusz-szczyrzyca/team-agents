@@ -5,13 +5,130 @@
 
 use std::num::NonZeroU32;
 use std::path::PathBuf;
+use time::UtcOffset;
 
 use agent_core::decide::outcome::PauseReason;
-use agent_core::ids::TaskId;
+use agent_core::ids::{TaskId, TeamId};
+use agent_core::kinds::CliKind;
+use agent_core::notice_status::NoticeStatus;
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::state::Timestamp;
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
 use agent_runtime::notify::{InvalidNotification, Notification};
+
+/// Every notice that can be sent to the human.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::VariantArray)]
+pub(super) enum NoticeKind {
+    /// Questions were asked (`run/notice-questions`).
+    Questions,
+    /// An agent wrote questions, but the file cannot be read (`run/notice-questions-missing`).
+    QuestionsMissing,
+    /// The task is hung after watchdog strikes (`run/notice-hung`).
+    Hung,
+    /// Turn limit continuations exhausted (`run/notice-turn-limit-exhausted`).
+    TurnLimitExhausted,
+    /// Turn limit run had no session (`run/notice-turn-limit-no-session`).
+    TurnLimitNoSession,
+    /// Task paused for provider limits (`run/notice-paused`).
+    Paused,
+    /// Task reported failed (`run/notice-failed`).
+    Failed,
+    /// Run ended without status code (`run/notice-no-status`).
+    NoStatus,
+    /// Run ended by signal without status (`run/notice-no-status-signal`).
+    NoStatusSignal,
+    /// Run could not be started (`run/notice-start-failed`).
+    StartFailed,
+    /// Run failed while running (`run/notice-run-failed`).
+    RunFailed,
+    /// Questions file incomplete (`questions/notice-incomplete`).
+    Incomplete,
+    /// Reviewers asked for changes, human decision needed (`review/notice-decision`).
+    Decision,
+    /// Lead task did not ask checks questions (`checks/notice-not-asked`).
+    NotAsked,
+    /// Pull request approved and ready to merge (`pr/notice-approved`).
+    Approved,
+    /// Pull request merge failed on GitHub (`pr/notice-merge-failed`).
+    MergeFailed,
+    /// Pull request was closed without merge (`pr/notice-closed`).
+    Closed,
+    /// Pull request branch could not be published (`pr/notice-publish-failed`).
+    PublishFailed,
+    /// Reviewer ended without a verdict (`review/notice-no-verdict`).
+    NoVerdict,
+    /// Pull request merged (`pr/notice-merged`).
+    Merged,
+    /// Team asleep (`pr/notice-team-asleep`).
+    TeamAsleep,
+    /// Team done (`team/notice-team-done`).
+    TeamDone,
+}
+
+impl NoticeKind {
+    /// The status of this notice.
+    #[must_use]
+    pub(super) const fn status(self) -> NoticeStatus {
+        match self {
+            Self::Questions | Self::Incomplete => NoticeStatus::Questions,
+            Self::Decision | Self::NotAsked => NoticeStatus::Decision,
+            Self::Failed
+            | Self::RunFailed
+            | Self::StartFailed
+            | Self::NoStatus
+            | Self::NoStatusSignal
+            | Self::QuestionsMissing
+            | Self::TurnLimitExhausted
+            | Self::TurnLimitNoSession => NoticeStatus::Failed,
+            Self::Hung => NoticeStatus::Hung,
+            Self::Paused => NoticeStatus::Paused,
+            Self::Approved => NoticeStatus::Approved,
+            Self::MergeFailed => NoticeStatus::NotMerged,
+            Self::Closed => NoticeStatus::Closed,
+            Self::PublishFailed => NoticeStatus::NotPublished,
+            Self::NoVerdict => NoticeStatus::NoVerdict,
+            Self::Merged => NoticeStatus::Merged,
+            Self::TeamAsleep => NoticeStatus::Asleep,
+            Self::TeamDone => NoticeStatus::Done,
+        }
+    }
+}
+
+/// The facts about the task and environment needed to lay out a notification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct NoticeContext<'a> {
+    /// The repository name.
+    pub(super) repo: &'a str,
+    /// The agent name.
+    pub(super) agent: &'a str,
+    /// The CLI kind of the agent, if known.
+    pub(super) cli: Option<CliKind>,
+    /// The model name of the agent, if configured.
+    pub(super) model: Option<&'a str>,
+    /// The time the event occurred.
+    pub(super) time: Timestamp,
+    /// The host's local offset from UTC.
+    pub(super) offset: UtcOffset,
+    /// The task ID.
+    pub(super) task: &'a TaskId,
+    /// The team ID, if the task belongs to a team.
+    pub(super) team: Option<&'a TeamId>,
+    /// The address of the pull request, if applicable.
+    pub(super) pr: Option<&'a str>,
+}
+
+/// Lays out a notification for the human.
+///
+/// # Errors
+/// [`InvalidNotification`] when title or body violates limits or format rules.
+pub(super) fn layout_notification(
+    _notice: NoticeKind,
+    context: &NoticeContext<'_>,
+    rendered: &str,
+) -> Result<Notification, InvalidNotification> {
+    // Stub returning old-style layout for RED commit
+    Notification::new(context.repo, rendered)
+}
 
 /// What the human is told about a task.
 #[derive(Debug, Clone, PartialEq, Eq)]

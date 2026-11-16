@@ -14,6 +14,7 @@ dependencies = [
  "rusqlite",
  "rustix",
  "serde_json",
+ "strum",
  "tempfile",
  "thiserror",
  "time",
