@@ -313,6 +313,57 @@ fn notification(
     Ok(layout_notification(notice, context, &rendered)?)
 }
 
+/// The autopilot notifications sent to the human.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum AutopilotNotice {
+    /// Human decision needed.
+    Decision,
+    /// Reviewer completed without a verdict.
+    NoVerdict,
+    /// Branch publish failed.
+    PublishFailed,
+    /// Team asleep.
+    TeamAsleep,
+    /// Pull request closed without merge.
+    Closed,
+    /// Pull request approved.
+    Approved,
+    /// Pull request merge failed.
+    MergeFailed,
+    /// Pull request merged.
+    Merged,
+}
+
+impl AutopilotNotice {
+    /// The prompt template for this notice.
+    pub(super) const fn prompt(self) -> AutopilotPrompt {
+        match self {
+            Self::Decision => AutopilotPrompt::NoticeDecision,
+            Self::NoVerdict => AutopilotPrompt::NoticeNoVerdict,
+            Self::PublishFailed => AutopilotPrompt::NoticePublishFailed,
+            Self::TeamAsleep => AutopilotPrompt::NoticeTeamAsleep,
+            Self::Closed => AutopilotPrompt::NoticeClosed,
+            Self::Approved => AutopilotPrompt::NoticeApproved,
+            Self::MergeFailed => AutopilotPrompt::NoticeMergeFailed,
+            Self::Merged => AutopilotPrompt::NoticeMerged,
+        }
+    }
+
+    /// The notification kind for this notice.
+    pub(super) const fn kind(self) -> NoticeKind {
+        match self {
+            Self::Decision => NoticeKind::Decision,
+            Self::NoVerdict => NoticeKind::NoVerdict,
+            Self::PublishFailed => NoticeKind::PublishFailed,
+            Self::TeamAsleep => NoticeKind::TeamAsleep,
+            Self::Closed => NoticeKind::Closed,
+            Self::Approved => NoticeKind::Approved,
+            Self::MergeFailed => NoticeKind::MergeFailed,
+            Self::Merged => NoticeKind::Merged,
+        }
+    }
+}
+
 impl Owner {
     /// One look at the pull requests of `team`.
     ///
@@ -387,34 +438,18 @@ impl Owner {
         Ok(client)
     }
 
-    /// Tells the human `prompt` rendered with `values`, in the name of the lead; what cannot be made is logged: the
+    /// Tells the human `notice` rendered with `values`, in the name of the lead; what cannot be made is logged: the
     /// harness goes on.
     fn tell_human(
         &self,
         pulls: &Pulls,
-        prompt: AutopilotPrompt,
+        notice: AutopilotNotice,
         values: Result<Variables, VariablesError>,
         lead: &Lead,
         now: Timestamp,
     ) {
-        let notice = match prompt {
-            AutopilotPrompt::NoticeDecision => NoticeKind::Decision,
-            AutopilotPrompt::NoticeNoVerdict => NoticeKind::NoVerdict,
-            AutopilotPrompt::NoticePublishFailed => NoticeKind::PublishFailed,
-            AutopilotPrompt::NoticeTeamAsleep => NoticeKind::TeamAsleep,
-            AutopilotPrompt::NoticeClosed => NoticeKind::Closed,
-            AutopilotPrompt::NoticeApproved => NoticeKind::Approved,
-            AutopilotPrompt::NoticeMergeFailed => NoticeKind::MergeFailed,
-            AutopilotPrompt::NoticeMerged => NoticeKind::Merged,
-            _ => {
-                tracing::error!(
-                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
-                    ?prompt,
-                    "unknown autopilot notice prompt"
-                );
-                return;
-            }
-        };
+        let prompt = notice.prompt();
+        let notice_kind = notice.kind();
         let pr = values
             .as_ref()
             .ok()
@@ -433,7 +468,7 @@ impl Owner {
             }
         };
         let made = match values {
-            Ok(v) => notification(&pulls.texts, prompt, &v, notice, &context),
+            Ok(v) => notification(&pulls.texts, prompt, &v, notice_kind, &context),
             Err(e) => Err(PublishError::from(e)),
         };
         let notification = match made {
@@ -475,18 +510,18 @@ impl Owner {
         Ok(())
     }
 
-    /// Tells the human `prompt` rendered with `values`, unless `announcement` was told before.
+    /// Tells the human `notice`, unless `announcement` was told before.
     fn announce(
         &mut self,
         pulls: &Pulls,
         lead: &Lead,
         announcement: Announcement,
-        prompt: AutopilotPrompt,
+        notice: AutopilotNotice,
         values: Result<Variables, VariablesError>,
         now: Timestamp,
     ) {
         if self.watch.announced.insert(announcement) {
-            self.tell_human(pulls, prompt, values, lead, now);
+            self.tell_human(pulls, notice, values, lead, now);
         }
     }
 }

@@ -4,7 +4,7 @@
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, TeamId};
 use agent_core::log::LogEvent;
-use agent_core::prompt::{AutopilotPrompt, Variables};
+use agent_core::prompt::Variables;
 use agent_core::protocol::EventKind;
 use agent_core::state::{CommitId, Completion, ItemPhase, PullRequest, RoundEnd, Timestamp};
 use agent_runtime::github::{GitHub, GitHubError, MergeMethod, MergeRequest, PullState, Rejection};
@@ -15,7 +15,7 @@ use crate::daemon::merge::items_of;
 
 use super::super::{Owner, OwnerError};
 use super::publish::Site;
-use super::{Announcement, Lead, PublishError, Pulls};
+use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 
 /// How long an approved pull request that waits (for the human, or for a merge that failed) is left alone between two
 /// looks at it.
@@ -251,15 +251,12 @@ impl Owner {
     fn tell_about(&mut self, about: &About<'_>, telling: Telling<'_>) {
         let About { site, pr, url, now } = *about;
         let (team, number) = (site.team.clone(), pr.number);
-        let (announcement, prompt) = match telling {
-            Telling::Closed => (Announcement::Closed { team, pr: number }, AutopilotPrompt::NoticeClosed),
-            Telling::Approved => (
-                Announcement::Approved { team, pr: number },
-                AutopilotPrompt::NoticeApproved,
-            ),
+        let (announcement, notice) = match telling {
+            Telling::Closed => (Announcement::Closed { team, pr: number }, AutopilotNotice::Closed),
+            Telling::Approved => (Announcement::Approved { team, pr: number }, AutopilotNotice::Approved),
             Telling::MergeFailed(_) => (
                 Announcement::MergeFailed { team, pr: number },
-                AutopilotPrompt::NoticeMergeFailed,
+                AutopilotNotice::MergeFailed,
             ),
         };
         let values = Variables::new()
@@ -271,7 +268,7 @@ impl Owner {
                 Telling::Approved => values.with("repo", site.lead.repo.as_str()),
                 Telling::MergeFailed(reason) => values.with("reason", reason),
             });
-        self.announce(site.pulls, site.lead, announcement, prompt, values, now);
+        self.announce(site.pulls, site.lead, announcement, notice, values, now);
     }
 
     /// Completes the items of the merged pull request `pr`; the checkout learns what the merge made of the base branch, so
@@ -292,7 +289,7 @@ impl Owner {
             site.pulls,
             site.lead,
             announcement,
-            AutopilotPrompt::NoticeMerged,
+            AutopilotNotice::Merged,
             values,
             now,
         );

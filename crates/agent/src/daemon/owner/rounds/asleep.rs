@@ -11,7 +11,7 @@ use agent_core::status::TaskStatus;
 
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
-use super::{Announcement, PublishError, Pulls};
+use super::{Announcement, AutopilotNotice, PublishError, Pulls};
 use crate::daemon::team::Why;
 
 /// How many times in a row the lead of a team is woken because the team sleeps; after that the human is told.
@@ -164,7 +164,7 @@ impl Owner {
                 };
                 if self.watch.announced.insert(announcement) {
                     let values = values(woken).and_then(|values| values.with("lead", lead.task.as_str()));
-                    self.tell_human(pulls, AutopilotPrompt::NoticeTeamAsleep, values, &lead, now);
+                    self.tell_human(pulls, AutopilotNotice::TeamAsleep, values, &lead, now);
                 }
                 Ok(())
             }

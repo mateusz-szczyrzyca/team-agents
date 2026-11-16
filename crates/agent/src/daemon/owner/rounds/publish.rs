@@ -25,7 +25,7 @@ use super::super::{Owner, OwnerError};
 use crate::daemon::merge::count;
 
 use super::checks::{Held, Reviewing};
-use super::{Announcement, Lead, PublishError, Pulls};
+use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 
 /// How many times in a row a lead is sent back because the gate has not passed at the tip of its branch; after that the
 /// human is told.
@@ -674,7 +674,7 @@ impl Owner {
                     .with("team", team.as_str())
                     .and_then(|values| values.with("items", items_of(publication).join(", ")))
                     .and_then(|values| values.with("reason", &reason));
-                self.tell_human(pulls, AutopilotPrompt::NoticePublishFailed, values, lead, now);
+                self.tell_human(pulls, AutopilotNotice::PublishFailed, values, lead, now);
             }
             return Ok(());
         }
@@ -747,7 +747,7 @@ impl Owner {
             .with("team", team_id.as_str())
             .and_then(|values| values.with("items", items_of(publication).join(", ")))
             .and_then(|values| values.with("reason", &reason));
-        self.tell_human(pulls, AutopilotPrompt::NoticePublishFailed, values, lead, now);
+        self.tell_human(pulls, AutopilotNotice::PublishFailed, values, lead, now);
         Ok(())
     }
 }
