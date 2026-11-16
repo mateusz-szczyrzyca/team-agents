@@ -63,6 +63,36 @@ fn env_name(name: &'static str) -> Result<EnvName, RunError> {
     EnvName::from_str(name).map_err(|source| RunError::EnvName { name, source })
 }
 
+/// What makes the `git` an agent runs commit as `identity`: the author and the committer, and whether and with which
+/// key a commit is signed. Without it the commits of a run are the human's, whose configuration git reads.
+fn identity_env(identity: &CommitIdentity) -> Result<Vec<(&'static str, String)>, RunError> {
+    let mut env = vec![
+        ("GIT_AUTHOR_NAME", identity.name().to_owned()),
+        ("GIT_AUTHOR_EMAIL", identity.email().to_owned()),
+        ("GIT_COMMITTER_NAME", identity.name().to_owned()),
+        ("GIT_COMMITTER_EMAIL", identity.email().to_owned()),
+    ];
+    // Configuration given in the environment wins over the files of the human and of the repository.
+    match identity.signing_key() {
+        Some(key) => env.extend([
+            ("GIT_CONFIG_COUNT", "3".to_owned()),
+            ("GIT_CONFIG_KEY_0", "commit.gpgsign".to_owned()),
+            ("GIT_CONFIG_VALUE_0", "true".to_owned()),
+            ("GIT_CONFIG_KEY_1", "gpg.format".to_owned()),
+            ("GIT_CONFIG_VALUE_1", "ssh".to_owned()),
+            ("GIT_CONFIG_KEY_2", "user.signingkey".to_owned()),
+            ("GIT_CONFIG_VALUE_2", utf8(key.as_path())?.to_owned()),
+        ]),
+        // The human's own configuration may sign every commit with a key the agent does not have.
+        None => env.extend([
+            ("GIT_CONFIG_COUNT", "1".to_owned()),
+            ("GIT_CONFIG_KEY_0", "commit.gpgsign".to_owned()),
+            ("GIT_CONFIG_VALUE_0", "false".to_owned()),
+        ]),
+    }
+    Ok(env)
+}
+
 /// Writes `content` to `path`, with its directories.
 async fn write_file(path: &Path, content: &str) -> Result<(), RunError> {
     let lay_down = |source| RunError::LayDown {
@@ -107,6 +137,10 @@ pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch,
     env.insert(env_name(PATH_VARIABLE)?, agent_path(parts)?);
     // The `agent` commands the run starts (`agent gate`) find the daemon of this home.
     env.insert(env_name(HOME_VARIABLE)?, utf8(parts.store.home().root())?.to_owned());
+    // The commits of the run are the agent's: this wins over a secret of the same name.
+    for (name, value) in identity_env(&job.identity)? {
+        env.insert(env_name(name)?, value);
+    }
     // What the adapter sets is what its CLI needs to work: it wins over a secret of the same name.
     env.extend(spec.env);
     Ok(Launch {

@@ -20,6 +20,7 @@
 #   quota                 the provider says the usage limit is reached and resets in 3 hours
 #   ratelimit             the provider answers HTTP 429
 #   env                   ends like `done` after writing PATH and FAKE_SECRET to .fake-env
+#   env-git               ends like `done` after writing to .fake-git who a commit would be by and how git would sign it
 #   env-home              ends like `done` after writing AGENTS_HOME to .fake-home
 #   commit                commits work.txt in the repository it runs in, leaves left.txt uncommitted, ends like `done`
 #   commit-busy           commits work.txt, leaves left.txt, then says something every 0.2 s until it is stopped
@@ -146,6 +147,16 @@ case $scenario in
     ;;
   env)
     printf 'PATH=%s\nFAKE_SECRET=%s\n' "$PATH" "${FAKE_SECRET:-}" > .fake-env
+    finish_done
+    ;;
+  env-git)
+    {
+      printf 'author=%s <%s>\n' "$(git var GIT_AUTHOR_IDENT | sed 's/ <.*//')" "${GIT_AUTHOR_EMAIL:-}"
+      printf 'committer=%s <%s>\n' "$(git var GIT_COMMITTER_IDENT | sed 's/ <.*//')" "${GIT_COMMITTER_EMAIL:-}"
+      printf 'gpgsign=%s\n' "$(git config --get commit.gpgsign || true)"
+      printf 'format=%s\n' "$(git config --get gpg.format || true)"
+      printf 'key=%s\n' "$(git config --get user.signingkey || true)"
+    } > .fake-git
     finish_done
     ;;
   commit)

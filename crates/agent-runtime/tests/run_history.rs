@@ -21,6 +21,7 @@ mod run_history {
     use agent_core::state::{CommitId, RunEnd, Timestamp};
     use agent_core::status::RunOutcome;
     use agent_runtime::clock::SharedClock;
+    use agent_runtime::git::CommitIdentity;
     use agent_runtime::harness_prompts::HarnessPrompts;
     use agent_runtime::history::{History, HistoryDb, OpenError, Reader, Setup, Started, TracingReporter};
     use agent_runtime::process::Supervisor;
@@ -220,6 +221,7 @@ mod run_history {
                 },
                 prompt: prompt.to_owned(),
                 working_dir: abs(self.worktree.path()),
+                identity: CommitIdentity::new("claude-1 (agent)".to_owned(), "agents@example.com".to_owned(), None),
                 mcp_servers: BTreeMap::<McpServerKind, agent_core::config::CommandLine>::new(),
             }
         }
@@ -281,7 +283,21 @@ mod run_history {
         assert_eq!(launch.at, now());
         assert!(!launch.prompt_in_file);
         let names: Vec<&str> = launch.env_names.iter().map(EnvName::as_str).collect();
-        assert_eq!(names, ["AGENTS_HOME", "FAKE_SECRET", "PATH"]);
+        assert_eq!(
+            names,
+            [
+                "AGENTS_HOME",
+                "FAKE_SECRET",
+                "GIT_AUTHOR_EMAIL",
+                "GIT_AUTHOR_NAME",
+                "GIT_COMMITTER_EMAIL",
+                "GIT_COMMITTER_NAME",
+                "GIT_CONFIG_COUNT",
+                "GIT_CONFIG_KEY_0",
+                "GIT_CONFIG_VALUE_0",
+                "PATH",
+            ]
+        );
     }
 
     // Rule: a prompt too long for a command line is recorded as sent through a file; the CLI saw the pointer.

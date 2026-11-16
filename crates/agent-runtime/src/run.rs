@@ -34,7 +34,7 @@ use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
 use crate::clock::SharedClock;
-use crate::git::{GitError, Revision};
+use crate::git::{CommitIdentity, GitError, Revision};
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
 use crate::history::{CaptureKind, History, log_decision};
 use crate::process::{ExitReport, ProcessError, Supervisor, error_chain};
@@ -122,6 +122,8 @@ pub struct RunJob {
     pub prompt: String,
     /// The agent's worktree: where the CLI runs.
     pub working_dir: AbsolutePath,
+    /// Whose the commits the agent makes in the run are: the agent's, never the human's.
+    pub identity: CommitIdentity,
     /// The MCP servers the run gets, each with its whole command line.
     pub mcp_servers: BTreeMap<McpServerKind, CommandLine>,
 }
