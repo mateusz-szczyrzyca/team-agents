@@ -800,14 +800,31 @@ pub enum AfterTurnLimit {
 
 /// Counts consecutive turn-limit endings at the tail of persisted runs.
 #[must_use]
-pub fn consecutive_turn_limits(_runs: &[crate::state::Run]) -> u64 {
-    0
+pub fn consecutive_turn_limits(runs: &[crate::state::Run]) -> u64 {
+    runs.iter()
+        .rev()
+        .take_while(|run| {
+            matches!(
+                run.state(),
+                crate::state::RunState::Ended {
+                    end: RunEnd::TurnLimit,
+                    ..
+                }
+            )
+        })
+        .fold(0_u64, |count, _| count.saturating_add(1))
 }
 
 /// Decides whether the current turn-limit ending may be followed by another run.
 #[must_use]
-pub fn after_turn_limit(_count: u64, _session: Option<&crate::state::SessionId>, _limits: &Limits) -> AfterTurnLimit {
-    AfterTurnLimit::Exhausted
+pub fn after_turn_limit(count: u64, session: Option<&crate::state::SessionId>, limits: &Limits) -> AfterTurnLimit {
+    if session.is_none() {
+        AfterTurnLimit::NoSession
+    } else if count <= u64::from(limits.turn_limit_resumes) {
+        AfterTurnLimit::Resume
+    } else {
+        AfterTurnLimit::Exhausted
+    }
 }
 
 #[cfg(test)]
