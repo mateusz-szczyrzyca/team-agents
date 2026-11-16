@@ -475,3 +475,7 @@ mod daemon_log_cause_tests;
 #[cfg(test)]
 #[path = "rounds/tests/history_queries.rs"]
 mod history_queries_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/turn_limits.rs"]
+mod turn_limits_tests;

@@ -1,0 +1,1 @@
+Your previous run reached its turn limit. Continue in this session from where you stopped, preserving the work already done. If the task is complete, verify the result and send your final message with its STATUS: line.
