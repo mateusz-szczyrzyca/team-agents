@@ -77,7 +77,7 @@ so its ledger row starts with `runs.at` and takes `run_ends.at` once the end is 
 | `synchronous` | `NORMAL` | in WAL mode a crash may lose the last commits, never corrupt the file |
 | `foreign_keys` | `ON` (each connection of the writer) | the rows of one record hold together |
 | `busy_timeout` | 5 seconds | a person with `sqlite3` open does not make the writer lose a batch at once |
-| `user_version` | the version of the schema, `7` | forward-only migrations (below) |
+| `user_version` | the version of the schema, `8` | forward-only migrations (below) |
 
 Every ordinary table is `STRICT` (FTS5 manages its virtual and shadow tables): a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
 (a step of the kind `message` has a text and no path), so a row that something else wrote is refused by SQLite or, if
@@ -694,3 +694,7 @@ unchanged and have a separate confidentiality contract. Disabling history conseq
 Schema `7` adds `turn_limit` to run endings and run-start reasons through a forward migration. Existing histories
 retain all run IDs, links, records and search entries. The reason has no associated fields; the ending has no
 outcome, exit code or reset timestamp. SQL constraints and the reading API both reject those extra fields.
+
+Schema `8` adds `publication_waits` to daemon log events through a forward migration. Existing histories
+retain all records, search entries, indexes and foreign key consistency. SQL constraints and the reading API
+both admit the `publication_waits` event under severity level `warn`.
