@@ -6,6 +6,7 @@
 //! items, so a daemon that restarts finds the same things to do at its first look. Without the token of a GitHub account
 //! in `secrets.toml` the autopilot is off: pull requests are not opened and the items stay where they are.
 
+mod asleep;
 mod checks;
 mod human;
 mod merges;
@@ -126,6 +127,8 @@ pub(super) struct PullWatch {
     polled: HashMap<(TeamId, PrNumber), Timestamp>,
     /// The gates the harness runs or ran by itself for the leads that were done without one.
     own_gates: HashMap<TaskId, publish::OwnGate>,
+    /// How many times in a row the lead of each team was woken because the whole team slept.
+    asleep_wakes: HashMap<TeamId, u32>,
     /// How many times in a row each lead was sent back because the gate had not passed at the tip of its branch.
     gate_sent_back: HashMap<TaskId, u32>,
     /// The pull requests whose merge GitHub refused: they are not merged again, only looked at for the human's merge.
@@ -183,6 +186,13 @@ pub(super) enum Announcement {
         team: TeamId,
         /// The branch.
         branch: BranchName,
+    },
+    /// A team sleeps with work unfinished after its lead was woken for it as often as it is.
+    TeamAsleep {
+        /// The team.
+        team: TeamId,
+        /// When its last run ended: a team that worked since and sleeps again is told again.
+        since: Timestamp,
     },
     /// The gate still does not pass at this tip after the lead was sent back as often as it is.
     GateNotPassed {
@@ -309,6 +319,7 @@ impl Owner {
         self.deliver_reviews(team, look)?;
         self.deliver_fix_passes(team, look)?;
         self.ask_the_human(&pulls, team, look)?;
+        self.wake_sleeping_team(&pulls, team, look)?;
         Ok(())
     }
 

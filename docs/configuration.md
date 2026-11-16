@@ -105,6 +105,7 @@ and an investigator.
 |---|---|---|
 | `watchdog.hang_minutes` | `30` | no activity for this long: the run is killed and resumed from its session |
 | `watchdog.hang_strikes` | `3` | this many hangs in a row without progress: the task is marked hung |
+| `watchdog.asleep_minutes` | `5` | every task of a team sleeps this long with an item unfinished: the lead is woken and told that nobody works; after two such wake-ups the human is told |
 | `limits.max_turns` | `300` | positive per-run turn budget, passed as `--max-turns` to Claude Code; CLIs without a turn limit ignore it |
 | `limits.turn_limit_resumes` | `3` | maximum consecutive automatic resumes after a turn limit; `0` fails on the first exhaustion |
 | `limits.quota_pause_minutes` | `30` | the pause of an exhausted quota when the CLI gives no reset time |

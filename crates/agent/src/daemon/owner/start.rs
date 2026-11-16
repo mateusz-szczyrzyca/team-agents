@@ -589,7 +589,8 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
     };
     let (team, member) = (found.team, found.member);
     match why {
-        Some(Why::Woken) => RunWhy::WakeUp,
+        // A lead woken because its team sleeps is woken, as by a message: the history has one reason for both.
+        Some(Why::Woken | Why::Asleep(_)) => RunWhy::WakeUp,
         Some(Why::Assigned(item)) => RunWhy::Item { item: *item },
         Some(Why::Delegated(request)) => RunWhy::Request {
             asked_by: state

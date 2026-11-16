@@ -35,6 +35,9 @@ const DEFAULT_HANG_MINUTES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 /// Hangs in a row without progress after which a task is marked hung, by default.
 const DEFAULT_HANG_STRIKES: NonZeroU32 = NonZeroU32::new(3).unwrap();
 
+/// `[watchdog] asleep_minutes` when the file does not give it.
+const DEFAULT_ASLEEP_MINUTES: NonZeroU32 = NonZeroU32::new(5).unwrap();
+
 /// Minutes a task is paused by an exhausted quota when the CLI gives no reset time, by default.
 const DEFAULT_QUOTA_PAUSE_MINUTES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 
@@ -229,6 +232,8 @@ pub struct Watchdog {
     pub hang_minutes: Minutes,
     /// Hangs in a row without progress after which the task is marked hung.
     pub hang_strikes: NonZeroU32,
+    /// Minutes for which every task of a team may sleep, with work of the team unfinished, before its lead is woken.
+    pub asleep_minutes: Minutes,
 }
 
 impl Default for Watchdog {
@@ -236,6 +241,7 @@ impl Default for Watchdog {
         Self {
             hang_minutes: Minutes::literal(DEFAULT_HANG_MINUTES),
             hang_strikes: DEFAULT_HANG_STRIKES,
+            asleep_minutes: Minutes::literal(DEFAULT_ASLEEP_MINUTES),
         }
     }
 }
@@ -841,6 +847,7 @@ agent_path = ["/opt/bin", "/usr/bin"]
 [watchdog]
 hang_minutes = 45
 hang_strikes = 2
+asleep_minutes = 9
 
 [limits]
 quota_pause_minutes = 60
@@ -935,6 +942,7 @@ cli = "claude"
             assert_eq!(config.binaries(), &Binaries::default());
             assert_eq!(config.watchdog().hang_minutes.as_duration(), minutes(30));
             assert_eq!(config.watchdog().hang_strikes.get(), 3);
+            assert_eq!(config.watchdog().asleep_minutes.as_duration(), minutes(5));
             assert_eq!(config.limits().quota_pause_minutes.as_duration(), minutes(30));
             assert_eq!(config.limits().rate_limit_pause_minutes.as_duration(), minutes(5));
             assert_eq!(config.limits().tail_lines.get(), 30);
@@ -998,6 +1006,7 @@ cli = "claude"
         assert_eq!(config.binaries().agent_path.len(), 2);
         assert_eq!(config.watchdog().hang_minutes.as_duration(), minutes(45));
         assert_eq!(config.watchdog().hang_strikes.get(), 2);
+        assert_eq!(config.watchdog().asleep_minutes.as_duration(), minutes(9));
         assert_eq!(config.limits().quota_pause_minutes.as_duration(), minutes(60));
         assert_eq!(config.limits().rate_limit_pause_minutes.as_duration(), minutes(2));
         assert_eq!(config.limits().tail_lines.get(), 50);

@@ -49,12 +49,13 @@ pub(super) fn rounds_for(state: &State, task: &TaskId, why: Option<&Why>) -> Res
         None if role == Role::Reviewer && !goes_on => RunStart::Review {
             round: reviewed.as_ref(),
         },
-        Some(Why::FixPass | Why::AskHuman | Why::Checks | Why::Gate(_)) | None if goes_on => {
+        Some(Why::FixPass | Why::AskHuman | Why::Checks | Why::Gate(_) | Why::Asleep(_)) | None if goes_on => {
             RunStart::Continuation { previous: &previous }
         }
-        Some(Why::Woken | Why::Assigned(_) | Why::FixPass | Why::AskHuman | Why::Checks | Why::Gate(_)) | None => {
-            RunStart::Work
-        }
+        Some(
+            Why::Woken | Why::Assigned(_) | Why::FixPass | Why::AskHuman | Why::Checks | Why::Gate(_) | Why::Asleep(_),
+        )
+        | None => RunStart::Work,
     };
     let item = member_item_round(team, role, member.agent());
     let open: Vec<RoundId> = team.open_rounds().map(|round| round.id().clone()).collect();

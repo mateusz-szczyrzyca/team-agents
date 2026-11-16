@@ -247,6 +247,84 @@ async fn a_lead_whose_gate_never_passes_is_sent_back_three_times_and_then_the_hu
     assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 0);
 }
 
+// ---- a team that sleeps ------------------------------------------------------------------------------------------
+
+// Rule: a lead that sleeps on an unfinished item with nobody at work is woken and told so; after two wake-ups that
+// change nothing the human is told, once.
+#[tokio::test]
+async fn a_team_that_sleeps_with_its_item_unfinished_has_its_lead_woken_twice_and_then_the_human_is_told() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let notice = rig.notification_with("sleeps with item 1.1 unfinished").await;
+    looked_again(&rig).await;
+    let second = rig.prompt(&tasks[0], 2).await;
+    let third = rig.prompt(&tasks[0], 3).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        second.contains(&format!(
+            "NOBODY IN YOUR TEAM IS WORKING (team {team}, woken for it 1 of 2)"
+        )),
+        "{second}"
+    );
+    assert!(second.contains("Item 1.1 is not finished"), "{second}");
+    assert!(
+        second.contains(&format!(
+            "- claude-1 (solo, task {}): waiting; its last run ended at ",
+            tasks[0]
+        )),
+        "{second}"
+    );
+    assert!(second.contains("with: STATUS: SLEEPING"), "{second}");
+    assert!(third.contains("woken for it 2 of 2"), "{third}");
+    assert!(notice.contains(&format!("agent say {} ", tasks[0])), "{notice}");
+    assert!(notice.contains(&format!("agent stop {team}")), "{notice}");
+    // The first run and the two it was woken for; the human is told once.
+    assert_eq!(rig.runs(&tasks[0]), 3);
+    let told: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("sleeps with item"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+}
+
+// Rule: a lead that sleeps is given the time a team may sleep: until then it is left alone.
+#[tokio::test]
+async fn a_team_that_has_not_slept_as_long_as_it_may_is_left_alone() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    looked_again(&rig).await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(rig.runs(&tasks[0]), 1);
+}
+
 // ---- reviews and the merge -----------------------------------------------------------------------------------
 
 use agent_core::state::Completion;

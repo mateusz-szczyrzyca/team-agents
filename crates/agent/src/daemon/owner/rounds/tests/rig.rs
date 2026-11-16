@@ -282,6 +282,17 @@ impl Rig {
         std::fs::remove_file(self.home.root().join("secrets.toml")).unwrap();
     }
 
+    /// Lets a team sleep for a minute of the test's clock before its lead is woken, instead of never.
+    pub(super) fn wake_sleeping_teams(&self) {
+        let text = std::fs::read_to_string(self.home.config_file()).unwrap();
+        assert!(text.contains("asleep_minutes = 100000"), "{text}");
+        std::fs::write(
+            self.home.config_file(),
+            text.replace("asleep_minutes = 100000", "asleep_minutes = 1"),
+        )
+        .unwrap();
+    }
+
     /// Replaces the address of the GitHub API in the configuration with `url`.
     pub(super) fn set_api_base(&self, url: &str) {
         let text = std::fs::read_to_string(self.home.config_file()).unwrap();
@@ -495,7 +506,7 @@ fn config(agents: &[Agent], github: &str, fix_passes: u32, home: &Home, bus: boo
     write!(
         text,
         "[tiers]\nnormal = [{}]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n[watchdog]\nhang_minutes = 1\n\
-         hang_strikes = 3\n[review]\nfix_passes = {fix_passes}\n[github]\napi_base = \"{github}\"\n\
+         hang_strikes = 3\nasleep_minutes = 100000\n[review]\nfix_passes = {fix_passes}\n[github]\napi_base = \"{github}\"\n\
          trusted_accounts = [\"{ACCOUNT}\"]\n[repos.example]\nbase_branch = \"main\"\ngate = [\"sh\", \"-c\", \"test ! -e gate-fails\"]\n",
         normals.join(", "),
         fixture_script("team-cli.sh").display(),

@@ -65,11 +65,13 @@ agent_path = ["/home/you/.local/bin", "/home/you/.cargo/bin", "/home/you/go/bin"
 
 # --- Hang watchdog and limits ---------------------------------------------------------------------------------------
 # A run with no activity for `hang_minutes` is killed and resumed from its session; after `hang_strikes` hangs in a
-# row without progress the task is marked hung.
+# row without progress the task is marked hung. A team whose every task sleeps for `asleep_minutes` while an item of it
+# is unfinished waits for nobody: its lead is woken and told so, and after two such wake-ups you are told.
 
 [watchdog]
 hang_minutes = 30
 hang_strikes = 3
+asleep_minutes = 5
 
 # An exhausted quota pauses the task until the reset time the CLI gives; `quota_pause_minutes` is the pause when it
 # gives none. A rate limit (HTTP 429) is a short pause. `tail_lines`: how many of a run's last lines of error output

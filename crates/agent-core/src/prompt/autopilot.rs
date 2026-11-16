@@ -26,6 +26,10 @@ pub enum AutopilotPrompt {
     PrUpdate,
     /// What the lead is told when it is done and the gate has not passed at the tip of its branch.
     GateNotPassed,
+    /// What the lead is told when every task of its team sleeps and an item is unfinished.
+    TeamAsleep,
+    /// The notification that a team sleeps with work unfinished after its lead was woken for it.
+    NoticeTeamAsleep,
     /// The notification that a pull request is approved and waits for the human to merge it.
     NoticeApproved,
     /// The notification that a pull request could not be opened or updated.
@@ -62,6 +66,8 @@ impl AutopilotPrompt {
         Self::PrBodyChecks,
         Self::PrUpdate,
         Self::GateNotPassed,
+        Self::TeamAsleep,
+        Self::NoticeTeamAsleep,
         Self::NoticeApproved,
         Self::NoticePublishFailed,
         Self::NoticeMergeFailed,
@@ -98,6 +104,16 @@ impl AutopilotPrompt {
                 "harness/pr/gate-not-passed.md",
                 Audience::Model,
                 &["branch", "reason", "sent", "limit"],
+            ),
+            Self::TeamAsleep => PromptSpec::new(
+                "harness/team/asleep.md",
+                Audience::Model,
+                &["team", "items", "minutes", "tasks", "woken", "limit"],
+            ),
+            Self::NoticeTeamAsleep => PromptSpec::new(
+                "harness/team/notice-asleep.md",
+                Audience::Human,
+                &["team", "items", "minutes", "tasks", "woken", "lead"],
             ),
             Self::NoticeApproved => PromptSpec::new(
                 "harness/pr/notice-approved.md",
