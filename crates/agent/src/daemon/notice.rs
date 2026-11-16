@@ -122,12 +122,54 @@ pub(super) struct NoticeContext<'a> {
 /// # Errors
 /// [`InvalidNotification`] when title or body violates limits or format rules.
 pub(super) fn layout_notification(
-    _notice: NoticeKind,
+    notice: NoticeKind,
     context: &NoticeContext<'_>,
     rendered: &str,
 ) -> Result<Notification, InvalidNotification> {
-    // Stub returning old-style layout for RED commit
-    Notification::new(context.repo, rendered)
+    let (note, original_body) = rendered.split_once('\n').unwrap_or((rendered, ""));
+    let note = note.trim_end();
+    let original_body = original_body.trim();
+
+    let status = notice.status();
+    let title = format!("{} {}", status.icon(), context.repo);
+
+    let local_dt = context.time.as_utc().to_offset(context.offset);
+    let time_str = format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        local_dt.year(),
+        u8::from(local_dt.month()),
+        local_dt.day(),
+        local_dt.hour(),
+        local_dt.minute(),
+    );
+
+    let agent_str = match (context.cli, context.model) {
+        (Some(cli), Some(model)) => format!("{} ({cli}, {model})", context.agent),
+        (Some(cli), None) => format!("{} ({cli})", context.agent),
+        (None, Some(model)) => format!("{} ({model})", context.agent),
+        (None, None) => context.agent.to_string(),
+    };
+
+    use std::fmt::Write as _;
+    let mut body = format!(
+        "Repo: {}\nAgent: {agent_str}\nTime: {time_str}\nTask: {}",
+        context.repo, context.task
+    );
+    if let Some(team) = context.team {
+        let _ = write!(body, "\nTeam: {team}");
+    }
+    let _ = write!(body, "\nStatus: {} {}", status.icon(), status.label());
+    let _ = write!(body, "\nNote: {note}");
+    if let Some(pr) = context.pr {
+        let _ = write!(body, "\nPR: {pr}");
+    }
+
+    if !original_body.is_empty() {
+        body.push_str("\n\n");
+        body.push_str(original_body);
+    }
+
+    Notification::new(&title, &body)
 }
 
 /// What the human is told about a task.
