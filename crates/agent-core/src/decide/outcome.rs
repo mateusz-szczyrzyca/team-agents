@@ -787,6 +787,29 @@ pub fn after_hang(hangs_in_a_row: u32, session: Option<&SessionId>, watchdog: &W
     }
 }
 
+/// Whether a turn-limited session can continue automatically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterTurnLimit {
+    /// Queue another invocation in the same session.
+    Resume,
+    /// All configured consecutive continuations have been used.
+    Exhausted,
+    /// The CLI supplied no session to continue.
+    NoSession,
+}
+
+/// Counts consecutive turn-limit endings at the tail of persisted runs.
+#[must_use]
+pub fn consecutive_turn_limits(_runs: &[crate::state::Run]) -> u64 {
+    0
+}
+
+/// Decides whether the current turn-limit ending may be followed by another run.
+#[must_use]
+pub fn after_turn_limit(_count: u64, _session: Option<&crate::state::SessionId>, _limits: &Limits) -> AfterTurnLimit {
+    AfterTurnLimit::Exhausted
+}
+
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU32;
