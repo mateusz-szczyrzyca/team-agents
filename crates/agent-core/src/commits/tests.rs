@@ -267,3 +267,11 @@ fn bare_urls_and_html_remain_unchanged_alongside_linkable_prose() {
         );
     }
 }
+
+#[test]
+fn backtick_in_fence_info_keeps_following_commit_in_prose() {
+    let text = "```foo`bar\na1b2c3d";
+    let expected =
+        "```foo`bar\n[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
+    assert_eq!(link_commits(text, REPO_URL, resolve_hash), expected);
+}
