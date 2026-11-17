@@ -236,3 +236,40 @@ async fn a_deleted_origin_branch_cannot_authorize_removing_local_reviewer_work()
         "keep this commit\n"
     );
 }
+
+#[tokio::test]
+async fn a_git_removal_failure_keeps_the_worktree_and_does_not_block_team_closure() {
+    let mut rig = rig().await;
+    rig.start().await;
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let state = rig
+        .item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    let reviewer = state.team(&team).unwrap().reviewers()[0].task().clone();
+    let tree = rig.worktree(&reviewer);
+    git(&rig.repo, &["worktree", "lock", tree.to_str().unwrap()]);
+    rig.github.merged_by_a_human(1);
+    rig.start_with_log_layer(HistoryLayer::deferred(
+        LogLevel::Info,
+        rig.history_test_clock(),
+        Secrets::default(),
+    ))
+    .await;
+    let removed: Vec<_> = tasks(&state).into_iter().filter(|task| task != &reviewer).collect();
+    cleaned(&rig, &removed).await;
+    rig.stop().await.unwrap();
+    assert!(tree.exists());
+    let state = rig.state();
+    assert_eq!(
+        state.team(&team).unwrap().reviewers()[0].status(),
+        agent_core::status::TaskStatus::Done
+    );
+    let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    assert!(
+        logs.iter().any(|row| row.event() == LogEvent::GitCallFailed
+            && row.task() == Some(&reviewer)
+            && row.message() == "the merged worktree cannot be removed and is kept"),
+        "{logs:?}"
+    );
+}
