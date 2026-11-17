@@ -615,3 +615,14 @@ fn description_refresh_preserves_another_repository_on_a_harness_line() {
 fn unlinked_harness_files(description: &str, harness: &str) -> String {
     unlinked_harness_files_in_repository(description, harness, "https://github.com/octo/example")
 }
+
+#[test]
+fn description_refresh_matches_uppercase_commit_labels() {
+    let harness = "Compare ABCDEF0 in src/lib.rs:7.\n";
+    let commit = "abcdef0123456789abcdef0123456789abcdef01";
+    let linked = format!(
+        "Compare [`ABCDEF0`](https://github.com/octo/example/commit/{commit}) in [src/lib.rs:7](https://github.com/octo/example/blob/{commit}/src/lib.rs#L7).\n"
+    );
+    let expected = format!("Compare [`ABCDEF0`](https://github.com/octo/example/commit/{commit}) in src/lib.rs:7.\n");
+    assert_eq!(unlinked_harness_files(&linked, harness), expected);
+}
