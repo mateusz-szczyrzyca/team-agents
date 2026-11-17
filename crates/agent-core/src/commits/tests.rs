@@ -211,3 +211,19 @@ fn existing_autolinks_are_preserved_alongside_linkable_prose() {
     let expected = "é <https://example.com/a1b2c3d> [`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
     assert_eq!(link_commits(input, REPO_URL, resolve_hash), expected);
 }
+
+#[test]
+fn autolink_schemes_and_unclosed_angles_keep_markdown_meaning() {
+    let linked = "[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
+    for scheme in ["http", "https", "mailto", "git+ssh", "CUSTOM.2"] {
+        let text = format!("<{scheme}:a1b2c3d>");
+        assert_eq!(link_commits(&text, REPO_URL, resolve_hash), text);
+    }
+    for (input, expected) in [
+        ("<a1b2c3d>", format!("<{linked}>")),
+        ("<https://a1b2c3d", format!("<https://{linked}")),
+        ("<https:// a1b2c3d", format!("<https:// {linked}")),
+    ] {
+        assert_eq!(link_commits(input, REPO_URL, resolve_hash), expected);
+    }
+}
