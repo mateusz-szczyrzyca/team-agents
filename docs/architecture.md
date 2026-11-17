@@ -662,7 +662,7 @@ when it next runs; nothing wakes it. A human's stop of a worker that serves a re
 
 Every notification sent to the human follows a standardized layout rendered through `layout_notification`:
 
-- **Title**: `<icon> <repo>` (or `<icon> <repo> (task <task>)` when the notification names a task)
+- **Title**: `<icon> <repo>`
 - **Body**:
   ```text
   Repo: <repo>
@@ -693,9 +693,11 @@ The notification statuses, icons and labels:
 | `Closed` | `🚫` | `pull request closed` | Pull request closed without merge |
 | `NotPublished` | `📕` | `not published` | Branch publish failed |
 | `NoVerdict` | `❗` | `review without a verdict` | Reviewer ended without a verdict |
-| `Merged` | `🟣` | `merged` | Pull request merged on GitHub by the daemon autopilot |
+| `Merged` | `🟣` | `merged` | Pull request merged on GitHub by the harness or the human |
 | `Asleep` | `💤` | `team asleep` | Team asleep |
 | `Done` | `✅` | `done` | Task or team finished |
+
+Merged item completion is saved before its notification is queued. If saving fails, no merge notice is queued; after a restart, persisted completed items prevent a repeated notice.
 
 ## Process model
 
