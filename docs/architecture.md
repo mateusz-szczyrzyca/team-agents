@@ -356,6 +356,22 @@ GitHub does not let approve it) and recorded in every item of the pull request (
 the review it answers by the time its run started, so one that comes after the review pass was decided is kept and posted, not
 taken for the next review pass.
 
+Every posted review, including a late one, starts with the investigator's name and its configured CLI and model
+(the model is omitted when none is configured), a verdict heading, and the review pass and commit. The approval
+heading is green bold `APPROVED` with the notification status's `✅✅`; changes requested are red bold
+`REQUEST CHANGES` with its `❌`. A horizontal rule separates the head from the report, whose `VERDICT:` line is
+removed only for publication. The saved report and history keep the reviewer's original verdict. The layout and
+both verdict texts live in `prompts/harness/review/`; changing their wording needs no code change.
+
+Before sending a pull request description (new or updated), an updated-branch comment or a review to GitHub,
+the daemon links commit IDs to the repository on GitHub, resolved from `origin`. The pure `agent-core` commit
+linker takes text and an injected lookup: only words of 7–40 hexadecimal digits that git resolves to a commit
+become links, with the original spelling as the label and the full ID in the URL. Single-backtick IDs are linked
+too; fenced code blocks, existing links, longer words and unknown IDs stay as written. If lookup fails, the
+original text is sent and the failure is logged with an existing event; linking never prevents publication.
+Review and developer rules require language-labelled fenced code blocks (`text` for output); the harness does
+not infer languages.
+
 **What a verdict leads to** (`daemon/merge.rs`, the round machine). The first approval waits for the second; two approvals mean
 `approved`; a request for changes starts the next fix pass, until `[review] fix_passes`, and then asks the human.
 

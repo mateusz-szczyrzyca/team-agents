@@ -1095,6 +1095,13 @@ start the next item. `agent run --no-merge` stops before the merge and tells you
 requested" a question reaches you like any other. How it works, and its limits, are in
 [`docs/architecture.md`](docs/architecture.md) ("Pull requests, reviews and the merge").
 
+Each posted Rust review starts with the investigator, CLI and configured model, a green **APPROVED** (`✅✅`) or
+red **REQUEST CHANGES** (`❌`) verdict, and the review pass and linked commit. The report follows a horizontal
+rule; its original `VERDICT:` line remains in local history. Commit IDs in pull request descriptions, branch
+update comments and reviews become GitHub links when git resolves them, preserving code fences and existing
+links. Lookup failures are logged and publication continues with the original text. The review layout is in
+`prompts/harness/review/`; review reports and PR descriptions must label code fences with their language.
+
 Before the review the daemon checks the round's own diff and commits through git, with no model, if the repository has a
 `[repos.NAME.checks]` table in `agents.toml` ([`docs/configuration.md`](docs/configuration.md)): the lists of path patterns that
 say what is a test, what is production code and what judges a round. A round that changes an existing test other than by added
