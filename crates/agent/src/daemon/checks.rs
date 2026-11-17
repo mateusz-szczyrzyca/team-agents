@@ -409,7 +409,11 @@ fn original_commit_label(part: &str) -> Option<(&str, &str)> {
         return None;
     };
     let generated = agent_core::commits::link_commits(label, repository, |word| {
-        commit.as_str().starts_with(word).then(|| commit.to_string())
+        commit
+            .as_str()
+            .get(..word.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(word))
+            .then(|| commit.to_string())
     });
     (generated == format!("[{label}]({url})")).then_some((label, tail))
 }
