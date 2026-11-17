@@ -112,3 +112,55 @@ fn retries_oversized_required_presentation_without_losing_full_facts() {
     assert!(summary.contains("worktree"));
     assert_eq!(input.unreadable_parts[0].reason.len(), 200_000);
 }
+
+#[test]
+fn collects_runs_questions_gates_and_checks_and_names_unreadable_parts() {
+    let (_dir, home, args) = fixture();
+    let task: TaskId = "task-20261117-120000-a1b2".parse().unwrap();
+    let run = "run-20261117-120001-a1b2".parse().unwrap();
+    let run_dir = home.run_dir(&task, &run);
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let files = [
+        ("prompt.md", b"prompt".as_slice()),
+        ("final.md", b"final"),
+        ("stdout", &[0, 255, 1]),
+        ("stderr", b"error"),
+    ];
+    for (name, bytes) in files {
+        std::fs::write(run_dir.join(name), bytes).unwrap();
+    }
+    let question = "# Questions\n\n## 1. Proceed?\na) yes\n\n**Recommended:** a)\n\n**Verdict:**\n";
+    std::fs::write(home.task_dir(&task).join("questions-2.md"), question).unwrap();
+    std::fs::write(home.checks_file(&task), b"checks record").unwrap();
+    std::fs::write(home.gate_record_file(&task), b"invalid gate record").unwrap();
+    std::fs::write(home.gate_log(&task, std::num::NonZeroU32::MIN), b"gate output").unwrap();
+    std::os::unix::fs::symlink(home.secrets_file(), home.task_dir(&task).join("secret-link")).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = runtime.block_on(execute_debug(&home, args, None, &mut Vec::new()));
+    assert!(matches!(result, Ok(DebugResult { .. })), "{result:?}");
+    let result = result.unwrap();
+    let copied = result.bundle_dir.join("tasks").join(task.as_str());
+    for (name, bytes) in files {
+        assert_eq!(
+            std::fs::read(copied.join("runs").join(run.as_str()).join(name)).unwrap(),
+            bytes
+        );
+    }
+    assert_eq!(
+        std::fs::read(copied.join(home.checks_file(&task).file_name().unwrap())).unwrap(),
+        b"checks record"
+    );
+    assert_eq!(std::fs::read(copied.join("gate-1.log")).unwrap(), b"gate output");
+    assert_eq!(
+        std::fs::read(copied.join("questions-2.md")).unwrap(),
+        question.as_bytes()
+    );
+    assert!(!copied.join("secret-link").exists());
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    for name in ["questions-2.md", "secret-link", "history", "gate", "worktree"] {
+        assert!(summary.contains(name), "missing {name}: {summary}");
+    }
+}
