@@ -124,8 +124,8 @@ fn fence(content: &str) -> Option<(Fence, &str)> {
     (width >= 3).then_some((Fence { marker, width }, rest))
 }
 
-/// Tracks fence transitions and reports whether this line belongs to a code block.
-fn fenced_line(line: &str, blocks: &mut Blocks) -> bool {
+/// Tracks fences and returns container-stripped content only outside fenced code.
+fn unfenced_content<'a>(line: &'a str, blocks: &mut Blocks) -> Option<&'a str> {
     let content = block_content(line, blocks);
     let delimiter = fence(content);
     if let Some(open) = blocks.active {
@@ -136,14 +136,14 @@ fn fenced_line(line: &str, blocks: &mut Blocks) -> bool {
         {
             blocks.active = None;
         }
-        true
+        None
     } else if let Some((opening, rest)) = delimiter
         && (opening.marker != '`' || !rest.contains('`'))
     {
         blocks.active = Some(opening);
-        true
+        None
     } else {
-        false
+        Some(content)
     }
 }
 
@@ -265,8 +265,8 @@ fn references(text: &str) -> HashSet<String> {
     let mut labels = HashSet::new();
     let mut active = Blocks::default();
     for line in text.lines() {
-        if !fenced_line(line, &mut active)
-            && let Some(label) = reference_definition(line)
+        if let Some(content) = unfenced_content(line, &mut active)
+            && let Some(label) = reference_definition(content)
         {
             labels.insert(label);
         }
@@ -582,7 +582,7 @@ pub fn link_commits(text: &str, repo_url: &str, mut resolve: impl FnMut(&str) ->
     let mut active = Blocks::default();
     let references = references(text);
     for line in text.split_inclusive('\n') {
-        if fenced_line(line, &mut active) || reference_definition(line).is_some() {
+        if unfenced_content(line, &mut active).is_none_or(|content| reference_definition(content).is_some()) {
             result.push_str(&link_prose(&prose, repo_url, &mut resolve, &references));
             prose.clear();
             result.push_str(line);
