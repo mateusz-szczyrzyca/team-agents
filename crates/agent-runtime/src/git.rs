@@ -1027,7 +1027,19 @@ impl Git {
     /// # Errors
     /// [`GitError::Run`] and [`GitError::Failed`] when origin cannot be fetched.
     pub async fn refresh_origin_branches(&self) -> Result<(), GitError> {
-        Ok(())
+        self.run_ok(
+            GitOperation::Fetch,
+            Reach::Network,
+            &[
+                arg("fetch"),
+                arg("--no-tags"),
+                arg("--prune"),
+                arg(REMOTE),
+                arg("+refs/heads/*:refs/remotes/origin/*"),
+            ],
+        )
+        .await
+        .map(drop)
     }
 
     /// Fetches `branch` from `origin` into the reference [`Revision::RemoteBranch`] names; no local branch moves.

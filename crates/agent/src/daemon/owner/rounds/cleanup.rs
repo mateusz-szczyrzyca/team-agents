@@ -88,6 +88,7 @@ impl Owner {
         if let TreeState::Dirty(_) = git.tree_state().await? {
             return Ok(Cleanup::Dirty);
         }
+        git.refresh_origin_branches().await?;
         if !git.head_on_origin().await? {
             return Ok(Cleanup::Unpushed);
         }
