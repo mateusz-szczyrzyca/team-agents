@@ -369,8 +369,10 @@ Before sending a pull request description (new or updated), an updated-branch co
 the daemon links commit IDs to the repository on GitHub, resolved from `origin`. The pure `agent-core` commit
 linker takes text and an injected lookup: only words of 7–40 hexadecimal digits that git resolves to a commit
 become links, with the original spelling as the label and the full ID in the URL. Single-backtick IDs are linked
-too; longer inline code spans, fenced code blocks, existing links (including bare URLs), HTML tags and
-comments, longer words and unknown IDs stay as written. If lookup fails, the
+too; longer inline code spans, fenced code blocks (including blockquote and list containers), existing links
+(including bare URLs, email autolinks, quoted titles and shortcut references), HTML tags and comments, longer
+words and unknown IDs stay as written. Reference definitions are read across the document, excluding fenced
+code examples. If lookup fails, the
 original text is sent and the failure is logged with an existing event; linking never prevents publication.
 Review and developer rules require language-labelled fenced code blocks (`text` for output); the harness does
 not infer languages.
