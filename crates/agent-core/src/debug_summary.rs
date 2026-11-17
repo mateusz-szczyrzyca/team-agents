@@ -12,7 +12,7 @@ use time::UtcOffset;
 use crate::config::RepoName;
 use crate::ids::{AgentName, BranchName, ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
-use crate::state::{CommitId, GateRecord, RoundLife, Timestamp};
+use crate::state::{CommitId, GateOutcome, GateRecord, GateTree, RoundLife, Timestamp};
 use crate::status::{ItemStatus, TaskStatus};
 
 /// Maximum byte limit for `SUMMARY.md`. The output must be strictly less than this limit.
@@ -347,7 +347,7 @@ fn format_time(ts: Timestamp, offset: UtcOffset) -> String {
     );
 
     let local_str = match utc.checked_to_offset(offset) {
-        Some(local) => format!(
+        Some(local) if (0..=9999).contains(&local.year()) => format!(
             "{:04}-{:02}-{:02} {:02}:{:02}:{:02} {}",
             local.year(),
             u8::from(local.month()),
@@ -357,7 +357,7 @@ fn format_time(ts: Timestamp, offset: UtcOffset) -> String {
             local.second(),
             offset_str,
         ),
-        None => format!("(local offset out of range: {offset_str})"),
+        _ => format!("(local offset out of range: {offset_str})"),
     };
 
     format!("{utc_str} ({local_str})")
@@ -582,12 +582,32 @@ fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut Str
     }
 }
 
-fn render_gate(gates: &[TaskGateSummary], out: &mut String) {
+fn render_gate(gates: &[TaskGateSummary], offset: UtcOffset, out: &mut String) {
     for g in gates {
         write_line(out, &format!("### Gate for Task `{}`", g.task_id));
         write_line(out, "");
         if let Some(rec) = &g.record {
-            write_line(out, &format!("- Record: {}", rec.summary()));
+            let tree = match rec.tree {
+                GateTree::Clean => "clean",
+                GateTree::NotClean => "dirty",
+            };
+            let outcome = match rec.result.outcome {
+                GateOutcome::Passed => "passed".to_owned(),
+                GateOutcome::Failed { exit_code } => format!("failed (exit {exit_code})"),
+                GateOutcome::TimedOut => "timed out".to_owned(),
+            };
+            write_line(
+                out,
+                &format!(
+                    "- Record: Commit `{}`, tree {}, outcome: {}",
+                    rec.result.head, tree, outcome
+                ),
+            );
+            write_line(
+                out,
+                &format!("  Finished: {}", format_time(rec.result.finished_at, offset)),
+            );
+            write_line(out, &format!("  Log: `{}`", rec.result.log.as_path().display()));
         } else {
             write_line(out, "- Record: none");
         }
@@ -740,7 +760,7 @@ pub fn render_summary(input: &SummaryInput, now: Timestamp, offset: UtcOffset) -
             SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut section_body),
             SummarySection::TaskDetails => render_task_details(&input.tasks, &mut section_body),
             SummarySection::GitWorktrees => render_git(&input.git, offset, &mut section_body),
-            SummarySection::GateRecords => render_gate(&input.gate, &mut section_body),
+            SummarySection::GateRecords => render_gate(&input.gate, offset, &mut section_body),
             SummarySection::HistoryTail => render_history(input.history_tail.as_deref(), &mut section_body),
             SummarySection::DaemonLog => render_daemon_log(input.daemon_log_lines.as_deref(), &mut section_body),
             SummarySection::Bus => render_bus(&input.bus_messages, &mut section_body),
