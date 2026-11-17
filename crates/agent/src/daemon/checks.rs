@@ -323,25 +323,45 @@ pub(super) fn authored(description: &str, harness: &str) -> String {
 /// Publication commits may differ after a fix pass; the original item text still belongs to the harness.
 fn original_file_labels(line: &str) -> String {
     let mut result = String::new();
-    let mut parts = line.split('[');
-    if let Some(prefix) = parts.next() {
+    let mut remaining = line;
+    while let Some((prefix, part)) = remaining.split_once('[') {
         result.push_str(prefix);
-    }
-    for part in parts {
         if let Some((label, tail)) = original_file_label(part) {
             result.push_str(label);
-            result.push_str(tail);
+            remaining = tail;
         } else {
             result.push('[');
-            result.push_str(part);
+            remaining = part;
         }
     }
+    result.push_str(remaining);
     result
+}
+
+/// Finds the destination after a balanced label, protecting brackets inside code spans.
+fn file_label_destination(part: &str) -> Option<(&str, &str)> {
+    let mut depth = 0_u32;
+    let mut code = false;
+    for (offset, ch) in part.char_indices() {
+        match ch {
+            '`' => code = !code,
+            '[' if !code => depth = depth.saturating_add(1),
+            ']' if !code => {
+                if depth == 0 {
+                    let destination = part.get(offset..)?.strip_prefix("](")?;
+                    return Some((part.get(..offset)?, destination));
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Recognizes the file link by reconstructing it, retaining unrelated author-written links.
 fn original_file_label(part: &str) -> Option<(&str, &str)> {
-    let (label, destination) = part.split_once("](")?;
+    let (label, destination) = file_label_destination(part)?;
     let (url, tail) = destination.split_once(')')?;
     let (repository, target) = url.rsplit_once("/blob/")?;
     if !repository.starts_with("https://github.com/") {
