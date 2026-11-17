@@ -383,3 +383,75 @@ fn git_paths_preserve_non_utf8_bytes_in_changed_and_untracked_names() {
     assert_eq!(summary.matches(r"log-\xFF").count(), 2);
     assert!(!summary.contains('\u{fffd}'));
 }
+
+#[test]
+fn gate_records_include_full_commit_finished_time_and_log_path() {
+    let input = sample_input();
+    let now = ts("2026-11-17T20:00:00Z");
+    let offset = UtcOffset::UTC;
+
+    let summary = render_summary(&input, now, offset);
+
+    assert!(
+        summary.contains("0123456789abcdef0123456789abcdef01234567"),
+        "gate section must include full commit hash"
+    );
+    assert!(
+        summary.contains("/tmp/gate.log"),
+        "gate section must include gate log path"
+    );
+    assert!(
+        summary.contains("2026-11-17 19:50:00 UTC"),
+        "gate section must include finished timestamp"
+    );
+}
+
+#[test]
+fn format_time_handles_offset_seconds_and_extreme_timestamp_fallback() {
+    let mut input = sample_input();
+    input.collected_at = ts("2026-11-17T20:00:00Z");
+    let now = ts("2026-11-17T20:00:00Z");
+    let offset_seconds = UtcOffset::from_hms(2, 30, 15).expect("valid offset with seconds");
+
+    let summary = render_summary(&input, now, offset_seconds);
+    assert!(
+        summary.contains("+02:30:15"),
+        "offset string must include seconds when non-zero"
+    );
+
+    // Extreme timestamps: year 0000 with negative offset underflows
+    let early = ts("0000-01-01T00:00:00Z");
+    let extreme_neg = UtcOffset::from_hms(-12, 0, 0).expect("valid negative offset");
+    let formatted_early = format_time(early, extreme_neg);
+    assert!(
+        formatted_early.contains("out of range"),
+        "underflowing local time must produce explicit out of range notice without panicking"
+    );
+
+    // Extreme timestamps: year 9999 with positive offset overflows
+    let late = ts("9999-12-31T23:59:59Z");
+    let extreme_pos = UtcOffset::from_hms(14, 0, 0).expect("valid positive offset");
+    let formatted_late = format_time(late, extreme_pos);
+    assert!(
+        formatted_late.contains("out of range"),
+        "overflowing local time must produce explicit out of range notice without panicking"
+    );
+}
+
+#[test]
+fn filesystem_values_above_100_percent_render_raw_observed() {
+    let mut input = sample_input();
+    input.machine.home_fs = Some(FsUsageSummary {
+        space_percent: 105,
+        inode_percent: 110,
+    });
+    let now = ts("2026-11-17T20:00:00Z");
+    let offset = UtcOffset::UTC;
+
+    let summary = render_summary(&input, now, offset);
+
+    assert!(
+        summary.contains("105% space, 110% inodes"),
+        "must render raw observed filesystem percentage above 100%"
+    );
+}
