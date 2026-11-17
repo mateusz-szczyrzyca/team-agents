@@ -225,7 +225,74 @@ fn reference_definition(line: &str) -> Option<String> {
     }
     label.pop()?;
     let destination: String = chars.collect();
-    (!destination.trim().is_empty()).then(|| reference_label(&label))
+    reference_target(destination.trim()).then(|| reference_label(&label))
+}
+
+/// Accepts a reference destination and optional title only when the entire line is valid.
+fn reference_target(text: &str) -> bool {
+    let mut chars = text.chars().peekable();
+    if chars.next_if_eq(&'<').is_some() {
+        let mut closed = false;
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\\' => {
+                    chars.next();
+                }
+                '>' => {
+                    closed = true;
+                    break;
+                }
+                '<' | '\n' | '\r' => return false,
+                _ => {}
+            }
+        }
+        if !closed {
+            return false;
+        }
+    } else {
+        let mut depth = 0_usize;
+        let mut consumed = false;
+        while let Some(ch) = chars.next_if(|ch| !ch.is_whitespace()) {
+            consumed = true;
+            match ch {
+                '\\' => {
+                    chars.next();
+                }
+                '(' => depth = depth.saturating_add(1),
+                ')' if depth == 0 => return false,
+                ')' => depth = depth.saturating_sub(1),
+                '<' | '>' => return false,
+                _ => {}
+            }
+        }
+        if !consumed || depth != 0 {
+            return false;
+        }
+    }
+    if chars.peek().is_none() {
+        return true;
+    }
+    if !chars.next().is_some_and(char::is_whitespace) {
+        return false;
+    }
+    while chars.next_if(|ch| ch.is_whitespace()).is_some() {}
+    let Some(open) = chars.next() else {
+        return true;
+    };
+    let close = match open {
+        '\'' => '\'',
+        '"' => '"',
+        '(' => ')',
+        _ => return false,
+    };
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            chars.next();
+        } else if ch == close {
+            return chars.all(char::is_whitespace);
+        }
+    }
+    false
 }
 
 /// Consumes a code span only when an equally wide closing backtick run exists.
@@ -453,7 +520,7 @@ pub fn link_commits(text: &str, repo_url: &str, mut resolve: impl FnMut(&str) ->
     let mut active: Option<Fence> = None;
     let references = references(text);
     for line in text.split_inclusive('\n') {
-        if fenced_line(line, &mut active) {
+        if fenced_line(line, &mut active) || reference_definition(line).is_some() {
             result.push_str(&link_prose(&prose, repo_url, &mut resolve, &references));
             prose.clear();
             result.push_str(line);
