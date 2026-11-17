@@ -558,3 +558,16 @@ fn bracketed_file_links_keep_harness_lines_out_of_authored_text() {
     let custom = "Check [`src/[x].rs`](https://example.com/custom): the case is covered.";
     assert_eq!(authored(custom, harness), custom);
 }
+
+#[test]
+fn generated_link_labels_use_balanced_brackets_and_ignore_code_punctuation() {
+    for (label, path) in [
+        ("src/[x].rs", "src/%5Bx%5D.rs"),
+        ("`src/[x](y).rs`", "src/%5Bx%5D%28y%29.rs"),
+    ] {
+        let description = format!(
+            "First [{label}](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/{path}), then [{label}](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/{path})."
+        );
+        assert_eq!(authored(&description, &format!("First {label}, then {label}.")), "");
+    }
+}
