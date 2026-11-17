@@ -472,3 +472,21 @@ fn combined_walk_preserves_legacy_commits_and_multiline_code() {
         );
     }
 }
+
+/// Bare labels must remain valid Markdown even when tree paths contain delimiters.
+#[test]
+fn bare_file_labels_escape_unmatched_brackets_and_backslashes() {
+    let commit: CommitId = COMMIT.parse().unwrap();
+    for (path, label, encoded) in [
+        ("src/a]b.rs", "src/a\\]b.rs", "src/a%5Db.rs"),
+        ("src/a[b.rs", "src/a\\[b.rs", "src/a%5Bb.rs"),
+        ("src/a\\b.rs", "src/a\\\\b.rs", "src/a%5Cb.rs"),
+        ("src/[x].rs", "src/[x].rs", "src/%5Bx%5D.rs"),
+    ] {
+        assert_eq!(
+            crate::commits::link_references(path, REPO_URL, &commit, |_| None, |candidate| candidate == path),
+            format!("[{label}]({REPO_URL}/blob/{commit}/{encoded})"),
+            "{path}"
+        );
+    }
+}
