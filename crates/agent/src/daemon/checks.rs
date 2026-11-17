@@ -319,19 +319,21 @@ pub(super) fn authored(description: &str, harness: &str) -> String {
     kept.join("\n")
 }
 
-/// Restores generated harness links belonging to the publishing repository.
+/// Restores harness-authored file labels belonging to the publishing repository.
 #[must_use]
-pub(super) fn unlinked_harness_files_in_repository(description: &str, harness: &str, _repository: &str) -> String {
-    unlinked_harness_files(description, harness)
-}
-
-/// Restores harness-authored file labels before a changed description is published again.
-#[must_use]
-pub(super) fn unlinked_harness_files(description: &str, harness: &str) -> String {
+pub(super) fn unlinked_harness_files_in_repository(description: &str, harness: &str, repository: &str) -> String {
     let written: HashSet<String> = harness.lines().map(str::trim).map(comparable_commit_labels).collect();
     let mut result = String::new();
     for line in description.split_inclusive('\n') {
-        let original = original_file_labels(line);
+        let original = original_labels(line, |part| {
+            let (_, destination) = file_label_destination(part)?;
+            let (url, _) = destination.split_once(')')?;
+            let (published_repository, _) = url.rsplit_once("/blob/")?;
+            if published_repository != repository {
+                return None;
+            }
+            original_file_label(part)
+        });
         // Only lines identifiable as harness text may have their generated destinations refreshed.
         if written.contains(&comparable_commit_labels(original.trim())) {
             result.push_str(&original);
@@ -377,7 +379,7 @@ fn comparable_commit_labels(line: &str) -> String {
 }
 
 /// Replaces recognized generated references with their original labels.
-fn original_labels(line: &str, recognize: fn(&str) -> Option<(&str, &str)>) -> String {
+fn original_labels<'a>(line: &'a str, mut recognize: impl FnMut(&'a str) -> Option<(&'a str, &'a str)>) -> String {
     let mut result = String::new();
     let mut remaining = line;
     while let Some((prefix, part)) = remaining.split_once('[') {
