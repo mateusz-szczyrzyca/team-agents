@@ -354,3 +354,12 @@ fn container_fences_protect_commits_while_following_prose_is_linked() {
         );
     }
 }
+
+#[test]
+fn reference_definitions_inside_fences_do_not_create_shortcut_links() {
+    let input = "~~~text\n[a1b2c3d]: https://example.com\n~~~\n\n[a1b2c3d]";
+    assert_eq!(
+        link_commits(input, REPO_URL, resolve_hash),
+        "~~~text\n[a1b2c3d]: https://example.com\n~~~\n\n[[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)]"
+    );
+}
