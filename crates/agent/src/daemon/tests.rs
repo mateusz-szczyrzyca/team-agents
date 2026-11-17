@@ -1369,3 +1369,24 @@ fn resolve_agent_binary_dir_fails_when_canonicalize_fails() {
         resolve_agent_binary_dir_from(|| Ok(PathBuf::from("/nonexistent/file/path/that/cannot/exist"))).unwrap_err();
     assert!(matches!(err, ExecutableError::Canonicalize { .. }), "{err:?}");
 }
+
+#[test]
+fn resolve_agent_binary_dir_fails_when_path_has_no_parent() {
+    let err = resolve_agent_binary_dir_from(|| Ok(PathBuf::from("/"))).unwrap_err();
+    assert!(matches!(err, ExecutableError::NoParent { .. }), "{err:?}");
+}
+
+#[test]
+fn resolve_agent_binary_dir_fails_when_parent_dir_is_not_valid_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+    let temp = tempfile::tempdir().unwrap();
+    let non_utf8_dir = temp.path().join(std::ffi::OsStr::from_bytes(b"bin-\xff"));
+    std::fs::create_dir(&non_utf8_dir).unwrap();
+    let file = non_utf8_dir.join("agent");
+    std::fs::write(&file, b"#!/bin/sh\n").unwrap();
+    let err = resolve_agent_binary_dir_from(|| Ok(file)).unwrap_err();
+    assert!(
+        matches!(err, ExecutableError::InvalidPath { source: None, .. }),
+        "{err:?}"
+    );
+}
