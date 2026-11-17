@@ -7,11 +7,7 @@ const COMMIT: &str = "1234567";
 fn resolve_path(path: &str) -> bool {
     matches!(
         path,
-        "src/lib.rs"
-            | "src/main.rs"
-            | "Cargo.toml"
-            | "README.md"
-            | "crates/agent-core/src/files.rs"
+        "src/lib.rs" | "src/main.rs" | "Cargo.toml" | "README.md" | "crates/agent-core/src/files.rs"
     )
 }
 
@@ -21,7 +17,7 @@ fn bare_path_is_linked() {
     let result = link_files(input, REPO_URL, COMMIT, resolve_path);
     assert_eq!(
         result,
-        "see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs)"
+        "see [src/lib.rs](https://github.com/owner/repo/blob/1234567/src/lib.rs)"
     );
 }
 
@@ -58,9 +54,7 @@ fn path_with_line_range_is_linked() {
 #[test]
 fn path_with_special_chars_is_encoded() {
     let input = "file with spaces in `src/my file.rs`";
-    let result = link_files(input, REPO_URL, COMMIT, |path| {
-        path == "src/my file.rs"
-    });
+    let result = link_files(input, REPO_URL, COMMIT, |path| path == "src/my file.rs");
     assert_eq!(
         result,
         "file with spaces in [`src/my file.rs`](https://github.com/owner/repo/blob/1234567/src/my%20file.rs)"
@@ -115,7 +109,7 @@ fn path_at_start_of_text_linked() {
     let result = link_files(input, REPO_URL, COMMIT, resolve_path);
     assert_eq!(
         result,
-        "[`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs) is important"
+        "[src/lib.rs](https://github.com/owner/repo/blob/1234567/src/lib.rs) is important"
     );
 }
 
@@ -125,7 +119,7 @@ fn path_at_end_of_text_linked() {
     let result = link_files(input, REPO_URL, COMMIT, resolve_path);
     assert_eq!(
         result,
-        "see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs)"
+        "see [src/lib.rs](https://github.com/owner/repo/blob/1234567/src/lib.rs)"
     );
 }
 
@@ -135,7 +129,7 @@ fn path_followed_by_period_linked() {
     let result = link_files(input, REPO_URL, COMMIT, resolve_path);
     assert_eq!(
         result,
-        "see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs)."
+        "see [src/lib.rs](https://github.com/owner/repo/blob/1234567/src/lib.rs)."
     );
 }
 
@@ -145,7 +139,7 @@ fn path_followed_by_comma_linked() {
     let result = link_files(input, REPO_URL, COMMIT, resolve_path);
     assert_eq!(
         result,
-        "see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs), also [`README.md`](https://github.com/owner/repo/blob/1234567/README.md)"
+        "see [src/lib.rs](https://github.com/owner/repo/blob/1234567/src/lib.rs), also [README.md](https://github.com/owner/repo/blob/1234567/README.md)"
     );
 }
 
@@ -155,7 +149,7 @@ fn multiple_paths_linked() {
     let result = link_files(input, REPO_URL, COMMIT, resolve_path);
     assert_eq!(
         result,
-        "see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs) and [`src/main.rs`](https://github.com/owner/repo/blob/1234567/src/main.rs)"
+        "see [src/lib.rs](https://github.com/owner/repo/blob/1234567/src/lib.rs) and [src/main.rs](https://github.com/owner/repo/blob/1234567/src/main.rs)"
     );
 }
 
@@ -203,7 +197,7 @@ fn multiline_text_with_paths() {
     let result = link_files(input, REPO_URL, COMMIT, resolve_path);
     assert_eq!(
         result,
-        "line 1: [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs)\nline 2: [`src/main.rs`](https://github.com/owner/repo/blob/1234567/src/main.rs)"
+        "line 1: [src/lib.rs](https://github.com/owner/repo/blob/1234567/src/lib.rs)\nline 2: [src/main.rs](https://github.com/owner/repo/blob/1234567/src/main.rs)"
     );
 }
 
@@ -213,7 +207,7 @@ fn cargo_toml_linked() {
     let result = link_files(input, REPO_URL, COMMIT, resolve_path);
     assert_eq!(
         result,
-        "edit [`Cargo.toml`](https://github.com/owner/repo/blob/1234567/Cargo.toml)"
+        "edit [Cargo.toml](https://github.com/owner/repo/blob/1234567/Cargo.toml)"
     );
 }
 
@@ -233,7 +227,7 @@ fn blockquote_content_processed() {
     let result = link_files(input, REPO_URL, COMMIT, resolve_path);
     assert_eq!(
         result,
-        "> see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs)"
+        "> see [src/lib.rs](https://github.com/owner/repo/blob/1234567/src/lib.rs)"
     );
 }
 
@@ -243,7 +237,7 @@ fn list_item_content_processed() {
     let result = link_files(input, REPO_URL, COMMIT, resolve_path);
     assert_eq!(
         result,
-        "- see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs)"
+        "- see [src/lib.rs](https://github.com/owner/repo/blob/1234567/src/lib.rs)"
     );
 }
 
@@ -267,7 +261,7 @@ fn root_level_readme_linked() {
     let result = link_files(input, REPO_URL, COMMIT, |path| path == "README.md");
     assert_eq!(
         result,
-        "see [`README.md`](https://github.com/owner/repo/blob/1234567/README.md)"
+        "see [README.md](https://github.com/owner/repo/blob/1234567/README.md)"
     );
 }
 
@@ -289,6 +283,6 @@ fn path_with_commit_like_substring_not_double_linked() {
     // Should link the path, not the substring
     assert_eq!(
         result,
-        "see [`src/a1b2c3d_code.rs`](https://github.com/owner/repo/blob/1234567/src/a1b2c3d_code.rs)"
+        "see [src/a1b2c3d_code.rs](https://github.com/owner/repo/blob/1234567/src/a1b2c3d_code.rs)"
     );
 }
