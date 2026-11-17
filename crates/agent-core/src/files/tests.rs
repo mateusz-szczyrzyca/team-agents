@@ -353,3 +353,25 @@ fn shared_walk_preserves_spelling_anchors_and_markdown_boundaries() {
         assert_eq!(output, expected, "input: {input}");
     }
 }
+
+/// Adding file linking preserves the existing punctuation boundaries of commit words.
+#[test]
+fn combined_linking_preserves_commit_word_boundaries() {
+    let commit = "0123456789012345678901234567890123456789".parse().unwrap();
+    for input in [
+        "abcdef0:note",
+        "abcdef0/unknown",
+        "(abcdef0)",
+        "abcdef0.rs",
+        "abcdef0!",
+        "éabcdef0",
+        "abcdef0_backup",
+    ] {
+        let resolve = |word: &str| (word == "abcdef0").then(|| "abcdef0123456789012345678901234567890123".to_owned());
+        assert_eq!(
+            crate::commits::link_references(input, REPO_URL, &commit, resolve, |_| false),
+            crate::commits::link_commits(input, REPO_URL, resolve),
+            "input: {input}",
+        );
+    }
+}

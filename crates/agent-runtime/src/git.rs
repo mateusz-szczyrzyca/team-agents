@@ -1492,6 +1492,25 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn tree_blobs_uses_the_requested_commit_and_repository_root() {
+        let fixture = Fixture::new();
+        let old = fixture.head();
+        std::fs::create_dir_all(fixture.repo.join("nested")).unwrap();
+        fixture.commit("nested/new.txt", "later\n", "Later file");
+        let current = fixture.head();
+        let git = isolated(
+            &fixture.repo.join("nested"),
+            CommitIdentity::new("Fixture".into(), "fixture@example.com".into(), None),
+        );
+
+        assert_eq!(git.tree_blobs(&old).await.unwrap(), HashSet::from(["a.txt".to_owned()]));
+        assert_eq!(
+            git.tree_blobs(&current).await.unwrap(),
+            HashSet::from(["a.txt".to_owned(), "nested/new.txt".to_owned()])
+        );
+    }
+
     // Rule: a branch is made at a start, found by its tip, and deleted.
     #[tokio::test]
     async fn a_branch_is_created_found_and_deleted() {
