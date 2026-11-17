@@ -467,6 +467,40 @@ fn html(chars: &mut Peekable<Chars<'_>>, linking: Linking) -> Option<String> {
     None
 }
 
+/// Consumes a closed autolink without crossing whitespace or changing failed input.
+fn autolink(chars: &mut Peekable<Chars<'_>>) -> Option<String> {
+    let mut link = String::from('<');
+    let mut lookahead = chars.clone();
+    for next in lookahead.by_ref() {
+        link.push(next);
+        if next == '>' {
+            *chars = lookahead;
+            return Some(link);
+        }
+        if next.is_whitespace() {
+            break;
+        }
+    }
+    None
+}
+
+/// Identifies tag-shaped commit words whose legacy commit parsing still applies.
+fn hexadecimal_tag(raw: &str) -> bool {
+    let Some(name) = raw.strip_prefix('<') else {
+        return false;
+    };
+    name.trim_start_matches('/')
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
+        .next()
+        .is_some_and(is_candidate)
+}
+
+/// Emits accumulated prose before a protected Markdown construct.
+fn flush_prose(result: &mut String, prose: &mut String, rewrite: &mut impl FnMut(&str, Style) -> String) {
+    result.push_str(&rewrite(prose, Style::Bare));
+    prose.clear();
+}
+
 /// Protects existing inline and reference links while rewriting ordinary prose.
 fn link_prose(
     text: &str,
@@ -485,8 +519,7 @@ fn link_prose(
         if let Some(marker) = markers.peek().filter(|marker| marker.start == offset)
             && let Some(prefix) = text.get((*marker).clone())
         {
-            result.push_str(&rewrite(&prose, Style::Bare));
-            prose.clear();
+            flush_prose(&mut result, &mut prose, rewrite);
             result.push_str(&rewrite(prefix, Style::CommitOnly));
             for _ in prefix.chars().skip(1) {
                 chars.next();
@@ -498,8 +531,7 @@ fn link_prose(
         if ch == '`'
             && let Some((width, content, raw)) = code_span(&mut chars)
         {
-            result.push_str(&rewrite(&prose, Style::Bare));
-            prose.clear();
+            flush_prose(&mut result, &mut prose, rewrite);
             offset = offset.saturating_add(raw.len().saturating_sub(1));
             if width == 1 {
                 result.push_str(&rewrite(&content, Style::Backticks));
@@ -518,11 +550,8 @@ fn link_prose(
         };
         if let Some(raw) = protected {
             offset = offset.saturating_add(raw.len().saturating_sub(ch.len_utf8()));
-            result.push_str(&rewrite(&prose, Style::Bare));
-            prose.clear();
-            let name = raw.trim_start_matches('<').trim_start_matches('/');
-            let name = name.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-').next();
-            if raw.starts_with('<') && name.is_some_and(is_candidate) {
+            flush_prose(&mut result, &mut prose, rewrite);
+            if hexadecimal_tag(&raw) {
                 result.push_str(&rewrite(&raw, Style::CommitOnly));
             } else {
                 result.push_str(&raw);
@@ -530,24 +559,9 @@ fn link_prose(
             continue;
         }
         if ch == '<' && (starts_autolink(chars.clone()) || starts_email(chars.clone())) {
-            let mut link = String::from('<');
-            let mut closed = false;
-            let mut lookahead = chars.clone();
-            for next in lookahead.by_ref() {
-                link.push(next);
-                if next == '>' {
-                    closed = true;
-                    break;
-                }
-                if next.is_whitespace() {
-                    break;
-                }
-            }
-            if closed {
+            if let Some(link) = autolink(&mut chars) {
                 offset = offset.saturating_add(link.len().saturating_sub(1));
-                chars = lookahead;
-                result.push_str(&rewrite(&prose, Style::Bare));
-                prose.clear();
+                flush_prose(&mut result, &mut prose, rewrite);
                 result.push_str(&link);
             } else {
                 prose.push('<');
@@ -570,8 +584,7 @@ fn link_prose(
             if balanced(&mut lookahead, open, close, &mut link) {
                 offset = offset.saturating_add(link.len().saturating_sub(1));
                 chars = lookahead;
-                result.push_str(&rewrite(&prose, Style::Bare));
-                prose.clear();
+                flush_prose(&mut result, &mut prose, rewrite);
                 result.push_str(&link);
                 continue;
             }
@@ -584,8 +597,7 @@ fn link_prose(
         {
             offset = offset.saturating_add(label.len().saturating_sub(1));
             chars = label_end;
-            result.push_str(&rewrite(&prose, Style::Bare));
-            prose.clear();
+            flush_prose(&mut result, &mut prose, rewrite);
             result.push_str(&label);
             continue;
         }
