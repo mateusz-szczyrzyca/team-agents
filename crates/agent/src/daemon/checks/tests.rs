@@ -595,3 +595,18 @@ fn description_refresh_matches_harness_lines_containing_commit_links() {
 
     assert_eq!(unlinked_harness_files(&linked, harness), expected);
 }
+
+#[test]
+fn description_refresh_preserves_another_repository_on_a_harness_line() {
+    let harness = "See `src/lib.rs:7`.\n";
+    let external = "See [`src/lib.rs:7`](https://github.com/acme/docs/blob/0123456789012345678901234567890123456789/src/lib.rs#L7).\n";
+    assert_eq!(
+        unlinked_harness_files_in_repository(external, harness, "https://github.com/octo/example"),
+        external
+    );
+    let local = "See [`src/lib.rs:7`](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/lib.rs#L7).\n";
+    assert_eq!(
+        unlinked_harness_files_in_repository(local, harness, "https://github.com/octo/example"),
+        harness
+    );
+}

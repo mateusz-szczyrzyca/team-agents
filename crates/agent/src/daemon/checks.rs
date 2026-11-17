@@ -319,6 +319,12 @@ pub(super) fn authored(description: &str, harness: &str) -> String {
     kept.join("\n")
 }
 
+/// Restores generated harness links belonging to the publishing repository.
+#[must_use]
+pub(super) fn unlinked_harness_files_in_repository(description: &str, harness: &str, _repository: &str) -> String {
+    unlinked_harness_files(description, harness)
+}
+
 /// Restores harness-authored file labels before a changed description is published again.
 #[must_use]
 pub(super) fn unlinked_harness_files(description: &str, harness: &str) -> String {
