@@ -1051,6 +1051,11 @@ It works offline, reports unreadable parts, and changes no task or git ref. Befo
 exact values from `secrets.toml` and environment variables ending in `TOKEN`, `SECRET`, `PASSWORD` or `KEY` with
 `<cut>`. An unreadable secrets file stops collection before any bundle is written.
 
+Task files and git output are bounded to 4 MiB each; task files together to 64 MiB, with at most
+4096 entries per task and 16 directory levels. Limits and skipped symlinks are reported as read failures.
+History is read without SQLite side files: a nonempty WAL or concurrent database change is reported as a read
+failure rather than risking an incomplete history or changing the home. Summary timestamps use UTC.
+
 The summary uses the pure anomaly assessment and stays below 100,000 bytes; full collected details are separate
 artifacts. Deferred sections explicitly say "Not collected in this version." A third task will add daemon process
 facts and logs (`--daemon-log FILE` is accepted for that extension), bus messages, notifications, configuration

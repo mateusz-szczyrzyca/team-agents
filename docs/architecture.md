@@ -490,12 +490,16 @@ Secrets are loaded before any artifact is written; an unreadable secrets file is
 the summary, replaces exact secrets-file values and values of environment variables whose names end in `TOKEN`,
 `SECRET`, `PASSWORD` or `KEY` with `<cut>`. The secrets file itself is never copied. Other read failures become
 assessment read failures and do not stop unrelated collection.
+Task files and subprocess output are bounded to 4 MiB each, task bytes to 64 MiB, directory entries to 4096 per
+task and nesting to 16 levels. Symlinks are not followed. Diagnostic history uses an immutable SQLite connection
+only for an unchanged, checkpointed database; a nonempty WAL or changed file is reported as unreadable so that
+collection neither creates SQLite side files nor silently excludes committed WAL records.
 
 A third task adds daemon process facts and log collection, bus messages, notifications, configuration with secret
 key names, machine metrics and the fifty newest untracked files. `--daemon-log` is accepted for that extension.
 Deferred sections explicitly say "Not collected in this version." They are not observations of absence or anomalies.
 
-The pure layer receives observed facts, the collection time and the machine's UTC offset from its caller.
+The pure layer receives observed facts, the collection time and a UTC offset from its caller; this collector uses UTC.
 Unavailable facts are distinct from observations that something is absent. Known anomalies are reported from
 those facts without asking the daemon, running git or reading the machine's clock. A summary with no known
 anomaly says "none of the known ones", which does not establish that the team is healthy.
