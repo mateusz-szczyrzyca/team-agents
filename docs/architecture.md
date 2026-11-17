@@ -382,7 +382,12 @@ about: the reviewed commit for a review, or the pull request head for descriptio
 preserve the author's spelling and single backticks, and URL path characters are percent-encoded. Trailing sentence
 punctuation is kept outside the link. Directories, missing files, absolute paths and paths containing `..` stay
 as written; files are never searched for under another name or at another commit. Git supplies the committed tree
-in one listing per text, rather than starting a process for each path.
+in one listing per text, rather than starting a process for each path. A truncated listing is a lookup failure;
+the harness never treats an incomplete tree as the full set of files.
+
+When joined items or test-change disclosures change a published description, generated file links in identifiable
+harness-authored lines are rebuilt at the new head. Other existing links retain their destinations. A description
+that does not change retains the links from its original publication.
 
 Single-backtick references are linked too, including file names containing spaces or `#`; longer inline code spans,
 fenced code blocks (including blockquote and list containers), existing links (including bare URLs, email autolinks,
