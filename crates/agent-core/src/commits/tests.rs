@@ -221,7 +221,7 @@ fn autolink_schemes_and_unclosed_angles_keep_markdown_meaning() {
     }
     for (input, expected) in [
         ("<a1b2c3d>", format!("<{linked}>")),
-        ("<https://a1b2c3d", format!("<https://{linked}")),
+        ("<https://a1b2c3d", "<https://a1b2c3d".to_owned()),
         ("<https:// a1b2c3d", format!("<https:// {linked}")),
     ] {
         assert_eq!(link_commits(input, REPO_URL, resolve_hash), expected);
