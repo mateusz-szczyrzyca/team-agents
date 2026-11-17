@@ -26,17 +26,81 @@ const INTRODUCTION: &str = "The harness lists here every commit of the branch wh
 /// its subject and its message as a quotation; `None` when there is none.
 #[must_use]
 pub fn test_fix_section(commits: &[CommitFacts]) -> Option<String> {
-    // The stub of the RED commit: it knows what it will write and writes nothing.
-    let _ = (commits, OPENING, CLOSING, HEADING, INTRODUCTION, TEST_FIX_PREFIX);
-    None
+    let fixes: Vec<&CommitFacts> = commits
+        .iter()
+        .filter(|commit| commit.subject.starts_with(TEST_FIX_PREFIX))
+        .collect();
+    if fixes.is_empty() {
+        return None;
+    }
+    let mut lines = vec![
+        OPENING.to_owned(),
+        HEADING.to_owned(),
+        String::new(),
+        INTRODUCTION.to_owned(),
+        String::new(),
+    ];
+    for commit in fixes {
+        lines.push(format!("- {} — {}", commit.id, commit.subject));
+        // A quotation: whatever the message holds, a heading or a comment line in it is none of the description.
+        for line in commit.body.trim().lines() {
+            let line = line.trim_end();
+            lines.push(if line.is_empty() {
+                "  >".to_owned()
+            } else {
+                format!("  > {line}")
+            });
+        }
+    }
+    lines.push(CLOSING.to_owned());
+    Some(lines.join("\n"))
 }
 
 /// `description` with `section` at its end, in the place of a section the harness wrote before; without one when
 /// `section` is `None`. Everything else of the description stays as it is.
 #[must_use]
 pub fn with_section(description: &str, section: Option<&str>) -> String {
-    let _ = section;
-    description.to_owned()
+    let (kept, had) = without_section(description);
+    match section {
+        // Nothing to take out and nothing to put in: the description is not the harness's to tidy.
+        None if !had => description.to_owned(),
+        None => kept,
+        Some(section) => {
+            let before = kept.trim_end();
+            if before.is_empty() {
+                format!("{section}\n")
+            } else {
+                format!("{before}\n\n{section}\n")
+            }
+        }
+    }
+}
+
+/// `description` without the section between the harness's two comment lines, and whether it had one. What stood
+/// before the section keeps one line break at its end; a section that was opened and never closed runs to the end.
+fn without_section(description: &str) -> (String, bool) {
+    let mut kept: Vec<&str> = Vec::new();
+    let (mut inside, mut had) = (false, false);
+    for line in description.lines() {
+        if inside {
+            inside = line.trim() != CLOSING;
+        } else if line.trim() == OPENING {
+            inside = true;
+            had = true;
+        } else {
+            kept.push(line);
+        }
+    }
+    if !had {
+        return (description.to_owned(), false);
+    }
+    let text = kept.join("\n");
+    let text = text.trim_end();
+    if text.is_empty() {
+        (String::new(), true)
+    } else {
+        (format!("{text}\n"), true)
+    }
 }
 
 #[cfg(test)]
