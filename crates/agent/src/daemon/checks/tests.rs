@@ -641,3 +641,32 @@ fn description_refresh_restores_escaped_bare_file_labels() {
         assert_eq!(unlinked_harness_files(&description, &harness), harness);
     }
 }
+
+#[test]
+fn authored_recognizes_file_links_with_blob_directories() {
+    for repository in ["octo/example", "blob/example", "octo/blob"] {
+        for path in ["src/blob/lib.rs", "blob/src/blob/lib.rs"] {
+            let harness = format!("See `{path}:7`.\n");
+            let description = format!(
+                "See [`{path}:7`](https://github.com/{repository}/blob/0123456789012345678901234567890123456789/{path}#L7).\nAuthor details."
+            );
+            assert_eq!(authored(&description, &harness), "Author details.");
+        }
+    }
+}
+
+#[test]
+fn description_refresh_restores_file_links_with_blob_directories() {
+    for repository in ["octo/example", "blob/example", "octo/blob"] {
+        for path in ["src/blob/lib.rs", "blob/src/blob/lib.rs"] {
+            let repository = format!("https://github.com/{repository}");
+            let harness = format!("See `{path}:7`.\n");
+            let description =
+                format!("See [`{path}:7`]({repository}/blob/0123456789012345678901234567890123456789/{path}#L7).\n");
+            assert_eq!(
+                unlinked_harness_files_in_repository(&description, &harness, &repository),
+                harness
+            );
+        }
+    }
+}
