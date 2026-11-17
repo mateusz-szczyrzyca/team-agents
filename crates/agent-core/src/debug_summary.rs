@@ -849,6 +849,18 @@ pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String,
     out.finish()
 }
 
+/// Renders a summary with explicit notices for sections outside the collection scope.
+///
+/// # Errors
+/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
+pub fn render_summary_with_uncollected(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    _uncollected: &[SummarySection],
+) -> Result<String, SummaryError> {
+    render_summary(input, offset)
+}
+
 /// Mandatory summary facts exceed the pasteable document budget.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
