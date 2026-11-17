@@ -223,14 +223,21 @@ fn has_pending_review(team: &Team, member: &Member) -> bool {
 }
 
 /// [`REVIEWS_REQUIRED`] of the `free` reviewers, drawn at random; `None` while fewer are free: the pull request waits.
-pub(super) fn choose_reviewers(mut free: Vec<Reviewer>, rng: &mut impl Rng) -> Option<Vec<Reviewer>> {
+///
+/// The reviewers that review for the team already (they wait in a review task of it) are drawn before new ones: they
+/// know the pull request and look at what became of their own findings.
+pub(super) fn choose_reviewers(free: Vec<Reviewer>, rng: &mut impl Rng) -> Option<Vec<Reviewer>> {
     if free.len() < REVIEWS_REQUIRED {
         return None;
     }
+    let (mut known, mut new): (Vec<Reviewer>, Vec<Reviewer>) = free
+        .into_iter()
+        .partition(|reviewer| matches!(reviewer.slot, Slot::Task(_)));
     let mut chosen = Vec::with_capacity(REVIEWS_REQUIRED);
     for _ in 0..REVIEWS_REQUIRED {
-        let index = rng.random_range(0..free.len());
-        chosen.push(free.swap_remove(index));
+        let pool = if known.is_empty() { &mut new } else { &mut known };
+        let index = rng.random_range(0..pool.len());
+        chosen.push(pool.swap_remove(index));
     }
     Some(chosen)
 }

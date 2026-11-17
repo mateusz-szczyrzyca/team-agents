@@ -226,10 +226,10 @@ BLOCKERS
 1. [TDD-2] src/lib.rs:7 — the case is untested
   ----- end of review report -----
 <time>  fix pass 1 of 5 on #1 started
-  ----- findings sent to the team (809 bytes) -----
+  ----- findings sent to the team (991 bytes) -----
 # THE REVIEWERS ASKED FOR CHANGES (pull request #1, fix pass 1 of 5)
 
-The reviewers of your pull request asked for changes. Their reports:
+Both reviews of your pull request are in, and at least one asks for changes. The reports, each with its verdict:
 
 ### Review by inv-r1
 
@@ -237,13 +237,19 @@ VERDICT: REQUEST_CHANGES
 BLOCKERS
 1. [TDD-2] src/lib.rs:7 — the case is untested
 
-Fix every blocker, on your branch `agents/inv-lead/<task-4>` (switch to it first when your worktree has another one out): do it
-yourself or give it to a member, as you see fit. A finding you think is wrong
+### Review by inv-r2
+
+VERDICT: APPROVE
+SUMMARY: fine
+
+Fix every blocker of every report, on your branch `agents/inv-lead/<task-4>` (switch to it first when your worktree has another one
+out): do it yourself or give it to a member, as you see fit. A report that approves may still name things worth
+fixing now. A finding you think is wrong
 gets a reason in your commit message, not silence. Then get the repository's gate green with `agent gate` and end your
 turn with `STATUS: DONE`.
 
 Do not push, and do not open or update the pull request: the harness pushes your branch when the gate has passed at its
-head, and asks the reviewers again. Do not answer the reviewers on GitHub.
+head, and asks the same reviewers again. Do not answer the reviewers on GitHub.
   ----- end of findings sent to the team -----
 <time>  run <run-15>: inv-lead (investigator, claude) as coordinator, because fix pass 1 of the item
     task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/inv-lead/<task-4>

@@ -18,7 +18,7 @@ use agent_core::status::{ReviewVerdict, TaskStatus};
 /// What follows a verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Next {
-    /// The other review is not in yet.
+    /// The other review is not in yet: an approval and a request for changes both wait for it.
     Wait,
     /// Both approve: the harness merges the pull request.
     Merge,
@@ -80,7 +80,9 @@ pub(super) fn items_of(team: &Team, pr: PrNumber) -> Vec<ItemId> {
 pub(super) fn round_state(progress: &ItemProgress) -> Option<RoundState> {
     let passes = count(progress.fix_passes().len());
     match progress.phase() {
-        ItemPhase::InReview { pr, reviews } => Some(if reviews.iter().any(asked_for_changes) {
+        // A request for changes with every review in and the item still in review is one the fix passes could not take:
+        // while a review is pending, the pass is not decided.
+        ItemPhase::InReview { pr, reviews } => Some(if decided_for_changes(reviews) {
             RoundState::AskingHuman { pr: pr.number, passes }
         } else {
             RoundState::InReview {
@@ -91,7 +93,11 @@ pub(super) fn round_state(progress: &ItemProgress) -> Option<RoundState> {
                     .filter(|review| approved(review))
                     .map(|review| review.reviewer.clone())
                     .collect(),
-                changes: Vec::new(),
+                changes: reviews
+                    .iter()
+                    .filter(|review| asked_for_changes(review))
+                    .map(|review| review.reviewer.clone())
+                    .collect(),
             }
         }),
         ItemPhase::Approved { pr, .. } => Some(RoundState::Approved { pr: pr.number }),
@@ -141,6 +147,14 @@ fn changes_requested_at(review: &Review) -> Option<Timestamp> {
 /// Whether `review` is a submitted request for changes.
 fn asked_for_changes(review: &Review) -> bool {
     changes_requested_at(review).is_some()
+}
+
+/// Whether the review pass `reviews` is decided for changes: a reviewer asked for them and no review is pending.
+fn decided_for_changes(reviews: &[Review]) -> bool {
+    reviews.iter().any(asked_for_changes)
+        && !reviews
+            .iter()
+            .any(|review| matches!(review.outcome, ReviewOutcome::Pending))
 }
 
 /// What the action of the round machine means for the daemon after a verdict.
@@ -215,13 +229,17 @@ pub(super) struct Exhausted {
     pub(super) requested_at: Timestamp,
 }
 
-/// The pull requests of `team` that wait for the human: an item in review that a reviewer sent back.
+/// The pull requests of `team` that wait for the human: an item in review that a reviewer sent back, with every review
+/// of the pass in.
 pub(super) fn exhausted(team: &Team) -> Vec<Exhausted> {
     let mut found: Vec<Exhausted> = Vec::new();
     for progress in team.items() {
         let ItemPhase::InReview { pr, reviews } = progress.phase() else {
             continue;
         };
+        if !decided_for_changes(reviews) {
+            continue;
+        }
         let Some(requested_at) = reviews.iter().filter_map(changes_requested_at).max() else {
             continue;
         };

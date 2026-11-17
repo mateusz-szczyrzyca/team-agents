@@ -197,7 +197,7 @@ pub enum RoundAction {
     PublishPullRequest,
     /// Ask investigators from outside the team for the reviews.
     RequestReviews,
-    /// Nothing yet: more reviews are due.
+    /// Nothing yet: more reviews are due. A request for changes waits here too, for the other review.
     AwaitReviews,
     /// Give the team the reviewers' findings for this fix pass.
     StartFixPass {
@@ -234,8 +234,8 @@ pub enum RoundError {
         /// The event that came.
         event: RoundEventKind,
     },
-    /// A reviewer that already approved reported again.
-    #[error("{reviewer} already approved this pull request")]
+    /// A reviewer that already gave its verdict in this review pass reported again.
+    #[error("{reviewer} already gave its verdict on this pull request in this review pass")]
     DuplicateReview {
         /// The reviewer that reported twice.
         reviewer: InvestigatorName,
@@ -450,35 +450,39 @@ fn review(
     verdict: ReviewVerdict,
     policy: RoundPolicy,
 ) -> Result<Step, RoundError> {
-    match verdict {
-        ReviewVerdict::RequestChanges if passes >= policy.fix_passes => {
-            Ok(Step::to(RoundState::AskingHuman { pr, passes }, RoundAction::AskHuman))
-        }
-        ReviewVerdict::RequestChanges => Ok(start_fix_pass(pr, passes)),
-        ReviewVerdict::Approve if approvals.contains(reviewer) => Err(RoundError::DuplicateReview {
+    if approvals.contains(reviewer) || changes.contains(reviewer) {
+        return Err(RoundError::DuplicateReview {
             reviewer: reviewer.clone(),
-        }),
-        ReviewVerdict::Approve => {
-            let mut approvals = approvals.to_vec();
-            approvals.push(reviewer.clone());
-            if approvals.len() < REVIEWS_REQUIRED {
-                return Ok(Step::to(
-                    RoundState::InReview {
-                        pr,
-                        passes,
-                        approvals,
-                        changes: changes.to_vec(),
-                    },
-                    RoundAction::AwaitReviews,
-                ));
-            }
-            let action = match policy.merge {
-                MergeMode::Autopilot => RoundAction::Merge,
-                MergeMode::NoMerge => RoundAction::HandToHuman,
-            };
-            Ok(Step::to(RoundState::Approved { pr }, action))
-        }
+        });
     }
+    let (mut approvals, mut changes) = (approvals.to_vec(), changes.to_vec());
+    match verdict {
+        ReviewVerdict::Approve => approvals.push(reviewer.clone()),
+        ReviewVerdict::RequestChanges => changes.push(reviewer.clone()),
+    }
+    // The pass is decided when every review is in: the verdicts may differ, and the team gets all the findings at once.
+    if approvals.len().saturating_add(changes.len()) < REVIEWS_REQUIRED {
+        return Ok(Step::to(
+            RoundState::InReview {
+                pr,
+                passes,
+                approvals,
+                changes,
+            },
+            RoundAction::AwaitReviews,
+        ));
+    }
+    if changes.is_empty() {
+        let action = match policy.merge {
+            MergeMode::Autopilot => RoundAction::Merge,
+            MergeMode::NoMerge => RoundAction::HandToHuman,
+        };
+        return Ok(Step::to(RoundState::Approved { pr }, action));
+    }
+    if passes >= policy.fix_passes {
+        return Ok(Step::to(RoundState::AskingHuman { pr, passes }, RoundAction::AskHuman));
+    }
+    Ok(start_fix_pass(pr, passes))
 }
 
 /// The team starts the fix pass after the `passes` it has had: its work, on the pull request `pr`.
@@ -985,7 +989,11 @@ mod tests {
     fn a_reviewer_that_asked_for_changes_cannot_report_again_in_the_same_pass() {
         for verdict in [ReviewVerdict::Approve, ReviewVerdict::RequestChanges] {
             assert_eq!(
-                go(&in_review_with(0, &[], &["inv-opus"]), &review("inv-opus", verdict), AUTOPILOT),
+                go(
+                    &in_review_with(0, &[], &["inv-opus"]),
+                    &review("inv-opus", verdict),
+                    AUTOPILOT
+                ),
                 Err(RoundError::DuplicateReview {
                     reviewer: reviewer("inv-opus")
                 })
@@ -1071,6 +1079,7 @@ mod tests {
                     head: head('d'),
                 },
                 review("inv-opus", ReviewVerdict::RequestChanges),
+                review("inv-codex", ReviewVerdict::Approve),
             ],
             AUTOPILOT,
         );

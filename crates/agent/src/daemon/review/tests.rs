@@ -476,10 +476,17 @@ gate = ["true"]
     #[test]
     fn the_reviewers_that_already_review_for_the_team_are_drawn_before_new_ones() {
         for seed in 0..64 {
-            let drawn = choose_reviewers(with_known(pool(4), &["inv-b", "inv-d"]), &mut StdRng::seed_from_u64(seed));
+            let drawn = choose_reviewers(
+                with_known(pool(4), &["inv-b", "inv-d"]),
+                &mut StdRng::seed_from_u64(seed),
+            );
 
             let drawn: BTreeSet<String> = drawn.unwrap().into_iter().map(|r| r.name.as_str().to_owned()).collect();
-            assert_eq!(drawn, BTreeSet::from(["inv-b".to_owned(), "inv-d".to_owned()]), "seed {seed}");
+            assert_eq!(
+                drawn,
+                BTreeSet::from(["inv-b".to_owned(), "inv-d".to_owned()]),
+                "seed {seed}"
+            );
         }
     }
 

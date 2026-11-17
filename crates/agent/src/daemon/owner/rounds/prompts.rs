@@ -9,7 +9,6 @@ use agent_core::ids::InvalidName;
 use agent_core::kinds::Role;
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
 use agent_core::state::{CommitId, ItemPhase, PrNumber, QuestionState, Review, ReviewOutcome, TaskRef, Timestamp};
-use agent_core::status::ReviewVerdict;
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextError};
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision};
 use agent_runtime::run::compose::{ComposeError, PromptTexts, item_sections};
@@ -154,7 +153,7 @@ async fn checks_notice(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<Option<
     }
 }
 
-/// The fix pass of the lead `found`, if an item is being fixed by it: the reports of the reviewers that asked for changes.
+/// The fix pass of the lead `found`, if an item is being fixed by it: the reports of the reviewers of the pass.
 pub(super) async fn fix_pass(
     ctx: &Context<'_>,
     texts: &AutopilotPrompts,
@@ -239,7 +238,8 @@ pub(super) async fn ask_human(
     ))
 }
 
-/// The kept reports of the reviews in `reviews` that asked for changes, each as a finding.
+/// The kept reports of the reviews in `reviews` that are in, each as a finding with its verdict: the lead is given what
+/// every reviewer of the pass said, not only the requests for changes.
 pub(super) async fn reports_of(
     ctx: &Context<'_>,
     texts: &AutopilotPrompts,
@@ -249,13 +249,7 @@ pub(super) async fn reports_of(
 ) -> Result<Vec<String>, SectionError> {
     let mut findings = Vec::new();
     for review in reviews {
-        if !matches!(
-            review.outcome,
-            ReviewOutcome::Submitted {
-                verdict: ReviewVerdict::RequestChanges,
-                ..
-            }
-        ) {
+        if !matches!(review.outcome, ReviewOutcome::Submitted { .. }) {
             continue;
         }
         let path = ctx.home.review_report_file(&review.task, pr, kept);

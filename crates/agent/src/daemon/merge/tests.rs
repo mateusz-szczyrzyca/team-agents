@@ -133,6 +133,7 @@ fn the_approvals_of_a_round_are_the_reviewers_that_approved_and_a_pending_review
 #[test]
 fn an_item_in_review_that_a_reviewer_sent_back_waits_for_the_human_with_the_passes_it_has_had() {
     let mut team = after_passes(in_review(), 2);
+    submit(&mut team, "1.1", 20, ReviewVerdict::Approve, 390);
     submit(&mut team, "1.1", 21, ReviewVerdict::RequestChanges, 400);
 
     assert_eq!(
@@ -156,21 +157,6 @@ fn an_item_with_a_request_for_changes_and_a_review_still_pending_is_in_review_an
             passes: 5,
             approvals: vec![],
             changes: vec![reviewer("inv-gemini")],
-        })
-    );
-}
-
-#[test]
-fn an_item_whose_reviews_are_all_in_with_a_request_for_changes_waits_for_the_human() {
-    let mut team = after_passes(in_review(), 2);
-    submit(&mut team, "1.1", 20, ReviewVerdict::Approve, 390);
-    submit(&mut team, "1.1", 21, ReviewVerdict::RequestChanges, 400);
-
-    assert_eq!(
-        round_state(team.item(item("1.1")).unwrap()),
-        Some(RoundState::AskingHuman {
-            pr: pr(7, &lead_branch()).number,
-            passes: 2,
         })
     );
 }
@@ -240,7 +226,8 @@ fn the_second_approval_merges_in_autopilot_and_hands_the_pull_request_to_the_hum
 #[test]
 fn a_request_for_changes_starts_the_next_fix_pass_while_passes_are_left() {
     for (passes, next) in [(0, 1), (1, 2), (4, 5)] {
-        let team = after_passes(in_review(), passes);
+        let mut team = after_passes(in_review(), passes);
+        submit(&mut team, "1.1", 21, ReviewVerdict::Approve, 1000);
 
         let after = after_verdict(
             team.item(item("1.1")).unwrap(),
@@ -255,7 +242,8 @@ fn a_request_for_changes_starts_the_next_fix_pass_while_passes_are_left() {
 
 #[test]
 fn a_request_for_changes_asks_the_human_when_the_passes_are_used_up() {
-    let team = after_passes(in_review(), 5);
+    let mut team = after_passes(in_review(), 5);
+    submit(&mut team, "1.1", 20, ReviewVerdict::Approve, 1000);
 
     let after = after_verdict(
         team.item(item("1.1")).unwrap(),
@@ -269,7 +257,8 @@ fn a_request_for_changes_asks_the_human_when_the_passes_are_used_up() {
 
 #[test]
 fn with_no_fix_passes_configured_the_human_is_asked_at_the_first_request_for_changes() {
-    let team = in_review();
+    let mut team = in_review();
+    submit(&mut team, "1.1", 21, ReviewVerdict::Approve, 120);
     let policy = RoundPolicy {
         merge: MergeMode::Autopilot,
         fix_passes: 0,
@@ -427,6 +416,7 @@ fn an_item_that_is_done_or_has_no_pull_request_is_not_an_item_of_the_pull_reques
 #[test]
 fn a_pull_request_with_a_request_for_changes_in_its_round_waits_for_the_human_since_the_last_one_came() {
     let mut team = after_passes(in_review(), 2);
+    submit(&mut team, "1.1", 20, ReviewVerdict::Approve, 390);
     submit(&mut team, "1.1", 21, ReviewVerdict::RequestChanges, 400);
 
     assert_eq!(
@@ -644,6 +634,7 @@ fn a_reviewer_that_gave_its_review_is_not_asked() {
 /// that ran from `started` seconds.
 fn exhausted_with_lead_run_at(started: u32) -> Team {
     let mut team = after_passes(in_review(), 2);
+    submit(&mut team, "1.1", 20, ReviewVerdict::Approve, 390);
     submit(&mut team, "1.1", 21, ReviewVerdict::RequestChanges, 400);
     ran(&mut team, 1, 1, started, started + 10);
     team
@@ -699,6 +690,7 @@ fn nothing_is_done_while_the_question_is_open_or_answered_or_the_lead_is_at_work
 #[test]
 fn the_answer_of_the_human_gives_one_more_fix_pass_after_the_configured_ones() {
     let mut team = after_passes(in_review(), 2);
+    submit(&mut team, "1.1", 20, ReviewVerdict::Approve, 390);
     submit(&mut team, "1.1", 21, ReviewVerdict::RequestChanges, 400);
 
     let next = after_answer(team.item(item("1.1")).unwrap(), AUTOPILOT);

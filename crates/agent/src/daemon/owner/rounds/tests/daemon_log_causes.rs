@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_core::config::{AbsolutePath, Program, Secrets};
-use agent_core::history::{HistoryEvent, MaxTextBytes, Record};
+use agent_core::history::{HistoryEvent, MaxTextBytes};
 use agent_core::ids::{AgentName, TaskId};
 use agent_core::log::{LogEntry, LogEvent, LogLevel};
 use agent_core::protocol::{
@@ -55,11 +55,8 @@ const SIGNALLED_HOME: &str = "AGENT_TEST_SIGNALLED_DAEMON_HOME";
 /// is logged into.
 const SPAWNED_PANIC_DB: &str = "AGENT_TEST_SPAWNED_PANIC_DB";
 
-/// A reviewer that asks for changes the first time and approves afterwards.
-const CHANGES_ONCE: &str = "done:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] src/lib.rs:7 — the case is untested,done:VERDICT: APPROVE\\nSUMMARY: fixed";
-
-/// A reviewer whose first report comes after the other reviewer has decided the pass, and that approves the fix.
-const LATE_APPROVALS: &str = "late:VERDICT: APPROVE\\nSUMMARY: late first,done:VERDICT: APPROVE\\nSUMMARY: fixed";
+/// Reviewers of which the first to run fails and every later run approves.
+const FAILS_FIRST: &str = "fail-first:VERDICT: APPROVE\\nSUMMARY: fine";
 
 /// Reviewers that never give a verdict.
 const SILENT: &str = "sleep";
@@ -657,55 +654,59 @@ async fn checks_that_send_a_round_back_and_the_reviews_asked_afterwards_are_logg
     );
 }
 
-/// A reviewer whose report comes after the other reviewer decided the pass: `review_report_late`, of its task.
+/// A reviewer that failed and was replaced, and that the human resumes afterwards: it reports with no review asked of
+/// it any more, `review_report_late`, of its task.
 async fn record_late_report(observed: &mut BTreeSet<LogEvent>) {
     let mut rig = Rig::new(
         &[
             normal("claude-1", "work"),
-            investigator("inv-r1", CHANGES_ONCE),
-            investigator("inv-r2", LATE_APPROVALS),
+            investigator("inv-r1", FAILS_FIRST),
+            investigator("inv-r2", FAILS_FIRST),
+            investigator("inv-r3", FAILS_FIRST),
         ],
         5,
         false,
     )
     .await;
     rig.start().await;
-    let (team, _tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    // The pull request is not merged, so the team goes on and the task of the reviewer that failed can be resumed.
+    let (team, _tasks) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
     let state = rig
-        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
         .await;
+    let replaced: TaskId = state
+        .team(&team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .find(|member| member.status() == TaskStatus::Failed)
+        .map(|member| member.task().clone())
+        .unwrap_or_else(|| panic!("no reviewer failed: {:?}", state.team(&team).unwrap().reviewers()));
+    let mut connection = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap();
+    connection
+        .request(
+            Client::Cli,
+            Command::Resume(ControlRequest {
+                target: Target::Task(replaced.clone()),
+            }),
+        )
+        .await
+        .unwrap();
+    rig.status_is(&replaced, TaskStatus::Waiting).await;
     rig.stop().await.unwrap();
 
-    let round = state.teams()[0].rounds()[0].id().clone();
-    let records = Reader::open(&rig.home.history_file())
-        .unwrap()
-        .round_records(&round)
-        .unwrap();
-    let late_task: TaskId = records
-        .iter()
-        .find_map(|stored| match &stored.record {
-            Record::Event(event) => match &event.event {
-                HistoryEvent::ReviewSubmitted {
-                    pass: 0,
-                    reviewer,
-                    task,
-                    ..
-                } if reviewer.as_str() == "inv-r2" => Some(task.clone()),
-                _ => None,
-            },
-            _ => None,
-        })
-        .unwrap_or_else(|| panic!("inv-r2 has no review of the first pass: {records:#?}"));
     let logs = logs_in(&rig.home.history_file());
     let late = row(&logs, LogEvent::ReviewReportLate, |entry| {
-        entry.task() == Some(&late_task)
+        entry.task() == Some(&replaced)
     });
     assert_eq!(late.team(), Some(&team));
     proved(observed, late, LogEvent::ReviewReportLate);
 }
 
 #[tokio::test]
-async fn a_review_report_after_its_pass_was_decided_is_logged_as_late() {
+async fn a_report_of_a_reviewer_with_no_review_asked_of_it_is_logged_as_late() {
     let mut observed = BTreeSet::new();
     record_late_report(&mut observed).await;
     assert_eq!(observed, BTreeSet::from([LogEvent::ReviewReportLate]));

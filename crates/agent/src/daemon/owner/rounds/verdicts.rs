@@ -8,7 +8,7 @@ use agent_core::ids::{AgentName, ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::EventKind;
-use agent_core::state::{Completion, ItemPhase, PullRequest, Review, ReviewOutcome, RoundEnd, Team, Timestamp};
+use agent_core::state::{ItemPhase, PullRequest, ReviewOutcome, RoundEnd, Team, Timestamp};
 use agent_core::status::ReviewVerdict;
 use agent_runtime::git::Revision;
 use agent_runtime::github::CommentReview;
@@ -16,7 +16,7 @@ use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
-use crate::daemon::merge::{Next, VerdictError, after_verdict, count, items_of};
+use crate::daemon::merge::{Next, VerdictError, after_verdict, count};
 use crate::daemon::review::{VerdictProblem, parse_verdict, report_text, report_without_verdict};
 use crate::daemon::team::Why;
 
@@ -42,26 +42,6 @@ pub(super) struct Offered {
     pub(super) reviewer: agent_core::ids::InvestigatorName,
     /// The fix passes the pull request had had when the review was asked.
     pub(super) pass: usize,
-    /// Whether it is the review pass that is going.
-    pub(super) current: bool,
-}
-
-/// What a reviewer's report answers.
-pub(super) enum Answer {
-    /// A review of the review pass that is going.
-    Current(Asked),
-    /// A review of a review pass the pull request has left behind.
-    Late(Late),
-}
-
-/// A review of a review pass that is decided.
-pub(super) struct Late {
-    /// The pull request.
-    pub(super) pr: PullRequest,
-    /// The fix passes the pull request had had when the review was asked.
-    pub(super) pass: usize,
-    /// The investigator that reviews.
-    pub(super) reviewer: agent_core::ids::InvestigatorName,
 }
 
 /// The review a reviewer's final message answers: the pull request, its items and when it was asked.
@@ -102,18 +82,16 @@ impl Owner {
         let Some(started) = started else {
             return Ok(());
         };
-        let asked = match self.answered_by(&located.team, task, started) {
-            Some(Answer::Current(asked)) => asked,
-            Some(Answer::Late(late)) => return self.keep_late_review(&pulls, task, located, &late, message).await,
-            None => {
-                tracing::info!(
-                    event = LogEvent::ReviewReportLate.as_str(),
-                    team = %located.team,
-                    task = %task,
-                    "a reviewer ended with nothing that it was asked to review: its report is not taken"
-                );
-                return Ok(());
-            }
+        // A review pass waits for every review that was asked, so a report answers a review that is pending or none: one
+        // of a reviewer that was replaced, or that was woken with nothing to review.
+        let Some(asked) = self.answered_by(&located.team, task, started) else {
+            tracing::info!(
+                event = LogEvent::ReviewReportLate.as_str(),
+                team = %located.team,
+                task = %task,
+                "a reviewer ended with nothing that it was asked to review: its report is not taken"
+            );
+            return Ok(());
         };
         match parse_verdict(message) {
             Ok(verdict) => {
@@ -125,79 +103,10 @@ impl Owner {
     }
 
     /// The review that a run of the reviewer `task` that started at `started` answers: the latest review asked of it at or
-    /// before that time that is still pending, in the review pass that is going or in one the pull request has left behind.
-    pub(super) fn answered_by(&self, team: &TeamId, task: &TaskId, started: Timestamp) -> Option<Answer> {
+    /// before that time that is still pending.
+    pub(super) fn answered_by(&self, team: &TeamId, task: &TaskId, started: Timestamp) -> Option<Asked> {
         let team = self.parts.state.team(team)?;
         answer_among(offered_reviews(team, task), started)
-    }
-
-    /// A report that answers a review of a review pass the pull request has left behind, because the reviewer was slow and
-    /// the other reviewer had asked for changes: the review pass is decided, and the report is kept and posted all the same.
-    pub(super) async fn keep_late_review(
-        &mut self,
-        pulls: &Pulls,
-        task: &TaskId,
-        located: &Located,
-        late: &Late,
-        message: &str,
-    ) -> Result<(), OwnerError> {
-        tracing::info!(
-            event = LogEvent::ReviewReportLate.as_str(),
-            team = %located.team,
-            task = %task,
-            pr = %late.pr.number,
-            "a reviewer ended a review of a review pass that is decided: its report is kept and posted"
-        );
-        let report = report_text(message);
-        let pass = count(late.pass);
-        self.parts
-            .store
-            .save_review_report(task, late.pr.number, pass, &report)
-            .await?;
-        // The report is a review all the same: the history has it, with its verdict, though it changes nothing.
-        let verdict = match parse_verdict(message) {
-            Ok(verdict) => {
-                let items = self
-                    .parts
-                    .state
-                    .team(&located.team)
-                    .map_or_else(Vec::new, |team| items_of(team, late.pr.number));
-                self.record_event(
-                    &located.team,
-                    self.rounds_of_items(&located.team, &items),
-                    HistoryEvent::ReviewSubmitted {
-                        pr: late.pr.number,
-                        pass,
-                        reviewer: late.reviewer.clone(),
-                        task: task.clone(),
-                        verdict,
-                        report: report.clone(),
-                    },
-                );
-                verdict
-            }
-            Err(problem) => {
-                tracing::info!(
-                    event = LogEvent::ReviewReportLate.as_str(),
-                    team = %located.team,
-                    task = %task,
-                    ?problem,
-                    "a late report has no verdict: the history records no review of it"
-                );
-                // Late reports remain visible even without a readable verdict. Display the conservative verdict
-                // while leaving the actual review history without a verdict.
-                ReviewVerdict::RequestChanges
-            }
-        };
-        let lead = self.lead_of(&located.team)?;
-        let asked = Asked {
-            pr: late.pr.clone(),
-            items: Vec::new(),
-            passes: late.pass,
-            reviewer: late.reviewer.clone(),
-        };
-        self.post_review(pulls, &lead, task, &asked, verdict, &report).await;
-        Ok(())
     }
 
     /// A report without a verdict: the reviewer is asked for it again, and after [`MAX_VERDICT_BOUNCES`] times the human is
@@ -409,7 +318,8 @@ impl Owner {
         let verdict_line = match verdict {
             ReviewVerdict::Approve => pulls.texts.render(
                 AutopilotPrompt::ReviewVerdictApprove,
-                &Variables::new().with("icon", agent_core::notice_status::NoticeStatus::Approved.icon())?,
+                // One mark on GitHub: the double one is the notification's "ready to merge", which one review is not.
+                &Variables::new().with("icon", agent_core::notice_status::NoticeStatus::Done.icon())?,
             )?,
             ReviewVerdict::RequestChanges => pulls.texts.render(
                 AutopilotPrompt::ReviewVerdictRequestChanges,
@@ -522,61 +432,32 @@ impl Owner {
     }
 }
 
-/// The reviews of the reviewer `task` that are pending in `team`, in the review pass that is going and in those the pull requests
-/// have left behind.
+/// The reviews of the reviewer `task` that are pending in `team`.
 fn offered_reviews(team: &Team, task: &TaskId) -> Vec<Offered> {
-    let pending = |reviews: &[Review]| {
-        reviews
-            .iter()
-            .find(|review| review.task == *task && matches!(review.outcome, ReviewOutcome::Pending))
-            .map(|review| (review.requested_at, review.reviewer.clone()))
-    };
     let mut offered = Vec::new();
     for progress in team.items() {
-        if let ItemPhase::InReview { pr, reviews } = progress.phase()
-            && let Some((requested_at, reviewer)) = pending(reviews)
-        {
+        let ItemPhase::InReview { pr, reviews } = progress.phase() else {
+            continue;
+        };
+        let pending = reviews
+            .iter()
+            .find(|review| review.task == *task && matches!(review.outcome, ReviewOutcome::Pending));
+        if let Some(review) = pending {
             offered.push(Offered {
-                requested_at,
+                requested_at: review.requested_at,
                 item: progress.id(),
                 pr: pr.clone(),
-                reviewer,
+                reviewer: review.reviewer.clone(),
                 pass: progress.fix_passes().len(),
-                current: true,
             });
-        }
-        let pr = match progress.phase() {
-            ItemPhase::InReview { pr, .. }
-            | ItemPhase::Fixing { pr, .. }
-            | ItemPhase::Approved { pr, .. }
-            | ItemPhase::Done {
-                completion: Completion::Merged { pr, .. },
-            } => pr,
-            ItemPhase::Done {
-                completion: Completion::Listed,
-            }
-            | ItemPhase::Pending
-            | ItemPhase::InProgress { .. } => continue,
-        };
-        for (index, pass) in progress.fix_passes().iter().enumerate() {
-            if let Some((requested_at, reviewer)) = pending(&pass.requested_by) {
-                offered.push(Offered {
-                    requested_at,
-                    item: progress.id(),
-                    pr: pr.clone(),
-                    reviewer,
-                    pass: index,
-                    current: false,
-                });
-            }
         }
     }
     offered
 }
 
-/// What a run that started at `started` answers among the `offered` reviews: those asked at the latest time that is not
-/// after it; of the review pass that is going when one of them is, else of a review pass that is decided.
-fn answer_among(offered: Vec<Offered>, started: Timestamp) -> Option<Answer> {
+/// What a run that started at `started` answers among the `offered` reviews: those of one pull request asked at the
+/// latest time that is not after it.
+fn answer_among(offered: Vec<Offered>, started: Timestamp) -> Option<Asked> {
     let latest = offered
         .iter()
         .map(|found| found.requested_at)
@@ -586,24 +467,15 @@ fn answer_among(offered: Vec<Offered>, started: Timestamp) -> Option<Answer> {
         .into_iter()
         .filter(|found| found.requested_at == latest)
         .collect();
-    let current: Vec<&Offered> = answered.iter().filter(|found| found.current).collect();
-    if let Some(first) = current.first() {
-        return Some(Answer::Current(Asked {
-            pr: first.pr.clone(),
-            items: current
-                .iter()
-                .filter(|found| found.pr.number == first.pr.number)
-                .map(|found| found.item)
-                .collect(),
-            passes: first.pass,
-            reviewer: first.reviewer.clone(),
-        }));
-    }
-    answered.into_iter().next().map(|found| {
-        Answer::Late(Late {
-            pr: found.pr,
-            pass: found.pass,
-            reviewer: found.reviewer,
-        })
+    let first = answered.first()?;
+    Some(Asked {
+        pr: first.pr.clone(),
+        items: answered
+            .iter()
+            .filter(|found| found.pr.number == first.pr.number)
+            .map(|found| found.item)
+            .collect(),
+        passes: first.pass,
+        reviewer: first.reviewer.clone(),
     })
 }

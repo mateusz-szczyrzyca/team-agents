@@ -329,7 +329,8 @@ for every review that was asked. At every look the harness finds the reviews tha
 failed, was stopped, or has been paused for `[review] replace_after_minutes`: each goes to another free investigator that is not
 of the team and not of the pass (`ItemMut::replace_review` puts the new review in the place of the old one, so the reviews that
 came stay), with a worktree at the head of the pull request, and the history records it as a review asked. The task of the
-reviewer that was replaced is left as it is: a report it still makes is kept and posted as a late one. When no investigator is
+reviewer that was replaced is left as it is: a report it still makes answers no review, is logged (`review_report_late`) and is
+not taken. When no investigator is
 free the human is told once for the review (`harness/review/notice-no-verdict.md`, which also tells of a report without a
 verdict). The reviewers of a team whose lead was stopped or failed are not replaced: stopping a team starts nobody.
 
@@ -343,7 +344,8 @@ prompt (`harness/pr/team-asleep.md`) says that nobody works and how every task e
 The count starts over when the lead ends with `STATUS: DONE`, and with the daemon.
 
 **Reviewers** (`daemon/review.rs`). The review pass of an item in review starts empty and is filled once (`ItemMut::ask_reviews`) with
-two investigators drawn at random among the free ones: configured, not in the crew, with no task that is going, asking or paused,
+two investigators drawn among the free ones — those that review for the team already (they wait in a review task of it) first,
+so that the fix is reviewed by who asked for it, then at random: configured, not in the crew, with no task that is going, asking or paused,
 no review to give and no team to lead that is not finished; the pull request waits for them. A reviewer is a task of the team
 with a worktree at the head (a new branch of its own), one per investigator: it ends `waiting`, not `done`, is given the next
 pull request, and the same one again after a fix pass, in the same session, and is closed with the team. Its prompt is the
@@ -353,17 +355,16 @@ the pull request with its expected result and checks. Its final message is the r
 report is kept in `tasks/<reviewer>/review-pr<N>-pass<K>.md` (`K` fix passes the pull request had), posted on the pull request
 as a **comment review** with the verdict in its body (the harness opens the pull request and posts with one account, which
 GitHub does not let approve it) and recorded in every item of the pull request (`review_submitted`). A report is matched with
-the review it answers by the time its run started, so one that comes after the review pass was decided is kept and posted, not
-taken for the next review pass.
+the review it answers by the time its run started: the latest review asked of its task at or before that time that is still
+pending. A report that answers none (a reviewer that was replaced, or woken with nothing to review) is logged and not taken.
 
-Every posted review, including a late one, starts with the investigator's name and its configured CLI and model
+Every posted review starts with the investigator's name and its configured CLI and model
 (the model is omitted when none is configured), a verdict heading, and the review pass and commit. The approval
-heading is green bold `APPROVED` with the notification status's `✅✅`; changes requested are red bold
+heading is green bold `APPROVED` with one `✅` (the mark of the status `done`: the double mark is the notification's "ready to
+merge", which one review is not); changes requested are red bold
 `REQUEST CHANGES` with its `❌`. A horizontal rule separates the head from the report, whose `VERDICT:` line is
 removed only for publication. The saved report and history keep the reviewer's original verdict. The layout and
 both verdict texts live in `prompts/harness/review/`; changing their wording needs no code change.
-A late report with no readable verdict is still posted, with a conservative request-changes heading;
-the history still records no review verdict for that report.
 
 Before sending a pull request description (new or updated), an updated-branch comment or a review to GitHub,
 the daemon links commit IDs to the repository on GitHub, resolved from `origin`. The pure `agent-core` commit
@@ -377,8 +378,11 @@ original text is sent and the failure is logged with an existing event; linking 
 Review and developer rules require language-labelled fenced code blocks (`text` for output); the harness does
 not infer languages.
 
-**What a verdict leads to** (`daemon/merge.rs`, the round machine). The first approval waits for the second; two approvals mean
-`approved`; a request for changes starts the next fix pass, until `[review] fix_passes`, and then asks the human.
+**What a verdict leads to** (`daemon/merge.rs`, the round machine). A review pass is decided when both reviews are in, never at
+the first one: the verdicts may differ, the team is to get every finding at once, and a reviewer that is still at work is not
+left reviewing a commit nobody waits for. The first verdict, an approval or a request for changes, waits for the second; two
+approvals mean `approved`; with at least one request for changes the next fix pass starts, until `[review] fix_passes`, and then
+the human is asked. A reviewer that cannot give its review is replaced (above), not left out.
 
 - **Merge.** In autopilot the pull request is read from GitHub and merged with a merge commit at the head it carries (a merge
   made elsewhere or by the human completes the items as well); the items are `done`, the base branch is fetched, and the next
@@ -387,8 +391,8 @@ not infer languages.
   without a merge is told once. An approved pull request that waits is read again every 30 seconds.
 - **`--no-merge`.** Nothing is merged: the human is told once that the pull request is approved. The next item of the feature
   starts at the approval; what depends on the pull request waits until it is merged, which the daemon finds when it reads it.
-- **Fix pass.** It goes to the lead, which has the integrated branch: it is woken with the reports of the reviewers that asked
-  for changes, the pass out of the configured ones and the branch (a solo agent switches to it first). When the gate has passed at
+- **Fix pass.** It goes to the lead, which has the integrated branch: it is woken with the reports of both reviewers, each with its
+  verdict, the pass out of the configured ones and the branch (a solo agent switches to it first). When the gate has passed at
   the new tip the same pull request is updated (a comment, and its description when a finished item joins) and the same reviewers
   review it again.
 - **The question.** When a reviewer still asks for changes after the configured passes, the lead is woken with the reports and the
