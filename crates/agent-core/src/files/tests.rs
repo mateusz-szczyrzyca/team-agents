@@ -450,3 +450,25 @@ fn invalid_root_relative_paths_are_refused_before_lookup() {
         );
     }
 }
+
+/// Adding file lookup preserves the legacy commit walk through structural Markdown.
+#[test]
+fn combined_walk_preserves_legacy_commits_and_multiline_code() {
+    let commit: CommitId = COMMIT.parse().unwrap();
+    for input in [
+        "<abcdef0>",
+        "1234567. item",
+        "> `note\n> abcdef0`",
+        "- `note\n  abcdef0`",
+    ] {
+        let resolve = |word: &str| matches!(word, "abcdef0" | "1234567").then(|| COMMIT.to_owned());
+        assert_eq!(
+            crate::commits::link_references(input, REPO_URL, &commit, resolve, |path| matches!(
+                path,
+                "1234567" | "abcdef0"
+            )),
+            crate::commits::link_commits(input, REPO_URL, resolve),
+            "{input}"
+        );
+    }
+}
