@@ -496,6 +496,9 @@ Anomalies are deduplicated, and structural headings, all task rows and gate reco
 last three gate outputs for each task are included. If mandatory facts and cut markers alone would reach the
 limit, the renderer returns `SummaryError::RequiredFactsTooLarge` instead of omitting facts. Times include UTC
 and the injected local offset; the collection timestamp is the only reference for activity ages.
+Part 2 must bound unreadable-part reasons, commit lists and untracked-file lists for presentation while
+retaining their full details in separate artifacts. On `RequiredFactsTooLarge`, the collector must retry with
+reduced verbose presentation fields so a large collection still produces `SUMMARY.md`.
 The later collector retains full artifacts separately and must redact secrets before writing any artifact,
 including the summary. The collector should fill `diagnostic_assessment::Assessment` once, then map its
 deduplicated findings and read failures to the presentation input; summary fields are for presentation, not
