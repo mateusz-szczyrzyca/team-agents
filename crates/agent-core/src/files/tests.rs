@@ -490,3 +490,21 @@ fn bare_file_labels_escape_unmatched_brackets_and_backslashes() {
         );
     }
 }
+
+/// File-only HTML protection must retain the commit linker's inline protections too.
+#[test]
+fn hexadecimal_html_keeps_legacy_code_and_link_protections() {
+    let commit: CommitId = COMMIT.parse().unwrap();
+    for input in [
+        "<abcdef0 title='``abcdef0``'>",
+        "<abcdef0 title='[abcdef0](https://example.com)'>",
+        "<abcdef0 title='`note abcdef0`'>",
+    ] {
+        let resolve = |_: &str| Some(COMMIT.to_owned());
+        assert_eq!(
+            crate::commits::link_references(input, REPO_URL, &commit, resolve, |_| true),
+            crate::commits::link_commits(input, REPO_URL, resolve),
+            "{input}"
+        );
+    }
+}
