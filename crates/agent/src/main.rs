@@ -584,6 +584,7 @@ fn finish(result: Result<(), CommandError>, err: &mut impl Write) -> Result<Exit
             write_text(err, &format!("agent: {}\n", error_chain(&error)))?;
             Ok(match &error {
                 CommandError::Log(error) => ExitCode::from(error.exit_code()),
+                CommandError::Debug(error) => ExitCode::from(error.exit_code()),
                 CommandError::Environment(_)
                 | CommandError::Client(_)
                 | CommandError::Status(_)
@@ -593,7 +594,6 @@ fn finish(result: Result<(), CommandError>, err: &mut impl Write) -> Result<Exit
                 | CommandError::Words(_)
                 | CommandError::Answer(_)
                 | CommandError::Gate(_)
-                | CommandError::Debug(_)
                 | CommandError::Editor(_)
                 | CommandError::Runtime(_) => ExitCode::FAILURE,
             })

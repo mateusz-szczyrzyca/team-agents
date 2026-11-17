@@ -24,6 +24,16 @@ pub(crate) enum DebugError {
     Client(#[from] ClientError),
 }
 
+impl DebugError {
+    /// The exit status of the command for this failure: 3 for an unknown ID, 1 otherwise.
+    pub(crate) const fn exit_code(&self) -> u8 {
+        match self {
+            Self::Runtime(DebugRuntimeError::UnknownTarget { .. }) => 3,
+            Self::Runtime(_) | Self::Output(_) | Self::Client(_) => 1,
+        }
+    }
+}
+
 /// Arguments for `agent debug` from the CLI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DebugCliArgs {
