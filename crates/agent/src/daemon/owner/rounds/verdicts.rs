@@ -16,7 +16,7 @@ use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
 use crate::daemon::merge::{Next, VerdictError, after_verdict, count, items_of};
-use crate::daemon::review::{VerdictProblem, parse_verdict, report_text};
+use crate::daemon::review::{VerdictProblem, parse_verdict, report_text, report_without_verdict};
 use crate::daemon::team::Why;
 
 use super::super::{Located, Owner, OwnerError};
@@ -154,7 +154,7 @@ impl Owner {
             .save_review_report(task, late.pr.number, pass, &report)
             .await?;
         // The report is a review all the same: the history has it, with its verdict, though it changes nothing.
-        match parse_verdict(message) {
+        let verdict = match parse_verdict(message) {
             Ok(verdict) => {
                 let items = self
                     .parts
@@ -173,6 +173,7 @@ impl Owner {
                         report: report.clone(),
                     },
                 );
+                Some(verdict)
             }
             Err(problem) => {
                 tracing::info!(
@@ -182,8 +183,12 @@ impl Owner {
                     ?problem,
                     "a late report has no verdict: the history records no review of it"
                 );
+                None
             }
-        }
+        };
+        let Some(verdict) = verdict else {
+            return Ok(());
+        };
         let lead = self.lead_of(&located.team)?;
         let asked = Asked {
             pr: late.pr.clone(),
@@ -191,7 +196,7 @@ impl Owner {
             passes: late.pass,
             reviewer: late.reviewer.clone(),
         };
-        self.post_review(pulls, &lead, task, &asked, &report).await;
+        self.post_review(pulls, &lead, task, &asked, verdict, &report).await;
         Ok(())
     }
 
@@ -271,7 +276,7 @@ impl Owner {
                 report: report.clone(),
             },
         );
-        self.post_review(pulls, &lead, task, asked, &report).await;
+        self.post_review(pulls, &lead, task, asked, verdict, &report).await;
         if let Some(next) = next {
             self.apply_next(team_id, &lead, asked, next, &mut look)?;
         }
@@ -363,8 +368,16 @@ impl Owner {
     ///
     /// A review that cannot be posted is logged and does not hold the round: the verdict counts, and the report is in the
     /// task's directory.
-    pub(super) async fn post_review(&mut self, pulls: &Pulls, lead: &Lead, task: &TaskId, asked: &Asked, report: &str) {
-        if let Err(error) = self.try_post_review(pulls, lead, task, asked, report).await {
+    pub(super) async fn post_review(
+        &mut self,
+        pulls: &Pulls,
+        lead: &Lead,
+        task: &TaskId,
+        asked: &Asked,
+        verdict: ReviewVerdict,
+        report: &str,
+    ) {
+        if let Err(error) = self.try_post_review(pulls, lead, task, asked, verdict, report).await {
             tracing::warn!(
                 event = LogEvent::GithubCallFailed.as_str(),
                 task = %task,
@@ -382,19 +395,43 @@ impl Owner {
         lead: &Lead,
         task: &TaskId,
         asked: &Asked,
+        verdict: ReviewVerdict,
         report: &str,
     ) -> Result<(), PublishError> {
         let agent: AgentName = asked.reviewer.as_str().parse()?;
         let git = self.worktree_git(&lead.repo, task, &agent)?;
         let head = git.rev_parse(&Revision::Head).await?;
         let github = self.github_for(pulls, &lead.repo, &git).await?;
+        let client = match self.parts.settings.config.investigator(&asked.reviewer) {
+            Some(inv) => match &inv.model {
+                Some(model) => format!("({cli}, {model})", cli = inv.cli.as_str(), model = model.as_str()),
+                None => format!("({cli})", cli = inv.cli.as_str()),
+            },
+            None => String::new(),
+        };
+        let verdict_line = match verdict {
+            ReviewVerdict::Approve => pulls.texts.render(
+                AutopilotPrompt::ReviewVerdictApprove,
+                &Variables::new().with("icon", agent_core::notice_status::NoticeStatus::Approved.icon())?,
+            )?,
+            ReviewVerdict::RequestChanges => pulls.texts.render(
+                AutopilotPrompt::ReviewVerdictRequestChanges,
+                &Variables::new().with("icon", agent_core::notice_status::NoticeStatus::Failed.icon())?,
+            )?,
+        };
+        let pass = count(asked.passes).saturating_add(1).to_string();
+        let stripped_report = report_without_verdict(report);
         let body = pulls.texts.render(
             AutopilotPrompt::ReviewComment,
             &Variables::new()
                 .with("reviewer", asked.reviewer.as_str())?
-                .with("head", head.as_str())?
-                .with("report", report)?,
+                .with("client", &client)?
+                .with("verdict", verdict_line.trim_end())?
+                .with("pass", &pass)?
+                .with("commit", head.as_str())?
+                .with("report", &stripped_report)?,
         )?;
+        let body = self.link_commits(&git, &body).await;
         github
             .post_comment_review(
                 asked.pr.number,

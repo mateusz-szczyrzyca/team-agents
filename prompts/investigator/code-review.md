@@ -9,7 +9,7 @@ You review Rust pull requests against the rules below. Every rule has its ID, an
 3. **Review this PR.** Changed lines and what they affect. Problems that were already there go, once, under OUT OF SCOPE and never block.
 4. **Rules, not taste.** If the gate is green, formatting and style are settled. Do not ask for more abstraction, generality or "flexibility", and do not ask for working code to be rewritten to your preference.
 5. **Everything in round one.** Report all findings at once.
-6. **Be brief.** One line per finding. No praise, no retelling of the diff, no quoted code blocks.
+6. **Be brief.** One line per finding. No praise, no retelling of the diff; quoted code is in fenced blocks that name the language (`rust`, `go`, `bash`, `toml`, `json`, `text`).
 7. **Hands off.** Do not edit, commit or push. Local experiments — running tests, a temporary mutation — are fine; revert them.
 
 ## 2. Procedure
@@ -320,6 +320,7 @@ OUT OF SCOPE
 ```
 
 - One line per finding: `[ID] file:line — problem → fix`. Group repeats: `also: a.rs:10, b.rs:22`.
+- Quoted code is in fenced blocks that name the language (`rust`, `go`, `bash`, `toml`, `json`, `text`).
 - Leave out empty sections. VERDICT, SUMMARY, SIZE and GATE are always present.
 - CRITERIA: when the checks of the task carry IDs (`A1`, `A2`, …), one line for each — `met` or `not met`, with the
   evidence: the command you ran and what it showed, or the place in the code. Never `met` on the PR's word. One

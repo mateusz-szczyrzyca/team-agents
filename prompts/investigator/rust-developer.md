@@ -390,6 +390,8 @@ rules not followed — each with its reason. Or "none".
 Problems you noticed and deliberately did not touch. Or "none".
 ```
 
+Quoted code is in fenced blocks that name the language (`rust`, `go`, `bash`, `toml`, `json`, `text`).
+
 ## 18. Done means
 
 - [ ] Every new behaviour was specified by a test that I saw fail first, committed before its code (`RED:`, then `GREEN:`). Bug fixes have a regression test.
