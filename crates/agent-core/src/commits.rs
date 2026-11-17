@@ -642,15 +642,18 @@ pub(crate) fn link_file_references(
 ) -> String {
     rewrite_markdown(text, &mut |content, style| {
         let mut rewrite = |word: &str| {
-            file_link(word, repo_url, commit, style, &mut is_file).or_else(|| {
-                if is_candidate(word) {
-                    resolve_commit(word).map(|full| {
-                        let mut result = String::new();
-                        push_link(&mut result, word, repo_url, &full);
-                        result
-                    })
-                } else {
-                    None
+            file_link(word, repo_url, commit, style, &mut is_file).or_else(|| match style {
+                Style::Bare => Some(link_words(word, repo_url, &mut resolve_commit)),
+                Style::Backticks => {
+                    if is_candidate(word) {
+                        resolve_commit(word).map(|full| {
+                            let mut result = String::new();
+                            push_link(&mut result, word, repo_url, &full);
+                            result
+                        })
+                    } else {
+                        None
+                    }
                 }
             })
         };

@@ -1090,6 +1090,7 @@ impl Git {
                     arg("ls-tree"),
                     arg("-r"),
                     arg("-z"),
+                    arg("--full-tree"),
                     arg("--end-of-options"),
                     arg(commit.as_str()),
                 ],
