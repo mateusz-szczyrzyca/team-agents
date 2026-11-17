@@ -523,6 +523,10 @@ fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut String) {
     }
 }
 
+#[expect(
+    clippy::unnecessary_debug_formatting,
+    reason = "debug escapes paths losslessly, including non-UTF-8 bytes; display can replace bytes"
+)]
 fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut String) {
     for w in worktrees {
         write_line(out, &format!("### Worktree for Task `{}`", w.task_id));
@@ -537,7 +541,7 @@ fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut Str
         let files = w
             .uncommitted_files
             .iter()
-            .map(|p| p.display().to_string())
+            .map(|p| format!("{:?}", p.as_os_str()))
             .collect::<Vec<_>>()
             .join(", ");
         write_line(
@@ -567,8 +571,8 @@ fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut Str
             write_line(
                 out,
                 &format!(
-                    "  * {} ({} bytes, modified: {})",
-                    u.path.display(),
+                    "  * {:?} ({} bytes, modified: {})",
+                    u.path.as_os_str(),
                     u.size_bytes,
                     mod_str
                 ),
