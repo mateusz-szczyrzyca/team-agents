@@ -68,6 +68,33 @@ mod git_tree_blobs {
     }
 
     #[tokio::test]
+    async fn tree_blobs_fails_with_output_too_long_when_truncated_after_complete_entry() -> TestResult {
+        let first_entry = "100644 blob 1111111111111111111111111111111111111111\tpath/to/first.txt";
+        let second_entry = "100644 blob 2222222222222222222222222222222222222222\tpath/to/second.txt";
+        let (_dir, git) = scripted_git(&format!(r"printf '%b\0%b\0' '{first_entry}' '{second_entry}'"))?;
+        // Truncate exactly after the first complete NUL-delimited entry:
+        let limit = u64::try_from(first_entry.len().saturating_add(1))?;
+        let git = git.with_limits(GitLimits {
+            max_output_bytes: limit,
+            ..GitLimits::default()
+        });
+
+        let result = git.tree_blobs(&dummy_commit()?).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(GitError::OutputTooLong {
+                    operation: GitOperation::LsTree,
+                    limit: l,
+                }) if l == limit
+            ),
+            "expected OutputTooLong with limit {limit}, got {result:?}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn tree_blobs_rejects_empty_path_with_unexpected() -> TestResult {
         let (_dir, git) = scripted_git(r"printf '100644 blob 1111111111111111111111111111111111111111\t\0'")?;
 
