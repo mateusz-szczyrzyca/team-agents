@@ -98,6 +98,28 @@ pub(super) enum Attempt {
         /// Why the gate does not count.
         hold: GateHold,
     },
+    /// The lead is done and the gate passed at `tip`, which contains the branch of none of the finished items: it is
+    /// sent back to merge them.
+    NotJoined {
+        /// The tip of its branch.
+        tip: CommitId,
+        /// The finished items, none of whose branches the tip contains.
+        missing: Vec<Joining>,
+    },
+}
+
+/// What a lead that is done is sent back to its branch with.
+struct Back {
+    /// The text it is given.
+    prompt: AutopilotPrompt,
+    /// The variable of that text that says what is wrong, beside the branch and the count: its name and its value.
+    variable: (&'static str, String),
+    /// The outcome the log names.
+    outcome: &'static str,
+    /// What is wrong, as the human is told it when the lead was sent back in vain: a sentence.
+    told: String,
+    /// What the lead ended without, each time, for the human: the end of "ended again without".
+    undone: &'static str,
 }
 
 /// A pull request that was opened or updated.
@@ -202,6 +224,9 @@ impl Owner {
                 Ok(Attempt::SentBack { tip, hold }) => {
                     self.send_back_for_gate(site, &publication, (&tip, &hold), now, look)?;
                 }
+                Ok(Attempt::NotJoined { tip, missing }) => {
+                    self.send_back_to_join(site, &publication, (&tip, &missing), now, look)?;
+                }
                 Err(error) => self.publish_failed(pulls, team_id, &lead, &publication, &error, now)?,
             }
         }
@@ -270,7 +295,16 @@ impl Owner {
         let Site { pulls, team, lead } = site;
         let ids = contained(&ready.git, items, &ready.tip).await?;
         if ids.is_empty() {
-            return Ok(Attempt::Nothing);
+            // A lead that is done handed its branch over: with none of the finished items in it nothing would ever be
+            // published, and nobody would be told. A lead that is not done is still at it.
+            return Ok(if lead.done && !items.is_empty() {
+                Attempt::NotJoined {
+                    tip: ready.tip.clone(),
+                    missing: items.to_vec(),
+                }
+            } else {
+                Attempt::Nothing
+            });
         }
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
         let existing = github.find_open_pull_request(head_branch).await?;
@@ -665,13 +699,69 @@ impl Owner {
         }
     }
 
-    /// Sends the lead back because the gate has not passed at `tip`, the tip of its branch, for the reason `hold`; after
-    /// [`GATE_SEND_BACKS`] times in a row the human is told instead, once for a tip.
+    /// The lead is done and the gate has not passed at the tip of its branch: it is sent back with the reason, and after
+    /// [`GATE_SEND_BACKS`] times the human is told.
     fn send_back_for_gate(
         &mut self,
         site: Site<'_>,
         publication: &Publication,
         (tip, hold): (&CommitId, &GateHold),
+        now: Timestamp,
+        look: &mut Look,
+    ) -> Result<(), OwnerError> {
+        let back = Back {
+            prompt: AutopilotPrompt::GateNotPassed,
+            variable: ("reason", hold.to_string()),
+            outcome: "gate_sent_back",
+            told: format!(
+                "the gate has not passed at the tip of the branch {}: {hold}",
+                publication.head_branch
+            ),
+            undone: "a gate that passes",
+        };
+        self.send_lead_back(site, publication, tip, &back, now, look)
+    }
+
+    /// The lead is done, the gate passed, and its branch contains the branch of none of the finished items in `missing`:
+    /// it is sent back to merge them, and after [`GATE_SEND_BACKS`] times the human is told.
+    fn send_back_to_join(
+        &mut self,
+        site: Site<'_>,
+        publication: &Publication,
+        (tip, missing): (&CommitId, &[Joining]),
+        now: Timestamp,
+        look: &mut Look,
+    ) -> Result<(), OwnerError> {
+        let lines: Vec<String> = missing
+            .iter()
+            .map(|joining| format!("- item {}: `{}`", joining.item, joining.branch))
+            .collect();
+        let named: Vec<String> = missing
+            .iter()
+            .map(|joining| format!("item {}: {}", joining.item, joining.branch))
+            .collect();
+        let back = Back {
+            prompt: AutopilotPrompt::BranchNotJoined,
+            variable: ("missing", lines.join("\n")),
+            outcome: "not_joined_sent_back",
+            told: format!(
+                "the gate passed, but the branch {} contains the branch of none of the finished items ({}).",
+                publication.head_branch,
+                named.join("; ")
+            ),
+            undone: "their branches merged",
+        };
+        self.send_lead_back(site, publication, tip, &back, now, look)
+    }
+
+    /// Sends the lead, which is done, back to its branch with the text of `back`; after [`GATE_SEND_BACKS`] times in a row
+    /// the human is told once instead, and the lead waits for them.
+    fn send_lead_back(
+        &mut self,
+        site: Site<'_>,
+        publication: &Publication,
+        tip: &CommitId,
+        back: &Back,
         now: Timestamp,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
@@ -685,9 +775,8 @@ impl Owner {
             };
             if self.watch.announced.insert(announcement) {
                 let reason = format!(
-                    "the gate has not passed at the tip of the branch {}: {hold} The lead was sent back {sent} times \
-                     and ended again without a gate that passes; it waits for you.",
-                    publication.head_branch
+                    "{} The lead was sent back {sent} times and ended again without {}; it waits for you.",
+                    back.told, back.undone
                 );
                 let values = Variables::new()
                     .with("team", team.as_str())
@@ -700,24 +789,24 @@ impl Owner {
         let sent = sent.saturating_add(1);
         let text = Variables::new()
             .with("branch", publication.head_branch.as_str())
-            .and_then(|values| values.with("reason", hold.to_string()))
+            .and_then(|values| values.with(back.variable.0, back.variable.1.as_str()))
             .and_then(|values| values.with("sent", sent.to_string()))
             .and_then(|values| values.with("limit", GATE_SEND_BACKS.to_string()))
             .map_err(PublishError::from)
-            .and_then(|values| Ok(pulls.texts.render(AutopilotPrompt::GateNotPassed, &values)?));
+            .and_then(|values| Ok(pulls.texts.render(back.prompt, &values)?));
         let text = match text {
             Ok(text) => text,
             Err(error) => return self.publish_failed(pulls, team, lead, publication, &error, now),
         };
         tracing::info!(
             event = LogEvent::ChecksDecided.as_str(),
-            outcome = "gate_sent_back",
+            outcome = back.outcome,
             team = %team,
             task = %lead.task,
             tip = %tip,
             sent,
-            reason = %hold,
-            "the lead is done and the gate has not passed at the tip of its branch: it is sent back"
+            reason = %back.told,
+            "the lead is done and its branch cannot be published as it is: it is sent back"
         );
         self.watch.gate_sent_back.insert(lead.task.clone(), sent);
         self.release(&lead.task, Why::Gate(text.trim_end().to_owned()), look)
