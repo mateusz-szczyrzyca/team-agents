@@ -106,7 +106,6 @@ fn retries_oversized_required_presentation_without_losing_full_facts() {
         Err(agent_core::debug_summary::SummaryError::RequiredFactsTooLarge { .. })
     ));
     let rendered = compact_summary(&input);
-    assert!(matches!(rendered, Ok(_)), "{rendered:?}");
     let summary = rendered.unwrap();
     assert!(summary.len() < agent_core::debug_summary::MAX_SUMMARY_BYTES);
     assert!(summary.contains("worktree"));
