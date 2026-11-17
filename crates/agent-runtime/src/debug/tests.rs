@@ -285,3 +285,25 @@ fn preserves_home_history_while_collecting_whole_prompts_steps_and_final_message
     names_after.sort();
     assert_eq!(names_after, names_before);
 }
+
+#[test]
+fn reports_active_history_wal_without_ignoring_committed_records_or_changing_it() {
+    let (_dir, home, args) = fixture();
+    let database =
+        crate::history::HistoryDb::open(&home.history_file(), agent_core::history::MaxTextBytes::default()).unwrap();
+    let wal = home.root().join("history.db-wal");
+    let before = std::fs::read(&wal).unwrap();
+    assert!(!before.is_empty());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = runtime
+        .block_on(execute_debug(&home, args, None, &mut Vec::new()))
+        .unwrap();
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(summary.contains("history has a nonempty WAL"), "{summary}");
+    assert_eq!(std::fs::read(&wal).unwrap(), before);
+    assert!(!result.bundle_dir.join("history.jsonl").exists());
+    drop(database);
+}
