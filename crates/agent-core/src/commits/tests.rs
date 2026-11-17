@@ -275,3 +275,43 @@ fn backtick_in_fence_info_keeps_following_commit_in_prose() {
         "```foo`bar\n[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
     assert_eq!(link_commits(text, REPO_URL, resolve_hash), expected);
 }
+
+#[test]
+fn brackets_without_link_targets_preserve_protected_markdown() {
+    let linked = "[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
+    for (input, expected) in [
+        (
+            "the range [0, 5) then `git show a1b2c3d` and https://example.com/a1b2c3d a1b2c3d",
+            format!("the range [0, 5) then `git show a1b2c3d` and https://example.com/a1b2c3d {linked}"),
+        ),
+        (
+            "[see `git show a1b2c3d`] now a1b2c3d",
+            format!("[see `git show a1b2c3d`] now {linked}"),
+        ),
+        ("[see ``a1b2c3d``] a1b2c3d", format!("[see ``a1b2c3d``] {linked}")),
+        (
+            "[see https://example.com/a1b2c3d ] a1b2c3d",
+            format!("[see https://example.com/a1b2c3d ] {linked}"),
+        ),
+        (
+            "[see <span title='a1b2c3d'>] a1b2c3d",
+            format!("[see <span title='a1b2c3d'>] {linked}"),
+        ),
+        (
+            "[see <!-- a1b2c3d --> a1b2c3d",
+            format!("[see <!-- a1b2c3d --> {linked}"),
+        ),
+        (
+            "[é [see `git show a1b2c3d`]] a1b2c3d",
+            format!("[é [see `git show a1b2c3d`]] {linked}"),
+        ),
+        ("[a1b2c3d] a1b2c3d", format!("[{linked}] {linked}")),
+        ("[see `a1b2c3d`]", format!("[see {linked}]")),
+        (
+            "[see](unclosed `git show a1b2c3d` a1b2c3d",
+            format!("[see](unclosed `git show a1b2c3d` {linked}"),
+        ),
+    ] {
+        assert_eq!(link_commits(input, REPO_URL, resolve_hash), expected, "{input:?}");
+    }
+}
