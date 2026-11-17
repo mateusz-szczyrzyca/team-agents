@@ -18,6 +18,9 @@ use crate::status::{ItemStatus, TaskStatus};
 /// Maximum byte limit for `SUMMARY.md`. The output must be strictly less than this limit.
 pub const MAX_SUMMARY_BYTES: usize = 100_000;
 
+/// Maximum byte budget allocated to an individual section's body to ensure all 12 headings are preserved.
+pub const MAX_SECTION_BYTES: usize = 7_800;
+
 /// Marker indicating that content was truncated to remain under [`MAX_SUMMARY_BYTES`].
 pub const CUT_MARKER: &str = "\n[... cut ...]\n";
 
@@ -319,24 +322,45 @@ pub struct UnreadablePartSummary {
 /// Formats a timestamp into human-readable UTC and local time representation.
 fn format_time(ts: Timestamp, offset: UtcOffset) -> String {
     let utc = ts.as_utc();
-    let local = utc.to_offset(offset);
-    let (hours, mins, _) = offset.as_hms();
-    let sign = if hours < 0 || mins < 0 { '-' } else { '+' };
-    format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC ({:02}:{:02}:{:02} {}{:02}:{:02})",
+    let (hours, mins, secs) = offset.as_hms();
+    let sign = if hours < 0 || mins < 0 || secs < 0 { '-' } else { '+' };
+    let offset_str = if secs != 0 {
+        format!(
+            "{}{:02}:{:02}:{:02}",
+            sign,
+            hours.unsigned_abs(),
+            mins.unsigned_abs(),
+            secs.unsigned_abs()
+        )
+    } else {
+        format!("{}{:02}:{:02}", sign, hours.unsigned_abs(), mins.unsigned_abs())
+    };
+
+    let utc_str = format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
         utc.year(),
         u8::from(utc.month()),
         utc.day(),
         utc.hour(),
         utc.minute(),
         utc.second(),
-        local.hour(),
-        local.minute(),
-        local.second(),
-        sign,
-        hours.unsigned_abs(),
-        mins.unsigned_abs(),
-    )
+    );
+
+    let local_str = match utc.checked_to_offset(offset) {
+        Some(local) => format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02} {}",
+            local.year(),
+            u8::from(local.month()),
+            local.day(),
+            local.hour(),
+            local.minute(),
+            local.second(),
+            offset_str,
+        ),
+        None => format!("(local offset out of range: {offset_str})"),
+    };
+
+    format!("{utc_str} ({local_str})")
 }
 
 /// Computes minutes since activity relative to `now`, saturating at 0 if activity is in the future.
@@ -525,7 +549,13 @@ fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut Str
         for c in &w.commits_over_base {
             write_line(
                 out,
-                &format!("  * `{}` {} ({})", c.id, c.subject, format_time(c.time, offset)),
+                &format!(
+                    "  * `{}` by {}: {} ({})",
+                    c.id,
+                    c.author,
+                    c.subject,
+                    format_time(c.time, offset)
+                ),
             );
         }
         write_line(
@@ -579,9 +609,9 @@ fn render_history(history: Option<&str>, out: &mut String) {
 
 fn render_daemon_log(lines: Option<&[String]>, out: &mut String) {
     if let Some(ls) = lines {
-        for line in ls {
+        for (i, line) in ls.iter().enumerate() {
             out.push_str(line);
-            if !line.ends_with('\n') {
+            if !line.ends_with('\n') && i + 1 < ls.len() {
                 write_line(out, "");
             }
         }
@@ -681,7 +711,7 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
 /// Renders the `SUMMARY.md` markdown text from `input`.
 ///
 /// Output is guaranteed to be strictly less than [`MAX_SUMMARY_BYTES`] (100,000 bytes),
-/// truncating long text bodies while preserving the end and all 12 section headings.
+/// truncating individual section bodies while preserving the end and all 12 section headings.
 #[must_use]
 pub fn render_summary(input: &SummaryInput, now: Timestamp, offset: UtcOffset) -> String {
     let mut out = String::with_capacity(8192);
@@ -697,37 +727,30 @@ pub fn render_summary(input: &SummaryInput, now: Timestamp, offset: UtcOffset) -
     for section in SummarySection::ALL {
         write_line(&mut out, section.heading());
         write_line(&mut out, "");
+
+        let mut section_body = String::new();
         match section {
-            SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
-            SummarySection::DaemonAndVersions => render_daemon(input.daemon.as_ref(), offset, &mut out),
-            SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut out),
-            SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut out),
-            SummarySection::TaskDetails => render_task_details(&input.tasks, &mut out),
-            SummarySection::GitWorktrees => render_git(&input.git, offset, &mut out),
-            SummarySection::GateRecords => render_gate(&input.gate, &mut out),
-            SummarySection::HistoryTail => {
-                let body = input.history_tail.as_deref().unwrap_or("No history recorded.");
-                let truncated = truncate_keep_tail(body, 20_000);
-                render_history(Some(&truncated), &mut out);
-            }
-            SummarySection::DaemonLog => {
-                let raw_lines = input.daemon_log_lines.as_ref().map(|lines| lines.join(""));
-                if let Some(text) = raw_lines {
-                    let truncated = truncate_keep_tail(&text, 25_000);
-                    render_daemon_log(Some(&[truncated]), &mut out);
-                } else {
-                    render_daemon_log(None, &mut out);
-                }
-            }
-            SummarySection::Bus => render_bus(&input.bus_messages, &mut out),
-            SummarySection::Notifications => render_notifications(&input.notifications, &mut out),
-            SummarySection::Machine => render_machine(&input.machine, &input.unreadable_parts, &mut out),
+            SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut section_body),
+            SummarySection::DaemonAndVersions => render_daemon(input.daemon.as_ref(), offset, &mut section_body),
+            SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut section_body),
+            SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut section_body),
+            SummarySection::TaskDetails => render_task_details(&input.tasks, &mut section_body),
+            SummarySection::GitWorktrees => render_git(&input.git, offset, &mut section_body),
+            SummarySection::GateRecords => render_gate(&input.gate, &mut section_body),
+            SummarySection::HistoryTail => render_history(input.history_tail.as_deref(), &mut section_body),
+            SummarySection::DaemonLog => render_daemon_log(input.daemon_log_lines.as_deref(), &mut section_body),
+            SummarySection::Bus => render_bus(&input.bus_messages, &mut section_body),
+            SummarySection::Notifications => render_notifications(&input.notifications, &mut section_body),
+            SummarySection::Machine => render_machine(&input.machine, &input.unreadable_parts, &mut section_body),
         }
+
+        let bounded = truncate_keep_tail(&section_body, MAX_SECTION_BYTES);
+        out.push_str(&bounded);
+        if !bounded.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
     }
 
-    if out.len() >= MAX_SUMMARY_BYTES {
-        truncate_keep_tail(&out, MAX_SUMMARY_BYTES.saturating_sub(1))
-    } else {
-        out
-    }
+    out
 }
