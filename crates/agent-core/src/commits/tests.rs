@@ -336,3 +336,21 @@ fn complete_links_preserve_email_titles_and_shortcut_references() {
         );
     }
 }
+
+#[test]
+fn container_fences_protect_commits_while_following_prose_is_linked() {
+    let linked = "[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
+    for protected in [
+        "> ```rust\n> a1b2c3d\n> ```",
+        "> ~~~text\n> a1b2c3d\n> ~~~",
+        " > > ```rust\n > > a1b2c3d\n > > ```",
+        "- ```rust\n  a1b2c3d\n  ```",
+        "1. ~~~text\n   a1b2c3d\n   ~~~",
+    ] {
+        assert_eq!(
+            link_commits(&format!("{protected}\n\na1b2c3d"), REPO_URL, resolve_hash),
+            format!("{protected}\n\n{linked}"),
+            "{protected:?}"
+        );
+    }
+}
