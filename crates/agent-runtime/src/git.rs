@@ -246,6 +246,9 @@ pub enum GitOperation {
     /// `git config`, to discover extension commands that history must disable.
     #[strum(serialize = "config")]
     Config,
+    /// `git cat-file -t`, to check if a path is a file in a commit.
+    #[strum(serialize = "cat-file type")]
+    CatFileType,
 }
 
 /// Why the scratch area of a read of the uncommitted changes cannot be made.
@@ -1070,6 +1073,37 @@ impl Git {
         )
         .await
         .map(drop)
+    }
+
+    /// Whether `path` names a file (blob) in the commit `revision`.
+    ///
+    /// # Errors
+    /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`].
+    pub async fn path_is_file(&self, revision: &Revision, path: &str) -> Result<bool, GitError> {
+        let spec = format!("{}:{}", revision, path);
+        let captured = self
+            .run(
+                GitOperation::CatFileType,
+                Reach::Local,
+                &[
+                    arg("cat-file"),
+                    arg("-t"),
+                    arg("--end-of-options"),
+                    arg(&spec),
+                ],
+            )
+            .await?;
+        match captured.exit {
+            ExitReport::Exited { code: 0 } => {
+                let output = text(GitOperation::CatFileType, &captured.stdout)?;
+                Ok(output.trim_end() == "blob")
+            }
+            ExitReport::Exited { code: 1 } => {
+                // Path does not exist in the commit
+                Ok(false)
+            }
+            _ => Err(failed(GitOperation::CatFileType, &captured)),
+        }
     }
 
     /// The command `git` with this handle's identity, signing and environment, and `args`.

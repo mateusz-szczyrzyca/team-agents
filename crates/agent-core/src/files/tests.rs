@@ -1,0 +1,262 @@
+use super::*;
+
+const REPO_URL: &str = "https://github.com/owner/repo";
+const COMMIT: &str = "1234567";
+
+// Helper to track which paths resolve to files
+fn resolve_path(path: &str) -> bool {
+    matches!(
+        path,
+        "src/lib.rs"
+            | "src/main.rs"
+            | "Cargo.toml"
+            | "README.md"
+            | "crates/agent-core/src/files.rs"
+    )
+}
+
+#[test]
+fn bare_path_is_linked() {
+    let input = "see src/lib.rs";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs)"
+    );
+}
+
+#[test]
+fn backtick_path_is_linked() {
+    let input = "see `src/lib.rs`";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs)"
+    );
+}
+
+#[test]
+fn path_with_line_number_is_linked() {
+    let input = "see `src/lib.rs:42`";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "see [`src/lib.rs:42`](https://github.com/owner/repo/blob/1234567/src/lib.rs#L42)"
+    );
+}
+
+#[test]
+fn path_with_line_range_is_linked() {
+    let input = "see `src/lib.rs:10-20`";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "see [`src/lib.rs:10-20`](https://github.com/owner/repo/blob/1234567/src/lib.rs#L10-L20)"
+    );
+}
+
+#[test]
+fn path_with_special_chars_is_encoded() {
+    let input = "file with spaces in `src/my file.rs`";
+    let result = link_files(input, REPO_URL, COMMIT, |path| {
+        path == "src/my file.rs"
+    });
+    assert_eq!(
+        result,
+        "file with spaces in [`src/my file.rs`](https://github.com/owner/repo/blob/1234567/src/my%20file.rs)"
+    );
+}
+
+#[test]
+fn directory_not_linked() {
+    let input = "see src/";
+    let result = link_files(input, REPO_URL, COMMIT, |_| false);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn missing_file_not_linked() {
+    let input = "see src/missing.rs";
+    let result = link_files(input, REPO_URL, COMMIT, |_| false);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn absolute_path_not_linked() {
+    let input = "see /src/lib.rs";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn path_with_double_dot_not_linked() {
+    let input = "see ../src/lib.rs";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn path_in_fenced_code_not_linked() {
+    let input = "```\nsrc/lib.rs\n```";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn path_in_existing_link_not_relinked() {
+    let input = "[link](src/lib.rs)";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn path_at_start_of_text_linked() {
+    let input = "src/lib.rs is important";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "[`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs) is important"
+    );
+}
+
+#[test]
+fn path_at_end_of_text_linked() {
+    let input = "see src/lib.rs";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs)"
+    );
+}
+
+#[test]
+fn path_followed_by_period_linked() {
+    let input = "see src/lib.rs.";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs)."
+    );
+}
+
+#[test]
+fn path_followed_by_comma_linked() {
+    let input = "see src/lib.rs, also README.md";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs), also [`README.md`](https://github.com/owner/repo/blob/1234567/README.md)"
+    );
+}
+
+#[test]
+fn multiple_paths_linked() {
+    let input = "see src/lib.rs and src/main.rs";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs) and [`src/main.rs`](https://github.com/owner/repo/blob/1234567/src/main.rs)"
+    );
+}
+
+#[test]
+fn text_without_paths_unchanged() {
+    let input = "this is just some prose with no paths";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn url_not_linked() {
+    let input = "see https://github.com/owner/repo for details";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn email_not_linked() {
+    let input = "contact <user@example.com>";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn path_in_longer_word_not_linked() {
+    let input = "my_src/lib.rs_backup";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn path_with_hash_in_backticks_encoded() {
+    let input = "`src/lib#2.rs`";
+    let result = link_files(input, REPO_URL, COMMIT, |path| path == "src/lib#2.rs");
+    assert_eq!(
+        result,
+        "[`src/lib#2.rs`](https://github.com/owner/repo/blob/1234567/src/lib%232.rs)"
+    );
+}
+
+#[test]
+fn multiline_text_with_paths() {
+    let input = "line 1: src/lib.rs\nline 2: src/main.rs";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "line 1: [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs)\nline 2: [`src/main.rs`](https://github.com/owner/repo/blob/1234567/src/main.rs)"
+    );
+}
+
+#[test]
+fn cargo_toml_linked() {
+    let input = "edit Cargo.toml";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "edit [`Cargo.toml`](https://github.com/owner/repo/blob/1234567/Cargo.toml)"
+    );
+}
+
+#[test]
+fn nested_path_linked() {
+    let input = "`crates/agent-core/src/files.rs:1-50`";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "[`crates/agent-core/src/files.rs:1-50`](https://github.com/owner/repo/blob/1234567/crates/agent-core/src/files.rs#L1-L50)"
+    );
+}
+
+#[test]
+fn blockquote_content_processed() {
+    let input = "> see src/lib.rs";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "> see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs)"
+    );
+}
+
+#[test]
+fn list_item_content_processed() {
+    let input = "- see src/lib.rs";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(
+        result,
+        "- see [`src/lib.rs`](https://github.com/owner/repo/blob/1234567/src/lib.rs)"
+    );
+}
+
+#[test]
+fn tilde_fence_protects_content() {
+    let input = "~~~\nsrc/lib.rs\n~~~";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn reference_link_preserved() {
+    let input = "[link][ref]\n\n[ref]: src/lib.rs";
+    let result = link_files(input, REPO_URL, COMMIT, resolve_path);
+    assert_eq!(result, input);
+}
