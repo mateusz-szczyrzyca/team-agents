@@ -275,24 +275,6 @@ impl Owner {
     /// that the next item builds on it.
     async fn complete(&mut self, about: &About<'_>, items: &[ItemId], look: &mut Look) -> Result<(), OwnerError> {
         let About { site, pr, url, now } = *about;
-        let announcement = Announcement::Merged {
-            team: site.team.clone(),
-            pr: pr.number,
-        };
-        let items_text = items.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
-        let values = Variables::new()
-            .with("team", site.team.as_str())
-            .and_then(|v| v.with("pr", pr.number.to_string()))
-            .and_then(|v| v.with("url", url))
-            .and_then(|v| v.with("items", items_text));
-        self.announce(
-            site.pulls,
-            site.lead,
-            announcement,
-            AutopilotNotice::Merged,
-            values,
-            now,
-        );
         for id in items {
             let mut team_mut = self
                 .parts
@@ -336,6 +318,27 @@ impl Owner {
                 "an item is merged"
             );
         }
+        // A restart uses the saved Done phases to deduplicate this notice. Never make
+        // delivery visible while a failed save can still leave the items approved.
+        self.save().await?;
+        let announcement = Announcement::Merged {
+            team: site.team.clone(),
+            pr: pr.number,
+        };
+        let items_text = items.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+        let values = Variables::new()
+            .with("team", site.team.as_str())
+            .and_then(|v| v.with("pr", pr.number.to_string()))
+            .and_then(|v| v.with("url", url))
+            .and_then(|v| v.with("items", items_text));
+        self.announce(
+            site.pulls,
+            site.lead,
+            announcement,
+            AutopilotNotice::Merged,
+            values,
+            now,
+        );
         self.fetch_base(site.lead).await;
         Ok(())
     }
