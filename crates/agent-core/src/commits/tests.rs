@@ -191,3 +191,16 @@ fn full_commit_ids_keep_their_original_spelling() {
         );
     }
 }
+
+#[test]
+fn unresolved_text_is_preserved_for_markdown_delimiter_combinations() {
+    let fragments = ["", "é", "[", "](", ")", "\\", "`", "~~~\n", "```\n", "a1b2c3d", "\r\n"];
+    for before in fragments {
+        for middle in fragments {
+            for after in fragments {
+                let text = format!("{before}{middle}{after}");
+                assert_eq!(link_commits(&text, REPO_URL, |_| None), text);
+            }
+        }
+    }
+}
