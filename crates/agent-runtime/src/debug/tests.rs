@@ -164,3 +164,44 @@ fn collects_runs_questions_gates_and_checks_and_names_unreadable_parts() {
         assert!(summary.contains(name), "missing {name}: {summary}");
     }
 }
+
+#[test]
+fn summary_lists_commits_above_the_configured_base() {
+    let (_dir, home, args) = fixture();
+    let task: TaskId = "task-20261117-120000-a1b2".parse().unwrap();
+    let repo = "example".parse().unwrap();
+    let worktree = home.worktree_dir(&repo, &task);
+    std::fs::create_dir_all(&worktree).unwrap();
+    for arguments in [
+        vec!["init", "--initial-branch=main"],
+        vec!["commit", "--allow-empty", "-m", "Base"],
+        vec!["switch", "-c", "feature"],
+        vec!["commit", "--allow-empty", "-m", "Add café diagnostics"],
+    ] {
+        let result = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&worktree)
+            .args(["-c", "user.name=Example", "-c", "user.email=example@example.com"])
+            .args(arguments)
+            .env("GIT_AUTHOR_DATE", "2026-11-17T12:01:00Z")
+            .env("GIT_COMMITTER_DATE", "2026-11-17T12:01:00Z")
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{result:?}");
+    }
+    std::fs::write(
+        home.config_file(),
+        "[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = runtime
+        .block_on(execute_debug(&home, args, None, &mut Vec::new()))
+        .unwrap();
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(summary.contains("Add café diagnostics"), "{summary}");
+    assert!(summary.contains("Example"), "{summary}");
+}
