@@ -324,6 +324,15 @@ impl Owner {
         if let Some(held) = self.check_before_review(site, &reviewing, now).await? {
             return Ok(Attempt::Held(held));
         }
+        // The reviewers find the `TEST-FIX:` commits of the round listed in the description: the harness writes that.
+        let body = self.disclosed(lead, ready, &remote.body).await?;
+        if body != remote.body {
+            let update = PullRequestUpdate {
+                body: Some(body),
+                ..PullRequestUpdate::default()
+            };
+            github.update_pull_request(remote.number, &update).await?;
+        }
         github.mark_ready(remote.number).await?;
         self.record_event(
             team,
@@ -389,13 +398,19 @@ impl Owner {
                 head: ready.tip.clone(),
             },
         );
+        // The description follows the round: the items that joined, and the `TEST-FIX:` commits the round has now.
+        let mut update = PullRequestUpdate::default();
+        let mut body = before.body.clone();
         if !joined.is_empty() {
             let text = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record)?;
-            let update = PullRequestUpdate {
-                title: Some(text.title),
-                body: Some(text.body),
-                ..PullRequestUpdate::default()
-            };
+            update.title = Some(text.title);
+            body = text.body;
+        }
+        let body = self.disclosed(lead, ready, &body).await?;
+        if body != before.body {
+            update.body = Some(body);
+        }
+        if update != PullRequestUpdate::default() {
             github.update_pull_request(pr.number, &update).await?;
         }
         let comment = pulls.texts.render(

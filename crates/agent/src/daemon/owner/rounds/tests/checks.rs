@@ -374,8 +374,10 @@ async fn a_green_commit_that_edits_the_test_of_its_red_commit_goes_back_to_the_t
     assert_eq!(rig.github.calls("POST", "/graphql"), []);
 }
 
+// Rule: a `TEST-FIX:` commit needs nothing from the team but itself: the harness lists it in the description of the
+// pull request, so the round goes to its review at the first check.
 #[tokio::test]
-async fn the_same_change_as_a_test_fix_that_the_description_names_goes_to_review() {
+async fn the_same_change_as_a_test_fix_goes_to_review_and_the_harness_lists_it_in_the_description() {
     let mut rig = checking_rig("script:red-testfix,slowdone", 5, SILENT, SILENT).await;
     script(
         &rig,
@@ -385,29 +387,26 @@ async fn the_same_change_as_a_test_fix_that_the_description_names_goes_to_review
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    // The first check does not find the test fix named: the team is sent back, and somebody names it in the description.
-    rig.wait_for("the pull request", || !rig.github.pulls().is_empty())
-        .await;
+    reviews_asked(&rig).await;
     let fix = git(
         &rig.worktree(&tasks[0]),
         &["log", "-1", "--format=%H", "--grep=^TEST-FIX"],
     );
-    edit_description(
-        &rig,
-        1,
-        &format!("## Tests changed after RED\n\n- {fix}: the second line was wrong\n"),
-    )
-    .await;
-    reviews_asked(&rig).await;
-    let back = rig.prompt(&tasks[0], 2).await;
     rig.stop().await.unwrap();
 
+    let pull = &rig.github.pulls()[0];
+    assert!(!pull.draft);
     assert!(
-        back.contains("TEST-FIX:") && back.contains("## Tests changed after RED"),
-        "{back}"
+        pull.body.contains(&format!(
+            "## Tests changed after RED\n\nThe harness lists here every commit of the branch whose subject starts with \
+             `TEST-FIX:`, with what its message says.\n\n- {fix} — TEST-FIX: the second line was wrong\n"
+        )),
+        "{}",
+        pull.body
     );
-    assert!(!rig.github.pulls()[0].draft);
-    assert_eq!(record(&rig, &tasks[0]).await.passes_of(&["1.1".parse().unwrap()]), 1);
+    // Nobody was sent back: the first check let the round through.
+    assert_eq!(rig.runs(&tasks[0]), 1);
+    assert_eq!(record(&rig, &tasks[0]).await.passes_of(&["1.1".parse().unwrap()]), 0);
 }
 
 // ---- after a fix pass -------------------------------------------------------------------------------------------------

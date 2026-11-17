@@ -528,9 +528,12 @@ question the round waits on, what the lead is to be told. Nothing of the checks 
 fix passes of the state is not touched.
 
 **Known limits.** The description is read from GitHub when the check runs, without the lines the harness itself wrote for the
-items (their text names files in passing): the harness writes the description of the pull request it opens, so a section such as
-`## Tests changed after RED` or the name of a file with a suppression comes from the team or the human editing it afterwards —
-the first check of such a round sends it back and the next reads the edit. A lead has one question at a time: while one waits, no
+items (their text names files in passing): the harness writes the description of the pull request it opens, so the name of a file with a suppression comes from the team
+or the human editing it afterwards — the first check of such a round sends it back and the next reads the edit. The section
+`## Tests changed after RED` is the harness's own (`agent_core::decide::disclosure`): it lists every commit of the round whose
+subject starts with `TEST-FIX:`, with its ID and its message, between two comment lines that mark it; the checks judge the round
+with that section in place, and the harness writes it into the description when the pull request is opened and at every update,
+replacing the one it wrote before and touching nothing else. A lead has one question at a time: while one waits, no
 other round of the same lead is checked. A path with a
 control character, or a range of more than 500 commits, cannot be checked and the branch is not published (the human is told once,
 as for any publication that fails). Lines that are not UTF-8 text have their bad bytes replaced for the markers. Two items that share

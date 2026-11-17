@@ -38,7 +38,7 @@ pub mod markers;
 const RED_PREFIX: &str = "RED:";
 
 /// What a subject starts with when its commit corrects a test that a `RED:` commit committed (TDD-14).
-const TEST_FIX_PREFIX: &str = "TEST-FIX:";
+pub(crate) const TEST_FIX_PREFIX: &str = "TEST-FIX:";
 
 /// The heading of the section of a pull request's description that names the `TEST-FIX:` commits, in lowercase.
 const TEST_FIX_HEADING: &str = "## tests changed after red";

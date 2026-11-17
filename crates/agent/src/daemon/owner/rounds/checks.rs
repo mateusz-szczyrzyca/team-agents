@@ -10,6 +10,7 @@
 use std::path::PathBuf;
 
 use agent_core::decide::checks::{Issue, Subject, assess_near, markers};
+use agent_core::decide::disclosure::{test_fix_section, with_section};
 use agent_core::decide::round::{AskReason, Checking, ChecksPolicy, ChecksStep};
 use agent_core::history::{CheckOutcome, HistoryEvent};
 use agent_core::ids::{ItemId, TaskId, TeamId};
@@ -286,6 +287,23 @@ impl Owner {
         );
     }
 
+    /// `description`, the description of the pull request of the branch `ready` of `lead`, with the section that lists
+    /// the `TEST-FIX:` commits of the round as it is now: added, replaced, or taken out when the round has none.
+    pub(super) async fn disclosed(
+        &self,
+        lead: &Lead,
+        ready: &Ready,
+        description: &str,
+    ) -> Result<String, PublishError> {
+        let base = self.base_branch(&lead.repo)?;
+        let merge_base = ready
+            .git
+            .merge_base(&Revision::RemoteBranch(base), &Revision::Commit(ready.tip.clone()))
+            .await?;
+        let facts = ready.git.round_facts(&merge_base, &ready.tip, description).await?;
+        Ok(with_section(description, test_fix_section(&facts.commits).as_deref()))
+    }
+
     /// What the checks find in the round of `reviewing`, whose pull request somebody described as `description`, without what
     /// the human allowed for its items.
     async fn round_issues(
@@ -303,7 +321,10 @@ impl Owner {
         let merge_base = git
             .merge_base(&Revision::RemoteBranch(base), &Revision::Commit(tip.clone()))
             .await?;
-        let facts = git.round_facts(&merge_base, tip, description).await?;
+        let mut facts = git.round_facts(&merge_base, tip, description).await?;
+        // The harness lists the `TEST-FIX:` commits in the description itself (see `disclosed`): the round is judged with
+        // the description it is about to have, not the one an agent could not edit.
+        facts.description = with_section(&facts.description, test_fix_section(&facts.commits).as_deref());
         // The files with added lines, once each, whose attributes wrap over lines: their unchanged lines complete an
         // attribute that the round edits.
         let mut edited: Vec<RepoPath> = facts
