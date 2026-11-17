@@ -610,3 +610,8 @@ fn description_refresh_preserves_another_repository_on_a_harness_line() {
         harness
     );
 }
+
+/// Keeps the existing publication fixtures scoped to their original repository.
+fn unlinked_harness_files(description: &str, harness: &str) -> String {
+    unlinked_harness_files_in_repository(description, harness, "https://github.com/octo/example")
+}
