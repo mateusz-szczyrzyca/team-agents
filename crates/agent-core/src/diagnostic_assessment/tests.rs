@@ -416,3 +416,109 @@ fn waiting_without_pr_requires_the_lead_a_passing_tip_and_an_in_progress_item() 
     facts.lead_git.as_mut().unwrap().gate = Some(gate());
     assert_eq!(assess(&facts), vec![Anomaly::NobodyWorking]);
 }
+
+#[test]
+fn each_anomaly_has_a_sentence_and_task_findings_offer_a_log_command() {
+    let cases = [
+        (Anomaly::NoDaemon, "No daemon holds this home.", None),
+        (
+            Anomaly::NewerExecutable,
+            "The daemon executable on disk is newer than the running process.",
+            None,
+        ),
+        (
+            Anomaly::FailedTask(task_id()),
+            "Task task-20261117-204920-lead is failed.",
+            Some("agent log --task task-20261117-204920-lead"),
+        ),
+        (
+            Anomaly::PausedTask(task_id()),
+            "Task task-20261117-204920-lead is paused.",
+            Some("agent log --task task-20261117-204920-lead"),
+        ),
+        (
+            Anomaly::StaleTask(task_id()),
+            "Running task task-20261117-204920-lead has output older than the inactivity threshold.",
+            Some("agent log --task task-20261117-204920-lead"),
+        ),
+        (
+            Anomaly::NobodyWorking,
+            "No team task is running or queued while an item remains unfinished.",
+            None,
+        ),
+        (
+            Anomaly::UnansweredQuestions("questions.md".into()),
+            "Questions file \"questions.md\" has no answer yet.",
+            None,
+        ),
+        (Anomaly::DirtyLead, "The lead worktree has uncommitted changes.", None),
+        (
+            Anomaly::DirtyGate,
+            "The lead's last gate ran on a tree that was not clean.",
+            None,
+        ),
+        (
+            Anomaly::GateAtOtherCommit,
+            "The lead's gate record belongs to a different commit than its tip.",
+            None,
+        ),
+        (
+            Anomaly::NoGatePassAtTip,
+            "The lead has no clean gate pass recorded at its tip.",
+            None,
+        ),
+        (
+            Anomaly::WaitingWithoutPr,
+            "The lead waits with a gate passed at its tip and an item in progress, but no pull request is recorded.",
+            None,
+        ),
+        (
+            Anomaly::UnmergedBranch(branch().name),
+            "The lead branch does not contain assigned unfinished branch agents/member/task.",
+            None,
+        ),
+        (
+            Anomaly::OriginDiffers(branch().name),
+            "Branch agents/member/task has a local tip that differs from its recorded origin ref.",
+            None,
+        ),
+        (
+            Anomaly::FullFilesystem("/tmp".into()),
+            "Filesystem \"/tmp\" is at least 90% full by space or inodes.",
+            None,
+        ),
+        (
+            Anomaly::Unreadable(ReadFailure {
+                part: "prompt".into(),
+                reason: "file gone".into(),
+            }),
+            "Could not collect prompt: file gone.",
+            None,
+        ),
+    ];
+    for (anomaly, sentence, command) in cases {
+        assert_eq!(anomaly.sentence(), sentence);
+        assert_eq!(anomaly.suggested_command().as_deref(), command);
+    }
+}
+
+#[test]
+fn an_old_merged_item_does_not_hide_a_current_waiting_round_without_a_pr() {
+    use crate::state::{PrNumber, PullRequest};
+    let mut facts = healthy();
+    facts.tasks[0].status = TaskStatus::Waiting;
+    facts.items = vec![
+        progress(),
+        ItemPhase::Done {
+            completion: Completion::Merged {
+                pr: PullRequest {
+                    number: PrNumber::new(std::num::NonZeroU32::new(1).unwrap()),
+                    branch: branch().name,
+                    opened_at: facts.now,
+                },
+                at: facts.now,
+            },
+        },
+    ];
+    assert_eq!(assess(&facts), vec![Anomaly::NobodyWorking, Anomaly::WaitingWithoutPr]);
+}

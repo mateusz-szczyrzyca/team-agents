@@ -160,6 +160,20 @@ pub enum Anomaly {
     Unreadable(ReadFailure),
 }
 
+impl Anomaly {
+    /// One sentence describing the observed problem for a standalone summary.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        String::new()
+    }
+
+    /// An available read-only CLI command that helps investigate this anomaly.
+    #[must_use]
+    pub fn suggested_command(&self) -> Option<String> {
+        None
+    }
+}
+
 /// Finds known anomalies once each in stable observation order.
 #[must_use]
 pub fn assess(facts: &Assessment) -> Vec<Anomaly> {
