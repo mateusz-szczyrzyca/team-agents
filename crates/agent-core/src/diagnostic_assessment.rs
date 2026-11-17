@@ -1,11 +1,12 @@
 //! Pure assessment of observed team diagnostics; unknown observations never imply a failure.
 
+use std::collections::HashSet;
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::ids::{BranchName, TaskId};
-use crate::state::{CommitId, GateRecord, ItemPhase, Timestamp};
+use crate::state::{CommitId, GateRecord, GateTree, ItemPhase, Timestamp};
 use crate::status::TaskStatus;
 
 /// Observations available for one diagnostic assessment, supplied without I/O.
@@ -161,8 +162,149 @@ pub enum Anomaly {
 
 /// Finds known anomalies once each in stable observation order.
 #[must_use]
-pub fn assess(_facts: &Assessment) -> Vec<Anomaly> {
-    Vec::new()
+pub fn assess(facts: &Assessment) -> Vec<Anomaly> {
+    let mut anomalies = Vec::new();
+    match facts.daemon {
+        Some(Daemon::Absent) => anomalies.push(Anomaly::NoDaemon),
+        Some(Daemon::Present {
+            executable_newer: Some(true),
+        }) => anomalies.push(Anomaly::NewerExecutable),
+        Some(Daemon::Present {
+            executable_newer: Some(false) | None,
+        })
+        | None => {}
+    }
+    for task in &facts.tasks {
+        match task.status {
+            TaskStatus::Failed => anomalies.push(Anomaly::FailedTask(task.id.clone())),
+            TaskStatus::Paused => anomalies.push(Anomaly::PausedTask(task.id.clone())),
+            TaskStatus::Running => {
+                if task.last_activity.is_some_and(|last| {
+                    last < facts.now && (facts.now.as_utc() - last.as_utc()).unsigned_abs() > facts.stale_after
+                }) {
+                    anomalies.push(Anomaly::StaleTask(task.id.clone()));
+                }
+            }
+            TaskStatus::Queued
+            | TaskStatus::Waiting
+            | TaskStatus::Questions
+            | TaskStatus::Stopped
+            | TaskStatus::Done => {}
+        }
+    }
+    if facts.items.iter().any(unfinished)
+        && !facts
+            .tasks
+            .iter()
+            .any(|task| matches!(task.status, TaskStatus::Running | TaskStatus::Queued))
+    {
+        anomalies.push(Anomaly::NobodyWorking);
+    }
+    anomalies.extend(facts.unanswered.iter().cloned().map(Anomaly::UnansweredQuestions));
+    assess_lead(facts, &mut anomalies);
+    assess_branches(facts, &mut anomalies);
+    for filesystem in &facts.filesystems {
+        if filesystem.space.is_some_and(full) || filesystem.inodes.is_some_and(full) {
+            anomalies.push(Anomaly::FullFilesystem(filesystem.path.clone()));
+        }
+    }
+    anomalies.extend(facts.unreadable.iter().cloned().map(Anomaly::Unreadable));
+    // The set owns a second copy so repeated input observations cannot duplicate an explanation.
+    let mut seen = HashSet::new();
+    anomalies.retain(|anomaly| seen.insert(anomaly.clone()));
+    anomalies
+}
+
+/// Whether an item is unfinished, exhaustively following the state model.
+fn unfinished(item: &ItemPhase) -> bool {
+    match item {
+        ItemPhase::Pending
+        | ItemPhase::InProgress { .. }
+        | ItemPhase::InReview { .. }
+        | ItemPhase::Fixing { .. }
+        | ItemPhase::Approved { .. } => true,
+        ItemPhase::Done { .. } => false,
+    }
+}
+
+/// Assesses only the coordinator's observed worktree and recorded gate.
+fn assess_lead(facts: &Assessment, anomalies: &mut Vec<Anomaly>) {
+    let Some(git) = &facts.lead_git else {
+        return;
+    };
+    if git.dirty {
+        anomalies.push(Anomaly::DirtyLead);
+    }
+    let passed_at_tip = git
+        .gate
+        .as_ref()
+        .is_some_and(|gate| gate.counts_as_pass() && gate.result.head == git.tip);
+    if let Some(gate) = &git.gate {
+        if gate.tree == GateTree::NotClean {
+            anomalies.push(Anomaly::DirtyGate);
+        }
+        if gate.result.head != git.tip {
+            anomalies.push(Anomaly::GateAtOtherCommit);
+        }
+    }
+    if !passed_at_tip {
+        anomalies.push(Anomaly::NoGatePassAtTip);
+    }
+    if passed_at_tip
+        && facts
+            .tasks
+            .iter()
+            .any(|task| task.id == facts.lead && task.status == TaskStatus::Waiting)
+        && facts
+            .items
+            .iter()
+            .any(|item| matches!(item, ItemPhase::InProgress { .. }))
+        && !facts.items.iter().any(|item| {
+            matches!(
+                item,
+                ItemPhase::InReview { .. }
+                    | ItemPhase::Fixing { .. }
+                    | ItemPhase::Approved { .. }
+                    | ItemPhase::Done {
+                        completion: crate::state::Completion::Merged { .. }
+                    }
+            )
+        })
+    {
+        anomalies.push(Anomaly::WaitingWithoutPr);
+    }
+}
+
+/// Compares only known local observations; assignment is required for a missing integration finding.
+fn assess_branches(facts: &Assessment, anomalies: &mut Vec<Anomaly>) {
+    let assigned: HashSet<_> = facts
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ItemPhase::InProgress { branch, .. } | ItemPhase::Fixing { branch, .. } => Some(branch),
+            ItemPhase::Pending | ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. } => {
+                None
+            }
+        })
+        .collect();
+    for branch in &facts.branches {
+        if branch.task != facts.lead && branch.contained_in_lead == Some(false) && assigned.contains(&branch.name) {
+            anomalies.push(Anomaly::UnmergedBranch(branch.name.clone()));
+        }
+        let differs = match &branch.origin {
+            Some(Origin::Missing) => true,
+            Some(Origin::Tip(tip)) => tip != &branch.tip,
+            None => false,
+        };
+        if differs {
+            anomalies.push(Anomaly::OriginDiffers(branch.name.clone()));
+        }
+    }
+}
+
+/// Compares exact fractions without rounding; widening u64 before multiplication prevents overflow.
+fn full(usage: Usage) -> bool {
+    u128::from(usage.used) * 100 >= u128::from(usage.total.get()) * 90
 }
 
 #[cfg(test)]
