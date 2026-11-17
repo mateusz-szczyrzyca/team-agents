@@ -366,3 +366,20 @@ fn daemon_log_lines_preserve_boundaries() {
 
     assert!(summary.contains("first line\n2026-11-17 19:00:01 [info] second line"));
 }
+
+#[cfg(unix)]
+#[test]
+fn git_paths_preserve_non_utf8_bytes_in_changed_and_untracked_names() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let mut input = sample_input();
+    let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(b"log-\xff".to_vec()));
+    let git = input.git.first_mut().expect("worktree");
+    git.uncommitted_files = vec![path.clone()];
+    git.newest_untracked.first_mut().expect("untracked file").path = path;
+
+    let summary = render_summary(&input, ts("2026-11-17T20:00:00Z"), UtcOffset::UTC);
+
+    assert_eq!(summary.matches(r"log-\xFF").count(), 2);
+    assert!(!summary.contains('\u{fffd}'));
+}
