@@ -227,3 +227,22 @@ fn autolink_schemes_and_unclosed_angles_keep_markdown_meaning() {
         assert_eq!(link_commits(input, REPO_URL, resolve_hash), expected);
     }
 }
+
+#[test]
+fn inline_code_spans_protect_commands_and_matching_backtick_runs() {
+    let linked = "[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
+    for span in [
+        "`git show a1b2c3d`",
+        "``a1b2c3d``",
+        "``git `show` a1b2c3d``",
+        "`git\nshow a1b2c3d`",
+        "`[a1b2c3d](target)`",
+        "`é a1b2c3d`",
+    ] {
+        let text = format!("run {span} then a1b2c3d");
+        assert_eq!(
+            link_commits(&text, REPO_URL, resolve_hash),
+            format!("run {span} then {linked}")
+        );
+    }
+}
