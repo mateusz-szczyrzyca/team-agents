@@ -130,6 +130,24 @@ mod config_checks {
         assert_eq!(config.review().fix_passes, 5);
     }
 
+    // Rule: a paused reviewer is given a quarter of an hour before another takes its review, unless the file says
+    // another time; no time at all is refused.
+    #[test]
+    fn a_paused_reviewer_is_replaced_after_a_quarter_of_an_hour_unless_the_file_says_another_time() {
+        let default = Config::from_toml_str(&config_with("")).unwrap();
+        let set = Config::from_toml_str(&config_with("[review]\nreplace_after_minutes = 40\n")).unwrap();
+
+        assert_eq!(
+            default.review().replace_after_minutes.as_duration(),
+            std::time::Duration::from_mins(15)
+        );
+        assert_eq!(
+            set.review().replace_after_minutes.as_duration(),
+            std::time::Duration::from_mins(40)
+        );
+        Config::from_toml_str(&config_with("[review]\nreplace_after_minutes = 0\n")).unwrap_err();
+    }
+
     #[test]
     fn the_file_sets_the_passes_of_the_checks_apart_from_those_of_the_reviews() {
         let config = Config::from_toml_str(&config_with("[review]\ncheck_passes = 7\n")).unwrap();

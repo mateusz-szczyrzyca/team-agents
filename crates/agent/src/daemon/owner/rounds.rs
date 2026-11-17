@@ -12,6 +12,7 @@ mod human;
 mod merges;
 mod prompts;
 mod publish;
+mod replace;
 mod reviewers;
 mod verdicts;
 
@@ -276,6 +277,9 @@ enum PublishError {
     /// The reviews cannot be asked of an item.
     #[error("the reviews cannot be asked of an item")]
     Asking(#[from] agent_core::state::AskReviewsError),
+    /// A review cannot be given to another reviewer.
+    #[error("a review cannot be given to another reviewer")]
+    Replacing(#[from] agent_core::state::ReplaceReviewError),
     /// The team or an item of it is not in the state any more.
     #[error("the team or an item of it is not in the state")]
     Lost,
@@ -316,6 +320,7 @@ impl Owner {
         self.merge_approved(&pulls, team, look).await?;
         self.publish_branches(&pulls, team, look).await?;
         self.ask_for_reviews(team, look).await?;
+        self.replace_reviewers(&pulls, team, look).await?;
         self.deliver_reviews(team, look)?;
         self.deliver_fix_passes(team, look)?;
         self.ask_the_human(&pulls, team, look)?;

@@ -25,6 +25,10 @@ use super::{Announcement, Lead, PublishError, Pulls};
 /// How many times a report without a verdict is sent back before the human is told.
 pub(super) const MAX_VERDICT_BOUNCES: u32 = 2;
 
+/// Why a review does not come, for the human, when its reviewer reports without a verdict.
+const NO_VERDICT_LINE: &str =
+    "it ended its review again and again without a `VERDICT:` line, so its review does not count.";
+
 /// A review that was asked of a reviewer, as the state keeps it, and where it was found.
 pub(super) struct Offered {
     /// When the review was asked.
@@ -226,7 +230,8 @@ impl Owner {
         let values = Variables::new()
             .with("reviewer", asked.reviewer.as_str())
             .and_then(|values| values.with("pr", asked.pr.number.to_string()))
-            .and_then(|values| values.with("task", task.as_str()));
+            .and_then(|values| values.with("task", task.as_str()))
+            .and_then(|values| values.with("why", NO_VERDICT_LINE));
         self.tell_human(pulls, AutopilotPrompt::NoticeNoVerdict, values, &lead, now);
         Ok(())
     }

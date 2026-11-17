@@ -1,3 +1,4 @@
 {{reviewer}} gave no verdict on pull request {{pr}}
-The reviewer {{reviewer}} (task {{task}}) ended its review of pull request #{{pr}} again and again without a `VERDICT:`
-line, so its review does not count. Look at what it said in the activity log of the task; `agent stop` ends the team.
+The review of pull request #{{pr}} by {{reviewer}} (task {{task}}) does not come: {{why}} Look at what the task said in
+its activity log. `agent resume {{task}}` or `agent unpause {{task}}` lets the reviewer try again; `agent stop` ends the
+team.
