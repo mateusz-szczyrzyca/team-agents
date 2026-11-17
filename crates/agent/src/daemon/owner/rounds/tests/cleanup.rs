@@ -328,6 +328,7 @@ async fn stepped(rig: &Rig) -> Stepped {
             hang: Duration::from_secs(20),
             stop_grace: Duration::from_secs(5),
         },
+        agent_binary_dir: "/opt/bin".parse().unwrap(),
     })
     .with_history(opened.history.clone());
     let (notices, deliveries) = mpsc::channel(64);
