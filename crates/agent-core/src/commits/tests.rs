@@ -315,3 +315,24 @@ fn brackets_without_link_targets_preserve_protected_markdown() {
         assert_eq!(link_commits(input, REPO_URL, resolve_hash), expected, "{input:?}");
     }
 }
+
+#[test]
+fn complete_links_preserve_email_titles_and_shortcut_references() {
+    let linked = "[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
+    for protected in [
+        "<a1b2c3d@example.com>",
+        "<person@a1b2c3d.example.com>",
+        "[a1b2c3d](target \"title ) a1b2c3d\")",
+        "[a1b2c3d](target 'title ) a1b2c3d')",
+        "[a1b2c3d]\n\n[a1b2c3d]: https://example.com",
+        "[A1B2C3D]\n\n[a1b2c3d]: https://example.com",
+        "[a1b2c3d][]\n\n[a1b2c3d]: https://example.com",
+    ] {
+        let input = format!("{protected}\n\na1b2c3d");
+        assert_eq!(
+            link_commits(&input, REPO_URL, resolve_hash),
+            format!("{protected}\n\n{linked}"),
+            "{input:?}"
+        );
+    }
+}
