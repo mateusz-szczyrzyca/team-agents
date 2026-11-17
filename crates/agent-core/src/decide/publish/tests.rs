@@ -34,6 +34,7 @@ fn done<'a>(tip: &'a CommitId, record: Option<&'a GateRecord>, gated_for_tip: bo
         own_work: true,
         record,
         gated_for_tip,
+        retried_for_tip: false,
     }
 }
 
@@ -76,13 +77,44 @@ fn a_lead_that_is_not_done_waits() {
             own_work,
             record,
             gated_for_tip: false,
+            retried_for_tip: false,
         };
         assert_eq!(gate_step(&waiting), GateStep::Wait, "{record:?}");
     }
 }
 
+// Rule: a gate that failed or timed out at the tip is run once more by the harness before the lead is sent back,
+// whoever ran the one that failed.
+#[test]
+fn a_gate_that_failed_at_the_tip_is_run_once_more_by_the_harness() {
+    let tip = commit('a');
+
+    for outcome in [failed(), GateOutcome::TimedOut] {
+        let red = record('a', outcome, GateTree::Clean);
+        for gated_for_tip in [false, true] {
+            assert_eq!(
+                gate_step(&done(&tip, Some(&red), gated_for_tip)),
+                GateStep::Retry,
+                "{outcome:?}, gated_for_tip={gated_for_tip}"
+            );
+        }
+    }
+}
+
+// Rule: a gate that passed on a tree that was not clean is not run again: the same tree gives the same answer.
+#[test]
+fn a_gate_that_passed_on_a_tree_that_was_not_clean_is_not_run_again() {
+    let tip = commit('a');
+    let dirty = record('a', GateOutcome::Passed, GateTree::NotClean);
+
+    assert!(matches!(
+        gate_step(&done(&tip, Some(&dirty), false)),
+        GateStep::SendBack(GateHold::NotPassed { .. })
+    ));
+}
+
 // Rule: a gate that did not pass at the tip, or passed on a tree that was not clean, sends the lead back with what it
-// said and where its output is.
+// said and where its output is — a failure after the harness ran the gate once more.
 #[test]
 fn a_gate_that_did_not_pass_at_the_tip_sends_the_lead_back() {
     let tip = commit('a');
@@ -99,7 +131,10 @@ fn a_gate_that_did_not_pass_at_the_tip_sends_the_lead_back() {
     ];
 
     for (record, summary) in cases {
-        let step = gate_step(&done(&tip, Some(&record), true));
+        let step = gate_step(&Waiting {
+            retried_for_tip: true,
+            ..done(&tip, Some(&record), true)
+        });
 
         assert_eq!(
             step,

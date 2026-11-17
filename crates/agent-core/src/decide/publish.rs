@@ -31,6 +31,8 @@ pub struct Waiting<'a> {
     pub record: Option<&'a GateRecord>,
     /// Whether the harness already ran the gate for this tip.
     pub gated_for_tip: bool,
+    /// Whether the harness already ran the gate for this tip once more, after a gate had not passed at it.
+    pub retried_for_tip: bool,
 }
 
 /// What the harness does with the branch.
@@ -42,6 +44,10 @@ pub enum GateStep {
     Wait,
     /// The harness runs the gate at the tip.
     Run,
+    /// A gate failed or timed out at the tip: the harness runs it once more before it sends the lead back, because a
+    /// check that fails for a reason outside the change (a test that depends on the load of the machine) is no reason
+    /// to wake the lead, and a lead that changed nothing can do no more than run it again.
+    Retry,
     /// The lead is sent back.
     SendBack(GateHold),
 }

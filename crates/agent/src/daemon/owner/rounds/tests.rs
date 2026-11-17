@@ -192,6 +192,31 @@ async fn a_lead_that_is_done_without_a_gate_has_the_gate_run_by_the_harness_and_
     assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
 }
 
+// Rule: a gate that fails is run once more by the harness before the lead is woken: a check that fails for a reason
+// outside the change and then passes does not cost a run of the lead, and the branch is published.
+#[tokio::test]
+async fn a_gate_that_fails_once_and_then_passes_is_run_again_by_the_harness_and_the_lead_is_not_woken() {
+    let mut rig = gate_rig("commit-clean").await;
+    // A gate that fails the first time it runs in this home and passes afterwards, whatever the tree has.
+    let flaky = "if [ -e ../gate-ran-once ]; then exit 0; else touch ../gate-ran-once; exit 1; fi";
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    assert!(config.contains("test ! -e gate-fails"), "{config}");
+    std::fs::write(rig.home.config_file(), config.replace("test ! -e gate-fails", flaky)).unwrap();
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    // The agent ran once: the harness ran the gate twice and woke nobody.
+    assert_eq!(rig.kept_runs(&tasks[0]), 1);
+    let record = std::fs::read_to_string(rig.home.gate_record_file(&tasks[0])).unwrap();
+    assert!(record.contains("\"kind\": \"passed\""), "{record}");
+    assert!(record.contains("gate-2.log"), "{record}");
+    assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
+}
+
 // Rule: a gate that fails sends the lead back with what the gate said; the fix is gated and published.
 #[tokio::test]
 async fn a_gate_that_fails_sends_the_lead_back_with_the_reason_and_the_fix_is_published() {

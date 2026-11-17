@@ -38,6 +38,8 @@ pub(super) enum OwnGate {
     Running {
         /// The tip it was started for.
         tip: CommitId,
+        /// Whether it is run once more after a gate had not passed at that tip.
+        retry: bool,
         /// Where the gate service answers when it is over.
         answer: oneshot::Receiver<Result<Reply, Failure>>,
     },
@@ -45,6 +47,8 @@ pub(super) enum OwnGate {
     Ran {
         /// The tip it was started for.
         tip: CommitId,
+        /// Whether it was run once more after a gate had not passed at that tip.
+        retry: bool,
     },
 }
 
@@ -56,7 +60,10 @@ enum Own {
     /// One waits or runs; it may be for an earlier tip.
     Running,
     /// One ran for this tip.
-    Ran,
+    Ran {
+        /// Whether it was run once more after a gate had not passed at the tip.
+        retry: bool,
+    },
 }
 
 /// How long a branch that could not be published is left alone before the next attempt.
@@ -259,13 +266,18 @@ impl Owner {
             // A tip the base branch has is the base branch: the lead committed nothing.
             own_work: !git.is_ancestor(&Revision::Commit(tip.clone()), &base).await?,
             record: record.as_ref(),
-            gated_for_tip: own == Own::Ran,
+            gated_for_tip: matches!(own, Own::Ran { .. }),
+            retried_for_tip: own == Own::Ran { retry: true },
         };
         let record = match (gate_step(&waiting), record) {
             (GateStep::Publish, Some(record)) => record,
             (GateStep::Publish | GateStep::Wait, _) => return Ok(Attempt::Nothing),
             (GateStep::Run, _) => {
-                self.start_own_gate(&lead.task, &tip);
+                self.start_own_gate(&lead.task, &tip, false);
+                return Ok(Attempt::Nothing);
+            }
+            (GateStep::Retry, _) => {
+                self.start_own_gate(&lead.task, &tip, true);
                 return Ok(Attempt::Nothing);
             }
             (GateStep::SendBack(hold), _) => return Ok(Attempt::SentBack { tip, hold }),
@@ -638,9 +650,13 @@ impl Owner {
     /// off the service: one that ran is remembered with its tip, one that could not run is forgotten and started again.
     fn own_gate_state(&mut self, task: &TaskId, tip: &CommitId) -> Own {
         let over = match self.watch.own_gates.get_mut(task) {
-            Some(OwnGate::Running { tip: started, answer }) => match answer.try_recv() {
+            Some(OwnGate::Running {
+                tip: started,
+                retry,
+                answer,
+            }) => match answer.try_recv() {
                 Err(oneshot::error::TryRecvError::Empty) => return Own::Running,
-                Ok(Ok(_)) => Some(Ok(started.clone())),
+                Ok(Ok(_)) => Some(Ok((started.clone(), *retry))),
                 Ok(Err(failure)) => Some(Err(failure.message)),
                 Err(oneshot::error::TryRecvError::Closed) => {
                     Some(Err("the gate service ended before it answered".to_owned()))
@@ -649,8 +665,10 @@ impl Owner {
             Some(OwnGate::Ran { .. }) | None => None,
         };
         match over {
-            Some(Ok(started)) => {
-                self.watch.own_gates.insert(task.clone(), OwnGate::Ran { tip: started });
+            Some(Ok((started, retry))) => {
+                self.watch
+                    .own_gates
+                    .insert(task.clone(), OwnGate::Ran { tip: started, retry });
             }
             Some(Err(reason)) => {
                 tracing::warn!(
@@ -664,18 +682,19 @@ impl Owner {
             None => {}
         }
         match self.watch.own_gates.get(task) {
-            Some(OwnGate::Ran { tip: ran }) if ran == tip => Own::Ran,
+            Some(OwnGate::Ran { tip: ran, retry }) if ran == tip => Own::Ran { retry: *retry },
             Some(OwnGate::Ran { .. } | OwnGate::Running { .. }) | None => Own::NotRun,
         }
     }
 
-    /// Starts the gate of `task` for the branch tip `tip`: nobody ran one, and the lead says it is done.
-    fn start_own_gate(&mut self, task: &TaskId, tip: &CommitId) {
+    /// Starts the gate of `task` for the branch tip `tip`: nobody ran one, and the lead says it is done; or, with `retry`,
+    /// one did not pass there and is run once more.
+    fn start_own_gate(&mut self, task: &TaskId, tip: &CommitId, retry: bool) {
         match self.own_gate(task) {
             Ok(answer) => {
                 tracing::info!(
                     event = LogEvent::ChecksDecided.as_str(),
-                    outcome = "gate_started",
+                    outcome = if retry { "gate_retried" } else { "gate_started" },
                     task = %task,
                     tip = %tip,
                     "the lead is done and no gate passed at the tip of its branch: the harness runs the gate"
@@ -684,6 +703,7 @@ impl Owner {
                     task.clone(),
                     OwnGate::Running {
                         tip: tip.clone(),
+                        retry,
                         answer,
                     },
                 );
