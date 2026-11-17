@@ -3,6 +3,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
+use agent_core::config::Secrets;
 use agent_core::ids::{RoundId, TeamId, TaskId};
 use agent_core::state::State;
 
@@ -67,6 +68,60 @@ pub enum DebugRuntimeError {
     Output(#[source] std::io::Error),
 }
 
+/// Resolves a debug target to its team ID.
+///
+/// # Errors
+/// [`DebugRuntimeError::UnknownTarget`] when the ID does not resolve to a known team.
+pub fn resolve_debug_target(state: &State, target: &DebugTarget) -> Result<TeamId, DebugRuntimeError> {
+    match target {
+        DebugTarget::Round(round_id) => {
+            state.find_round(round_id)
+                .map(|(team, _round)| team.id().clone())
+                .ok_or_else(|| DebugRuntimeError::UnknownTarget {
+                    id: round_id.to_string(),
+                })
+        }
+        DebugTarget::Team(team_id) => {
+            state.team(team_id)
+                .map(|_team| team_id.clone())
+                .ok_or_else(|| DebugRuntimeError::UnknownTarget {
+                    id: team_id.to_string(),
+                })
+        }
+        DebugTarget::Task(task_id) => {
+            state.find_task(task_id)
+                .map(|task_ref| task_ref.team.id().clone())
+                .ok_or_else(|| DebugRuntimeError::UnknownTarget {
+                    id: task_id.to_string(),
+                })
+        }
+    }
+}
+
+/// Loads and validates that secrets file is readable before collection begins.
+///
+/// # Errors
+/// [`DebugRuntimeError::SecretsUnreadable`] when secrets file cannot be read or parsed.
+pub async fn load_debug_secrets(home: &Home) -> Result<Secrets, DebugRuntimeError> {
+    let secrets_path = home.secrets_file();
+    let text = tokio::fs::read_to_string(&secrets_path)
+        .await
+        .map_err(|e| DebugRuntimeError::SecretsUnreadable {
+            reason: format!("cannot read {}: {}", secrets_path.display(), e),
+        })?;
+
+    let _metadata = tokio::fs::metadata(&secrets_path)
+        .await
+        .map_err(|e| DebugRuntimeError::SecretsUnreadable {
+            reason: format!("cannot stat {}: {}", secrets_path.display(), e),
+        })?;
+
+    Secrets::parse(&text, 0o600)
+        .map_err(|_| DebugRuntimeError::SecretsUnreadable {
+            reason: "secrets file is malformed".to_string(),
+        })
+}
+
 /// Collects diagnostic facts and renders a summary.
 ///
 /// # Errors
@@ -85,30 +140,5 @@ pub async fn execute_debug(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub mod tests;
 
-    #[test]
-    fn debug_target_round_eq() {
-        let round = RoundId::parse("round-20261117-230000-xxxx").unwrap();
-        let target1 = DebugTarget::Round(round.clone());
-        let target2 = DebugTarget::Round(round);
-        assert_eq!(target1, target2);
-    }
-
-    #[test]
-    fn debug_target_team_eq() {
-        let team = TeamId::parse("team-20261117-230000-xxxx").unwrap();
-        let target1 = DebugTarget::Team(team.clone());
-        let target2 = DebugTarget::Team(team);
-        assert_eq!(target1, target2);
-    }
-
-    #[test]
-    fn debug_target_task_eq() {
-        let task = TaskId::parse("task-20261117-230000-xxxx").unwrap();
-        let target1 = DebugTarget::Task(task.clone());
-        let target2 = DebugTarget::Task(task);
-        assert_eq!(target1, target2);
-    }
-}
