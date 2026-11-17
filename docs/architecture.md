@@ -395,6 +395,11 @@ not infer languages.
   questions file to write; its question reaches the human like any other (`agent answer`). The answer is one more fix pass. A lead
   that ran and put no question leaves the human told directly, once.
 - When every item is merged the team ends: its tasks, the reviewers among them, are `done` and the human is notified.
+  When it ends so — every item merged, by the daemon or by the human, and no round open — git removes the worktrees of its
+  tasks that are not running (`git worktree remove`, which refuses a changed checkout). Their branches stay, local and on
+  origin. A worktree with changes not committed, or with commits no branch of origin has (origin is fetched first, with
+  `--prune`), is kept and logged (`git_call_failed`, `warn`, with the reason), as is one git cannot remove; neither stops the
+  team from ending. A team that ends any other way, stopped or failed, keeps every worktree.
 
 **Known limits.** The owner waits for GitHub and git calls (GitHub's own timeouts, at most 30 s an attempt; a push at most 10
 minutes): a call that hangs leaves the socket unanswered that long. The merge is at the head GitHub carries, so a commit someone
