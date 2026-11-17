@@ -511,6 +511,73 @@ impl Owner {
         })
     }
 
+    /// Links repository file paths in Markdown text sent to GitHub.
+    pub(super) async fn link_files(
+        &self,
+        git: &Git,
+        text: &str,
+        commit: &agent_core::state::CommitId,
+    ) -> String {
+        let origin_url = match git.origin_url().await {
+            Ok(url) => url,
+            Err(error) => {
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::GitCallFailed.as_str(),
+                    error = %error_chain(&error),
+                    "cannot determine origin url for file links: text is sent unchanged"
+                );
+                return text.to_owned();
+            }
+        };
+        let slug = match RepoSlug::from_remote_url(&origin_url) {
+            Ok(slug) => slug,
+            Err(error) => {
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::GitCallFailed.as_str(),
+                    error = %error_chain(&error),
+                    "cannot determine repository slug for file links: text is sent unchanged"
+                );
+                return text.to_owned();
+            }
+        };
+
+        // Scan for all candidate file paths without resolving them
+        let mut candidates = HashSet::new();
+        let _scanned = agent_core::files::link_files(text, "", commit.as_str(), |candidate| {
+            candidates.insert(candidate.to_owned());
+            false
+        });
+        if candidates.is_empty() {
+            return text.to_owned();
+        }
+
+        // Check which candidates are actual files in the commit
+        let mut resolved = HashSet::new();
+        let revision = agent_runtime::git::Revision::Commit(commit.clone());
+        for candidate in &candidates {
+            match git.path_is_file(&revision, candidate).await {
+                Ok(true) => {
+                    resolved.insert(candidate.as_str().to_owned());
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        event = agent_core::log::LogEvent::GitCallFailed.as_str(),
+                        path = %candidate,
+                        error = %error_chain(&error),
+                        "cannot check if path is file: text is sent unchanged"
+                    );
+                    return text.to_owned();
+                }
+            }
+        }
+
+        let repo_url = format!("https://github.com/{}/{}", slug.owner(), slug.name());
+        agent_core::files::link_files(text, &repo_url, commit.as_str(), |path| {
+            resolved.contains(path)
+        })
+    }
+
     /// Tells the human `notice` rendered with `values`, in the name of the lead; what cannot be made is logged: the
     /// harness goes on.
     fn tell_human(
