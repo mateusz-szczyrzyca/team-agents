@@ -116,12 +116,49 @@ fn balanced(chars: &mut Peekable<Chars<'_>>, open: char, close: char, text: &mut
     false
 }
 
+/// Markdown autolinks begin with a two-to-thirty-two-character URI scheme.
+fn starts_autolink(mut chars: Peekable<Chars<'_>>) -> bool {
+    if !chars.next().is_some_and(|ch| ch.is_ascii_alphabetic()) {
+        return false;
+    }
+    for length in 1..=32 {
+        match chars.next() {
+            Some(':') => return length >= 2,
+            Some(ch) if ch.is_ascii_alphanumeric() || matches!(ch, '+' | '.' | '-') => {}
+            Some(_) | None => return false,
+        }
+    }
+    false
+}
+
 /// Protects existing inline and reference links while rewriting ordinary prose.
 fn link_prose(text: &str, repo_url: &str, resolve: &mut impl FnMut(&str) -> Option<String>) -> String {
     let mut result = String::with_capacity(text.len());
     let mut prose = String::new();
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
+        if ch == '<' && starts_autolink(chars.clone()) {
+            let mut link = String::from('<');
+            let mut closed = false;
+            for next in chars.by_ref() {
+                link.push(next);
+                if next == '>' {
+                    closed = true;
+                    break;
+                }
+                if next.is_whitespace() {
+                    break;
+                }
+            }
+            if closed {
+                result.push_str(&link_words(&prose, repo_url, resolve));
+                prose.clear();
+                result.push_str(&link);
+            } else {
+                prose.push_str(&link);
+            }
+            continue;
+        }
         if ch != '[' {
             prose.push(ch);
             continue;
