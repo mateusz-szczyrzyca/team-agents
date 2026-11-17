@@ -698,9 +698,22 @@ impl Git {
     /// Whether a fetched branch of `origin` contains the checkout's entire committed history.
     ///
     /// # Errors
-    /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`] and [`GitError::NotUtf8`].
+    /// [`GitError::Run`], [`GitError::Failed`] and [`GitError::OutputTooLong`].
     pub async fn head_on_origin(&self) -> Result<bool, GitError> {
-        Ok(false)
+        let operation = GitOperation::RemoteContains;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("for-each-ref"),
+                    arg("--contains=HEAD"),
+                    arg("--format=%(refname)"),
+                    arg("refs/remotes/origin/"),
+                ],
+            )
+            .await?;
+        Ok(!whole(operation, &captured.stdout, self.limits)?.is_empty())
     }
 
     /// Whether the checkout has changes, and which.
