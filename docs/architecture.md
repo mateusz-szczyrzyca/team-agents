@@ -395,7 +395,8 @@ not infer languages.
   questions file to write; its question reaches the human like any other (`agent answer`). The answer is one more fix pass. A lead
   that ran and put no question leaves the human told directly, once.
 - When every item is merged the team ends: its tasks, the reviewers among them, are `done` and the human is notified.
-  When it ends so — every item merged, by the daemon or by the human, and no round open — git removes the worktrees of its
+  When it ends so — every item done, at least one by its merge (by the daemon or by the human; the others ticked `[x]` in the
+  list), and no round open — git removes the worktrees of its
   tasks that are not running (`git worktree remove`, which refuses a changed checkout). Their branches stay, local and on
   origin. A worktree with changes not committed, or with commits no branch of origin has (origin is fetched first, with
   `--prune`), is kept and logged (`git_call_failed`, `warn`, with the reason), as is one git cannot remove; neither stops the
