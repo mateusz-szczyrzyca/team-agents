@@ -526,3 +526,122 @@ fn an_old_merged_item_does_not_hide_a_current_waiting_round_without_a_pr() {
     ];
     assert_eq!(assess(&facts), vec![Anomaly::NobodyWorking, Anomaly::WaitingWithoutPr]);
 }
+
+mod retained_assessment {
+    use super::*;
+
+    #[test]
+    fn returns_typed_assessment_with_anomalies() {
+        let mut facts = healthy();
+        facts.daemon = Some(Daemon::Absent);
+
+        assert_eq!(assess(&facts), vec![Anomaly::NoDaemon]);
+    }
+
+    #[test]
+    fn detects_daemon_offline() {
+        let mut facts = healthy();
+        facts.daemon = Some(Daemon::Absent);
+
+        assert_eq!(assess(&facts), vec![Anomaly::NoDaemon]);
+    }
+
+    #[test]
+    fn detects_no_anomalies_when_all_healthy() {
+        assert_eq!(assess(&healthy()), vec![]);
+    }
+
+    #[test]
+    fn never_infers_anomaly_from_missing_facts() {
+        let mut facts = healthy();
+        facts.daemon = None;
+        facts.lead_git = None;
+
+        assert_eq!(assess(&facts), vec![]);
+    }
+
+    #[test]
+    fn deduplicates_anomalies_per_task_category() {
+        let mut facts = healthy();
+        let failed = Task {
+            id: task_id(),
+            status: TaskStatus::Failed,
+            last_activity: None,
+        };
+        facts.tasks = vec![failed.clone(), failed];
+
+        assert_eq!(assess(&facts), vec![Anomaly::FailedTask(task_id())]);
+    }
+}
+
+mod retained_anomalies {
+    use super::*;
+
+    #[test]
+    fn no_anomalies_when_all_healthy() {
+        assert_eq!(assess(&healthy()), vec![]);
+    }
+
+    #[test]
+    fn daemon_offline_detected() {
+        let mut facts = healthy();
+        facts.daemon = Some(Daemon::Absent);
+
+        assert_eq!(assess(&facts), vec![Anomaly::NoDaemon]);
+    }
+
+    #[test]
+    fn daemon_stale_detected() {
+        let mut facts = healthy();
+        facts.daemon = Some(Daemon::Present {
+            executable_newer: Some(true),
+        });
+
+        assert_eq!(assess(&facts), vec![Anomaly::NewerExecutable]);
+    }
+
+    #[test]
+    fn task_failed_detected() {
+        let mut facts = healthy();
+        facts.tasks = vec![Task {
+            id: task_id(),
+            status: TaskStatus::Failed,
+            last_activity: None,
+        }];
+
+        assert_eq!(assess(&facts), vec![Anomaly::FailedTask(task_id())]);
+    }
+
+    #[test]
+    fn open_questions_detected() {
+        let mut facts = healthy();
+        let path = PathBuf::from("tasks/member/questions-1.md");
+        facts.unanswered = vec![path.clone()];
+
+        assert_eq!(assess(&facts), vec![Anomaly::UnansweredQuestions(path)]);
+    }
+
+    #[test]
+    fn lead_dirty_detected() {
+        let mut facts = healthy();
+        facts.lead_git.as_mut().unwrap().dirty = true;
+
+        assert_eq!(assess(&facts), vec![Anomaly::DirtyLead]);
+    }
+
+    #[test]
+    fn filesystem_full_detected() {
+        let mut facts = healthy();
+        let path = PathBuf::from("/home");
+        facts.filesystems = vec![Filesystem {
+            path: path.clone(),
+            space: Some(Usage {
+                used: 95,
+                total: NonZeroU64::new(100).unwrap(),
+            }),
+            inodes: None,
+        }];
+
+        assert_eq!(assess(&facts), vec![Anomaly::FullFilesystem(path)]);
+    }
+}
