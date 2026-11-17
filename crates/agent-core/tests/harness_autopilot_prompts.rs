@@ -39,6 +39,8 @@ mod harness_autopilot_prompts {
             "harness/pr/notice-approved.md",
             "harness/review/request.md",
             "harness/review/comment.md",
+            "harness/review/verdict-approve.md",
+            "harness/review/verdict-request-changes.md",
             "harness/review/fix-pass.md",
             "harness/review/ask-human.md",
             "harness/review/verdict-missing.md",
