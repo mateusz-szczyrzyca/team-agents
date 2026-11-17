@@ -410,3 +410,17 @@ fn fences_keep_the_opening_container_context_and_list_indentation() {
         );
     }
 }
+
+#[test]
+fn unindented_fences_after_terminated_containers_preserve_later_body_lines() {
+    for container in ["1. finding", "- finding", "> finding"] {
+        for fence in ["```", "~~~"] {
+            let input = format!("{container}\n\n{fence}rust\nfirst body line\na1b2c3d\n{fence}\n");
+            assert_eq!(
+                link_commits(&input, REPO_URL, resolve_hash),
+                input,
+                "{container:?}, {fence:?}"
+            );
+        }
+    }
+}
