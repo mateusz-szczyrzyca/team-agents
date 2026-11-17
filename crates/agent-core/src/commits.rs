@@ -407,18 +407,8 @@ fn link_prose(
         let mut link = String::from('[');
         let mut lookahead = chars.clone();
         let label_closed = balanced(&mut lookahead, '[', ']', &mut link);
-        if label_closed
-            && link
-                .strip_prefix('[')
-                .and_then(|label| label.strip_suffix(']'))
-                .is_some_and(|label| references.contains(&reference_label(label)))
-        {
-            chars = lookahead;
-            result.push_str(&link_words(&prose, repo_url, resolve));
-            prose.clear();
-            result.push_str(&link);
-            continue;
-        }
+        let label_end = lookahead.clone();
+        let label = link.clone();
         let destination = lookahead.next_if(|ch| *ch == '(' || *ch == '[');
         if label_closed && let Some(open) = destination {
             link.push(open);
@@ -430,6 +420,18 @@ fn link_prose(
                 result.push_str(&link);
                 continue;
             }
+        }
+        if label_closed
+            && label
+                .strip_prefix('[')
+                .and_then(|label| label.strip_suffix(']'))
+                .is_some_and(|label| references.contains(&reference_label(label)))
+        {
+            chars = label_end;
+            result.push_str(&link_words(&prose, repo_url, resolve));
+            prose.clear();
+            result.push_str(&label);
+            continue;
         }
         // Failed link parsing must leave its contents subject to the same prose protections.
         prose.push('[');
