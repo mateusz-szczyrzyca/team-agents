@@ -434,3 +434,42 @@ async fn file_paths_with_commit_words_do_not_trigger_commit_lookups() {
     let calls = std::fs::read_to_string(&log_file).unwrap();
     assert_eq!(calls.lines().collect::<Vec<_>>(), ["remote", "ls-tree"]);
 }
+
+#[tokio::test]
+async fn description_changing_fix_pass_refreshes_harness_file_links_to_new_head() {
+    const ITEMS: &str = "Build it.\n\n1. First\n[ ] 1.1 The first item\n    Check README.md:7.\n    Expected result:\n    - it works\n    Checks:\n    - run it\n";
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,script:disclose"),
+            investigator("inv-r1", R1_SCENARIO),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("disclose.sh"),
+        "set -eu\ngit -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q --allow-empty -m 'TEST-FIX: correct the documented expectation'\n",
+    )
+    .unwrap();
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ITEMS, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let branch = format!("agents/claude-1/{}-1.1", tasks[0]);
+    let head = rig.remote_tip(&branch);
+    let pulls = rig.github.pulls();
+    assert_eq!(pulls.len(), 1);
+    assert!(
+        pulls[0].body.contains("## Tests changed after RED"),
+        "{}",
+        pulls[0].body
+    );
+    let expected = format!("[README.md:7](https://github.com/{SLUG}/blob/{head}/README.md#L7)");
+    assert!(pulls[0].body.contains(&expected), "{}", pulls[0].body);
+}

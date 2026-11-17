@@ -319,6 +319,12 @@ pub(super) fn authored(description: &str, harness: &str) -> String {
     kept.join("\n")
 }
 
+/// Restores harness-authored file labels before a changed description is published again.
+#[must_use]
+pub(crate) fn unlinked_harness_files(description: &str, _harness: &str) -> String {
+    description.to_owned()
+}
+
 /// Removes only the exact blob-link spelling produced by the repository file linker.
 /// Publication commits may differ after a fix pass; the original item text still belongs to the harness.
 fn original_file_labels(line: &str) -> String {

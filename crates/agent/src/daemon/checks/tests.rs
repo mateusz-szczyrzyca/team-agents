@@ -571,3 +571,13 @@ fn generated_link_labels_use_balanced_brackets_and_ignore_code_punctuation() {
         assert_eq!(authored(&description, &format!("First {label}, then {label}.")), "");
     }
 }
+
+#[test]
+fn description_refresh_unlinks_only_generated_harness_lines() {
+    let linked = "See [`src/[x].rs:7`](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/%5Bx%5D.rs#L7).\nAn existing [guide](https://example.com/guide).\nCustom [src/a.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/a.rs).\n";
+    let harness = "See `src/[x].rs:7`.\nAn existing [guide](https://example.com/guide).\n";
+    assert_eq!(
+        unlinked_harness_files(linked, harness),
+        "See `src/[x].rs:7`.\nAn existing [guide](https://example.com/guide).\nCustom [src/a.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/a.rs).\n"
+    );
+}
