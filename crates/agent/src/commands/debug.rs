@@ -60,9 +60,12 @@ pub(crate) async fn query_daemon_status(home: &Home, target: &Target) -> Option<
                 target: Some(target.clone()),
             });
             match connection.request(Client::Cli, request).await {
-                Ok(Reply::Teams { teams } | Reply::Overview { teams, .. }) => {
-                    Some(Ok(crate::commands::status::render_active(&teams, &|_| None)))
-                }
+                Ok(Reply::Overview { teams, history }) => Some(Ok(format!(
+                    "{}{}",
+                    crate::commands::status::render_active(&teams, &|_| None),
+                    crate::commands::status::render_history(Some(&history)),
+                ))),
+                Ok(Reply::Teams { teams }) => Some(Ok(crate::commands::status::render_active(&teams, &|_| None))),
                 Ok(other) => Some(Err(format!("unexpected daemon reply: {other:?}"))),
                 Err(err) => Some(Err(err.to_string())),
             }
