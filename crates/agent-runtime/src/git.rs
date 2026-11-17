@@ -559,8 +559,34 @@ impl Git {
     /// # Errors
     /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and
     /// [`GitError::Unexpected`].
-    pub async fn resolve_commit(&self, _text: &str) -> Result<Option<CommitId>, GitError> {
-        Ok(None)
+    pub async fn resolve_commit(&self, text_input: &str) -> Result<Option<CommitId>, GitError> {
+        let operation = GitOperation::RevParse;
+        let spec = format!("{text_input}^{{commit}}");
+        let captured = self
+            .run(
+                operation,
+                Reach::Local,
+                &[
+                    arg("rev-parse"),
+                    arg("--verify"),
+                    arg("--quiet"),
+                    arg("--end-of-options"),
+                    arg(&spec),
+                ],
+            )
+            .await?;
+        match captured.exit {
+            ExitReport::Exited { code: 0 } => {
+                let printed = text(operation, &captured.stdout)?;
+                let id = printed
+                    .trim_end()
+                    .parse()
+                    .map_err(|source| GitError::NotACommit { operation, source })?;
+                Ok(Some(id))
+            }
+            ExitReport::Exited { code: 1 } => Ok(None),
+            ExitReport::Exited { .. } | ExitReport::Signaled { .. } => Err(failed(operation, &captured)),
+        }
     }
 
     /// The tip of `branch`, or `None` when there is no such branch.
