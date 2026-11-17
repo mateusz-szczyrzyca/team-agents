@@ -375,3 +375,72 @@ fn combined_linking_preserves_commit_word_boundaries() {
         );
     }
 }
+
+/// Interior punctuation belongs to the exact tree path, unlike sentence suffixes.
+#[test]
+fn bare_paths_preserve_interior_punctuation() {
+    let commit = "0123456789012345678901234567890123456789".parse().unwrap();
+    for (input, path, encoded, prefix, suffix) in [
+        ("src/file(1).rs", "src/file(1).rs", "src/file%281%29.rs", "", ""),
+        ("(src/file(1).rs).", "src/file(1).rs", "src/file%281%29.rs", "(", ")."),
+        ("src/a,b;v.rs,", "src/a,b;v.rs", "src/a%2Cb%3Bv.rs", "", ","),
+    ] {
+        let result = crate::commits::link_references(input, REPO_URL, &commit, |_| None, |candidate| candidate == path);
+        assert_eq!(
+            result,
+            format!("{prefix}[{path}]({REPO_URL}/blob/{commit}/{encoded}){suffix}"),
+            "{input}"
+        );
+    }
+}
+
+/// A hexadecimal HTML tag name must not expose its attributes to file linking.
+#[test]
+fn hexadecimal_html_tags_preserve_file_attributes() {
+    let commit = "0123456789012345678901234567890123456789".parse().unwrap();
+    let input = "<deadbeef title='src/lib.rs'>src/lib.rs</deadbeef>";
+    let result = crate::commits::link_references(input, REPO_URL, &commit, |_| None, |path| path == "src/lib.rs");
+    assert_eq!(
+        result,
+        format!("<deadbeef title='src/lib.rs'>[src/lib.rs]({REPO_URL}/blob/{commit}/src/lib.rs)</deadbeef>")
+    );
+}
+
+/// Markdown list markers are structural even when the tree contains their digits.
+#[test]
+fn ordered_list_markers_are_not_file_references() {
+    let commit = "0123456789012345678901234567890123456789".parse().unwrap();
+    let input = "1. item\n> 2) item\n- 3. item\n";
+    assert_eq!(
+        crate::commits::link_references(
+            input,
+            REPO_URL,
+            &commit,
+            |_| None,
+            |path| matches!(path, "1" | "2" | "3")
+        ),
+        input
+    );
+}
+
+/// Syntactically forbidden paths never reach even an accepting tree lookup.
+#[test]
+fn invalid_root_relative_paths_are_refused_before_lookup() {
+    let commit = "0123456789012345678901234567890123456789".parse().unwrap();
+    for input in [
+        "/src/lib.rs",
+        "../src/lib.rs",
+        "./src/lib.rs",
+        "src//lib.rs",
+        "`/src/lib.rs`",
+        "`../src/lib.rs`",
+        "`./src/lib.rs`",
+        "`src//lib.rs`",
+    ] {
+        assert_eq!(
+            crate::commits::link_references(input, REPO_URL, &commit, |_| None, |_| true),
+            input,
+            "{input}"
+        );
+    }
+}
