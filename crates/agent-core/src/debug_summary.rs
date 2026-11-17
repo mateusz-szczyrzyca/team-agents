@@ -370,32 +370,17 @@ fn minutes_since(now: Timestamp, activity: Timestamp) -> i64 {
     if seconds <= 0 { 0 } else { seconds / 60 }
 }
 
-/// Truncates `text` so it fits within `max_bytes`, keeping the end and prepending [`CUT_MARKER`].
-fn truncate_keep_tail(text: &str, max_bytes: usize) -> String {
-    if text.len() <= max_bytes {
+/// Keeps a UTF-8 tail within the fixed section budget, marking omitted content.
+fn truncate_keep_tail(text: &str) -> String {
+    if text.len() <= MAX_SECTION_BYTES {
         return text.to_owned();
     }
-    let marker_len = CUT_MARKER.len();
-    if max_bytes <= marker_len {
-        return text
-            .chars()
-            .rev()
-            .take(max_bytes)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-    }
-    let keep_bytes = max_bytes.saturating_sub(marker_len);
-    let start_candidate = text.len().saturating_sub(keep_bytes);
-    let mut boundary = start_candidate;
-    while boundary < text.len() && !text.is_char_boundary(boundary) {
-        boundary += 1;
-    }
-    let mut result = String::with_capacity(marker_len + (text.len() - boundary));
+    let keep_bytes = MAX_SECTION_BYTES.saturating_sub(CUT_MARKER.len());
+    let first_byte = text.len().saturating_sub(keep_bytes);
+    let mut result = String::with_capacity(MAX_SECTION_BYTES);
     result.push_str(CUT_MARKER);
-    if let Some(tail) = text.get(boundary..) {
-        result.push_str(tail);
+    for (_, ch) in text.char_indices().skip_while(|(index, _)| *index < first_byte) {
+        result.push(ch);
     }
     result
 }
@@ -768,7 +753,7 @@ pub fn render_summary(input: &SummaryInput, now: Timestamp, offset: UtcOffset) -
             SummarySection::Machine => render_machine(&input.machine, &input.unreadable_parts, &mut section_body),
         }
 
-        let bounded = truncate_keep_tail(&section_body, MAX_SECTION_BYTES);
+        let bounded = truncate_keep_tail(&section_body);
         out.push_str(&bounded);
         if !bounded.ends_with('\n') {
             out.push('\n');
