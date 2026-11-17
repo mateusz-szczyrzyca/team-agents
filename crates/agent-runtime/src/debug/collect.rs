@@ -402,8 +402,14 @@ impl Collection {
         let path = home.history_file();
         let id = team.id().clone();
         let result = tokio::task::spawn_blocking(move || {
-            let reader = crate::history::Reader::open(&path)?;
-            reader.team_records(&id)
+            let before = history_stamp(&path)?;
+            let reader =
+                crate::history::Reader::open_without_shared_memory(&path).map_err(ObservationError::History)?;
+            let records = reader.team_records(&id).map_err(ObservationError::History)?;
+            if before != history_stamp(&path)? {
+                return Err(ObservationError::HistoryChanged);
+            }
+            Ok(records)
         })
         .await
         .map_err(DebugRuntimeError::Worker)?;
@@ -570,6 +576,12 @@ impl Collection {
 /// A bounded observation failure, converted to a read-failure only at its part's boundary.
 #[derive(Debug, thiserror::Error)]
 enum ObservationError {
+    /// History cannot be decoded.
+    #[error("cannot read history records")]
+    History(#[source] crate::history::ReadError),
+    /// Concurrent writes prevented a stable observation.
+    #[error("history changed during collection")]
+    HistoryChanged,
     /// File access failed.
     #[error("cannot read file")]
     Io(#[source] std::io::Error),
@@ -602,6 +614,12 @@ enum ObservationError {
     /// A git object ID is invalid.
     #[error("git tip is invalid")]
     Commit(#[source] agent_core::state::InvalidCommitId),
+}
+
+/// Checks that immutable SQLite reading will include every committed record and remain stable.
+fn history_stamp(path: &Path) -> Result<(u64, std::time::SystemTime), ObservationError> {
+    let metadata = std::fs::metadata(path).map_err(ObservationError::Io)?;
+    Ok((metadata.len(), metadata.modified().map_err(ObservationError::Io)?))
 }
 
 fn parse_commit(line: &str) -> Result<GitCommitSummaryFacts, ObservationError> {

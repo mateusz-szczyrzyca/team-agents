@@ -77,6 +77,15 @@ pub struct RoundPrompt {
     pub was_cut: bool,
 }
 
+/// SQLite lock strategy: diagnostics must not create or change shared-memory files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadMode {
+    /// Normal readers coordinate through shared-memory bookkeeping.
+    Shared,
+    /// Immutable readers are used only while the caller verifies an unchanged, checkpointed file.
+    Immutable,
+}
+
 /// The history database, open read-only.
 #[derive(Debug)]
 pub struct Reader {
@@ -190,13 +199,45 @@ impl Reader {
     /// [`ReadError::Open`] when the file cannot be opened; [`ReadError::Empty`] when no daemon has written to it;
     /// [`ReadError::Newer`] when it is of a version this build does not know.
     pub fn open(path: &Path) -> Result<Self, ReadError> {
+        Self::open_mode(path, ReadMode::Shared)
+    }
+
+    /// Opens diagnostics without creating or updating SQLite shared-memory files.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Self::open`].
+    /// The caller must reject nonempty WAL files and verify that the database did not change.
+    pub(crate) fn open_without_shared_memory(path: &Path) -> Result<Self, ReadError> {
+        Self::open_mode(path, ReadMode::Immutable)
+    }
+
+    fn open_mode(path: &Path, mode: ReadMode) -> Result<Self, ReadError> {
         let open = |source| ReadError::Open {
             path: path.to_path_buf(),
             source,
         };
-        let connection =
-            Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
-                .map_err(open)?;
+        let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let connection = match mode {
+            ReadMode::Shared => Connection::open_with_flags(path, flags),
+            ReadMode::Immutable => {
+                // Percent-encode every byte so URI metacharacters and non-UTF-8 paths retain their meaning.
+                let digit = |n: u8| match n {
+                    0..=9 => char::from(b'0'.saturating_add(n)),
+                    _ => char::from(b'A'.saturating_add(n.saturating_sub(10))),
+                };
+                let encoded: String = path
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .iter()
+                    .flat_map(|byte| ['%', digit(byte >> 4), digit(byte & 15)])
+                    .collect();
+                Connection::open_with_flags(
+                    format!("file:{encoded}?immutable=1"),
+                    flags | OpenFlags::SQLITE_OPEN_URI,
+                )
+            }
+        }
+        .map_err(open)?;
         connection.busy_timeout(BUSY_TIMEOUT).map_err(open)?;
         let found = version_of(&connection).map_err(open)?;
         let supported = latest(MIGRATIONS);
