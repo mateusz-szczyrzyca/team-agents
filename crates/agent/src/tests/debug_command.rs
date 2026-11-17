@@ -197,16 +197,24 @@ fn setup_test_home() -> (tempfile::TempDir, Home, State, TeamId, TaskId, TaskId,
     std::fs::create_dir_all(&repo_dir).unwrap();
     let lead_wt = home.worktree_dir(&repo(), &lead_task);
     let member_wt = home.worktree_dir(&repo(), &member_task);
-    std::fs::create_dir_all(&lead_wt).unwrap();
-    std::fs::create_dir_all(&member_wt).unwrap();
 
-    run_git(&lead_wt, &["init", "-q", "-b", "main"]);
+    run_git(&repo_dir, &["init", "-q", "-b", "main", lead_wt.to_str().unwrap()]);
     run_git(
         &lead_wt,
         &["commit", "-q", "--allow-empty", "-m", "initial lead commit"],
     );
 
-    run_git(&member_wt, &["init", "-q", "-b", "agents/claude-1/item-1-1"]);
+    run_git(
+        &lead_wt,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "agents/claude-1/item-1-1",
+            member_wt.to_str().unwrap(),
+        ],
+    );
     run_git(&member_wt, &["commit", "-q", "--allow-empty", "-m", "member work"]);
 
     std::fs::write(home.state_file(), state.to_json().unwrap()).unwrap();
@@ -217,34 +225,47 @@ fn setup_test_home() -> (tempfile::TempDir, Home, State, TeamId, TaskId, TaskId,
     (dir, home, state, team, lead_task, member_task, round)
 }
 
-fn find_summary(out_dir: &Path) -> Option<PathBuf> {
-    if out_dir.join("SUMMARY.md").exists() {
-        return Some(out_dir.join("SUMMARY.md"));
+fn git_head_path(worktree: &Path) -> PathBuf {
+    let git_path = worktree.join(".git");
+    if git_path.is_dir() {
+        git_path.join("HEAD")
+    } else {
+        let content = std::fs::read_to_string(&git_path).unwrap();
+        let gitdir = content
+            .lines()
+            .find_map(|line| line.strip_prefix("gitdir: "))
+            .unwrap()
+            .trim();
+        PathBuf::from(gitdir).join("HEAD")
     }
-    if let Ok(entries) = std::fs::read_dir(out_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() && path.join("SUMMARY.md").exists() {
-                return Some(path.join("SUMMARY.md"));
-            }
-        }
-    }
-    None
 }
 
-fn collect_files(dir: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                files.extend(collect_files(&path));
-            } else {
-                files.push(path);
-            }
+fn find_summary(out_dir: &Path) -> Result<Option<PathBuf>, std::io::Error> {
+    if out_dir.join("SUMMARY.md").exists() {
+        return Ok(Some(out_dir.join("SUMMARY.md")));
+    }
+    for entry in std::fs::read_dir(out_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() && path.join("SUMMARY.md").exists() {
+            return Ok(Some(path.join("SUMMARY.md")));
         }
     }
-    files
+    Ok(None)
+}
+
+fn collect_files(dir: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            files.extend(collect_files(&path)?);
+        } else {
+            files.push(path);
+        }
+    }
+    Ok(files)
 }
 
 #[test]
@@ -336,7 +357,7 @@ fn debug_failed_task_and_unanswered_questions() {
     assert_eq!(code, ExitCode::SUCCESS, "stderr was: {err}");
     assert!(out.contains("Debug summary:"), "stdout was: {out}");
 
-    let summary_path = find_summary(out_dir.path()).expect("SUMMARY.md should exist");
+    let summary_path = find_summary(out_dir.path()).unwrap().expect("SUMMARY.md should exist");
     let summary = std::fs::read_to_string(&summary_path).unwrap();
     assert!(
         summary.contains("failed") || summary.contains("Failed"),
@@ -370,7 +391,7 @@ fn debug_done_lead_lacking_unfinished_member_branch() {
     );
     assert_eq!(code, ExitCode::SUCCESS, "stderr was: {err}");
 
-    let summary_path = find_summary(out_dir.path()).expect("SUMMARY.md should exist");
+    let summary_path = find_summary(out_dir.path()).unwrap().expect("SUMMARY.md should exist");
     let summary = std::fs::read_to_string(&summary_path).unwrap();
     assert!(
         summary.contains("branch") || summary.contains("Branch"),
@@ -398,7 +419,7 @@ fn debug_removed_worktree_reports_read_failure_and_rest_continues() {
     );
     assert_eq!(code, ExitCode::SUCCESS, "stderr was: {err}");
 
-    let summary_path = find_summary(out_dir.path()).expect("SUMMARY.md should exist");
+    let summary_path = find_summary(out_dir.path()).unwrap().expect("SUMMARY.md should exist");
     let summary = std::fs::read_to_string(&summary_path).unwrap();
     assert!(
         summary.contains("unreadable") || summary.contains("failed") || summary.contains("Unreadable"),
@@ -440,16 +461,15 @@ fn debug_redaction_secrets_prompt_raw_stdout_and_env_values() {
     );
     assert_eq!(code, ExitCode::SUCCESS, "stderr was: {err}");
 
-    let all_files = collect_files(out_dir.path());
+    let all_files = collect_files(out_dir.path()).unwrap();
     assert!(!all_files.is_empty(), "debug bundle should produce files");
     for file in all_files {
-        if let Ok(content) = std::fs::read_to_string(&file) {
-            assert!(
-                !content.contains(secret_token),
-                "file {} contained unredacted secret!",
-                file.display()
-            );
-        }
+        let content = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            !content.contains(secret_token),
+            "file {} contained unredacted secret!",
+            file.display()
+        );
     }
 }
 
@@ -476,7 +496,10 @@ fn debug_strict_missing_secrets_no_output_directory() {
     assert_ne!(code, ExitCode::SUCCESS);
     assert!(err.contains("secrets") || err.contains("Secrets"), "stderr was: {err}");
 
-    let entries: Vec<_> = std::fs::read_dir(&bundle_parent).unwrap().flatten().collect();
+    let entries: Vec<_> = std::fs::read_dir(&bundle_parent)
+        .unwrap()
+        .map(|res| res.unwrap().path())
+        .collect();
     assert!(
         entries.is_empty(),
         "no bundle directory should be created when secrets are unreadable"
@@ -491,8 +514,8 @@ fn debug_home_state_tasks_and_git_refs_unchanged() {
     let state_before = std::fs::read(home.state_file()).unwrap();
     let lead_wt = home.worktree_dir(&repo(), &lead_task);
     let member_wt = home.worktree_dir(&repo(), &member_task);
-    let lead_git_head_before = std::fs::read(lead_wt.join(".git/HEAD")).unwrap();
-    let member_git_head_before = std::fs::read(member_wt.join(".git/HEAD")).unwrap();
+    let lead_git_head_before = std::fs::read(git_head_path(&lead_wt)).unwrap();
+    let member_git_head_before = std::fs::read(git_head_path(&member_wt)).unwrap();
 
     let out_dir = tempfile::tempdir().unwrap();
     let (code, _out, err) = agent(
@@ -513,13 +536,13 @@ fn debug_home_state_tasks_and_git_refs_unchanged() {
         "state.json must not be modified by agent debug"
     );
 
-    let lead_git_head_after = std::fs::read(lead_wt.join(".git/HEAD")).unwrap();
+    let lead_git_head_after = std::fs::read(git_head_path(&lead_wt)).unwrap();
     assert_eq!(
         lead_git_head_before, lead_git_head_after,
         "git HEAD must not be changed"
     );
 
-    let member_git_head_after = std::fs::read(member_wt.join(".git/HEAD")).unwrap();
+    let member_git_head_after = std::fs::read(git_head_path(&member_wt)).unwrap();
     assert_eq!(
         member_git_head_before, member_git_head_after,
         "git HEAD must not be changed"
@@ -594,7 +617,7 @@ fn debug_done_lead_with_uncontained_member_branch_reports_exact_unmerged_anomaly
     );
     assert_eq!(code, ExitCode::SUCCESS, "stderr was: {err}");
 
-    let summary_path = find_summary(out_dir.path()).expect("SUMMARY.md should exist");
+    let summary_path = find_summary(out_dir.path()).unwrap().expect("SUMMARY.md should exist");
     let summary = std::fs::read_to_string(&summary_path).unwrap();
     assert!(
         summary.contains("The lead branch does not contain assigned unfinished branch agents/claude-1/item-1-1."),
@@ -624,7 +647,10 @@ fn debug_rejects_unknown_target_with_exit_3_and_creates_no_directory() {
     assert_eq!(code, ExitCode::from(3), "stderr was: {err}");
     assert!(err.contains(unknown_team), "stderr was: {err}");
 
-    let entries: Vec<_> = std::fs::read_dir(&bundle_parent).unwrap().flatten().collect();
+    let entries: Vec<_> = std::fs::read_dir(&bundle_parent)
+        .unwrap()
+        .map(|res| res.unwrap().path())
+        .collect();
     assert!(
         entries.is_empty(),
         "no bundle directory should be created when target is unknown"
@@ -677,7 +703,7 @@ fn debug_snapshots_all_task_files_and_git_refs_intact() {
     );
 
     // Verify bundle contains snapshots of task files
-    let all_files = collect_files(out_dir.path());
+    let all_files = collect_files(out_dir.path()).unwrap();
     assert!(
         all_files
             .iter()
