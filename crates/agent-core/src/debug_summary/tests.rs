@@ -1,9 +1,11 @@
+use std::path::PathBuf;
 use time::UtcOffset;
 
 use super::*;
+use crate::config::{AbsolutePath, RepoName};
 use crate::ids::{AgentName, BranchName, ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
-use crate::state::{CommitId, Timestamp};
+use crate::state::{CommitId, GateOutcome, GateRecord, GateResult, GateTree, RoundLife, Timestamp};
 use crate::status::{ItemStatus, TaskStatus};
 
 fn ts(text: &str) -> Timestamp {
@@ -13,7 +15,7 @@ fn ts(text: &str) -> Timestamp {
 fn sample_team() -> TeamSummaryFacts {
     TeamSummaryFacts {
         id: "team-20261117-200000-aaaa".parse::<TeamId>().expect("valid team id"),
-        repo: "team-agents".to_owned(),
+        repo: "team-agents".parse::<RepoName>().expect("valid repo name"),
         items: vec![ItemSummaryFacts {
             id: "1.1".parse::<ItemId>().expect("valid item id"),
             title: "Summary renderer".to_owned(),
@@ -24,7 +26,7 @@ fn sample_team() -> TeamSummaryFacts {
             id: "round-20261117-200000-rrrr".parse::<RoundId>().expect("valid round id"),
             item: Some("1.1".parse::<ItemId>().expect("valid item id")),
             opened_at: ts("2026-11-17T19:00:00Z"),
-            status: "open".to_owned(),
+            status: RoundLife::Open,
         }],
     }
 }
@@ -67,11 +69,11 @@ fn sample_git() -> GitWorktreeSummary {
             time: ts("2026-11-17T19:35:00Z"),
             subject: "First commit".to_owned(),
         }],
-        uncommitted_files: vec!["crates/agent/src/test.rs".to_owned()],
+        uncommitted_files: vec![PathBuf::from("crates/agent/src/test.rs")],
         harness_refs: vec!["refs/team-agents/heads/test".to_owned()],
         lead_contains_tip: Some(true),
         newest_untracked: vec![UntrackedFileSummaryFacts {
-            path: "test.log".to_owned(),
+            path: PathBuf::from("test.log"),
             size_bytes: 1024,
             modified: Some(ts("2026-11-17T19:40:00Z")),
         }],
@@ -96,12 +98,16 @@ fn sample_input() -> SummaryInput {
         git: vec![sample_git()],
         gate: vec![TaskGateSummary {
             task_id: "task-20261117-200000-tttt".parse::<TaskId>().expect("valid task id"),
-            record: Some(GateRecordSummaryFacts {
-                commit: "0123456789abcdef0123456789abcdef01234567"
-                    .parse::<CommitId>()
-                    .expect("valid commit id"),
-                clean: true,
-                passed: true,
+            record: Some(GateRecord {
+                tree: GateTree::Clean,
+                result: GateResult {
+                    head: "0123456789abcdef0123456789abcdef01234567"
+                        .parse::<CommitId>()
+                        .expect("valid commit id"),
+                    finished_at: ts("2026-11-17T19:50:00Z"),
+                    outcome: GateOutcome::Passed,
+                    log: "/tmp/gate.log".parse::<AbsolutePath>().expect("valid path"),
+                },
             }),
             recent_output_tails: vec!["Gate passed with zero findings".to_owned()],
         }],
@@ -110,20 +116,20 @@ fn sample_input() -> SummaryInput {
         bus_messages: vec!["[#1] agentbus: team created".to_owned()],
         notifications: vec!["Notification: round active".to_owned()],
         machine: MachineSummary {
-            load_avg: (0.5, 0.4, 0.3),
-            memory_total_bytes: 16_000_000_000,
-            memory_available_bytes: 8_000_000_000,
-            home_fs: FsUsageSummary {
+            load_avg: Some((0.5, 0.4, 0.3)),
+            memory_total_bytes: Some(16_000_000_000),
+            memory_available_bytes: Some(8_000_000_000),
+            home_fs: Some(FsUsageSummary {
                 space_percent: 45,
                 inode_percent: 20,
-            },
-            temp_fs: FsUsageSummary {
+            }),
+            temp_fs: Some(FsUsageSummary {
                 space_percent: 10,
                 inode_percent: 5,
-            },
+            }),
             daemon_descendant_pids: vec![12346, 12347],
-            tasks_dir_bytes: 50_000_000,
-            worktrees_dir_bytes: 120_000_000,
+            tasks_dir_bytes: Some(50_000_000),
+            worktrees_dir_bytes: Some(120_000_000),
         },
         unreadable_parts: vec![],
     }
