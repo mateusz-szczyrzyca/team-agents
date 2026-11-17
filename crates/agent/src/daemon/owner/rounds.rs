@@ -512,12 +512,7 @@ impl Owner {
     }
 
     /// Links repository file paths in Markdown text sent to GitHub.
-    pub(super) async fn link_files(
-        &self,
-        git: &Git,
-        text: &str,
-        commit: &agent_core::state::CommitId,
-    ) -> String {
+    pub(super) async fn link_files(&self, git: &Git, text: &str, commit: &agent_core::state::CommitId) -> String {
         let origin_url = match git.origin_url().await {
             Ok(url) => url,
             Err(error) => {
@@ -573,9 +568,7 @@ impl Owner {
         }
 
         let repo_url = format!("https://github.com/{}/{}", slug.owner(), slug.name());
-        agent_core::files::link_files(text, &repo_url, commit.as_str(), |path| {
-            resolved.contains(path)
-        })
+        agent_core::files::link_files(text, &repo_url, commit.as_str(), |path| resolved.contains(path))
     }
 
     /// Tells the human `notice` rendered with `values`, in the name of the lead; what cannot be made is logged: the

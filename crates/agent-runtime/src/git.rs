@@ -1085,12 +1085,7 @@ impl Git {
             .run(
                 GitOperation::CatFileType,
                 Reach::Local,
-                &[
-                    arg("cat-file"),
-                    arg("-t"),
-                    arg("--end-of-options"),
-                    arg(&spec),
-                ],
+                &[arg("cat-file"), arg("-t"), arg("--end-of-options"), arg(&spec)],
             )
             .await?;
         match captured.exit {
