@@ -447,6 +447,69 @@ impl Owner {
         Ok(client)
     }
 
+    /// Rewrites commit IDs in `text` into markdown links to GitHub commit pages.
+    ///
+    /// If commit resolution or origin URL lookup fails, the failure is logged with [`LogEvent::GitCallFailed`](agent_core::log::LogEvent::GitCallFailed) and `text`
+    /// is returned unchanged.
+    pub(super) async fn link_commits(&self, git: &Git, text: &str) -> String {
+        let origin_url = match git.origin_url().await {
+            Ok(url) => url,
+            Err(error) => {
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::GitCallFailed.as_str(),
+                    error = %error_chain(&error),
+                    "cannot determine origin url for commit links: text is sent unchanged"
+                );
+                return text.to_owned();
+            }
+        };
+        let slug = match RepoSlug::from_remote_url(&origin_url) {
+            Ok(slug) => slug,
+            Err(error) => {
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::GitCallFailed.as_str(),
+                    error = %error_chain(&error),
+                    "cannot determine repository slug for commit links: text is sent unchanged"
+                );
+                return text.to_owned();
+            }
+        };
+
+        let mut candidates = HashSet::new();
+        let scanned = agent_core::commits::link_commits(text, "", |candidate| {
+            candidates.insert(candidate.to_owned());
+            None
+        });
+        drop(scanned);
+        if candidates.is_empty() {
+            return text.to_owned();
+        }
+
+        let mut resolved = HashMap::new();
+        for candidate in &candidates {
+            match git.resolve_commit(candidate).await {
+                Ok(Some(id)) => {
+                    resolved.insert(candidate.as_str(), id);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        event = agent_core::log::LogEvent::GitCallFailed.as_str(),
+                        candidate = %candidate,
+                        error = %error_chain(&error),
+                        "cannot resolve candidate commit: text is sent unchanged"
+                    );
+                    return text.to_owned();
+                }
+            }
+        }
+
+        let repo_url = format!("https://github.com/{}/{}", slug.owner(), slug.name());
+        agent_core::commits::link_commits(text, &repo_url, |candidate| {
+            resolved.get(candidate).map(ToString::to_string)
+        })
+    }
+
     /// Tells the human `notice` rendered with `values`, in the name of the lead; what cannot be made is logged: the
     /// harness goes on.
     fn tell_human(
@@ -555,14 +618,14 @@ mod history_sessions_tests;
 #[path = "rounds/tests/history_stories.rs"]
 mod history_stories_tests;
 #[cfg(test)]
+#[path = "rounds/tests/review_head.rs"]
+mod review_head_tests;
+#[cfg(test)]
 #[path = "rounds/tests/rig.rs"]
 mod rig;
 #[cfg(test)]
 #[path = "rounds/tests/round_records.rs"]
 mod round_records_tests;
-#[cfg(test)]
-#[path = "rounds/tests/review_head.rs"]
-mod review_head_tests;
 #[cfg(test)]
 mod tests;
 

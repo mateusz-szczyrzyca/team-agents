@@ -81,6 +81,20 @@ pub(super) fn report_text(message: &str) -> String {
     lines.join("\n").trim().chars().take(MAX_REPORT_CHARS).collect()
 }
 
+/// The report without its `VERDICT:` line, with leading and trailing empty lines trimmed.
+pub(super) fn report_without_verdict(report: &str) -> String {
+    let lines: Vec<&str> = report
+        .lines()
+        .filter(|line| after_key(line, VERDICT_KEY).is_none())
+        .collect();
+    let start = lines.iter().position(|l| !l.trim().is_empty()).unwrap_or(lines.len());
+    let end = lines
+        .iter()
+        .rposition(|l| !l.trim().is_empty())
+        .map_or(start, |p| p.saturating_add(1));
+    lines.get(start..end).unwrap_or_default().join("\n")
+}
+
 /// Where the review of an investigator is carried out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Slot {
