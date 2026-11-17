@@ -463,6 +463,41 @@ gate = ["true"]
         assert_eq!(choose_reviewers(pool(0), &mut StdRng::seed_from_u64(1)), None);
     }
 
+    /// The `pool` with the reviewers named in `known` waiting in a review task of the team.
+    fn with_known(mut pool: Vec<Reviewer>, known: &[&str]) -> Vec<Reviewer> {
+        for (reviewer, number) in pool.iter_mut().zip(40_u32..) {
+            if known.contains(&reviewer.name.as_str()) {
+                reviewer.slot = Slot::Task(task(number));
+            }
+        }
+        pool
+    }
+
+    #[test]
+    fn the_reviewers_that_already_review_for_the_team_are_drawn_before_new_ones() {
+        for seed in 0..64 {
+            let drawn = choose_reviewers(with_known(pool(4), &["inv-b", "inv-d"]), &mut StdRng::seed_from_u64(seed));
+
+            let drawn: BTreeSet<String> = drawn.unwrap().into_iter().map(|r| r.name.as_str().to_owned()).collect();
+            assert_eq!(drawn, BTreeSet::from(["inv-b".to_owned(), "inv-d".to_owned()]), "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn one_reviewer_that_already_reviews_for_the_team_is_joined_by_a_new_one_drawn_at_random() {
+        let mut others = BTreeSet::new();
+        for seed in 0..64 {
+            let drawn = choose_reviewers(with_known(pool(4), &["inv-c"]), &mut StdRng::seed_from_u64(seed)).unwrap();
+
+            let names: Vec<&str> = drawn.iter().map(|r| r.name.as_str()).collect();
+            assert_eq!(names.len(), 2, "seed {seed}");
+            assert!(names.contains(&"inv-c"), "seed {seed}: {names:?}");
+            others.extend(names.into_iter().filter(|name| *name != "inv-c").map(str::to_owned));
+        }
+
+        assert_eq!(others.len(), 3, "{others:?}");
+    }
+
     #[test]
     fn the_draw_is_a_function_of_the_random_source_and_reaches_every_reviewer() {
         let draw = |seed| choose_reviewers(pool(4), &mut StdRng::seed_from_u64(seed)).unwrap();

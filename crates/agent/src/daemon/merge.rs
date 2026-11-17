@@ -91,6 +91,7 @@ pub(super) fn round_state(progress: &ItemProgress) -> Option<RoundState> {
                     .filter(|review| approved(review))
                     .map(|review| review.reviewer.clone())
                     .collect(),
+                changes: Vec::new(),
             }
         }),
         ItemPhase::Approved { pr, .. } => Some(RoundState::Approved { pr: pr.number }),

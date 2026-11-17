@@ -109,6 +109,7 @@ fn an_item_in_review_with_no_review_asked_waits_for_reviewers_and_has_had_no_fix
             pr: pr(7, &lead_branch()).number,
             passes: 0,
             approvals: vec![],
+            changes: vec![],
         })
     );
 }
@@ -124,6 +125,7 @@ fn the_approvals_of_a_round_are_the_reviewers_that_approved_and_a_pending_review
             pr: pr(7, &lead_branch()).number,
             passes: 0,
             approvals: vec![reviewer("inv-gemini")],
+            changes: vec![],
         })
     );
 }
@@ -131,6 +133,37 @@ fn the_approvals_of_a_round_are_the_reviewers_that_approved_and_a_pending_review
 #[test]
 fn an_item_in_review_that_a_reviewer_sent_back_waits_for_the_human_with_the_passes_it_has_had() {
     let mut team = after_passes(in_review(), 2);
+    submit(&mut team, "1.1", 21, ReviewVerdict::RequestChanges, 400);
+
+    assert_eq!(
+        round_state(team.item(item("1.1")).unwrap()),
+        Some(RoundState::AskingHuman {
+            pr: pr(7, &lead_branch()).number,
+            passes: 2,
+        })
+    );
+}
+
+#[test]
+fn an_item_with_a_request_for_changes_and_a_review_still_pending_is_in_review_and_waits_for_it() {
+    let mut team = after_passes(in_review(), 5);
+    submit(&mut team, "1.1", 21, ReviewVerdict::RequestChanges, 700);
+
+    assert_eq!(
+        round_state(team.item(item("1.1")).unwrap()),
+        Some(RoundState::InReview {
+            pr: pr(7, &lead_branch()).number,
+            passes: 5,
+            approvals: vec![],
+            changes: vec![reviewer("inv-gemini")],
+        })
+    );
+}
+
+#[test]
+fn an_item_whose_reviews_are_all_in_with_a_request_for_changes_waits_for_the_human() {
+    let mut team = after_passes(in_review(), 2);
+    submit(&mut team, "1.1", 20, ReviewVerdict::Approve, 390);
     submit(&mut team, "1.1", 21, ReviewVerdict::RequestChanges, 400);
 
     assert_eq!(
@@ -250,6 +283,37 @@ fn with_no_fix_passes_configured_the_human_is_asked_at_the_first_request_for_cha
     );
 
     assert_eq!(after, Ok(Next::AskHuman));
+}
+
+#[test]
+fn the_first_request_for_changes_waits_for_the_other_review_whatever_passes_are_left() {
+    for passes in [0, 4, 5] {
+        let team = after_passes(in_review(), passes);
+
+        let after = after_verdict(
+            team.item(item("1.1")).unwrap(),
+            &reviewer("inv-codex"),
+            ReviewVerdict::RequestChanges,
+            AUTOPILOT,
+        );
+
+        assert_eq!(after, Ok(Next::Wait), "{passes} passes");
+    }
+}
+
+#[test]
+fn an_approval_that_comes_after_a_request_for_changes_starts_the_fix_pass() {
+    let mut team = after_passes(in_review(), 1);
+    submit(&mut team, "1.1", 20, ReviewVerdict::RequestChanges, 300);
+
+    let after = after_verdict(
+        team.item(item("1.1")).unwrap(),
+        &reviewer("inv-gemini"),
+        ReviewVerdict::Approve,
+        AUTOPILOT,
+    );
+
+    assert_eq!(after, Ok(Next::FixPass { pass: pass(2) }));
 }
 
 #[test]
@@ -399,6 +463,14 @@ fn a_pull_request_whose_reviews_are_pending_or_approving_or_being_fixed_waits_fo
     submit(&mut fixing, "1.1", 20, ReviewVerdict::RequestChanges, 150);
     fix(&mut fixing, "1.1", "inv-opus", &lead_branch(), 7, &lead_branch());
     assert_eq!(exhausted(&fixing), []);
+}
+
+#[test]
+fn a_pull_request_with_a_request_for_changes_and_a_review_still_pending_does_not_wait_for_the_human() {
+    let mut team = after_passes(in_review(), 2);
+    submit(&mut team, "1.1", 21, ReviewVerdict::RequestChanges, 400);
+
+    assert_eq!(exhausted(&team), []);
 }
 
 // ---- what the human said --------------------------------------------------------------------------------------

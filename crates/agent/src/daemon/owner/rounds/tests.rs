@@ -755,6 +755,54 @@ async fn the_lead_is_given_the_fix_pass_with_the_findings_of_the_reviewers() {
     assert!(prompt.contains("agent gate"), "{prompt}");
 }
 
+// Rule: a review pass is decided when both reviews are in: the verdicts may differ, and the lead gets every report at
+// once. A reviewer that is slower than one that asked for changes is waited for, and reviews the fix in its turn.
+#[tokio::test]
+async fn a_request_for_changes_waits_for_the_other_review_and_the_lead_is_given_both_reports() {
+    let slow = "late:VERDICT: APPROVE\\nSUMMARY: looks fine to me,done:VERDICT: APPROVE\\nSUMMARY: fine";
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", CHANGES_ONCE),
+            investigator("inv-r2", slow),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let prompt = rig.prompt(&tasks[0], 2).await;
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    assert!(prompt.contains("fix pass 1 of 5"), "{prompt}");
+    assert!(
+        prompt.contains("1. [TDD-2] src/lib.rs:7 — the case is untested"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("inv-r2"), "{prompt}");
+    assert!(prompt.contains("SUMMARY: looks fine to me"), "{prompt}");
+    let found = state.team(&team).unwrap();
+    let progress = found.item("1.1".parse().unwrap()).unwrap();
+    // One fix pass, asked for when both reviews were in: none of its reviews was left pending.
+    assert_eq!(progress.fix_passes().len(), 1);
+    let pass = &progress.fix_passes()[0];
+    assert_eq!(pass.requested_by.len(), 2, "{pass:?}");
+    assert!(
+        pass.requested_by
+            .iter()
+            .all(|review| matches!(review.outcome, ReviewOutcome::Submitted { .. })),
+        "{pass:?}"
+    );
+    // The same two investigators reviewed the fix: nobody was drawn in their place.
+    assert_eq!(found.reviewers().len(), 2, "{:?}", found.reviewers());
+    assert_eq!(rig.github.reviews(1).len(), 4);
+}
+
 #[tokio::test]
 async fn a_fixed_branch_updates_the_pull_request_and_is_reviewed_again_until_it_is_merged() {
     let mut rig = fixing_rig(5).await;

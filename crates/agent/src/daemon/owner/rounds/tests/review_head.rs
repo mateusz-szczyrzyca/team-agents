@@ -150,7 +150,7 @@ async fn review_head_and_commit_links_in_reviews_pr_description_and_update_comme
         .unwrap();
     let body2 = r2_pass1["body"].as_str().unwrap();
     assert!(body2.starts_with(
-        "### Review by `inv-r2` (claude)\n## ✅✅ $\\color{#1a7f37}{\\textbf{APPROVED}}$\nReview pass 1 of commit [`"
+        "### Review by `inv-r2` (claude)\n## ✅ $\\color{#1a7f37}{\\textbf{APPROVED}}$\nReview pass 1 of commit [`"
     ));
     assert!(body2.contains("\n---\n\nSUMMARY: fine"));
     assert!(!body2.contains("VERDICT: APPROVE"));
@@ -164,7 +164,7 @@ async fn review_head_and_commit_links_in_reviews_pr_description_and_update_comme
         .unwrap();
     let body3 = r1_pass2["body"].as_str().unwrap();
     assert!(body3.starts_with(
-        "### Review by `inv-r1` (claude)\n## ✅✅ $\\color{#1a7f37}{\\textbf{APPROVED}}$\nReview pass 2 of commit [`"
+        "### Review by `inv-r1` (claude)\n## ✅ $\\color{#1a7f37}{\\textbf{APPROVED}}$\nReview pass 2 of commit [`"
     ));
     assert!(body3.contains(&format!("https://github.com/{SLUG}/commit/{final_head}")));
     assert!(body3.contains("\n---\n\nSUMMARY: fixed in"));

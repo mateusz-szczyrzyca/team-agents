@@ -88,6 +88,9 @@ pub enum RoundState {
         passes: u32,
         /// The investigators that approved, in the order their reviews came.
         approvals: Vec<InvestigatorName>,
+        /// The investigators that asked for changes in this review pass, in the order their reviews came. The pass is
+        /// decided only when every review is in: the team gets all the findings at once.
+        changes: Vec<InvestigatorName>,
     },
     /// Both reviews approve; the pull request waits to be merged by the harness, or with `--no-merge` by the human.
     Approved {
@@ -335,9 +338,14 @@ impl RoundState {
                 | RoundEvent::Merged { .. }
                 | RoundEvent::HumanAnswered => Err(self.refuse(event)),
             },
-            Self::InReview { pr, passes, approvals } => match event {
+            Self::InReview {
+                pr,
+                passes,
+                approvals,
+                changes,
+            } => match event {
                 RoundEvent::ReviewSubmitted { reviewer, verdict } => {
-                    review(*pr, *passes, approvals, reviewer, *verdict, policy)
+                    review(*pr, *passes, approvals, changes, reviewer, *verdict, policy)
                 }
                 RoundEvent::MemberDone
                 | RoundEvent::GateGreen { .. }
@@ -425,16 +433,19 @@ fn publish(stage: Stage, gated: &CommitId, pr: PrNumber, published: &CommitId) -
             pr,
             passes,
             approvals: Vec::new(),
+            changes: Vec::new(),
         },
         RoundAction::RequestReviews,
     ))
 }
 
-/// A reviewer's verdict in a round that has had `passes` fix passes and the approvals of `approvals` so far.
+/// A reviewer's verdict in a round that has had `passes` fix passes, the approvals of `approvals` and the requests for
+/// changes of `changes` so far in this review pass.
 fn review(
     pr: PrNumber,
     passes: u32,
     approvals: &[InvestigatorName],
+    changes: &[InvestigatorName],
     reviewer: &InvestigatorName,
     verdict: ReviewVerdict,
     policy: RoundPolicy,
@@ -452,7 +463,12 @@ fn review(
             approvals.push(reviewer.clone());
             if approvals.len() < REVIEWS_REQUIRED {
                 return Ok(Step::to(
-                    RoundState::InReview { pr, passes, approvals },
+                    RoundState::InReview {
+                        pr,
+                        passes,
+                        approvals,
+                        changes: changes.to_vec(),
+                    },
                     RoundAction::AwaitReviews,
                 ));
             }
@@ -631,10 +647,16 @@ mod tests {
     }
 
     fn in_review(passes: u32, approvals: &[&str]) -> RoundState {
+        in_review_with(passes, approvals, &[])
+    }
+
+    /// A round in review with the approvals of `approvals` and the requests for changes of `changes` so far.
+    fn in_review_with(passes: u32, approvals: &[&str], changes: &[&str]) -> RoundState {
         RoundState::InReview {
             pr: pr(7),
             passes,
             approvals: approvals.iter().map(|name| reviewer(name)).collect(),
+            changes: changes.iter().map(|name| reviewer(name)).collect(),
         }
     }
 
@@ -876,12 +898,12 @@ mod tests {
         );
     }
 
-    // Rule: "changes requested" goes back to the team for a fix pass, counted from 1.
+    // Rule: "changes requested" goes back to the team for a fix pass, counted from 1, once both reviews are in.
     #[test]
     fn changes_requested_start_a_fix_pass() {
         assert_eq!(
             go(
-                &in_review(0, &[]),
+                &in_review_with(0, &[], &["inv-codex"]),
                 &review("inv-opus", ReviewVerdict::RequestChanges),
                 AUTOPILOT
             ),
@@ -909,12 +931,74 @@ mod tests {
         );
     }
 
+    // Rule: a review pass is decided when both reviews are in. The first request for changes waits for the other
+    // review: the verdicts may differ, and the team gets every finding at once.
+    #[test]
+    fn the_first_request_for_changes_waits_for_the_second_review() {
+        for policy in [AUTOPILOT, NO_MERGE, ASK_AT_ONCE] {
+            assert_eq!(
+                go(
+                    &in_review(0, &[]),
+                    &review("inv-opus", ReviewVerdict::RequestChanges),
+                    policy
+                ),
+                Ok(step(in_review_with(0, &[], &["inv-opus"]), RoundAction::AwaitReviews))
+            );
+        }
+    }
+
+    // Rule: an approval that comes after a request for changes decides the pass for the fix pass: one request is
+    // enough, whichever review came first.
+    #[test]
+    fn an_approval_after_a_request_for_changes_starts_the_fix_pass() {
+        assert_eq!(
+            go(
+                &in_review_with(1, &[], &["inv-opus"]),
+                &review("inv-codex", ReviewVerdict::Approve),
+                AUTOPILOT
+            ),
+            Ok(step(
+                RoundState::MemberWork { stage: fixing(2) },
+                RoundAction::StartFixPass { pass: pass(2) }
+            ))
+        );
+    }
+
+    // Rule: when the fix passes are used up the human is asked, and only when both reviews are in.
+    #[test]
+    fn an_approval_after_a_request_for_changes_asks_the_human_when_the_fix_passes_are_used_up() {
+        assert_eq!(
+            go(
+                &in_review_with(5, &[], &["inv-opus"]),
+                &review("inv-codex", ReviewVerdict::Approve),
+                AUTOPILOT
+            ),
+            Ok(step(
+                RoundState::AskingHuman { pr: pr(7), passes: 5 },
+                RoundAction::AskHuman
+            ))
+        );
+    }
+
+    // Rule: a reviewer has one verdict in a review pass, whatever it was.
+    #[test]
+    fn a_reviewer_that_asked_for_changes_cannot_report_again_in_the_same_pass() {
+        for verdict in [ReviewVerdict::Approve, ReviewVerdict::RequestChanges] {
+            assert_eq!(
+                go(&in_review_with(0, &[], &["inv-opus"]), &review("inv-opus", verdict), AUTOPILOT),
+                Err(RoundError::DuplicateReview {
+                    reviewer: reviewer("inv-opus")
+                })
+            );
+        }
+    }
+
     // Rule: at most the configured number of fix passes: the last one is still started.
     #[test]
     fn the_last_configured_fix_pass_is_started() {
         assert_eq!(
             go(
-                &in_review(4, &[]),
+                &in_review_with(4, &[], &["inv-codex"]),
                 &review("inv-opus", ReviewVerdict::RequestChanges),
                 AUTOPILOT
             ),
@@ -930,7 +1014,7 @@ mod tests {
     fn changes_requested_after_the_last_fix_pass_ask_the_human() {
         assert_eq!(
             go(
-                &in_review(5, &[]),
+                &in_review_with(5, &[], &["inv-codex"]),
                 &review("inv-opus", ReviewVerdict::RequestChanges),
                 AUTOPILOT
             ),
@@ -946,7 +1030,7 @@ mod tests {
     fn with_no_fix_passes_the_human_is_asked_at_once() {
         assert_eq!(
             go(
-                &in_review(0, &[]),
+                &in_review_with(0, &[], &["inv-codex"]),
                 &review("inv-opus", ReviewVerdict::RequestChanges),
                 ASK_AT_ONCE
             ),
