@@ -1,0 +1,285 @@
+use time::UtcOffset;
+
+use super::*;
+use crate::ids::{AgentName, BranchName, ItemId, RoundId, TaskId, TeamId};
+use crate::kinds::Role;
+use crate::state::{CommitId, Timestamp};
+use crate::status::{ItemStatus, TaskStatus};
+
+fn ts(text: &str) -> Timestamp {
+    text.parse().expect("valid test timestamp")
+}
+
+fn sample_team() -> TeamSummaryFacts {
+    TeamSummaryFacts {
+        id: "team-20261117-200000-aaaa".parse::<TeamId>().expect("valid team id"),
+        repo: "team-agents".to_owned(),
+        items: vec![ItemSummaryFacts {
+            id: "1.1".parse::<ItemId>().expect("valid item id"),
+            title: "Summary renderer".to_owned(),
+            phase: ItemStatus::InProgress,
+            assignee: Some("gemini-1".parse::<AgentName>().expect("valid agent name")),
+        }],
+        rounds: vec![RoundSummaryFacts {
+            id: "round-20261117-200000-rrrr".parse::<RoundId>().expect("valid round id"),
+            item: Some("1.1".parse::<ItemId>().expect("valid item id")),
+            opened_at: ts("2026-11-17T19:00:00Z"),
+            status: "open".to_owned(),
+        }],
+    }
+}
+
+fn sample_task() -> TaskSummaryFacts {
+    TaskSummaryFacts {
+        id: "task-20261117-200000-tttt".parse::<TaskId>().expect("valid task id"),
+        agent: "gemini-1".parse::<AgentName>().expect("valid agent name"),
+        role: Role::Member,
+        status: TaskStatus::Running,
+        run_count: 2,
+        last_run_started: Some(ts("2026-11-17T19:30:00Z")),
+        last_run_ended: None,
+        last_activity: Some(ts("2026-11-17T19:45:00Z")),
+        last_run_end_detail: Some("Run 2 running".to_owned()),
+        questions: Some(QuestionsSummaryFacts {
+            has_unanswered: false,
+            content: "All answered".to_owned(),
+        }),
+    }
+}
+
+fn sample_git() -> GitWorktreeSummary {
+    GitWorktreeSummary {
+        task_id: "task-20261117-200000-tttt".parse::<TaskId>().expect("valid task id"),
+        branch: "feature/test".parse::<BranchName>().expect("valid branch name"),
+        tip: "0123456789abcdef0123456789abcdef01234567"
+            .parse::<CommitId>()
+            .expect("valid commit id"),
+        origin_tip: Some(
+            "0123456789abcdef0123456789abcdef01234567"
+                .parse::<CommitId>()
+                .expect("valid commit id"),
+        ),
+        commits_over_base: vec![GitCommitSummaryFacts {
+            id: "0123456789abcdef0123456789abcdef01234567"
+                .parse::<CommitId>()
+                .expect("valid commit id"),
+            author: "Dev <dev@example.com>".to_owned(),
+            time: ts("2026-11-17T19:35:00Z"),
+            subject: "First commit".to_owned(),
+        }],
+        uncommitted_files: vec!["crates/agent/src/test.rs".to_owned()],
+        harness_refs: vec!["refs/team-agents/heads/test".to_owned()],
+        lead_contains_tip: Some(true),
+        newest_untracked: vec![UntrackedFileSummaryFacts {
+            path: "test.log".to_owned(),
+            size_bytes: 1024,
+            modified: Some(ts("2026-11-17T19:40:00Z")),
+        }],
+    }
+}
+
+fn sample_input() -> SummaryInput {
+    SummaryInput {
+        collected_at: ts("2026-11-17T20:00:00Z"),
+        anomalies: vec![],
+        daemon: Some(DaemonSummary {
+            pid: 12345,
+            started_at: Some(ts("2026-11-17T18:00:00Z")),
+            cmdline: vec!["agent".to_owned(), "daemon".to_owned()],
+            env_var_names: vec!["PATH".to_owned(), "HOME".to_owned()],
+            exe_path: "/usr/local/bin/agent".to_owned(),
+            disk_newer_than_process: false,
+            version: "0.1.0".to_owned(),
+        }),
+        team: sample_team(),
+        tasks: vec![sample_task()],
+        git: vec![sample_git()],
+        gate: vec![TaskGateSummary {
+            task_id: "task-20261117-200000-tttt".parse::<TaskId>().expect("valid task id"),
+            record: Some(GateRecordSummaryFacts {
+                commit: "0123456789abcdef0123456789abcdef01234567"
+                    .parse::<CommitId>()
+                    .expect("valid commit id"),
+                clean: true,
+                passed: true,
+            }),
+            recent_output_tails: vec!["Gate passed with zero findings".to_owned()],
+        }],
+        history_tail: Some("Round opened".to_owned()),
+        daemon_log_lines: Some(vec!["2026-11-17 19:00:00 [info] round started".to_owned()]),
+        bus_messages: vec!["[#1] agentbus: team created".to_owned()],
+        notifications: vec!["Notification: round active".to_owned()],
+        machine: MachineSummary {
+            load_avg: (0.5, 0.4, 0.3),
+            memory_total_bytes: 16_000_000_000,
+            memory_available_bytes: 8_000_000_000,
+            home_fs: FsUsageSummary {
+                space_percent: 45,
+                inode_percent: 20,
+            },
+            temp_fs: FsUsageSummary {
+                space_percent: 10,
+                inode_percent: 5,
+            },
+            daemon_descendant_pids: vec![12346, 12347],
+            tasks_dir_bytes: 50_000_000,
+            worktrees_dir_bytes: 120_000_000,
+        },
+        unreadable_parts: vec![],
+    }
+}
+
+#[test]
+fn sections_in_exact_order_and_present() {
+    let input = sample_input();
+    let now = ts("2026-11-17T20:00:00Z");
+    let offset = UtcOffset::from_hms(1, 0, 0).expect("valid offset");
+
+    let summary = render_summary(&input, now, offset);
+
+    let mut last_idx = 0;
+    for section in SummarySection::ALL {
+        let heading = section.heading();
+        let remaining = summary.get(last_idx..).expect("valid char boundary");
+        let found = remaining.find(heading).unwrap_or_else(|| {
+            panic!("missing or out-of-order section heading: {heading}");
+        });
+        last_idx += found + heading.len();
+    }
+}
+
+#[test]
+fn anomalies_empty_shows_none_of_the_known_ones() {
+    let mut input = sample_input();
+    input.anomalies.clear();
+    let now = ts("2026-11-17T20:00:00Z");
+    let offset = UtcOffset::UTC;
+
+    let summary = render_summary(&input, now, offset);
+
+    assert!(summary.contains("none of the known ones"));
+}
+
+#[test]
+fn anomalies_with_entries_renders_messages_and_commands() {
+    let mut input = sample_input();
+    input.anomalies = vec![
+        SummaryAnomaly {
+            message: "a task is failed".to_owned(),
+            command: Some("agent retry task-20261117-200000-tttt".to_owned()),
+        },
+        SummaryAnomaly {
+            message: "filesystem is nearly full".to_owned(),
+            command: None,
+        },
+    ];
+    let now = ts("2026-11-17T20:00:00Z");
+    let offset = UtcOffset::UTC;
+
+    let summary = render_summary(&input, now, offset);
+
+    assert!(!summary.contains("none of the known ones"));
+    assert!(summary.contains("a task is failed"));
+    assert!(summary.contains("agent retry task-20261117-200000-tttt"));
+    assert!(summary.contains("filesystem is nearly full"));
+}
+
+#[test]
+fn task_table_computes_minutes_since_activity_and_saturates_future() {
+    let mut input = sample_input();
+    // Task 1: active 15 minutes before now (19:45 vs 20:00)
+    input.tasks.first_mut().expect("first task").last_activity = Some(ts("2026-11-17T19:45:00Z"));
+
+    // Task 2: active 5 minutes in the future (20:05 vs 20:00) -> should saturate at 0
+    let mut task2 = input.tasks.first().expect("first task").clone();
+    task2.id = "task-20261117-200000-2222".parse().expect("valid task id");
+    task2.last_activity = Some(ts("2026-11-17T20:05:00Z"));
+    input.tasks.push(task2);
+
+    let now = ts("2026-11-17T20:00:00Z");
+    let offset = UtcOffset::UTC;
+
+    let summary = render_summary(&input, now, offset);
+
+    assert!(summary.contains("15m") || summary.contains("15 min") || summary.contains("15"));
+    assert!(summary.contains("0m") || summary.contains("0 min") || summary.contains(" 0 "));
+}
+
+#[test]
+fn timestamps_formatted_in_utc_and_local_offset() {
+    let input = sample_input();
+    let now = ts("2026-11-17T20:00:00Z");
+    // Offset +02:00
+    let offset_plus = UtcOffset::from_hms(2, 0, 0).expect("valid offset");
+    let summary_plus = render_summary(&input, now, offset_plus);
+
+    assert!(summary_plus.contains("20:00:00") && summary_plus.contains("22:00:00"));
+
+    // Offset -05:00
+    let offset_minus = UtcOffset::from_hms(-5, 0, 0).expect("valid offset");
+    let summary_minus = render_summary(&input, now, offset_minus);
+
+    assert!(summary_minus.contains("20:00:00") && summary_minus.contains("15:00:00"));
+}
+
+#[test]
+fn daemon_unreachable_renders_daemon_does_not_answer() {
+    let mut input = sample_input();
+    input.daemon = None;
+    let now = ts("2026-11-17T20:00:00Z");
+    let offset = UtcOffset::UTC;
+
+    let summary = render_summary(&input, now, offset);
+
+    assert!(
+        summary.to_lowercase().contains("does not answer")
+            || summary.to_lowercase().contains("not responding")
+            || summary.to_lowercase().contains("unreachable")
+    );
+}
+
+#[test]
+fn large_content_truncated_under_100k_bytes_keeps_tail_and_preserves_headings() {
+    let mut input = sample_input();
+    // Add 120KB of daemon log content
+    let huge_chunk = "Log line entry with multibyte unicode characters 🦀 and details\n".repeat(2000);
+    input.daemon_log_lines = Some(vec![huge_chunk]);
+
+    let now = ts("2026-11-17T20:00:00Z");
+    let offset = UtcOffset::UTC;
+
+    let summary = render_summary(&input, now, offset);
+
+    assert!(
+        summary.len() < MAX_SUMMARY_BYTES,
+        "summary len {} must be < {}",
+        summary.len(),
+        MAX_SUMMARY_BYTES
+    );
+    assert!(summary.contains(CUT_MARKER.trim()), "summary must contain cut marker");
+
+    // All section headings must still be preserved
+    for section in SummarySection::ALL {
+        assert!(
+            summary.contains(section.heading()),
+            "heading {} must be preserved after truncation",
+            section.heading()
+        );
+    }
+}
+
+#[test]
+fn unreadable_parts_named_in_summary() {
+    let mut input = sample_input();
+    input.unreadable_parts = vec![UnreadablePartSummary {
+        name: "daemon.log".to_owned(),
+        reason: "permission denied".to_owned(),
+    }];
+    let now = ts("2026-11-17T20:00:00Z");
+    let offset = UtcOffset::UTC;
+
+    let summary = render_summary(&input, now, offset);
+
+    assert!(summary.contains("daemon.log"));
+    assert!(summary.contains("permission denied"));
+}
