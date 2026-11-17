@@ -581,3 +581,17 @@ fn description_refresh_unlinks_only_generated_harness_lines() {
         "See `src/[x].rs:7`.\nAn existing [guide](https://example.com/guide).\nCustom [src/a.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/a.rs).\n"
     );
 }
+
+#[test]
+fn description_refresh_matches_harness_lines_containing_commit_links() {
+    let harness = "Compare abcdef0 in src/lib.rs:7.\nCompare `abcdef0` in `src/lib.rs:8`.\n";
+    let commit = "abcdef0123456789abcdef0123456789abcdef0123";
+    let linked = format!(
+        "Compare [`abcdef0`](https://github.com/octo/example/commit/{commit}) in [src/lib.rs:7](https://github.com/octo/example/blob/{commit}/src/lib.rs#L7).\nCompare [`abcdef0`](https://github.com/octo/example/commit/{commit}) in [`src/lib.rs:8`](https://github.com/octo/example/blob/{commit}/src/lib.rs#L8).\n"
+    );
+    let expected = format!(
+        "Compare [`abcdef0`](https://github.com/octo/example/commit/{commit}) in src/lib.rs:7.\nCompare [`abcdef0`](https://github.com/octo/example/commit/{commit}) in `src/lib.rs:8`.\n"
+    );
+
+    assert_eq!(unlinked_harness_files(&linked, harness), expected);
+}
