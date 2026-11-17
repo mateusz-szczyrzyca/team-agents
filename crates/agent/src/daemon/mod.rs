@@ -164,24 +164,24 @@ pub(crate) enum ExecutableError {
     /// The executable path cannot be canonicalized.
     #[error("cannot canonicalize the daemon executable path {path:?}")]
     Canonicalize {
-        /// The path.
+        /// The executable path returned by `current_exe` before canonicalization.
         path: PathBuf,
-        /// The source error.
+        /// The I/O error encountered while canonicalizing.
         #[source]
         source: std::io::Error,
     },
     /// The executable path has no parent directory.
     #[error("the daemon executable path {path:?} has no parent directory")]
     NoParent {
-        /// The path.
+        /// The canonicalized executable path without a parent directory.
         path: PathBuf,
     },
     /// The directory path is not a valid absolute path.
     #[error("the daemon executable directory {path:?} is not valid")]
     InvalidPath {
-        /// The directory path.
+        /// The parent directory path of the canonical executable.
         path: PathBuf,
-        /// The rule violation, if any.
+        /// The rule violation if the path is not valid UTF-8 or not an absolute path.
         source: Option<agent_core::config::InvalidValue>,
     },
 }
@@ -291,13 +291,23 @@ pub(crate) async fn run_with_rng(
 
 /// The prompt catalogs, rules, and pull requests of the daemon.
 struct DaemonTexts {
+    /// The harness prompts for run instructions and lifecycle.
     texts: Arc<HarnessPrompts>,
+    /// The team prompts for lead and member coordination.
     team_texts: Arc<TeamPrompts>,
+    /// The question prompts for human interactions.
     question_texts: Arc<QuestionsPrompts>,
+    /// The pull request review and autopilot prompts, if enabled.
     pulls: Option<Pulls>,
+    /// The prompt loader for developer and reviewer rules.
     rules: Arc<PromptLoader>,
 }
 
+/// Loads the prompt catalogs, rules, and pull request reviewer prompts for the daemon.
+///
+/// # Errors
+/// Returns [`DaemonError::Prompts`] if loading prompt catalogs or rules fails.
+/// Returns [`DaemonError::Pulls`] if initializing pull request prompts fails.
 async fn load_daemon_texts(setup: &DaemonSetup, settings: &Settings) -> Result<DaemonTexts, DaemonError> {
     let language = settings.config.language().clone();
     let texts = Arc::new(HarnessPrompts::load(&setup.prompts_dir, &language).await?);

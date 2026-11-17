@@ -175,15 +175,23 @@ async fn argument_prompt(parts: &EngineParts, job: &RunJob, run_dir: &Path) -> R
     Ok((prompt, true))
 }
 
-/// The `PATH` of the agents: the daemon executable directory, then the directories of `[binaries] agent_path`, in order.
-fn agent_path(parts: &EngineParts) -> Result<String, RunError> {
-    let mut directories = Vec::with_capacity(parts.config.binaries().agent_path.len() + 1);
-    directories.push(parts.agent_binary_dir.as_path());
-    for path in &parts.config.binaries().agent_path {
-        if path != &parts.agent_binary_dir {
+/// The directories of the `PATH` the agents run with: the daemon executable directory first, then the configured
+/// `agent_path` directories without duplicating the daemon directory.
+#[must_use]
+pub fn agent_path_directories<'a>(agent_binary_dir: &'a Path, agent_path: &'a [AbsolutePath]) -> Vec<&'a Path> {
+    let mut directories = Vec::with_capacity(agent_path.len() + 1);
+    directories.push(agent_binary_dir);
+    for path in agent_path {
+        if path.as_path() != agent_binary_dir {
             directories.push(path.as_path());
         }
     }
+    directories
+}
+
+/// The `PATH` of the agents: the daemon executable directory, then the directories of `[binaries] agent_path`, in order.
+fn agent_path(parts: &EngineParts) -> Result<String, RunError> {
+    let directories = agent_path_directories(parts.agent_binary_dir.as_path(), &parts.config.binaries().agent_path);
     let joined = std::env::join_paths(directories).map_err(|source| RunError::AgentPath { source })?;
     joined
         .into_string()
