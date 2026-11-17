@@ -24,23 +24,28 @@ enum Cleanup {
 }
 
 impl Owner {
-    /// Releases completed workspaces only after every item has merged and the next round cannot need them.
+    /// Releases completed workspaces only after every item is done, at least one merged, and no round is open.
     /// Cleanup is a side effect: failure is logged and never reverses a durable merge or prevents team closure.
     pub(in crate::daemon::owner) async fn cleanup_merged_worktrees(&self, team_id: &TeamId) {
         let Some(team) = self.parts.state.team(team_id) else {
             return;
         };
-        if team.items().is_empty()
-            || team.open_rounds().next().is_some()
-            || !team.items().iter().all(|item| {
-                matches!(
-                    item.phase(),
-                    ItemPhase::Done {
-                        completion: Completion::Merged { .. }
-                    }
-                )
-            })
-        {
+        if team.open_rounds().next().is_some() {
+            return;
+        }
+        // The team ended by a merge: every item is done, and at least one by its pull request; the others the list
+        // ticked before the team started.
+        let mut merged = false;
+        for item in team.items() {
+            let ItemPhase::Done { completion } = item.phase() else {
+                return;
+            };
+            match completion {
+                Completion::Merged { .. } => merged = true,
+                Completion::Listed => {}
+            }
+        }
+        if !merged {
             return;
         }
         let members = team
