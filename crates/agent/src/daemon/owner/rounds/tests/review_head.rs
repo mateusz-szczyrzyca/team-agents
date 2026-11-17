@@ -111,7 +111,7 @@ async fn tree_blobs_is_listed_once_for_many_paths() {
     let commit: CommitId = "abcdef0123456789abcdef0123456789abcdef01".parse().unwrap();
     let mut many_paths = String::new();
     for i in 1..=100 {
-        let _ = write!(many_paths, "file{i}.txt:1 ");
+        write!(many_paths, "file{i}.txt:1 ").unwrap();
     }
 
     drop(owner.link_commits(&git, &commit, &many_paths).await);
@@ -325,8 +325,8 @@ Build the thing.
     let pr_body = &pulls[0].body;
 
     let expected_readme_link =
-        format!("[README.md:10-20](https://github.com/{SLUG}/blob/{final_head}/README.md#L10-L20)");
-    let expected_work_link = format!("[work-1.txt](https://github.com/{SLUG}/blob/{final_head}/work-1.txt)");
+        format!("[README.md:10-20](https://github.com/{SLUG}/blob/{initial_head}/README.md#L10-L20)");
+    let expected_work_link = format!("[work-1.txt](https://github.com/{SLUG}/blob/{initial_head}/work-1.txt)");
     assert!(
         pr_body.contains(&expected_readme_link),
         "PR body missing README file link: {pr_body}"
