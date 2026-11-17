@@ -293,7 +293,7 @@ fn reports_active_history_wal_without_ignoring_committed_records_or_changing_it(
         crate::history::HistoryDb::open(&home.history_file(), agent_core::history::MaxTextBytes::default()).unwrap();
     let wal = home.root().join("history.db-wal");
     let before = std::fs::read(&wal).unwrap();
-    assert!(!before.is_empty());
+    assert_ne!(before, Vec::<u8>::new());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
