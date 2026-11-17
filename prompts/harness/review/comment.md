@@ -1,3 +1,7 @@
-Review by `{{reviewer}}` of `{{head}}`, posted by the harness from the reviewer's report:
+### Review by `{{reviewer}}` {{client}}
+{{verdict}}
+Review pass {{pass}} of commit `{{commit}}`
+
+---
 
 {{report}}
