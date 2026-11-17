@@ -230,6 +230,9 @@ async fn a_lead_whose_gate_never_passes_is_sent_back_three_times_and_then_the_hu
     looked_again(&rig).await;
     rig.stop().await.unwrap();
 
+    assert!(notice.starts_with("📕 example\n"), "{notice}");
+    assert!(notice.contains("\nStatus: 📕 not published\n"), "{notice}");
+    assert!(notice.contains("Note: The pull request of "), "{notice}");
     assert!(
         notice.contains("the gate has not passed at the tip of the branch"),
         "{notice}"
@@ -289,6 +292,12 @@ async fn a_team_that_sleeps_with_its_item_unfinished_has_its_lead_woken_twice_an
     );
     assert!(second.contains("with: STATUS: SLEEPING"), "{second}");
     assert!(third.contains("woken for it 2 of 2"), "{third}");
+    assert!(notice.starts_with("💤 example\n"), "{notice}");
+    assert!(notice.contains("\nStatus: 💤 team asleep\n"), "{notice}");
+    assert!(
+        notice.contains(&format!("Note: Team {team} sleeps with item 1.1 unfinished")),
+        "{notice}"
+    );
     assert!(notice.contains(&format!("agent say {} ", tasks[0])), "{notice}");
     assert!(notice.contains(&format!("agent stop {team}")), "{notice}");
     // The first run and the two it was woken for; the human is told once.
@@ -880,6 +889,8 @@ async fn a_lead_that_ends_without_the_question_leaves_the_human_told_directly_on
     looked_again(&rig).await;
     rig.stop().await.unwrap();
 
+    assert!(notice.starts_with("❓ example\n"), "{notice}");
+    assert!(notice.contains("\nStatus: ❓ needs your decision\n"), "{notice}");
     assert!(notice.contains("pull request #1"), "{notice}");
     let told: Vec<_> = rig
         .notifications()
@@ -1047,12 +1058,19 @@ async fn a_pull_request_the_human_closed_without_merging_is_told_once_and_the_it
     rig.start().await;
 
     rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    rig.notification_with("could not be merged").await;
+    let merge_failed = rig.notification_with("could not be merged").await;
+    assert!(merge_failed.starts_with("❌ example\n"), "{merge_failed}");
+    assert!(merge_failed.contains("\nStatus: ❌ not merged\n"), "{merge_failed}");
+    assert!(merge_failed.contains("Note: Pull request 1 of "), "{merge_failed}");
+
     rig.github.closed_by_a_human(1);
     let notice = rig.notification_with("was closed").await;
     looked_again(&rig).await;
     rig.stop().await.unwrap();
 
+    assert!(notice.starts_with("🚫 example\n"), "{notice}");
+    assert!(notice.contains("\nStatus: 🚫 pull request closed\n"), "{notice}");
+    assert!(notice.contains("Note: Pull request 1 of "), "{notice}");
     assert!(
         notice.contains("pull request #1") || notice.contains("Pull request 1"),
         "{notice}"

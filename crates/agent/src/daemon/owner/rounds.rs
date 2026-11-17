@@ -605,3 +605,7 @@ mod turn_limit_restart_tests;
 #[cfg(test)]
 #[path = "rounds/tests/turn_limit_round.rs"]
 mod turn_limit_round_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/notice_mapping.rs"]
+mod notice_mapping_tests;

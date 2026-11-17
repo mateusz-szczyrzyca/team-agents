@@ -504,6 +504,14 @@ async fn a_lead_that_does_not_put_the_question_is_woken_twice_and_then_the_human
     looked_again(&rig).await;
     rig.stop().await.unwrap();
 
+    assert!(notice.starts_with("❓ example\n"), "{notice}");
+    assert!(notice.contains("\nStatus: ❓ needs your decision\n"), "{notice}");
+    assert!(
+        notice.contains(&format!(
+            "Note: The checks of team {team} wait for you, but no question was put to you"
+        )),
+        "{notice}"
+    );
     assert!(notice.contains(tasks[0].as_str()), "{notice}");
     assert!(notice.contains(team.as_str()), "{notice}");
     // The run that edited the test, and the two that were asked to put the question and did not, and the one after them.
