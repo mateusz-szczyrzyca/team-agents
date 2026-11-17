@@ -208,3 +208,80 @@ fn summary_lists_commits_above_the_configured_base() {
     assert!(summary.contains("Add café diagnostics"), "{summary}");
     assert!(summary.contains("Example"), "{summary}");
 }
+
+#[test]
+fn preserves_home_history_while_collecting_whole_prompts_steps_and_final_messages() {
+    use crate::history::{HistoryDb, Store};
+    use agent_core::history::{AgentIdentity, MaxTextBytes, Record, RunEndRecord, RunStart, RunWhy, Step};
+    use agent_core::kinds::{CliKind, Role, Tier};
+    let (_dir, home, args) = fixture();
+    let run: agent_core::ids::RunId = "run-20261117-120001-a1b2".parse().unwrap();
+    let at = "2026-11-17T12:00:00Z".parse().unwrap();
+    let team = "team-20261117-120000-a1b2".parse().unwrap();
+    let task = "task-20261117-120000-a1b2".parse().unwrap();
+    let mut database = HistoryDb::open(&home.history_file(), MaxTextBytes::default()).unwrap();
+    database
+        .write(&[
+            Record::Run(Box::new(RunStart {
+                run: run.clone(),
+                team,
+                task,
+                at,
+                agent: AgentIdentity {
+                    name: "codex-1".to_owned(),
+                    tier: Tier::Normal,
+                    cli: CliKind::Codex,
+                    model: None,
+                },
+                role: Role::Solo,
+                rounds: vec![],
+                why: RunWhy::FirstRun,
+                prompt: "Whole café prompt test-confidential-λ".to_owned(),
+                worktree: AbsolutePath::try_from("/tmp/example".to_owned()).unwrap(),
+                branch: "feature".parse().unwrap(),
+                session: None,
+            })),
+            Record::Step(Box::new(Step {
+                run: run.clone(),
+                number: std::num::NonZeroU32::MIN,
+                at,
+                event: agent_core::cli::ActivityEvent::Text("Recorded café step".to_owned()),
+            })),
+            Record::RunEnd(Box::new(RunEndRecord {
+                run,
+                at,
+                end: agent_core::state::RunEnd::Stopped,
+                final_message: Some("Whole café final message".to_owned()),
+            })),
+        ])
+        .unwrap();
+    drop(database);
+    let before = std::fs::read(home.history_file()).unwrap();
+    let mut names_before: Vec<_> = std::fs::read_dir(home.root())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    names_before.sort();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = runtime
+        .block_on(execute_debug(&home, args, None, &mut Vec::new()))
+        .unwrap();
+    for file in ["history.txt", "history.jsonl"] {
+        let text = std::fs::read_to_string(result.bundle_dir.join(file)).unwrap();
+        for expected in ["Whole café prompt", "Recorded café step", "Whole café final message"] {
+            assert!(text.contains(expected), "{file}: {text}");
+        }
+        assert!(!text.contains("test-confidential-λ"));
+    }
+    assert_eq!(std::fs::read(home.history_file()).unwrap(), before);
+    let mut names_after: Vec<_> = std::fs::read_dir(home.root())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| name != "debug")
+        .collect();
+    names_after.sort();
+    assert_eq!(names_after, names_before);
+}
