@@ -363,3 +363,11 @@ fn reference_definitions_inside_fences_do_not_create_shortcut_links() {
         "~~~text\n[a1b2c3d]: https://example.com\n~~~\n\n[[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)]"
     );
 }
+
+#[test]
+fn complete_links_take_precedence_over_shortcut_references() {
+    for link in ["[a1b2c3d](path/a1b2c3d)", "[a1b2c3d][other-a1b2c3d]", "[a1b2c3d][]"] {
+        let text = format!("{link}\n\n[a1b2c3d]: https://example.com");
+        assert_eq!(link_commits(&text, REPO_URL, resolve_hash), text);
+    }
+}
