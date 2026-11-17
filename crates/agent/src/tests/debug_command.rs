@@ -159,6 +159,24 @@ fn run_git(dir: &Path, args: &[&str]) {
     assert!(status.success(), "git failed: {args:?}");
 }
 
+fn run_git_capture(dir: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=Fake",
+            "-c",
+            "user.email=fake@example.com",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git failed: {args:?}");
+    String::from_utf8(output.stdout).unwrap()
+}
+
 fn setup_test_home() -> (tempfile::TempDir, Home, State, TeamId, TaskId, TaskId, RoundId) {
     let dir = tempfile::tempdir().unwrap();
     let abs_path: AbsolutePath = dir.path().to_str().unwrap().parse().unwrap();
@@ -610,5 +628,70 @@ fn debug_rejects_unknown_target_with_exit_3_and_creates_no_directory() {
     assert!(
         entries.is_empty(),
         "no bundle directory should be created when target is unknown"
+    );
+}
+
+#[test]
+fn debug_snapshots_all_task_files_and_git_refs_intact() {
+    let (_dir, home, _state, team, lead_task, member_task, _round) = setup_test_home();
+    let env = environment(home.state_file().parent().unwrap());
+
+    // Populate task artifacts for both lead and member
+    let lead_dir = home.task_dir(&lead_task);
+    std::fs::write(lead_dir.join("prompt.md"), "lead prompt text").unwrap();
+    std::fs::write(lead_dir.join("activity.jsonl"), "{\"lead\":\"event\"}\n").unwrap();
+    std::fs::write(lead_dir.join("meta.env"), "TASK_ID=lead\n").unwrap();
+
+    let member_dir = home.task_dir(&member_task);
+    std::fs::write(member_dir.join("prompt.md"), "member prompt text").unwrap();
+    std::fs::write(member_dir.join("activity.jsonl"), "{\"member\":\"event\"}\n").unwrap();
+    std::fs::write(member_dir.join("final-message.txt"), "Done item 1.1\n").unwrap();
+
+    let lead_wt = home.worktree_dir(&repo(), &lead_task);
+    let member_wt = home.worktree_dir(&repo(), &member_task);
+
+    // Record git refs before debug runs
+    let lead_refs_before = run_git_capture(&lead_wt, &["show-ref"]);
+    let member_refs_before = run_git_capture(&member_wt, &["show-ref"]);
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let (code, _out, err) = agent(
+        &env,
+        &[
+            "debug",
+            "--team",
+            team.as_str(),
+            "--out",
+            out_dir.path().to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, ExitCode::SUCCESS, "stderr was: {err}");
+
+    // Verify git refs remain completely untouched
+    let lead_refs_after = run_git_capture(&lead_wt, &["show-ref"]);
+    let member_refs_after = run_git_capture(&member_wt, &["show-ref"]);
+    assert_eq!(lead_refs_before, lead_refs_after, "lead git refs must not be modified");
+    assert_eq!(
+        member_refs_before, member_refs_after,
+        "member git refs must not be modified"
+    );
+
+    // Verify bundle contains snapshots of task files
+    let all_files = collect_files(out_dir.path());
+    assert!(
+        all_files
+            .iter()
+            .any(|f| f.ends_with("lead/prompt.md") || f.ends_with(format!("{}/prompt.md", lead_task.as_str()))),
+        "bundle must snapshot lead task prompt"
+    );
+    assert!(
+        all_files
+            .iter()
+            .any(|f| f.ends_with("member/prompt.md") || f.ends_with(format!("{}/prompt.md", member_task.as_str()))),
+        "bundle must snapshot member task prompt"
+    );
+    assert!(
+        all_files.iter().any(|f| f.ends_with("final-message.txt")),
+        "bundle must snapshot member final-message.txt"
     );
 }
