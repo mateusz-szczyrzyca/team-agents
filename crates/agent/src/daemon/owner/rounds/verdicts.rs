@@ -173,7 +173,7 @@ impl Owner {
                         report: report.clone(),
                     },
                 );
-                Some(verdict)
+                verdict
             }
             Err(problem) => {
                 tracing::info!(
@@ -183,11 +183,10 @@ impl Owner {
                     ?problem,
                     "a late report has no verdict: the history records no review of it"
                 );
-                None
+                // An invalid late report was already posted before headings were introduced. Keep posting it,
+                // displaying the conservative verdict while leaving the actual review history without a verdict.
+                ReviewVerdict::RequestChanges
             }
-        };
-        let Some(verdict) = verdict else {
-            return Ok(());
         };
         let lead = self.lead_of(&located.team)?;
         let asked = Asked {
