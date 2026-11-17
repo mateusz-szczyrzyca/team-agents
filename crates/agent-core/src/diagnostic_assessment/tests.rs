@@ -69,6 +69,10 @@ fn branch() -> Branch {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table keeps every anomaly case and its expected context together"
+)]
 fn every_known_anomaly_is_reported_exactly_with_its_context() {
     let cases: Vec<(Assessment, Vec<Anomaly>)> = vec![
         (
