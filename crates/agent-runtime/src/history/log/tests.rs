@@ -603,3 +603,59 @@ fn a_scoped_future_dropped_under_another_subscriber_closes_its_spans_in_its_own(
 
     assert!(dropped.is_ok(), "the spans were closed in the other registry");
 }
+
+#[test]
+fn installed_panic_hook_preserves_another_threads_message_and_location() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "history::log::tests::previous_panic_hook_child_process",
+            "--nocapture",
+        ])
+        .env("AGENT_TEST_PREVIOUS_PANIC_HOOK", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "child stdout: {}\nchild stderr: {}",
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap()
+    );
+}
+
+/// Process isolation keeps the observer hook from intercepting concurrent tests' panics.
+#[test]
+fn previous_panic_hook_child_process() {
+    if std::env::var_os("AGENT_TEST_PREVIOUS_PANIC_HOOK").is_none() {
+        return;
+    }
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&observed);
+    let original = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info.location().unwrap();
+        sink.lock().unwrap().push((
+            info.payload().downcast_ref::<&str>().unwrap().to_string(),
+            location.file().to_owned(),
+            location.line(),
+        ));
+    }));
+    let layer = HistoryLayer::deferred(
+        LogLevel::Info,
+        SharedClock::new(StepClock::new(1_763_200_200)),
+        Secrets::default(),
+    );
+    layer.with_stderr_sink(Arc::new(|_| {}));
+    install_panic_hook(layer);
+    let line = line!() + 2;
+    let thread = std::thread::spawn(|| {
+        panic!("another test failed: λ");
+    });
+    let panicked = thread.join().is_err();
+    std::panic::set_hook(original);
+    assert!(panicked);
+    assert_eq!(
+        *observed.lock().unwrap(),
+        vec![("another test failed: λ".to_owned(), file!().to_owned(), line)]
+    );
+}
