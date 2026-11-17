@@ -362,6 +362,8 @@ heading is green bold `APPROVED` with the notification status's `✅✅`; change
 `REQUEST CHANGES` with its `❌`. A horizontal rule separates the head from the report, whose `VERDICT:` line is
 removed only for publication. The saved report and history keep the reviewer's original verdict. The layout and
 both verdict texts live in `prompts/harness/review/`; changing their wording needs no code change.
+A late report with no readable verdict is still posted, with a conservative request-changes heading;
+the history still records no review verdict for that report.
 
 Before sending a pull request description (new or updated), an updated-branch comment or a review to GitHub,
 the daemon links commit IDs to the repository on GitHub, resolved from `origin`. The pure `agent-core` commit

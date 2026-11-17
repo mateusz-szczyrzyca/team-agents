@@ -183,8 +183,8 @@ impl Owner {
                     ?problem,
                     "a late report has no verdict: the history records no review of it"
                 );
-                // An invalid late report was already posted before headings were introduced. Keep posting it,
-                // displaying the conservative verdict while leaving the actual review history without a verdict.
+                // Late reports remain visible even without a readable verdict. Display the conservative verdict
+                // while leaving the actual review history without a verdict.
                 ReviewVerdict::RequestChanges
             }
         };
