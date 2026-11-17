@@ -286,20 +286,23 @@ fn link_prose(text: &str, repo_url: &str, resolve: &mut impl FnMut(&str) -> Opti
             prose.push(ch);
             continue;
         }
-        result.push_str(&link_words(&prose, repo_url, resolve));
-        prose.clear();
         let mut link = String::from('[');
-        let label_closed = balanced(&mut chars, '[', ']', &mut link);
-        let destination = chars.next_if(|ch| *ch == '(' || *ch == '[');
+        let mut lookahead = chars.clone();
+        let label_closed = balanced(&mut lookahead, '[', ']', &mut link);
+        let destination = lookahead.next_if(|ch| *ch == '(' || *ch == '[');
         if label_closed && let Some(open) = destination {
             link.push(open);
             let close = if open == '(' { ')' } else { ']' };
-            if balanced(&mut chars, open, close, &mut link) {
+            if balanced(&mut lookahead, open, close, &mut link) {
+                chars = lookahead;
+                result.push_str(&link_words(&prose, repo_url, resolve));
+                prose.clear();
                 result.push_str(&link);
                 continue;
             }
         }
-        result.push_str(&link_words(&link, repo_url, resolve));
+        // Failed link parsing must leave its contents subject to the same prose protections.
+        prose.push('[');
     }
     result.push_str(&link_words(&prose, repo_url, resolve));
     result
