@@ -286,3 +286,70 @@ fn path_with_commit_like_substring_not_double_linked() {
         "see [src/a1b2c3d_code.rs](https://github.com/owner/repo/blob/1234567/src/a1b2c3d_code.rs)"
     );
 }
+
+/// File references and commit words share Markdown protection and never see generated output.
+#[test]
+fn shared_walk_preserves_spelling_anchors_and_markdown_boundaries() {
+    let commit: crate::state::CommitId = "0123456789012345678901234567890123456789".parse().unwrap();
+    let file_url = format!("{REPO_URL}/blob/{commit}/src/lib.rs");
+    let file = format!("[src/lib.rs]({file_url})");
+    let id = "abcdef0";
+    let full = "abcdef0123456789012345678901234567890123";
+    let linked_id = format!("[`{id}`]({REPO_URL}/commit/{full})");
+    let cases = [
+        ("src/lib.rs:7", format!("[src/lib.rs:7]({file_url}#L7)")),
+        ("src/lib.rs:7-12", format!("[src/lib.rs:7-12]({file_url}#L7-L12)")),
+        ("`src/lib.rs:7-12`", format!("[`src/lib.rs:7-12`]({file_url}#L7-L12)")),
+        ("src/lib.rs.", format!("{file}.")),
+        ("src/lib.rs,", format!("{file},")),
+        ("src/lib.rs;", format!("{file};")),
+        ("(src/lib.rs)", format!("({file})")),
+        ("src/lib.rs:", format!("{file}:")),
+        ("abcdef0 src/lib.rs", format!("{linked_id} {file}")),
+        ("src/lib.rs abcdef0", format!("{file} {linked_id}")),
+        (
+            "`abcdef0.rs`",
+            format!("[`abcdef0.rs`]({REPO_URL}/blob/{commit}/abcdef0.rs)"),
+        ),
+        ("src/lib.rs_backup", "src/lib.rs_backup".into()),
+        ("src/lib.rs@backup", "src/lib.rs@backup".into()),
+        ("../src/lib.rs", "../src/lib.rs".into()),
+        ("/src/lib.rs", "/src/lib.rs".into()),
+        ("`see src/lib.rs`", "`see src/lib.rs`".into()),
+        ("``src/lib.rs``", "``src/lib.rs``".into()),
+        (
+            "> ```text\n> src/lib.rs\n> ```",
+            "> ```text\n> src/lib.rs\n> ```".into(),
+        ),
+        (
+            "- ```text\n  src/lib.rs\n  ```",
+            "- ```text\n  src/lib.rs\n  ```".into(),
+        ),
+        ("[src/lib.rs](elsewhere)", "[src/lib.rs](elsewhere)".into()),
+        (
+            "[src/lib.rs][ref]\n\n[ref]: /dest",
+            "[src/lib.rs][ref]\n\n[ref]: /dest".into(),
+        ),
+        ("<b title='src/lib.rs'>", "<b title='src/lib.rs'>".into()),
+        ("<!-- src/lib.rs -->", "<!-- src/lib.rs -->".into()),
+        (
+            "https://example.com/src/lib.rs",
+            "https://example.com/src/lib.rs".into(),
+        ),
+        ("nothing here", "nothing here".into()),
+        (
+            "`src/café #1.rs`",
+            format!("[`src/café #1.rs`]({REPO_URL}/blob/{commit}/src/caf%C3%A9%20%231.rs)"),
+        ),
+    ];
+    for (input, expected) in cases {
+        let output = crate::commits::link_references(
+            input,
+            REPO_URL,
+            &commit,
+            |word| (word == id).then(|| full.to_owned()),
+            |path| matches!(path, "src/lib.rs" | "abcdef0.rs" | "src/café #1.rs"),
+        );
+        assert_eq!(output, expected, "input: {input}");
+    }
+}
