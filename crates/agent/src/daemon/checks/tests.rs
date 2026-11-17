@@ -585,7 +585,7 @@ fn description_refresh_unlinks_only_generated_harness_lines() {
 #[test]
 fn description_refresh_matches_harness_lines_containing_commit_links() {
     let harness = "Compare abcdef0 in src/lib.rs:7.\nCompare `abcdef0` in `src/lib.rs:8`.\n";
-    let commit = "abcdef0123456789abcdef0123456789abcdef0123";
+    let commit = "abcdef0123456789abcdef0123456789abcdef01";
     let linked = format!(
         "Compare [`abcdef0`](https://github.com/octo/example/commit/{commit}) in [src/lib.rs:7](https://github.com/octo/example/blob/{commit}/src/lib.rs#L7).\nCompare [`abcdef0`](https://github.com/octo/example/commit/{commit}) in [`src/lib.rs:8`](https://github.com/octo/example/blob/{commit}/src/lib.rs#L8).\n"
     );
