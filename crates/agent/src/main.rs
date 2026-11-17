@@ -22,6 +22,9 @@ mod client;
 mod command_tests;
 mod commands;
 mod daemon;
+#[cfg(test)]
+#[path = "tests/debug_command.rs"]
+mod debug_command_tests;
 mod environment;
 #[cfg(test)]
 #[path = "tests/fixtures.rs"]
@@ -47,6 +50,7 @@ use crate::client::{ClientError, Connection};
 use crate::commands::answer::{AnswerError, Source, answer};
 use crate::commands::control::ControlError;
 use crate::commands::daemon::{DaemonCommandError, daemon};
+use crate::commands::debug::{DebugCliArgs, DebugError, debug};
 use crate::commands::gate::{GateError, gate, task_in};
 use crate::commands::log::{LogError, LogRequest, log};
 use crate::commands::pause::pause;
@@ -96,6 +100,12 @@ const LOG: &str = "log";
 /// What `agent log` is for, as the help says.
 const LOG_ABOUT: &str = "Reads history directly, with no daemon needed. With only --round or --team and optional --prompts, --no-steps, --json: tells the story. With no scope, both scopes, --show log, or any row filter: prints daemon log rows. Row filters are --task, --run, --agent, --level, --event, --since, --until, --grep, -n and -f.";
 
+/// The name of the command that diagnoses a team, round or task into a directory.
+const DEBUG: &str = "debug";
+
+/// What `agent debug` is for, as the help says.
+const DEBUG_ABOUT: &str = "Diagnoses a team, round or task into a directory with a summary that names what is wrong";
+
 /// What `agent run` is for, as the help says.
 const RUN_ABOUT: &str = "Starts a task or a team on the repository the current directory is in";
 
@@ -135,7 +145,8 @@ fn command() -> clap::Command {
     let with_run = Cli::command()
         .subcommand(RunArgs::augment_args(clap::Command::new(RUN)).about(RUN_ABOUT))
         .subcommand(GateArgs::augment_args(clap::Command::new(GATE)).about(GATE_ABOUT))
-        .subcommand(LogArgs::augment_args(clap::Command::new(LOG)).about(LOG_ABOUT));
+        .subcommand(LogArgs::augment_args(clap::Command::new(LOG)).about(LOG_ABOUT))
+        .subcommand(DebugArgs::augment_args(clap::Command::new(DEBUG)).about(DEBUG_ABOUT));
     // `augment_subcommands` gives the command the doc comment of `Steer` as its description: the description is kept.
     let about = with_run.get_about().cloned();
     let steering = Steer::augment_subcommands(with_run);
@@ -159,6 +170,8 @@ enum Invocation {
     Gate(GateArgs),
     /// `log`.
     Log(LogArgs),
+    /// `debug`.
+    Debug(DebugArgs),
 }
 
 /// Parses `args` (the program name first) as `agent` takes them, the commands that steer included.
@@ -181,6 +194,9 @@ where
     }
     if let Some((LOG, log)) = matches.subcommand() {
         return Ok(Invocation::Log(LogArgs::from_arg_matches(log)?));
+    }
+    if let Some((DEBUG, debug)) = matches.subcommand() {
+        return Ok(Invocation::Debug(DebugArgs::from_arg_matches(debug)?));
     }
     parse(args).map(Invocation::Parsed)
 }
@@ -409,6 +425,48 @@ fn parse_task(text: &str) -> Result<TaskId, TaskArgError> {
     })
 }
 
+/// The arguments of `agent debug`.
+#[derive(Debug, Args, PartialEq, Eq)]
+#[command(group(clap::ArgGroup::new("target").required(true).multiple(false)))]
+struct DebugArgs {
+    /// The round to debug.
+    #[arg(long, value_parser = parse_round, value_name = "ROUND_ID", group = "target")]
+    round: Option<RoundId>,
+
+    /// The team to debug.
+    #[arg(long, value_parser = parse_team, value_name = "TEAM_ID", group = "target")]
+    team: Option<TeamId>,
+
+    /// The task to debug.
+    #[arg(long, value_parser = parse_task, value_name = "TASK_ID", group = "target")]
+    task: Option<TaskId>,
+
+    /// Directory where the debug bundle directory is written.
+    #[arg(long, value_name = "DIR")]
+    out: Option<PathBuf>,
+
+    /// Minutes without activity after which a task is considered stale.
+    #[arg(long, value_name = "MINUTES")]
+    stale_minutes: Option<u64>,
+
+    /// Path to a daemon log file to use when daemon does not answer.
+    #[arg(long, value_name = "FILE")]
+    daemon_log: Option<PathBuf>,
+}
+
+impl From<DebugArgs> for DebugCliArgs {
+    fn from(args: DebugArgs) -> Self {
+        Self {
+            round: args.round,
+            team: args.team,
+            task: args.task,
+            out: args.out,
+            stale_minutes: args.stale_minutes,
+            daemon_log: args.daemon_log,
+        }
+    }
+}
+
 /// Why `agent` could not finish its output.
 #[derive(Debug, thiserror::Error)]
 enum OutputError {
@@ -450,6 +508,9 @@ enum CommandError {
     /// `agent log` failed.
     #[error(transparent)]
     Log(#[from] LogError),
+    /// `agent debug` failed.
+    #[error(transparent)]
+    Debug(#[from] DebugError),
     /// The editor for `agent answer` cannot be found.
     #[error(transparent)]
     Editor(#[from] EditorError),
@@ -498,6 +559,7 @@ where
         Ok(Invocation::Gate(args)) => finish(execute_blocking(environment, Work::Gate(args), out), err)?,
         // `log` reads a file and needs no runtime: it runs on the thread of the command.
         Ok(Invocation::Log(args)) => finish(execute_log(environment, args, out), err)?,
+        Ok(Invocation::Debug(args)) => finish(execute_blocking(environment, Work::Debug(args), out), err)?,
         // `--version` and `--help` arrive here too, as "errors" meant for stdout.
         Err(answer) if !answer.use_stderr() => {
             write_text(out, &answer.render().to_string())?;
@@ -531,6 +593,7 @@ fn finish(result: Result<(), CommandError>, err: &mut impl Write) -> Result<Exit
                 | CommandError::Words(_)
                 | CommandError::Answer(_)
                 | CommandError::Gate(_)
+                | CommandError::Debug(_)
                 | CommandError::Editor(_)
                 | CommandError::Runtime(_) => ExitCode::FAILURE,
             })
@@ -549,6 +612,8 @@ enum Work {
     Steer(Steer),
     /// `gate`.
     Gate(GateArgs),
+    /// `debug`.
+    Debug(DebugArgs),
 }
 
 /// Runs `work` on a runtime of its own.
@@ -563,8 +628,22 @@ fn execute_blocking(environment: &Environment, work: Work, out: &mut impl Write)
             Work::Run(args) => execute_run(environment, args, out).await,
             Work::Steer(steer) => execute_steer(environment, steer, out).await,
             Work::Gate(args) => execute_gate(environment, args, out).await,
+            Work::Debug(args) => execute_debug_cmd(environment, args, out).await,
         }
     })
+}
+
+/// Carries out `agent debug`.
+///
+/// # Errors
+/// [`CommandError`].
+async fn execute_debug_cmd(
+    environment: &Environment,
+    args: DebugArgs,
+    out: &mut impl Write,
+) -> Result<(), CommandError> {
+    let home = environment.home()?;
+    debug(&home, args.into(), out).await.map_err(CommandError::Debug)
 }
 
 /// Carries out `command`.
