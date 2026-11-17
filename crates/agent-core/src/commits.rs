@@ -713,7 +713,7 @@ pub(crate) fn link_file_references(
                 format!("`{content}`")
             }
         }
-        Style::CommitOnly => link_words(content, repo_url, &mut resolve_commit),
+        Style::CommitOnly => link_commits(content, repo_url, &mut resolve_commit),
         Style::Bare => rewrite_tokens(content, &mut |token| {
             bare_file_link(token, repo_url, commit, &mut is_file)
                 .unwrap_or_else(|| link_words(token, repo_url, &mut resolve_commit))
