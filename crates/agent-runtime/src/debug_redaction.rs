@@ -48,19 +48,16 @@ impl SecretsCut {
         let mut remaining = bytes;
         let mut redacted = Vec::with_capacity(bytes.len());
         while let Some((first, tail)) = remaining.split_first() {
-            match self
+            if let Some(rest) = self
                 .values
                 .iter()
                 .find_map(|value| remaining.strip_prefix(value.as_slice()))
             {
-                Some(rest) => {
-                    redacted.extend_from_slice(b"<cut>");
-                    remaining = rest;
-                }
-                None => {
-                    redacted.push(*first);
-                    remaining = tail;
-                }
+                redacted.extend_from_slice(b"<cut>");
+                remaining = rest;
+            } else {
+                redacted.push(*first);
+                remaining = tail;
             }
         }
         redacted
