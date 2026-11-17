@@ -394,3 +394,43 @@ fn copy_prompt_catalog(source: &std::path::Path, destination: &std::path::Path) 
     }
     Ok(())
 }
+#[tokio::test]
+async fn file_paths_with_commit_words_do_not_trigger_commit_lookups() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::str::FromStr;
+
+    use agent_core::config::AbsolutePath;
+    use agent_core::state::CommitId;
+    use agent_runtime::git::{CommitIdentity, Git};
+
+    use crate::daemon::owner::fixture::{Daemon, pair_state};
+
+    let daemon = Daemon::new(&pair_state(), None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let log_file = dir.path().join("calls.log");
+    let executable = dir.path().join("git");
+    let script = format!(
+        "#!/bin/sh\nsubcmd=\"\"\nwhile [ $# -gt 0 ]; do\n  case \"$1\" in\n    -c) shift 2 ;;\n    -*) shift ;;\n    *) subcmd=\"$1\"; break ;;\n  esac\ndone\necho \"$subcmd\" >> \"{}\"\ncase \"$subcmd\" in\n  remote) printf 'https://github.com/octo/example.git\\n' ;;\n  ls-tree) printf '100644 blob abcdef0123456789abcdef0123456789abcdef01\\tabcdef0.rs\\0' ;;\n  *) exit 128 ;;\nesac\n",
+        log_file.display()
+    );
+    std::fs::write(&executable, script).unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let git = Git::new(
+        AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap(),
+        CommitIdentity::new("Fixture".into(), "fixture@example.com".into(), None),
+    )
+    .with_env("PATH".parse().unwrap(), dir.path().to_str().unwrap());
+
+    let commit: CommitId = "abcdef0123456789abcdef0123456789abcdef01".parse().unwrap();
+    let linked = owner.link_commits(&git, &commit, "abcdef0.rs:7").await;
+    assert_eq!(
+        linked,
+        format!("[abcdef0.rs:7](https://github.com/octo/example/blob/{commit}/abcdef0.rs#L7)")
+    );
+
+    let calls = std::fs::read_to_string(&log_file).unwrap();
+    assert_eq!(calls.lines().collect::<Vec<_>>(), ["remote", "ls-tree"]);
+}
