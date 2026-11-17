@@ -74,6 +74,7 @@ pub(crate) async fn daemon(environment: &Environment, prompts_dir: Option<PathBu
         clock: SharedClock::new(SystemClock),
         local_offset: environment.local_offset(),
         timings: None,
+        agent_binary_dir: None,
     };
     let ended = daemon::run_with_log_layer(setup, shutdown.clone(), log_layer).await;
     shutdown.cancel();

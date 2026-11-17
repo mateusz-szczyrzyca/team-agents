@@ -160,7 +160,7 @@ pub(super) fn check_story(rig: &Rig, team: &TeamId) -> (String, String) {
             .position(|run| *run.id() == start.run)
             .unwrap()
             + 1;
-        let kept = std::fs::read_to_string(rig.worktree(task).join(format!(".fake-prompt-{number}"))).unwrap();
+        let kept = rig.kept_prompt(task, number);
         assert_eq!(format!("{}\n", start.prompt), kept, "the prompt of run {}", start.run);
         if matches!(start.why, RunWhy::Review { .. }) {
             reviews += 1;

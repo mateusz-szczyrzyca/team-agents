@@ -149,6 +149,10 @@ case $scenario in
     printf 'PATH=%s\nFAKE_SECRET=%s\n' "$PATH" "${FAKE_SECRET:-}" > .fake-env
     finish_done
     ;;
+  agent)
+    agent > .fake-agent
+    finish_done
+    ;;
   env-git)
     {
       printf 'author=%s <%s>\n' "$(git var GIT_AUTHOR_IDENT | sed 's/ <.*//')" "${GIT_AUTHOR_EMAIL:-}"

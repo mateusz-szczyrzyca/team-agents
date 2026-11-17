@@ -59,7 +59,7 @@ Add `--locked` when `Cargo.lock` is committed. Run whatever else the repository'
 - **LINT-5** No `#![deny(warnings)]` in source: it breaks the build on every toolchain update. Strictness lives in the gate.
 - **LINT-6** Stay inside the repository's edition and MSRV (`rust-version`). Stable features only, unless the repository is on nightly.
 - **LINT-7** In a repository without a strict lint setup, follow these rules by hand, check your own change by passing the appendix lints as `-W clippy::<lint>` flags, and propose the baseline from the appendix as a separate PR.
-- **LINT-8 Green means green on the first run.** A check that fails and then passes with nothing changed is flaky, not green. Never hide it by running it again: if your change made it flaky, fix it (TDD-8); if it did not, report the test's name and its failure under *Out of scope*.
+- **LINT-8 Green means green on the first run.** A check that fails and then passes with nothing changed is flaky, not green. Never hide it by running it again. A failure in a test your change adds or touches, or one your change made flaky, is your bug: fix it (TDD-8). When the gate fails on a test or check your change does not touch and cannot have changed: 1) keep the whole output of that failure — the test's name, the message and the location of its panic — in a file under `build/`; 2) run the gate once more, and only once; 3) if it passes, go on, and list the failure in the PR under `## Flaky checks` with the test, the message and the location; 4) if it fails again in the same place, it is not flaky for this change: find the cause, and ask the human only when the cause is in code your task may not change.
 
 ## 5. Test-driven development — `TDD`
 
@@ -388,6 +388,9 @@ The commands you ran and their results.
 ## Deviations
 Lint suppressions, `unsafe`, new dependencies with their justification, assumptions,
 rules not followed — each with its reason. Or "none".
+
+## Flaky checks
+Only when LINT-8 let the change go on: each failure with its test, message and location. Or leave the section out.
 
 ## Out of scope
 Problems you noticed and deliberately did not touch. Or "none".

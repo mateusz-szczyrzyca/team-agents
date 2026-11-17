@@ -8,7 +8,7 @@ use std::fmt;
 use std::future::Future;
 use std::panic::PanicHookInfo;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, MutexGuard, Once, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use agent_core::config::Secrets;
@@ -37,12 +37,6 @@ thread_local! {
     /// by the panic hook, which runs outside the subscriber's event callback and therefore has no span context.
     static ENTERED_SPANS: RefCell<Vec<(usize, u64)>> = const { RefCell::new(Vec::new()) };
 }
-
-/// Active [`HistoryLayer`] used by the process panic hook.
-static PANIC_LAYER: Mutex<Option<HistoryLayer>> = Mutex::new(None);
-
-/// Ensures `std::panic::set_hook` is installed at most once per process.
-static PANIC_HOOK_ONCE: Once = Once::new();
 
 /// Subscriber registered in `tracing_core`'s global dispatcher list so that `tracing_core` never takes its
 /// single-dispatcher fast path (`Rebuilder::JustOne`) and caches `Interest::never()` from a thread running without a
@@ -169,7 +163,9 @@ impl HistoryLayer {
         let layer = Self::deferred(LogLevel::Info, SharedClock::new(SystemClock), Secrets::default());
         locked(&layer.state).dual_stderr = true;
         tracing::subscriber::set_global_default(tracing_subscriber::registry().with(layer.clone()))?;
-        install_panic_hook(layer.clone());
+        // The daemon owns this process: only the redacted history sink may expose its panic.
+        let panic_layer = layer.clone();
+        std::panic::set_hook(Box::new(move |info| panic_layer.record_panic_info(info)));
         Ok(layer)
     }
 
@@ -636,21 +632,17 @@ where
     }
 }
 
-/// Installs the daemon panic hook that records [`LogEvent::DaemonPanicked`] with a redacted message
-/// and source location through `layer`.
+/// Installs a panic hook that records [`LogEvent::DaemonPanicked`] with a redacted message
+/// and source location through `layer`, then calls the previously installed hook.
+///
+/// Calling the previous hook preserves diagnostics owned by an embedding process, including test assertions.
+/// The standalone daemon uses [`HistoryLayer::install_global`] to keep its stderr redacted instead.
 pub fn install_panic_hook(layer: HistoryLayer) {
-    *locked(&PANIC_LAYER) = Some(layer);
-    PANIC_HOOK_ONCE.call_once(|| {
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            let active = locked(&PANIC_LAYER).clone();
-            if let Some(layer) = active {
-                layer.record_panic_info(info);
-            } else {
-                previous(info);
-            }
-        }));
-    });
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        layer.record_panic_info(info);
+        previous(info);
+    }));
 }
 
 /// Records a pure decision of `agent_core::decide` (`decision_taken`, `debug`) with its name, input, and result.

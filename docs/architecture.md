@@ -395,6 +395,12 @@ not infer languages.
   questions file to write; its question reaches the human like any other (`agent answer`). The answer is one more fix pass. A lead
   that ran and put no question leaves the human told directly, once.
 - When every item is merged the team ends: its tasks, the reviewers among them, are `done` and the human is notified.
+  When it ends so — every item done, at least one by its merge (by the daemon or by the human; the others ticked `[x]` in the
+  list), and no round open — git removes the worktrees of its
+  tasks that are not running (`git worktree remove`, which refuses a changed checkout). Their branches stay, local and on
+  origin. A worktree with changes not committed, or with commits no branch of origin has (origin is fetched first, with
+  `--prune`), is kept and logged (`git_call_failed`, `warn`, with the reason), as is one git cannot remove; neither stops the
+  team from ending. A team that ends any other way, stopped or failed, keeps every worktree.
 
 **Known limits.** The owner waits for GitHub and git calls (GitHub's own timeouts, at most 30 s an attempt; a push at most 10
 minutes): a call that hangs leaves the socket unanswered that long. The merge is at the head GitHub carries, so a commit someone
@@ -579,7 +585,7 @@ it by the queue and the timeout, and a daemon that ends closes the connection).
 clean — a changed or untracked file, or a merge that waits to be committed, makes it **not clean**; a gate on such a tree is
 run all the same, because a coordinator checks the tree it merged before it commits the merge, and it is recorded as not
 clean. A worktree git cannot read is refused (`refused`: "the gate cannot run in ...") and nothing is run. The command runs
-in the worktree in a process group of its own, with the `PATH` of `[binaries] agent_path`, its output (standard output and
+in the worktree in a process group of its own, with the `PATH` starting with the daemon executable directory followed by `[binaries] agent_path` without duplicating it, its output (standard output and
 error) in `tasks/<task>/gate-<n>.log` (`n` counts from 1; no log is overwritten), and no input. It is stopped, with
 everything it started (`SIGTERM`, then `SIGKILL`), when it runs past `gate_timeout_minutes` — recorded `timed_out`, a failure —
 and when its task is stopped or paused or the daemon shuts down while it runs — then nothing is recorded and the client is

@@ -180,6 +180,9 @@ pub enum GitOperation {
     /// `git branch <name>`.
     #[strum(serialize = "branch create")]
     BranchCreate,
+    /// `git for-each-ref --contains HEAD refs/remotes/origin/`.
+    #[strum(serialize = "remote contains")]
+    RemoteContains,
     /// `git branch -d`.
     #[strum(serialize = "branch delete")]
     BranchDelete,
@@ -692,6 +695,27 @@ impl Git {
             .map(drop)
     }
 
+    /// Whether a fetched branch of `origin` contains the checkout's entire committed history.
+    ///
+    /// # Errors
+    /// [`GitError::Run`], [`GitError::Failed`] and [`GitError::OutputTooLong`].
+    pub async fn head_on_origin(&self) -> Result<bool, GitError> {
+        let operation = GitOperation::RemoteContains;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("for-each-ref"),
+                    arg("--contains=HEAD"),
+                    arg("--format=%(refname)"),
+                    arg("refs/remotes/origin/"),
+                ],
+            )
+            .await?;
+        Ok(!whole(operation, &captured.stdout, self.limits)?.is_empty())
+    }
+
     /// Whether the checkout has changes, and which.
     ///
     /// # Errors
@@ -996,6 +1020,26 @@ impl Git {
             ExitReport::Exited { code: 1 } => Ok(false),
             ExitReport::Exited { .. } | ExitReport::Signaled { .. } => Err(failed(operation, &captured)),
         }
+    }
+
+    /// Refreshes every branch of origin and removes tracking refs for deleted branches.
+    ///
+    /// # Errors
+    /// [`GitError::Run`] and [`GitError::Failed`] when origin cannot be fetched.
+    pub async fn refresh_origin_branches(&self) -> Result<(), GitError> {
+        self.run_ok(
+            GitOperation::Fetch,
+            Reach::Network,
+            &[
+                arg("fetch"),
+                arg("--no-tags"),
+                arg("--prune"),
+                arg(REMOTE),
+                arg("+refs/heads/*:refs/remotes/origin/*"),
+            ],
+        )
+        .await
+        .map(drop)
     }
 
     /// Fetches `branch` from `origin` into the reference [`Revision::RemoteBranch`] names; no local branch moves.
@@ -2207,6 +2251,64 @@ mod tests {
                 operation: GitOperation::RevParse,
                 source: CaptureError::Spawn { .. }
             })
+        ));
+    }
+    #[tokio::test]
+    async fn origin_contains_head_only_when_a_remote_branch_contains_every_commit() {
+        let fixture = Fixture::new();
+        let git = fixture.git();
+        assert!(!git.head_on_origin().await.unwrap());
+        raw(&fixture.repo, &["update-ref", "refs/remotes/other/main", "HEAD"]);
+        assert!(!git.head_on_origin().await.unwrap());
+        raw(&fixture.repo, &["update-ref", "refs/remotes/origin/topic", "HEAD"]);
+        assert!(git.head_on_origin().await.unwrap());
+        fixture.commit("λ.txt", "local work", "Unpushed");
+        assert!(!git.head_on_origin().await.unwrap());
+        raw(&fixture.repo, &["update-ref", "refs/remotes/origin/topic", "HEAD"]);
+        assert!(git.head_on_origin().await.unwrap());
+        raw(&fixture.repo, &["reset", "--hard", "HEAD~1"]);
+        assert!(git.head_on_origin().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn origin_contains_head_propagates_git_failure() {
+        let (_dir, git) = scripted_git("exit 7");
+        let error = git.head_on_origin().await.unwrap_err();
+        assert!(matches!(
+            error,
+            GitError::Failed {
+                operation: GitOperation::RemoteContains,
+                ..
+            }
+        ));
+    }
+    #[tokio::test]
+    async fn refreshing_origin_branches_discovers_published_history_and_prunes_deleted_branches() {
+        let fixture = Fixture::new();
+        let origin = fixture.sibling("origin.git");
+        std::fs::create_dir(&origin).unwrap();
+        raw(&origin, &["init", "-q", "--bare"]);
+        raw(&fixture.repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+        raw(&fixture.repo, &["push", "-q", "origin", "HEAD:topic"]);
+        raw(&fixture.repo, &["update-ref", "-d", "refs/remotes/origin/topic"]);
+        let git = fixture.git();
+        git.refresh_origin_branches().await.unwrap();
+        assert!(git.head_on_origin().await.unwrap());
+        raw(&origin, &["update-ref", "-d", "refs/heads/topic"]);
+        git.refresh_origin_branches().await.unwrap();
+        assert!(!git.head_on_origin().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn refreshing_origin_branches_propagates_fetch_failure() {
+        let (_dir, git) = scripted_git("exit 7");
+        let error = git.refresh_origin_branches().await.unwrap_err();
+        assert!(matches!(
+            error,
+            GitError::Failed {
+                operation: GitOperation::Fetch,
+                ..
+            }
         ));
     }
 }

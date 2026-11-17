@@ -350,6 +350,9 @@ impl Owner {
                 }
                 self.publish_summary(now, team);
             }
+            if self.closed.contains(team) {
+                self.cleanup_merged_worktrees(team).await;
+            }
             Ok(())
         }
         .instrument(span)

@@ -1,6 +1,7 @@
 //! Stop the real owner precisely between settling and scheduling, then boot the daemon from its saved state.
 
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -58,6 +59,7 @@ async fn stepped(rig: &Rig) -> Stepped {
             hang: Duration::from_secs(20),
             stop_grace: Duration::from_secs(5),
         },
+        agent_binary_dir: agent_core::config::AbsolutePath::from_str("/opt/bin").unwrap(),
     })
     .with_history(opened.history.clone());
     let (notices, deliveries) = mpsc::channel(64);
