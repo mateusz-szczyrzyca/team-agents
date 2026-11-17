@@ -182,8 +182,8 @@ case $action in
   fail) result 'I could not do it.\nSTATUS: FAILED' ;;
   nostatus) result 'I think that is all.' ;;
   fail-first:*)
-    # Making a directory is atomic: of the tasks that get here at once, one makes it.
-    if mkdir "$home/.fake-first-failed" 2> /dev/null; then
+    # Bash noclobber claims the marker with exclusive creation; some mkdir implementations report success to both racers.
+    if (set -o noclobber; > "$home/.fake-first-failed") 2> /dev/null; then
       result 'I could not do it.\nSTATUS: FAILED'
     else
       result "${action#fail-first:}"'\nSTATUS: DONE'
