@@ -164,13 +164,54 @@ impl Anomaly {
     /// One sentence describing the observed problem for a standalone summary.
     #[must_use]
     pub fn sentence(&self) -> String {
-        String::new()
+        match self {
+            Self::NoDaemon => "No daemon holds this home.".into(),
+            Self::NewerExecutable => "The daemon executable on disk is newer than the running process.".into(),
+            Self::FailedTask(task) => format!("Task {task} is failed."),
+            Self::PausedTask(task) => format!("Task {task} is paused."),
+            Self::StaleTask(task) => format!("Running task {task} has output older than the inactivity threshold."),
+            Self::NobodyWorking => "No team task is running or queued while an item remains unfinished.".into(),
+            Self::UnansweredQuestions(path) => format!("Questions file {path:?} has no answer yet."),
+            Self::DirtyLead => "The lead worktree has uncommitted changes.".into(),
+            Self::DirtyGate => "The lead's last gate ran on a tree that was not clean.".into(),
+            Self::GateAtOtherCommit => "The lead's gate record belongs to a different commit than its tip.".into(),
+            Self::NoGatePassAtTip => "The lead has no clean gate pass recorded at its tip.".into(),
+            Self::WaitingWithoutPr => {
+                "The lead waits with a gate passed at its tip and an item in progress, but no pull request is recorded."
+                    .into()
+            }
+            Self::UnmergedBranch(branch) => {
+                format!("The lead branch does not contain assigned unfinished branch {branch}.")
+            }
+            Self::OriginDiffers(branch) => {
+                format!("Branch {branch} has a local tip that differs from its recorded origin ref.")
+            }
+            Self::FullFilesystem(path) => format!("Filesystem {path:?} is at least 90% full by space or inodes."),
+            Self::Unreadable(failure) => format!("Could not collect {}: {}.", failure.part, failure.reason),
+        }
     }
 
     /// An available read-only CLI command that helps investigate this anomaly.
     #[must_use]
     pub fn suggested_command(&self) -> Option<String> {
-        None
+        match self {
+            Self::FailedTask(task) | Self::PausedTask(task) | Self::StaleTask(task) => {
+                Some(format!("agent log --task {task}"))
+            }
+            Self::NoDaemon
+            | Self::NewerExecutable
+            | Self::NobodyWorking
+            | Self::UnansweredQuestions(_)
+            | Self::DirtyLead
+            | Self::DirtyGate
+            | Self::GateAtOtherCommit
+            | Self::NoGatePassAtTip
+            | Self::WaitingWithoutPr
+            | Self::UnmergedBranch(_)
+            | Self::OriginDiffers(_)
+            | Self::FullFilesystem(_)
+            | Self::Unreadable(_) => None,
+        }
     }
 }
 
@@ -276,12 +317,7 @@ fn assess_lead(facts: &Assessment, anomalies: &mut Vec<Anomaly>) {
         && !facts.items.iter().any(|item| {
             matches!(
                 item,
-                ItemPhase::InReview { .. }
-                    | ItemPhase::Fixing { .. }
-                    | ItemPhase::Approved { .. }
-                    | ItemPhase::Done {
-                        completion: crate::state::Completion::Merged { .. }
-                    }
+                ItemPhase::InReview { .. } | ItemPhase::Fixing { .. } | ItemPhase::Approved { .. }
             )
         })
     {
