@@ -289,3 +289,80 @@ fn unreadable_parts_named_in_summary() {
     assert!(summary.contains("daemon.log"));
     assert!(summary.contains("permission denied"));
 }
+
+#[test]
+fn git_commits_include_author() {
+    let input = sample_input();
+    let now = ts("2026-11-17T20:00:00Z");
+    let offset = UtcOffset::UTC;
+
+    let summary = render_summary(&input, now, offset);
+
+    assert!(
+        summary.contains("Dev <dev@example.com>"),
+        "summary must contain commit author"
+    );
+}
+
+#[test]
+fn format_time_includes_local_date_and_handles_midnight_crossing() {
+    let mut input = sample_input();
+    input.collected_at = ts("2026-11-17T23:30:00Z");
+    let now = ts("2026-11-18T02:00:00Z");
+    let offset = UtcOffset::from_hms(2, 0, 0).expect("valid offset");
+
+    let summary = render_summary(&input, now, offset);
+
+    // UTC is 2026-11-17, local date after crossing midnight at +02:00 is 2026-11-18
+    assert!(summary.contains("2026-11-17 23:30:00 UTC"));
+    assert!(summary.contains("2026-11-18 01:30:00 +02:00"));
+}
+
+#[test]
+fn huge_early_content_keeps_all_12_headings() {
+    let mut input = sample_input();
+    // Huge task details (80KB) and huge anomalies (30KB)
+    input.tasks.first_mut().expect("task").last_run_end_detail =
+        Some("Very long task output detail with unicode 🚀\n".repeat(1500));
+    input.anomalies = (0..500)
+        .map(|i| SummaryAnomaly {
+            message: format!("Anomaly {i}: deeply detailed problem with system 🔧"),
+            command: Some(format!("agent fix-rule-{i}")),
+        })
+        .collect();
+
+    let now = ts("2026-11-17T20:00:00Z");
+    let offset = UtcOffset::UTC;
+
+    let summary = render_summary(&input, now, offset);
+
+    assert!(
+        summary.len() < MAX_SUMMARY_BYTES,
+        "summary len {} must be < {}",
+        summary.len(),
+        MAX_SUMMARY_BYTES
+    );
+    for section in SummarySection::ALL {
+        assert!(
+            summary.contains(section.heading()),
+            "heading {} must be preserved despite huge early content",
+            section.heading()
+        );
+    }
+}
+
+#[test]
+fn daemon_log_lines_preserve_boundaries() {
+    let mut input = sample_input();
+    input.daemon_log_lines = Some(vec![
+        "2026-11-17 19:00:00 [info] first line".to_owned(),
+        "2026-11-17 19:00:01 [info] second line".to_owned(),
+    ]);
+
+    let now = ts("2026-11-17T20:00:00Z");
+    let offset = UtcOffset::UTC;
+
+    let summary = render_summary(&input, now, offset);
+
+    assert!(summary.contains("first line\n2026-11-17 19:00:01 [info] second line"));
+}
