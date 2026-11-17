@@ -680,3 +680,7 @@ mod turn_limit_round_tests;
 #[cfg(test)]
 #[path = "rounds/tests/notice_mapping.rs"]
 mod notice_mapping_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/cleanup.rs"]
+mod cleanup_tests;
