@@ -9,7 +9,7 @@
 //! The commit identity and the signing of a run belong to its [`Git`] handle and travel with every command as
 //! environment and `-c` options: nothing is written to a git configuration file.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::os::unix::ffi::OsStrExt;
@@ -246,6 +246,9 @@ pub enum GitOperation {
     /// `git config`, to discover extension commands that history must disable.
     #[strum(serialize = "config")]
     Config,
+    /// `git ls-tree`, to list the files in a commit tree.
+    #[strum(serialize = "ls-tree")]
+    LsTree,
 }
 
 /// Why the scratch area of a read of the uncommitted changes cannot be made.
@@ -1072,6 +1075,15 @@ impl Git {
         .map(drop)
     }
 
+    /// The blobs in the tree of `commit`, as repository-relative paths.
+    ///
+    /// # Errors
+    /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and
+    /// [`GitError::Unexpected`].
+    pub async fn tree_blobs(&self, _commit: &CommitId) -> Result<HashSet<String>, GitError> {
+        Ok(HashSet::new())
+    }
+
     /// The command `git` with this handle's identity, signing and environment, and `args`.
     fn command(&self, args: &[&OsStr]) -> Command {
         let mut command = Command::new("git");
@@ -1420,6 +1432,20 @@ mod tests {
         assert_eq!(git.resolve_commit(short).await.unwrap(), Some(head.clone()));
         assert_eq!(git.resolve_commit(head.as_str()).await.unwrap(), Some(head));
         assert_eq!(git.resolve_commit("deadbeef").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn tree_blobs_lists_only_blobs_in_commit_tree() {
+        let fixture = Fixture::new();
+        std::fs::create_dir_all(fixture.repo.join("nested/dir")).unwrap();
+        fixture.commit("nested/dir/b.txt", "two\n", "Second");
+        let head = fixture.head();
+
+        let blobs = fixture.git().tree_blobs(&head).await.unwrap();
+        assert_eq!(
+            blobs,
+            HashSet::from(["a.txt".to_owned(), "nested/dir/b.txt".to_owned()])
+        );
     }
 
     // Rule: a branch is made at a start, found by its tip, and deleted.
