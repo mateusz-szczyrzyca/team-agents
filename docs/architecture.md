@@ -379,14 +379,17 @@ the original spelling as the label and the full ID in the URL.
 A repository-relative path becomes a file link only when it names a blob in the tree of the commit the text is
 about: the reviewed commit for a review, or the pull request head for descriptions and updated-branch comments.
 `src/lib.rs:7` adds `#L7`; `src/lib.rs:7-12` adds `#L7-L12`. Line numbers need not exist in the file. File labels
-preserve the author's spelling and single backticks, and URL path characters are percent-encoded. Trailing sentence
+preserve the author's spelling and single backticks; unmatched Markdown label brackets and literal backslashes
+in bare labels are escaped so the links render correctly. URL path characters are percent-encoded. Trailing sentence
 punctuation is kept outside the link. Directories, missing files, absolute paths and paths containing `..` stay
 as written; files are never searched for under another name or at another commit. Git supplies the committed tree
 in one listing per text, rather than starting a process for each path. A truncated listing is a lookup failure;
 the harness never treats an incomplete tree as the full set of files.
 
 When joined items or test-change disclosures change a published description, generated file links in identifiable
-harness-authored lines are rebuilt at the new head. Other existing links retain their destinations. A description
+harness-authored lines are rebuilt at the new head only when their destinations belong to the publishing
+repository from `origin`. Generated commit labels are recognized regardless of hexadecimal letter case.
+Other existing links retain their destinations. A description
 that does not change retains the links from its original publication.
 
 Single-backtick references are linked too, including file names containing spaces or `#`; longer inline code spans,
