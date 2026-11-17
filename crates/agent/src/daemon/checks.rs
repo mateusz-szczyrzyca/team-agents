@@ -321,8 +321,19 @@ pub(super) fn authored(description: &str, harness: &str) -> String {
 
 /// Restores harness-authored file labels before a changed description is published again.
 #[must_use]
-pub(crate) fn unlinked_harness_files(description: &str, _harness: &str) -> String {
-    description.to_owned()
+pub(crate) fn unlinked_harness_files(description: &str, harness: &str) -> String {
+    let written: HashSet<&str> = harness.lines().map(str::trim).collect();
+    let mut result = String::new();
+    for line in description.split_inclusive('\n') {
+        let original = original_file_labels(line);
+        // Only lines identifiable as harness text may have their generated destinations refreshed.
+        if written.contains(original.trim()) {
+            result.push_str(&original);
+        } else {
+            result.push_str(line);
+        }
+    }
+    result
 }
 
 /// Removes only the exact blob-link spelling produced by the repository file linker.
