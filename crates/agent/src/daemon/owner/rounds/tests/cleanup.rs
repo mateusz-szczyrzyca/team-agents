@@ -48,28 +48,45 @@ async fn cleaned(rig: &Rig, tasks: &[TaskId]) {
 #[tokio::test]
 async fn autopilot_merge_removes_lead_and_reviewers_but_keeps_all_branches() {
     let mut rig = rig().await;
-    rig.github.answer_merges(super::fake_github::MergeAnswer::Refuse(409));
     rig.start().await;
     rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let state = rig
-        .item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
+        .item_where("1.1", "merged", |phase| matches!(phase, ItemPhase::Done { .. }))
         .await;
     let tasks = tasks(&state);
     assert_eq!(tasks.len(), 3);
-    let local = git(&rig.repo, &["for-each-ref", "--format=%(refname)", "refs/heads/"]);
-    let remote = git(&rig.origin, &["for-each-ref", "--format=%(refname)", "refs/heads/"]);
-    rig.github.answer_merges(super::fake_github::MergeAnswer::Allow);
-    rig.item_where("1.1", "merged", |phase| matches!(phase, ItemPhase::Done { .. }))
-        .await;
     cleaned(&rig, &tasks).await;
     rig.stop().await.unwrap();
+    let team = &state.teams()[0];
+    let mut local = vec!["refs/heads/main".to_owned()];
+    for member in team
+        .crew()
+        .roster()
+        .into_iter()
+        .map(|(_, member)| member)
+        .chain(team.reviewers())
+    {
+        let agent = crate::daemon::team::agent_name(member.agent()).unwrap();
+        let branch = crate::daemon::team::task_branch(&agent, member.task()).unwrap();
+        local.push(format!("refs/heads/{branch}"));
+    }
+    let ItemPhase::Done {
+        completion: agent_core::state::Completion::Merged { pr, .. },
+    } = team.item("1.1".parse().unwrap()).unwrap().phase()
+    else {
+        panic!("expected merged item")
+    };
+    local.push(format!("refs/heads/{}", pr.branch));
+    local.sort();
     assert_eq!(
         git(&rig.repo, &["for-each-ref", "--format=%(refname)", "refs/heads/"]),
-        local
+        local.join("\n")
     );
+    let mut remote = ["refs/heads/main".to_owned(), format!("refs/heads/{}", pr.branch)];
+    remote.sort();
     assert_eq!(
         git(&rig.origin, &["for-each-ref", "--format=%(refname)", "refs/heads/"]),
-        remote
+        remote.join("\n")
     );
     let listed = git(&rig.repo, &["worktree", "list", "--porcelain"]);
     assert!(
