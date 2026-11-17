@@ -1344,7 +1344,7 @@ mod tests {
     async fn resolve_commit_resolves_abbreviated_and_full_commit_ids_and_none_for_unknown() {
         let fixture = Fixture::new();
         let head = fixture.head();
-        let short = &head.as_str()[..7];
+        let short = head.as_str().get(..7).unwrap();
 
         let git = fixture.git();
         assert_eq!(git.resolve_commit(short).await.unwrap(), Some(head.clone()));
