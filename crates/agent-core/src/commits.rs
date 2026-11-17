@@ -1,4 +1,4 @@
-//! Pure Markdown rewriting of repository commit references.
+//! Pure Markdown rewriting of repository commit and file references.
 
 use std::collections::HashSet;
 use std::iter::Peekable;
@@ -468,12 +468,7 @@ fn html(chars: &mut Peekable<Chars<'_>>) -> Option<String> {
 }
 
 /// Protects existing inline and reference links while rewriting ordinary prose.
-fn link_prose(
-    text: &str,
-    repo_url: &str,
-    resolve: &mut impl FnMut(&str) -> Option<String>,
-    references: &HashSet<String>,
-) -> String {
+fn link_prose(text: &str, rewrite: &mut impl FnMut(&str, Style) -> String, references: &HashSet<String>) -> String {
     let mut result = String::with_capacity(text.len());
     let mut prose = String::new();
     let mut chars = text.chars().peekable();
@@ -481,13 +476,10 @@ fn link_prose(
         if ch == '`'
             && let Some((width, content, raw)) = code_span(&mut chars)
         {
-            result.push_str(&link_words(&prose, repo_url, resolve));
+            result.push_str(&rewrite(&prose, Style::Bare));
             prose.clear();
-            if width == 1
-                && is_candidate(&content)
-                && let Some(full) = resolve(&content)
-            {
-                push_link(&mut result, &content, repo_url, &full);
+            if width == 1 {
+                result.push_str(&rewrite(&content, Style::Backticks));
             } else {
                 result.push_str(&raw);
             }
@@ -502,7 +494,7 @@ fn link_prose(
             None
         };
         if let Some(raw) = protected {
-            result.push_str(&link_words(&prose, repo_url, resolve));
+            result.push_str(&rewrite(&prose, Style::Bare));
             prose.clear();
             result.push_str(&raw);
             continue;
@@ -523,7 +515,7 @@ fn link_prose(
             }
             if closed {
                 chars = lookahead;
-                result.push_str(&link_words(&prose, repo_url, resolve));
+                result.push_str(&rewrite(&prose, Style::Bare));
                 prose.clear();
                 result.push_str(&link);
             } else {
@@ -546,7 +538,7 @@ fn link_prose(
             let close = if open == '(' { ')' } else { ']' };
             if balanced(&mut lookahead, open, close, &mut link) {
                 chars = lookahead;
-                result.push_str(&link_words(&prose, repo_url, resolve));
+                result.push_str(&rewrite(&prose, Style::Bare));
                 prose.clear();
                 result.push_str(&link);
                 continue;
@@ -559,7 +551,7 @@ fn link_prose(
                 .is_some_and(|label| references.contains(&reference_label(label)))
         {
             chars = label_end;
-            result.push_str(&link_words(&prose, repo_url, resolve));
+            result.push_str(&rewrite(&prose, Style::Bare));
             prose.clear();
             result.push_str(&label);
             continue;
@@ -567,7 +559,7 @@ fn link_prose(
         // Failed link parsing must leave its contents subject to the same prose protections.
         prose.push('[');
     }
-    result.push_str(&link_words(&prose, repo_url, resolve));
+    result.push_str(&rewrite(&prose, Style::Bare));
     result
 }
 
@@ -579,33 +571,190 @@ fn link_prose(
 /// is the repository's HTTPS URL, without a trailing slash.
 #[must_use]
 pub fn link_commits(text: &str, repo_url: &str, mut resolve: impl FnMut(&str) -> Option<String>) -> String {
+    rewrite_markdown(text, &mut |content, style| match style {
+        Style::Bare => link_words(content, repo_url, &mut resolve),
+        Style::Backticks => {
+            if is_candidate(content)
+                && let Some(full) = resolve(content)
+            {
+                let mut result = String::new();
+                push_link(&mut result, content, repo_url, &full);
+                result
+            } else {
+                format!("`{content}`")
+            }
+        }
+    })
+}
+
+/// The spelling around a prose token in the original Markdown.
+#[derive(Debug, Clone, Copy)]
+enum Style {
+    /// An ordinary prose word.
+    Bare,
+    /// An entire single-backtick code span.
+    Backticks,
+}
+
+/// Runs all reference rewriting through the same Markdown protections.
+fn rewrite_markdown(text: &str, rewrite: &mut impl FnMut(&str, Style) -> String) -> String {
     let mut result = String::with_capacity(text.len());
     let mut prose = String::new();
     let mut active = Blocks::default();
     let references = references(text);
     for line in text.split_inclusive('\n') {
         if unfenced_content(line, &mut active).is_none_or(|content| reference_definition(content).is_some()) {
-            result.push_str(&link_prose(&prose, repo_url, &mut resolve, &references));
+            result.push_str(&link_prose(&prose, rewrite, &references));
             prose.clear();
             result.push_str(line);
         } else {
             prose.push_str(line);
         }
     }
-    result.push_str(&link_prose(&prose, repo_url, &mut resolve, &references));
+    result.push_str(&link_prose(&prose, rewrite, &references));
     result
 }
 
-/// Links repository commit words and file paths in Markdown.
+/// Links repository commit words and file paths in Markdown in one pass.
+///
+/// `is_file` reports whether a root-relative path is a blob in `commit`'s tree.
+/// `resolve_commit` resolves commit words as in [`link_commits`]. File labels
+/// retain their original spelling and backticks, with optional line anchors.
+/// Existing Markdown links, HTML and fenced code remain unchanged.
 #[must_use]
 pub fn link_references(
     text: &str,
     repo_url: &str,
-    _commit: &CommitId,
+    commit: &CommitId,
     resolve_commit: impl FnMut(&str) -> Option<String>,
-    _is_file: impl FnMut(&str) -> bool,
+    is_file: impl FnMut(&str) -> bool,
 ) -> String {
-    link_commits(text, repo_url, resolve_commit)
+    link_file_references(text, repo_url, &commit.to_string(), resolve_commit, is_file)
+}
+
+/// Shares the walker with the file-only public interface.
+pub(crate) fn link_file_references(
+    text: &str,
+    repo_url: &str,
+    commit: &str,
+    mut resolve_commit: impl FnMut(&str) -> Option<String>,
+    mut is_file: impl FnMut(&str) -> bool,
+) -> String {
+    rewrite_markdown(text, &mut |content, style| {
+        let mut rewrite = |word: &str| {
+            file_link(word, repo_url, commit, style, &mut is_file).or_else(|| match style {
+                Style::Bare => Some(link_words(word, repo_url, &mut resolve_commit)),
+                Style::Backticks => {
+                    if is_candidate(word) {
+                        resolve_commit(word).map(|full| {
+                            let mut result = String::new();
+                            push_link(&mut result, word, repo_url, &full);
+                            result
+                        })
+                    } else {
+                        None
+                    }
+                }
+            })
+        };
+        match style {
+            Style::Backticks => match rewrite(content) {
+                Some(link) => link,
+                None => format!("`{content}`"),
+            },
+            Style::Bare => rewrite_tokens(content, &mut rewrite),
+        }
+    })
+}
+
+/// Keeps path suffixes together so a path embedded in a larger word is never guessed.
+fn token_separator(ch: char) -> bool {
+    ch.is_whitespace()
+        || matches!(
+            ch,
+            ',' | ';' | '(' | ')' | '[' | ']' | '<' | '>' | '"' | '\'' | '`' | '*' | '|' | '='
+        )
+}
+
+/// Rewrites complete prose tokens while leaving sentence punctuation outside links.
+fn rewrite_tokens(text: &str, rewrite: &mut impl FnMut(&str) -> Option<String>) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if token_separator(ch) {
+            result.push(ch);
+            continue;
+        }
+        let mut token = String::from(ch);
+        while let Some(next) = chars.next_if(|next| !token_separator(*next)) {
+            token.push(next);
+        }
+        let word = token.trim_end_matches(['.', ':']);
+        match rewrite(word) {
+            Some(link) => {
+                result.push_str(&link);
+                if let Some(punctuation) = token.strip_prefix(word) {
+                    result.push_str(punctuation);
+                }
+            }
+            None => result.push_str(&token),
+        }
+    }
+    result
+}
+
+/// A syntactically valid line suffix, kept as text to preserve its spelling.
+fn line_anchor(suffix: &str) -> Option<String> {
+    let digits = |word: &str| !word.is_empty() && word.bytes().all(|byte| byte.is_ascii_digit());
+    if let Some((start, end)) = suffix.split_once('-') {
+        (digits(start) && digits(end)).then(|| format!("#L{start}-L{end}"))
+    } else {
+        digits(suffix).then(|| format!("#L{suffix}"))
+    }
+}
+
+/// Resolves an exact root-relative file, never a traversal or an absolute path.
+fn file_link(
+    word: &str,
+    repo_url: &str,
+    commit: &str,
+    style: Style,
+    is_file: &mut impl FnMut(&str) -> bool,
+) -> Option<String> {
+    let (path, anchor) = match word.rsplit_once(':') {
+        Some((path, suffix)) => match line_anchor(suffix) {
+            Some(anchor) => (path, anchor),
+            None => (word, String::new()),
+        },
+        None => (word, String::new()),
+    };
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.split('/').any(|part| matches!(part, ".." | "." | ""))
+        || !is_file(path)
+    {
+        return None;
+    }
+    let label = match style {
+        Style::Bare => word.to_owned(),
+        Style::Backticks => format!("`{word}`"),
+    };
+    let mut encoded = String::new();
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~' | b'/') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            for nibble in [byte >> 4, byte & 15] {
+                let digit = match nibble {
+                    0..=9 => b'0'.saturating_add(nibble),
+                    _ => b'A'.saturating_add(nibble.saturating_sub(10)),
+                };
+                encoded.push(char::from(digit));
+            }
+        }
+    }
+    Some(format!("[{label}]({repo_url}/blob/{commit}/{encoded}{anchor})"))
 }
 
 #[cfg(test)]

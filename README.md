@@ -276,6 +276,10 @@ you decide.
 **Texts on GitHub.** The agents write code in blocks that name their language, commits and PRs as links, and RED
 and GREEN bold in red and green (`prompts/writing.md`). Before an `--autopilot` review a PR description that does
 not goes back to the team once, with what to fix.
+The Rust harness also links repository file paths in pull request descriptions, updated-branch comments and reviews
+to the relevant full commit on GitHub. For example, `src/lib.rs:7-12` links to that file's lines 7–12 when the file
+exists in that commit. Bare paths and single-backtick paths are supported; code blocks, existing links and unknown
+paths stay as written. See [the Rust architecture](docs/architecture.md) for the publication rules.
 
 **The verdict.** A review ends with `VERDICT: ready-to-merge | needs-fixes | incomplete`, and its notification
 shows it: ✅ ready to merge, 🔧 needs fixes, 🧩 incomplete, ❌ a review without a verdict. Critical or major

@@ -371,14 +371,25 @@ removed only for publication. The saved report and history keep the reviewer's o
 both verdict texts live in `prompts/harness/review/`; changing their wording needs no code change.
 
 Before sending a pull request description (new or updated), an updated-branch comment or a review to GitHub,
-the daemon links commit IDs to the repository on GitHub, resolved from `origin`. The pure `agent-core` commit
-linker takes text and an injected lookup: only words of 7–40 hexadecimal digits that git resolves to a commit
-become links, with the original spelling as the label and the full ID in the URL. Single-backtick IDs are linked
-too; longer inline code spans, fenced code blocks (including blockquote and list containers), existing links
-(including bare URLs, email autolinks, quoted titles and shortcut references), HTML tags and comments, longer
-words and unknown IDs stay as written. Reference definitions are read across the document, excluding fenced
-code examples. If lookup fails, the
-original text is sent and the failure is logged with an existing event; linking never prevents publication.
+the daemon links commit IDs and repository files to GitHub, using the owner and repository from `origin`.
+The pure `agent-core` rewriter shares one Markdown walk for both kinds of reference, so generated links are never
+processed again. Only words of 7–40 hexadecimal digits that git resolves to a commit become commit links, with
+the original spelling as the label and the full ID in the URL.
+
+A repository-relative path becomes a file link only when it names a blob in the tree of the commit the text is
+about: the reviewed commit for a review, or the pull request head for descriptions and updated-branch comments.
+`src/lib.rs:7` adds `#L7`; `src/lib.rs:7-12` adds `#L7-L12`. Line numbers need not exist in the file. File labels
+preserve the author's spelling and single backticks, and URL path characters are percent-encoded. Trailing sentence
+punctuation is kept outside the link. Directories, missing files, absolute paths and paths containing `..` stay
+as written; files are never searched for under another name or at another commit. Git supplies the committed tree
+in one listing per text, rather than starting a process for each path.
+
+Single-backtick references are linked too, including file names containing spaces or `#`; longer inline code spans,
+fenced code blocks (including blockquote and list containers), existing links (including bare URLs, email autolinks,
+quoted titles and shortcut references), HTML tags and comments, and longer words stay as written. Reference
+definitions are read across the document, excluding fenced code examples. If a lookup fails, the original text is
+sent and the failure is logged with an existing event; linking never prevents publication. Saved reviewer reports
+and their history retain the author's original text.
 Review and developer rules require language-labelled fenced code blocks (`text` for output); the harness does
 not infer languages.
 

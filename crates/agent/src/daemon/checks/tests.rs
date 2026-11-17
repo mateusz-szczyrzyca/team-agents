@@ -519,3 +519,33 @@ fn lines_are_compared_without_their_indentation_and_a_changed_line_is_the_teams(
 fn a_description_without_the_harnesss_text_is_all_the_teams() {
     assert_eq!(authored("Only mine.\nTwo lines.", ""), "Only mine.\nTwo lines.");
 }
+
+/// Generated file links do not turn the harness's item text into a human disclosure.
+#[test]
+fn file_links_at_any_publication_commit_do_not_count_as_authored_text() {
+    let harness = "Change src/lib.rs:7 and `README.md`.\n";
+    let description = "Change [src/lib.rs:7](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/lib.rs#L7) and [`README.md`](https://github.com/octo/example/blob/abcdef0123456789012345678901234567890123/README.md).\n\n## Suppressions\n- `src/lib.rs`: required for compatibility.";
+    assert_eq!(
+        authored(description, harness),
+        "\n## Suppressions\n- `src/lib.rs`: required for compatibility."
+    );
+    assert_eq!(
+        authored("[src/lib.rs](https://example.com/custom)", "src/lib.rs"),
+        "[src/lib.rs](https://example.com/custom)"
+    );
+}
+
+/// Link normalization recognizes only the exact generated blob URL and label spelling.
+#[test]
+fn unrelated_blob_links_remain_authored() {
+    for description in [
+        "[src/lib.rs](https://github.com/octo/example/blob/short/src/lib.rs)",
+        "[src/lib.rs](https://github.com/octo/example/blob/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/src/lib.rs)",
+        "[src/lib.rs](https://example.com/blob/0123456789012345678901234567890123456789/src/lib.rs)",
+        "[src/lib.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/other.rs)",
+        "[src/lib.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789)",
+        "[src/lib.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/lib.rs",
+    ] {
+        assert_eq!(authored(description, "src/lib.rs"), description);
+    }
+}

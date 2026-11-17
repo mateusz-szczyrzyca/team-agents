@@ -301,15 +301,19 @@ Build the thing.
     )
     .await;
 
-    let prompt_dir = rig.home.prompts_dir().join("harness/pr");
-    std::fs::create_dir_all(&prompt_dir).unwrap();
+    let catalog = rig.home.prompts_dir();
+    copy_prompt_catalog(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &catalog,
+    )
+    .unwrap();
     std::fs::write(
-        prompt_dir.join("update.md"),
+        catalog.join("harness/pr/update.md"),
         "The branch was updated to `{{head}}` for README.md:1-5 after fix pass {{pass}} (the gate: {{gate}}).\n",
     )
     .unwrap();
 
-    rig.start().await;
+    rig.start_with_prompts(&catalog).await;
 
     let (_, tasks) = rig.run(&["claude-1"], TASK_LIST, MergeMode::Autopilot, None).await;
     rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
@@ -325,8 +329,8 @@ Build the thing.
     let pr_body = &pulls[0].body;
 
     let expected_readme_link =
-        format!("[README.md:10-20](https://github.com/{SLUG}/blob/{final_head}/README.md#L10-L20)");
-    let expected_work_link = format!("[work-1.txt](https://github.com/{SLUG}/blob/{final_head}/work-1.txt)");
+        format!("[README.md:10-20](https://github.com/{SLUG}/blob/{initial_head}/README.md#L10-L20)");
+    let expected_work_link = format!("[work-1.txt](https://github.com/{SLUG}/blob/{initial_head}/work-1.txt)");
     assert!(
         pr_body.contains(&expected_readme_link),
         "PR body missing README file link: {pr_body}"
@@ -374,4 +378,59 @@ Build the thing.
         body3.contains(&expected_r1_p2_link),
         "Review pass 2 missing backticked file link: {body3}"
     );
+}
+
+/// Copies the real prompt catalog so a scenario can override a text without touching shared files.
+fn copy_prompt_catalog(source: &std::path::Path, destination: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_prompt_catalog(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+#[tokio::test]
+async fn file_paths_with_commit_words_do_not_trigger_commit_lookups() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::str::FromStr;
+
+    use agent_core::config::AbsolutePath;
+    use agent_core::state::CommitId;
+    use agent_runtime::git::{CommitIdentity, Git};
+
+    use crate::daemon::owner::fixture::{Daemon, pair_state};
+
+    let daemon = Daemon::new(&pair_state(), None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let log_file = dir.path().join("calls.log");
+    let executable = dir.path().join("git");
+    let script = format!(
+        "#!/bin/sh\nsubcmd=\"\"\nwhile [ $# -gt 0 ]; do\n  case \"$1\" in\n    -c) shift 2 ;;\n    -*) shift ;;\n    *) subcmd=\"$1\"; break ;;\n  esac\ndone\necho \"$subcmd\" >> \"{}\"\ncase \"$subcmd\" in\n  remote) printf 'https://github.com/octo/example.git\\n' ;;\n  ls-tree) printf '100644 blob abcdef0123456789abcdef0123456789abcdef01\\tabcdef0.rs\\0' ;;\n  *) exit 128 ;;\nesac\n",
+        log_file.display()
+    );
+    std::fs::write(&executable, script).unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let git = Git::new(
+        AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap(),
+        CommitIdentity::new("Fixture".into(), "fixture@example.com".into(), None),
+    )
+    .with_env("PATH".parse().unwrap(), dir.path().to_str().unwrap());
+
+    let commit: CommitId = "abcdef0123456789abcdef0123456789abcdef01".parse().unwrap();
+    let linked = owner.link_commits(&git, &commit, "abcdef0.rs:7").await;
+    assert_eq!(
+        linked,
+        format!("[abcdef0.rs:7](https://github.com/octo/example/blob/{commit}/abcdef0.rs#L7)")
+    );
+
+    let calls = std::fs::read_to_string(&log_file).unwrap();
+    assert_eq!(calls.lines().collect::<Vec<_>>(), ["remote", "ls-tree"]);
 }
