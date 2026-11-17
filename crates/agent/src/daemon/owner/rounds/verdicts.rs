@@ -1,6 +1,7 @@
 //! The verdicts: what a reviewer's final message leads to — its report is kept and posted, its verdict recorded, and the
 //! round machine says what follows.
 
+use agent_core::config::ModelName;
 use agent_core::decide::round::{RoundError, RoundPolicy};
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, ItemId, TaskId, TeamId};
@@ -402,9 +403,7 @@ impl Owner {
         let head = git.rev_parse(&Revision::Head).await?;
         let github = self.github_for(pulls, &lead.repo, &git).await?;
         let client = match self.parts.settings.config.investigator(&asked.reviewer) {
-            Some(inv) => {
-                crate::daemon::notice::client_label(Some(inv.cli), inv.model.as_ref().map(|model| model.as_str()))
-            }
+            Some(inv) => crate::daemon::notice::client_label(Some(inv.cli), inv.model.as_ref().map(ModelName::as_str)),
             None => String::new(),
         };
         let verdict_line = match verdict {
