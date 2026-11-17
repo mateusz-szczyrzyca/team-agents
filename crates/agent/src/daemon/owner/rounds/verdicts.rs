@@ -338,7 +338,7 @@ impl Owner {
                 .with("commit", head.as_str())?
                 .with("report", &stripped_report)?,
         )?;
-        let body = self.link_commits(&git, &body).await;
+        let body = self.link_commits(&git, &head, &body).await;
         github
             .post_comment_review(
                 asked.pr.number,

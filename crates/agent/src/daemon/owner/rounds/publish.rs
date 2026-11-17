@@ -340,7 +340,7 @@ impl Owner {
             }
             found
         } else {
-            let body = self.link_commits(&ready.git, &text.body).await;
+            let body = self.link_commits(&ready.git, &ready.tip, &text.body).await;
             let created = github
                 .create_pull_request(&NewPullRequest {
                     title: text.title,
@@ -376,7 +376,7 @@ impl Owner {
         }
         // The reviewers find the `TEST-FIX:` commits of the round listed in the description: the harness writes that.
         let body = self.disclosed(lead, ready, &remote.body).await?;
-        let body = self.link_commits(&ready.git, &body).await;
+        let body = self.link_commits(&ready.git, &ready.tip, &body).await;
         if body != remote.body {
             let update = PullRequestUpdate {
                 body: Some(body),
@@ -458,7 +458,7 @@ impl Owner {
             body = text.body;
         }
         let body = self.disclosed(lead, ready, &body).await?;
-        let body = self.link_commits(&ready.git, &body).await;
+        let body = self.link_commits(&ready.git, &ready.tip, &body).await;
         if body != before.body {
             update.body = Some(body);
         }
@@ -472,7 +472,7 @@ impl Owner {
                 .with("pass", self.fix_passes_of(team, fixing).to_string())?
                 .with("gate", ready.record.summary())?,
         )?;
-        let comment = self.link_commits(&ready.git, &comment).await;
+        let comment = self.link_commits(&ready.git, &ready.tip, &comment).await;
         github.post_comment(pr.number, comment.trim_end()).await?;
         let after = github.get_pull_request(pr.number).await?;
         Ok(Attempt::Published(Published {
