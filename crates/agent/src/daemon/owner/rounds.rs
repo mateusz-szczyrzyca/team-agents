@@ -8,6 +8,7 @@
 
 mod asleep;
 mod checks;
+mod cleanup;
 mod human;
 mod merges;
 mod prompts;
