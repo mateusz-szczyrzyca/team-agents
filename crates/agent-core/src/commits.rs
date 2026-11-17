@@ -13,12 +13,47 @@ struct Fence {
     width: usize,
 }
 
-/// Reads a Markdown fence after at most three leading spaces.
-fn fence(line: &str) -> Option<(Fence, &str)> {
-    let content = line.trim_start_matches(' ');
-    if line.len().saturating_sub(content.len()) > 3 {
-        return None;
+/// Removes Markdown blockquote and list markers before a possible fence.
+fn container_content(mut line: &str) -> Option<&str> {
+    loop {
+        let content = line.trim_start_matches(' ');
+        if line.len().saturating_sub(content.len()) > 3 {
+            return None;
+        }
+        if let Some(rest) = content.strip_prefix('>') {
+            line = rest.strip_prefix(' ').unwrap_or(rest);
+            continue;
+        }
+        let mut chars = content.chars();
+        let first = chars.next()?;
+        let rest = if matches!(first, '-' | '+' | '*') {
+            chars.as_str()
+        } else if first.is_ascii_digit() {
+            let after_digits = content.trim_start_matches(|ch: char| ch.is_ascii_digit());
+            if content.len().saturating_sub(after_digits.len()) > 9 {
+                return Some(content);
+            }
+            match after_digits
+                .strip_prefix('.')
+                .or_else(|| after_digits.strip_prefix(')'))
+            {
+                Some(rest) => rest,
+                None => return Some(content),
+            }
+        } else {
+            return Some(content);
+        };
+        if let Some(rest) = rest.strip_prefix(' ') {
+            line = rest;
+        } else {
+            return Some(content);
+        }
     }
+}
+
+/// Reads a Markdown fence after container markers and at most three leading spaces.
+fn fence(line: &str) -> Option<(Fence, &str)> {
+    let content = container_content(line)?;
     let marker = content.chars().next()?;
     if marker != '`' && marker != '~' {
         return None;
