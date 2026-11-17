@@ -583,7 +583,12 @@ fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
     clippy::unnecessary_debug_formatting,
     reason = "debug escapes paths losslessly, including non-UTF-8 bytes; display can replace bytes"
 )]
-fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut SummaryWriter) {
+fn render_git(
+    worktrees: &[GitWorktreeSummary],
+    offset: UtcOffset,
+    out: &mut SummaryWriter,
+    untracked: UntrackedCollection,
+) {
     for w in worktrees {
         write_line(out, &format!("### Worktree for Task `{}`", w.task_id));
         write_line(out, "");
@@ -617,6 +622,11 @@ fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut Sum
                     format_time(c.time, offset)
                 ),
             );
+        }
+        if untracked == UntrackedCollection::Deferred {
+            write_line(out, "- Untracked file metadata: Not collected in this version.");
+            write_line(out, "");
+            continue;
         }
         write_line(
             out,
@@ -838,9 +848,9 @@ pub fn render_summary_with_coverage(
     input: &SummaryInput,
     offset: UtcOffset,
     uncollected: &[SummarySection],
-    _untracked: UntrackedCollection,
+    untracked: UntrackedCollection,
 ) -> Result<String, SummaryError> {
-    render_summary_with_uncollected(input, offset, uncollected)
+    render_with_coverage(input, offset, uncollected, untracked)
 }
 
 /// Renders a summary with explicit notices for sections outside the collection scope.
@@ -853,6 +863,15 @@ pub fn render_summary_with_uncollected(
     input: &SummaryInput,
     offset: UtcOffset,
     uncollected: &[SummarySection],
+) -> Result<String, SummaryError> {
+    render_with_coverage(input, offset, uncollected, UntrackedCollection::Collected)
+}
+
+fn render_with_coverage(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+    untracked: UntrackedCollection,
 ) -> Result<String, SummaryError> {
     let now = input.collected_at;
     let mut out = SummaryWriter::default();
@@ -884,7 +903,7 @@ pub fn render_summary_with_uncollected(
             SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut out),
             SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut out),
             SummarySection::TaskDetails => render_task_details(&input.tasks, &mut out),
-            SummarySection::GitWorktrees => render_git(&input.git, offset, &mut out),
+            SummarySection::GitWorktrees => render_git(&input.git, offset, &mut out, untracked),
             SummarySection::GateRecords => render_gate(&input.gate, offset, &mut out),
             SummarySection::HistoryTail => render_history(input.history_tail.as_deref(), &mut out),
             SummarySection::DaemonLog => render_daemon_log(input.daemon_log_lines.as_deref(), &mut out),

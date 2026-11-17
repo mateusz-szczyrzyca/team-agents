@@ -9,7 +9,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use agent_core::config::{MAX_SECRETS_BYTES, Secrets, SecretsError};
-use agent_core::debug_summary::{SummaryError, SummaryInput, SummarySection, render_summary_with_uncollected};
+use agent_core::debug_summary::{
+    SummaryError, SummaryInput, SummarySection, UntrackedCollection, render_summary_with_coverage,
+};
 use agent_core::diagnostic_assessment::assess;
 use agent_core::ids::{RoundId, TaskId, TeamId};
 use agent_core::state::{InvalidTimestamp, State, StateError, Timestamp};
@@ -243,7 +245,7 @@ fn short(text: &str, limit: usize) -> String {
 }
 
 fn compact_summary(input: &SummaryInput) -> Result<String, SummaryError> {
-    match render_summary_with_uncollected(input, time::UtcOffset::UTC, DEFERRED) {
+    match render_summary_with_coverage(input, time::UtcOffset::UTC, DEFERRED, UntrackedCollection::Deferred) {
         Ok(text) => Ok(text),
         Err(SummaryError::RequiredFactsTooLarge { .. }) => {
             let mut compact = input.clone();
@@ -257,7 +259,7 @@ fn compact_summary(input: &SummaryInput) -> Result<String, SummaryError> {
                 git.commits_over_base.clear();
                 git.newest_untracked.clear();
             }
-            render_summary_with_uncollected(&compact, time::UtcOffset::UTC, DEFERRED)
+            render_summary_with_coverage(&compact, time::UtcOffset::UTC, DEFERRED, UntrackedCollection::Deferred)
         }
         Err(error) => Err(error),
     }
