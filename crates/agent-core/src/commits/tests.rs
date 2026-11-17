@@ -424,3 +424,23 @@ fn unindented_fences_after_terminated_containers_preserve_later_body_lines() {
         }
     }
 }
+
+#[test]
+fn container_reference_definitions_and_their_global_shortcuts_are_preserved() {
+    let linked = "[`1234567`](https://github.com/owner/repo/commit/1234567000000000000000000000000000000000)";
+    for definition in [
+        "> [a1b2c3d]: /url",
+        "- [a1b2c3d]: path/1234567 \"title 1234567\"",
+        "1. [a1b2c3d]: /url",
+        "> - [a1b2c3d]: /url",
+        "- item\n\n  [a1b2c3d]: /url",
+        "> item\n>\n> [a1b2c3d]: /url",
+    ] {
+        let input = format!("[a1b2c3d]\n\n{definition}\n\n[a1b2c3d]\n\n1234567");
+        assert_eq!(
+            link_commits(&input, REPO_URL, resolve_hash),
+            format!("[a1b2c3d]\n\n{definition}\n\n[a1b2c3d]\n\n{linked}"),
+            "{definition:?}"
+        );
+    }
+}
