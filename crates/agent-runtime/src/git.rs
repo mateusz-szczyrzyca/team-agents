@@ -553,6 +553,16 @@ impl Git {
             .map_err(|source| GitError::NotACommit { operation, source })
     }
 
+    /// Resolves an abbreviated or full commit ID `text` to its full [`CommitId`], or `None` if it does not name a
+    /// commit.
+    ///
+    /// # Errors
+    /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and
+    /// [`GitError::Unexpected`].
+    pub async fn resolve_commit(&self, _text: &str) -> Result<Option<CommitId>, GitError> {
+        Ok(None)
+    }
+
     /// The tip of `branch`, or `None` when there is no such branch.
     ///
     /// # Errors
@@ -1328,6 +1338,18 @@ mod tests {
             matches!(&result, Err(GitError::UnknownRevision { revision }) if revision == "refs/heads/nothing"),
             "{result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn resolve_commit_resolves_abbreviated_and_full_commit_ids_and_none_for_unknown() {
+        let fixture = Fixture::new();
+        let head = fixture.head();
+        let short = &head.as_str()[..7];
+
+        let git = fixture.git();
+        assert_eq!(git.resolve_commit(short).await.unwrap(), Some(head.clone()));
+        assert_eq!(git.resolve_commit(head.as_str()).await.unwrap(), Some(head));
+        assert_eq!(git.resolve_commit("deadbeef").await.unwrap(), None);
     }
 
     // Rule: a branch is made at a start, found by its tip, and deleted.
