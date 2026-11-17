@@ -604,3 +604,47 @@ fn gate_log_path_escapes_quotes_losslessly() {
     let summary = render_summary(&input, UtcOffset::UTC).unwrap();
     assert!(summary.contains(r#"Log: `"/tmp/log-\"quoted\""`"#));
 }
+
+/// Builds a document whose mandatory facts and minimal tails occupy exactly the requested bytes.
+fn input_at_minimum_summary_bytes(required_bytes: usize, short_tail: &str) -> SummaryInput {
+    let mut input = sample_input();
+    input.tasks.clear();
+    input.gate.clear();
+    input.history_tail = Some(String::new());
+    input.daemon_log_lines = None;
+    input.bus_messages = vec![short_tail.to_owned()];
+    input.notifications.clear();
+    input.anomalies = vec![SummaryAnomaly {
+        message: String::new(),
+        command: None,
+    }];
+    let baseline = render_summary(&input, UtcOffset::UTC).unwrap().len();
+    input.anomalies.first_mut().unwrap().message = "a".repeat(required_bytes - baseline - CUT_MARKER.len());
+    input.history_tail = Some("history".repeat(MAX_SUMMARY_BYTES));
+    input
+}
+
+#[test]
+fn summary_budget_one_byte_below_limit_preserves_short_tail_and_exact_cut_marker() {
+    for short_tail in ["", "tiny", "🦀"] {
+        let input = input_at_minimum_summary_bytes(MAX_SUMMARY_BYTES - 1, short_tail);
+        let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+        assert_eq!(summary.len(), MAX_SUMMARY_BYTES - 1);
+        assert_eq!(summary.matches(CUT_MARKER).count(), 1);
+        let bus = summary.split(SummarySection::Bus.heading()).nth(1).unwrap();
+        assert!(bus.starts_with(&format!("\n\n- {short_tail}\n")));
+    }
+}
+
+#[test]
+fn summary_budget_at_limit_returns_exact_required_bytes_with_short_and_long_tails() {
+    for short_tail in ["", "tiny", "🦀"] {
+        let input = input_at_minimum_summary_bytes(MAX_SUMMARY_BYTES, short_tail);
+        assert_eq!(
+            render_summary(&input, UtcOffset::UTC),
+            Err(SummaryError::RequiredFactsTooLarge {
+                required_bytes: MAX_SUMMARY_BYTES,
+            })
+        );
+    }
+}
