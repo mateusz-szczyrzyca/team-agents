@@ -1036,6 +1036,12 @@ running installation, until the cutover. Build it with `cargo build` and run `ta
 `AGENTS_HOME=/tmp/trial-home`. Its files and settings are different from the Bash version's
 ([`docs/configuration.md`](docs/configuration.md), [`docs/state.md`](docs/state.md)).
 
+Debug diagnostics are being added in two parts: the pure facts, anomaly detection and bounded summary first,
+then runtime collection and the `agent debug` command. The summary preserves anomalies and structural rows,
+shares its byte budget among text tails, and reports a typed error if mandatory facts alone exceed the limit.
+The first part exposes no new command; see the
+[diagnostics design](docs/architecture.md#debug-diagnostics-commands-and-pure-decisions).
+
 The daemon records teams, rounds, runs and their steps and changes in `history.db`, together with gates, checks,
 pull requests, review and fix passes, questions, answers, controls and notifications. See
 [`docs/history.md`](docs/history.md) for `[history]` settings, read-only queries and lost-record reporting in

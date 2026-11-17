@@ -477,6 +477,35 @@ of durable loss reporting.
 `agent log --round` and `--team` ([`log.md`](log.md)) read the ledger directly and give it to `agent_core::story`, a pure function
 from records to lines (or JSON lines); there is no socket call in it, so it works without the daemon.
 
+### Debug diagnostics: commands and pure decisions
+
+Debug diagnostics are implemented in two dependent PRs. The first supplies the pure collected-facts model,
+anomaly detection and summary layout in `agent-core`; it adds no CLI command and reads or writes no files.
+The second supplies runtime collection and exposes `agent debug`. Until that second part lands, the existing
+command list and the daemon protocol are unchanged.
+
+The pure layer receives observed facts, the collection time and the machine's UTC offset from its caller.
+Unavailable facts are distinct from observations that something is absent. Known anomalies are reported from
+those facts without asking the daemon, running git or reading the machine's clock. A summary with no known
+anomaly says "none of the known ones", which does not establish that the team is healthy.
+
+The summary puts anomalies first, followed by daemon and versions, team/items/rounds, the tasks table, the last
+runs and questions, git, gates, history, daemon log, bus, notifications and machine. It stays below 100,000 bytes;
+individual long text fields share the remaining budget and retain their ends with an explicit cut marker.
+Anomalies are deduplicated, and structural headings, all task rows and gate records remain intact. Only the
+last three gate outputs for each task are included. If mandatory facts and cut markers alone would reach the
+limit, the renderer returns `SummaryError::RequiredFactsTooLarge` instead of omitting facts. Times include UTC
+and the injected local offset; the collection timestamp is the only reference for activity ages.
+Part 2 must bound unreadable-part reasons, commit lists and untracked-file lists for presentation while
+retaining their full details in separate artifacts. On `RequiredFactsTooLarge`, the collector must retry with
+reduced verbose presentation fields so a large collection still produces `SUMMARY.md`.
+The later collector retains full artifacts separately and must redact secrets before writing any artifact,
+including the summary. The collector should fill `diagnostic_assessment::Assessment` once, then map its
+deduplicated findings and read failures to the presentation input; summary fields are for presentation, not
+a second source of anomaly decisions. A known missing origin ref is deliberately reported as differing from
+the local tip, including a never-pushed branch; an unavailable origin observation produces no such finding.
+These new facts are diagnostic inputs, not a new persisted state or socket format.
+
 ### Rounds
 
 A **round** is the work of one team on one item of its task list, from the item's start to its merge (with `--no-merge`: to its

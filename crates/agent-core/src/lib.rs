@@ -49,7 +49,9 @@ macro_rules! version_type {
 pub mod cli;
 pub mod commits;
 pub mod config;
+pub mod debug_summary;
 pub mod decide;
+pub mod diagnostic_assessment;
 pub mod files;
 pub mod history;
 pub mod ids;
