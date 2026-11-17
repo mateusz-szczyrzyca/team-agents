@@ -519,3 +519,154 @@ fn lines_are_compared_without_their_indentation_and_a_changed_line_is_the_teams(
 fn a_description_without_the_harnesss_text_is_all_the_teams() {
     assert_eq!(authored("Only mine.\nTwo lines.", ""), "Only mine.\nTwo lines.");
 }
+
+/// Generated file links do not turn the harness's item text into a human disclosure.
+#[test]
+fn file_links_at_any_publication_commit_do_not_count_as_authored_text() {
+    let harness = "Change src/lib.rs:7 and `README.md`.\n";
+    let description = "Change [src/lib.rs:7](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/lib.rs#L7) and [`README.md`](https://github.com/octo/example/blob/abcdef0123456789012345678901234567890123/README.md).\n\n## Suppressions\n- `src/lib.rs`: required for compatibility.";
+    assert_eq!(
+        authored(description, harness),
+        "\n## Suppressions\n- `src/lib.rs`: required for compatibility."
+    );
+    assert_eq!(
+        authored("[src/lib.rs](https://example.com/custom)", "src/lib.rs"),
+        "[src/lib.rs](https://example.com/custom)"
+    );
+}
+
+/// Link normalization recognizes only the exact generated blob URL and label spelling.
+#[test]
+fn unrelated_blob_links_remain_authored() {
+    for description in [
+        "[src/lib.rs](https://github.com/octo/example/blob/short/src/lib.rs)",
+        "[src/lib.rs](https://github.com/octo/example/blob/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/src/lib.rs)",
+        "[src/lib.rs](https://example.com/blob/0123456789012345678901234567890123456789/src/lib.rs)",
+        "[src/lib.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/other.rs)",
+        "[src/lib.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789)",
+        "[src/lib.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/lib.rs",
+    ] {
+        assert_eq!(authored(description, "src/lib.rs"), description);
+    }
+}
+
+#[test]
+fn bracketed_file_links_keep_harness_lines_out_of_authored_text() {
+    let harness = "Check `src/[x].rs`: the case is covered.";
+    let description = "Check [`src/[x].rs`](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/%5Bx%5D.rs): the case is covered.";
+    assert_eq!(authored(description, harness), "");
+    let custom = "Check [`src/[x].rs`](https://example.com/custom): the case is covered.";
+    assert_eq!(authored(custom, harness), custom);
+}
+
+#[test]
+fn generated_link_labels_use_balanced_brackets_and_ignore_code_punctuation() {
+    for (label, path) in [
+        ("src/[x].rs", "src/%5Bx%5D.rs"),
+        ("`src/[x](y).rs`", "src/%5Bx%5D%28y%29.rs"),
+    ] {
+        let description = format!(
+            "First [{label}](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/{path}), then [{label}](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/{path})."
+        );
+        assert_eq!(authored(&description, &format!("First {label}, then {label}.")), "");
+    }
+}
+
+#[test]
+fn description_refresh_unlinks_only_generated_harness_lines() {
+    let linked = "See [`src/[x].rs:7`](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/%5Bx%5D.rs#L7).\nAn existing [guide](https://example.com/guide).\nCustom [src/a.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/a.rs).\n";
+    let harness = "See `src/[x].rs:7`.\nAn existing [guide](https://example.com/guide).\n";
+    assert_eq!(
+        unlinked_harness_files(linked, harness),
+        "See `src/[x].rs:7`.\nAn existing [guide](https://example.com/guide).\nCustom [src/a.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/a.rs).\n"
+    );
+}
+
+#[test]
+fn description_refresh_matches_harness_lines_containing_commit_links() {
+    let harness = "Compare abcdef0 in src/lib.rs:7.\nCompare `abcdef0` in `src/lib.rs:8`.\n";
+    let commit = "abcdef0123456789abcdef0123456789abcdef01";
+    let linked = format!(
+        "Compare [`abcdef0`](https://github.com/octo/example/commit/{commit}) in [src/lib.rs:7](https://github.com/octo/example/blob/{commit}/src/lib.rs#L7).\nCompare [`abcdef0`](https://github.com/octo/example/commit/{commit}) in [`src/lib.rs:8`](https://github.com/octo/example/blob/{commit}/src/lib.rs#L8).\n"
+    );
+    let expected = format!(
+        "Compare [`abcdef0`](https://github.com/octo/example/commit/{commit}) in src/lib.rs:7.\nCompare [`abcdef0`](https://github.com/octo/example/commit/{commit}) in `src/lib.rs:8`.\n"
+    );
+
+    assert_eq!(unlinked_harness_files(&linked, harness), expected);
+}
+
+#[test]
+fn description_refresh_preserves_another_repository_on_a_harness_line() {
+    let harness = "See `src/lib.rs:7`.\n";
+    let external = "See [`src/lib.rs:7`](https://github.com/acme/docs/blob/0123456789012345678901234567890123456789/src/lib.rs#L7).\n";
+    assert_eq!(
+        unlinked_harness_files_in_repository(external, harness, "https://github.com/octo/example"),
+        external
+    );
+    let local = "See [`src/lib.rs:7`](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/lib.rs#L7).\n";
+    assert_eq!(
+        unlinked_harness_files_in_repository(local, harness, "https://github.com/octo/example"),
+        harness
+    );
+}
+
+/// Keeps the existing publication fixtures scoped to their original repository.
+fn unlinked_harness_files(description: &str, harness: &str) -> String {
+    unlinked_harness_files_in_repository(description, harness, "https://github.com/octo/example")
+}
+
+#[test]
+fn description_refresh_matches_uppercase_commit_labels() {
+    let harness = "Compare ABCDEF0 in src/lib.rs:7.\n";
+    let commit = "abcdef0123456789abcdef0123456789abcdef01";
+    let linked = format!(
+        "Compare [`ABCDEF0`](https://github.com/octo/example/commit/{commit}) in [src/lib.rs:7](https://github.com/octo/example/blob/{commit}/src/lib.rs#L7).\n"
+    );
+    let expected = format!("Compare [`ABCDEF0`](https://github.com/octo/example/commit/{commit}) in src/lib.rs:7.\n");
+    assert_eq!(unlinked_harness_files(&linked, harness), expected);
+}
+
+#[test]
+fn description_refresh_restores_escaped_bare_file_labels() {
+    for (label, encoded, original) in [
+        (r"src/a\]b.rs", "src/a%5Db.rs", "src/a]b.rs"),
+        (r"src/a\[b.rs", "src/a%5Bb.rs", "src/a[b.rs"),
+        (r"src/a\\b.rs", "src/a%5Cb.rs", r"src/a\b.rs"),
+    ] {
+        let harness = format!("See {original}.\n");
+        let description = format!(
+            "See [{label}](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/{encoded}).\n"
+        );
+        assert_eq!(unlinked_harness_files(&description, &harness), harness);
+    }
+}
+
+#[test]
+fn authored_recognizes_file_links_with_blob_directories() {
+    for repository in ["octo/example", "blob/example", "octo/blob"] {
+        for path in ["src/blob/lib.rs", "blob/src/blob/lib.rs"] {
+            let harness = format!("See `{path}:7`.\n");
+            let description = format!(
+                "See [`{path}:7`](https://github.com/{repository}/blob/0123456789012345678901234567890123456789/{path}#L7).\nAuthor details."
+            );
+            assert_eq!(authored(&description, &harness), "Author details.");
+        }
+    }
+}
+
+#[test]
+fn description_refresh_restores_file_links_with_blob_directories() {
+    for repository in ["octo/example", "blob/example", "octo/blob"] {
+        for path in ["src/blob/lib.rs", "blob/src/blob/lib.rs"] {
+            let repository = format!("https://github.com/{repository}");
+            let harness = format!("See `{path}:7`.\n");
+            let description =
+                format!("See [`{path}:7`]({repository}/blob/0123456789012345678901234567890123456789/{path}#L7).\n");
+            assert_eq!(
+                unlinked_harness_files_in_repository(&description, &harness, &repository),
+                harness
+            );
+        }
+    }
+}

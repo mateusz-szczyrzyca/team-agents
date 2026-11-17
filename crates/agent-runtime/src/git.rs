@@ -9,7 +9,7 @@
 //! The commit identity and the signing of a run belong to its [`Git`] handle and travel with every command as
 //! environment and `-c` options: nothing is written to a git configuration file.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::os::unix::ffi::OsStrExt;
@@ -246,6 +246,9 @@ pub enum GitOperation {
     /// `git config`, to discover extension commands that history must disable.
     #[strum(serialize = "config")]
     Config,
+    /// `git ls-tree`, to list the files in a commit tree.
+    #[strum(serialize = "ls-tree")]
+    LsTree,
 }
 
 /// Why the scratch area of a read of the uncommitted changes cannot be made.
@@ -1072,6 +1075,31 @@ impl Git {
         .map(drop)
     }
 
+    /// The blobs in the tree of `commit`, as repository-relative paths.
+    ///
+    /// # Errors
+    /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and
+    /// [`GitError::Unexpected`].
+    pub async fn tree_blobs(&self, commit: &CommitId) -> Result<HashSet<String>, GitError> {
+        let operation = GitOperation::LsTree;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("ls-tree"),
+                    arg("-r"),
+                    arg("-z"),
+                    arg("--full-tree"),
+                    arg("--end-of-options"),
+                    arg(commit.as_str()),
+                ],
+            )
+            .await?;
+        let bytes = whole(operation, &captured.stdout, self.limits)?;
+        parse_tree_blobs(operation, bytes)
+    }
+
     /// The command `git` with this handle's identity, signing and environment, and `args`.
     fn command(&self, args: &[&OsStr]) -> Command {
         let mut command = Command::new("git");
@@ -1269,6 +1297,39 @@ fn parse_status(operation: GitOperation, bytes: &[u8]) -> Result<Vec<StatusEntry
     Ok(entries)
 }
 
+/// Reads the output of `git ls-tree -r -z`: `<mode> <type> <object>\t<path>\0` entries,
+/// collecting the paths whose object type is `blob`.
+fn parse_tree_blobs(operation: GitOperation, bytes: &[u8]) -> Result<HashSet<String>, GitError> {
+    let mut blobs = HashSet::new();
+    for entry in bytes.split(|byte| *byte == 0).filter(|entry| !entry.is_empty()) {
+        let unexpected = || GitError::Unexpected {
+            operation,
+            output: diagnostic(entry),
+        };
+        let Some(tab_pos) = entry.iter().position(|byte| *byte == b'\t') else {
+            return Err(unexpected());
+        };
+        let (meta, rest) = entry.split_at(tab_pos);
+        let path_bytes = rest.get(1..).ok_or_else(unexpected)?;
+        if path_bytes.is_empty() {
+            return Err(unexpected());
+        }
+        let mut parts = meta.split(|byte| *byte == b' ');
+        let _mode = parts.next().ok_or_else(unexpected)?;
+        let obj_type = parts.next().ok_or_else(unexpected)?;
+        let _object = parts.next().ok_or_else(unexpected)?;
+        if parts.next().is_some() {
+            return Err(unexpected());
+        }
+        if obj_type == b"blob" {
+            let path =
+                String::from_utf8(path_bytes.to_vec()).map_err(|source| GitError::NotUtf8 { operation, source })?;
+            blobs.insert(path);
+        }
+    }
+    Ok(blobs)
+}
+
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
@@ -1420,6 +1481,39 @@ mod tests {
         assert_eq!(git.resolve_commit(short).await.unwrap(), Some(head.clone()));
         assert_eq!(git.resolve_commit(head.as_str()).await.unwrap(), Some(head));
         assert_eq!(git.resolve_commit("deadbeef").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn tree_blobs_lists_only_blobs_in_commit_tree() {
+        let fixture = Fixture::new();
+        std::fs::create_dir_all(fixture.repo.join("nested/dir")).unwrap();
+        fixture.commit("nested/dir/b.txt", "two\n", "Second");
+        let head = fixture.head();
+
+        let blobs = fixture.git().tree_blobs(&head).await.unwrap();
+        assert_eq!(
+            blobs,
+            HashSet::from(["a.txt".to_owned(), "nested/dir/b.txt".to_owned()])
+        );
+    }
+
+    #[tokio::test]
+    async fn tree_blobs_uses_the_requested_commit_and_repository_root() {
+        let fixture = Fixture::new();
+        let old = fixture.head();
+        std::fs::create_dir_all(fixture.repo.join("nested")).unwrap();
+        fixture.commit("nested/new.txt", "later\n", "Later file");
+        let current = fixture.head();
+        let git = isolated(
+            &fixture.repo.join("nested"),
+            CommitIdentity::new("Fixture".into(), "fixture@example.com".into(), None),
+        );
+
+        assert_eq!(git.tree_blobs(&old).await.unwrap(), HashSet::from(["a.txt".to_owned()]));
+        assert_eq!(
+            git.tree_blobs(&current).await.unwrap(),
+            HashSet::from(["a.txt".to_owned(), "nested/new.txt".to_owned()])
+        );
     }
 
     // Rule: a branch is made at a start, found by its tip, and deleted.

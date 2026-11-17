@@ -12,7 +12,7 @@ use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::{EventKind, Failure, Reply};
 use agent_core::state::{CommitId, GateRecord, ItemPhase, PullRequest, Timestamp};
 use agent_runtime::git::{Git, Revision};
-use agent_runtime::github::{NewPullRequest, PullRequestUpdate, Readiness};
+use agent_runtime::github::{NewPullRequest, PullRequestUpdate, Readiness, RepoSlug};
 use agent_runtime::process::error_chain;
 use tokio::sync::oneshot;
 
@@ -26,6 +26,29 @@ use crate::daemon::merge::count;
 
 use super::checks::{Held, Reviewing};
 use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
+
+/// Refreshes only links attributable to the origin used by this publication.
+async fn refresh_harness_files(git: &Git, description: &str, harness: &str) -> String {
+    let repository = async {
+        let origin = git.origin_url().await?;
+        Ok::<_, PublishError>(RepoSlug::from_remote_url(&origin)?)
+    }
+    .await;
+    match repository {
+        Ok(slug) => {
+            let url = format!("https://github.com/{}/{}", slug.owner(), slug.name());
+            crate::daemon::checks::unlinked_harness_files_in_repository(description, harness, &url)
+        }
+        Err(error) => {
+            tracing::warn!(
+                event = LogEvent::GitCallFailed.as_str(),
+                error = %error_chain(&error),
+                "cannot determine origin for refreshing file links: text is sent unchanged"
+            );
+            description.to_owned()
+        }
+    }
+}
 
 /// How many times in a row a lead is sent back because the gate has not passed at the tip of its branch; after that the
 /// human is told.
@@ -340,7 +363,7 @@ impl Owner {
             }
             found
         } else {
-            let body = self.link_commits(&ready.git, &text.body).await;
+            let body = self.link_commits(&ready.git, &ready.tip, &text.body).await;
             let created = github
                 .create_pull_request(&NewPullRequest {
                     title: text.title,
@@ -376,7 +399,12 @@ impl Owner {
         }
         // The reviewers find the `TEST-FIX:` commits of the round listed in the description: the harness writes that.
         let body = self.disclosed(lead, ready, &remote.body).await?;
-        let body = self.link_commits(&ready.git, &body).await;
+        let body = if body == remote.body {
+            body
+        } else {
+            refresh_harness_files(&ready.git, &body, &text.body).await
+        };
+        let body = self.link_commits(&ready.git, &ready.tip, &body).await;
         if body != remote.body {
             let update = PullRequestUpdate {
                 body: Some(body),
@@ -458,7 +486,13 @@ impl Owner {
             body = text.body;
         }
         let body = self.disclosed(lead, ready, &body).await?;
-        let body = self.link_commits(&ready.git, &body).await;
+        let body = if body == before.body {
+            body
+        } else {
+            let harness = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record)?;
+            refresh_harness_files(&ready.git, &body, &harness.body).await
+        };
+        let body = self.link_commits(&ready.git, &ready.tip, &body).await;
         if body != before.body {
             update.body = Some(body);
         }
@@ -472,7 +506,7 @@ impl Owner {
                 .with("pass", self.fix_passes_of(team, fixing).to_string())?
                 .with("gate", ready.record.summary())?,
         )?;
-        let comment = self.link_commits(&ready.git, &comment).await;
+        let comment = self.link_commits(&ready.git, &ready.tip, &comment).await;
         github.post_comment(pr.number, comment.trim_end()).await?;
         let after = github.get_pull_request(pr.number).await?;
         Ok(Attempt::Published(Published {

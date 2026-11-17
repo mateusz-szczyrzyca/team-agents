@@ -5,6 +5,7 @@
 //! owner carries it out (`owner/rounds/checks.rs`). Nothing here reads a file or runs a process, but the texts, which come
 //! from `prompts/harness/checks/`.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::num::{NonZeroU32, TryFromIntError};
 use std::path::Path;
@@ -299,9 +300,17 @@ pub(super) fn decisions(subjects: &[Subject], file: &QuestionsFile) -> Decisions
 /// text of an item names files in passing; only what somebody added to the description discloses a file to the checks.
 #[must_use]
 pub(super) fn authored(description: &str, harness: &str) -> String {
-    let written: HashSet<&str> = harness.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    let written: HashSet<String> = harness
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(original_file_labels)
+        .collect();
     let mut kept: Vec<&str> = Vec::new();
-    for line in description.lines().filter(|line| !written.contains(line.trim())) {
+    for line in description
+        .lines()
+        .filter(|line| !written.contains(&original_file_labels(line.trim())))
+    {
         // The text that was taken out leaves its blank lines behind: a run of them is one.
         if line.trim().is_empty() && kept.last().is_some_and(|last| last.trim().is_empty()) {
             continue;
@@ -309,6 +318,179 @@ pub(super) fn authored(description: &str, harness: &str) -> String {
         kept.push(line);
     }
     kept.join("\n")
+}
+
+/// Restores harness-authored file labels belonging to the publishing repository.
+#[must_use]
+pub(super) fn unlinked_harness_files_in_repository(description: &str, harness: &str, repository: &str) -> String {
+    let written: HashSet<String> = harness.lines().map(str::trim).map(comparable_commit_labels).collect();
+    let mut result = String::new();
+    for line in description.split_inclusive('\n') {
+        let original = original_labels(line, |part| {
+            let (_, destination) = file_label_destination(part)?;
+            let (url, _) = destination.split_once(')')?;
+            let (published_repository, _) = published_file_target(url)?;
+            if published_repository != repository {
+                return None;
+            }
+            original_file_label(part)
+        });
+        // Only lines identifiable as harness text may have their generated destinations refreshed.
+        if written.contains(&comparable_commit_labels(original.trim())) {
+            result.push_str(&original);
+        } else {
+            result.push_str(line);
+        }
+    }
+    result
+}
+
+/// Removes only the exact blob-link spelling produced by the repository file linker.
+/// Publication commits may differ after a fix pass; the original item text still belongs to the harness.
+fn original_file_labels(line: &str) -> String {
+    original_labels(line, original_file_label)
+}
+
+/// Commit words accepted by the shared Markdown linker: abbreviations through a full SHA-1.
+const COMMIT_WORD_LENGTHS: std::ops::RangeInclusive<usize> = 7..=40;
+
+/// Normalizes generated commit labels only for identifying the original harness line.
+fn comparable_commit_labels(line: &str) -> String {
+    let normalized = original_labels(line, original_commit_label);
+    let mut result = String::new();
+    let mut remaining = normalized.as_str();
+    while let Some((prefix, part)) = remaining.split_once('`') {
+        result.push_str(prefix);
+        let Some((span, tail)) = part.split_once('`') else {
+            result.push('`');
+            result.push_str(part);
+            return result;
+        };
+        if COMMIT_WORD_LENGTHS.contains(&span.len()) && span.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            result.push_str(span);
+        } else {
+            result.push('`');
+            result.push_str(span);
+            result.push('`');
+        }
+        remaining = tail;
+    }
+    result.push_str(remaining);
+    result
+}
+
+/// Replaces recognized generated references with their original labels.
+fn original_labels<'a>(line: &'a str, mut recognize: impl FnMut(&'a str) -> Option<(Cow<'a, str>, &'a str)>) -> String {
+    let mut result = String::new();
+    let mut remaining = line;
+    while let Some((prefix, part)) = remaining.split_once('[') {
+        result.push_str(prefix);
+        if let Some((label, tail)) = recognize(part) {
+            result.push_str(&label);
+            remaining = tail;
+        } else {
+            result.push('[');
+            remaining = part;
+        }
+    }
+    result.push_str(remaining);
+    result
+}
+
+/// Recognizes the exact commit-link spelling without changing its publication destination.
+fn original_commit_label(part: &str) -> Option<(Cow<'_, str>, &str)> {
+    let (label, destination) = file_label_destination(part)?;
+    let (url, tail) = destination.split_once(')')?;
+    let (repository, revision) = url.rsplit_once("/commit/")?;
+    if !repository.starts_with("https://github.com/") {
+        return None;
+    }
+    // Invalid revisions identify ordinary author-written links, not generated commit references.
+    let Ok(commit) = revision.parse::<agent_core::state::CommitId>() else {
+        return None;
+    };
+    let generated = agent_core::commits::link_commits(label, repository, |word| {
+        commit
+            .as_str()
+            .get(..word.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(word))
+            .then(|| commit.to_string())
+    });
+    (generated == format!("[{label}]({url})")).then_some((Cow::Borrowed(label), tail))
+}
+
+/// Finds the destination after a balanced label, protecting brackets inside code spans.
+fn file_label_destination(part: &str) -> Option<(&str, &str)> {
+    let mut depth = 0_u32;
+    let mut code = false;
+    let mut escaped = false;
+    for (offset, ch) in part.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && !code {
+            escaped = true;
+            continue;
+        }
+        match ch {
+            '`' => code = !code,
+            '[' if !code => depth = depth.saturating_add(1),
+            ']' if !code => {
+                if depth == 0 {
+                    let destination = part.get(offset..)?.strip_prefix("](")?;
+                    return Some((part.get(..offset)?, destination));
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Locates the blob route after the owner and repository; paths may themselves contain `blob`.
+fn published_file_target(url: &str) -> Option<(&str, &str)> {
+    let location = url.strip_prefix("https://github.com/")?;
+    let (_owner, location) = location.split_once('/')?;
+    let (_repository, route) = location.split_once('/')?;
+    let target = route.strip_prefix("blob/")?;
+    let repository = url.strip_suffix(route)?.strip_suffix('/')?;
+    Some((repository, target))
+}
+
+/// Recognizes the file link by reconstructing it, retaining unrelated author-written links.
+fn original_file_label(part: &str) -> Option<(Cow<'_, str>, &str)> {
+    let (label, destination) = file_label_destination(part)?;
+    let (url, tail) = destination.split_once(')')?;
+    let (repository, target) = published_file_target(url)?;
+    let (revision, _path) = target.split_once('/')?;
+    // Invalid revisions identify ordinary author-written links, not generated file references.
+    let Ok(commit) = revision.parse::<agent_core::state::CommitId>() else {
+        return None;
+    };
+    let original = unescaped_file_label(label);
+    let generated = agent_core::files::link_files(&original, repository, &commit, |_| true);
+    (generated == format!("[{label}]({url})")).then_some((original, tail))
+}
+
+/// Decodes only escapes in bare labels; code spans keep literal filename characters.
+fn unescaped_file_label(label: &str) -> Cow<'_, str> {
+    if label.starts_with('`') || !label.contains('\\') {
+        return Cow::Borrowed(label);
+    }
+    let mut decoded = String::with_capacity(label.len());
+    let mut chars = label.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\'
+            && let Some(escaped) = chars.next_if(|ch| matches!(ch, '[' | ']' | '\\'))
+        {
+            decoded.push(escaped);
+        } else {
+            decoded.push(ch);
+        }
+    }
+    Cow::Owned(decoded)
 }
 
 /// What the lead is told to put the questions number `number` in `file` to the human.

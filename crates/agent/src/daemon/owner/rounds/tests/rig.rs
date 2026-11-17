@@ -253,6 +253,33 @@ impl Rig {
         }
     }
 
+    /// Starts with a catalog isolated inside the test temporary directory.
+    pub(super) async fn start_with_prompts(&mut self, prompts: &Path) {
+        self.shutdown = CancellationToken::new();
+        let socket = self.home.socket_file();
+        let deadline = Instant::now() + PATIENCE;
+        'attempts: loop {
+            let mut setup = self.setup();
+            setup.prompts_dir = prompts.to_path_buf();
+            let daemon = tokio::spawn(run(setup, self.shutdown.clone()));
+            while !socket.exists() {
+                if daemon.is_finished() {
+                    match daemon.await.unwrap() {
+                        Err(DaemonError::AlreadyRunning { .. }) if Instant::now() < deadline => {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            continue 'attempts;
+                        }
+                        ended => panic!("the daemon ended at its start: {ended:?}"),
+                    }
+                }
+                assert!(Instant::now() < deadline, "timed out waiting for the socket");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            self.daemon = Some(daemon);
+            return;
+        }
+    }
+
     /// Starts the daemon with an explicit log layer, retaining its stderr sink and applying the loaded settings.
     pub(super) async fn start_with_log_layer(&mut self, layer: HistoryLayer) {
         self.shutdown = CancellationToken::new();
