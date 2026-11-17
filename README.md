@@ -1036,10 +1036,25 @@ running installation, until the cutover. Build it with `cargo build` and run `ta
 `AGENTS_HOME=/tmp/trial-home`. Its files and settings are different from the Bash version's
 ([`docs/configuration.md`](docs/configuration.md), [`docs/state.md`](docs/state.md)).
 
-Debug diagnostics are being added in two parts: the pure facts, anomaly detection and bounded summary first,
-then runtime collection and the `agent debug` command. The summary preserves anomalies and structural rows,
-shares its byte budget among text tails, and reports a typed error if mandatory facts alone exceed the limit.
-The first part exposes no new command; see the
+The Rust CLI provides a read-only diagnostic bundle for one team:
+
+```sh
+AGENTS_HOME=/tmp/trial-home target/debug/agent debug --team TEAM_ID
+# Alternatively select --round ROUND_ID or --task TASK_ID; exactly one is required.
+```
+
+`--out DIR` selects the parent directory (the default is `<home>/debug/`), and `--stale-minutes N`
+sets the activity threshold. The command prints the paths of the new directory and its `SUMMARY.md`.
+It collects the saved state, status when the daemon answers, team tasks and their runs, prompts, final messages,
+steps, raw output and standard error, questions and answers, gates, checks, worktree git facts and team history.
+It works offline, reports unreadable parts, and changes no task or git ref. Before writing any artifact it replaces
+exact values from `secrets.toml` and environment variables ending in `TOKEN`, `SECRET`, `PASSWORD` or `KEY` with
+`<cut>`. An unreadable secrets file stops collection before any bundle is written.
+
+The summary uses the pure anomaly assessment and stays below 100,000 bytes; full collected details are separate
+artifacts. Deferred sections explicitly say "Not collected in this version." A third task will add daemon process
+facts and logs (`--daemon-log FILE` is accepted for that extension), bus messages, notifications, configuration
+and secret key names, machine metrics and the fifty newest untracked files. See the
 [diagnostics design](docs/architecture.md#debug-diagnostics-commands-and-pure-decisions).
 
 The daemon records teams, rounds, runs and their steps and changes in `history.db`, together with gates, checks,

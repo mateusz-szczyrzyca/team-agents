@@ -479,10 +479,21 @@ from records to lines (or JSON lines); there is no socket call in it, so it work
 
 ### Debug diagnostics: commands and pure decisions
 
-Debug diagnostics are implemented in two dependent PRs. The first supplies the pure collected-facts model,
-anomaly detection and summary layout in `agent-core`; it adds no CLI command and reads or writes no files.
-The second supplies runtime collection and exposes `agent debug`. Until that second part lands, the existing
-command list and the daemon protocol are unchanged.
+`agent debug (--round ID | --team ID | --task ID) [--out DIR] [--daemon-log FILE]
+[--stale-minutes N]` resolves one team and writes a new diagnostic directory beneath `<home>/debug/` or `DIR`.
+It reads the state and existing status protocol, tasks and runs (including prompts, final messages, steps, raw
+output and standard error), questions and answers, gates and their outputs, check records, worktree git facts
+and team history. It does not change task state, emit history events, fetch or move refs. A daemon that does not
+answer does not prevent collection. A missing target fails without leaving a directory.
+
+Secrets are loaded before any artifact is written; an unreadable secrets file is fatal. Every artifact, including
+the summary, replaces exact secrets-file values and values of environment variables whose names end in `TOKEN`,
+`SECRET`, `PASSWORD` or `KEY` with `<cut>`. The secrets file itself is never copied. Other read failures become
+assessment read failures and do not stop unrelated collection.
+
+A third task adds daemon process facts and log collection, bus messages, notifications, configuration with secret
+key names, machine metrics and the fifty newest untracked files. `--daemon-log` is accepted for that extension.
+Deferred sections explicitly say "Not collected in this version." They are not observations of absence or anomalies.
 
 The pure layer receives observed facts, the collection time and the machine's UTC offset from its caller.
 Unavailable facts are distinct from observations that something is absent. Known anomalies are reported from
@@ -496,11 +507,9 @@ Anomalies are deduplicated, and structural headings, all task rows and gate reco
 last three gate outputs for each task are included. If mandatory facts and cut markers alone would reach the
 limit, the renderer returns `SummaryError::RequiredFactsTooLarge` instead of omitting facts. Times include UTC
 and the injected local offset; the collection timestamp is the only reference for activity ages.
-Part 2 must bound unreadable-part reasons, commit lists and untracked-file lists for presentation while
-retaining their full details in separate artifacts. On `RequiredFactsTooLarge`, the collector must retry with
-reduced verbose presentation fields so a large collection still produces `SUMMARY.md`.
-The later collector retains full artifacts separately and must redact secrets before writing any artifact,
-including the summary. The collector should fill `diagnostic_assessment::Assessment` once, then map its
+The collector retains full details in separate artifacts and retries `RequiredFactsTooLarge` with shorter
+presentation fields, including unreadable-part reasons and commit lists. It fills
+`diagnostic_assessment::Assessment` once, then maps its
 deduplicated findings and read failures to the presentation input; summary fields are for presentation, not
 a second source of anomaly decisions. A known missing origin ref is deliberately reported as differing from
 the local tip, including a never-pushed branch; an unavailable origin observation produces no such finding.
