@@ -477,6 +477,24 @@ of durable loss reporting.
 `agent log --round` and `--team` ([`log.md`](log.md)) read the ledger directly and give it to `agent_core::story`, a pure function
 from records to lines (or JSON lines); there is no socket call in it, so it works without the daemon.
 
+### Debug diagnostics: commands and pure decisions
+
+Debug diagnostics are implemented in two dependent PRs. The first supplies the pure collected-facts model,
+anomaly detection and summary layout in `agent-core`; it adds no CLI command and reads or writes no files.
+The second supplies runtime collection and exposes `agent debug`. Until that second part lands, the existing
+command list and the daemon protocol are unchanged.
+
+The pure layer receives observed facts, the collection time and the machine's UTC offset from its caller.
+Unavailable facts are distinct from observations that something is absent. Known anomalies are reported from
+those facts without asking the daemon, running git or reading the machine's clock. A summary with no known
+anomaly says "none of the known ones", which does not establish that the team is healthy.
+
+The summary puts anomalies first, followed by daemon and versions, team/items/rounds, the tasks table, the last
+runs and questions, git, gates, history, daemon log, bus, notifications and machine. It stays below 100,000 bytes;
+long text retains its end with an explicit cut marker. Times include UTC and the injected local offset.
+The later collector retains full artifacts separately and must redact secrets before writing any artifact,
+including the summary. These new facts are diagnostic inputs, not a new persisted state or socket format.
+
 ### Rounds
 
 A **round** is the work of one team on one item of its task list, from the item's start to its merge (with `--no-merge`: to its
