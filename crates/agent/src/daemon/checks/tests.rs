@@ -534,3 +534,18 @@ fn file_links_at_any_publication_commit_do_not_count_as_authored_text() {
         "[src/lib.rs](https://example.com/custom)"
     );
 }
+
+/// Link normalization recognizes only the exact generated blob URL and label spelling.
+#[test]
+fn unrelated_blob_links_remain_authored() {
+    for description in [
+        "[src/lib.rs](https://github.com/octo/example/blob/short/src/lib.rs)",
+        "[src/lib.rs](https://github.com/octo/example/blob/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/src/lib.rs)",
+        "[src/lib.rs](https://example.com/blob/0123456789012345678901234567890123456789/src/lib.rs)",
+        "[src/lib.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/other.rs)",
+        "[src/lib.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789)",
+        "[src/lib.rs](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/lib.rs",
+    ] {
+        assert_eq!(authored(description, "src/lib.rs"), description);
+    }
+}
