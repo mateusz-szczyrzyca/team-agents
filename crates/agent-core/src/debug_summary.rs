@@ -6,11 +6,13 @@
 #[cfg(test)]
 mod tests;
 
+use std::path::PathBuf;
 use time::UtcOffset;
 
+use crate::config::RepoName;
 use crate::ids::{AgentName, BranchName, ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
-use crate::state::{CommitId, Timestamp};
+use crate::state::{CommitId, GateRecord, RoundLife, Timestamp};
 use crate::status::{ItemStatus, TaskStatus};
 
 /// Maximum byte limit for `SUMMARY.md`. The output must be strictly less than this limit.
@@ -150,7 +152,7 @@ pub struct TeamSummaryFacts {
     /// Team ID.
     pub id: TeamId,
     /// Repository name.
-    pub repo: String,
+    pub repo: RepoName,
     /// Items of the team.
     pub items: Vec<ItemSummaryFacts>,
     /// Rounds of the team.
@@ -179,8 +181,8 @@ pub struct RoundSummaryFacts {
     pub item: Option<ItemId>,
     /// When the round opened.
     pub opened_at: Timestamp,
-    /// Status of the round (e.g. open, closed).
-    pub status: String,
+    /// Status of the round.
+    pub status: RoundLife,
 }
 
 /// Status and run summary for one task in the task table.
@@ -231,7 +233,7 @@ pub struct GitWorktreeSummary {
     /// Commits ahead of base branch.
     pub commits_over_base: Vec<GitCommitSummaryFacts>,
     /// Names of changed uncommitted files.
-    pub uncommitted_files: Vec<String>,
+    pub uncommitted_files: Vec<PathBuf>,
     /// Harness refs (`refs/team-agents/`).
     pub harness_refs: Vec<String>,
     /// Whether the lead's tip contains this branch's tip.
@@ -257,7 +259,7 @@ pub struct GitCommitSummaryFacts {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UntrackedFileSummaryFacts {
     /// Relative path in worktree.
-    pub path: String,
+    pub path: PathBuf,
     /// Size in bytes.
     pub size_bytes: u64,
     /// Modification time, if readable.
@@ -269,42 +271,31 @@ pub struct UntrackedFileSummaryFacts {
 pub struct TaskGateSummary {
     /// Task ID.
     pub task_id: TaskId,
-    /// Last gate record summary (commit, clean tree, passed).
-    pub record: Option<GateRecordSummaryFacts>,
+    /// Last gate record.
+    pub record: Option<GateRecord>,
     /// Tails of the last up to 3 gate outputs.
     pub recent_output_tails: Vec<String>,
-}
-
-/// Summary of a gate record.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GateRecordSummaryFacts {
-    /// Commit tested.
-    pub commit: CommitId,
-    /// Whether the tree was clean.
-    pub clean: bool,
-    /// Whether the gate passed.
-    pub passed: bool,
 }
 
 /// Machine and resource metrics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MachineSummary {
     /// 1-, 5-, 15-minute load averages.
-    pub load_avg: (f64, f64, f64),
+    pub load_avg: Option<(f64, f64, f64)>,
     /// Total system memory in bytes.
-    pub memory_total_bytes: u64,
+    pub memory_total_bytes: Option<u64>,
     /// Available system memory in bytes.
-    pub memory_available_bytes: u64,
+    pub memory_available_bytes: Option<u64>,
     /// Filesystem usage for home directory.
-    pub home_fs: FsUsageSummary,
+    pub home_fs: Option<FsUsageSummary>,
     /// Filesystem usage for temporary directory.
-    pub temp_fs: FsUsageSummary,
+    pub temp_fs: Option<FsUsageSummary>,
     /// Process IDs of daemon descendants.
     pub daemon_descendant_pids: Vec<u32>,
     /// Total size in bytes of tasks directory.
-    pub tasks_dir_bytes: u64,
+    pub tasks_dir_bytes: Option<u64>,
     /// Total size in bytes of worktrees directory.
-    pub worktrees_dir_bytes: u64,
+    pub worktrees_dir_bytes: Option<u64>,
 }
 
 /// Filesystem space and inode usage.
@@ -325,38 +316,6 @@ pub struct UnreadablePartSummary {
     pub reason: String,
 }
 
-/// Internal text buffer avoiding direct `format_push_string` clippy warnings.
-#[derive(Debug, Default)]
-struct Buffer {
-    /// Under construction markdown text.
-    text: String,
-}
-
-impl Buffer {
-    /// Creates a buffer with default capacity.
-    fn new() -> Self {
-        Self {
-            text: String::with_capacity(8192),
-        }
-    }
-
-    /// Appends a string slice.
-    fn push(&mut self, s: &str) {
-        self.text.push_str(s);
-    }
-
-    /// Appends a line with trailing newline.
-    fn line(&mut self, s: &str) {
-        self.text.push_str(s);
-        self.text.push('\n');
-    }
-
-    /// Appends a blank newline.
-    fn blank(&mut self) {
-        self.text.push('\n');
-    }
-}
-
 /// Formats a timestamp into human-readable UTC and local time representation.
 fn format_time(ts: Timestamp, offset: UtcOffset) -> String {
     let utc = ts.as_utc();
@@ -366,7 +325,7 @@ fn format_time(ts: Timestamp, offset: UtcOffset) -> String {
     format!(
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC ({:02}:{:02}:{:02} {}{:02}:{:02})",
         utc.year(),
-        utc.month() as u8,
+        u8::from(utc.month()),
         utc.day(),
         utc.hour(),
         utc.minute(),
@@ -417,76 +376,91 @@ fn truncate_keep_tail(text: &str, max_bytes: usize) -> String {
     result
 }
 
-fn render_anomalies(anomalies: &[SummaryAnomaly], b: &mut Buffer) {
+fn write_line(out: &mut String, s: &str) {
+    out.push_str(s);
+    out.push('\n');
+}
+
+fn render_anomalies(anomalies: &[SummaryAnomaly], out: &mut String) {
     if anomalies.is_empty() {
-        b.line("none of the known ones");
-        b.blank();
+        write_line(out, "none of the known ones");
+        write_line(out, "");
     } else {
         for a in anomalies {
-            b.line(&format!("- {}", a.message));
+            write_line(out, &format!("- {}", a.message));
             if let Some(cmd) = &a.command {
-                b.line(&format!("  Command: `{cmd}`"));
+                write_line(out, &format!("  Command: `{cmd}`"));
             }
         }
-        b.blank();
+        write_line(out, "");
     }
 }
 
-fn render_daemon(daemon: Option<&DaemonSummary>, offset: UtcOffset, b: &mut Buffer) {
+fn render_daemon(daemon: Option<&DaemonSummary>, offset: UtcOffset, out: &mut String) {
     let Some(d) = daemon else {
-        b.line("The daemon does not answer (unreachable).");
-        b.blank();
+        write_line(out, "The daemon does not answer (unreachable).");
+        write_line(out, "");
         return;
     };
-    b.line(&format!("- PID: {}", d.pid));
+    write_line(out, &format!("- PID: {}", d.pid));
     if let Some(started) = d.started_at {
-        b.line(&format!("- Started: {}", format_time(started, offset)));
+        write_line(out, &format!("- Started: {}", format_time(started, offset)));
     }
-    b.line(&format!("- Version: {}", d.version));
-    b.line(&format!("- Executable: {}", d.exe_path));
+    write_line(out, &format!("- Version: {}", d.version));
+    write_line(out, &format!("- Executable: {}", d.exe_path));
     if d.disk_newer_than_process {
-        b.line("  (Warning: binary on disk is newer than running process)");
+        write_line(out, "  (Warning: binary on disk is newer than running process)");
     }
-    b.line(&format!("- Command line: {}", d.cmdline.join(" ")));
-    b.line(&format!("- Environment variables: {}", d.env_var_names.join(", ")));
-    b.blank();
+    write_line(out, &format!("- Command line: {}", d.cmdline.join(" ")));
+    write_line(out, &format!("- Environment variables: {}", d.env_var_names.join(", ")));
+    write_line(out, "");
 }
 
-fn render_team(team: &TeamSummaryFacts, offset: UtcOffset, b: &mut Buffer) {
-    b.line(&format!("Team `{}` (repository `{}`)", team.id, team.repo));
-    b.blank();
-    b.line("### Items");
-    b.blank();
-    b.line("| Item | Title | Phase | Assignee |");
-    b.line("|---|---|---|---|");
+fn render_team(team: &TeamSummaryFacts, offset: UtcOffset, out: &mut String) {
+    write_line(out, &format!("Team `{}` (repository `{}`)", team.id, team.repo));
+    write_line(out, "");
+    write_line(out, "### Items");
+    write_line(out, "");
+    write_line(out, "| Item | Title | Phase | Assignee |");
+    write_line(out, "|---|---|---|---|");
     for item in &team.items {
         let assignee = item.assignee.as_ref().map_or("-", AgentName::as_str);
-        b.line(&format!(
-            "| {} | {} | {:?} | {} |",
-            item.id, item.title, item.phase, assignee
-        ));
+        write_line(
+            out,
+            &format!("| {} | {} | {:?} | {} |", item.id, item.title, item.phase, assignee),
+        );
     }
-    b.blank();
-    b.line("### Rounds");
-    b.blank();
-    b.line("| Round | Item | Opened | Status |");
-    b.line("|---|---|---|---|");
+    write_line(out, "");
+    write_line(out, "### Rounds");
+    write_line(out, "");
+    write_line(out, "| Round | Item | Opened | Status |");
+    write_line(out, "|---|---|---|---|");
     for r in &team.rounds {
         let item_str = r.item.as_ref().map_or_else(|| "-".to_owned(), ToString::to_string);
-        b.line(&format!(
-            "| {} | {} | {} | {} |",
-            r.id,
-            item_str,
-            format_time(r.opened_at, offset),
-            r.status
-        ));
+        let status_str = match r.status {
+            RoundLife::Open => "open".to_owned(),
+            RoundLife::Closed { at, how } => format!("closed ({how}) at {}", format_time(at, offset)),
+        };
+        write_line(
+            out,
+            &format!(
+                "| {} | {} | {} | {} |",
+                r.id,
+                item_str,
+                format_time(r.opened_at, offset),
+                status_str
+            ),
+        );
     }
-    b.blank();
+    write_line(out, "");
 }
 
-fn render_task_table(tasks: &[TaskSummaryFacts], now: Timestamp, offset: UtcOffset, b: &mut Buffer) {
-    b.line("| Task | Agent | Role | Status | Runs | Started | Ended | Last Activity | Minutes Since |");
-    b.line("|---|---|---|---|---|---|---|---|---|");
+fn render_task_table(tasks: &[TaskSummaryFacts], now: Timestamp, offset: UtcOffset, out: &mut String) {
+    write_line(
+        out,
+        "| Task | Agent | Role | Status | Runs | Started | Ended | Last Activity | Minutes Since |",
+    );
+    write_line(out, "|---|---|---|---|---|---|---|---|---|");
     for t in tasks {
         let started = t
             .last_run_started
@@ -498,177 +472,210 @@ fn render_task_table(tasks: &[TaskSummaryFacts], now: Timestamp, offset: UtcOffs
             || ("-".to_owned(), "-".to_owned()),
             |a| (format_time(a, offset), format!("{} min", minutes_since(now, a))),
         );
-        b.line(&format!(
-            "| {} | {} | {:?} | {:?} | {} | {} | {} | {} | {} |",
-            t.id, t.agent, t.role, t.status, t.run_count, started, ended, act_str, mins_str
-        ));
+        write_line(
+            out,
+            &format!(
+                "| {} | {} | {:?} | {:?} | {} | {} | {} | {} | {} |",
+                t.id, t.agent, t.role, t.status, t.run_count, started, ended, act_str, mins_str
+            ),
+        );
     }
-    b.blank();
+    write_line(out, "");
 }
 
-fn render_task_details(tasks: &[TaskSummaryFacts], b: &mut Buffer) {
+fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut String) {
     for t in tasks {
-        b.line(&format!("### Task `{}` (`{}`)", t.id, t.agent));
-        b.blank();
+        write_line(out, &format!("### Task `{}` (`{}`)", t.id, t.agent));
+        write_line(out, "");
         let detail = t.last_run_end_detail.as_deref().unwrap_or("-");
-        b.line(&format!("- Last run end detail: {detail}"));
+        write_line(out, &format!("- Last run end detail: {detail}"));
         if let Some(q) = &t.questions {
-            b.line(&format!("- Questions (unanswered: {}):", q.has_unanswered));
-            b.line(&q.content);
+            write_line(out, &format!("- Questions (unanswered: {}):", q.has_unanswered));
+            write_line(out, &q.content);
         } else {
-            b.line("- Questions: none");
+            write_line(out, "- Questions: none");
         }
-        b.blank();
+        write_line(out, "");
     }
 }
 
-fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, b: &mut Buffer) {
+fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut String) {
     for w in worktrees {
-        b.line(&format!("### Worktree for Task `{}`", w.task_id));
-        b.blank();
+        write_line(out, &format!("### Worktree for Task `{}`", w.task_id));
+        write_line(out, "");
         let origin = w.origin_tip.as_ref().map_or("-", CommitId::as_str);
-        b.line(&format!(
-            "- Branch: `{}` (Tip: `{}`, Origin: `{}`)",
-            w.branch, w.tip, origin
-        ));
+        write_line(
+            out,
+            &format!("- Branch: `{}` (Tip: `{}`, Origin: `{}`)", w.branch, w.tip, origin),
+        );
         let lead_contains = w.lead_contains_tip.map_or("unknown", |c| if c { "yes" } else { "no" });
-        b.line(&format!("- Lead contains tip: {lead_contains}"));
-        b.line(&format!(
-            "- Uncommitted files ({}): {}",
-            w.uncommitted_files.len(),
-            w.uncommitted_files.join(", ")
-        ));
-        b.line(&format!("- Harness refs: {}", w.harness_refs.join(", ")));
-        b.line("- Commits over base:");
+        write_line(out, &format!("- Lead contains tip: {lead_contains}"));
+        let files = w
+            .uncommitted_files
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        write_line(
+            out,
+            &format!("- Uncommitted files ({}): {}", w.uncommitted_files.len(), files),
+        );
+        write_line(out, &format!("- Harness refs: {}", w.harness_refs.join(", ")));
+        write_line(out, "- Commits over base:");
         for c in &w.commits_over_base {
-            b.line(&format!(
-                "  * `{}` {} ({})",
-                c.id,
-                c.subject,
-                format_time(c.time, offset)
-            ));
+            write_line(
+                out,
+                &format!("  * `{}` {} ({})", c.id, c.subject, format_time(c.time, offset)),
+            );
         }
-        b.line(&format!("- Untracked files (newest {}):", w.newest_untracked.len()));
+        write_line(
+            out,
+            &format!("- Untracked files (newest {}):", w.newest_untracked.len()),
+        );
         for u in &w.newest_untracked {
             let mod_str = u.modified.map_or_else(|| "-".to_owned(), |m| format_time(m, offset));
-            b.line(&format!(
-                "  * {} ({} bytes, modified: {})",
-                u.path, u.size_bytes, mod_str
-            ));
+            write_line(
+                out,
+                &format!(
+                    "  * {} ({} bytes, modified: {})",
+                    u.path.display(),
+                    u.size_bytes,
+                    mod_str
+                ),
+            );
         }
-        b.blank();
+        write_line(out, "");
     }
 }
 
-fn render_gate(gates: &[TaskGateSummary], b: &mut Buffer) {
+fn render_gate(gates: &[TaskGateSummary], out: &mut String) {
     for g in gates {
-        b.line(&format!("### Gate for Task `{}`", g.task_id));
-        b.blank();
+        write_line(out, &format!("### Gate for Task `{}`", g.task_id));
+        write_line(out, "");
         if let Some(rec) = &g.record {
-            let clean = if rec.clean { "clean" } else { "dirty" };
-            let passed = if rec.passed { "passed" } else { "failed" };
-            b.line(&format!(
-                "- Record: Commit `{}`, tree {}, result: {}",
-                rec.commit, clean, passed
-            ));
+            write_line(out, &format!("- Record: {}", rec.summary()));
         } else {
-            b.line("- Record: none");
+            write_line(out, "- Record: none");
         }
-        b.line("- Recent gate outputs:");
+        write_line(out, "- Recent gate outputs:");
         for tail in &g.recent_output_tails {
-            b.line("```");
-            b.line(tail);
-            b.line("```");
+            write_line(out, "```");
+            write_line(out, tail);
+            write_line(out, "```");
         }
-        b.blank();
+        write_line(out, "");
     }
 }
 
-fn render_history(history: Option<&str>, b: &mut Buffer) {
+fn render_history(history: Option<&str>, out: &mut String) {
     if let Some(h) = history {
-        b.push(h);
+        out.push_str(h);
     } else {
-        b.push("No history recorded.");
+        out.push_str("No history recorded.");
     }
-    b.blank();
-    b.blank();
+    write_line(out, "");
+    write_line(out, "");
 }
 
-fn render_daemon_log(lines: Option<&[String]>, b: &mut Buffer) {
+fn render_daemon_log(lines: Option<&[String]>, out: &mut String) {
     if let Some(ls) = lines {
         for line in ls {
-            b.push(line);
+            out.push_str(line);
             if !line.ends_with('\n') {
-                b.blank();
+                write_line(out, "");
             }
         }
     } else {
-        b.push("Daemon log not found.");
+        out.push_str("Daemon log not found.");
     }
-    b.blank();
-    b.blank();
+    write_line(out, "");
+    write_line(out, "");
 }
 
-fn render_bus(messages: &[String], b: &mut Buffer) {
+fn render_bus(messages: &[String], out: &mut String) {
     if messages.is_empty() {
-        b.line("No bus messages.");
+        write_line(out, "No bus messages.");
     } else {
         for msg in messages {
-            b.line(&format!("- {msg}"));
+            write_line(out, &format!("- {msg}"));
         }
     }
-    b.blank();
+    write_line(out, "");
 }
 
-fn render_notifications(notifications: &[String], b: &mut Buffer) {
+fn render_notifications(notifications: &[String], out: &mut String) {
     if notifications.is_empty() {
-        b.line("No notifications.");
+        write_line(out, "No notifications.");
     } else {
         for n in notifications {
-            b.line(&format!("- {n}"));
+            write_line(out, &format!("- {n}"));
         }
     }
-    b.blank();
+    write_line(out, "");
 }
 
-fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary], b: &mut Buffer) {
-    b.line(&format!(
-        "- Load average: {:.2}, {:.2}, {:.2}",
-        machine.load_avg.0, machine.load_avg.1, machine.load_avg.2
-    ));
-    b.line(&format!(
-        "- Memory: {} / {} bytes available",
-        machine.memory_available_bytes, machine.memory_total_bytes
-    ));
-    b.line(&format!(
-        "- Home filesystem: {}% space, {}% inodes",
-        machine.home_fs.space_percent, machine.home_fs.inode_percent
-    ));
-    b.line(&format!(
-        "- Temp filesystem: {}% space, {}% inodes",
-        machine.temp_fs.space_percent, machine.temp_fs.inode_percent
-    ));
+fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary], out: &mut String) {
+    if let Some(avg) = machine.load_avg {
+        write_line(
+            out,
+            &format!("- Load average: {:.2}, {:.2}, {:.2}", avg.0, avg.1, avg.2),
+        );
+    } else {
+        write_line(out, "- Load average: unknown");
+    }
+    if let (Some(avail), Some(total)) = (machine.memory_available_bytes, machine.memory_total_bytes) {
+        write_line(out, &format!("- Memory: {avail} / {total} bytes available"));
+    } else {
+        write_line(out, "- Memory: unknown");
+    }
+    if let Some(home) = machine.home_fs {
+        write_line(
+            out,
+            &format!(
+                "- Home filesystem: {}% space, {}% inodes",
+                home.space_percent, home.inode_percent
+            ),
+        );
+    } else {
+        write_line(out, "- Home filesystem: unknown");
+    }
+    if let Some(temp) = machine.temp_fs {
+        write_line(
+            out,
+            &format!(
+                "- Temp filesystem: {}% space, {}% inodes",
+                temp.space_percent, temp.inode_percent
+            ),
+        );
+    } else {
+        write_line(out, "- Temp filesystem: unknown");
+    }
     let pids = machine
         .daemon_descendant_pids
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ");
-    b.line(&format!("- Daemon descendant PIDs: {pids}"));
-    b.line(&format!("- Tasks directory size: {} bytes", machine.tasks_dir_bytes));
-    b.line(&format!(
-        "- Worktrees directory size: {} bytes",
-        machine.worktrees_dir_bytes
-    ));
+    write_line(out, &format!("- Daemon descendant PIDs: {pids}"));
+    if let Some(bytes) = machine.tasks_dir_bytes {
+        write_line(out, &format!("- Tasks directory size: {bytes} bytes"));
+    } else {
+        write_line(out, "- Tasks directory size: unknown");
+    }
+    if let Some(bytes) = machine.worktrees_dir_bytes {
+        write_line(out, &format!("- Worktrees directory size: {bytes} bytes"));
+    } else {
+        write_line(out, "- Worktrees directory size: unknown");
+    }
     if !unreadable.is_empty() {
-        b.blank();
-        b.line("### Unreadable Parts");
-        b.blank();
+        write_line(out, "");
+        write_line(out, "### Unreadable Parts");
+        write_line(out, "");
         for u in unreadable {
-            b.line(&format!("- `{}`: {}", u.name, u.reason));
+            write_line(out, &format!("- `{}`: {}", u.name, u.reason));
         }
     }
-    b.blank();
+    write_line(out, "");
 }
 
 /// Renders the `SUMMARY.md` markdown text from `input`.
@@ -677,47 +684,50 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
 /// truncating long text bodies while preserving the end and all 12 section headings.
 #[must_use]
 pub fn render_summary(input: &SummaryInput, now: Timestamp, offset: UtcOffset) -> String {
-    let mut b = Buffer::new();
+    let mut out = String::with_capacity(8192);
 
-    b.line(&format!("# Debug Summary — Team `{}`", input.team.id));
-    b.blank();
-    b.line(&format!("Collected at: {}", format_time(input.collected_at, offset)));
-    b.blank();
+    write_line(&mut out, &format!("# Debug Summary — Team `{}`", input.team.id));
+    write_line(&mut out, "");
+    write_line(
+        &mut out,
+        &format!("Collected at: {}", format_time(input.collected_at, offset)),
+    );
+    write_line(&mut out, "");
 
     for section in SummarySection::ALL {
-        b.line(section.heading());
-        b.blank();
+        write_line(&mut out, section.heading());
+        write_line(&mut out, "");
         match section {
-            SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut b),
-            SummarySection::DaemonAndVersions => render_daemon(input.daemon.as_ref(), offset, &mut b),
-            SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut b),
-            SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut b),
-            SummarySection::TaskDetails => render_task_details(&input.tasks, &mut b),
-            SummarySection::GitWorktrees => render_git(&input.git, offset, &mut b),
-            SummarySection::GateRecords => render_gate(&input.gate, &mut b),
+            SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
+            SummarySection::DaemonAndVersions => render_daemon(input.daemon.as_ref(), offset, &mut out),
+            SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut out),
+            SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut out),
+            SummarySection::TaskDetails => render_task_details(&input.tasks, &mut out),
+            SummarySection::GitWorktrees => render_git(&input.git, offset, &mut out),
+            SummarySection::GateRecords => render_gate(&input.gate, &mut out),
             SummarySection::HistoryTail => {
                 let body = input.history_tail.as_deref().unwrap_or("No history recorded.");
                 let truncated = truncate_keep_tail(body, 20_000);
-                render_history(Some(&truncated), &mut b);
+                render_history(Some(&truncated), &mut out);
             }
             SummarySection::DaemonLog => {
                 let raw_lines = input.daemon_log_lines.as_ref().map(|lines| lines.join(""));
                 if let Some(text) = raw_lines {
                     let truncated = truncate_keep_tail(&text, 25_000);
-                    render_daemon_log(Some(&[truncated]), &mut b);
+                    render_daemon_log(Some(&[truncated]), &mut out);
                 } else {
-                    render_daemon_log(None, &mut b);
+                    render_daemon_log(None, &mut out);
                 }
             }
-            SummarySection::Bus => render_bus(&input.bus_messages, &mut b),
-            SummarySection::Notifications => render_notifications(&input.notifications, &mut b),
-            SummarySection::Machine => render_machine(&input.machine, &input.unreadable_parts, &mut b),
+            SummarySection::Bus => render_bus(&input.bus_messages, &mut out),
+            SummarySection::Notifications => render_notifications(&input.notifications, &mut out),
+            SummarySection::Machine => render_machine(&input.machine, &input.unreadable_parts, &mut out),
         }
     }
 
-    if b.text.len() >= MAX_SUMMARY_BYTES {
-        truncate_keep_tail(&b.text, MAX_SUMMARY_BYTES.saturating_sub(1))
+    if out.len() >= MAX_SUMMARY_BYTES {
+        truncate_keep_tail(&out, MAX_SUMMARY_BYTES.saturating_sub(1))
     } else {
-        b.text
+        out
     }
 }
