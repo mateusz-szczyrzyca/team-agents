@@ -194,3 +194,34 @@ async fn a_merged_item_does_not_remove_worktrees_of_the_next_open_round() {
     rig.stop().await.unwrap();
     assert!(tasks(&state).iter().all(|task| rig.worktree(task).exists()));
 }
+
+#[tokio::test]
+async fn a_deleted_origin_branch_cannot_authorize_removing_local_reviewer_work() {
+    let mut rig = rig().await;
+    rig.start().await;
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let state = rig
+        .item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    let reviewer = state.team(&team).unwrap().reviewers()[0].task().clone();
+    let tree = rig.worktree(&reviewer);
+    std::fs::write(tree.join("investigation.txt"), "keep this commit\n").unwrap();
+    git(&tree, &["add", "."]);
+    git(&tree, &["commit", "-qm", "Investigate"]);
+    git(&tree, &["push", "-q", "origin", "HEAD:investigation"]);
+    git(&rig.origin, &["update-ref", "-d", "refs/heads/investigation"]);
+    rig.github.merged_by_a_human(1);
+    rig.start().await;
+    let removed: Vec<_> = tasks(&state).into_iter().filter(|task| task != &reviewer).collect();
+    cleaned(&rig, &removed).await;
+    rig.stop().await.unwrap();
+    assert!(
+        tree.exists(),
+        "a deleted remote branch must not authorize worktree removal"
+    );
+    assert_eq!(
+        std::fs::read_to_string(tree.join("investigation.txt")).unwrap(),
+        "keep this commit\n"
+    );
+}

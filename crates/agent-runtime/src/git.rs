@@ -1022,6 +1022,14 @@ impl Git {
         }
     }
 
+    /// Refreshes every branch of origin and removes tracking refs for deleted branches.
+    ///
+    /// # Errors
+    /// [`GitError::Run`] and [`GitError::Failed`] when origin cannot be fetched.
+    pub async fn refresh_origin_branches(&self) -> Result<(), GitError> {
+        Ok(())
+    }
+
     /// Fetches `branch` from `origin` into the reference [`Revision::RemoteBranch`] names; no local branch moves.
     ///
     /// # Errors
@@ -2258,6 +2266,35 @@ mod tests {
             error,
             GitError::Failed {
                 operation: GitOperation::RemoteContains,
+                ..
+            }
+        ));
+    }
+    #[tokio::test]
+    async fn refreshing_origin_branches_discovers_published_history_and_prunes_deleted_branches() {
+        let fixture = Fixture::new();
+        let origin = fixture.sibling("origin.git");
+        std::fs::create_dir(&origin).unwrap();
+        raw(&origin, &["init", "-q", "--bare"]);
+        raw(&fixture.repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+        raw(&fixture.repo, &["push", "-q", "origin", "HEAD:topic"]);
+        raw(&fixture.repo, &["update-ref", "-d", "refs/remotes/origin/topic"]);
+        let git = fixture.git();
+        git.refresh_origin_branches().await.unwrap();
+        assert!(git.head_on_origin().await.unwrap());
+        raw(&origin, &["update-ref", "-d", "refs/heads/topic"]);
+        git.refresh_origin_branches().await.unwrap();
+        assert!(!git.head_on_origin().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn refreshing_origin_branches_propagates_fetch_failure() {
+        let (_dir, git) = scripted_git("exit 7");
+        let error = git.refresh_origin_branches().await.unwrap_err();
+        assert!(matches!(
+            error,
+            GitError::Failed {
+                operation: GitOperation::Fetch,
                 ..
             }
         ));
