@@ -43,6 +43,59 @@ where
     result
 }
 
+/// Extracts all candidate commit IDs (7 to 40 hex digits) from `text` that are outside fenced code blocks and
+/// existing links.
+#[must_use]
+pub fn candidate_commits(text: &str) -> Vec<&str> {
+    let mut candidates = Vec::new();
+    let mut fence_state: Option<(char, usize)> = None;
+
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if let Some((fence_char, min_count)) = fence_state {
+            if is_closing_fence(trimmed, fence_char, min_count) {
+                fence_state = None;
+            }
+        } else if let Some((fence_char, count)) = opening_fence(trimmed) {
+            fence_state = Some((fence_char, count));
+        } else {
+            collect_line_candidates(line, &mut candidates);
+        }
+    }
+
+    candidates
+}
+
+/// Collects candidate commit IDs from a single non-fenced line.
+fn collect_line_candidates<'a>(line: &'a str, out: &mut Vec<&'a str>) {
+    let mut rest = line;
+    let mut prev_char: Option<char> = None;
+
+    while !rest.is_empty() {
+        if let Some(link_len) = match_existing_link(rest)
+            && let Some(link_str) = rest.get(..link_len)
+        {
+            prev_char = link_str.chars().last();
+            rest = rest.get(link_len..).unwrap_or("");
+            continue;
+        }
+
+        if let Some((consumed, id_str, _)) = match_candidate(rest, prev_char) {
+            out.push(id_str);
+            if let Some(consumed_str) = rest.get(..consumed) {
+                prev_char = consumed_str.chars().last();
+            }
+            rest = rest.get(consumed..).unwrap_or("");
+            continue;
+        }
+
+        if let Some(c) = rest.chars().next() {
+            prev_char = Some(c);
+            rest = rest.get(c.len_utf8()..).unwrap_or("");
+        }
+    }
+}
+
 /// Checks if `trimmed` is an opening code fence (at least 3 backticks or tildes).
 fn opening_fence(trimmed: &str) -> Option<(char, usize)> {
     let first = trimmed.chars().next()?;

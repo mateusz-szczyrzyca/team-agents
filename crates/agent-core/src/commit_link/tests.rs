@@ -98,3 +98,10 @@ fn link_commits_table() {
         assert_eq!(actual, expected, "case: {label}");
     }
 }
+
+#[test]
+fn candidate_commits_extracts_eligible_hex_words() {
+    let text = "commit `1234567` and 7654321 but [deadbeef](url)\n```\nabcdef0\n```\nand prefix_1111111";
+    let candidates = super::candidate_commits(text);
+    assert_eq!(candidates, vec!["1234567", "7654321"]);
+}

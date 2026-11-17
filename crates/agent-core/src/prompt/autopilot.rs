@@ -42,6 +42,10 @@ pub enum AutopilotPrompt {
     ReviewRequest,
     /// The review the harness posts on the pull request for a reviewer's report.
     ReviewComment,
+    /// The verdict line of an approved review.
+    ReviewVerdictApprove,
+    /// The verdict line of a review that requests changes.
+    ReviewVerdictRequestChanges,
     /// What the lead of a team is told when the reviewers asked for changes.
     ReviewFixPass,
     /// One reviewer's report among the findings the lead is given.
@@ -76,6 +80,8 @@ impl AutopilotPrompt {
         Self::NoticeClosed,
         Self::ReviewRequest,
         Self::ReviewComment,
+        Self::ReviewVerdictApprove,
+        Self::ReviewVerdictRequestChanges,
         Self::ReviewFixPass,
         Self::ReviewFinding,
         Self::ReviewAskHuman,
@@ -149,8 +155,14 @@ impl AutopilotPrompt {
             Self::ReviewComment => PromptSpec::new(
                 "harness/review/comment.md",
                 Audience::Model,
-                &["reviewer", "head", "report"],
+                &["reviewer", "client", "verdict", "pass", "commit", "report"],
             ),
+            Self::ReviewVerdictApprove => {
+                PromptSpec::new("harness/review/verdict-approve.md", Audience::Model, &["icon"])
+            }
+            Self::ReviewVerdictRequestChanges => {
+                PromptSpec::new("harness/review/verdict-request-changes.md", Audience::Model, &["icon"])
+            }
             Self::ReviewFixPass => PromptSpec::new(
                 "harness/review/fix-pass.md",
                 Audience::Model,
