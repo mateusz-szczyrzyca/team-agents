@@ -1080,8 +1080,22 @@ impl Git {
     /// # Errors
     /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and
     /// [`GitError::Unexpected`].
-    pub async fn tree_blobs(&self, _commit: &CommitId) -> Result<HashSet<String>, GitError> {
-        Ok(HashSet::new())
+    pub async fn tree_blobs(&self, commit: &CommitId) -> Result<HashSet<String>, GitError> {
+        let operation = GitOperation::LsTree;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("ls-tree"),
+                    arg("-r"),
+                    arg("-z"),
+                    arg("--end-of-options"),
+                    arg(commit.as_str()),
+                ],
+            )
+            .await?;
+        parse_tree_blobs(operation, &captured.stdout.bytes)
     }
 
     /// The command `git` with this handle's identity, signing and environment, and `args`.
@@ -1279,6 +1293,36 @@ fn parse_status(operation: GitOperation, bytes: &[u8]) -> Result<Vec<StatusEntry
         });
     }
     Ok(entries)
+}
+
+/// Reads the output of `git ls-tree -r -z`: `<mode> <type> <object>\t<path>\0` entries,
+/// collecting the paths whose object type is `blob`.
+fn parse_tree_blobs(operation: GitOperation, bytes: &[u8]) -> Result<HashSet<String>, GitError> {
+    let mut blobs = HashSet::new();
+    for entry in bytes.split(|byte| *byte == 0).filter(|entry| !entry.is_empty()) {
+        let unexpected = || GitError::Unexpected {
+            operation,
+            output: diagnostic(entry),
+        };
+        let Some(tab_pos) = entry.iter().position(|byte| *byte == b'\t') else {
+            return Err(unexpected());
+        };
+        let (meta, rest) = entry.split_at(tab_pos);
+        let path_bytes = rest.get(1..).ok_or_else(unexpected)?;
+        let mut parts = meta.split(|byte| *byte == b' ');
+        let _mode = parts.next().ok_or_else(unexpected)?;
+        let obj_type = parts.next().ok_or_else(unexpected)?;
+        let _object = parts.next().ok_or_else(unexpected)?;
+        if parts.next().is_some() {
+            return Err(unexpected());
+        }
+        if obj_type == b"blob" {
+            let path =
+                String::from_utf8(path_bytes.to_vec()).map_err(|source| GitError::NotUtf8 { operation, source })?;
+            blobs.insert(path);
+        }
+    }
+    Ok(blobs)
 }
 
 #[cfg(test)]
