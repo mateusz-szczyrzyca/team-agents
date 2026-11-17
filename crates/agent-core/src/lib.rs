@@ -47,6 +47,7 @@ macro_rules! version_type {
 }
 
 pub mod cli;
+pub mod commit_link;
 pub mod config;
 pub mod decide;
 pub mod history;
