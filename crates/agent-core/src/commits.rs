@@ -161,9 +161,9 @@ where
                     let hex_str: String = hex_slice.iter().collect();
 
                     if let Some(full_hash) = resolve(&hex_str) {
-                        result.push('[');
+                        result.push_str("[`");
                         result.push_str(&hex_str);
-                        result.push(']');
+                        result.push_str("`]");
                         result.push('(');
                         result.push_str(repo_url);
                         result.push_str("/commit/");
@@ -202,9 +202,9 @@ where
                     let hex_str: String = hex_slice.iter().collect();
 
                     if let Some(full_hash) = resolve(&hex_str) {
-                        result.push('[');
+                        result.push_str("[`");
                         result.push_str(&hex_str);
-                        result.push(']');
+                        result.push_str("`]");
                         result.push('(');
                         result.push_str(repo_url);
                         result.push_str("/commit/");
