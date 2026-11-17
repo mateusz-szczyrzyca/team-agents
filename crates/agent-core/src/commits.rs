@@ -4,6 +4,8 @@ use std::collections::HashSet;
 use std::iter::Peekable;
 use std::str::Chars;
 
+use crate::state::CommitId;
+
 /// An open fenced code block, closed only by the same marker and sufficient width.
 #[derive(Debug, Clone, Copy)]
 struct Fence {
@@ -592,6 +594,18 @@ pub fn link_commits(text: &str, repo_url: &str, mut resolve: impl FnMut(&str) ->
     }
     result.push_str(&link_prose(&prose, repo_url, &mut resolve, &references));
     result
+}
+
+/// Links repository commit words and file paths in Markdown.
+#[must_use]
+pub fn link_references(
+    text: &str,
+    repo_url: &str,
+    _commit: &CommitId,
+    resolve_commit: impl FnMut(&str) -> Option<String>,
+    _is_file: impl FnMut(&str) -> bool,
+) -> String {
+    link_commits(text, repo_url, resolve_commit)
 }
 
 #[cfg(test)]

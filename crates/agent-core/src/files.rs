@@ -202,10 +202,7 @@ fn parse_line_spec(s: &str) -> (String, Option<String>, String) {
 
 /// Checks if a path looks like a valid repository path (not absolute, no ..).
 fn is_valid_path(path: &str) -> bool {
-    !path.is_empty()
-        && !path.starts_with('/')
-        && !path.contains("..")
-        && !path.starts_with('-')
+    !path.is_empty() && !path.starts_with('/') && !path.contains("..") && !path.starts_with('-')
 }
 
 /// Appends the Markdown representation of a resolved file link.
@@ -215,7 +212,11 @@ fn push_file_link(result: &mut String, path: &str, line_spec: Option<&str>, repo
         // Format line numbers: single line or range
         let formatted_lines = if lines.contains('-') {
             // Range: "10-20" becomes "L10-L20"
-            lines.split('-').map(|n| format!("L{}", n)).collect::<Vec<_>>().join("-")
+            lines
+                .split('-')
+                .map(|n| format!("L{}", n))
+                .collect::<Vec<_>>()
+                .join("-")
         } else {
             // Single line: "10" becomes "L10"
             format!("L{}", lines)
@@ -502,12 +503,7 @@ fn starts_email(chars: Peekable<Chars<'_>>) -> bool {
 }
 
 /// Links words in prose that might be file paths, retaining the author's spelling in code-styled labels.
-fn link_words(
-    text: &str,
-    repo_url: &str,
-    commit: &str,
-    resolve: &mut impl FnMut(&str) -> bool,
-) -> String {
+fn link_words(text: &str, repo_url: &str, commit: &str, resolve: &mut impl FnMut(&str) -> bool) -> String {
     let mut result = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -644,12 +640,7 @@ fn link_prose(
 /// repository's HTTPS URL without a trailing slash, and `commit` is the commit ID
 /// (full or short) to include in links.
 #[must_use]
-pub fn link_files(
-    text: &str,
-    repo_url: &str,
-    commit: &str,
-    mut resolve: impl FnMut(&str) -> bool,
-) -> String {
+pub fn link_files(text: &str, repo_url: &str, commit: &str, mut resolve: impl FnMut(&str) -> bool) -> String {
     let mut result = String::with_capacity(text.len());
     let mut prose = String::new();
     let mut active = Blocks::default();

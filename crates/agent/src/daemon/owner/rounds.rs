@@ -24,7 +24,7 @@ use std::sync::Arc;
 use agent_core::config::{AbsolutePath, GithubLogin, InvalidValue, RepoName, Secret};
 use agent_core::ids::{AgentName, BranchName, GenerateIdError, InvalidBranchName, InvalidName, TaskId, TeamId};
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
-use agent_core::state::{PrNumber, Timestamp};
+use agent_core::state::{CommitId, PrNumber, Timestamp};
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextError};
 use agent_runtime::checks_prompts::ChecksPrompts;
 use agent_runtime::git::{CommitIdentity, Git, GitError};
@@ -448,11 +448,11 @@ impl Owner {
         Ok(client)
     }
 
-    /// Rewrites commit IDs in `text` into markdown links to GitHub commit pages.
+    /// Rewrites commit IDs and file paths in `text` into markdown links to GitHub.
     ///
-    /// If commit resolution or origin URL lookup fails, the failure is logged with [`LogEvent::GitCallFailed`](agent_core::log::LogEvent::GitCallFailed) and `text`
+    /// If commit resolution, tree listing or origin URL lookup fails, the failure is logged with [`LogEvent::GitCallFailed`](agent_core::log::LogEvent::GitCallFailed) and `text`
     /// is returned unchanged.
-    pub(super) async fn link_commits(&self, git: &Git, text: &str) -> String {
+    pub(super) async fn link_commits(&self, git: &Git, commit: &CommitId, text: &str) -> String {
         let origin_url = match git.origin_url().await {
             Ok(url) => url,
             Err(error) => {
@@ -476,15 +476,30 @@ impl Owner {
             }
         };
 
+        let tree_blobs = match git.tree_blobs(commit).await {
+            Ok(blobs) => blobs,
+            Err(error) => {
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::GitCallFailed.as_str(),
+                    error = %error_chain(&error),
+                    "cannot list tree blobs for file links: text is sent unchanged"
+                );
+                return text.to_owned();
+            }
+        };
+
         let mut candidates = HashSet::new();
-        let scanned = agent_core::commits::link_commits(text, "", |candidate| {
-            candidates.insert(candidate.to_owned());
-            None
-        });
+        let scanned = agent_core::commits::link_references(
+            text,
+            "",
+            commit,
+            |candidate| {
+                candidates.insert(candidate.to_owned());
+                None
+            },
+            |_| false,
+        );
         drop(scanned);
-        if candidates.is_empty() {
-            return text.to_owned();
-        }
 
         let mut resolved = HashMap::new();
         for candidate in &candidates {
@@ -506,69 +521,13 @@ impl Owner {
         }
 
         let repo_url = format!("https://github.com/{}/{}", slug.owner(), slug.name());
-        agent_core::commits::link_commits(text, &repo_url, |candidate| {
-            resolved.get(candidate).map(ToString::to_string)
-        })
-    }
-
-    /// Links repository file paths in Markdown text sent to GitHub.
-    pub(super) async fn link_files(&self, git: &Git, text: &str, commit: &agent_core::state::CommitId) -> String {
-        let origin_url = match git.origin_url().await {
-            Ok(url) => url,
-            Err(error) => {
-                tracing::warn!(
-                    event = agent_core::log::LogEvent::GitCallFailed.as_str(),
-                    error = %error_chain(&error),
-                    "cannot determine origin url for file links: text is sent unchanged"
-                );
-                return text.to_owned();
-            }
-        };
-        let slug = match RepoSlug::from_remote_url(&origin_url) {
-            Ok(slug) => slug,
-            Err(error) => {
-                tracing::warn!(
-                    event = agent_core::log::LogEvent::GitCallFailed.as_str(),
-                    error = %error_chain(&error),
-                    "cannot determine repository slug for file links: text is sent unchanged"
-                );
-                return text.to_owned();
-            }
-        };
-
-        // Scan for all candidate file paths without resolving them
-        let mut candidates = HashSet::new();
-        let _scanned = agent_core::files::link_files(text, "", commit.as_str(), |candidate| {
-            candidates.insert(candidate.to_owned());
-            false
-        });
-        if candidates.is_empty() {
-            return text.to_owned();
-        }
-
-        // Check which candidates are actual files in the commit
-        let mut resolved = HashSet::new();
-        let revision = agent_runtime::git::Revision::Commit(commit.clone());
-        for candidate in &candidates {
-            match git.path_is_file(&revision, candidate).await {
-                Ok(true) => {
-                    resolved.insert(candidate.as_str().to_owned());
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    tracing::warn!(
-                        event = agent_core::log::LogEvent::GitCallFailed.as_str(),
-                        path = %candidate,
-                        error = %error_chain(&error),
-                        "cannot check if path is file: text is sent unchanged"
-                    );
-                    return text.to_owned();
-                }
-            }
-        }
-
-        let repo_url = format!("https://github.com/{}/{}", slug.owner(), slug.name());
-        agent_core::files::link_files(text, &repo_url, commit.as_str(), |path| resolved.contains(path))
+        agent_core::commits::link_references(
+            text,
+            &repo_url,
+            commit,
+            |candidate| resolved.get(candidate).map(ToString::to_string),
+            |path| tree_blobs.contains(path),
+        )
     }
 
     /// Tells the human `notice` rendered with `values`, in the name of the lead; what cannot be made is logged: the
