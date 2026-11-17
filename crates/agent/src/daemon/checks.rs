@@ -352,7 +352,7 @@ fn original_file_label(part: &str) -> Option<(&str, &str)> {
     let Ok(commit) = revision.parse::<agent_core::state::CommitId>() else {
         return None;
     };
-    let generated = agent_core::files::link_files(label, repository, commit.as_str(), |_| true);
+    let generated = agent_core::files::link_files(label, repository, &commit, |_| true);
     (generated == format!("[{label}]({url})")).then_some((label, tail))
 }
 

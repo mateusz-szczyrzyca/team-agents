@@ -657,14 +657,14 @@ pub fn link_references(
     resolve_commit: impl FnMut(&str) -> Option<String>,
     is_file: impl FnMut(&str) -> bool,
 ) -> String {
-    link_file_references(text, repo_url, &commit.to_string(), resolve_commit, is_file)
+    link_file_references(text, repo_url, commit, resolve_commit, is_file)
 }
 
 /// Shares the walker with the file-only public interface.
 pub(crate) fn link_file_references(
     text: &str,
     repo_url: &str,
-    commit: &str,
+    commit: &CommitId,
     mut resolve_commit: impl FnMut(&str) -> Option<String>,
     mut is_file: impl FnMut(&str) -> bool,
 ) -> String {
@@ -709,7 +709,12 @@ fn rewrite_tokens(text: &str, rewrite: &mut impl FnMut(&str) -> String) -> Strin
 }
 
 /// Prefers exact filenames, trimming only surrounding prose punctuation on a miss.
-fn bare_file_link(token: &str, repo_url: &str, commit: &str, is_file: &mut impl FnMut(&str) -> bool) -> Option<String> {
+fn bare_file_link(
+    token: &str,
+    repo_url: &str,
+    commit: &CommitId,
+    is_file: &mut impl FnMut(&str) -> bool,
+) -> Option<String> {
     if let Some(link) = file_link(token, repo_url, commit, Style::Bare, is_file) {
         return Some(link);
     }
@@ -735,7 +740,7 @@ fn line_anchor(suffix: &str) -> Option<String> {
 fn file_link(
     word: &str,
     repo_url: &str,
-    commit: &str,
+    commit: &CommitId,
     style: Style,
     is_file: &mut impl FnMut(&str) -> bool,
 ) -> Option<String> {
