@@ -131,15 +131,15 @@ pub enum Anomaly {
     /// The executable was replaced after daemon startup.
     NewerExecutable,
     /// A task's last run failed.
-    FailedTask(TaskId),
+    FailedTask(#[doc = "Task whose status is failed."] TaskId),
     /// A task was paused.
-    PausedTask(TaskId),
+    PausedTask(#[doc = "Task whose status is paused."] TaskId),
     /// A running task has output older than the supplied threshold.
-    StaleTask(TaskId),
+    StaleTask(#[doc = "Running task whose output is stale."] TaskId),
     /// Unfinished items have no running or queued team task.
     NobodyWorking,
     /// A questions file still lacks an answer.
-    UnansweredQuestions(PathBuf),
+    UnansweredQuestions(#[doc = "Questions file without an answer."] PathBuf),
     /// The lead worktree has changes.
     DirtyLead,
     /// The lead's last gate used a tree with changes.
@@ -151,18 +151,22 @@ pub enum Anomaly {
     /// Lead waits with a passing gate and an item in progress without a recorded PR.
     WaitingWithoutPr,
     /// An unfinished assigned item's branch is not contained in the lead tip.
-    UnmergedBranch(BranchName),
+    UnmergedBranch(#[doc = "Assigned branch missing from the lead tip."] BranchName),
     /// A local tip differs from the clone's origin ref, including a missing origin ref.
-    OriginDiffers(BranchName),
+    OriginDiffers(#[doc = "Branch with a local/origin difference."] BranchName),
     /// A filesystem is at least 90 percent full by space or inode usage.
-    FullFilesystem(PathBuf),
+    FullFilesystem(#[doc = "Path on the full filesystem."] PathBuf),
     /// A part of the diagnostics could not be collected.
-    Unreadable(ReadFailure),
+    Unreadable(#[doc = "Unavailable part and the reason collection failed."] ReadFailure),
 }
 
 impl Anomaly {
     /// One sentence describing the observed problem for a standalone summary.
     #[must_use]
+    #[expect(
+        clippy::unnecessary_debug_formatting,
+        reason = "debug escapes paths losslessly, including non-UTF-8 bytes; display can replace bytes"
+    )]
     pub fn sentence(&self) -> String {
         match self {
             Self::NoDaemon => "No daemon holds this home.".into(),
@@ -171,7 +175,7 @@ impl Anomaly {
             Self::PausedTask(task) => format!("Task {task} is paused."),
             Self::StaleTask(task) => format!("Running task {task} has output older than the inactivity threshold."),
             Self::NobodyWorking => "No team task is running or queued while an item remains unfinished.".into(),
-            Self::UnansweredQuestions(path) => format!("Questions file {path:?} has no answer yet."),
+            Self::UnansweredQuestions(path) => format!("Questions file {:?} has no answer yet.", path.as_os_str()),
             Self::DirtyLead => "The lead worktree has uncommitted changes.".into(),
             Self::DirtyGate => "The lead's last gate ran on a tree that was not clean.".into(),
             Self::GateAtOtherCommit => "The lead's gate record belongs to a different commit than its tip.".into(),
@@ -186,7 +190,10 @@ impl Anomaly {
             Self::OriginDiffers(branch) => {
                 format!("Branch {branch} has a local tip that differs from its recorded origin ref.")
             }
-            Self::FullFilesystem(path) => format!("Filesystem {path:?} is at least 90% full by space or inodes."),
+            Self::FullFilesystem(path) => format!(
+                "Filesystem {:?} is at least 90% full by space or inodes.",
+                path.as_os_str()
+            ),
             Self::Unreadable(failure) => format!("Could not collect {}: {}.", failure.part, failure.reason),
         }
     }
