@@ -531,3 +531,55 @@ async fn debug_online_daemon_status_reuses_status_rendering() {
     let expected = crate::commands::status::render(&teams);
     assert_eq!(status, expected);
 }
+
+#[test]
+fn debug_done_lead_with_uncontained_member_branch_reports_exact_unmerged_anomaly() {
+    let (_dir, home, mut state, team, lead_task, member_task, _round) = setup_test_home();
+
+    // Transition lead task to Done
+    let (_role, mut lead_found) = state.find_task_mut(&lead_task).unwrap();
+    lead_found.transition(TaskStatus::Running).unwrap();
+    lead_found.transition(TaskStatus::Done).unwrap();
+
+    // Advance item 1.1 to InProgress on member's branch
+    let item_id: ItemId = "1.1".parse().unwrap();
+    state
+        .team_mut(&team)
+        .unwrap()
+        .item_mut(item_id)
+        .unwrap()
+        .advance(agent_core::state::ItemPhase::InProgress {
+            assignee: "claude-1".parse().unwrap(),
+            branch: "agents/claude-1/item-1-1".parse().unwrap(),
+        })
+        .unwrap();
+
+    std::fs::write(home.state_file(), state.to_json().unwrap()).unwrap();
+
+    // Member worktree creates an unmerged commit not contained in lead branch
+    let member_wt = home.worktree_dir(&repo(), &member_task);
+    std::fs::write(member_wt.join("unmerged_feature.txt"), "feature content").unwrap();
+    run_git(&member_wt, &["add", "unmerged_feature.txt"]);
+    run_git(&member_wt, &["commit", "-q", "-m", "unmerged feature commit"]);
+
+    let env = environment(home.state_file().parent().unwrap());
+    let out_dir = tempfile::tempdir().unwrap();
+    let (code, _out, err) = agent(
+        &env,
+        &[
+            "debug",
+            "--team",
+            team.as_str(),
+            "--out",
+            out_dir.path().to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, ExitCode::SUCCESS, "stderr was: {err}");
+
+    let summary_path = find_summary(out_dir.path()).expect("SUMMARY.md should exist");
+    let summary = std::fs::read_to_string(&summary_path).unwrap();
+    assert!(
+        summary.contains("The lead branch does not contain assigned unfinished branch agents/claude-1/item-1-1."),
+        "summary was: {summary}"
+    );
+}
