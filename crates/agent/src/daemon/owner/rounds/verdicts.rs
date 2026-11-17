@@ -232,7 +232,7 @@ impl Owner {
             .and_then(|values| values.with("pr", asked.pr.number.to_string()))
             .and_then(|values| values.with("task", task.as_str()))
             .and_then(|values| values.with("why", NO_VERDICT_LINE));
-        self.tell_human(pulls, AutopilotPrompt::NoticeNoVerdict, values, &lead, now);
+        self.tell_human(pulls, AutopilotNotice::NoVerdict, values, &lead, now);
         Ok(())
     }
 
