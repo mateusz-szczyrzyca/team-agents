@@ -722,7 +722,8 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
 /// Output is guaranteed to be strictly less than [`MAX_SUMMARY_BYTES`] (100,000 bytes),
 /// truncating individual section bodies while preserving the end and all 12 section headings.
 #[must_use]
-pub fn render_summary(input: &SummaryInput, now: Timestamp, offset: UtcOffset) -> String {
+pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String, SummaryError> {
+    let now = input.collected_at;
     let mut out = String::with_capacity(8192);
 
     write_line(&mut out, &format!("# Debug Summary — Team `{}`", input.team.id));
@@ -761,5 +762,17 @@ pub fn render_summary(input: &SummaryInput, now: Timestamp, offset: UtcOffset) -
         out.push('\n');
     }
 
-    out
+    Ok(out)
+}
+
+/// Mandatory summary facts exceed the pasteable document budget.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SummaryError {
+    /// Anomalies, records and structural rows cannot all fit without omission.
+    #[error("mandatory summary facts need {required_bytes} bytes, exceeding the summary budget")]
+    RequiredFactsTooLarge {
+        /// Bytes required before allocating any optional text tails.
+        required_bytes: usize,
+    },
 }

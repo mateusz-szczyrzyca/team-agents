@@ -475,3 +475,132 @@ fn gate_tree_outcomes_and_missing_record_are_rendered_exactly() {
     let summary = render_summary(&input, UtcOffset::UTC).expect("mandatory summary facts fit");
     assert!(summary.contains("- Record: none\n- Recent gate outputs:\n"));
 }
+
+#[test]
+fn every_distinct_anomaly_is_retained_once_even_above_old_section_budget() {
+    let mut input = sample_input();
+    input.anomalies = (0..500)
+        .map(|i| SummaryAnomaly {
+            message: format!("unique anomaly {i}: missing branch integration"),
+            command: None,
+        })
+        .collect();
+    input.anomalies.push(input.anomalies.first().unwrap().clone());
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    for anomaly in &input.anomalies {
+        assert_eq!(
+            summary
+                .lines()
+                .filter(|line| *line == format!("- {}", anomaly.message))
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn short_document_keeps_text_above_old_per_section_limit_without_cutting() {
+    let mut input = sample_input();
+    let history = format!("history start\n{}history end", "complete line\n".repeat(1500));
+    input.history_tail = Some(history.clone());
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(summary.contains(&history));
+    assert!(!summary.contains(CUT_MARKER));
+}
+
+#[test]
+fn long_individual_tails_preserve_every_task_gate_record_and_fence() {
+    let mut input = sample_input();
+    let detail = format!("{}RUN-END", "long output 🦀\n".repeat(20_000));
+    input.tasks.first_mut().unwrap().last_run_end_detail = Some(detail.clone());
+    input.tasks.first_mut().unwrap().questions.as_mut().unwrap().content = format!("{detail}ANSWER-END");
+    let mut second = sample_task();
+    second.id = "task-20261117-200000-2222".parse().unwrap();
+    input.tasks.push(second.clone());
+    let first_gate = input.gate.first_mut().unwrap();
+    first_gate.recent_output_tails = vec![
+        "discard-fourth-oldest".to_owned(),
+        format!("{detail}GATE-1-END"),
+        format!("{detail}GATE-2-END"),
+        format!("{detail}GATE-3-END"),
+    ];
+    let mut second_gate = first_gate.clone();
+    second_gate.task_id = second.id;
+    second_gate.recent_output_tails.clear();
+    input.gate.push(second_gate);
+    input.history_tail = Some(format!("{detail}HISTORY-END"));
+    input.daemon_log_lines = Some(vec![format!("{detail}DAEMON-END")]);
+    input.bus_messages = vec![format!("{detail}BUS-END")];
+    input.notifications = vec![format!("{detail}NOTIFICATION-END")];
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(summary.len() < MAX_SUMMARY_BYTES);
+    assert!(summary.contains(CUT_MARKER));
+    for task in &input.tasks {
+        assert!(summary.contains(&format!("### Task `{}` (`{}`)\n", task.id, task.agent)));
+        assert!(summary.contains(&format!("### Gate for Task `{}`\n", task.id)));
+    }
+    assert_eq!(summary.matches("- Record: Commit").count(), 2);
+    assert_eq!(summary.lines().filter(|line| *line == "```text").count(), 3);
+    assert_eq!(summary.lines().filter(|line| *line == "```").count(), 3);
+    assert!(!summary.contains("discard-fourth-oldest"));
+    for end in [
+        "RUN-END",
+        "ANSWER-END",
+        "GATE-1-END",
+        "GATE-2-END",
+        "GATE-3-END",
+        "HISTORY-END",
+        "DAEMON-END",
+        "BUS-END",
+        "NOTIFICATION-END",
+    ] {
+        assert!(summary.contains(end), "missing {end}");
+    }
+}
+
+#[test]
+fn task_table_header_and_all_rows_survive_large_task_counts() {
+    let mut input = sample_input();
+    input.tasks = (0..100)
+        .map(|i| {
+            let mut task = sample_task();
+            task.id = format!("task-20261117-200000-{i:04}").parse().unwrap();
+            task
+        })
+        .collect();
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(
+        summary.contains("| Task | Agent | Role | Status | Runs | Started | Ended | Last Activity | Minutes Since |\n")
+    );
+    for task in &input.tasks {
+        assert_eq!(summary.matches(&format!("| {} |", task.id)).count(), 1);
+    }
+}
+
+#[test]
+fn mandatory_facts_over_budget_return_an_error_instead_of_dropping_anomalies() {
+    let mut input = sample_input();
+    input.anomalies = vec![SummaryAnomaly {
+        message: "x".repeat(MAX_SUMMARY_BYTES),
+        command: None,
+    }];
+    assert!(
+        matches!(render_summary(&input, UtcOffset::UTC), Err(SummaryError::RequiredFactsTooLarge { required_bytes }) if required_bytes >= MAX_SUMMARY_BYTES)
+    );
+}
+
+#[test]
+fn status_and_phase_use_cli_display_spellings() {
+    let input = sample_input();
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(summary.contains("| member | running |"));
+    assert!(summary.contains("| in_progress | gemini-1 |"));
+}
+
+#[test]
+fn gate_log_path_escapes_quotes_losslessly() {
+    let mut input = sample_input();
+    input.gate.first_mut().unwrap().record.as_mut().unwrap().result.log = "/tmp/log-\"quoted\"".parse().unwrap();
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(summary.contains(r#"Log: `"/tmp/log-\"quoted\""`"#));
+}
