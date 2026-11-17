@@ -1,22 +1,69 @@
 //! Exact byte redaction for every diagnostic artifact before persistence.
 
 use std::ffi::OsString;
+use std::fmt;
+use std::os::unix::ffi::OsStringExt;
 
 use agent_core::config::Secrets;
 
 /// Secret values that may not appear in diagnostic artifacts.
-#[derive(Debug)]
-pub(crate) struct SecretsCut;
+pub(crate) struct SecretsCut {
+    /// Nonempty byte patterns, longest first so nested values cannot leave a secret suffix.
+    values: Vec<Vec<u8>>,
+}
+
+impl fmt::Debug for SecretsCut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SecretsCut").field("values", &"<redacted>").finish()
+    }
+}
 
 impl SecretsCut {
     /// Captures configured secrets and suffix-selected environment values without reading global state.
-    pub(crate) fn new(_secrets: &Secrets, _environment: impl IntoIterator<Item = (OsString, OsString)>) -> Self {
-        Self
+    pub(crate) fn new(secrets: &Secrets, environment: impl IntoIterator<Item = (OsString, OsString)>) -> Self {
+        let mut values: Vec<_> = secrets
+            .github_token()
+            .into_iter()
+            .chain(secrets.agent_env().values())
+            .chain(secrets.notification_env().values())
+            .map(|value| value.expose().as_bytes().to_vec())
+            .collect();
+        for (name, value) in environment {
+            if ["TOKEN", "SECRET", "PASSWORD", "KEY"]
+                .iter()
+                .any(|suffix| name.as_encoded_bytes().ends_with(suffix.as_bytes()))
+                && !value.is_empty()
+            {
+                // An empty environment value contains no confidential bytes to replace.
+                values.push(value.into_vec());
+            }
+        }
+        values.sort_unstable_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
+        values.dedup();
+        Self { values }
     }
 
     /// Replaces exact occurrences, preserving unrelated bytes including non-UTF-8 output.
     pub(crate) fn redact(&self, bytes: &[u8]) -> Vec<u8> {
-        bytes.to_vec()
+        let mut remaining = bytes;
+        let mut redacted = Vec::with_capacity(bytes.len());
+        while let Some((first, tail)) = remaining.split_first() {
+            match self
+                .values
+                .iter()
+                .find_map(|value| remaining.strip_prefix(value.as_slice()))
+            {
+                Some(rest) => {
+                    redacted.extend_from_slice(b"<cut>");
+                    remaining = rest;
+                }
+                None => {
+                    redacted.push(*first);
+                    remaining = tail;
+                }
+            }
+        }
+        redacted
     }
 }
 
