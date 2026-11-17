@@ -513,7 +513,8 @@ async fn the_review_of_a_reviewer_is_posted_on_the_pull_request_as_a_comment_wit
         assert_eq!(review["event"], "COMMENT");
         assert_eq!(review["commit_id"], git(&rig.origin, &["rev-parse", &branch]));
         let body = review["body"].as_str().unwrap();
-        assert!(body.contains("VERDICT: APPROVE"), "{body}");
+        assert!(body.contains("APPROVED"), "{body}");
+        assert!(!body.contains("VERDICT: APPROVE"), "{body}");
         assert!(body.contains("SUMMARY: fine"), "{body}");
         assert!(!body.contains("STATUS: DONE"), "{body}");
         assert!(body.contains("inv-r"), "{body}");

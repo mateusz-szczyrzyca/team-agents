@@ -169,13 +169,21 @@ case $action in
     printf '{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"%s"}\n' "$session"
     ;;
   done) result 'Finished the work.\nSTATUS: DONE' ;;
+  review-commit:*|late-commit:*)
+    # These new actions quote the commit actually checked out by the reviewer.
+    if [[ $action == late-commit:* ]]; then
+      wait_for_peer_review
+    fi
+    head=$(git rev-parse HEAD)
+    result "VERDICT: ${action#*:}\nSUMMARY: commit \`$head\`\nSTATUS: DONE"
+    ;;
   done:*) result "${action#done:}"'\nSTATUS: DONE' ;;
   sleep) result 'Nothing to do now.\nSTATUS: SLEEPING' ;;
   fail) result 'I could not do it.\nSTATUS: FAILED' ;;
   nostatus) result 'I think that is all.' ;;
   fail-first:*)
-    # Making a directory is atomic: of the tasks that get here at once, one makes it.
-    if mkdir "$home/.fake-first-failed" 2> /dev/null; then
+    # Bash noclobber claims the marker with exclusive creation; some mkdir implementations report success to both racers.
+    if (set -o noclobber; > "$home/.fake-first-failed") 2> /dev/null; then
       result 'I could not do it.\nSTATUS: FAILED'
     else
       result "${action#fail-first:}"'\nSTATUS: DONE'

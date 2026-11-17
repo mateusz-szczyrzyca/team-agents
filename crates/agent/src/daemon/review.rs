@@ -81,6 +81,22 @@ pub(super) fn report_text(message: &str) -> String {
     lines.join("\n").trim().chars().take(MAX_REPORT_CHARS).collect()
 }
 
+/// Removes only the first verdict line used by [`parse_verdict`], preserving all other report bytes.
+pub(super) fn report_without_verdict(report: &str) -> String {
+    let mut removed = false;
+    report
+        .split_inclusive('\n')
+        .filter(|line| {
+            if !removed && after_key(line, VERDICT_KEY).is_some() {
+                removed = true;
+                false
+            } else {
+                true
+            }
+        })
+        .collect()
+}
+
 /// Where the review of an investigator is carried out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Slot {

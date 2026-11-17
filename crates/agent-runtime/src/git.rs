@@ -553,6 +553,42 @@ impl Git {
             .map_err(|source| GitError::NotACommit { operation, source })
     }
 
+    /// Resolves an abbreviated or full commit ID `text` to its full [`CommitId`], or `None` if it does not name a
+    /// commit.
+    ///
+    /// # Errors
+    /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and
+    /// [`GitError::NotACommit`].
+    pub async fn resolve_commit(&self, text_input: &str) -> Result<Option<CommitId>, GitError> {
+        let operation = GitOperation::RevParse;
+        let spec = format!("{text_input}^{{commit}}");
+        let captured = self
+            .run(
+                operation,
+                Reach::Local,
+                &[
+                    arg("rev-parse"),
+                    arg("--verify"),
+                    arg("--quiet"),
+                    arg("--end-of-options"),
+                    arg(&spec),
+                ],
+            )
+            .await?;
+        match captured.exit {
+            ExitReport::Exited { code: 0 } => {
+                let printed = text(operation, &captured.stdout)?;
+                let id = printed
+                    .trim_end()
+                    .parse()
+                    .map_err(|source| GitError::NotACommit { operation, source })?;
+                Ok(Some(id))
+            }
+            ExitReport::Exited { code: 1 } => Ok(None),
+            ExitReport::Exited { .. } | ExitReport::Signaled { .. } => Err(failed(operation, &captured)),
+        }
+    }
+
     /// The tip of `branch`, or `None` when there is no such branch.
     ///
     /// # Errors
@@ -1328,6 +1364,18 @@ mod tests {
             matches!(&result, Err(GitError::UnknownRevision { revision }) if revision == "refs/heads/nothing"),
             "{result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn resolve_commit_resolves_abbreviated_and_full_commit_ids_and_none_for_unknown() {
+        let fixture = Fixture::new();
+        let head = fixture.head();
+        let short = head.as_str().get(..7).unwrap();
+
+        let git = fixture.git();
+        assert_eq!(git.resolve_commit(short).await.unwrap(), Some(head.clone()));
+        assert_eq!(git.resolve_commit(head.as_str()).await.unwrap(), Some(head));
+        assert_eq!(git.resolve_commit("deadbeef").await.unwrap(), None);
     }
 
     // Rule: a branch is made at a start, found by its tip, and deleted.
@@ -2120,5 +2168,45 @@ mod tests {
             ),
             "{result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn commit_lookup_propagates_git_failure_instead_of_reporting_missing() {
+        let (_dir, git) = scripted_git("exit 128");
+        let result = git.resolve_commit("abcdef0").await;
+        assert!(matches!(
+            result,
+            Err(GitError::Failed {
+                operation: GitOperation::RevParse,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn commit_lookup_rejects_invalid_commit_output() {
+        let (_dir, git) = scripted_git("printf 'not-a-commit\\n'");
+        let result = git.resolve_commit("abcdef0").await;
+        assert!(matches!(
+            result,
+            Err(GitError::NotACommit {
+                operation: GitOperation::RevParse,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn commit_lookup_propagates_a_missing_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git = isolated(&tmp.path().join("missing"), agent_identity());
+        let result = git.resolve_commit("abcdef0").await;
+        assert!(matches!(
+            result,
+            Err(GitError::Run {
+                operation: GitOperation::RevParse,
+                source: CaptureError::Spawn { .. }
+            })
+        ));
     }
 }

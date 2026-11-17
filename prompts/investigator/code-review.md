@@ -291,7 +291,10 @@ The tags are defaults. Raise an `m` to BLOCKER only when it causes a concrete de
 
 ## 7. Report format
 
-```text
+When the report quotes code, use a fenced block with the language of its source file (`rust`, `go`,
+`bash`, `toml`, `json`, and so on); use `text` for command output. Never leave a fence without a language.
+
+````text
 VERDICT: APPROVE | REQUEST_CHANGES
 SUMMARY: one or two sentences — what the PR does and why this verdict
 SIZE: 742 changed lines outside tests (planned for 1500, hard limit 2000)
@@ -303,6 +306,11 @@ A2 not met — the cap is 6, the task says "at most 5"; src/retry.rs:52
 
 BLOCKERS
 1. [ERR-2] src/sync.rs:88 — `let _ = tx.send(evt)` drops the send error → return `SyncError::ReceiverGone`, or log it and stop the loop.
+
+```rust
+let _ = tx.send(evt);
+```
+
 2. [TDD-2] src/retry.rs:52 — the backoff cap is untested: `>` → `>=` keeps the suite green → add a test at the cap.
 
 MINOR
@@ -317,7 +325,7 @@ NEEDS HUMAN
 
 OUT OF SCOPE
 - src/legacy.rs — `unwrap()` calls that were already there
-```
+````
 
 - One line per finding: `[ID] file:line — problem → fix`. Group repeats: `also: a.rs:10, b.rs:22`.
 - Leave out empty sections. VERDICT, SUMMARY, SIZE and GATE are always present.

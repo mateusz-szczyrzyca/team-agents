@@ -7,6 +7,8 @@ use agent_core::state::Timestamp;
 use super::*;
 use crate::testing::{Answer, FakeDaemon};
 
+mod stale_socket;
+
 fn status() -> Command {
     Command::Status(StatusRequest { target: None })
 }
@@ -63,7 +65,8 @@ async fn a_missing_socket_means_the_daemon_is_not_running() {
 #[tokio::test]
 async fn a_socket_file_nobody_listens_on_means_the_daemon_is_not_running() {
     let dir = tempfile::tempdir().unwrap();
-    drop(tokio::net::UnixListener::bind(socket(&dir)).unwrap());
+    let listener = std::os::unix::net::UnixListener::bind(socket(&dir)).unwrap();
+    stale_socket::close(listener).unwrap();
 
     let error = Connection::connect(&socket(&dir)).await.unwrap_err();
 

@@ -363,6 +363,9 @@ static DATE_RE: LazyLock<Regex> =
 
 ## 17. PR description
 
+When the description quotes code, use a fenced block with the language of its source file (`rust`, `go`,
+`bash`, `toml`, `json`, and so on); use `text` for command output. Never leave a fence without a language.
+
 ```markdown
 ## What and why
 

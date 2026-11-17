@@ -349,6 +349,9 @@ The requester opens the pull request; these rules decide what you hand over.
 
 Your final message to the requester has these parts, each true and short. The requester copies them into the pull request description.
 
+When the description quotes code, use a fenced block with the language of its source file (`rust`, `go`,
+`bash`, `toml`, `json`, and so on); use `text` for command output. Never leave a fence without a language.
+
 ```markdown
 ## What and why
 
