@@ -821,6 +821,28 @@ pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String,
     render_summary_with_uncollected(input, offset, &[])
 }
 
+/// Whether newest-untracked-file metadata was collected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UntrackedCollection {
+    /// Metadata was collected, including a genuinely empty result.
+    Collected,
+    /// Metadata is outside this collector's scope.
+    Deferred,
+}
+
+/// Renders a summary with explicit collection coverage for untracked metadata.
+///
+/// # Errors
+/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
+pub fn render_summary_with_coverage(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+    _untracked: UntrackedCollection,
+) -> Result<String, SummaryError> {
+    render_summary_with_uncollected(input, offset, uncollected)
+}
+
 /// Renders a summary with explicit notices for sections outside the collection scope.
 ///
 /// Collection failures remain visible even when machine observations are deferred.

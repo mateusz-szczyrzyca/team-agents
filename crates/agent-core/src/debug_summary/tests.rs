@@ -686,3 +686,13 @@ fn deferred_machine_section_keeps_collection_failures_visible() {
     assert!(rendered.contains("### Unreadable Parts\n\n- `worktree`: removed"));
     assert!(!rendered.contains("Load average"));
 }
+
+#[test]
+fn deferred_untracked_metadata_does_not_claim_zero_files() {
+    let mut input = sample_input();
+    input.git[0].newest_untracked.clear();
+    let summary = render_summary_with_coverage(&input, UtcOffset::UTC, &[], UntrackedCollection::Deferred).unwrap();
+    assert!(summary.contains("Untracked file metadata: Not collected in this version."));
+    assert!(!summary.contains("Untracked files (newest 0)"));
+    assert!(summary.contains("Commits over base"));
+}
