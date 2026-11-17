@@ -32,22 +32,6 @@ fn link_words(text: &str, repo_url: &str, resolve: &mut impl FnMut(&str) -> Opti
     let mut result = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '`' {
-            let mut lookahead = chars.clone();
-            let word = take_word(&mut lookahead);
-            if is_candidate(&word) && lookahead.next() == Some('`') {
-                // Consume the complete inline code span so its delimiters become the link label.
-                chars = lookahead;
-                if let Some(full) = resolve(&word) {
-                    push_link(&mut result, &word, repo_url, &full);
-                } else {
-                    result.push('`');
-                    result.push_str(&word);
-                    result.push('`');
-                }
-                continue;
-            }
-        }
         if is_word_char(ch) {
             let mut word = String::from(ch);
             word.push_str(&take_word(&mut chars));
@@ -131,12 +115,55 @@ fn starts_autolink(mut chars: Peekable<Chars<'_>>) -> bool {
     false
 }
 
+/// Consumes a code span only when an equally wide closing backtick run exists.
+fn code_span(chars: &mut Peekable<Chars<'_>>) -> Option<(usize, String, String)> {
+    let mut lookahead = chars.clone();
+    let mut opening = String::from('`');
+    while lookahead.next_if_eq(&'`').is_some() {
+        opening.push('`');
+    }
+    let width = opening.len();
+    let mut content = String::new();
+    while let Some(ch) = lookahead.next() {
+        if ch != '`' {
+            content.push(ch);
+            continue;
+        }
+        let mut closing = String::from('`');
+        while lookahead.next_if_eq(&'`').is_some() {
+            closing.push('`');
+        }
+        if closing.len() == width {
+            let raw = format!("{opening}{content}{closing}");
+            *chars = lookahead;
+            return Some((width, content, raw));
+        }
+        content.push_str(&closing);
+    }
+    None
+}
+
 /// Protects existing inline and reference links while rewriting ordinary prose.
 fn link_prose(text: &str, repo_url: &str, resolve: &mut impl FnMut(&str) -> Option<String>) -> String {
     let mut result = String::with_capacity(text.len());
     let mut prose = String::new();
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
+        if ch == '`'
+            && let Some((width, content, raw)) = code_span(&mut chars)
+        {
+            result.push_str(&link_words(&prose, repo_url, resolve));
+            prose.clear();
+            if width == 1
+                && is_candidate(&content)
+                && let Some(full) = resolve(&content)
+            {
+                push_link(&mut result, &content, repo_url, &full);
+            } else {
+                result.push_str(&raw);
+            }
+            continue;
+        }
         if ch == '<' && starts_autolink(chars.clone()) {
             let mut link = String::from('<');
             let mut closed = false;
