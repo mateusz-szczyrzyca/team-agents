@@ -721,3 +721,36 @@ fn debug_snapshots_all_task_files_and_git_refs_intact() {
         "bundle must snapshot member final-message.txt"
     );
 }
+
+#[tokio::test]
+async fn debug_status_preserves_the_daemons_history_health_line() {
+    let (_dir, home, state, team, _, _, _) = setup_test_home();
+    let teams = vec![agent_core::protocol::TeamSummary::from(&state.teams()[0])];
+    let health = agent_core::history::HistoryHealth {
+        state: agent_core::history::HistoryState::Disabled,
+        lost: 0,
+    };
+    let expected = format!(
+        "{}{}",
+        crate::commands::status::render(&teams),
+        crate::commands::status::render_history(Some(&health))
+    );
+    let _daemon = crate::testing::FakeDaemon::serve(&home.socket_file(), move |request| {
+        crate::testing::Answer::Lines(vec![
+            agent_core::protocol::Frame::Response(agent_core::protocol::Response::ok(
+                request.id,
+                agent_core::protocol::Reply::Overview {
+                    teams: teams.clone(),
+                    history: health.clone(),
+                },
+            ))
+            .to_line()
+            .unwrap(),
+        ])
+    });
+    let actual = crate::commands::debug::query_daemon_status(&home, &Target::Team(team))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(actual, expected);
+}
