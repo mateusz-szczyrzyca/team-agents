@@ -63,6 +63,28 @@ fn fence(line: &str) -> Option<(Fence, &str)> {
     (width >= 3).then_some((Fence { marker, width }, rest))
 }
 
+/// Tracks fence transitions and reports whether this line belongs to a code block.
+fn fenced_line(line: &str, active: &mut Option<Fence>) -> bool {
+    let delimiter = fence(line);
+    if let Some(open) = *active {
+        if let Some((closing, rest)) = delimiter
+            && closing.marker == open.marker
+            && closing.width >= open.width
+            && rest.trim().is_empty()
+        {
+            *active = None;
+        }
+        true
+    } else if let Some((opening, rest)) = delimiter
+        && (opening.marker != '`' || !rest.contains('`'))
+    {
+        *active = Some(opening);
+        true
+    } else {
+        false
+    }
+}
+
 /// Links resolved commit words, retaining the author's spelling in code-styled labels.
 fn link_words(text: &str, repo_url: &str, resolve: &mut impl FnMut(&str) -> Option<String>) -> String {
     let mut result = String::with_capacity(text.len());
@@ -178,7 +200,16 @@ fn reference_label(label: &str) -> String {
 
 /// Finds complete reference definitions so shortcuts also work before their definition.
 fn references(text: &str) -> HashSet<String> {
-    text.lines().filter_map(reference_definition).collect()
+    let mut labels = HashSet::new();
+    let mut active = None;
+    for line in text.lines() {
+        if !fenced_line(line, &mut active)
+            && let Some(label) = reference_definition(line)
+        {
+            labels.insert(label);
+        }
+    }
+    labels
 }
 
 /// Reads a reference definition's label while preserving its source spelling elsewhere.
@@ -420,23 +451,10 @@ pub fn link_commits(text: &str, repo_url: &str, mut resolve: impl FnMut(&str) ->
     let mut active: Option<Fence> = None;
     let references = references(text);
     for line in text.split_inclusive('\n') {
-        let delimiter = fence(line);
-        if let Some(open) = active {
-            result.push_str(line);
-            if let Some((closing, rest)) = delimiter
-                && closing.marker == open.marker
-                && closing.width >= open.width
-                && rest.trim().is_empty()
-            {
-                active = None;
-            }
-        } else if let Some((opening, rest)) = delimiter
-            && (opening.marker != '`' || !rest.contains('`'))
-        {
+        if fenced_line(line, &mut active) {
             result.push_str(&link_prose(&prose, repo_url, &mut resolve, &references));
             prose.clear();
             result.push_str(line);
-            active = Some(opening);
         } else {
             prose.push_str(line);
         }
