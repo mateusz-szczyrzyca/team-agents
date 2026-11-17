@@ -1096,7 +1096,8 @@ impl Git {
                 ],
             )
             .await?;
-        parse_tree_blobs(operation, &captured.stdout.bytes)
+        let bytes = whole(operation, &captured.stdout, self.limits)?;
+        parse_tree_blobs(operation, bytes)
     }
 
     /// The command `git` with this handle's identity, signing and environment, and `args`.
@@ -1310,6 +1311,9 @@ fn parse_tree_blobs(operation: GitOperation, bytes: &[u8]) -> Result<HashSet<Str
         };
         let (meta, rest) = entry.split_at(tab_pos);
         let path_bytes = rest.get(1..).ok_or_else(unexpected)?;
+        if path_bytes.is_empty() {
+            return Err(unexpected());
+        }
         let mut parts = meta.split(|byte| *byte == b' ');
         let _mode = parts.next().ok_or_else(unexpected)?;
         let obj_type = parts.next().ok_or_else(unexpected)?;
