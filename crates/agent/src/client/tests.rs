@@ -7,6 +7,8 @@ use agent_core::state::Timestamp;
 use super::*;
 use crate::testing::{Answer, FakeDaemon};
 
+mod stale_socket;
+
 fn status() -> Command {
     Command::Status(StatusRequest { target: None })
 }
