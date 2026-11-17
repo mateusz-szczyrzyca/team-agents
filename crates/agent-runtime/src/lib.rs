@@ -9,6 +9,7 @@ pub mod autopilot_prompts;
 pub mod checks_prompts;
 pub mod cli;
 pub mod clock;
+mod debug_redaction;
 pub mod editor;
 pub mod git;
 pub mod github;
