@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_core::debug_summary::{
-    GitWorktreeSummary, ItemSummaryFacts, MachineSummary, QuestionsSummaryFacts, RoundSummaryFacts, SummaryInput,
-    TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts,
+    GitCommitSummaryFacts, GitWorktreeSummary, ItemSummaryFacts, MachineSummary, QuestionsSummaryFacts,
+    RoundSummaryFacts, SummaryInput, TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts,
 };
 use agent_core::diagnostic_assessment::{Assessment, Branch, LeadGit, Origin, ReadFailure, Task};
 use agent_core::ids::{BranchName, TaskId};
@@ -546,10 +546,21 @@ impl Collection {
             )
             .await
             {
-                Ok(text) => self.add(
-                    PathBuf::from("git").join(format!("{task}-commits.txt")),
-                    text.into_bytes(),
-                ),
+                Ok(text) => {
+                    let parsed = text.lines().map(parse_commit).collect::<Result<Vec<_>, _>>();
+                    match parsed {
+                        Ok(commits) => {
+                            if let Some(git) = self.summary.git.iter_mut().find(|git| git.task_id == task) {
+                                git.commits_over_base = commits;
+                            }
+                        }
+                        Err(error) => self.failed(format!("git commit details {task}"), error_chain(&error)),
+                    }
+                    self.add(
+                        PathBuf::from("git").join(format!("{task}-commits.txt")),
+                        text.into_bytes(),
+                    );
+                }
                 Err(error) => self.failed(format!("git commits {task}"), error_chain(&error)),
             }
         }
@@ -576,6 +587,12 @@ enum ObservationError {
         /// Bounded error bytes, escaped without losing data.
         stderr: Vec<u8>,
     },
+    /// Git did not return all requested commit fields.
+    #[error("git commit record lacks required fields")]
+    CommitFields,
+    /// A commit timestamp is not representable.
+    #[error("git commit timestamp is invalid")]
+    CommitTime(#[source] agent_core::state::InvalidTimestamp),
     /// Git output is not UTF-8.
     #[error("git output is not UTF-8")]
     Utf8(#[source] std::string::FromUtf8Error),
@@ -585,6 +602,20 @@ enum ObservationError {
     /// A git object ID is invalid.
     #[error("git tip is invalid")]
     Commit(#[source] agent_core::state::InvalidCommitId),
+}
+
+fn parse_commit(line: &str) -> Result<GitCommitSummaryFacts, ObservationError> {
+    let mut fields = line.splitn(4, '\0');
+    let id = fields.next().ok_or(ObservationError::CommitFields)?;
+    let time = fields.next().ok_or(ObservationError::CommitFields)?;
+    let author = fields.next().ok_or(ObservationError::CommitFields)?;
+    let subject = fields.next().ok_or(ObservationError::CommitFields)?;
+    Ok(GitCommitSummaryFacts {
+        id: id.parse().map_err(ObservationError::Commit)?,
+        time: time.parse().map_err(ObservationError::CommitTime)?,
+        author: author.to_owned(),
+        subject: subject.to_owned(),
+    })
 }
 
 async fn bounded_bytes(path: &Path) -> Result<Vec<u8>, ObservationError> {
