@@ -1286,6 +1286,73 @@ async fn the_branch_of_the_coordinator_that_integrated_the_members_work_is_publi
     assert!(reviewers.iter().all(|name| name.starts_with("inv-r")), "{reviewers:?}");
 }
 
+/// A team whose coordinator does `lead` and whose member does its item, with two approving reviewers.
+async fn unjoined_rig(lead: &'static str) -> Rig {
+    Rig::new(
+        &[
+            investigator("inv-lead", lead),
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await
+}
+
+// Rule: a pull request is opened for the finished items whose branches the lead's branch contains. A lead that is done
+// with a gate that passed and a branch that contains none of them is not left waiting in silence: it is told which
+// branches are missing, and its branch is published once it has merged them.
+#[tokio::test]
+async fn a_coordinator_that_did_not_merge_its_members_branch_is_told_which_and_is_published_when_it_has() {
+    let mut rig = unjoined_rig("sleep,work,integrate").await;
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    let prompt = rig.prompt(&tasks[0], 3).await;
+    rig.stop().await.unwrap();
+
+    let member_branch = format!("agents/claude-1/{}-1.1", tasks[1]);
+    assert!(prompt.contains("YOUR WORK IS NOT PUBLISHED"), "{prompt}");
+    assert!(prompt.contains("sent back 1 of 3"), "{prompt}");
+    assert!(prompt.contains(&format!("item 1.1: `{member_branch}`")), "{prompt}");
+    assert!(prompt.contains("git merge"), "{prompt}");
+    assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
+}
+
+// Rule: after three such send-backs the human is told once, with the branches that are missing.
+#[tokio::test]
+async fn a_coordinator_that_never_merges_its_members_branch_is_sent_back_three_times_and_then_the_human_is_told_once() {
+    let mut rig = unjoined_rig("sleep,work").await;
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let notice = rig.notification_with("could not be published").await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    let member_branch = format!("agents/claude-1/{}-1.1", tasks[1]);
+    assert!(notice.contains("\nStatus: 📕 not published\n"), "{notice}");
+    assert!(notice.contains(&member_branch), "{notice}");
+    assert!(notice.contains("sent back 3 times"), "{notice}");
+    // The sleep, the work, and the three runs it was sent back for.
+    assert_eq!(rig.runs(&tasks[0]), 5);
+    let told: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("could not be published"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 0);
+}
+
 #[tokio::test]
 async fn a_fix_pass_of_a_team_goes_to_its_coordinator_which_has_the_integrated_branch() {
     let mut rig = team_rig(CHANGES_ONCE).await;
