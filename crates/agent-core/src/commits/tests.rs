@@ -246,3 +246,24 @@ fn inline_code_spans_protect_commands_and_matching_backtick_runs() {
         );
     }
 }
+
+#[test]
+fn bare_urls_and_html_remain_unchanged_alongside_linkable_prose() {
+    let linked = "[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
+    for protected in [
+        "https://github.com/owner/repo/commit/a1b2c3d",
+        "git+ssh://example.com/a1b2c3d?ref=a1b2c3d",
+        "[ref]: https://example.com/a1b2c3d",
+        "<a href=\"https://example.com/a1b2c3d\">",
+        "<span title=\"a1b2c3d > a1b2c3d\">",
+        "<span title='a1b2c3d > a1b2c3d'>",
+        "<!-- a1b2c3d >\na1b2c3d -->",
+        "</span data-ref=a1b2c3d>",
+    ] {
+        let text = format!("{protected} a1b2c3d");
+        assert_eq!(
+            link_commits(&text, REPO_URL, resolve_hash),
+            format!("{protected} {linked}")
+        );
+    }
+}
