@@ -4,6 +4,7 @@ use agent_core::config::Secrets;
 use agent_core::ids::TaskId;
 use agent_core::log::{LogEvent, LogLevel};
 use agent_core::protocol::{Client, Command, ControlRequest, Reply, Target};
+use agent_core::state::Completion;
 use agent_core::state::{ItemPhase, MergeMode, State};
 use agent_runtime::history::{HistoryLayer, Reader};
 
@@ -427,4 +428,45 @@ async fn merged_worktrees_are_cleaned_once_when_the_running_lead_finishes() {
         logs.iter().all(|row| row.event() != LogEvent::GitCallFailed),
         "{logs:?}"
     );
+}
+
+/// A list whose first item was ticked before the team started and whose second the team does.
+const TICKED_THEN_OPEN: &str = "\
+Build the thing.
+
+1. First
+[x] 1.1 The first item
+    Do the first thing in the repository.
+    Expected result:
+    - the first thing works
+    Checks:
+    - run the first thing
+[ ] 1.2 The second item
+    Do the second thing in the repository.
+    Expected result:
+    - the second thing works
+    Checks:
+    - run the second thing
+";
+
+#[tokio::test]
+async fn a_team_whose_other_items_were_ticked_in_the_list_removes_its_worktrees_after_its_merge() {
+    let mut rig = rig().await;
+    rig.start().await;
+    rig.run(&["claude-1"], TICKED_THEN_OPEN, MergeMode::Autopilot, None)
+        .await;
+    let state = rig
+        .item_where("1.2", "merged", |phase| {
+            matches!(
+                phase,
+                ItemPhase::Done {
+                    completion: Completion::Merged { .. }
+                }
+            )
+        })
+        .await;
+    let tasks = tasks(&state);
+    assert_eq!(tasks.len(), 3);
+    cleaned(&rig, &tasks).await;
+    rig.stop().await.unwrap();
 }
