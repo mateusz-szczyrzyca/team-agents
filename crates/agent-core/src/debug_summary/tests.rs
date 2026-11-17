@@ -138,10 +138,9 @@ fn sample_input() -> SummaryInput {
 #[test]
 fn sections_in_exact_order_and_present() {
     let input = sample_input();
-    let now = ts("2026-11-17T20:00:00Z");
     let offset = UtcOffset::from_hms(1, 0, 0).expect("valid offset");
 
-    let summary = render_summary(&input, now, offset);
+    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
 
     let mut last_idx = 0;
     for section in SummarySection::ALL {
@@ -158,10 +157,9 @@ fn sections_in_exact_order_and_present() {
 fn anomalies_empty_shows_none_of_the_known_ones() {
     let mut input = sample_input();
     input.anomalies.clear();
-    let now = ts("2026-11-17T20:00:00Z");
     let offset = UtcOffset::UTC;
 
-    let summary = render_summary(&input, now, offset);
+    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
 
     assert!(summary.contains("none of the known ones"));
 }
@@ -179,10 +177,9 @@ fn anomalies_with_entries_renders_messages_and_commands() {
             command: None,
         },
     ];
-    let now = ts("2026-11-17T20:00:00Z");
     let offset = UtcOffset::UTC;
 
-    let summary = render_summary(&input, now, offset);
+    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
 
     assert!(!summary.contains("none of the known ones"));
     assert!(summary.contains("a task is failed"));
@@ -202,28 +199,26 @@ fn task_table_computes_minutes_since_activity_and_saturates_future() {
     task2.last_activity = Some(ts("2026-11-17T20:05:00Z"));
     input.tasks.push(task2);
 
-    let now = ts("2026-11-17T20:00:00Z");
     let offset = UtcOffset::UTC;
 
-    let summary = render_summary(&input, now, offset);
+    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
 
-    assert!(summary.contains("15m") || summary.contains("15 min") || summary.contains("15"));
-    assert!(summary.contains("0m") || summary.contains("0 min") || summary.contains(" 0 "));
+    assert!(summary.contains("| 15 min |"));
+    assert!(summary.contains("| 0 min |"));
 }
 
 #[test]
 fn timestamps_formatted_in_utc_and_local_offset() {
     let input = sample_input();
-    let now = ts("2026-11-17T20:00:00Z");
     // Offset +02:00
     let offset_plus = UtcOffset::from_hms(2, 0, 0).expect("valid offset");
-    let summary_plus = render_summary(&input, now, offset_plus);
+    let summary_plus = render_summary(&input, offset_plus).expect("mandatory summary facts fit");
 
     assert!(summary_plus.contains("20:00:00") && summary_plus.contains("22:00:00"));
 
     // Offset -05:00
     let offset_minus = UtcOffset::from_hms(-5, 0, 0).expect("valid offset");
-    let summary_minus = render_summary(&input, now, offset_minus);
+    let summary_minus = render_summary(&input, offset_minus).expect("mandatory summary facts fit");
 
     assert!(summary_minus.contains("20:00:00") && summary_minus.contains("15:00:00"));
 }
@@ -232,16 +227,11 @@ fn timestamps_formatted_in_utc_and_local_offset() {
 fn daemon_unreachable_renders_daemon_does_not_answer() {
     let mut input = sample_input();
     input.daemon = None;
-    let now = ts("2026-11-17T20:00:00Z");
     let offset = UtcOffset::UTC;
 
-    let summary = render_summary(&input, now, offset);
+    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
 
-    assert!(
-        summary.to_lowercase().contains("does not answer")
-            || summary.to_lowercase().contains("not responding")
-            || summary.to_lowercase().contains("unreachable")
-    );
+    assert!(summary.contains("The daemon does not answer (unreachable).\n"));
 }
 
 #[test]
@@ -251,10 +241,9 @@ fn large_content_truncated_under_100k_bytes_keeps_tail_and_preserves_headings() 
     let huge_chunk = "Log line entry with multibyte unicode characters 🦀 and details\n".repeat(2000);
     input.daemon_log_lines = Some(vec![huge_chunk]);
 
-    let now = ts("2026-11-17T20:00:00Z");
     let offset = UtcOffset::UTC;
 
-    let summary = render_summary(&input, now, offset);
+    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
 
     assert!(
         summary.len() < MAX_SUMMARY_BYTES,
@@ -281,10 +270,9 @@ fn unreadable_parts_named_in_summary() {
         name: "daemon.log".to_owned(),
         reason: "permission denied".to_owned(),
     }];
-    let now = ts("2026-11-17T20:00:00Z");
     let offset = UtcOffset::UTC;
 
-    let summary = render_summary(&input, now, offset);
+    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
 
     assert!(summary.contains("daemon.log"));
     assert!(summary.contains("permission denied"));
@@ -293,10 +281,9 @@ fn unreadable_parts_named_in_summary() {
 #[test]
 fn git_commits_include_author() {
     let input = sample_input();
-    let now = ts("2026-11-17T20:00:00Z");
     let offset = UtcOffset::UTC;
 
-    let summary = render_summary(&input, now, offset);
+    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
 
     assert!(
         summary.contains("Dev <dev@example.com>"),
@@ -308,10 +295,9 @@ fn git_commits_include_author() {
 fn format_time_includes_local_date_and_handles_midnight_crossing() {
     let mut input = sample_input();
     input.collected_at = ts("2026-11-17T23:30:00Z");
-    let now = ts("2026-11-18T02:00:00Z");
     let offset = UtcOffset::from_hms(2, 0, 0).expect("valid offset");
 
-    let summary = render_summary(&input, now, offset);
+    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
 
     // UTC is 2026-11-17, local date after crossing midnight at +02:00 is 2026-11-18
     assert!(summary.contains("2026-11-17 23:30:00 UTC"));
@@ -331,10 +317,9 @@ fn huge_early_content_keeps_all_12_headings() {
         })
         .collect();
 
-    let now = ts("2026-11-17T20:00:00Z");
     let offset = UtcOffset::UTC;
 
-    let summary = render_summary(&input, now, offset);
+    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
 
     assert!(
         summary.len() < MAX_SUMMARY_BYTES,
@@ -359,10 +344,9 @@ fn daemon_log_lines_preserve_boundaries() {
         "2026-11-17 19:00:01 [info] second line".to_owned(),
     ]);
 
-    let now = ts("2026-11-17T20:00:00Z");
     let offset = UtcOffset::UTC;
 
-    let summary = render_summary(&input, now, offset);
+    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
 
     assert!(summary.contains("first line\n2026-11-17 19:00:01 [info] second line"));
 }
@@ -378,7 +362,7 @@ fn git_paths_preserve_non_utf8_bytes_in_changed_and_untracked_names() {
     git.uncommitted_files = vec![path.clone()];
     git.newest_untracked.first_mut().expect("untracked file").path = path;
 
-    let summary = render_summary(&input, ts("2026-11-17T20:00:00Z"), UtcOffset::UTC);
+    let summary = render_summary(&input, UtcOffset::UTC).expect("mandatory summary facts fit");
 
     assert_eq!(summary.matches(r"log-\xFF").count(), 2);
     assert!(!summary.contains('\u{fffd}'));
@@ -387,10 +371,9 @@ fn git_paths_preserve_non_utf8_bytes_in_changed_and_untracked_names() {
 #[test]
 fn gate_records_include_full_commit_finished_time_and_log_path() {
     let input = sample_input();
-    let now = ts("2026-11-17T20:00:00Z");
     let offset = UtcOffset::UTC;
 
-    let summary = render_summary(&input, now, offset);
+    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
 
     assert!(
         summary.contains("0123456789abcdef0123456789abcdef01234567"),
@@ -410,10 +393,9 @@ fn gate_records_include_full_commit_finished_time_and_log_path() {
 fn format_time_handles_offset_seconds_and_extreme_timestamp_fallback() {
     let mut input = sample_input();
     input.collected_at = ts("2026-11-17T20:00:00Z");
-    let now = ts("2026-11-17T20:00:00Z");
     let offset_seconds = UtcOffset::from_hms(2, 30, 15).expect("valid offset with seconds");
 
-    let summary = render_summary(&input, now, offset_seconds);
+    let summary = render_summary(&input, offset_seconds).expect("mandatory summary facts fit");
     assert!(
         summary.contains("+02:30:15"),
         "offset string must include seconds when non-zero"
@@ -445,10 +427,9 @@ fn filesystem_values_above_100_percent_render_raw_observed() {
         space_percent: 105,
         inode_percent: 110,
     });
-    let now = ts("2026-11-17T20:00:00Z");
     let offset = UtcOffset::UTC;
 
-    let summary = render_summary(&input, now, offset);
+    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
 
     assert!(
         summary.contains("105% space, 110% inodes"),
@@ -464,7 +445,7 @@ fn newer_executable_and_closed_round_are_rendered_with_context() {
         at: ts("2026-11-17T19:55:00Z"),
         how: crate::state::RoundEnd::Approved,
     };
-    let summary = render_summary(&input, input.collected_at, UtcOffset::UTC);
+    let summary = render_summary(&input, UtcOffset::UTC).expect("mandatory summary facts fit");
     assert!(summary.contains("  (Warning: binary on disk is newer than running process)\n"));
     assert!(summary.contains("closed (approved) at 2026-11-17 19:55:00 UTC (2026-11-17 19:55:00 +00:00)"));
 }
@@ -484,13 +465,13 @@ fn gate_tree_outcomes_and_missing_record_are_rendered_exactly() {
         let record = input.gate.first_mut().unwrap().record.as_mut().unwrap();
         record.tree = GateTree::NotClean;
         record.result.outcome = outcome;
-        let summary = render_summary(&input, input.collected_at, UtcOffset::UTC);
+        let summary = render_summary(&input, UtcOffset::UTC).expect("mandatory summary facts fit");
         assert!(summary.contains(&format!(
             "- Record: Commit `0123456789abcdef0123456789abcdef01234567`, tree dirty, outcome: {expected}\n"
         )));
     }
     let mut input = sample_input();
     input.gate.first_mut().unwrap().record = None;
-    let summary = render_summary(&input, input.collected_at, UtcOffset::UTC);
+    let summary = render_summary(&input, UtcOffset::UTC).expect("mandatory summary facts fit");
     assert!(summary.contains("- Record: none\n- Recent gate outputs:\n"));
 }
