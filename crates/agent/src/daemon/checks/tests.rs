@@ -626,3 +626,18 @@ fn description_refresh_matches_uppercase_commit_labels() {
     let expected = format!("Compare [`ABCDEF0`](https://github.com/octo/example/commit/{commit}) in src/lib.rs:7.\n");
     assert_eq!(unlinked_harness_files(&linked, harness), expected);
 }
+
+#[test]
+fn description_refresh_restores_escaped_bare_file_labels() {
+    for (label, encoded, original) in [
+        (r"src/a\]b.rs", "src/a%5Db.rs", "src/a]b.rs"),
+        (r"src/a\[b.rs", "src/a%5Bb.rs", "src/a[b.rs"),
+        (r"src/a\\b.rs", "src/a%5Cb.rs", r"src/a\b.rs"),
+    ] {
+        let harness = format!("See {original}.\n");
+        let description = format!(
+            "See [{label}](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/{encoded}).\n"
+        );
+        assert_eq!(unlinked_harness_files(&description, &harness), harness);
+    }
+}
