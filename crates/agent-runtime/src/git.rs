@@ -180,6 +180,9 @@ pub enum GitOperation {
     /// `git branch <name>`.
     #[strum(serialize = "branch create")]
     BranchCreate,
+    /// `git for-each-ref --contains HEAD refs/remotes/origin/`.
+    #[strum(serialize = "remote contains")]
+    RemoteContains,
     /// `git branch -d`.
     #[strum(serialize = "branch delete")]
     BranchDelete,
@@ -690,6 +693,14 @@ impl Git {
         self.run_ok(GitOperation::WorktreeRemove, Reach::Local, args)
             .await
             .map(drop)
+    }
+
+    /// Whether a fetched branch of `origin` contains the checkout's entire committed history.
+    ///
+    /// # Errors
+    /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`] and [`GitError::NotUtf8`].
+    pub async fn head_on_origin(&self) -> Result<bool, GitError> {
+        Ok(false)
     }
 
     /// Whether the checkout has changes, and which.
@@ -2207,6 +2218,35 @@ mod tests {
                 operation: GitOperation::RevParse,
                 source: CaptureError::Spawn { .. }
             })
+        ));
+    }
+    #[tokio::test]
+    async fn origin_contains_head_only_when_a_remote_branch_contains_every_commit() {
+        let fixture = Fixture::new();
+        let git = fixture.git();
+        assert!(!git.head_on_origin().await.unwrap());
+        raw(&fixture.repo, &["update-ref", "refs/remotes/other/main", "HEAD"]);
+        assert!(!git.head_on_origin().await.unwrap());
+        raw(&fixture.repo, &["update-ref", "refs/remotes/origin/topic", "HEAD"]);
+        assert!(git.head_on_origin().await.unwrap());
+        fixture.commit("λ.txt", "local work", "Unpushed");
+        assert!(!git.head_on_origin().await.unwrap());
+        raw(&fixture.repo, &["update-ref", "refs/remotes/origin/topic", "HEAD"]);
+        assert!(git.head_on_origin().await.unwrap());
+        raw(&fixture.repo, &["reset", "--hard", "HEAD~1"]);
+        assert!(git.head_on_origin().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn origin_contains_head_propagates_git_failure() {
+        let (_dir, git) = scripted_git("exit 7");
+        let error = git.head_on_origin().await.unwrap_err();
+        assert!(matches!(
+            error,
+            GitError::Failed {
+                operation: GitOperation::RemoteContains,
+                ..
+            }
         ));
     }
 }
