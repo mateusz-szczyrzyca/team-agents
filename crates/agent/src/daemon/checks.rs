@@ -329,7 +329,7 @@ pub(super) fn unlinked_harness_files_in_repository(description: &str, harness: &
         let original = original_labels(line, |part| {
             let (_, destination) = file_label_destination(part)?;
             let (url, _) = destination.split_once(')')?;
-            let (published_repository, _) = url.rsplit_once("/blob/")?;
+            let (published_repository, _) = published_file_target(url)?;
             if published_repository != repository {
                 return None;
             }
@@ -449,14 +449,21 @@ fn file_label_destination(part: &str) -> Option<(&str, &str)> {
     None
 }
 
+/// Locates the blob route after the owner and repository; paths may themselves contain `blob`.
+fn published_file_target(url: &str) -> Option<(&str, &str)> {
+    let location = url.strip_prefix("https://github.com/")?;
+    let (_owner, location) = location.split_once('/')?;
+    let (_repository, route) = location.split_once('/')?;
+    let target = route.strip_prefix("blob/")?;
+    let repository = url.strip_suffix(route)?.strip_suffix('/')?;
+    Some((repository, target))
+}
+
 /// Recognizes the file link by reconstructing it, retaining unrelated author-written links.
 fn original_file_label(part: &str) -> Option<(Cow<'_, str>, &str)> {
     let (label, destination) = file_label_destination(part)?;
     let (url, tail) = destination.split_once(')')?;
-    let (repository, target) = url.rsplit_once("/blob/")?;
-    if !repository.starts_with("https://github.com/") {
-        return None;
-    }
+    let (repository, target) = published_file_target(url)?;
     let (revision, _path) = target.split_once('/')?;
     // Invalid revisions identify ordinary author-written links, not generated file references.
     let Ok(commit) = revision.parse::<agent_core::state::CommitId>() else {
