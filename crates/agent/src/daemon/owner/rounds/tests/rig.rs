@@ -434,6 +434,26 @@ impl Rig {
         })
     }
 
+    /// How many runs completed publication of their fake CLI records, even after worktree removal.
+    pub(super) fn kept_runs(&self, task: &TaskId) -> u32 {
+        let counter = self
+            .repo
+            .join(".git/fake-records")
+            .join(task.as_str())
+            .join(".fake-runs");
+        std::fs::read_to_string(counter).unwrap().trim().parse().unwrap()
+    }
+
+    /// The exact prompt mirrored outside the worktree before the fake CLI performs its action.
+    pub(super) fn kept_prompt(&self, task: &TaskId, number: usize) -> String {
+        let prompt = self
+            .repo
+            .join(".git/fake-records")
+            .join(task.as_str())
+            .join(format!(".fake-prompt-{number}"));
+        std::fs::read_to_string(prompt).unwrap()
+    }
+
     /// The prompt the task's `n`-th run was given, once it has been.
     pub(super) async fn prompt(&self, task: &TaskId, n: u32) -> String {
         let log = self.worktree(task).join(".fake-log");

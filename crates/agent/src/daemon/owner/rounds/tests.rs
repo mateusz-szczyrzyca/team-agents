@@ -186,7 +186,7 @@ async fn a_lead_that_is_done_without_a_gate_has_the_gate_run_by_the_harness_and_
     rig.stop().await.unwrap();
 
     // The agent ran once: nobody had to tell it to run the gate.
-    assert_eq!(rig.runs(&tasks[0]), 1);
+    assert_eq!(rig.kept_runs(&tasks[0]), 1);
     let record = std::fs::read_to_string(rig.home.gate_record_file(&tasks[0])).unwrap();
     assert!(record.contains("\"kind\": \"passed\""), "{record}");
     assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
@@ -201,7 +201,7 @@ async fn a_gate_that_fails_sends_the_lead_back_with_the_reason_and_the_fix_is_pu
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
         .await;
-    let prompt = rig.prompt(&tasks[0], 2).await;
+    let prompt = rig.kept_prompt(&tasks[0], 2);
     rig.stop().await.unwrap();
 
     assert!(
@@ -214,7 +214,7 @@ async fn a_gate_that_fails_sends_the_lead_back_with_the_reason_and_the_fix_is_pu
         prompt.contains(&format!("agents/claude-1/{}-1.1", tasks[0])),
         "{prompt}"
     );
-    assert_eq!(rig.runs(&tasks[0]), 2);
+    assert_eq!(rig.kept_runs(&tasks[0]), 2);
     // Only what passed the gate went to GitHub.
     assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
 }

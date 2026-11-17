@@ -77,6 +77,11 @@ printf '%s\n' "${args[@]}" > ".fake-args-$n"
 branch=$(git rev-parse --abbrev-ref HEAD 2>&1) || branch="git failed: $branch"
 echo "$n $session $branch" >> .fake-log
 
+# Keep evidence used after a merged round removes its worktrees.
+records_dir="$(git rev-parse --git-common-dir)/fake-records/$(basename "$PWD")"
+mkdir -p "$records_dir"
+cp .fake-runs ".fake-prompt-$n" "$records_dir/"
+
 IFS=, read -r -a actions <<< "$scenario"
 action=${actions[$((n - 1))]:-${actions[${#actions[@]}-1]}}
 
