@@ -87,6 +87,7 @@ mod run_hold {
                 hang: HANG,
                 stop_grace: Duration::from_secs(5),
             },
+            agent_binary_dir: abs(Path::new("/opt/bin")),
         });
         Env {
             home,

@@ -40,6 +40,8 @@ pub(super) struct GateParts {
     pub(super) clock: SharedClock,
     /// Where the events go.
     pub(super) events: broadcast::Sender<Event>,
+    /// The directory of the daemon executable, prepended to `PATH`.
+    pub(super) agent_binary_dir: AbsolutePath,
     /// The directories of the gate command's `PATH`: the agents' own.
     pub(super) agent_path: Vec<AbsolutePath>,
     /// How long a stopped gate has to end after `SIGTERM` before `SIGKILL`.
@@ -435,6 +437,7 @@ impl Service {
 
     /// The process of `job`, its output going to `log`.
     fn spec(&self, job: &GateJob, log: &Path) -> Result<ProcessSpec, GateError> {
+        let _stub_bin_dir = &self.parts.agent_binary_dir;
         let directories = self.parts.agent_path.iter().map(AbsolutePath::as_path);
         let path = std::env::join_paths(directories)
             .map_err(|source| GateError::AgentPath { source })?

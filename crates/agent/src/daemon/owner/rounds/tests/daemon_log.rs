@@ -1228,6 +1228,7 @@ async fn record_gate_failure_events(dir: &Path, history: History) {
         store: Arc::clone(&gate_store),
         clock: SharedClock::new(gate_daemon.clock.clone()),
         events: events_tx,
+        agent_binary_dir: abs(Path::new("/opt/bin")),
         agent_path: vec![abs(Path::new("/usr/bin")), abs(Path::new("/bin"))],
         stop_grace: Duration::from_secs(1),
     };

@@ -169,6 +169,7 @@ mod run_history {
                 hang: Duration::from_secs(5),
                 stop_grace: Duration::from_secs(5),
             },
+            agent_binary_dir: abs(Path::new("/opt/bin")),
         })
         .with_history(history.clone());
         Rig {
@@ -527,6 +528,7 @@ mod run_history {
                 hang: Duration::from_secs(5),
                 stop_grace: Duration::from_secs(5),
             },
+            agent_binary_dir: abs(Path::new("/opt/bin")),
         })
         .with_history(rig.history.clone());
 
