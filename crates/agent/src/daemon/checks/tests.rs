@@ -549,3 +549,12 @@ fn unrelated_blob_links_remain_authored() {
         assert_eq!(authored(description, "src/lib.rs"), description);
     }
 }
+
+#[test]
+fn bracketed_file_links_keep_harness_lines_out_of_authored_text() {
+    let harness = "Check `src/[x].rs`: the case is covered.";
+    let description = "Check [`src/[x].rs`](https://github.com/octo/example/blob/0123456789012345678901234567890123456789/src/%5Bx%5D.rs): the case is covered.";
+    assert_eq!(authored(description, harness), "");
+    let custom = "Check [`src/[x].rs`](https://example.com/custom): the case is covered.";
+    assert_eq!(authored(custom, harness), custom);
+}
