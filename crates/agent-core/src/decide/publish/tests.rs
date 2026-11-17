@@ -33,8 +33,11 @@ fn done<'a>(tip: &'a CommitId, record: Option<&'a GateRecord>, gated_for_tip: bo
         lead_done: true,
         own_work: true,
         record,
-        gated_for_tip,
-        retried_for_tip: false,
+        harness_gate: if gated_for_tip {
+            HarnessGate::Ran
+        } else {
+            HarnessGate::NotRun
+        },
     }
 }
 
@@ -76,8 +79,7 @@ fn a_lead_that_is_not_done_waits() {
             lead_done: false,
             own_work,
             record,
-            gated_for_tip: false,
-            retried_for_tip: false,
+            harness_gate: HarnessGate::NotRun,
         };
         assert_eq!(gate_step(&waiting), GateStep::Wait, "{record:?}");
     }
@@ -132,7 +134,7 @@ fn a_gate_that_did_not_pass_at_the_tip_sends_the_lead_back() {
 
     for (record, summary) in cases {
         let step = gate_step(&Waiting {
-            retried_for_tip: true,
+            harness_gate: HarnessGate::Retried,
             ..done(&tip, Some(&record), true)
         });
 

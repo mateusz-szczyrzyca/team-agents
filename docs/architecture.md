@@ -316,11 +316,15 @@ human is told once.
 **The gate of a lead that is done** (`agent_core::decide::publish::gate_step`, `owner/rounds/publish.rs`). A lead need not have
 run the gate. When its last run ended with `STATUS: DONE` and no record passes at the tip of its branch, the harness acts instead
 of waiting: with no record of the tip it runs the gate itself, once for a tip, through the gate service (the record and the
-history are those of any gate); with a record of the tip that is no pass — failed, timed out, or passed on a tree that was not
-clean — it sends the lead back with a run whose prompt (`harness/pr/gate-not-passed.md`) says what the gate said and where its
-output is; a branch with no commit of its own, and a gate that ran on another commit than the tip (the worktree has another
-branch out), send it back as well. After three times in a row (`GATE_SEND_BACKS`) the human is told, once for a tip, and the lead
-waits. A lead that ended with `STATUS: SLEEPING` waits for its team and is not done: its branch is neither gated nor sent back,
+history are those of any gate); with a record of the tip of a gate that failed or timed out — the lead's own or the harness's — it runs the gate once more,
+once for a tip (`GateStep::Retry`, logged as `gate_retried`): a check that fails for a reason outside the commit and then
+passes costs no run of the lead, which may not hide it by running the gate again itself; with a record of the tip that is still
+no pass, or of a pass on a tree that was not clean, it sends the lead back with a run whose prompt
+(`harness/pr/gate-not-passed.md`) says what the gate said and where its output is; a branch with no commit of its own, and a gate that ran on another commit than the tip (the worktree has another
+branch out), send it back as well. A lead that is done with a gate that passed and a branch that contains the branch of none of the
+finished items is sent back as well, with the branches to merge (`harness/pr/branch-not-joined.md`): without that nothing would
+be published and nobody told. After three times in a row (`GATE_SEND_BACKS`, counted together) the human is told, once for a
+tip, and the lead waits. A lead that ended with `STATUS: SLEEPING` waits for its team and is not done: its branch is neither gated nor sent back,
 and is published only when the gate it ran itself passed at the tip. What the harness remembers of its own gates and of the
 times it sent a lead back is not in the state: a daemon that restarts starts over.
 

@@ -1,7 +1,7 @@
 //! Publishing: pushing the branch of the lead, opening or updating its pull request, and putting the items in review.
 
 use agent_core::config::RepoName;
-use agent_core::decide::publish::{GateHold, GateStep, Waiting, gate_step};
+use agent_core::decide::publish::{GateHold, GateStep, HarnessGate, Waiting, gate_step};
 use agent_core::decide::round::{RoundEvent, RoundPolicy, RoundState, Stage};
 use agent_core::history::HistoryEvent;
 use std::num::NonZeroU32;
@@ -266,8 +266,11 @@ impl Owner {
             // A tip the base branch has is the base branch: the lead committed nothing.
             own_work: !git.is_ancestor(&Revision::Commit(tip.clone()), &base).await?,
             record: record.as_ref(),
-            gated_for_tip: matches!(own, Own::Ran { .. }),
-            retried_for_tip: own == Own::Ran { retry: true },
+            harness_gate: match own {
+                Own::NotRun | Own::Running => HarnessGate::NotRun,
+                Own::Ran { retry: false } => HarnessGate::Ran,
+                Own::Ran { retry: true } => HarnessGate::Retried,
+            },
         };
         let record = match (gate_step(&waiting), record) {
             (GateStep::Publish, Some(record)) => record,

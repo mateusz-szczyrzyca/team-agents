@@ -9,14 +9,17 @@
 //! 1. A lead that did not end with `STATUS: DONE` (it sleeps, waiting for its team) is not done: its branch is
 //!    published when a record passes at the tip — the gate it ran itself — and otherwise waits.
 //! 2. A branch without a commit of its own has nothing to publish: the lead is sent back.
-//! 3. The record is of the tip: a pass publishes, anything else sends the lead back with what the gate said.
+//! 3. The record is of the tip: a pass publishes. A gate that failed or timed out there is run once more by the harness,
+//!    whoever ran it: a check that fails for a reason outside the commit is no reason to wake the lead, which may not
+//!    hide it by running the gate again itself. What does not pass then, and a pass on a tree that was not clean, send
+//!    the lead back with what the gate said.
 //! 4. The record is of another commit, or there is none: the harness runs the gate — once for a tip. When the gate it
 //!    ran for this tip left no record of the tip, the worktree has another commit out: the lead is sent back.
 
 use std::fmt;
 
 use crate::config::AbsolutePath;
-use crate::state::{CommitId, GateRecord};
+use crate::state::{CommitId, GateOutcome, GateRecord};
 
 /// What is known of the branch of a lead that waits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,10 +32,19 @@ pub struct Waiting<'a> {
     pub own_work: bool,
     /// The last gate record of the lead's task.
     pub record: Option<&'a GateRecord>,
-    /// Whether the harness already ran the gate for this tip.
-    pub gated_for_tip: bool,
-    /// Whether the harness already ran the gate for this tip once more, after a gate had not passed at it.
-    pub retried_for_tip: bool,
+    /// What the harness itself has done about the gate of this tip.
+    pub harness_gate: HarnessGate,
+}
+
+/// What the harness itself has done about the gate of the tip of a branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HarnessGate {
+    /// It ran none for this tip.
+    NotRun,
+    /// It ran the gate for this tip, because nobody had.
+    Ran,
+    /// It ran the gate for this tip once more, after a gate had not passed at it.
+    Retried,
 }
 
 /// What the harness does with the branch.
@@ -117,11 +129,18 @@ pub fn gate_step(waiting: &Waiting<'_>) -> GateStep {
     }
     match at_tip {
         Some(record) if record.counts_as_pass() => GateStep::Publish,
+        // The commit itself did not pass: once more, in case what failed was not the commit. A pass on a tree that was
+        // not clean is not run again: the same tree gives the same answer.
+        Some(record)
+            if record.result.outcome != GateOutcome::Passed && waiting.harness_gate != HarnessGate::Retried =>
+        {
+            GateStep::Retry
+        }
         Some(record) => GateStep::SendBack(GateHold::NotPassed {
             summary: record.summary(),
             log: record.result.log.clone(),
         }),
-        None if waiting.gated_for_tip => GateStep::SendBack(GateHold::NotAtTip {
+        None if waiting.harness_gate != HarnessGate::NotRun => GateStep::SendBack(GateHold::NotAtTip {
             tip: waiting.tip.clone(),
             gated: waiting.record.map(|record| record.result.head.clone()),
         }),

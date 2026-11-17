@@ -674,14 +674,13 @@ async fn record_late_report(observed: &mut BTreeSet<LogEvent>) {
     let state = rig
         .item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
         .await;
-    let replaced: TaskId = state
-        .team(&team)
-        .unwrap()
-        .reviewers()
+    let reviewers = state.team(&team).unwrap().reviewers();
+    let replaced: TaskId = reviewers
         .iter()
         .find(|member| member.status() == TaskStatus::Failed)
-        .map(|member| member.task().clone())
-        .unwrap_or_else(|| panic!("no reviewer failed: {:?}", state.team(&team).unwrap().reviewers()));
+        .unwrap_or_else(|| panic!("no reviewer failed: {reviewers:?}"))
+        .task()
+        .clone();
     let mut connection = crate::client::Connection::connect(&rig.home.socket_file())
         .await
         .unwrap();

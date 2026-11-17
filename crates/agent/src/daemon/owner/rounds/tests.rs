@@ -234,7 +234,8 @@ async fn a_gate_that_fails_sends_the_lead_back_with_the_reason_and_the_fix_is_pu
         "{prompt}"
     );
     assert!(prompt.contains("the gate failed (exit 1) at "), "{prompt}");
-    assert!(prompt.contains("gate-1.log"), "{prompt}");
+    // The log is that of the gate the harness ran once more, which failed as well.
+    assert!(prompt.contains("gate-2.log"), "{prompt}");
     assert!(
         prompt.contains(&format!("agents/claude-1/{}-1.1", tasks[0])),
         "{prompt}"
