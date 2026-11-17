@@ -169,6 +169,8 @@ async fn autopilot_review_notices_render_expected_notes_and_statuses() {
                 .with("pr", "1")
                 .unwrap()
                 .with("task", "task-2")
+                .unwrap()
+                .with("why", "it gave none.")
                 .unwrap(),
             "Note: claude-2 gave no verdict on pull request 1",
         ),
