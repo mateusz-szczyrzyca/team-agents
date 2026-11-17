@@ -204,3 +204,10 @@ fn unresolved_text_is_preserved_for_markdown_delimiter_combinations() {
         }
     }
 }
+
+#[test]
+fn existing_autolinks_are_preserved_alongside_linkable_prose() {
+    let input = "é <https://example.com/a1b2c3d> a1b2c3d";
+    let expected = "é <https://example.com/a1b2c3d> [`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
+    assert_eq!(link_commits(input, REPO_URL, resolve_hash), expected);
+}
