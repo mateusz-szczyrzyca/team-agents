@@ -583,3 +583,32 @@ fn debug_done_lead_with_uncontained_member_branch_reports_exact_unmerged_anomaly
         "summary was: {summary}"
     );
 }
+
+#[test]
+fn debug_rejects_unknown_target_with_exit_3_and_creates_no_directory() {
+    let (_dir, home, _state, _team, _lead_task, _member_task, _round) = setup_test_home();
+    let env = environment(home.state_file().parent().unwrap());
+    let out_dir = tempfile::tempdir().unwrap();
+    let bundle_parent = out_dir.path().join("bundle_parent");
+    std::fs::create_dir_all(&bundle_parent).unwrap();
+
+    let unknown_team = "team-20990101-000000-zzzz";
+    let (code, _out, err) = agent(
+        &env,
+        &[
+            "debug",
+            "--team",
+            unknown_team,
+            "--out",
+            bundle_parent.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, ExitCode::from(3), "stderr was: {err}");
+    assert!(err.contains(unknown_team), "stderr was: {err}");
+
+    let entries: Vec<_> = std::fs::read_dir(&bundle_parent).unwrap().flatten().collect();
+    assert!(
+        entries.is_empty(),
+        "no bundle directory should be created when target is unknown"
+    );
+}
