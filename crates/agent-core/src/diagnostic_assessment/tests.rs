@@ -645,3 +645,60 @@ mod retained_anomalies {
         assert_eq!(assess(&facts), vec![Anomaly::FullFilesystem(path)]);
     }
 }
+
+fn review_phases() -> Vec<ItemPhase> {
+    let pr = crate::state::PullRequest {
+        number: crate::state::PrNumber::new(std::num::NonZeroU32::new(12).unwrap()),
+        branch: branch().name,
+        opened_at: healthy().now,
+    };
+    vec![
+        ItemPhase::InReview {
+            pr: pr.clone(),
+            reviews: vec![],
+        },
+        ItemPhase::Fixing {
+            assignee: "member".parse().unwrap(),
+            branch: branch().name,
+            pr: pr.clone(),
+        },
+        ItemPhase::Approved { pr, reviews: vec![] },
+    ]
+}
+
+#[test]
+fn review_fixing_and_approved_items_are_unfinished_when_nobody_works() {
+    for phase in review_phases() {
+        let mut facts = healthy();
+        facts.tasks.clear();
+        facts.items = vec![phase];
+        assert_eq!(assess(&facts), vec![Anomaly::NobodyWorking]);
+    }
+}
+
+#[test]
+fn recorded_pull_requests_prevent_waiting_without_pr_even_with_another_item_in_progress() {
+    for phase in review_phases() {
+        let mut facts = healthy();
+        facts.tasks.first_mut().unwrap().status = TaskStatus::Waiting;
+        facts.items = vec![progress(), phase];
+        assert_eq!(assess(&facts), vec![Anomaly::NobodyWorking]);
+    }
+}
+
+#[test]
+fn only_fixing_has_an_assigned_branch_among_review_phases() {
+    for phase in review_phases() {
+        let expected = match phase {
+            ItemPhase::Fixing { .. } => vec![Anomaly::UnmergedBranch(branch().name)],
+            ItemPhase::InReview { .. } | ItemPhase::Approved { .. } => vec![],
+            ItemPhase::Pending | ItemPhase::InProgress { .. } | ItemPhase::Done { .. } => panic!("unexpected fixture"),
+        };
+        let mut facts = healthy();
+        facts.items = vec![phase];
+        let mut member = branch();
+        member.contained_in_lead = Some(false);
+        facts.branches = vec![member];
+        assert_eq!(assess(&facts), expected);
+    }
+}

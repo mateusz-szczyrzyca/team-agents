@@ -455,3 +455,42 @@ fn filesystem_values_above_100_percent_render_raw_observed() {
         "must render raw observed filesystem percentage above 100%"
     );
 }
+
+#[test]
+fn newer_executable_and_closed_round_are_rendered_with_context() {
+    let mut input = sample_input();
+    input.daemon.as_mut().unwrap().disk_newer_than_process = true;
+    input.team.rounds.first_mut().unwrap().status = RoundLife::Closed {
+        at: ts("2026-11-17T19:55:00Z"),
+        how: crate::state::RoundEnd::Approved,
+    };
+    let summary = render_summary(&input, input.collected_at, UtcOffset::UTC);
+    assert!(summary.contains("  (Warning: binary on disk is newer than running process)\n"));
+    assert!(summary.contains("closed (approved) at 2026-11-17 19:55:00 UTC (2026-11-17 19:55:00 +00:00)"));
+}
+
+#[test]
+fn gate_tree_outcomes_and_missing_record_are_rendered_exactly() {
+    for (outcome, expected) in [
+        (
+            GateOutcome::Failed {
+                exit_code: std::num::NonZeroI32::new(17).unwrap(),
+            },
+            "failed (exit 17)",
+        ),
+        (GateOutcome::TimedOut, "timed out"),
+    ] {
+        let mut input = sample_input();
+        let record = input.gate.first_mut().unwrap().record.as_mut().unwrap();
+        record.tree = GateTree::NotClean;
+        record.result.outcome = outcome;
+        let summary = render_summary(&input, input.collected_at, UtcOffset::UTC);
+        assert!(summary.contains(&format!(
+            "- Record: Commit `0123456789abcdef0123456789abcdef01234567`, tree dirty, outcome: {expected}\n"
+        )));
+    }
+    let mut input = sample_input();
+    input.gate.first_mut().unwrap().record = None;
+    let summary = render_summary(&input, input.collected_at, UtcOffset::UTC);
+    assert!(summary.contains("- Record: none\n- Recent gate outputs:\n"));
+}
