@@ -399,7 +399,7 @@ async fn the_same_change_as_a_test_fix_goes_to_review_and_the_harness_lists_it_i
     assert!(
         pull.body.contains(&format!(
             "## Tests changed after RED\n\nThe harness lists here every commit of the branch whose subject starts with \
-             `TEST-FIX:`, with what its message says.\n\n- {fix} — TEST-FIX: the second line was wrong\n"
+             `TEST-FIX:`, with what its message says.\n\n- [`{fix}`](https://github.com/octo/example/commit/{fix}) — TEST-FIX: the second line was wrong\n"
         )),
         "{}",
         pull.body
