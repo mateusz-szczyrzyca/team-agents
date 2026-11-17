@@ -102,6 +102,8 @@ pub struct EngineParts {
     pub local_offset: UtcOffset,
     /// How often and how long.
     pub timings: RunTimings,
+    /// The directory of the agent/daemon executable, prepended to `PATH` for agent runs.
+    pub agent_binary_dir: AbsolutePath,
 }
 
 /// One run to carry out.

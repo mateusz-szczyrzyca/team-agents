@@ -219,6 +219,7 @@ impl Daemon {
                 hang: Duration::from_secs(1),
                 stop_grace: Duration::from_secs(5),
             },
+            agent_binary_dir: agent_core::config::AbsolutePath::from_str("/opt/bin").unwrap(),
         });
         let (notices, deliveries) = mpsc::channel(notifier::QUEUE);
         let (events, kept) = broadcast::channel(16);
@@ -346,6 +347,7 @@ impl Daemon {
                     stop_grace: Duration::from_secs(5),
                 },
             }),
+            agent_binary_dir: None,
         };
         let daemon = tokio::spawn(run_in(setup, self.surroundings.clone(), self.shutdown.clone()));
         let socket = self.home.socket_file();

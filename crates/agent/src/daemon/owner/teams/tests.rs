@@ -272,6 +272,7 @@ impl Fixture {
             clock: SharedClock::new(self.clock.clone()),
             local_offset: time::UtcOffset::UTC,
             timings: Some(timings()),
+            agent_binary_dir: None,
         }
     }
 

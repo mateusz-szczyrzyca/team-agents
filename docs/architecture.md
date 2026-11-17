@@ -579,7 +579,7 @@ it by the queue and the timeout, and a daemon that ends closes the connection).
 clean — a changed or untracked file, or a merge that waits to be committed, makes it **not clean**; a gate on such a tree is
 run all the same, because a coordinator checks the tree it merged before it commits the merge, and it is recorded as not
 clean. A worktree git cannot read is refused (`refused`: "the gate cannot run in ...") and nothing is run. The command runs
-in the worktree in a process group of its own, with the `PATH` of `[binaries] agent_path`, its output (standard output and
+in the worktree in a process group of its own, with the `PATH` starting with the daemon executable directory followed by `[binaries] agent_path` without duplicating it, its output (standard output and
 error) in `tasks/<task>/gate-<n>.log` (`n` counts from 1; no log is overwritten), and no input. It is stopped, with
 everything it started (`SIGTERM`, then `SIGKILL`), when it runs past `gate_timeout_minutes` — recorded `timed_out`, a failure —
 and when its task is stopped or paused or the daemon shuts down while it runs — then nothing is recorded and the client is

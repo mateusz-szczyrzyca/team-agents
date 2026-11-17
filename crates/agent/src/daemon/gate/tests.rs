@@ -87,6 +87,8 @@ struct Rig {
     service: Option<JoinHandle<()>>,
     /// The clock of the service: a test moves it.
     clock: ManualClock,
+    /// The directory of the daemon executable.
+    agent_binary_dir: AbsolutePath,
     /// The directories of the gate command's `PATH`.
     agent_path: Vec<AbsolutePath>,
 }
@@ -109,6 +111,7 @@ impl Rig {
             shutdown: CancellationToken::new(),
             service: None,
             clock: ManualClock::new(crate::fixtures::at(0)),
+            agent_binary_dir: abs(Path::new("/opt/bin")),
             agent_path: vec![abs(Path::new("/usr/bin")), abs(Path::new("/bin"))],
         }
     }
@@ -119,6 +122,7 @@ impl Rig {
             store: Arc::clone(&self.store),
             clock: SharedClock::new(self.clock.clone()),
             events: self.sender.clone(),
+            agent_binary_dir: self.agent_binary_dir.clone(),
             agent_path: self.agent_path.clone(),
             stop_grace: Duration::from_secs(5),
         }
@@ -1220,4 +1224,33 @@ async fn a_gate_whose_worktree_git_cannot_read_before_it_ran_counts_a_capture_lo
     assert_eq!((notes[0].0, notes[0].1), ("gate", "capture_gate"));
     assert_ne!(notes[0].2, "");
     assert_eq!(notes[0].3, &[round]);
+}
+
+#[tokio::test]
+async fn the_path_of_a_gate_starts_with_the_agent_binary_directory() {
+    let mut rig = Rig::new().await;
+    rig.agent_binary_dir = abs(Path::new("/injected/gate/bin"));
+    rig.agent_path = vec![abs(Path::new("/usr/bin")), abs(Path::new("/bin"))];
+    let marker = rig.worktree(1).join("path.txt");
+    rig.start();
+
+    recorded(rig.ask(1, &format!("sh -c 'echo \"$PATH\" > {marker:?}'"), LONG)).await;
+
+    let path = std::fs::read_to_string(marker).unwrap();
+    assert_eq!(path.trim(), "/injected/gate/bin:/usr/bin:/bin");
+}
+
+#[tokio::test]
+async fn an_agent_path_naming_the_agent_binary_directory_has_it_once_in_the_gate() {
+    let mut rig = Rig::new().await;
+    let bin_dir = abs(Path::new("/injected/gate/bin"));
+    rig.agent_binary_dir = bin_dir.clone();
+    rig.agent_path = vec![abs(Path::new("/opt/bin")), bin_dir, abs(Path::new("/usr/bin"))];
+    let marker = rig.worktree(1).join("path.txt");
+    rig.start();
+
+    recorded(rig.ask(1, &format!("sh -c 'echo \"$PATH\" > {marker:?}'"), LONG)).await;
+
+    let path = std::fs::read_to_string(marker).unwrap();
+    assert_eq!(path.trim(), "/injected/gate/bin:/opt/bin:/usr/bin");
 }

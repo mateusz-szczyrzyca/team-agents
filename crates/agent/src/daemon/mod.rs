@@ -13,10 +13,11 @@
 //! them as interrupted, the notifier delivers what is queued, and the socket is removed.
 
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::config::OpenQuestions;
+use agent_core::config::{AbsolutePath, OpenQuestions};
 use agent_core::log::LogEvent;
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, AutopilotPromptsError};
@@ -94,6 +95,8 @@ pub(crate) struct DaemonSetup {
     pub(crate) local_offset: UtcOffset,
     /// The timings, or `None` for those the configuration gives.
     pub(crate) timings: Option<Timings>,
+    /// The directory containing the daemon's own executable, or `None` to resolve `std::env::current_exe()`.
+    pub(crate) agent_binary_dir: Option<AbsolutePath>,
 }
 
 /// Why the daemon stopped with an error.
@@ -147,6 +150,70 @@ pub(crate) enum DaemonError {
     /// The socket server or the notifier failed.
     #[error("a task of the daemon (the socket server or the notifier) failed")]
     Join(#[source] JoinError),
+    /// The daemon's executable cannot be resolved.
+    #[error("cannot resolve the daemon executable")]
+    Executable(#[from] ExecutableError),
+}
+
+/// Why the executable directory of the daemon cannot be determined.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ExecutableError {
+    /// The current executable cannot be determined.
+    #[error("cannot determine the executable of the daemon")]
+    Current(#[source] std::io::Error),
+    /// The executable path cannot be canonicalized.
+    #[error("cannot canonicalize the daemon executable path {path:?}")]
+    Canonicalize {
+        /// The path.
+        path: PathBuf,
+        /// The source error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The executable path has no parent directory.
+    #[error("the daemon executable path {path:?} has no parent directory")]
+    NoParent {
+        /// The path.
+        path: PathBuf,
+    },
+    /// The directory path is not a valid absolute path.
+    #[error("the daemon executable directory {path:?} is not valid")]
+    InvalidPath {
+        /// The directory path.
+        path: PathBuf,
+        /// The rule violation, if any.
+        source: Option<agent_core::config::InvalidValue>,
+    },
+}
+
+/// Resolves the canonical directory of the current executable.
+///
+/// # Errors
+/// [`ExecutableError`] if the executable cannot be found, canonicalized, or its parent is not a valid absolute path.
+pub(crate) fn resolve_agent_binary_dir() -> Result<AbsolutePath, ExecutableError> {
+    resolve_agent_binary_dir_from(std::env::current_exe)
+}
+
+/// Resolves the canonical directory of the executable returned by `current_exe`.
+pub(crate) fn resolve_agent_binary_dir_from(
+    current_exe: impl FnOnce() -> std::io::Result<PathBuf>,
+) -> Result<AbsolutePath, ExecutableError> {
+    let exe = current_exe().map_err(ExecutableError::Current)?;
+    let canonical = exe.canonicalize().map_err(|source| ExecutableError::Canonicalize {
+        path: exe.clone(),
+        source,
+    })?;
+    let parent = canonical.parent().ok_or_else(|| ExecutableError::NoParent {
+        path: canonical.clone(),
+    })?;
+    let text = parent.to_str().ok_or_else(|| ExecutableError::InvalidPath {
+        path: parent.to_path_buf(),
+        source: None,
+    })?;
+    AbsolutePath::from_str(text).map_err(|source| ExecutableError::InvalidPath {
+        path: parent.to_path_buf(),
+        source: Some(source),
+    })
 }
 
 /// Where the daemon looks for what belongs to the user it runs as, read from the environment once at its start.
@@ -222,6 +289,33 @@ pub(crate) async fn run_with_rng(
     run_with_rng_and_log_layer(setup, surroundings, rng, shutdown, None).await
 }
 
+/// The prompt catalogs, rules, and pull requests of the daemon.
+struct DaemonTexts {
+    texts: Arc<HarnessPrompts>,
+    team_texts: Arc<TeamPrompts>,
+    question_texts: Arc<QuestionsPrompts>,
+    pulls: Option<Pulls>,
+    rules: Arc<PromptLoader>,
+}
+
+async fn load_daemon_texts(setup: &DaemonSetup, settings: &Settings) -> Result<DaemonTexts, DaemonError> {
+    let language = settings.config.language().clone();
+    let texts = Arc::new(HarnessPrompts::load(&setup.prompts_dir, &language).await?);
+    let team_texts = Arc::new(TeamPrompts::load(&setup.prompts_dir, &language).await?);
+    let question_texts = Arc::new(QuestionsPrompts::load(&setup.prompts_dir, &language).await?);
+    let autopilot_texts = Arc::new(AutopilotPrompts::load(&setup.prompts_dir, &language).await?);
+    let checks_texts = Arc::new(ChecksPrompts::load(&setup.prompts_dir, &language).await?);
+    let pulls = Pulls::new(autopilot_texts, checks_texts, settings)?;
+    let rules = Arc::new(PromptLoader::load(&setup.prompts_dir, &language).await?);
+    Ok(DaemonTexts {
+        texts,
+        team_texts,
+        question_texts,
+        pulls,
+        rules,
+    })
+}
+
 /// Runs the daemon with either the process-wide logging layer supplied by the command or a scoped test layer.
 async fn run_with_rng_and_log_layer(
     setup: DaemonSetup,
@@ -238,14 +332,7 @@ async fn run_with_rng_and_log_layer(
     let settings = Arc::new(Settings::load(&setup.home).await?);
     let log_layer = daemon_log_layer(&settings, &setup, installed_log_layer);
     let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(log_layer.clone()).into();
-    let language = settings.config.language().clone();
-    let texts = Arc::new(HarnessPrompts::load(&setup.prompts_dir, &language).await?);
-    let team_texts = Arc::new(TeamPrompts::load(&setup.prompts_dir, &language).await?);
-    let question_texts = Arc::new(QuestionsPrompts::load(&setup.prompts_dir, &language).await?);
-    let autopilot_texts = Arc::new(AutopilotPrompts::load(&setup.prompts_dir, &language).await?);
-    let checks_texts = Arc::new(ChecksPrompts::load(&setup.prompts_dir, &language).await?);
-    let pulls = Pulls::new(autopilot_texts, checks_texts, &settings)?;
-    let rules = Arc::new(PromptLoader::load(&setup.prompts_dir, &language).await?);
+    let daemon_texts = load_daemon_texts(&setup, &settings).await?;
     let bus = make_bus(&setup.home, &settings);
     let state = store.load().await?;
     let timings = setup.timings.unwrap_or_else(|| Timings {
@@ -256,15 +343,20 @@ async fn run_with_rng_and_log_layer(
         .with_subscriber(dispatch.clone())
         .await;
     log_layer.attach_history(opened.history.clone());
+    let agent_binary_dir = match setup.agent_binary_dir {
+        Some(dir) => dir,
+        None => resolve_agent_binary_dir()?,
+    };
     let engine = RunEngine::new(EngineParts {
         store: Arc::clone(&store),
-        texts: Arc::clone(&texts),
+        texts: Arc::clone(&daemon_texts.texts),
         config: Arc::new(settings.config.clone()),
         secrets: Arc::new(settings.secrets.clone()),
         supervisor: Supervisor::new(MAX_RUNS),
         clock: setup.clock.clone(),
         local_offset: setup.local_offset,
         timings: timings.run,
+        agent_binary_dir: agent_binary_dir.clone(),
     })
     .with_history(opened.history.clone());
     let notifier = Notifier::from_config(settings.config.notifications(), store.home(), &settings.secrets);
@@ -288,6 +380,7 @@ async fn run_with_rng_and_log_layer(
         store: Arc::clone(&store),
         clock: setup.clock.clone(),
         events: events.clone(),
+        agent_binary_dir,
         agent_path: settings.config.binaries().agent_path.clone(),
         stop_grace: timings.run.stop_grace,
     };
@@ -301,10 +394,10 @@ async fn run_with_rng_and_log_layer(
             store,
             state,
             settings,
-            texts,
-            team_texts,
-            question_texts,
-            rules,
+            texts: daemon_texts.texts,
+            team_texts: daemon_texts.team_texts,
+            question_texts: daemon_texts.question_texts,
+            rules: daemon_texts.rules,
             bus,
             opens,
             engine,
@@ -319,7 +412,7 @@ async fn run_with_rng_and_log_layer(
     )
     .with_gate(gates)
     .with_history(opened.history.clone());
-    let owner = attach_pulls(owner, pulls, &dispatch);
+    let owner = attach_pulls(owner, daemon_texts.pulls, &dispatch);
     log_start(&setup.home, &dispatch);
     let owned_end = Scoped::new(owner.run(requests), dispatch.clone()).await;
     // Whatever ended the owner, the rest of the daemon ends with it.

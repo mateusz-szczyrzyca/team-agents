@@ -122,6 +122,7 @@ mod run_engine {
             clock: SharedClock::new(FixedClock(now().as_utc())),
             local_offset: time::UtcOffset::UTC,
             timings,
+            agent_binary_dir: abs(Path::new("/usr/local/bin")),
         });
         Env {
             home,
@@ -134,6 +135,46 @@ mod run_engine {
 
     async fn env() -> Env {
         env_with(&fake_cli(), "", timings()).await
+    }
+
+    async fn env_with_paths(binary_dir: AbsolutePath, agent_path: &[AbsolutePath]) -> Env {
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = Home::new(&abs(home_dir.path()));
+        let store = Arc::new(StateStore::open(home.clone()).await.unwrap());
+        let path_list = agent_path
+            .iter()
+            .map(|p| format!("\"{}\"", p.as_path().display()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let config = Config::from_toml_str(&format!(
+            "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{}\"\nagent_path = [{path_list}]\n",
+            fake_cli(),
+        ))
+        .unwrap();
+        let texts = HarnessPrompts::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+            &Language::default(),
+        )
+        .await
+        .unwrap();
+        let engine = RunEngine::new(EngineParts {
+            store,
+            texts: Arc::new(texts),
+            config: Arc::new(config),
+            secrets: Arc::new(Secrets::parse("", 0o600).unwrap()),
+            supervisor: Supervisor::new(NonZeroUsize::new(4).unwrap()),
+            clock: SharedClock::new(FixedClock(now().as_utc())),
+            local_offset: time::UtcOffset::UTC,
+            timings: timings(),
+            agent_binary_dir: binary_dir,
+        });
+        Env {
+            home,
+            _home_dir: home_dir,
+            worktree: tempfile::tempdir().unwrap(),
+            engine,
+            task: TaskId::from_str("task-20261112-100000-t1t1").unwrap(),
+        }
     }
 
     impl Env {
@@ -806,5 +847,68 @@ mod run_engine {
                 stop_grace: Duration::from_secs(10),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn the_path_of_a_run_starts_with_the_agent_binary_directory() {
+        let binary_dir = abs(Path::new("/injected/agent/bin"));
+        let env = env_with_paths(binary_dir.clone(), &[abs(Path::new("/usr/bin"))]).await;
+        let job = env.job("env", Env::new_session());
+        env.engine.run(job, &CancellationToken::new()).await.unwrap();
+        let env_content = env.recorded(".fake-env");
+        let path_line = env_content.lines().find(|l| l.starts_with("PATH=")).unwrap();
+        assert_eq!(path_line, "PATH=/injected/agent/bin:/usr/bin");
+    }
+
+    #[tokio::test]
+    async fn an_agent_path_naming_the_agent_binary_directory_has_it_once_in_a_run() {
+        let binary_dir = abs(Path::new("/injected/agent/bin"));
+        let env = env_with_paths(
+            binary_dir.clone(),
+            &[
+                abs(Path::new("/opt/bin")),
+                binary_dir.clone(),
+                abs(Path::new("/usr/bin")),
+            ],
+        )
+        .await;
+        let job = env.job("env", Env::new_session());
+        env.engine.run(job, &CancellationToken::new()).await.unwrap();
+        let env_content = env.recorded(".fake-env");
+        let path_line = env_content.lines().find(|l| l.starts_with("PATH=")).unwrap();
+        assert_eq!(path_line, "PATH=/injected/agent/bin:/opt/bin:/usr/bin");
+    }
+
+    #[tokio::test]
+    async fn with_the_fake_cli_an_agent_in_a_later_agent_path_dir_is_not_the_one_a_run_starts() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let primary = temp.path().join("primary");
+        let later = temp.path().join("later");
+        std::fs::create_dir(&primary).unwrap();
+        std::fs::create_dir(&later).unwrap();
+
+        let primary_agent = primary.join("agent");
+        std::fs::write(&primary_agent, "#!/bin/sh\necho 'from primary'\n").unwrap();
+        let mut perms = std::fs::metadata(&primary_agent).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&primary_agent, perms).unwrap();
+
+        let later_agent = later.join("agent");
+        std::fs::write(&later_agent, "#!/bin/sh\necho 'from later'\n").unwrap();
+        let mut perms = std::fs::metadata(&later_agent).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&later_agent, perms).unwrap();
+
+        let env = env_with_paths(
+            abs(&primary),
+            &[abs(&later), abs(Path::new("/usr/bin")), abs(Path::new("/bin"))],
+        )
+        .await;
+        let job = env.job("agent", Env::new_session());
+        env.engine.run(job, &CancellationToken::new()).await.unwrap();
+        let agent_output = env.recorded(".fake-agent");
+        assert_eq!(agent_output.trim(), "from primary");
     }
 }

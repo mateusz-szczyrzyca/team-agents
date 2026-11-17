@@ -51,7 +51,8 @@ workers = []
 
 # --- Programs ------------------------------------------------------------------------------------------------------
 # A bare name is looked up on `agent_path`, the PATH the agents see (toolchains: cargo, go, ...); an absolute path
-# is used as it is. Paths start at the root: there is no `~`. Every setting here has a default.
+# is used as it is. The directory of the daemon executable is automatically prepended first to PATH without duplicates.
+# Paths start at the root: there is no `~`. Every setting here has a default.
 
 [binaries]
 claude = "/home/you/.local/bin/claude"

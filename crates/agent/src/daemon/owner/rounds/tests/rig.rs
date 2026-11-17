@@ -222,6 +222,7 @@ impl Rig {
                     stop_grace: Duration::from_secs(5),
                 },
             }),
+            agent_binary_dir: None,
         }
     }
 

@@ -99,6 +99,7 @@ impl Fixture {
             clock: SharedClock::new(self.clock.clone()),
             local_offset: time::UtcOffset::UTC,
             timings: Some(timings()),
+            agent_binary_dir: None,
         }
     }
 
@@ -607,6 +608,7 @@ async fn a_home_without_a_configuration_is_refused_with_the_file_named() {
         clock: SharedClock::new(ManualClock::new(at(0))),
         local_offset: time::UtcOffset::UTC,
         timings: None,
+        agent_binary_dir: None,
     };
 
     let error = run(setup, CancellationToken::new()).await.unwrap_err();
@@ -625,6 +627,7 @@ async fn a_prompts_directory_that_lacks_files_is_refused_with_every_problem() {
         clock: SharedClock::new(ManualClock::new(at(0))),
         local_offset: time::UtcOffset::UTC,
         timings: None,
+        agent_binary_dir: None,
     };
 
     let error = run(setup, CancellationToken::new()).await.unwrap_err();
@@ -1351,4 +1354,18 @@ async fn a_run_records_steps_without_creating_an_activity_file() {
         !fixture.home.activity_log(&task(1)).exists(),
         "activity belongs only in history"
     );
+}
+
+#[test]
+fn resolve_agent_binary_dir_fails_when_current_exe_cannot_be_determined() {
+    let err =
+        resolve_agent_binary_dir_from(|| Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no exe"))).unwrap_err();
+    assert!(matches!(err, ExecutableError::Current(_)), "{err:?}");
+}
+
+#[test]
+fn resolve_agent_binary_dir_fails_when_canonicalize_fails() {
+    let err =
+        resolve_agent_binary_dir_from(|| Ok(PathBuf::from("/nonexistent/file/path/that/cannot/exist"))).unwrap_err();
+    assert!(matches!(err, ExecutableError::Canonicalize { .. }), "{err:?}");
 }

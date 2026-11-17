@@ -175,9 +175,15 @@ async fn argument_prompt(parts: &EngineParts, job: &RunJob, run_dir: &Path) -> R
     Ok((prompt, true))
 }
 
-/// The `PATH` of the agents: the directories of `[binaries] agent_path`, in order.
+/// The `PATH` of the agents: the daemon executable directory, then the directories of `[binaries] agent_path`, in order.
 fn agent_path(parts: &EngineParts) -> Result<String, RunError> {
-    let directories = parts.config.binaries().agent_path.iter().map(AbsolutePath::as_path);
+    let mut directories = Vec::with_capacity(parts.config.binaries().agent_path.len() + 1);
+    directories.push(parts.agent_binary_dir.as_path());
+    for path in &parts.config.binaries().agent_path {
+        if path != &parts.agent_binary_dir {
+            directories.push(path.as_path());
+        }
+    }
     let joined = std::env::join_paths(directories).map_err(|source| RunError::AgentPath { source })?;
     joined
         .into_string()
