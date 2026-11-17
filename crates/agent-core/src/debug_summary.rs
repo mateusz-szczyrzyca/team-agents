@@ -792,6 +792,12 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
     } else {
         write_line(out, "- Worktrees directory size: unknown");
     }
+    render_unreadable(unreadable, out);
+    write_line(out, "");
+}
+
+/// Keeps collection failures visible independently of deferred machine observations.
+fn render_unreadable(unreadable: &[UnreadablePartSummary], out: &mut SummaryWriter) {
     if !unreadable.is_empty() {
         write_line(out, "");
         write_line(out, "### Unreadable Parts");
@@ -800,7 +806,6 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
             write_line(out, &format!("- `{}`: {}", u.name, u.reason));
         }
     }
-    write_line(out, "");
 }
 
 /// Renders the `SUMMARY.md` markdown text from `input`.
@@ -813,6 +818,20 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
 /// Returns [`SummaryError::RequiredFactsTooLarge`] when mandatory facts and cut
 /// markers alone would reach the byte limit; no partial document is returned.
 pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String, SummaryError> {
+    render_summary_with_uncollected(input, offset, &[])
+}
+
+/// Renders a summary with explicit notices for sections outside the collection scope.
+///
+/// Collection failures remain visible even when machine observations are deferred.
+///
+/// # Errors
+/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
+pub fn render_summary_with_uncollected(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+) -> Result<String, SummaryError> {
     let now = input.collected_at;
     let mut out = SummaryWriter::default();
 
@@ -827,6 +846,15 @@ pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String,
     for section in SummarySection::ALL {
         write_line(&mut out, section.heading());
         write_line(&mut out, "");
+
+        if uncollected.contains(&section) {
+            write_line(&mut out, "Not collected in this version.");
+            if section == SummarySection::Machine {
+                render_unreadable(&input.unreadable_parts, &mut out);
+            }
+            write_line(&mut out, "");
+            continue;
+        }
 
         match section {
             SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
@@ -847,18 +875,6 @@ pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String,
     }
 
     out.finish()
-}
-
-/// Renders a summary with explicit notices for sections outside the collection scope.
-///
-/// # Errors
-/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
-pub fn render_summary_with_uncollected(
-    input: &SummaryInput,
-    offset: UtcOffset,
-    _uncollected: &[SummarySection],
-) -> Result<String, SummaryError> {
-    render_summary(input, offset)
 }
 
 /// Mandatory summary facts exceed the pasteable document budget.
