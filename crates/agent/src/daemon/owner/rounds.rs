@@ -497,7 +497,7 @@ impl Owner {
                 candidates.insert(candidate.to_owned());
                 None
             },
-            |_| false,
+            |path| tree_blobs.contains(path),
         );
         drop(scanned);
 
