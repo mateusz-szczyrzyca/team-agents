@@ -5,7 +5,9 @@ use agent_core::state::{ItemPhase, MergeMode};
 use super::fake_github::SLUG;
 use super::rig::{Rig, git, investigator, normal};
 
+/// An approving final report.
 const APPROVING: &str = "done:VERDICT: APPROVE\\nSUMMARY: fine";
+/// A requested fix followed by approval.
 const R1_SCENARIO: &str = "done:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] see `HEAD` for issue,done:VERDICT: APPROVE\\nSUMMARY: fixed in `HEAD`";
 
 #[tokio::test]
@@ -104,4 +106,100 @@ async fn review_head_and_commit_links_in_reviews_pr_description_and_update_comme
     assert!(body3.contains(&format!("https://github.com/{SLUG}/commit/{final_head}")));
     assert!(body3.contains("\n---\n\nSUMMARY: fixed in"));
     assert!(!body3.contains("VERDICT: APPROVE"));
+}
+
+#[tokio::test]
+async fn modeled_reviews_and_late_reviews_link_the_reported_commit_on_each_pass() {
+    for late in [
+        "late-commit:APPROVE,review-commit:APPROVE",
+        "late-commit:REQUEST_CHANGES,review-commit:APPROVE",
+    ] {
+        let mut rig = Rig::new(
+            &[
+                normal("claude-1", "work"),
+                investigator("inv-r1", "review-commit:REQUEST_CHANGES,review-commit:APPROVE"),
+                investigator("inv-r2", late),
+            ],
+            5,
+            false,
+        )
+        .await;
+        let config_path = rig.home.config_file();
+        let config = std::fs::read_to_string(&config_path).unwrap();
+        let config = config
+            .replace(
+                "[investigators.inv-r1]\n",
+                "[investigators.inv-r1]\nmodel = \"review-model\"\n",
+            )
+            .replace(
+                "[investigators.inv-r2]\n",
+                "[investigators.inv-r2]\nmodel = \"review-model\"\n",
+            );
+        std::fs::write(config_path, config).unwrap();
+        rig.start().await;
+        rig.run(&["claude-1"], super::rig::ONE, MergeMode::Autopilot, None)
+            .await;
+        rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+            .await;
+        rig.stop().await.unwrap();
+        let reviews = rig.github.reviews(1);
+        assert_eq!(reviews.len(), 4);
+        for review in reviews {
+            let body = review["body"].as_str().unwrap();
+            let head = review["commit_id"].as_str().unwrap();
+            let commit = format!("[`{head}`](https://github.com/{SLUG}/commit/{head})");
+            assert!(body.contains("(claude, review-model)\n"), "{body}");
+            assert!(
+                body.contains(&format!("of commit {commit}\n\n---\n\nSUMMARY: commit {commit}")),
+                "{body}"
+            );
+            assert!(!body.contains("VERDICT:"), "{body}");
+            assert_eq!(review["event"], "COMMENT");
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_invalid_late_report_is_still_posted_without_recording_a_verdict() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator(
+                "inv-r1",
+                "done:VERDICT: REQUEST_CHANGES\\nSUMMARY: fix,done:VERDICT: APPROVE\\nSUMMARY: fixed",
+            ),
+            investigator(
+                "inv-r2",
+                "late:SUMMARY: no verdict,done:VERDICT: APPROVE\\nSUMMARY: fine",
+            ),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    rig.run(&["claude-1"], super::rig::ONE, MergeMode::Autopilot, None)
+        .await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    let reviews = rig.github.reviews(1);
+    let late = reviews
+        .iter()
+        .find(|review| review["body"].as_str().unwrap().contains("SUMMARY: no verdict"));
+    assert!(late.is_some(), "the late report must still be posted: {reviews:?}");
+    let state = rig.state();
+    let round = state.teams()[0].rounds()[0].id();
+    let records = agent_runtime::history::Reader::open(&rig.home.history_file())
+        .unwrap()
+        .round_records(round)
+        .unwrap();
+    assert_eq!(records.iter().filter(|stored| matches!(&stored.record,
+        agent_core::history::Record::Event(event) if matches!(&event.event,
+            agent_core::history::HistoryEvent::ReviewSubmitted { pass: 0, reviewer, .. } if reviewer.as_str() == "inv-r2"
+        )
+    )).count(), 0);
+    let body = late.unwrap()["body"].as_str().unwrap();
+    assert!(body.starts_with("### Review by `inv-r2` (claude)\n## ❌ $\\color{#d1242f}{\\textbf{REQUEST CHANGES}}$\nReview pass 1 of commit "), "{body}");
+    assert!(body.ends_with("\n---\n\nSUMMARY: no verdict"), "{body}");
 }
