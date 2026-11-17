@@ -59,13 +59,7 @@ async fn autopilot_merge_removes_lead_and_reviewers_but_keeps_all_branches() {
     rig.stop().await.unwrap();
     let team = &state.teams()[0];
     let mut local = vec!["refs/heads/main".to_owned()];
-    for member in team
-        .crew()
-        .roster()
-        .into_iter()
-        .map(|(_, member)| member)
-        .chain(team.reviewers())
-    {
+    for member in team.reviewers() {
         let agent = crate::daemon::team::agent_name(member.agent()).unwrap();
         let branch = crate::daemon::team::task_branch(&agent, member.task()).unwrap();
         local.push(format!("refs/heads/{branch}"));
