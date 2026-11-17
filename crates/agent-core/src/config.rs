@@ -194,6 +194,8 @@ pub struct Binaries {
     /// Serena; without it the agents get no Serena server.
     pub serena: Option<Program>,
     /// The directories of the `PATH` the agents run with, in order.
+    ///
+    /// The directory of the daemon executable is automatically prepended first without duplicating it.
     pub agent_path: Vec<AbsolutePath>,
 }
 

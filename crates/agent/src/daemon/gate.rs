@@ -437,8 +437,13 @@ impl Service {
 
     /// The process of `job`, its output going to `log`.
     fn spec(&self, job: &GateJob, log: &Path) -> Result<ProcessSpec, GateError> {
-        let _stub_bin_dir = &self.parts.agent_binary_dir;
-        let directories = self.parts.agent_path.iter().map(AbsolutePath::as_path);
+        let mut directories = Vec::with_capacity(self.parts.agent_path.len() + 1);
+        directories.push(self.parts.agent_binary_dir.as_path());
+        for path in &self.parts.agent_path {
+            if path != &self.parts.agent_binary_dir {
+                directories.push(path.as_path());
+            }
+        }
         let path = std::env::join_paths(directories)
             .map_err(|source| GateError::AgentPath { source })?
             .into_string()

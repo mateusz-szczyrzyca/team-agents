@@ -289,6 +289,33 @@ pub(crate) async fn run_with_rng(
     run_with_rng_and_log_layer(setup, surroundings, rng, shutdown, None).await
 }
 
+/// The prompt catalogs, rules, and pull requests of the daemon.
+struct DaemonTexts {
+    texts: Arc<HarnessPrompts>,
+    team_texts: Arc<TeamPrompts>,
+    question_texts: Arc<QuestionsPrompts>,
+    pulls: Option<Pulls>,
+    rules: Arc<PromptLoader>,
+}
+
+async fn load_daemon_texts(setup: &DaemonSetup, settings: &Settings) -> Result<DaemonTexts, DaemonError> {
+    let language = settings.config.language().clone();
+    let texts = Arc::new(HarnessPrompts::load(&setup.prompts_dir, &language).await?);
+    let team_texts = Arc::new(TeamPrompts::load(&setup.prompts_dir, &language).await?);
+    let question_texts = Arc::new(QuestionsPrompts::load(&setup.prompts_dir, &language).await?);
+    let autopilot_texts = Arc::new(AutopilotPrompts::load(&setup.prompts_dir, &language).await?);
+    let checks_texts = Arc::new(ChecksPrompts::load(&setup.prompts_dir, &language).await?);
+    let pulls = Pulls::new(autopilot_texts, checks_texts, settings)?;
+    let rules = Arc::new(PromptLoader::load(&setup.prompts_dir, &language).await?);
+    Ok(DaemonTexts {
+        texts,
+        team_texts,
+        question_texts,
+        pulls,
+        rules,
+    })
+}
+
 /// Runs the daemon with either the process-wide logging layer supplied by the command or a scoped test layer.
 async fn run_with_rng_and_log_layer(
     setup: DaemonSetup,
@@ -305,14 +332,7 @@ async fn run_with_rng_and_log_layer(
     let settings = Arc::new(Settings::load(&setup.home).await?);
     let log_layer = daemon_log_layer(&settings, &setup, installed_log_layer);
     let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(log_layer.clone()).into();
-    let language = settings.config.language().clone();
-    let texts = Arc::new(HarnessPrompts::load(&setup.prompts_dir, &language).await?);
-    let team_texts = Arc::new(TeamPrompts::load(&setup.prompts_dir, &language).await?);
-    let question_texts = Arc::new(QuestionsPrompts::load(&setup.prompts_dir, &language).await?);
-    let autopilot_texts = Arc::new(AutopilotPrompts::load(&setup.prompts_dir, &language).await?);
-    let checks_texts = Arc::new(ChecksPrompts::load(&setup.prompts_dir, &language).await?);
-    let pulls = Pulls::new(autopilot_texts, checks_texts, &settings)?;
-    let rules = Arc::new(PromptLoader::load(&setup.prompts_dir, &language).await?);
+    let daemon_texts = load_daemon_texts(&setup, &settings).await?;
     let bus = make_bus(&setup.home, &settings);
     let state = store.load().await?;
     let timings = setup.timings.unwrap_or_else(|| Timings {
@@ -329,7 +349,7 @@ async fn run_with_rng_and_log_layer(
     };
     let engine = RunEngine::new(EngineParts {
         store: Arc::clone(&store),
-        texts: Arc::clone(&texts),
+        texts: Arc::clone(&daemon_texts.texts),
         config: Arc::new(settings.config.clone()),
         secrets: Arc::new(settings.secrets.clone()),
         supervisor: Supervisor::new(MAX_RUNS),
@@ -374,10 +394,10 @@ async fn run_with_rng_and_log_layer(
             store,
             state,
             settings,
-            texts,
-            team_texts,
-            question_texts,
-            rules,
+            texts: daemon_texts.texts,
+            team_texts: daemon_texts.team_texts,
+            question_texts: daemon_texts.question_texts,
+            rules: daemon_texts.rules,
             bus,
             opens,
             engine,
@@ -392,7 +412,7 @@ async fn run_with_rng_and_log_layer(
     )
     .with_gate(gates)
     .with_history(opened.history.clone());
-    let owner = attach_pulls(owner, pulls, &dispatch);
+    let owner = attach_pulls(owner, daemon_texts.pulls, &dispatch);
     log_start(&setup.home, &dispatch);
     let owned_end = Scoped::new(owner.run(requests), dispatch.clone()).await;
     // Whatever ended the owner, the rest of the daemon ends with it.
