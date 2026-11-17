@@ -473,16 +473,34 @@ fn link_prose(
     rewrite: &mut impl FnMut(&str, Style) -> String,
     references: &HashSet<String>,
     linking: Linking,
+    markers: &[std::ops::Range<usize>],
 ) -> String {
     let mut result = String::with_capacity(text.len());
     let mut prose = String::new();
     let mut chars = text.chars().peekable();
+    let mut offset: usize = 0;
+    let mut markers = markers.iter().peekable();
     while let Some(ch) = chars.next() {
+        while markers.next_if(|marker| marker.end <= offset).is_some() {}
+        if let Some(marker) = markers.peek().filter(|marker| marker.start == offset)
+            && let Some(prefix) = text.get((*marker).clone())
+        {
+            result.push_str(&rewrite(&prose, Style::Bare));
+            prose.clear();
+            result.push_str(&rewrite(prefix, Style::CommitOnly));
+            for _ in prefix.chars().skip(1) {
+                chars.next();
+            }
+            offset = marker.end;
+            continue;
+        }
+        offset = offset.saturating_add(ch.len_utf8());
         if ch == '`'
             && let Some((width, content, raw)) = code_span(&mut chars)
         {
             result.push_str(&rewrite(&prose, Style::Bare));
             prose.clear();
+            offset = offset.saturating_add(raw.len().saturating_sub(1));
             if width == 1 {
                 result.push_str(&rewrite(&content, Style::Backticks));
             } else {
@@ -499,9 +517,16 @@ fn link_prose(
             None
         };
         if let Some(raw) = protected {
+            offset = offset.saturating_add(raw.len().saturating_sub(ch.len_utf8()));
             result.push_str(&rewrite(&prose, Style::Bare));
             prose.clear();
-            result.push_str(&raw);
+            let name = raw.trim_start_matches('<').trim_start_matches('/');
+            let name = name.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-').next();
+            if raw.starts_with('<') && name.is_some_and(is_candidate) {
+                result.push_str(&rewrite(&raw, Style::CommitOnly));
+            } else {
+                result.push_str(&raw);
+            }
             continue;
         }
         if ch == '<' && (starts_autolink(chars.clone()) || starts_email(chars.clone())) {
@@ -519,6 +544,7 @@ fn link_prose(
                 }
             }
             if closed {
+                offset = offset.saturating_add(link.len().saturating_sub(1));
                 chars = lookahead;
                 result.push_str(&rewrite(&prose, Style::Bare));
                 prose.clear();
@@ -542,6 +568,7 @@ fn link_prose(
             link.push(open);
             let close = if open == '(' { ')' } else { ']' };
             if balanced(&mut lookahead, open, close, &mut link) {
+                offset = offset.saturating_add(link.len().saturating_sub(1));
                 chars = lookahead;
                 result.push_str(&rewrite(&prose, Style::Bare));
                 prose.clear();
@@ -555,6 +582,7 @@ fn link_prose(
                 .and_then(|label| label.strip_suffix(']'))
                 .is_some_and(|label| references.contains(&reference_label(label)))
         {
+            offset = offset.saturating_add(label.len().saturating_sub(1));
             chars = label_end;
             result.push_str(&rewrite(&prose, Style::Bare));
             prose.clear();
@@ -577,7 +605,7 @@ fn link_prose(
 #[must_use]
 pub fn link_commits(text: &str, repo_url: &str, mut resolve: impl FnMut(&str) -> Option<String>) -> String {
     rewrite_markdown(text, Linking::Commits, &mut |content, style| match style {
-        Style::Bare => link_words(content, repo_url, &mut resolve),
+        Style::Bare | Style::CommitOnly => link_words(content, repo_url, &mut resolve),
         Style::Backticks => {
             if is_candidate(content)
                 && let Some(full) = resolve(content)
@@ -597,6 +625,8 @@ pub fn link_commits(text: &str, repo_url: &str, mut resolve: impl FnMut(&str) ->
 enum Style {
     /// An ordinary prose word.
     Bare,
+    /// Structural Markdown permits legacy commit rewriting but never file lookup.
+    CommitOnly,
     /// An entire single-backtick code span.
     Backticks,
 }
@@ -616,30 +646,30 @@ fn rewrite_markdown(text: &str, linking: Linking, rewrite: &mut impl FnMut(&str,
     let mut prose = String::new();
     let mut active = Blocks::default();
     let references = references(text);
+    let mut markers = Vec::new();
     for line in text.split_inclusive('\n') {
         match unfenced_content(line, &mut active) {
             None => {
-                result.push_str(&link_prose(&prose, rewrite, &references, linking));
+                result.push_str(&link_prose(&prose, rewrite, &references, linking, &markers));
                 prose.clear();
+                markers.clear();
                 result.push_str(line);
             }
             Some(content) if reference_definition(content).is_some() => {
-                result.push_str(&link_prose(&prose, rewrite, &references, linking));
+                result.push_str(&link_prose(&prose, rewrite, &references, linking, &markers));
                 prose.clear();
+                markers.clear();
                 result.push_str(line);
             }
             Some(content) if matches!(linking, Linking::References) && content.len() != line.len() => {
-                result.push_str(&link_prose(&prose, rewrite, &references, linking));
-                prose.clear();
-                if let Some(prefix) = line.strip_suffix(content) {
-                    result.push_str(prefix);
-                }
-                prose.push_str(content);
+                let end = prose.len().saturating_add(line.len().saturating_sub(content.len()));
+                markers.push(prose.len()..end);
+                prose.push_str(line);
             }
             Some(_) => prose.push_str(line),
         }
     }
-    result.push_str(&link_prose(&prose, rewrite, &references, linking));
+    result.push_str(&link_prose(&prose, rewrite, &references, linking, &markers));
     result
 }
 
@@ -683,6 +713,7 @@ pub(crate) fn link_file_references(
                 format!("`{content}`")
             }
         }
+        Style::CommitOnly => link_words(content, repo_url, &mut resolve_commit),
         Style::Bare => rewrite_tokens(content, &mut |token| {
             bare_file_link(token, repo_url, commit, &mut is_file)
                 .unwrap_or_else(|| link_words(token, repo_url, &mut resolve_commit))
@@ -759,7 +790,7 @@ fn file_link(
         return None;
     }
     let label = match style {
-        Style::Bare => word.to_owned(),
+        Style::Bare | Style::CommitOnly => word.to_owned(),
         Style::Backticks => format!("`{word}`"),
     };
     let mut encoded = String::new();
