@@ -5,6 +5,7 @@
 //! owner carries it out (`owner/rounds/checks.rs`). Nothing here reads a file or runs a process, but the texts, which come
 //! from `prompts/harness/checks/`.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::num::{NonZeroU32, TryFromIntError};
 use std::path::Path;
@@ -379,13 +380,13 @@ fn comparable_commit_labels(line: &str) -> String {
 }
 
 /// Replaces recognized generated references with their original labels.
-fn original_labels<'a>(line: &'a str, mut recognize: impl FnMut(&'a str) -> Option<(&'a str, &'a str)>) -> String {
+fn original_labels<'a>(line: &'a str, mut recognize: impl FnMut(&'a str) -> Option<(Cow<'a, str>, &'a str)>) -> String {
     let mut result = String::new();
     let mut remaining = line;
     while let Some((prefix, part)) = remaining.split_once('[') {
         result.push_str(prefix);
         if let Some((label, tail)) = recognize(part) {
-            result.push_str(label);
+            result.push_str(&label);
             remaining = tail;
         } else {
             result.push('[');
@@ -397,7 +398,7 @@ fn original_labels<'a>(line: &'a str, mut recognize: impl FnMut(&'a str) -> Opti
 }
 
 /// Recognizes the exact commit-link spelling without changing its publication destination.
-fn original_commit_label(part: &str) -> Option<(&str, &str)> {
+fn original_commit_label(part: &str) -> Option<(Cow<'_, str>, &str)> {
     let (label, destination) = file_label_destination(part)?;
     let (url, tail) = destination.split_once(')')?;
     let (repository, revision) = url.rsplit_once("/commit/")?;
@@ -415,14 +416,23 @@ fn original_commit_label(part: &str) -> Option<(&str, &str)> {
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case(word))
             .then(|| commit.to_string())
     });
-    (generated == format!("[{label}]({url})")).then_some((label, tail))
+    (generated == format!("[{label}]({url})")).then_some((Cow::Borrowed(label), tail))
 }
 
 /// Finds the destination after a balanced label, protecting brackets inside code spans.
 fn file_label_destination(part: &str) -> Option<(&str, &str)> {
     let mut depth = 0_u32;
     let mut code = false;
+    let mut escaped = false;
     for (offset, ch) in part.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && !code {
+            escaped = true;
+            continue;
+        }
         match ch {
             '`' => code = !code,
             '[' if !code => depth = depth.saturating_add(1),
@@ -440,7 +450,7 @@ fn file_label_destination(part: &str) -> Option<(&str, &str)> {
 }
 
 /// Recognizes the file link by reconstructing it, retaining unrelated author-written links.
-fn original_file_label(part: &str) -> Option<(&str, &str)> {
+fn original_file_label(part: &str) -> Option<(Cow<'_, str>, &str)> {
     let (label, destination) = file_label_destination(part)?;
     let (url, tail) = destination.split_once(')')?;
     let (repository, target) = url.rsplit_once("/blob/")?;
@@ -452,8 +462,28 @@ fn original_file_label(part: &str) -> Option<(&str, &str)> {
     let Ok(commit) = revision.parse::<agent_core::state::CommitId>() else {
         return None;
     };
-    let generated = agent_core::files::link_files(label, repository, &commit, |_| true);
-    (generated == format!("[{label}]({url})")).then_some((label, tail))
+    let original = unescaped_file_label(label);
+    let generated = agent_core::files::link_files(&original, repository, &commit, |_| true);
+    (generated == format!("[{label}]({url})")).then_some((original, tail))
+}
+
+/// Decodes only escapes in bare labels; code spans keep literal filename characters.
+fn unescaped_file_label(label: &str) -> Cow<'_, str> {
+    if label.starts_with('`') || !label.contains('\\') {
+        return Cow::Borrowed(label);
+    }
+    let mut decoded = String::with_capacity(label.len());
+    let mut chars = label.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\'
+            && let Some(escaped) = chars.next_if(|ch| matches!(ch, '[' | ']' | '\\'))
+        {
+            decoded.push(escaped);
+        } else {
+            decoded.push(ch);
+        }
+    }
+    Cow::Owned(decoded)
 }
 
 /// What the lead is told to put the questions number `number` in `file` to the human.
