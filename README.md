@@ -1098,8 +1098,8 @@ requested" a question reaches you like any other. How it works, and its limits, 
 Each posted Rust review starts with the investigator, CLI and configured model, a green **APPROVED** (`✅✅`) or
 red **REQUEST CHANGES** (`❌`) verdict, and the review pass and linked commit. The report follows a horizontal
 rule; its original `VERDICT:` line remains in local history. Commit IDs in pull request descriptions, branch
-update comments and reviews become GitHub links when git resolves them, preserving code fences and existing
-links. Lookup failures are logged and publication continues with the original text. The review layout is in
+update comments and reviews become GitHub links when git resolves them. Longer inline code spans, code fences,
+existing links (including bare URLs), HTML tags and comments stay unchanged. Lookup failures are logged and publication continues with the original text. The review layout is in
 `prompts/harness/review/`; review reports and PR descriptions must label code fences with their language.
 
 Before the review the daemon checks the round's own diff and commits through git, with no model, if the repository has a
