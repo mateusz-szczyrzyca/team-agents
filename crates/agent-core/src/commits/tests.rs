@@ -138,3 +138,56 @@ fn hash_with_surrounding_punctuation() {
         "commit: [`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)."
     );
 }
+
+#[test]
+fn markdown_boundaries_and_unicode_are_preserved() {
+    let linked = "[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
+    let cases = [
+        (
+            "é [a1b2c3d](https://example.com) a1b2c3d",
+            format!("é [a1b2c3d](https://example.com) {linked}"),
+        ),
+        (
+            "é\n```rust\na1b2c3d\n```\na1b2c3d",
+            format!("é\n```rust\na1b2c3d\n```\n{linked}"),
+        ),
+        ("```rust\na1b2c3d", "```rust\na1b2c3d".to_owned()),
+        (
+            "````rust\n```\na1b2c3d\n````\na1b2c3d",
+            format!("````rust\n```\na1b2c3d\n````\n{linked}"),
+        ),
+        (
+            "~~~rust\n```\na1b2c3d\n~~~\na1b2c3d",
+            format!("~~~rust\n```\na1b2c3d\n~~~\n{linked}"),
+        ),
+        (
+            "```rust\r\na1b2c3d\r\n```\r\na1b2c3d",
+            format!("```rust\r\na1b2c3d\r\n```\r\n{linked}"),
+        ),
+        (
+            "[a1b2c3d](https://example.com/(a1b2c3d)) a1b2c3d",
+            format!("[a1b2c3d](https://example.com/(a1b2c3d)) {linked}"),
+        ),
+        ("[label][a1b2c3d] a1b2c3d", format!("[label][a1b2c3d] {linked}")),
+        (
+            "za1b2c3d a1b2c3dz _a1b2c3d a1b2c3d_ éa1b2c3d a1b2c3dé",
+            "za1b2c3d a1b2c3dz _a1b2c3d a1b2c3d_ éa1b2c3d a1b2c3dé".to_owned(),
+        ),
+        ("plain text without commits", "plain text without commits".to_owned()),
+    ];
+    for (input, expected) in cases {
+        assert_eq!(link_commits(input, REPO_URL, resolve_hash), expected, "{input:?}");
+    }
+}
+
+#[test]
+fn full_commit_ids_keep_their_original_spelling() {
+    let id = "ABCDEF0123456789abcdef0123456789ABCDEF01";
+    assert_eq!(id.len(), 40);
+    for input in [id.to_owned(), format!("`{id}`")] {
+        assert_eq!(
+            link_commits(&input, REPO_URL, |candidate| Some(candidate.to_ascii_lowercase())),
+            format!("[`{id}`]({REPO_URL}/commit/{})", id.to_ascii_lowercase())
+        );
+    }
+}
