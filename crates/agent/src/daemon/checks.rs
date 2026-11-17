@@ -321,13 +321,13 @@ pub(super) fn authored(description: &str, harness: &str) -> String {
 
 /// Restores harness-authored file labels before a changed description is published again.
 #[must_use]
-pub(crate) fn unlinked_harness_files(description: &str, harness: &str) -> String {
-    let written: HashSet<&str> = harness.lines().map(str::trim).collect();
+pub(super) fn unlinked_harness_files(description: &str, harness: &str) -> String {
+    let written: HashSet<String> = harness.lines().map(str::trim).map(comparable_commit_labels).collect();
     let mut result = String::new();
     for line in description.split_inclusive('\n') {
         let original = original_file_labels(line);
         // Only lines identifiable as harness text may have their generated destinations refreshed.
-        if written.contains(original.trim()) {
+        if written.contains(&comparable_commit_labels(original.trim())) {
             result.push_str(&original);
         } else {
             result.push_str(line);
@@ -339,11 +339,44 @@ pub(crate) fn unlinked_harness_files(description: &str, harness: &str) -> String
 /// Removes only the exact blob-link spelling produced by the repository file linker.
 /// Publication commits may differ after a fix pass; the original item text still belongs to the harness.
 fn original_file_labels(line: &str) -> String {
+    original_labels(line, original_file_label)
+}
+
+/// Commit words accepted by the shared Markdown linker: abbreviations through a full SHA-1.
+const COMMIT_WORD_LENGTHS: std::ops::RangeInclusive<usize> = 7..=40;
+
+/// Normalizes generated commit labels only for identifying the original harness line.
+fn comparable_commit_labels(line: &str) -> String {
+    let normalized = original_labels(line, original_commit_label);
+    let mut result = String::new();
+    let mut remaining = normalized.as_str();
+    while let Some((prefix, part)) = remaining.split_once('`') {
+        result.push_str(prefix);
+        let Some((span, tail)) = part.split_once('`') else {
+            result.push('`');
+            result.push_str(part);
+            return result;
+        };
+        if COMMIT_WORD_LENGTHS.contains(&span.len()) && span.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            result.push_str(span);
+        } else {
+            result.push('`');
+            result.push_str(span);
+            result.push('`');
+        }
+        remaining = tail;
+    }
+    result.push_str(remaining);
+    result
+}
+
+/// Replaces recognized generated references with their original labels.
+fn original_labels(line: &str, recognize: fn(&str) -> Option<(&str, &str)>) -> String {
     let mut result = String::new();
     let mut remaining = line;
     while let Some((prefix, part)) = remaining.split_once('[') {
         result.push_str(prefix);
-        if let Some((label, tail)) = original_file_label(part) {
+        if let Some((label, tail)) = recognize(part) {
             result.push_str(label);
             remaining = tail;
         } else {
@@ -353,6 +386,24 @@ fn original_file_labels(line: &str) -> String {
     }
     result.push_str(remaining);
     result
+}
+
+/// Recognizes the exact commit-link spelling without changing its publication destination.
+fn original_commit_label(part: &str) -> Option<(&str, &str)> {
+    let (label, destination) = file_label_destination(part)?;
+    let (url, tail) = destination.split_once(')')?;
+    let (repository, revision) = url.rsplit_once("/commit/")?;
+    if !repository.starts_with("https://github.com/") {
+        return None;
+    }
+    // Invalid revisions identify ordinary author-written links, not generated commit references.
+    let Ok(commit) = revision.parse::<agent_core::state::CommitId>() else {
+        return None;
+    };
+    let generated = agent_core::commits::link_commits(label, repository, |word| {
+        commit.as_str().starts_with(word).then(|| commit.to_string())
+    });
+    (generated == format!("[{label}]({url})")).then_some((label, tail))
 }
 
 /// Finds the destination after a balanced label, protecting brackets inside code spans.
