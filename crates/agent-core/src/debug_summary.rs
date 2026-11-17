@@ -6,6 +6,7 @@
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use time::UtcOffset;
 
@@ -17,9 +18,6 @@ use crate::status::{ItemStatus, TaskStatus};
 
 /// Maximum byte limit for `SUMMARY.md`. The output must be strictly less than this limit.
 pub const MAX_SUMMARY_BYTES: usize = 100_000;
-
-/// Maximum byte budget allocated to an individual section's body to ensure all 12 headings are preserved.
-pub const MAX_SECTION_BYTES: usize = 7_800;
 
 /// Marker indicating that content was truncated to remain under [`MAX_SUMMARY_BYTES`].
 pub const CUT_MARKER: &str = "\n[... cut ...]\n";
@@ -370,14 +368,80 @@ fn minutes_since(now: Timestamp, activity: Timestamp) -> i64 {
     if seconds <= 0 { 0 } else { seconds / 60 }
 }
 
-/// Keeps a UTF-8 tail within the fixed section budget, marking omitted content.
-fn truncate_keep_tail(text: &str) -> String {
-    if text.len() <= MAX_SECTION_BYTES {
+/// A document fragment whose structure or text determines its budget policy.
+#[derive(Debug)]
+enum SummaryPart {
+    /// Facts and Markdown structure that must survive intact.
+    Required(String),
+    /// Optional text whose most recent bytes are retained.
+    Tail(String),
+}
+
+/// Defers text budgets until every mandatory fact has been rendered.
+#[derive(Debug, Default)]
+struct SummaryWriter {
+    /// Ordered fragments, including all structural delimiters.
+    parts: Vec<SummaryPart>,
+}
+
+impl SummaryWriter {
+    fn push_str(&mut self, text: &str) {
+        self.parts.push(SummaryPart::Required(text.to_owned()));
+    }
+
+    fn tail(&mut self, text: &str) {
+        self.parts.push(SummaryPart::Tail(text.to_owned()));
+    }
+
+    fn finish(self) -> Result<String, SummaryError> {
+        let mut required = 0_usize;
+        let mut lengths = Vec::new();
+        for part in &self.parts {
+            match part {
+                SummaryPart::Required(text) => required = required.saturating_add(text.len()),
+                SummaryPart::Tail(text) => lengths.push(text.len()),
+            }
+        }
+        let minimum = lengths
+            .iter()
+            .fold(required, |sum, len| sum.saturating_add((*len).min(CUT_MARKER.len())));
+        if minimum >= MAX_SUMMARY_BYTES {
+            return Err(SummaryError::RequiredFactsTooLarge {
+                required_bytes: minimum,
+            });
+        }
+        let mut remaining = MAX_SUMMARY_BYTES.saturating_sub(1).saturating_sub(required);
+        lengths.sort_unstable();
+        let mut lengths = lengths.into_iter();
+        let mut cap = usize::MAX;
+        while let Some(len) = lengths.next() {
+            // The current fragment makes the divisor nonzero.
+            let share = remaining / lengths.len().saturating_add(1);
+            if len > share {
+                cap = share;
+                break;
+            }
+            remaining = remaining.saturating_sub(len);
+        }
+        let mut result = String::new();
+        for part in self.parts {
+            match part {
+                SummaryPart::Required(text) => result.push_str(&text),
+                SummaryPart::Tail(text) => result.push_str(&truncate_keep_tail(&text, cap)),
+            }
+        }
+        Ok(result)
+    }
+}
+
+/// Keeps a UTF-8 tail within its shared document budget, marking omitted content.
+fn truncate_keep_tail(text: &str, budget: usize) -> String {
+    if text.len() <= budget {
         return text.to_owned();
     }
-    let keep_bytes = MAX_SECTION_BYTES.saturating_sub(CUT_MARKER.len());
+    let keep_bytes = budget.saturating_sub(CUT_MARKER.len());
     let first_byte = text.len().saturating_sub(keep_bytes);
-    let mut result = String::with_capacity(MAX_SECTION_BYTES);
+    let mut result = String::with_capacity(budget);
     result.push_str(CUT_MARKER);
     for (_, ch) in text.char_indices().skip_while(|(index, _)| *index < first_byte) {
         result.push(ch);
@@ -385,17 +449,21 @@ fn truncate_keep_tail(text: &str) -> String {
     result
 }
 
-fn write_line(out: &mut String, s: &str) {
+fn write_line(out: &mut SummaryWriter, s: &str) {
     out.push_str(s);
-    out.push('\n');
+    out.push_str("\n");
 }
 
-fn render_anomalies(anomalies: &[SummaryAnomaly], out: &mut String) {
+fn render_anomalies(anomalies: &[SummaryAnomaly], out: &mut SummaryWriter) {
     if anomalies.is_empty() {
         write_line(out, "none of the known ones");
         write_line(out, "");
     } else {
+        let mut seen = HashSet::new();
         for a in anomalies {
+            if !seen.insert((&a.message, &a.command)) {
+                continue;
+            }
             write_line(out, &format!("- {}", a.message));
             if let Some(cmd) = &a.command {
                 write_line(out, &format!("  Command: `{cmd}`"));
@@ -405,7 +473,7 @@ fn render_anomalies(anomalies: &[SummaryAnomaly], out: &mut String) {
     }
 }
 
-fn render_daemon(daemon: Option<&DaemonSummary>, offset: UtcOffset, out: &mut String) {
+fn render_daemon(daemon: Option<&DaemonSummary>, offset: UtcOffset, out: &mut SummaryWriter) {
     let Some(d) = daemon else {
         write_line(out, "The daemon does not answer (unreachable).");
         write_line(out, "");
@@ -425,7 +493,7 @@ fn render_daemon(daemon: Option<&DaemonSummary>, offset: UtcOffset, out: &mut St
     write_line(out, "");
 }
 
-fn render_team(team: &TeamSummaryFacts, offset: UtcOffset, out: &mut String) {
+fn render_team(team: &TeamSummaryFacts, offset: UtcOffset, out: &mut SummaryWriter) {
     write_line(out, &format!("Team `{}` (repository `{}`)", team.id, team.repo));
     write_line(out, "");
     write_line(out, "### Items");
@@ -436,7 +504,7 @@ fn render_team(team: &TeamSummaryFacts, offset: UtcOffset, out: &mut String) {
         let assignee = item.assignee.as_ref().map_or("-", AgentName::as_str);
         write_line(
             out,
-            &format!("| {} | {} | {:?} | {} |", item.id, item.title, item.phase, assignee),
+            &format!("| {} | {} | {} | {} |", item.id, item.title, item.phase, assignee),
         );
     }
     write_line(out, "");
@@ -464,7 +532,7 @@ fn render_team(team: &TeamSummaryFacts, offset: UtcOffset, out: &mut String) {
     write_line(out, "");
 }
 
-fn render_task_table(tasks: &[TaskSummaryFacts], now: Timestamp, offset: UtcOffset, out: &mut String) {
+fn render_task_table(tasks: &[TaskSummaryFacts], now: Timestamp, offset: UtcOffset, out: &mut SummaryWriter) {
     write_line(
         out,
         "| Task | Agent | Role | Status | Runs | Started | Ended | Last Activity | Minutes Since |",
@@ -484,7 +552,7 @@ fn render_task_table(tasks: &[TaskSummaryFacts], now: Timestamp, offset: UtcOffs
         write_line(
             out,
             &format!(
-                "| {} | {} | {:?} | {:?} | {} | {} | {} | {} | {} |",
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
                 t.id, t.agent, t.role, t.status, t.run_count, started, ended, act_str, mins_str
             ),
         );
@@ -492,15 +560,18 @@ fn render_task_table(tasks: &[TaskSummaryFacts], now: Timestamp, offset: UtcOffs
     write_line(out, "");
 }
 
-fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut String) {
+fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
     for t in tasks {
         write_line(out, &format!("### Task `{}` (`{}`)", t.id, t.agent));
         write_line(out, "");
         let detail = t.last_run_end_detail.as_deref().unwrap_or("-");
-        write_line(out, &format!("- Last run end detail: {detail}"));
+        out.push_str("- Last run end detail: ");
+        out.tail(detail);
+        write_line(out, "");
         if let Some(q) = &t.questions {
             write_line(out, &format!("- Questions (unanswered: {}):", q.has_unanswered));
-            write_line(out, &q.content);
+            out.tail(&q.content);
+            write_line(out, "");
         } else {
             write_line(out, "- Questions: none");
         }
@@ -512,7 +583,7 @@ fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut String) {
     clippy::unnecessary_debug_formatting,
     reason = "debug escapes paths losslessly, including non-UTF-8 bytes; display can replace bytes"
 )]
-fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut String) {
+fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut SummaryWriter) {
     for w in worktrees {
         write_line(out, &format!("### Worktree for Task `{}`", w.task_id));
         write_line(out, "");
@@ -567,7 +638,11 @@ fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut Str
     }
 }
 
-fn render_gate(gates: &[TaskGateSummary], offset: UtcOffset, out: &mut String) {
+#[expect(
+    clippy::unnecessary_debug_formatting,
+    reason = "debug escapes quotes and path bytes consistently with worktree paths"
+)]
+fn render_gate(gates: &[TaskGateSummary], offset: UtcOffset, out: &mut SummaryWriter) {
     for g in gates {
         write_line(out, &format!("### Gate for Task `{}`", g.task_id));
         write_line(out, "");
@@ -592,23 +667,28 @@ fn render_gate(gates: &[TaskGateSummary], offset: UtcOffset, out: &mut String) {
                 out,
                 &format!("  Finished: {}", format_time(rec.result.finished_at, offset)),
             );
-            write_line(out, &format!("  Log: `{}`", rec.result.log.as_path().display()));
+            write_line(out, &format!("  Log: `{:?}`", rec.result.log.as_path()));
         } else {
             write_line(out, "- Record: none");
         }
         write_line(out, "- Recent gate outputs:");
-        for tail in &g.recent_output_tails {
-            write_line(out, "```");
-            write_line(out, tail);
+        for tail in g
+            .recent_output_tails
+            .iter()
+            .skip(g.recent_output_tails.len().saturating_sub(3))
+        {
+            write_line(out, "```text");
+            out.tail(tail);
+            write_line(out, "");
             write_line(out, "```");
         }
         write_line(out, "");
     }
 }
 
-fn render_history(history: Option<&str>, out: &mut String) {
+fn render_history(history: Option<&str>, out: &mut SummaryWriter) {
     if let Some(h) = history {
-        out.push_str(h);
+        out.tail(h);
     } else {
         out.push_str("No history recorded.");
     }
@@ -616,14 +696,16 @@ fn render_history(history: Option<&str>, out: &mut String) {
     write_line(out, "");
 }
 
-fn render_daemon_log(lines: Option<&[String]>, out: &mut String) {
+fn render_daemon_log(lines: Option<&[String]>, out: &mut SummaryWriter) {
     if let Some(ls) = lines {
-        for (i, line) in ls.iter().enumerate() {
-            out.push_str(line);
-            if !line.ends_with('\n') && i + 1 < ls.len() {
-                write_line(out, "");
+        let mut text = String::new();
+        for line in ls {
+            text.push_str(line);
+            if !line.ends_with('\n') {
+                text.push('\n');
             }
         }
+        out.tail(&text);
     } else {
         out.push_str("Daemon log not found.");
     }
@@ -631,29 +713,33 @@ fn render_daemon_log(lines: Option<&[String]>, out: &mut String) {
     write_line(out, "");
 }
 
-fn render_bus(messages: &[String], out: &mut String) {
+fn render_bus(messages: &[String], out: &mut SummaryWriter) {
     if messages.is_empty() {
         write_line(out, "No bus messages.");
     } else {
         for msg in messages {
-            write_line(out, &format!("- {msg}"));
+            out.push_str("- ");
+            out.tail(msg);
+            write_line(out, "");
         }
     }
     write_line(out, "");
 }
 
-fn render_notifications(notifications: &[String], out: &mut String) {
+fn render_notifications(notifications: &[String], out: &mut SummaryWriter) {
     if notifications.is_empty() {
         write_line(out, "No notifications.");
     } else {
         for n in notifications {
-            write_line(out, &format!("- {n}"));
+            out.push_str("- ");
+            out.tail(n);
+            write_line(out, "");
         }
     }
     write_line(out, "");
 }
 
-fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary], out: &mut String) {
+fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary], out: &mut SummaryWriter) {
     if let Some(avg) = machine.load_avg {
         write_line(
             out,
@@ -720,11 +806,15 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
 /// Renders the `SUMMARY.md` markdown text from `input`.
 ///
 /// Output is guaranteed to be strictly less than [`MAX_SUMMARY_BYTES`] (100,000 bytes),
-/// truncating individual section bodies while preserving the end and all 12 section headings.
-#[must_use]
+/// All anomalies, structural headings, table rows and gate records are retained.
+/// Long text fields share the remaining budget and retain marked UTF-8 tails.
+///
+/// # Errors
+/// Returns [`SummaryError::RequiredFactsTooLarge`] when mandatory facts and cut
+/// markers alone would reach the byte limit; no partial document is returned.
 pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String, SummaryError> {
     let now = input.collected_at;
-    let mut out = String::with_capacity(8192);
+    let mut out = SummaryWriter::default();
 
     write_line(&mut out, &format!("# Debug Summary — Team `{}`", input.team.id));
     write_line(&mut out, "");
@@ -738,31 +828,25 @@ pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String,
         write_line(&mut out, section.heading());
         write_line(&mut out, "");
 
-        let mut section_body = String::new();
         match section {
-            SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut section_body),
-            SummarySection::DaemonAndVersions => render_daemon(input.daemon.as_ref(), offset, &mut section_body),
-            SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut section_body),
-            SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut section_body),
-            SummarySection::TaskDetails => render_task_details(&input.tasks, &mut section_body),
-            SummarySection::GitWorktrees => render_git(&input.git, offset, &mut section_body),
-            SummarySection::GateRecords => render_gate(&input.gate, offset, &mut section_body),
-            SummarySection::HistoryTail => render_history(input.history_tail.as_deref(), &mut section_body),
-            SummarySection::DaemonLog => render_daemon_log(input.daemon_log_lines.as_deref(), &mut section_body),
-            SummarySection::Bus => render_bus(&input.bus_messages, &mut section_body),
-            SummarySection::Notifications => render_notifications(&input.notifications, &mut section_body),
-            SummarySection::Machine => render_machine(&input.machine, &input.unreadable_parts, &mut section_body),
+            SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
+            SummarySection::DaemonAndVersions => render_daemon(input.daemon.as_ref(), offset, &mut out),
+            SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut out),
+            SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut out),
+            SummarySection::TaskDetails => render_task_details(&input.tasks, &mut out),
+            SummarySection::GitWorktrees => render_git(&input.git, offset, &mut out),
+            SummarySection::GateRecords => render_gate(&input.gate, offset, &mut out),
+            SummarySection::HistoryTail => render_history(input.history_tail.as_deref(), &mut out),
+            SummarySection::DaemonLog => render_daemon_log(input.daemon_log_lines.as_deref(), &mut out),
+            SummarySection::Bus => render_bus(&input.bus_messages, &mut out),
+            SummarySection::Notifications => render_notifications(&input.notifications, &mut out),
+            SummarySection::Machine => render_machine(&input.machine, &input.unreadable_parts, &mut out),
         }
 
-        let bounded = truncate_keep_tail(&section_body);
-        out.push_str(&bounded);
-        if !bounded.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push('\n');
+        write_line(&mut out, "");
     }
 
-    Ok(out)
+    out.finish()
 }
 
 /// Mandatory summary facts exceed the pasteable document budget.
