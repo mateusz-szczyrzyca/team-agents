@@ -615,12 +615,14 @@ fn installed_panic_hook_preserves_another_threads_message_and_location() {
         .env("AGENT_TEST_PREVIOUS_PANIC_HOOK", "1")
         .output()
         .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
         output.status.success(),
-        "child stdout: {}\nchild stderr: {}",
-        String::from_utf8(output.stdout).unwrap(),
+        "child stdout: {stdout}\nchild stderr: {}",
         String::from_utf8(output.stderr).unwrap()
     );
+    // `--exact` with a name that matches nothing passes as well: the child must have run its one test.
+    assert!(stdout.contains("test result: ok. 1 passed"), "child stdout: {stdout}");
 }
 
 /// Process isolation keeps the observer hook from intercepting concurrent tests' panics.
