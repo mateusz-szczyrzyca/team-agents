@@ -143,6 +143,86 @@ fn code_span(chars: &mut Peekable<Chars<'_>>) -> Option<(usize, String, String)>
     None
 }
 
+/// URI scheme characters are ASCII and cannot contain Markdown delimiters.
+fn scheme_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '+' | '.' | '-')
+}
+
+/// Consumes a bare scheme:// URL through its next whitespace boundary.
+fn bare_url(first: char, chars: &mut Peekable<Chars<'_>>) -> Option<String> {
+    let mut lookahead = chars.clone();
+    let mut url = String::from(first);
+    while let Some(ch) = lookahead.next_if(|ch| scheme_char(*ch)) {
+        url.push(ch);
+    }
+    if lookahead.next() != Some(':') || lookahead.next() != Some('/') || lookahead.next() != Some('/') {
+        return None;
+    }
+    url.push_str("://");
+    while let Some(ch) = lookahead.next_if(|ch| !ch.is_whitespace()) {
+        url.push(ch);
+    }
+    *chars = lookahead;
+    Some(url)
+}
+
+/// Consumes complete HTML tags or comments, respecting quoted attribute delimiters.
+fn html(chars: &mut Peekable<Chars<'_>>) -> Option<String> {
+    let mut lookahead = chars.clone();
+    let mut raw = String::from('<');
+    if lookahead.next_if_eq(&'!').is_some() {
+        if lookahead.next() != Some('-') || lookahead.next() != Some('-') {
+            return None;
+        }
+        raw.push_str("!--");
+        for ch in lookahead.by_ref() {
+            raw.push(ch);
+            if raw.ends_with("-->") {
+                *chars = lookahead;
+                return Some(raw);
+            }
+        }
+        return None;
+    }
+    if lookahead.next_if_eq(&'/').is_some() {
+        raw.push('/');
+    }
+    if !lookahead.peek().is_some_and(char::is_ascii_alphabetic) {
+        return None;
+    }
+    let mut name = String::new();
+    while let Some(ch) = lookahead.next_if(|ch| ch.is_ascii_alphanumeric() || *ch == '-') {
+        name.push(ch);
+    }
+    if !lookahead
+        .peek()
+        .is_some_and(|ch| ch.is_whitespace() || matches!(ch, '/' | '>'))
+    {
+        return None;
+    }
+    // Angle-bracketed commit words remain prose rather than HTML tag names.
+    if is_candidate(&name) {
+        return None;
+    }
+    // Preserve the complete original tag after checking its name.
+    lookahead = chars.clone();
+    raw.truncate(1);
+    let mut quote = None;
+    for ch in lookahead.by_ref() {
+        raw.push(ch);
+        match (quote, ch) {
+            (Some(open), close) if open == close => quote = None,
+            (None, '\'' | '"') => quote = Some(ch),
+            (None, '>') => {
+                *chars = lookahead;
+                return Some(raw);
+            }
+            (Some(_) | None, _) => {}
+        }
+    }
+    None
+}
+
 /// Protects existing inline and reference links while rewriting ordinary prose.
 fn link_prose(text: &str, repo_url: &str, resolve: &mut impl FnMut(&str) -> Option<String>) -> String {
     let mut result = String::with_capacity(text.len());
@@ -164,10 +244,25 @@ fn link_prose(text: &str, repo_url: &str, resolve: &mut impl FnMut(&str) -> Opti
             }
             continue;
         }
+        let starts_scheme = ch.is_ascii_alphabetic() && !prose.chars().next_back().is_some_and(scheme_char);
+        let protected = if starts_scheme {
+            bare_url(ch, &mut chars)
+        } else if ch == '<' {
+            html(&mut chars)
+        } else {
+            None
+        };
+        if let Some(raw) = protected {
+            result.push_str(&link_words(&prose, repo_url, resolve));
+            prose.clear();
+            result.push_str(&raw);
+            continue;
+        }
         if ch == '<' && starts_autolink(chars.clone()) {
             let mut link = String::from('<');
             let mut closed = false;
-            for next in chars.by_ref() {
+            let mut lookahead = chars.clone();
+            for next in lookahead.by_ref() {
                 link.push(next);
                 if next == '>' {
                     closed = true;
@@ -178,11 +273,12 @@ fn link_prose(text: &str, repo_url: &str, resolve: &mut impl FnMut(&str) -> Opti
                 }
             }
             if closed {
+                chars = lookahead;
                 result.push_str(&link_words(&prose, repo_url, resolve));
                 prose.clear();
                 result.push_str(&link);
             } else {
-                prose.push_str(&link);
+                prose.push('<');
             }
             continue;
         }
