@@ -402,10 +402,9 @@ impl Owner {
         let head = git.rev_parse(&Revision::Head).await?;
         let github = self.github_for(pulls, &lead.repo, &git).await?;
         let client = match self.parts.settings.config.investigator(&asked.reviewer) {
-            Some(inv) => match &inv.model {
-                Some(model) => format!("({cli}, {model})", cli = inv.cli.as_str(), model = model.as_str()),
-                None => format!("({cli})", cli = inv.cli.as_str()),
-            },
+            Some(inv) => {
+                crate::daemon::notice::client_label(Some(inv.cli), inv.model.as_ref().map(|model| model.as_str()))
+            }
             None => String::new(),
         };
         let verdict_line = match verdict {

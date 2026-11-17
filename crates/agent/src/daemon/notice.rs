@@ -117,6 +117,16 @@ pub(super) struct NoticeContext<'a> {
     pub(super) pr: Option<&'a str>,
 }
 
+/// Formats the optional CLI and model shared by notification and review headers.
+pub(super) fn client_label(cli: Option<CliKind>, model: Option<&str>) -> String {
+    match (cli, model) {
+        (Some(cli), Some(model)) => format!("({cli}, {model})"),
+        (Some(cli), None) => format!("({cli})"),
+        (None, Some(model)) => format!("({model})"),
+        (None, None) => String::new(),
+    }
+}
+
 /// Lays out a notification for the human.
 ///
 /// # Errors
@@ -143,11 +153,11 @@ pub(super) fn layout_notification(
         local_dt.minute(),
     );
 
-    let agent_str = match (context.cli, context.model) {
-        (Some(cli), Some(model)) => format!("{} ({cli}, {model})", context.agent),
-        (Some(cli), None) => format!("{} ({cli})", context.agent),
-        (None, Some(model)) => format!("{} ({model})", context.agent),
-        (None, None) => context.agent.to_string(),
+    let client = client_label(context.cli, context.model);
+    let agent_str = if client.is_empty() {
+        context.agent.to_owned()
+    } else {
+        format!("{} {client}", context.agent)
     };
 
     let mut body = format!(
