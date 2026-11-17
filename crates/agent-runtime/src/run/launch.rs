@@ -16,7 +16,7 @@ use crate::store::HOME_VARIABLE;
 use tokio::io::AsyncWriteExt;
 
 /// The file of a run's standard output, in its directory.
-const STDOUT_FILE: &str = "out.jsonl";
+pub(super) const STDOUT_FILE: &str = "out.jsonl";
 
 /// The file of a run's standard error, in its directory.
 const STDERR_FILE: &str = "err.log";

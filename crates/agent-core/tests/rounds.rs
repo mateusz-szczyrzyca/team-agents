@@ -9,8 +9,9 @@ mod world;
 mod rounds {
     use agent_core::ids::RoundId;
     use agent_core::state::{
-        AdvanceItemError, BeginRunError, CloseRoundError, Completion, InvalidState, ItemPhase, NewRun, OpenRoundError,
-        PhaseKind, ReviewOutcome, Round, RoundEnd, RoundLife, RunError, State, StateError, StateOpenRoundError, Team,
+        AdvanceItemError, BeginRunError, CloseRoundError, Completion, InvalidReviews, InvalidState, ItemPhase, NewRun,
+        OpenRoundError, PhaseKind, ReplaceReviewError, ReviewOutcome, Round, RoundEnd, RoundLife, RunError, State,
+        StateError, StateOpenRoundError, Team,
     };
     use agent_core::status::ReviewVerdict;
     use serde_json::{Value, json};
@@ -518,6 +519,161 @@ mod rounds {
         assert_eq!(
             "round-20261111-193001-q1w2".parse::<RoundId>().unwrap().as_str(),
             "round-20261111-193001-q1w2"
+        );
+    }
+
+    // ---- giving a review that does not come to another reviewer ---------------------------------------------------
+
+    /// A state whose item 1.2 of team 1 is in review, asked of `inv-codex` (task 7) and `inv-gemini` (task 8).
+    fn in_review() -> State {
+        let mut state = state();
+        {
+            let mut team = state.team_mut(&team_id(1)).unwrap();
+            let mut handle = team.item_mut(item("1.2")).unwrap();
+            handle
+                .advance(ItemPhase::InProgress {
+                    assignee: "codex-1".parse().unwrap(),
+                    branch: "agents/codex-1/item-1-2".parse().unwrap(),
+                })
+                .unwrap();
+            handle
+                .advance(ItemPhase::InReview {
+                    pr: pr(7),
+                    reviews: Vec::new(),
+                })
+                .unwrap();
+            handle
+                .ask_reviews(vec![
+                    review("inv-codex", 7, ReviewOutcome::Pending),
+                    review("inv-gemini", 8, ReviewOutcome::Pending),
+                ])
+                .unwrap();
+        }
+        state
+    }
+
+    /// The reviewers and the tasks of the review pass of item 1.2, in order.
+    fn pass(state: &State) -> Vec<(String, String)> {
+        let team = state.team(&team_id(1)).unwrap();
+        let progress = team
+            .items()
+            .iter()
+            .find(|progress| progress.id() == item("1.2"))
+            .unwrap();
+        let ItemPhase::InReview { reviews, .. } = progress.phase() else {
+            panic!("the item is in review");
+        };
+        reviews
+            .iter()
+            .map(|review| (review.reviewer.to_string(), review.task.to_string()))
+            .collect()
+    }
+
+    /// Replaces the review of task `gone` of item 1.2 with `with`.
+    fn replace(state: &mut State, gone: u32, with: agent_core::state::Review) -> Result<(), ReplaceReviewError> {
+        let mut team = state.team_mut(&team_id(1)).unwrap();
+        let mut handle = team.item_mut(item("1.2")).unwrap();
+        handle.replace_review(&task(gone), with)
+    }
+
+    // Rule: the review that does not come goes to another reviewer, in its place; the other review is untouched.
+    #[test]
+    fn the_review_of_a_reviewer_that_is_gone_goes_to_another_in_its_place() {
+        let mut state = in_review();
+        {
+            let mut team = state.team_mut(&team_id(1)).unwrap();
+            let mut handle = team.item_mut(item("1.2")).unwrap();
+            handle.submit_review(&task(8), ReviewVerdict::Approve, at(40)).unwrap();
+        }
+
+        replace(&mut state, 7, review("inv-kimi", 9, ReviewOutcome::Pending)).unwrap();
+
+        assert_eq!(
+            pass(&state),
+            [
+                ("inv-kimi".to_owned(), task(9).to_string()),
+                ("inv-gemini".to_owned(), task(8).to_string()),
+            ]
+        );
+        // The new reviewer's review is the one that counts now: its verdict is taken, the old task's is not.
+        let mut team = state.team_mut(&team_id(1)).unwrap();
+        let mut handle = team.item_mut(item("1.2")).unwrap();
+        assert!(handle.submit_review(&task(7), ReviewVerdict::Approve, at(50)).is_err());
+        handle.submit_review(&task(9), ReviewVerdict::Approve, at(50)).unwrap();
+    }
+
+    // Rule: a review that came stays its reviewer's.
+    #[test]
+    fn a_review_that_has_its_outcome_is_not_given_away() {
+        let mut state = in_review();
+        {
+            let mut team = state.team_mut(&team_id(1)).unwrap();
+            let mut handle = team.item_mut(item("1.2")).unwrap();
+            handle.submit_review(&task(7), ReviewVerdict::Approve, at(40)).unwrap();
+        }
+        let before = pass(&state);
+
+        let result = replace(&mut state, 7, review("inv-kimi", 9, ReviewOutcome::Pending));
+
+        assert_eq!(
+            result,
+            Err(ReplaceReviewError::AlreadySubmitted {
+                item: item("1.2"),
+                task: task(7),
+            })
+        );
+        assert_eq!(pass(&state), before);
+    }
+
+    // Rule: what is refused leaves the review pass as it was.
+    #[test]
+    fn a_replacement_that_does_not_fit_is_refused_and_changes_nothing() {
+        let mut state = in_review();
+        let before = pass(&state);
+
+        // No review of the pass was asked of that task.
+        assert_eq!(
+            replace(&mut state, 30, review("inv-kimi", 9, ReviewOutcome::Pending)),
+            Err(ReplaceReviewError::UnknownReview {
+                item: item("1.2"),
+                task: task(30),
+            })
+        );
+        // The other reviewer of the pass cannot review twice.
+        assert_eq!(
+            replace(&mut state, 7, review("inv-gemini", 9, ReviewOutcome::Pending)),
+            Err(ReplaceReviewError::Reviews {
+                item: item("1.2"),
+                source: InvalidReviews::DuplicateReviewer {
+                    reviewer: "inv-gemini".parse().unwrap(),
+                },
+            })
+        );
+        // A review that already has its outcome is not asked for.
+        let submitted = ReviewOutcome::Submitted {
+            verdict: ReviewVerdict::Approve,
+            at: at(40),
+        };
+        assert_eq!(
+            replace(&mut state, 7, review("inv-kimi", 9, submitted)),
+            Err(ReplaceReviewError::NotPending {
+                item: item("1.2"),
+                reviewer: "inv-kimi".parse().unwrap(),
+            })
+        );
+        assert_eq!(pass(&state), before);
+    }
+
+    // Rule: only an item in review has a review to give away.
+    #[test]
+    fn an_item_that_is_not_in_review_has_no_review_to_give_away() {
+        let mut state = state();
+
+        let result = replace(&mut state, 7, review("inv-kimi", 9, ReviewOutcome::Pending));
+
+        assert!(
+            matches!(result, Err(ReplaceReviewError::NotInReview { item: found, .. }) if found == item("1.2")),
+            "{result:?}"
         );
     }
 }

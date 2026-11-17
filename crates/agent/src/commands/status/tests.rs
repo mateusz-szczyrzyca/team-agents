@@ -182,6 +182,8 @@ async fn a_closed_output_is_an_error_not_a_panic() {
 // ---- rounds --------------------------------------------------------------------------------------------------------
 
 use agent_core::config::AbsolutePath;
+use std::str::FromStr;
+
 use agent_core::ids::RoundId;
 use agent_core::protocol::{RoundDetail, RoundTask};
 use agent_core::state::{ItemPhase, NewRun, RoundEnd, State};
@@ -282,6 +284,77 @@ team-20261111-153000-t5m8  team-agents  autopilot  0 pending, 1 in progress, 0 i
     );
 }
 
+/// The activity of a home in `dir`, which has no runs.
+fn no_activity(dir: &std::path::Path) -> Activity {
+    let home = Home::new(&AbsolutePath::from_str(dir.to_str().unwrap()).unwrap());
+    Activity::new(home, UtcOffset::UTC)
+}
+
+// Rule: a task that runs says when it was last active; a task that does not run says nothing of it.
+#[test]
+fn a_task_that_runs_says_when_it_was_last_active_and_the_others_do_not() {
+    let mut teams = sample();
+    teams[0].members[1].status = TaskStatus::Running;
+    let said = |_: &TaskId| Some("last activity 23:10:11".to_owned());
+
+    let text = render_active(&teams, &said);
+
+    assert!(
+        text.contains("  task-20261111-153002-k3x9  member       claude-1   running, last activity 23:10:11\n"),
+        "{text}"
+    );
+    assert_eq!(text.matches("last activity").count(), 1, "{text}");
+    // A run that has written nothing yet has no time to tell.
+    let silent = render_active(&teams, &|_| None);
+    assert!(
+        silent.contains("  task-20261111-153002-k3x9  member       claude-1   running\n"),
+        "{silent}"
+    );
+}
+
+// Rule: the time is the time of day of the machine, not UTC.
+#[test]
+fn the_last_activity_is_told_as_the_local_time_of_day() {
+    let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_794_694_211);
+    let warsaw = UtcOffset::from_hms(1, 0, 0).unwrap();
+
+    assert_eq!(clock_time(at, UtcOffset::UTC), "22:10:11");
+    assert_eq!(clock_time(at, warsaw), "23:10:11");
+}
+
+// Rule: the last activity of a running task is read from the output of its runs in the home.
+#[tokio::test]
+async fn the_status_reads_the_last_activity_of_a_running_task_from_the_home() {
+    let dir = tempfile::tempdir().unwrap();
+    let activity = no_activity(dir.path());
+    let run_dir = dir
+        .path()
+        .join("tasks/task-20261111-153002-k3x9/runs/run-20261111-153005-k3x9");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    std::fs::write(run_dir.join("out.jsonl"), "{}\n").unwrap();
+    let changed = std::fs::metadata(run_dir.join("out.jsonl"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let mut teams = sample();
+    teams[0].members[1].status = TaskStatus::Running;
+    let listed = teams.clone();
+    let daemon = FakeDaemon::serve(&socket(&dir), move |request| {
+        let reply = Reply::Teams { teams: listed.clone() };
+        Answer::Lines(vec![
+            Frame::Response(Response::ok(request.id, reply)).to_line().unwrap(),
+        ])
+    });
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+    let mut out = Vec::new();
+
+    status_active(&mut connection, None, &activity, &mut out).await.unwrap();
+
+    let text = String::from_utf8(out).unwrap();
+    let expected = format!("running, last activity {}\n", clock_time(changed, UtcOffset::UTC));
+    assert!(text.contains(&expected), "{text}");
+}
+
 // Rule: `--running` shows what is being worked on: the teams with a round that goes on, and those rounds only.
 #[test]
 fn the_running_view_keeps_the_teams_with_an_open_round_and_their_open_rounds_only() {
@@ -332,7 +405,9 @@ async fn the_running_view_of_a_daemon_with_no_open_round_says_so() {
     let mut connection = Connection::connect(daemon.socket()).await.unwrap();
     let mut out = Vec::new();
 
-    status_running(&mut connection, &mut out).await.unwrap();
+    status_running(&mut connection, &no_activity(dir.path()), &mut out)
+        .await
+        .unwrap();
 
     assert_eq!(String::from_utf8(out).unwrap(), "no team has an open round\n");
     assert_eq!(

@@ -9,6 +9,8 @@
 #   fail            ends with STATUS: FAILED
 #   nostatus        ends without a STATUS line
 #   questions       ends with STATUS: QUESTIONS and writes no questions file
+#   fail-first:TEXT  the first task of the home to run this action ends with STATUS: FAILED; every other one ends with
+#                   TEXT, a line break and STATUS: DONE: of two reviewers, exactly one cannot work
 #   slowdone        waits a second, then ends with STATUS: DONE
 #   slowfail        waits a second, then ends with STATUS: FAILED
 #   gated           commits a file in the worktree, excludes its own `.fake-*` files from git, creates `.fake-committed-N` and waits
@@ -171,6 +173,14 @@ case $action in
   sleep) result 'Nothing to do now.\nSTATUS: SLEEPING' ;;
   fail) result 'I could not do it.\nSTATUS: FAILED' ;;
   nostatus) result 'I think that is all.' ;;
+  fail-first:*)
+    # Making a directory is atomic: of the tasks that get here at once, one makes it.
+    if mkdir "$home/.fake-first-failed" 2> /dev/null; then
+      result 'I could not do it.\nSTATUS: FAILED'
+    else
+      result "${action#fail-first:}"'\nSTATUS: DONE'
+    fi
+    ;;
   questions) result 'I have to ask.\nSTATUS: QUESTIONS' ;;
   slowdone) sleep 1; result 'Finished the work.\nSTATUS: DONE' ;;
   slowfail) sleep 1; result 'I could not do it.\nSTATUS: FAILED' ;;

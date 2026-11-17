@@ -142,6 +142,12 @@ impl Home {
         self.task_dir(task).join(RUNS_DIR).join(run.as_str())
     }
 
+    /// The directory of the runs of `task`: a directory for each, named by its ID.
+    #[must_use]
+    pub fn runs_dir(&self, task: &TaskId) -> PathBuf {
+        self.task_dir(task).join(RUNS_DIR)
+    }
+
     /// The default directory of the notification files.
     #[must_use]
     pub fn notifications_dir(&self) -> PathBuf {

@@ -1077,6 +1077,9 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus |
 | `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now |
 
+`agent status` ends the line of a task that runs with `last activity HH:MM:SS`: the local time the output of its run last
+changed (the file `tasks/<task>/runs/<run>/out.jsonl`), which is how to tell a task that works from one that hangs.
+
 A run that ends with questions leaves `questions-<round>.md` in the task's directory and a notification file; with
 `[questions] open = "vscode"` the file is also opened in the VS Code window connected to the host. Saving that file with the
 `**ANSWERED**` marker on its last line sends the answers as well (the daemon watches the file; a file saved while it was

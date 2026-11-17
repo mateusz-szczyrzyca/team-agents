@@ -491,6 +491,14 @@ impl CheckedMut<'_, ItemProgress> {
         self.value.ask_reviews(reviews)
     }
 
+    /// See [`ItemProgress::replace_review`].
+    ///
+    /// # Errors
+    /// [`ReplaceReviewError`], as for [`ItemProgress::replace_review`].
+    pub fn replace_review(&mut self, gone: &TaskId, with: Review) -> Result<(), ReplaceReviewError> {
+        self.value.replace_review(gone, with)
+    }
+
     /// Records the last gate result for the item, replacing the one before.
     pub fn set_gate(&mut self, result: GateResult) {
         self.value.gate = Some(result);
@@ -605,6 +613,52 @@ pub enum AdvanceError {
     ListedCompletion {
         /// The item.
         item: ItemId,
+    },
+}
+
+/// Why a review could not be given to another reviewer.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ReplaceReviewError {
+    /// Only an item in review has reviews that are still to come.
+    #[error("item {item} is {phase}: only an item in review has a review to give to another reviewer")]
+    NotInReview {
+        /// The item.
+        item: ItemId,
+        /// Its phase.
+        phase: PhaseKind,
+    },
+    /// The review pass has no review of that task.
+    #[error("item {item}: no review of this review pass was asked of {task}")]
+    UnknownReview {
+        /// The item.
+        item: ItemId,
+        /// The task.
+        task: TaskId,
+    },
+    /// The review came: a review that has its outcome stays its reviewer's.
+    #[error("item {item}: the review asked of {task} has its outcome, so it is not given to another reviewer")]
+    AlreadySubmitted {
+        /// The item.
+        item: ItemId,
+        /// The task.
+        task: TaskId,
+    },
+    /// The review that takes the place has its outcome already.
+    #[error("item {item}: the review by {reviewer} has its outcome already, so it cannot be asked for")]
+    NotPending {
+        /// The item.
+        item: ItemId,
+        /// The new reviewer.
+        reviewer: InvestigatorName,
+    },
+    /// With the new review the pass would name a reviewer or a task twice.
+    #[error("item {item}: the review pass would not be valid")]
+    Reviews {
+        /// The item.
+        item: ItemId,
+        /// What is wrong with it.
+        #[source]
+        source: InvalidReviews,
     },
 }
 
@@ -876,6 +930,49 @@ impl ItemProgress {
         }
         check_review_pass(&reviews).map_err(|source| AskReviewsError::Reviews { item, source })?;
         *pass = reviews;
+        Ok(())
+    }
+
+    /// Gives the review that was asked of the reviewer task `gone`, and has not come, to another reviewer: `with` takes
+    /// its place in the review pass. The other reviews of the pass stay as they are.
+    ///
+    /// # Errors
+    /// [`ReplaceReviewError`]: the item is not in review, no review of the pass was asked of `gone`, that review has its
+    /// outcome, `with` has one, or `with` names a reviewer or a task the pass already has.
+    pub fn replace_review(&mut self, gone: &TaskId, with: Review) -> Result<(), ReplaceReviewError> {
+        let item = self.id;
+        let phase = self.phase.kind();
+        let ItemPhase::InReview { reviews, .. } = &mut self.phase else {
+            return Err(ReplaceReviewError::NotInReview { item, phase });
+        };
+        let Some(index) = reviews.iter().position(|review| &review.task == gone) else {
+            return Err(ReplaceReviewError::UnknownReview {
+                item,
+                task: gone.clone(),
+            });
+        };
+        if reviews
+            .get(index)
+            .is_some_and(|review| !matches!(review.outcome, ReviewOutcome::Pending))
+        {
+            return Err(ReplaceReviewError::AlreadySubmitted {
+                item,
+                task: gone.clone(),
+            });
+        }
+        if !matches!(with.outcome, ReviewOutcome::Pending) {
+            return Err(ReplaceReviewError::NotPending {
+                item,
+                reviewer: with.reviewer,
+            });
+        }
+        // The pass is checked as it would be, and changed only when it is valid.
+        let mut next = reviews.clone();
+        if let Some(place) = next.get_mut(index) {
+            *place = with;
+        }
+        check_review_pass(&next).map_err(|source| ReplaceReviewError::Reviews { item, source })?;
+        *reviews = next;
         Ok(())
     }
 

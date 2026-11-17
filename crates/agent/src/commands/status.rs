@@ -2,11 +2,17 @@
 //! item, the tasks that worked for it, its pull request and its review passes.
 
 use std::io::{self, Write};
+use std::time::SystemTime;
 
 use agent_core::history::HistoryHealth;
-use agent_core::ids::RoundId;
+use agent_core::ids::{RoundId, TaskId};
 use agent_core::protocol::{Client, Command, Reply, RoundDetail, ShowRequest, StatusRequest, Target, TeamSummary};
 use agent_core::state::{Round, RoundLife, RunState};
+use agent_core::status::TaskStatus;
+use agent_runtime::process::error_chain;
+use agent_runtime::run::activity::last_activity;
+use agent_runtime::store::Home;
+use time::UtcOffset;
 
 use crate::client::{ClientError, Connection};
 
@@ -27,10 +33,58 @@ pub(crate) enum StatusError {
     Output(#[source] io::Error),
 }
 
-/// Asks the daemon for the status of `target` (every team without one) and writes it to `out`.
+/// Where `agent status` reads when a task that runs was last active, and the offset it tells the time in.
+#[derive(Debug, Clone)]
+pub(crate) struct Activity {
+    /// The home whose runs are looked at.
+    home: Home,
+    /// The machine's offset from UTC.
+    offset: UtcOffset,
+}
+
+impl Activity {
+    /// The activity of the tasks of `home`, told in the local time `offset` gives.
+    pub(crate) const fn new(home: Home, offset: UtcOffset) -> Self {
+        Self { home, offset }
+    }
+
+    /// What the line of the running task `task` says of its last activity: the time the output of its runs last changed,
+    /// or that it cannot be told; `None` when its runs have written nothing yet.
+    fn of(&self, task: &TaskId) -> Option<String> {
+        match last_activity(&self.home, task) {
+            Ok(Some(changed)) => Some(format!("last activity {}", clock_time(changed, self.offset))),
+            Ok(None) => None,
+            Err(error) => Some(format!("last activity unknown ({})", error_chain(&error))),
+        }
+    }
+}
+
+/// `at` as a time of day, `HH:MM:SS`, at `offset` from UTC.
+pub(crate) fn clock_time(at: SystemTime, offset: UtcOffset) -> String {
+    let local = time::OffsetDateTime::from(at).to_offset(offset);
+    format!("{:02}:{:02}:{:02}", local.hour(), local.minute(), local.second())
+}
+
+/// Asks the daemon for the status of `target` (every team without one) and writes it to `out`; the tasks that run say
+/// when they were last active.
 ///
 /// # Errors
 /// [`StatusError`].
+pub(crate) async fn status_active(
+    connection: &mut Connection,
+    target: Option<Target>,
+    activity: &Activity,
+    out: &mut impl Write,
+) -> Result<(), StatusError> {
+    if let Some(Target::Round(round)) = target {
+        return show_round(connection, round, out).await;
+    }
+    let (teams, history) = teams(connection, target).await?;
+    write(out, &render_active(&teams, &|task| activity.of(task)), history.as_ref())
+}
+
+/// [`status_active`] without the last activity of the tasks: what the tests of the status ask for.
+#[cfg(test)]
 pub(crate) async fn status(
     connection: &mut Connection,
     target: Option<Target>,
@@ -48,13 +102,17 @@ pub(crate) async fn status(
 ///
 /// # Errors
 /// [`StatusError`].
-pub(crate) async fn status_running(connection: &mut Connection, out: &mut impl Write) -> Result<(), StatusError> {
+pub(crate) async fn status_running(
+    connection: &mut Connection,
+    activity: &Activity,
+    out: &mut impl Write,
+) -> Result<(), StatusError> {
     let (teams, history) = teams(connection, None).await?;
     let teams = running(teams);
     let text = if teams.is_empty() {
         NO_OPEN_ROUNDS.to_owned()
     } else {
-        render(&teams)
+        render_active(&teams, &|task| activity.of(task))
     };
     write(out, &text, history.as_ref())
 }
@@ -127,8 +185,16 @@ pub(super) const fn kind_of(reply: &Reply) -> &'static str {
     }
 }
 
-/// The teams as text: a line for each team, and under it a line for each of its tasks.
+/// The teams as text: a line for each team, and under it a line for each of its tasks, without the last activity of the
+/// tasks: what the tests of the layout compare.
+#[cfg(test)]
 pub(crate) fn render(teams: &[TeamSummary]) -> String {
+    render_active(teams, &|_| None)
+}
+
+/// The teams as text: a line for each team, and under it a line for each of its tasks, with what `activity` says of each
+/// task that runs after its status.
+pub(crate) fn render_active(teams: &[TeamSummary], activity: &dyn Fn(&TaskId) -> Option<String>) -> String {
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
     }
@@ -154,8 +220,13 @@ pub(crate) fn render(teams: &[TeamSummary]) -> String {
             let waiting = member.open_question.map_or_else(String::new, |number| {
                 format!(", questions number {number} wait for answers")
             });
+            // Only a task that runs is active now: what a task that waits last did is in its log.
+            let active = (member.status == TaskStatus::Running)
+                .then(|| activity(&member.task))
+                .flatten()
+                .map_or_else(String::new, |said| format!(", {said}"));
             lines.push(format!(
-                "  {}  {:<role_width$}  {:<agent_width$}  {}{waiting}",
+                "  {}  {:<role_width$}  {:<agent_width$}  {}{active}{waiting}",
                 member.task,
                 member.role.to_string(),
                 member.agent.name(),

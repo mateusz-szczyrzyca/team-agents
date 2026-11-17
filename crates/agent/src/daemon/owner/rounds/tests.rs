@@ -250,6 +250,81 @@ async fn a_lead_whose_gate_never_passes_is_sent_back_three_times_and_then_the_hu
     assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 0);
 }
 
+// ---- a reviewer that cannot work ---------------------------------------------------------------------------------
+
+/// One of two reviewers that run it fails; the others approve.
+const ONE_FAILS: &str = "fail-first:VERDICT: APPROVE\\nSUMMARY: fine";
+
+// Rule: a reviewer whose task failed is replaced by another free investigator, and the pass is decided by the reviews
+// of those that worked.
+#[tokio::test]
+async fn a_reviewer_that_failed_is_replaced_by_a_free_investigator_and_the_pull_request_is_merged() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", ONE_FAILS),
+            investigator("inv-r2", ONE_FAILS),
+            investigator("inv-r3", ONE_FAILS),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let state = rig.state();
+    let reviewers = state.team(&team).unwrap().reviewers();
+    let failed: Vec<_> = reviewers
+        .iter()
+        .filter(|member| member.status() == TaskStatus::Failed)
+        .collect();
+    // All three investigators were asked: the two that were drawn, and the third for the one that failed.
+    assert_eq!(reviewers.len(), 3, "{reviewers:?}");
+    assert_eq!(failed.len(), 1, "{reviewers:?}");
+    // The two reviews that count are approvals, and none is by the reviewer that failed.
+    let reviews = rig.github.reviews(1);
+    assert_eq!(reviews.len(), 2, "{reviews:?}");
+    assert!(rig.notifications().iter().all(|text| !text.contains("gave no verdict")));
+}
+
+// Rule: when no investigator is free to take the review of a reviewer that failed, the human is told, once.
+#[tokio::test]
+async fn a_reviewer_that_failed_with_no_investigator_free_is_told_to_the_human_once() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", ONE_FAILS),
+            investigator("inv-r2", ONE_FAILS),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let notice = rig.notification_with("gave no verdict on pull request 1").await;
+    looked_again(&rig).await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        notice.contains("its task is failed and no other investigator is free to take the review"),
+        "{notice}"
+    );
+    let told: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("gave no verdict"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+}
+
 // ---- a team that sleeps ------------------------------------------------------------------------------------------
 
 // Rule: a lead that sleeps on an unfinished item with nobody at work is woken and told so; after two wake-ups that

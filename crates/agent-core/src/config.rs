@@ -59,6 +59,9 @@ const DEFAULT_FIX_PASSES: u32 = 5;
 /// Times the checks before a review send a round back to the team, by default, before the human is asked.
 const DEFAULT_CHECK_PASSES: u32 = 2;
 
+/// `[review] replace_after_minutes` when the file does not give it.
+const DEFAULT_REPLACE_AFTER_MINUTES: NonZeroU32 = NonZeroU32::new(15).unwrap();
+
 /// Minutes a repository's gate may run, by default.
 const DEFAULT_GATE_TIMEOUT_MINUTES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 
@@ -283,6 +286,8 @@ pub struct Review {
     /// How many times the checks before a review send the round back to the team before the human is asked; 0 asks
     /// at once.
     pub check_passes: u32,
+    /// Minutes a reviewer may be paused, with its review still to come, before another investigator takes the review.
+    pub replace_after_minutes: Minutes,
 }
 
 impl Default for Review {
@@ -290,6 +295,7 @@ impl Default for Review {
         Self {
             fix_passes: DEFAULT_FIX_PASSES,
             check_passes: DEFAULT_CHECK_PASSES,
+            replace_after_minutes: Minutes::literal(DEFAULT_REPLACE_AFTER_MINUTES),
         }
     }
 }

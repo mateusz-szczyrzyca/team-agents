@@ -168,7 +168,7 @@ impl AutopilotPrompt {
             Self::NoticeNoVerdict => PromptSpec::new(
                 "harness/review/notice-no-verdict.md",
                 Audience::Human,
-                &["reviewer", "pr", "task"],
+                &["reviewer", "pr", "task", "why"],
             ),
             Self::NoticeDecision => PromptSpec::new(
                 "harness/review/notice-decision.md",

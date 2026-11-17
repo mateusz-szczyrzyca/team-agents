@@ -148,7 +148,7 @@ impl Owner {
     }
 
     /// Gets the worktree of `reviewer` ready for `head`: its own is moved there, or a new task with a worktree is made.
-    async fn prepare_reviewer(
+    pub(super) async fn prepare_reviewer(
         &mut self,
         git: &Git,
         lead: &Lead,
@@ -280,4 +280,21 @@ pub(super) struct Prepared {
     reviews: Vec<Review>,
     /// The new reviewers.
     made: Vec<Made>,
+}
+
+impl Prepared {
+    /// The reviews asked.
+    pub(super) fn reviews(&self) -> &[Review] {
+        &self.reviews
+    }
+
+    /// The new reviewers with what was made for them.
+    pub(super) fn made(&self) -> &[Made] {
+        &self.made
+    }
+
+    /// The tasks of the new reviewers.
+    pub(super) fn members(&self) -> impl Iterator<Item = &Member> {
+        self.made.iter().map(|made| &made.member)
+    }
 }

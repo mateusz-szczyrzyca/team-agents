@@ -87,11 +87,14 @@ rate_limit_pause_minutes = 5
 tail_lines = 30
 
 # Reviews: "changes requested" goes back to the team at most `fix_passes` times; then you are asked. The checks
-# before a review (see the repository's `checks` below) send a round back at most `check_passes` times.
+# before a review (see the repository's `checks` below) send a round back at most `check_passes` times. A reviewer whose
+# task failed or was stopped is replaced by another free investigator at once, and one that is paused (a quota, a rate
+# limit) after `replace_after_minutes`; when no investigator is free you are told.
 
 [review]
 fix_passes = 5
 check_passes = 2
+replace_after_minutes = 15
 
 # --- Git and GitHub ----------------------------------------------------------------------------------------------
 # The identity of every commit an agent makes; {agent} is the agent's name. `signing_key` is an SSH private key that
