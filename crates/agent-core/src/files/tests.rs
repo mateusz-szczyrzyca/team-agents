@@ -260,3 +260,35 @@ fn reference_link_preserved() {
     let result = link_files(input, REPO_URL, COMMIT, resolve_path);
     assert_eq!(result, input);
 }
+
+#[test]
+fn root_level_readme_linked() {
+    let input = "see README.md";
+    let result = link_files(input, REPO_URL, COMMIT, |path| path == "README.md");
+    assert_eq!(
+        result,
+        "see [`README.md`](https://github.com/owner/repo/blob/1234567/README.md)"
+    );
+}
+
+#[test]
+fn parentheses_in_path_encoded() {
+    let input = "`src/file(1).rs`";
+    let result = link_files(input, REPO_URL, COMMIT, |path| path == "src/file(1).rs");
+    assert_eq!(
+        result,
+        "[`src/file(1).rs`](https://github.com/owner/repo/blob/1234567/src/file%281%29.rs)"
+    );
+}
+
+#[test]
+fn path_with_commit_like_substring_not_double_linked() {
+    // Path with a1b2c3d substring should not be parsed as commit
+    let input = "see src/a1b2c3d_code.rs";
+    let result = link_files(input, REPO_URL, COMMIT, |path| path == "src/a1b2c3d_code.rs");
+    // Should link the path, not the substring
+    assert_eq!(
+        result,
+        "see [`src/a1b2c3d_code.rs`](https://github.com/owner/repo/blob/1234567/src/a1b2c3d_code.rs)"
+    );
+}
