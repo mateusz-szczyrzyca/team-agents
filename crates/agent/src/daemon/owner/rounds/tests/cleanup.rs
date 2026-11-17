@@ -470,3 +470,25 @@ async fn a_team_whose_other_items_were_ticked_in_the_list_removes_its_worktrees_
     cleaned(&rig, &tasks).await;
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_list_without_items_keeps_the_worktree_of_its_lead_when_the_lead_is_done() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "done"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    std::fs::write(rig.repo.join(".git/info/exclude"), ".fake-*\n").unwrap();
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["claude-1"], "Explain the layout.\n", MergeMode::Autopilot, None)
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Done).await;
+    rig.stop().await.unwrap();
+    assert!(rig.worktree(&tasks[0]).exists());
+}
