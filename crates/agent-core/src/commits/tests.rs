@@ -1,12 +1,13 @@
 use super::*;
 
+/// Repository used by the pure linker examples.
 const REPO_URL: &str = "https://github.com/owner/repo";
 
 // Helper to track which hashes were resolved
 fn resolve_hash(hash: &str) -> Option<String> {
     match hash {
-        "a1b2c3d" => Some("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4".to_string()),
-        "1234567" => Some("1234567890abcdef1234567890abcdef".to_string()),
+        "a1b2c3d" => Some("a1b2c3d000000000000000000000000000000000".to_string()),
+        "1234567" => Some("1234567000000000000000000000000000000000".to_string()),
         _ => None,
     }
 }
@@ -17,7 +18,7 @@ fn bare_hash_is_linked() {
     let result = link_commits(input, REPO_URL, resolve_hash);
     assert_eq!(
         result,
-        "see commit [a1b2c3d](https://github.com/owner/repo/commit/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4)"
+        "see commit [`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)"
     );
 }
 
@@ -27,7 +28,7 @@ fn backtick_enclosed_hash_is_linked() {
     let result = link_commits(input, REPO_URL, resolve_hash);
     assert_eq!(
         result,
-        "see commit [a1b2c3d](https://github.com/owner/repo/commit/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4)"
+        "see commit [`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)"
     );
 }
 
@@ -40,7 +41,7 @@ fn too_short_hash_unchanged() {
 
 #[test]
 fn too_long_hash_unchanged() {
-    let input = "see commit a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4";
+    let input = "see commit a1b2c3d000000000000000000000000000000000e5f6a1b2c3d4";
     let result = link_commits(input, REPO_URL, resolve_hash);
     assert_eq!(result, input);
 }
@@ -65,8 +66,8 @@ fn multiple_commits_linked() {
     let result = link_commits(input, REPO_URL, resolve_hash);
     assert_eq!(
         result,
-        "fixed in [a1b2c3d](https://github.com/owner/repo/commit/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4), \
-         see also [1234567](https://github.com/owner/repo/commit/1234567890abcdef1234567890abcdef)"
+        "fixed in [`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000), \
+         see also [`1234567`](https://github.com/owner/repo/commit/1234567000000000000000000000000000000000)"
     );
 }
 
@@ -76,7 +77,7 @@ fn hash_in_backticks_replaced() {
     let result = link_commits(input, REPO_URL, resolve_hash);
     assert_eq!(
         result,
-        "fixed in [a1b2c3d](https://github.com/owner/repo/commit/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4)"
+        "fixed in [`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)"
     );
 }
 
@@ -100,14 +101,14 @@ fn hash_outside_fence_linked_mixed() {
     let result = link_commits(input, REPO_URL, resolve_hash);
     assert_eq!(
         result,
-        "fixed [a1b2c3d](https://github.com/owner/repo/commit/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4)\n\
-         ```\na1b2c3d\n```\nalso [1234567](https://github.com/owner/repo/commit/1234567890abcdef1234567890abcdef)"
+        "fixed [`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)\n\
+         ```\na1b2c3d\n```\nalso [`1234567`](https://github.com/owner/repo/commit/1234567000000000000000000000000000000000)"
     );
 }
 
 #[test]
 fn existing_link_not_relinked() {
-    let input = "[a1b2c3d](https://github.com/owner/repo/commit/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4)";
+    let input = "[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
     let result = link_commits(input, REPO_URL, resolve_hash);
     assert_eq!(result, input);
 }
@@ -119,7 +120,7 @@ fn hash_at_boundaries() {
     let result = link_commits(input, REPO_URL, resolve_hash);
     assert_eq!(
         result,
-        "[a1b2c3d](https://github.com/owner/repo/commit/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4)"
+        "[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)"
     );
 
     // 40 chars - maximum (all zeros, unresolvable)
@@ -134,6 +135,6 @@ fn hash_with_surrounding_punctuation() {
     let result = link_commits(input, REPO_URL, resolve_hash);
     assert_eq!(
         result,
-        "commit: [a1b2c3d](https://github.com/owner/repo/commit/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4)."
+        "commit: [`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)."
     );
 }
