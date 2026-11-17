@@ -299,9 +299,17 @@ pub(super) fn decisions(subjects: &[Subject], file: &QuestionsFile) -> Decisions
 /// text of an item names files in passing; only what somebody added to the description discloses a file to the checks.
 #[must_use]
 pub(super) fn authored(description: &str, harness: &str) -> String {
-    let written: HashSet<&str> = harness.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    let written: HashSet<String> = harness
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(original_file_labels)
+        .collect();
     let mut kept: Vec<&str> = Vec::new();
-    for line in description.lines().filter(|line| !written.contains(line.trim())) {
+    for line in description
+        .lines()
+        .filter(|line| !written.contains(&original_file_labels(line.trim())))
+    {
         // The text that was taken out leaves its blank lines behind: a run of them is one.
         if line.trim().is_empty() && kept.last().is_some_and(|last| last.trim().is_empty()) {
             continue;
@@ -309,6 +317,43 @@ pub(super) fn authored(description: &str, harness: &str) -> String {
         kept.push(line);
     }
     kept.join("\n")
+}
+
+/// Removes only the exact blob-link spelling produced by the repository file linker.
+/// Publication commits may differ after a fix pass; the original item text still belongs to the harness.
+fn original_file_labels(line: &str) -> String {
+    let mut result = String::new();
+    let mut parts = line.split('[');
+    if let Some(prefix) = parts.next() {
+        result.push_str(prefix);
+    }
+    for part in parts {
+        if let Some((label, tail)) = original_file_label(part) {
+            result.push_str(label);
+            result.push_str(tail);
+        } else {
+            result.push('[');
+            result.push_str(part);
+        }
+    }
+    result
+}
+
+/// Recognizes the file link by reconstructing it, retaining unrelated author-written links.
+fn original_file_label(part: &str) -> Option<(&str, &str)> {
+    let (label, destination) = part.split_once("](")?;
+    let (url, tail) = destination.split_once(')')?;
+    let (repository, target) = url.rsplit_once("/blob/")?;
+    if !repository.starts_with("https://github.com/") {
+        return None;
+    }
+    let (revision, _path) = target.split_once('/')?;
+    // Invalid revisions identify ordinary author-written links, not generated file references.
+    let Ok(commit) = revision.parse::<agent_core::state::CommitId>() else {
+        return None;
+    };
+    let generated = agent_core::files::link_files(label, repository, commit.as_str(), |_| true);
+    (generated == format!("[{label}]({url})")).then_some((label, tail))
 }
 
 /// What the lead is told to put the questions number `number` in `file` to the human.
