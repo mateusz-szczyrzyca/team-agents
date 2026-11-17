@@ -767,6 +767,29 @@ fn line_anchor(suffix: &str) -> Option<String> {
     }
 }
 
+/// Escapes literal backslashes and unbalanced brackets without changing balanced labels.
+fn bare_label(word: &str) -> String {
+    let mut depth = 0_usize;
+    let mut unmatched = false;
+    for ch in word.chars() {
+        match ch {
+            '[' => depth = depth.saturating_add(1),
+            ']' if depth == 0 => unmatched = true,
+            ']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    let escape_brackets = unmatched || depth != 0;
+    let mut label = String::new();
+    for ch in word.chars() {
+        if ch == '\\' || (escape_brackets && matches!(ch, '[' | ']')) {
+            label.push('\\');
+        }
+        label.push(ch);
+    }
+    label
+}
+
 /// Resolves an exact root-relative file, never a traversal or an absolute path.
 fn file_link(
     word: &str,
@@ -790,7 +813,7 @@ fn file_link(
         return None;
     }
     let label = match style {
-        Style::Bare | Style::CommitOnly => word.to_owned(),
+        Style::Bare | Style::CommitOnly => bare_label(word),
         Style::Backticks => format!("`{word}`"),
     };
     let mut encoded = String::new();
