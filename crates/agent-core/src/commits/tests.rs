@@ -371,3 +371,21 @@ fn complete_links_take_precedence_over_shortcut_references() {
         assert_eq!(link_commits(&text, REPO_URL, resolve_hash), text);
     }
 }
+
+#[test]
+fn reference_definitions_preserve_relative_destinations_and_titles() {
+    let linked = "[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
+    for definition in [
+        "[ref]: path/a1b2c3d",
+        r#"[ref]: path/a1b2c3d "title a1b2c3d""#,
+        "[ref]: <path/a1b2c3d> 'title a1b2c3d'",
+        "   [ref]: path/a1b2c3d (title a1b2c3d)",
+        r#"[ref]: path/a1b2c3d "escaped \" a1b2c3d""#,
+    ] {
+        let input = format!("[ref]\n\n{definition}\n\na1b2c3d");
+        assert_eq!(
+            link_commits(&input, REPO_URL, resolve_hash),
+            format!("[ref]\n\n{definition}\n\n{linked}")
+        );
+    }
+}
