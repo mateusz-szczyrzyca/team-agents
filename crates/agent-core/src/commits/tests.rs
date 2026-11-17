@@ -389,3 +389,24 @@ fn reference_definitions_preserve_relative_destinations_and_titles() {
         );
     }
 }
+
+#[test]
+fn fences_keep_the_opening_container_context_and_list_indentation() {
+    let linked = "[`a1b2c3d`](https://github.com/owner/repo/commit/a1b2c3d000000000000000000000000000000000)";
+    for (code, prose) in [
+        ("~~~text\n> ~~~\na1b2c3d\n~~~\n", "a1b2c3d"),
+        ("```text\n- ```\na1b2c3d\n```\n", "a1b2c3d"),
+        ("- item\n\n    ~~~text\n    a1b2c3d\n    ~~~\n\n", "a1b2c3d"),
+        ("1. item\n\n    ```rust\n    a1b2c3d\n    ```\n\n", "a1b2c3d"),
+        ("> ~~~text\n> a1b2c3d\n", "a1b2c3d"),
+        ("- ~~~text\n  a1b2c3d\n", "a1b2c3d"),
+        ("- > ~~~text\n  > a1b2c3d\n", "a1b2c3d"),
+        ("> - item\n>\n>     ~~~text\n>     a1b2c3d\n>     ~~~\n", "a1b2c3d"),
+    ] {
+        assert_eq!(
+            link_commits(&format!("{code}{prose}"), REPO_URL, resolve_hash),
+            format!("{code}{linked}"),
+            "{code:?}"
+        );
+    }
+}
