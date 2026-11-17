@@ -54,6 +54,8 @@ pub enum AutopilotPrompt {
     NoticeNoVerdict,
     /// The notification that the reviewers still ask for changes and the human has to decide.
     NoticeDecision,
+    /// The notification that a pull request was merged.
+    NoticeMerged,
 }
 
 impl AutopilotPrompt {
@@ -80,6 +82,7 @@ impl AutopilotPrompt {
         Self::ReviewVerdictMissing,
         Self::NoticeNoVerdict,
         Self::NoticeDecision,
+        Self::NoticeMerged,
     ];
 
     /// Where the text is, who reads it and which variables it uses.
@@ -133,6 +136,11 @@ impl AutopilotPrompt {
             Self::NoticeClosed => {
                 PromptSpec::new("harness/pr/notice-closed.md", Audience::Human, &["team", "pr", "url"])
             }
+            Self::NoticeMerged => PromptSpec::new(
+                "harness/pr/notice-merged.md",
+                Audience::Human,
+                &["team", "pr", "url", "items"],
+            ),
             Self::ReviewRequest => PromptSpec::new(
                 "harness/review/request.md",
                 Audience::Model,

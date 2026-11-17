@@ -17,7 +17,7 @@ use agent_core::status::TaskStatus;
 use agent_runtime::process::error_chain;
 use agent_runtime::text_file::replace_text_file;
 
-use super::{Located, Notice, Owner, OwnerError};
+use super::{Located, Owner, OwnerError};
 use crate::daemon::questions::watch::{Report, Saved};
 use crate::daemon::questions::{self, Judgement, Loaded};
 
@@ -299,24 +299,34 @@ impl Owner {
         if self.incomplete.get(task) == Some(&problems) {
             return;
         }
-        let made = questions::incomplete_notification(
-            &self.parts.question_texts,
-            &open.located.agent,
-            task,
-            &open.path,
-            &problems,
-        );
-        self.incomplete.insert(task.clone(), problems);
-        match made {
-            Ok(notification) => match Timestamp::now(&self.parts.clock) {
-                Ok(now) => self.notify(now, &open.located, task, Notice::Prepared(notification)),
-                Err(error) => tracing::error!(
+        let now = match Timestamp::now(&self.parts.clock) {
+            Ok(now) => now,
+            Err(error) => {
+                tracing::error!(
                     event = LogEvent::NotificationFailed.as_str(),
                     task = %task,
                     %error,
                     "the clock gives no time for a notification"
-                ),
-            },
+                );
+                return;
+            }
+        };
+        let context = match self.notice_context(task, now, None) {
+            Ok(c) => c,
+            Err(error) => {
+                tracing::error!(
+                    event = LogEvent::NotificationFailed.as_str(),
+                    task = %task,
+                    %error,
+                    "an incomplete notification has no task context"
+                );
+                return;
+            }
+        };
+        let made = questions::incomplete_notification(&self.parts.question_texts, &context, &open.path, &problems);
+        self.incomplete.insert(task.clone(), problems);
+        match made {
+            Ok(notification) => self.notify(now, &open.located, task, notification),
             Err(error) => {
                 tracing::error!(
                     event = LogEvent::NotificationFailed.as_str(),

@@ -34,7 +34,8 @@ use agent_runtime::settings::Settings;
 use agent_runtime::store::StoreError;
 use agent_runtime::text_file::ReplaceError;
 
-use super::{Notice, Owner, OwnerError};
+use super::{Owner, OwnerError};
+use crate::daemon::notice::{NoticeContext, NoticeKind, layout_notification};
 
 use super::teams::Look;
 use crate::daemon::checks::ChecksTextError;
@@ -155,6 +156,13 @@ pub(super) enum Announcement {
     },
     /// The pull request was closed without being merged.
     Closed {
+        /// The team.
+        team: TeamId,
+        /// The pull request.
+        pr: PrNumber,
+    },
+    /// The pull request was merged.
+    Merged {
         /// The team.
         team: TeamId,
         /// The pull request.
@@ -297,15 +305,71 @@ struct Lead {
     done: bool,
 }
 
-/// The notification of the text `prompt` rendered with `values`: its first line is the title, the rest the body.
-fn notification(
-    texts: &AutopilotPrompts,
-    prompt: AutopilotPrompt,
-    values: &Variables,
-) -> Result<Notification, PublishError> {
-    let rendered = texts.render(prompt, values)?;
-    let (title, body) = rendered.split_once('\n').unwrap_or((rendered.as_str(), ""));
-    Ok(Notification::new(title.trim_end(), body.trim())?)
+/// The autopilot notifications sent to the human.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum AutopilotNotice {
+    /// Human decision needed.
+    Decision,
+    /// Reviewer completed without a verdict.
+    NoVerdict,
+    /// Branch publish failed.
+    PublishFailed,
+    /// Team asleep.
+    TeamAsleep,
+    /// Pull request closed without merge.
+    Closed,
+    /// Pull request approved.
+    Approved,
+    /// Pull request merge failed.
+    MergeFailed,
+    /// Pull request merged.
+    Merged,
+}
+
+impl AutopilotNotice {
+    /// The prompt template for this notice.
+    #[must_use]
+    pub(super) const fn prompt(self) -> AutopilotPrompt {
+        match self {
+            Self::Decision => AutopilotPrompt::NoticeDecision,
+            Self::NoVerdict => AutopilotPrompt::NoticeNoVerdict,
+            Self::PublishFailed => AutopilotPrompt::NoticePublishFailed,
+            Self::TeamAsleep => AutopilotPrompt::NoticeTeamAsleep,
+            Self::Closed => AutopilotPrompt::NoticeClosed,
+            Self::Approved => AutopilotPrompt::NoticeApproved,
+            Self::MergeFailed => AutopilotPrompt::NoticeMergeFailed,
+            Self::Merged => AutopilotPrompt::NoticeMerged,
+        }
+    }
+
+    /// The notification kind for this notice.
+    #[must_use]
+    pub(super) const fn kind(self) -> NoticeKind {
+        match self {
+            Self::Decision => NoticeKind::Decision,
+            Self::NoVerdict => NoticeKind::NoVerdict,
+            Self::PublishFailed => NoticeKind::PublishFailed,
+            Self::TeamAsleep => NoticeKind::TeamAsleep,
+            Self::Closed => NoticeKind::Closed,
+            Self::Approved => NoticeKind::Approved,
+            Self::MergeFailed => NoticeKind::MergeFailed,
+            Self::Merged => NoticeKind::Merged,
+        }
+    }
+
+    /// Renders this notice with `values` into a notification for `context`.
+    ///
+    /// # Errors
+    /// [`PublishError`] when variable rendering fails or layout fails.
+    fn render(
+        self,
+        texts: &AutopilotPrompts,
+        values: &Variables,
+        context: &NoticeContext<'_>,
+    ) -> Result<Notification, PublishError> {
+        let rendered = texts.render(self.prompt(), values)?;
+        Ok(layout_notification(self.kind(), context, &rendered)?)
+    }
 }
 
 impl Owner {
@@ -383,22 +447,41 @@ impl Owner {
         Ok(client)
     }
 
-    /// Tells the human `prompt` rendered with `values`, in the name of the lead; what cannot be made is logged: the
+    /// Tells the human `notice` rendered with `values`, in the name of the lead; what cannot be made is logged: the
     /// harness goes on.
     fn tell_human(
         &self,
         pulls: &Pulls,
-        prompt: AutopilotPrompt,
+        notice: AutopilotNotice,
         values: Result<Variables, VariablesError>,
         lead: &Lead,
         now: Timestamp,
     ) {
-        let made = values
-            .map_err(PublishError::from)
-            .and_then(|values| notification(&pulls.texts, prompt, &values));
+        let pr = values
+            .as_ref()
+            .ok()
+            .and_then(|v| v.names().find(|n| n.as_str() == "url").and_then(|n| v.get(n)))
+            .map(str::to_owned);
+        let context = match self.notice_context(&lead.task, now, pr.as_deref()) {
+            Ok(c) => c,
+            Err(error) => {
+                tracing::error!(
+                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
+                    task = %lead.task,
+                    %error,
+                    "a notification of the autopilot has no task context"
+                );
+                return;
+            }
+        };
+        let made = match values {
+            Ok(v) => notice.render(&pulls.texts, &v, &context),
+            Err(e) => Err(PublishError::from(e)),
+        };
         let notification = match made {
             Ok(notification) => notification,
             Err(error) => {
+                let prompt = notice.prompt();
                 tracing::error!(
                     event = agent_core::log::LogEvent::NotificationFailed.as_str(),
                     ?prompt,
@@ -409,7 +492,7 @@ impl Owner {
             }
         };
         match self.locate(&lead.task) {
-            Ok(located) => self.notify(now, &located, &lead.task, Notice::Prepared(notification)),
+            Ok(located) => self.notify(now, &located, &lead.task, notification),
             Err(error) => {
                 tracing::error!(
                     event = agent_core::log::LogEvent::NotificationFailed.as_str(),
@@ -435,18 +518,18 @@ impl Owner {
         Ok(())
     }
 
-    /// Tells the human `prompt` rendered with `values`, unless `announcement` was told before.
+    /// Tells the human `notice`, unless `announcement` was told before.
     fn announce(
         &mut self,
         pulls: &Pulls,
         lead: &Lead,
         announcement: Announcement,
-        prompt: AutopilotPrompt,
+        notice: AutopilotNotice,
         values: Result<Variables, VariablesError>,
         now: Timestamp,
     ) {
         if self.watch.announced.insert(announcement) {
-            self.tell_human(pulls, prompt, values, lead, now);
+            self.tell_human(pulls, notice, values, lead, now);
         }
     }
 }
@@ -527,3 +610,7 @@ mod turn_limit_restart_tests;
 #[cfg(test)]
 #[path = "rounds/tests/turn_limit_round.rs"]
 mod turn_limit_round_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/notice_mapping.rs"]
+mod notice_mapping_tests;

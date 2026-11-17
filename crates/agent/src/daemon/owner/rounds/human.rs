@@ -4,7 +4,7 @@
 use agent_core::decide::round::RoundPolicy;
 use agent_core::ids::TeamId;
 use agent_core::log::LogEvent;
-use agent_core::prompt::{AutopilotPrompt, Variables};
+use agent_core::prompt::Variables;
 use agent_core::protocol::EventKind;
 use agent_core::state::{ItemPhase, Timestamp};
 use agent_runtime::process::error_chain;
@@ -16,7 +16,7 @@ use crate::daemon::merge::{
 use crate::daemon::team::Why;
 
 use super::super::{Owner, OwnerError};
-use super::{Announcement, Lead, Pulls};
+use super::{Announcement, AutopilotNotice, Lead, Pulls};
 
 impl Owner {
     /// Gives the lead the fix pass that waits for it: its task is queued, and its prompt has the findings.
@@ -85,7 +85,7 @@ impl Owner {
             .with("team", team_id.as_str())
             .and_then(|values| values.with("pr", waits.pr.number.to_string()))
             .and_then(|values| values.with("passes", waits.passes.to_string()));
-        self.tell_human(pulls, AutopilotPrompt::NoticeDecision, values, lead, now);
+        self.tell_human(pulls, AutopilotNotice::Decision, values, lead, now);
         Ok(())
     }
 

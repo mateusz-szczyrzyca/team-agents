@@ -4,7 +4,7 @@ use agent_core::decide::reviewer::{Awaited, replace_now};
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{InvestigatorName, ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
-use agent_core::prompt::{AutopilotPrompt, Variables};
+use agent_core::prompt::Variables;
 use agent_core::state::{ItemPhase, PullRequest, ReviewOutcome, RunState, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::history::log_decision;
@@ -14,7 +14,7 @@ use rand::RngExt;
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
 use super::reviewers::Prepared;
-use super::{Announcement, Lead, PublishError, Pulls};
+use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 use crate::daemon::merge::count;
 use crate::daemon::review::{Reviewer, free_reviewers};
 
@@ -236,6 +236,6 @@ impl Owner {
             .and_then(|values| values.with("pr", gone.pr.number.to_string()))
             .and_then(|values| values.with("task", gone.task.as_str()))
             .and_then(|values| values.with("why", why));
-        self.tell_human(pulls, AutopilotPrompt::NoticeNoVerdict, values, lead, now);
+        self.tell_human(pulls, AutopilotNotice::NoVerdict, values, lead, now);
     }
 }

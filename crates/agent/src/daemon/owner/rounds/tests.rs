@@ -230,6 +230,9 @@ async fn a_lead_whose_gate_never_passes_is_sent_back_three_times_and_then_the_hu
     looked_again(&rig).await;
     rig.stop().await.unwrap();
 
+    assert!(notice.starts_with("📕 example\n"), "{notice}");
+    assert!(notice.contains("\nStatus: 📕 not published\n"), "{notice}");
+    assert!(notice.contains("Note: The pull request of "), "{notice}");
     assert!(
         notice.contains("the gate has not passed at the tip of the branch"),
         "{notice}"
@@ -364,6 +367,12 @@ async fn a_team_that_sleeps_with_its_item_unfinished_has_its_lead_woken_twice_an
     );
     assert!(second.contains("with: STATUS: SLEEPING"), "{second}");
     assert!(third.contains("woken for it 2 of 2"), "{third}");
+    assert!(notice.starts_with("💤 example\n"), "{notice}");
+    assert!(notice.contains("\nStatus: 💤 team asleep\n"), "{notice}");
+    assert!(
+        notice.contains(&format!("Note: Team {team} sleeps with item 1.1 unfinished")),
+        "{notice}"
+    );
     assert!(notice.contains(&format!("agent say {} ", tasks[0])), "{notice}");
     assert!(notice.contains(&format!("agent stop {team}")), "{notice}");
     // The first run and the two it was woken for; the human is told once.
@@ -437,7 +446,28 @@ async fn two_approving_reviews_merge_the_pull_request_through_the_api_at_the_hea
     let state = rig
         .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
         .await;
+    let merged_notice = rig.notification_with("Status: 🟣 merged").await;
+    assert!(merged_notice.starts_with("🟣 example\n"), "{merged_notice}");
+    assert!(merged_notice.contains("Status: 🟣 merged"), "{merged_notice}");
+    assert!(merged_notice.contains("Note: Pull request 1 of "), "{merged_notice}");
+    assert!(merged_notice.contains("/pull/1"), "{merged_notice}");
+    assert!(merged_notice.contains("1.1"), "{merged_notice}");
+
     rig.stop().await.unwrap();
+    rig.start().await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    let merged_notifications: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|n| n.starts_with("🟣 example\n"))
+        .collect();
+    assert_eq!(
+        merged_notifications.len(),
+        1,
+        "merged notification was repeated after restart: {merged_notifications:?}"
+    );
 
     let ItemPhase::Done { completion } = phase_of(&state, "1.1") else {
         panic!("item 1.1 is not done");
@@ -576,7 +606,8 @@ async fn when_every_item_is_merged_the_team_ends_its_reviewers_are_closed_and_th
         .await;
     rig.stop().await.unwrap();
 
-    assert!(notice.starts_with(&format!("Team {team} is finished\n")), "{notice}");
+    assert!(notice.starts_with("✅ example\n"), "{notice}");
+    assert!(notice.contains(&format!("Note: Team {team} is finished")), "{notice}");
     let found = state.team(&team).unwrap();
     for id in ["1.1", "1.2"] {
         assert!(
@@ -862,6 +893,9 @@ async fn when_the_fix_passes_are_used_up_the_lead_is_asked_to_put_the_question_t
     let state = rig.status_is(&tasks[0], TaskStatus::Questions).await;
     let prompt = rig.prompt(&tasks[0], 3).await;
     let notice = rig.notification_with("has questions").await;
+    assert!(notice.starts_with("❓ example\n"), "{notice}");
+    assert!(notice.contains("Status: ❓ waiting for answers"), "{notice}");
+    assert!(notice.contains("Task: "), "{notice}");
     rig.stop().await.unwrap();
 
     assert!(
@@ -930,6 +964,8 @@ async fn a_lead_that_ends_without_the_question_leaves_the_human_told_directly_on
     looked_again(&rig).await;
     rig.stop().await.unwrap();
 
+    assert!(notice.starts_with("❓ example\n"), "{notice}");
+    assert!(notice.contains("\nStatus: ❓ needs your decision\n"), "{notice}");
     assert!(notice.contains("pull request #1"), "{notice}");
     let told: Vec<_> = rig
         .notifications()
@@ -957,8 +993,13 @@ async fn with_no_merge_nothing_is_merged_and_the_human_is_told_that_the_pull_req
     looked_again(&rig).await;
     rig.stop().await.unwrap();
 
-    assert!(notice.starts_with("Pull request 1 of "), "{notice}");
-    assert!(notice.contains("pull/1"), "{notice}");
+    assert!(notice.starts_with("✅✅ example\n"), "{notice}");
+    assert!(notice.contains("\nStatus: ✅✅ approved: ready to merge\n"), "{notice}");
+    assert!(
+        notice.contains("\nPR: https://github.example.com/octo/example/pull/1\n"),
+        "{notice}"
+    );
+    assert!(notice.contains("Note: Pull request 1 of "), "{notice}");
     assert!(notice.contains("--no-merge"), "{notice}");
     assert_eq!(rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")), []);
     assert!(matches!(phase_of(&state, "1.1"), ItemPhase::Approved { .. }));
@@ -995,13 +1036,39 @@ async fn the_item_is_done_and_the_team_ends_when_the_human_merges_the_approved_p
     rig.start().await;
 
     rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
-    rig.notification_with("is approved").await;
+    let approved = rig.notification_with("is approved").await;
+    assert!(approved.starts_with("✅✅ example\n"), "{approved}");
+    assert!(
+        approved.contains("\nPR: https://github.example.com/octo/example/pull/1\n"),
+        "{approved}"
+    );
+
     rig.github.merged_by_a_human(1);
     let state = rig
         .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
         .await;
+    let merged_notice = rig.notification_with("Status: 🟣 merged").await;
+    assert!(merged_notice.starts_with("🟣 example\n"), "{merged_notice}");
+    assert!(merged_notice.contains("Status: 🟣 merged"), "{merged_notice}");
+    assert!(merged_notice.contains("Note: Pull request 1 of "), "{merged_notice}");
+    assert!(merged_notice.contains("/pull/1"), "{merged_notice}");
+    assert!(merged_notice.contains("1.1"), "{merged_notice}");
+
+    rig.stop().await.unwrap();
+    rig.start().await;
     let finished = rig.notification_with("is finished").await;
     rig.stop().await.unwrap();
+
+    let merged_notifications: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|n| n.starts_with("🟣 example\n"))
+        .collect();
+    assert_eq!(
+        merged_notifications.len(),
+        1,
+        "human merged notification was repeated after restart: {merged_notifications:?}"
+    );
 
     let ItemPhase::Done { completion } = phase_of(&state, "1.1") else {
         panic!("item 1.1 is not done");
@@ -1024,7 +1091,8 @@ async fn a_merge_that_github_refuses_is_told_to_the_human_once_and_is_not_tried_
     looked_again(&rig).await;
     rig.stop().await.unwrap();
 
-    assert!(notice.starts_with("Pull request 1 of "), "{notice}");
+    assert!(notice.starts_with("❌ example\n"), "{notice}");
+    assert!(notice.contains("Note: Pull request 1 of "), "{notice}");
     assert!(notice.contains("Pull Request is not mergeable"), "{notice}");
     assert!(matches!(phase_of(&state, "1.1"), ItemPhase::Approved { .. }));
     assert_eq!(
@@ -1065,12 +1133,19 @@ async fn a_pull_request_the_human_closed_without_merging_is_told_once_and_the_it
     rig.start().await;
 
     rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    rig.notification_with("could not be merged").await;
+    let merge_failed = rig.notification_with("could not be merged").await;
+    assert!(merge_failed.starts_with("❌ example\n"), "{merge_failed}");
+    assert!(merge_failed.contains("\nStatus: ❌ not merged\n"), "{merge_failed}");
+    assert!(merge_failed.contains("Note: Pull request 1 of "), "{merge_failed}");
+
     rig.github.closed_by_a_human(1);
     let notice = rig.notification_with("was closed").await;
     looked_again(&rig).await;
     rig.stop().await.unwrap();
 
+    assert!(notice.starts_with("🚫 example\n"), "{notice}");
+    assert!(notice.contains("\nStatus: 🚫 pull request closed\n"), "{notice}");
+    assert!(notice.contains("Note: Pull request 1 of "), "{notice}");
     assert!(
         notice.contains("pull request #1") || notice.contains("Pull request 1"),
         "{notice}"

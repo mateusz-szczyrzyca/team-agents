@@ -237,6 +237,7 @@ impl Daemon {
             rng: StdRng::seed_from_u64(1),
             notices,
             events,
+            local_offset: time::UtcOffset::UTC,
             tick: Duration::from_millis(20),
             store,
             settings,

@@ -532,7 +532,8 @@ async fn a_solo_task_is_started_runs_to_done_and_its_team_is_closed_and_told_to_
         .into_iter()
         .find(|text| text.contains("is finished"))
         .unwrap();
-    assert!(notice.starts_with(&format!("Team {team} is finished\n")), "{notice}");
+    assert!(notice.starts_with("✅ example\n"), "{notice}");
+    assert!(notice.contains(&format!("Note: Team {team} is finished")), "{notice}");
 }
 
 #[tokio::test]

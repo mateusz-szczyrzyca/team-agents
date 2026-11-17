@@ -189,6 +189,8 @@ pub(crate) enum DoneNoticeError {
     Invalid(#[from] InvalidNotification),
 }
 
+use crate::daemon::notice::{NoticeContext, NoticeKind as HumanNoticeKind, layout_notification};
+
 /// The notification for the human that `team` is finished.
 ///
 /// # Errors
@@ -196,15 +198,14 @@ pub(crate) enum DoneNoticeError {
 pub(in crate::daemon) fn team_done_notification(
     texts: &TeamPrompts,
     team: &Team,
+    context: &NoticeContext<'_>,
 ) -> Result<Notification, DoneNoticeError> {
     let values = Variables::new()
         .with("team", team.id().as_str())?
         .with("repo", team.repo().as_str())?
         .with("items", team.items().len().to_string())?;
     let rendered = texts.render(TeamPrompt::NoticeTeamDone, &values)?;
-    // The first line is the title, what follows is the body.
-    let (title, body) = rendered.split_once('\n').unwrap_or((rendered.as_str(), ""));
-    Ok(Notification::new(title.trim_end(), body.trim())?)
+    Ok(layout_notification(HumanNoticeKind::TeamDone, context, &rendered)?)
 }
 
 /// The `status` detail of the notice of a request a worker finished, as the bus words it.

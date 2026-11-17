@@ -182,9 +182,29 @@ async fn the_notification_that_a_team_is_finished_names_the_team_the_repository_
     let texts = texts().await;
     let team = crate::daemon::team::support::crew_of(crate::daemon::team::support::CHAIN, 1, 0);
 
-    let notification = team_done_notification(&texts, &team).unwrap();
+    let task_id = "task-20261111-191500-1111".parse().unwrap();
+    let context = NoticeContext {
+        repo: team.repo().as_str(),
+        agent: "codex-1",
+        cli: Some(agent_core::kinds::CliKind::Codex),
+        model: None,
+        time: crate::fixtures::at(0),
+        offset: time::UtcOffset::UTC,
+        task: &task_id,
+        team: Some(team.id()),
+        pr: None,
+    };
+    let notification = team_done_notification(&texts, &team, &context).unwrap();
 
-    assert_eq!(notification.title(), format!("Team {} is finished", team.id()));
+    assert_eq!(notification.title(), format!("✅ {}", team.repo()));
+    assert!(notification.body().contains("Status: ✅ done"));
+    assert!(
+        notification
+            .body()
+            .contains(&format!("Note: Team {} is finished", team.id())),
+        "{}",
+        notification.body()
+    );
     assert!(
         notification
             .body()

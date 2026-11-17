@@ -9,6 +9,7 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
 
+use crate::daemon::notice::{NoticeContext, NoticeKind, layout_notification};
 use agent_core::ids::TaskId;
 use agent_core::prompt::{QuestionsPrompt, Variables, VariablesError};
 use agent_core::protocol::{AnswerList, Failure, FailureKind};
@@ -191,20 +192,17 @@ pub(super) fn judge(file: &QuestionsFile) -> Judgement {
 /// [`TextError`] when the text cannot be rendered or is not a notification.
 pub(super) fn incomplete_notification(
     texts: &QuestionsPrompts,
-    agent: &str,
-    task: &TaskId,
+    context: &NoticeContext<'_>,
     path: &Path,
     problems: &str,
 ) -> Result<Notification, TextError> {
     let values = Variables::new()
-        .with("agent", agent)?
-        .with("task", task.as_str())?
+        .with("agent", context.agent)?
+        .with("task", context.task.as_str())?
         .with("file", path.display().to_string())?
         .with("problems", problems)?;
     let rendered = texts.render(QuestionsPrompt::NoticeIncomplete, &values)?;
-    // The first line is the title, what follows is the body.
-    let (title, body) = rendered.split_once('\n').unwrap_or((rendered.as_str(), ""));
-    Ok(Notification::new(title.trim_end(), body.trim())?)
+    Ok(layout_notification(NoticeKind::Incomplete, context, &rendered)?)
 }
 
 /// The questions of `problems`, one on each line: its number, its title and what is wrong.

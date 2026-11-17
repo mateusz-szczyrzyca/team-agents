@@ -146,8 +146,15 @@ Write `allow` to let the round go to its review as it is; the harness records it
 
 **Verdict:**
   ----- end of questions -----
-<time>  notification sent: claude-1 has questions (<task-4>)
-  ----- notification (259 bytes) -----
+<time>  notification sent: ❓ example (task <task-4>)
+  ----- notification (443 bytes) -----
+Repo: example
+Agent: claude-1 (claude)
+Time: <time>
+Task: <task-4>
+Status: ❓ waiting for answers
+Note: claude-1 has questions (<task-4>)
+
 Questions number 1 of task <task-4> wait for your answers in <home>/tasks/<task-4>/questions-1.md.
 Answer in the file (put **ANSWERED** on its last line and save) or run `agent answer <task-4>`.
   ----- end of notification -----

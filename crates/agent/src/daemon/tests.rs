@@ -292,7 +292,8 @@ async fn a_run_that_asks_questions_records_the_round_and_tells_the_human() {
     assert!(file.is_file());
     let notes = f.notifications();
     assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(notes[0].starts_with("claude-1 has questions"), "{}", notes[0]);
+    assert!(notes[0].starts_with("❓ "), "{}", notes[0]);
+    assert!(notes[0].contains("Note: claude-1 has questions"), "{}", notes[0]);
     assert!(notes[0].contains(file.to_str().unwrap()), "{}", notes[0]);
 }
 
@@ -364,7 +365,8 @@ async fn after_the_configured_strikes_the_task_is_hung_and_the_human_is_told() {
     assert!(runs.iter().all(|run| end_of(run) == &RunEnd::Hung));
     let notes = f.notifications();
     assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(notes[0].starts_with("claude-1 is hung"), "{}", notes[0]);
+    assert!(notes[0].starts_with("⌛ "), "{}", notes[0]);
+    assert!(notes[0].contains("Note: claude-1 is hung"), "{}", notes[0]);
     assert!(notes[0].contains("2 times"), "{}", notes[0]);
 }
 

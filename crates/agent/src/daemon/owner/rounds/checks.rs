@@ -22,10 +22,11 @@ use agent_runtime::notify::Notification;
 use agent_runtime::text_file::replace_text_file;
 
 use super::super::start::next_number;
-use super::super::{Notice, Owner, OwnerError};
+use super::super::{Owner, OwnerError};
 use super::publish::{Ready, Site};
 use super::{Announcement, Lead, PublishError, Pulls};
 use crate::daemon::checks::{MAX_RELAYS, authored, decisions, named, questions, reason, team_message};
+use crate::daemon::notice::{NoticeContext, NoticeKind, layout_notification};
 use crate::daemon::questions;
 use crate::daemon::team::Why;
 
@@ -365,15 +366,25 @@ impl Owner {
                     return Ok(());
                 }
                 let now = Timestamp::now(&self.parts.clock)?;
-                match not_asked(pulls, team_id, &lead.task) {
-                    Ok(notification) => match self.locate(&lead.task) {
-                        Ok(located) => self.notify(now, &located, &lead.task, Notice::Prepared(notification)),
+                match self.notice_context(&lead.task, now, None) {
+                    Ok(context) => match not_asked(pulls, team_id, &lead.task, &context) {
+                        Ok(notification) => match self.locate(&lead.task) {
+                            Ok(located) => self.notify(now, &located, &lead.task, notification),
+                            Err(error) => {
+                                tracing::error!(
+                                    event = agent_core::log::LogEvent::NotificationFailed.as_str(),
+                                    task = %lead.task,
+                                    %error,
+                                    "a notification of the checks has no task to be about"
+                                );
+                            }
+                        },
                         Err(error) => {
                             tracing::error!(
                                 event = agent_core::log::LogEvent::NotificationFailed.as_str(),
                                 task = %lead.task,
-                                %error,
-                                "a notification of the checks has no task to be about"
+                                error = %agent_runtime::process::error_chain(&error),
+                                "a notification of the checks cannot be made"
                             );
                         }
                     },
@@ -381,8 +392,8 @@ impl Owner {
                         tracing::error!(
                             event = agent_core::log::LogEvent::NotificationFailed.as_str(),
                             task = %lead.task,
-                            error = %agent_runtime::process::error_chain(&error),
-                            "a notification of the checks cannot be made"
+                            %error,
+                            "a notification of the checks has no task context"
                         );
                     }
                 }
@@ -401,7 +412,12 @@ fn issue_lines(pulls: &Pulls, issues: &[Issue]) -> Result<Vec<String>, PublishEr
 }
 
 /// The notification that the lead `task` of `team` did not put the question of the checks to the human.
-fn not_asked(pulls: &Pulls, team: &TeamId, task: &TaskId) -> Result<Notification, PublishError> {
+fn not_asked(
+    pulls: &Pulls,
+    team: &TeamId,
+    task: &TaskId,
+    context: &NoticeContext<'_>,
+) -> Result<Notification, PublishError> {
     let values = Variables::new()
         .with("team", team.as_str())?
         .with("task", task.as_str())?;
@@ -409,6 +425,5 @@ fn not_asked(pulls: &Pulls, team: &TeamId, task: &TaskId) -> Result<Notification
         .checks()
         .render(agent_core::prompt::ChecksPrompt::NoticeNotAsked, &values)
         .map_err(crate::daemon::checks::ChecksTextError::from)?;
-    let (title, body) = rendered.split_once('\n').unwrap_or((rendered.as_str(), ""));
-    Ok(Notification::new(title.trim_end(), body.trim())?)
+    Ok(layout_notification(NoticeKind::NotAsked, context, &rendered)?)
 }

@@ -20,7 +20,7 @@ use crate::daemon::review::{VerdictProblem, parse_verdict, report_text};
 use crate::daemon::team::Why;
 
 use super::super::{Located, Owner, OwnerError};
-use super::{Announcement, Lead, PublishError, Pulls};
+use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 
 /// How many times a report without a verdict is sent back before the human is told.
 pub(super) const MAX_VERDICT_BOUNCES: u32 = 2;
@@ -232,7 +232,7 @@ impl Owner {
             .and_then(|values| values.with("pr", asked.pr.number.to_string()))
             .and_then(|values| values.with("task", task.as_str()))
             .and_then(|values| values.with("why", NO_VERDICT_LINE));
-        self.tell_human(pulls, AutopilotPrompt::NoticeNoVerdict, values, &lead, now);
+        self.tell_human(pulls, AutopilotNotice::NoVerdict, values, &lead, now);
         Ok(())
     }
 

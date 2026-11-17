@@ -177,10 +177,18 @@ async fn zero_resumes_notifies_with_the_exact_exhaustion_text_and_restart_does_n
         .filter(|n| n.contains("turn limit"))
         .collect();
     assert_eq!(notices.len(), 1);
-    assert_eq!(
-        notices[0].replace(tasks[0].as_str(), "<TASK>"),
-        include_str!("../../../../../tests/fixtures/turn-limit/exhausted.txt").trim_end()
-    );
+    let (expected_title, expected_body) = include_str!("../../../../../tests/fixtures/turn-limit/exhausted.txt")
+        .trim_end()
+        .split_once('\n')
+        .unwrap();
+    assert!(notices[0].starts_with("❌ example\n"));
+    assert!(notices[0].contains("\nRepo: example\n"));
+    assert!(notices[0].contains("\nAgent: claude-1 (claude)\n"));
+    assert!(notices[0].contains(&format!("\nTask: {}\n", tasks[0])));
+    assert!(notices[0].contains("\nStatus: ❌ failed\n"));
+    assert!(notices[0].contains(&format!("\nNote: {expected_title}\n\n")));
+    let body_part = notices[0].split("\n\n").nth(1).unwrap();
+    assert_eq!(body_part.replace(tasks[0].as_str(), "<TASK>"), expected_body);
     assert_eq!(rig.runs(&tasks[0]), 1);
     rig.start().await;
     rig.status_is(&tasks[0], TaskStatus::Failed).await;
