@@ -1,6 +1,7 @@
 //! `agent debug` on the command line: parsing, validation, offline fallback, and end-to-end execution.
 
 use std::ffi::OsString;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -191,8 +192,9 @@ fn setup_test_home() -> (tempfile::TempDir, Home, State, TeamId, TaskId, TaskId,
     run_git(&member_wt, &["commit", "-q", "--allow-empty", "-m", "member work"]);
 
     std::fs::write(home.state_file(), state.to_json().unwrap()).unwrap();
-    std::fs::write(home.secrets_file(), "[secrets]\n").unwrap();
-    std::fs::write(home.config_file(), "[settings]\n").unwrap();
+    std::fs::write(home.secrets_file(), "").unwrap();
+    std::fs::set_permissions(home.secrets_file(), std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(home.config_file(), "").unwrap();
 
     (dir, home, state, team, lead_task, member_task, round)
 }
@@ -393,6 +395,7 @@ fn debug_redaction_secrets_prompt_raw_stdout_and_env_values() {
     let secrets_content =
         format!("github_token = \"{secret_token}\"\n[agent_env]\nAPI_KEY = \"sk-supersecret9876543210\"\n");
     std::fs::write(home.secrets_file(), secrets_content).unwrap();
+    std::fs::set_permissions(home.secrets_file(), std::fs::Permissions::from_mode(0o600)).unwrap();
 
     let prompt_file = home.task_dir(&member_task).join("prompt.md");
     std::fs::write(&prompt_file, format!("Prompt with {secret_token} inside")).unwrap();
