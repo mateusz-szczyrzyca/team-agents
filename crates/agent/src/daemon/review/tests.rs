@@ -478,3 +478,21 @@ gate = ["true"]
         assert_eq!(seen.len(), 4, "{seen:?}");
     }
 }
+
+#[test]
+fn removing_the_first_verdict_preserves_every_other_report_byte() {
+    for (report, expected) in [
+        (
+            "\r\n**VERDICT: APPROVE**\r\n\r\nSUMMARY: café\r\n",
+            "\r\n\r\nSUMMARY: café\r\n",
+        ),
+        (
+            "before\nVERDICT: APPROVE\n\nVERDICT: REQUEST_CHANGES\nafter",
+            "before\n\nVERDICT: REQUEST_CHANGES\nafter",
+        ),
+        ("VERDICT: APPROVE", ""),
+        ("\nSUMMARY: no verdict\n", "\nSUMMARY: no verdict\n"),
+    ] {
+        assert_eq!(super::report_without_verdict(report), expected);
+    }
+}
