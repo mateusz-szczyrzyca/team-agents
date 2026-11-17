@@ -301,15 +301,19 @@ Build the thing.
     )
     .await;
 
-    let prompt_dir = rig.home.prompts_dir().join("harness/pr");
-    std::fs::create_dir_all(&prompt_dir).unwrap();
+    let catalog = rig.home.prompts_dir();
+    copy_prompt_catalog(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &catalog,
+    )
+    .unwrap();
     std::fs::write(
-        prompt_dir.join("update.md"),
+        catalog.join("harness/pr/update.md"),
         "The branch was updated to `{{head}}` for README.md:1-5 after fix pass {{pass}} (the gate: {{gate}}).\n",
     )
     .unwrap();
 
-    rig.start().await;
+    rig.start_with_prompts(&catalog).await;
 
     let (_, tasks) = rig.run(&["claude-1"], TASK_LIST, MergeMode::Autopilot, None).await;
     rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
@@ -374,4 +378,19 @@ Build the thing.
         body3.contains(&expected_r1_p2_link),
         "Review pass 2 missing backticked file link: {body3}"
     );
+}
+
+/// Copies the real prompt catalog so a scenario can override a text without touching shared files.
+fn copy_prompt_catalog(source: &std::path::Path, destination: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_prompt_catalog(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
 }
