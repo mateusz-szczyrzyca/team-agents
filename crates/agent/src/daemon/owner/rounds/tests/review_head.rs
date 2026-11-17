@@ -38,7 +38,7 @@ async fn review_head_and_commit_links_in_reviews_pr_description_and_update_comme
     assert_eq!(pulls.len(), 1);
     let pr_body = &pulls[0].body;
     let short_initial = initial_head.get(..7).unwrap();
-    let expected_pr_link = format!("[{short_initial}](https://github.com/{SLUG}/commit/{initial_head})");
+    let expected_pr_link = format!("[`{short_initial}`](https://github.com/{SLUG}/commit/{initial_head})");
     assert!(
         pr_body.contains(&expected_pr_link),
         "PR body missing commit link: {pr_body}"
