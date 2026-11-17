@@ -13,47 +13,108 @@ struct Fence {
     width: usize,
 }
 
-/// Removes Markdown blockquote and list markers before a possible fence.
-fn container_content(mut line: &str) -> Option<&str> {
-    loop {
-        let content = line.trim_start_matches(' ');
-        if line.len().saturating_sub(content.len()) > 3 {
-            return None;
+/// The Markdown block that must continue for its fenced code to remain open.
+#[derive(Debug)]
+enum Container {
+    /// A blockquote requires a quote marker on each non-lazy code line.
+    Quote,
+    /// A list item requires this many spaces on its continuation lines.
+    List(usize),
+}
+
+/// Container ancestry persists across lines; an active fence fixes that ancestry.
+#[derive(Debug, Default)]
+struct Blocks {
+    /// Containers enclosing the current line, in outer-to-inner order.
+    containers: Vec<Container>,
+    /// An open code fence within exactly these containers.
+    active: Option<Fence>,
+}
+
+/// Strips at most three spaces, the indentation allowed before a block marker.
+fn marker_content(line: &str) -> Option<&str> {
+    let content = line.trim_start_matches(' ');
+    (line.len().saturating_sub(content.len()) <= 3).then_some(content)
+}
+
+/// Matches one existing container without interpreting any new block markers.
+fn continuation<'a>(line: &'a str, container: &Container) -> Option<&'a str> {
+    match container {
+        Container::Quote => {
+            let rest = marker_content(line)?.strip_prefix('>')?;
+            Some(rest.strip_prefix(' ').unwrap_or(rest))
         }
-        if let Some(rest) = content.strip_prefix('>') {
-            line = rest.strip_prefix(' ').unwrap_or(rest);
-            continue;
-        }
-        let mut chars = content.chars();
-        let first = chars.next()?;
-        let rest = if matches!(first, '-' | '+' | '*') {
-            chars.as_str()
-        } else if first.is_ascii_digit() {
-            let after_digits = content.trim_start_matches(|ch: char| ch.is_ascii_digit());
-            if content.len().saturating_sub(after_digits.len()) > 9 {
-                return Some(content);
+        Container::List(width) => {
+            if line.trim().is_empty() {
+                return Some(line);
             }
-            match after_digits
-                .strip_prefix('.')
-                .or_else(|| after_digits.strip_prefix(')'))
-            {
-                Some(rest) => rest,
-                None => return Some(content),
+            let mut rest = line;
+            for _ in 0..*width {
+                rest = rest.strip_prefix(' ')?;
             }
-        } else {
-            return Some(content);
-        };
-        if let Some(rest) = rest.strip_prefix(' ') {
-            line = rest;
-        } else {
-            return Some(content);
+            Some(rest)
         }
     }
 }
 
-/// Reads a Markdown fence after container markers and at most three leading spaces.
-fn fence(line: &str) -> Option<(Fence, &str)> {
-    let content = container_content(line)?;
+/// Reads a list marker and its padding, returning the continuation indentation.
+fn list_marker(content: &str) -> Option<(usize, &str)> {
+    let mut chars = content.chars();
+    let first = chars.next()?;
+    let rest = if matches!(first, '-' | '+' | '*') {
+        chars.as_str()
+    } else if first.is_ascii_digit() {
+        let after_digits = content.trim_start_matches(|ch: char| ch.is_ascii_digit());
+        if content.len().saturating_sub(after_digits.len()) > 9 {
+            return None;
+        }
+        after_digits
+            .strip_prefix('.')
+            .or_else(|| after_digits.strip_prefix(')'))?
+    } else {
+        return None;
+    };
+    let after_space = rest.strip_prefix(' ')?;
+    let trimmed = rest.trim_start_matches(' ');
+    let padding = rest.len().saturating_sub(trimmed.len());
+    // Five spaces begin indented code, rather than additional marker padding.
+    let body = if padding <= 4 { trimmed } else { after_space };
+    Some((content.len().saturating_sub(body.len()), body))
+}
+
+/// Advances container ancestry, ending a fence when any enclosing block ends.
+fn block_content<'a>(line: &'a str, blocks: &mut Blocks) -> &'a str {
+    let mut content = line;
+    for (depth, container) in blocks.containers.iter().enumerate() {
+        if let Some(rest) = continuation(content, container) {
+            content = rest;
+        } else {
+            blocks.containers.truncate(depth);
+            blocks.active = None;
+            break;
+        }
+    }
+    if blocks.active.is_some() {
+        return content;
+    }
+    while let Some(trimmed) = marker_content(content) {
+        if let Some(rest) = trimmed.strip_prefix('>') {
+            blocks.containers.push(Container::Quote);
+            content = rest.strip_prefix(' ').unwrap_or(rest);
+        } else if let Some((width, rest)) = list_marker(trimmed) {
+            let indent = content.len().saturating_sub(trimmed.len());
+            blocks.containers.push(Container::List(indent.saturating_add(width)));
+            content = rest;
+        } else {
+            break;
+        }
+    }
+    content
+}
+
+/// Reads a Markdown fence within its already matched container context.
+fn fence(content: &str) -> Option<(Fence, &str)> {
+    let content = marker_content(content)?;
     let marker = content.chars().next()?;
     if marker != '`' && marker != '~' {
         return None;
@@ -64,21 +125,22 @@ fn fence(line: &str) -> Option<(Fence, &str)> {
 }
 
 /// Tracks fence transitions and reports whether this line belongs to a code block.
-fn fenced_line(line: &str, active: &mut Option<Fence>) -> bool {
-    let delimiter = fence(line);
-    if let Some(open) = *active {
+fn fenced_line(line: &str, blocks: &mut Blocks) -> bool {
+    let content = block_content(line, blocks);
+    let delimiter = fence(content);
+    if let Some(open) = blocks.active {
         if let Some((closing, rest)) = delimiter
             && closing.marker == open.marker
             && closing.width >= open.width
             && rest.trim().is_empty()
         {
-            *active = None;
+            blocks.active = None;
         }
         true
     } else if let Some((opening, rest)) = delimiter
         && (opening.marker != '`' || !rest.contains('`'))
     {
-        *active = Some(opening);
+        blocks.active = Some(opening);
         true
     } else {
         false
@@ -201,7 +263,7 @@ fn reference_label(label: &str) -> String {
 /// Finds complete reference definitions so shortcuts also work before their definition.
 fn references(text: &str) -> HashSet<String> {
     let mut labels = HashSet::new();
-    let mut active = None;
+    let mut active = Blocks::default();
     for line in text.lines() {
         if !fenced_line(line, &mut active)
             && let Some(label) = reference_definition(line)
@@ -517,7 +579,7 @@ fn link_prose(
 pub fn link_commits(text: &str, repo_url: &str, mut resolve: impl FnMut(&str) -> Option<String>) -> String {
     let mut result = String::with_capacity(text.len());
     let mut prose = String::new();
-    let mut active: Option<Fence> = None;
+    let mut active = Blocks::default();
     let references = references(text);
     for line in text.split_inclusive('\n') {
         if fenced_line(line, &mut active) || reference_definition(line).is_some() {
