@@ -301,18 +301,6 @@ struct Lead {
     done: bool,
 }
 
-/// The notification of the text `prompt` rendered with `values`: its first line is the title, the rest the body.
-fn notification(
-    texts: &AutopilotPrompts,
-    prompt: AutopilotPrompt,
-    values: &Variables,
-    notice: NoticeKind,
-    context: &NoticeContext<'_>,
-) -> Result<Notification, PublishError> {
-    let rendered = texts.render(prompt, values)?;
-    Ok(layout_notification(notice, context, &rendered)?)
-}
-
 /// The autopilot notifications sent to the human.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum AutopilotNotice {
@@ -336,6 +324,7 @@ pub(super) enum AutopilotNotice {
 
 impl AutopilotNotice {
     /// The prompt template for this notice.
+    #[must_use]
     pub(super) const fn prompt(self) -> AutopilotPrompt {
         match self {
             Self::Decision => AutopilotPrompt::NoticeDecision,
@@ -350,6 +339,7 @@ impl AutopilotNotice {
     }
 
     /// The notification kind for this notice.
+    #[must_use]
     pub(super) const fn kind(self) -> NoticeKind {
         match self {
             Self::Decision => NoticeKind::Decision,
@@ -361,6 +351,20 @@ impl AutopilotNotice {
             Self::MergeFailed => NoticeKind::MergeFailed,
             Self::Merged => NoticeKind::Merged,
         }
+    }
+
+    /// Renders this notice with `values` into a notification for `context`.
+    ///
+    /// # Errors
+    /// [`PublishError`] when variable rendering fails or layout fails.
+    fn render(
+        self,
+        texts: &AutopilotPrompts,
+        values: &Variables,
+        context: &NoticeContext<'_>,
+    ) -> Result<Notification, PublishError> {
+        let rendered = texts.render(self.prompt(), values)?;
+        Ok(layout_notification(self.kind(), context, &rendered)?)
     }
 }
 
@@ -448,8 +452,6 @@ impl Owner {
         lead: &Lead,
         now: Timestamp,
     ) {
-        let prompt = notice.prompt();
-        let notice_kind = notice.kind();
         let pr = values
             .as_ref()
             .ok()
@@ -468,12 +470,13 @@ impl Owner {
             }
         };
         let made = match values {
-            Ok(v) => notification(&pulls.texts, prompt, &v, notice_kind, &context),
+            Ok(v) => notice.render(&pulls.texts, &v, &context),
             Err(e) => Err(PublishError::from(e)),
         };
         let notification = match made {
             Ok(notification) => notification,
             Err(error) => {
+                let prompt = notice.prompt();
                 tracing::error!(
                     event = agent_core::log::LogEvent::NotificationFailed.as_str(),
                     ?prompt,
