@@ -1,5 +1,6 @@
 //! Pure Markdown rewriting of repository commit references.
 
+use std::collections::HashSet;
 use std::iter::Peekable;
 use std::str::Chars;
 
@@ -82,12 +83,20 @@ fn push_link(result: &mut String, word: &str, repo_url: &str, full: &str) {
 /// Consumes a balanced link label or destination, preserving escapes verbatim.
 fn balanced(chars: &mut Peekable<Chars<'_>>, open: char, close: char, text: &mut String) -> bool {
     let mut depth = 1_usize;
+    let mut quote = None;
+    let mut previous = open;
     while let Some(ch) = chars.next() {
         text.push(ch);
         if ch == '\\' {
             if let Some(escaped) = chars.next() {
                 text.push(escaped);
             }
+        } else if quote == Some(ch) {
+            quote = None;
+        } else if quote.is_some() {
+            continue;
+        } else if open == '(' && previous.is_whitespace() && matches!(ch, '\'' | '"') {
+            quote = Some(ch);
         } else if ch == open {
             depth = depth.saturating_add(1);
         } else if ch == close {
@@ -96,6 +105,7 @@ fn balanced(chars: &mut Peekable<Chars<'_>>, open: char, close: char, text: &mut
                 return true;
             }
         }
+        previous = ch;
     }
     false
 }
@@ -113,6 +123,43 @@ fn starts_autolink(mut chars: Peekable<Chars<'_>>) -> bool {
         }
     }
     false
+}
+
+/// Recognizes an angle-delimited email address without consuming following prose.
+fn starts_email(chars: Peekable<Chars<'_>>) -> bool {
+    let address: String = chars.take_while(|ch| *ch != '>').collect();
+    let Some((local, domain)) = address.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && domain.contains('.')
+        && !address.chars().any(|ch| ch.is_whitespace() || matches!(ch, '<' | '>'))
+}
+
+/// Normalizes reference labels according to their case-insensitive whitespace rules.
+fn reference_label(label: &str) -> String {
+    label.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// Finds complete reference definitions so shortcuts also work before their definition.
+fn references(text: &str) -> HashSet<String> {
+    text.lines().filter_map(reference_definition).collect()
+}
+
+/// Reads a reference definition's label while preserving its source spelling elsewhere.
+fn reference_definition(line: &str) -> Option<String> {
+    let content = line.trim_start_matches(' ');
+    if line.len().saturating_sub(content.len()) > 3 {
+        return None;
+    }
+    let mut chars = content.strip_prefix('[')?.chars().peekable();
+    let mut label = String::new();
+    if !balanced(&mut chars, '[', ']', &mut label) || chars.next() != Some(':') {
+        return None;
+    }
+    label.pop()?;
+    let destination: String = chars.collect();
+    (!destination.trim().is_empty()).then(|| reference_label(&label))
 }
 
 /// Consumes a code span only when an equally wide closing backtick run exists.
@@ -224,7 +271,12 @@ fn html(chars: &mut Peekable<Chars<'_>>) -> Option<String> {
 }
 
 /// Protects existing inline and reference links while rewriting ordinary prose.
-fn link_prose(text: &str, repo_url: &str, resolve: &mut impl FnMut(&str) -> Option<String>) -> String {
+fn link_prose(
+    text: &str,
+    repo_url: &str,
+    resolve: &mut impl FnMut(&str) -> Option<String>,
+    references: &HashSet<String>,
+) -> String {
     let mut result = String::with_capacity(text.len());
     let mut prose = String::new();
     let mut chars = text.chars().peekable();
@@ -258,7 +310,7 @@ fn link_prose(text: &str, repo_url: &str, resolve: &mut impl FnMut(&str) -> Opti
             result.push_str(&raw);
             continue;
         }
-        if ch == '<' && starts_autolink(chars.clone()) {
+        if ch == '<' && (starts_autolink(chars.clone()) || starts_email(chars.clone())) {
             let mut link = String::from('<');
             let mut closed = false;
             let mut lookahead = chars.clone();
@@ -289,6 +341,18 @@ fn link_prose(text: &str, repo_url: &str, resolve: &mut impl FnMut(&str) -> Opti
         let mut link = String::from('[');
         let mut lookahead = chars.clone();
         let label_closed = balanced(&mut lookahead, '[', ']', &mut link);
+        if label_closed
+            && link
+                .strip_prefix('[')
+                .and_then(|label| label.strip_suffix(']'))
+                .is_some_and(|label| references.contains(&reference_label(label)))
+        {
+            chars = lookahead;
+            result.push_str(&link_words(&prose, repo_url, resolve));
+            prose.clear();
+            result.push_str(&link);
+            continue;
+        }
         let destination = lookahead.next_if(|ch| *ch == '(' || *ch == '[');
         if label_closed && let Some(open) = destination {
             link.push(open);
@@ -319,6 +383,7 @@ pub fn link_commits(text: &str, repo_url: &str, mut resolve: impl FnMut(&str) ->
     let mut result = String::with_capacity(text.len());
     let mut prose = String::new();
     let mut active: Option<Fence> = None;
+    let references = references(text);
     for line in text.split_inclusive('\n') {
         let delimiter = fence(line);
         if let Some(open) = active {
@@ -333,7 +398,7 @@ pub fn link_commits(text: &str, repo_url: &str, mut resolve: impl FnMut(&str) ->
         } else if let Some((opening, rest)) = delimiter
             && (opening.marker != '`' || !rest.contains('`'))
         {
-            result.push_str(&link_prose(&prose, repo_url, &mut resolve));
+            result.push_str(&link_prose(&prose, repo_url, &mut resolve, &references));
             prose.clear();
             result.push_str(line);
             active = Some(opening);
@@ -341,7 +406,7 @@ pub fn link_commits(text: &str, repo_url: &str, mut resolve: impl FnMut(&str) ->
             prose.push_str(line);
         }
     }
-    result.push_str(&link_prose(&prose, repo_url, &mut resolve));
+    result.push_str(&link_prose(&prose, repo_url, &mut resolve, &references));
     result
 }
 
