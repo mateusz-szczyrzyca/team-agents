@@ -31,8 +31,17 @@ pub struct Awaited {
 /// Whether the review `awaited` describes is given to another investigator.
 #[must_use]
 pub fn replace_now(awaited: &Awaited) -> bool {
-    let _ = awaited;
-    false
+    if matches!(awaited.lead, TaskStatus::Stopped | TaskStatus::Failed) {
+        return false;
+    }
+    let (status, quiet_for, patience) = (awaited.reviewer, awaited.quiet_for, awaited.patience);
+    match status {
+        TaskStatus::Failed | TaskStatus::Stopped => true,
+        TaskStatus::Paused => quiet_for >= patience,
+        TaskStatus::Queued | TaskStatus::Running | TaskStatus::Questions | TaskStatus::Waiting | TaskStatus::Done => {
+            false
+        }
+    }
 }
 
 #[cfg(test)]

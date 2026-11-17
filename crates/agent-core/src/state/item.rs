@@ -940,7 +940,39 @@ impl ItemProgress {
     /// [`ReplaceReviewError`]: the item is not in review, no review of the pass was asked of `gone`, that review has its
     /// outcome, `with` has one, or `with` names a reviewer or a task the pass already has.
     pub fn replace_review(&mut self, gone: &TaskId, with: Review) -> Result<(), ReplaceReviewError> {
-        let _unused = (gone, with);
+        let item = self.id;
+        let phase = self.phase.kind();
+        let ItemPhase::InReview { reviews, .. } = &mut self.phase else {
+            return Err(ReplaceReviewError::NotInReview { item, phase });
+        };
+        let Some(index) = reviews.iter().position(|review| &review.task == gone) else {
+            return Err(ReplaceReviewError::UnknownReview {
+                item,
+                task: gone.clone(),
+            });
+        };
+        if reviews
+            .get(index)
+            .is_some_and(|review| !matches!(review.outcome, ReviewOutcome::Pending))
+        {
+            return Err(ReplaceReviewError::AlreadySubmitted {
+                item,
+                task: gone.clone(),
+            });
+        }
+        if !matches!(with.outcome, ReviewOutcome::Pending) {
+            return Err(ReplaceReviewError::NotPending {
+                item,
+                reviewer: with.reviewer,
+            });
+        }
+        // The pass is checked as it would be, and changed only when it is valid.
+        let mut next = reviews.clone();
+        if let Some(place) = next.get_mut(index) {
+            *place = with;
+        }
+        check_review_pass(&next).map_err(|source| ReplaceReviewError::Reviews { item, source })?;
+        *reviews = next;
         Ok(())
     }
 

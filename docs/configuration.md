@@ -43,7 +43,7 @@ Top-level key and tables:
 | `[binaries]` | table | see below | programs and the agents' `PATH` |
 | `[watchdog]` | table | see below | when a silent run is hung |
 | `[limits]` | table | see below | pauses for quotas and rate limits |
-| `[review]` | table | `fix_passes = 5`, `check_passes = 2` | the review loop and the checks before it |
+| `[review]` | table | `fix_passes = 5`, `check_passes = 2`, `replace_after_minutes = 15` | the review loop, the checks before it and the reviewers that cannot work |
 | `[git]` | table | see below | the identity of the agents' commits |
 | `[github]` | table | none trusted, public API | whose words on GitHub are instructions, and where the API is |
 | `[notifications]` | table | files only | how the human is told |
@@ -124,6 +124,7 @@ Provider quota exhaustion takes precedence over a turn limit and uses the quota 
 |---|---|---|
 | `fix_passes` | `5` | "changes requested" goes back to the team at most this many times; then the human is asked. `0` asks at once |
 | `check_passes` | `2` | the checks before a review ([`[repos.NAME.checks]`](#reposnamechecks)) send a round back to the team at most this many times; then the human is asked. `0` asks at once |
+| `replace_after_minutes` | `15` | a reviewer that is paused this long with its review still to come is replaced by another free investigator; one whose task failed or was stopped is replaced at once. With no investigator free the human is told |
 
 ### `[git]`
 

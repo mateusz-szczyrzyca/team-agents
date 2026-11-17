@@ -323,6 +323,15 @@ waits. A lead that ended with `STATUS: SLEEPING` waits for its team and is not d
 and is published only when the gate it ran itself passed at the tip. What the harness remembers of its own gates and of the
 times it sent a lead back is not in the state: a daemon that restarts starts over.
 
+**A reviewer that cannot work** (`agent_core::decide::reviewer::replace_now`, `owner/rounds/replace.rs`). A review pass waits
+for every review that was asked. At every look the harness finds the reviews that are still to come and whose reviewer's task
+failed, was stopped, or has been paused for `[review] replace_after_minutes`: each goes to another free investigator that is not
+of the team and not of the pass (`ItemMut::replace_review` puts the new review in the place of the old one, so the reviews that
+came stay), with a worktree at the head of the pull request, and the history records it as a review asked. The task of the
+reviewer that was replaced is left as it is: a report it still makes is kept and posted as a late one. When no investigator is
+free the human is told once for the review (`harness/review/notice-no-verdict.md`, which also tells of a report without a
+verdict). The reviewers of a team whose lead was stopped or failed are not replaced: stopping a team starts nobody.
+
 **A team that sleeps** (`agent_core::decide::asleep::asleep_step`, `owner/rounds/asleep.rs`). A coordinator that gives work to a
 member and sleeps, and a member that wakes, does nothing and sleeps again, leave a team in which each waits for another. At every
 look the harness asks: is an item in progress or being fixed, does every task of the crew wait (none queued, running, asking the
