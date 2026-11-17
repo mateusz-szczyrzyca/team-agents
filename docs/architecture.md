@@ -491,9 +491,17 @@ anomaly says "none of the known ones", which does not establish that the team is
 
 The summary puts anomalies first, followed by daemon and versions, team/items/rounds, the tasks table, the last
 runs and questions, git, gates, history, daemon log, bus, notifications and machine. It stays below 100,000 bytes;
-long text retains its end with an explicit cut marker. Times include UTC and the injected local offset.
+individual long text fields share the remaining budget and retain their ends with an explicit cut marker.
+Anomalies are deduplicated, and structural headings, all task rows and gate records remain intact. Only the
+last three gate outputs for each task are included. If mandatory facts and cut markers alone would reach the
+limit, the renderer returns `SummaryError::RequiredFactsTooLarge` instead of omitting facts. Times include UTC
+and the injected local offset; the collection timestamp is the only reference for activity ages.
 The later collector retains full artifacts separately and must redact secrets before writing any artifact,
-including the summary. These new facts are diagnostic inputs, not a new persisted state or socket format.
+including the summary. The collector should fill `diagnostic_assessment::Assessment` once, then map its
+deduplicated findings and read failures to the presentation input; summary fields are for presentation, not
+a second source of anomaly decisions. A known missing origin ref is deliberately reported as differing from
+the local tip, including a never-pushed branch; an unavailable origin observation produces no such finding.
+These new facts are diagnostic inputs, not a new persisted state or socket format.
 
 ### Rounds
 
