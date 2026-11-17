@@ -50,6 +50,7 @@ pub mod cli;
 pub mod commits;
 pub mod config;
 pub mod decide;
+pub mod diagnostic_assessment;
 pub mod files;
 pub mod history;
 pub mod ids;
