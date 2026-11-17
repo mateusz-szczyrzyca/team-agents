@@ -558,7 +558,7 @@ impl Git {
     ///
     /// # Errors
     /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and
-    /// [`GitError::Unexpected`].
+    /// [`GitError::NotACommit`].
     pub async fn resolve_commit(&self, text_input: &str) -> Result<Option<CommitId>, GitError> {
         let operation = GitOperation::RevParse;
         let spec = format!("{text_input}^{{commit}}");
@@ -2168,5 +2168,45 @@ mod tests {
             ),
             "{result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn commit_lookup_propagates_git_failure_instead_of_reporting_missing() {
+        let (_dir, git) = scripted_git("exit 128");
+        let result = git.resolve_commit("abcdef0").await;
+        assert!(matches!(
+            result,
+            Err(GitError::Failed {
+                operation: GitOperation::RevParse,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn commit_lookup_rejects_invalid_commit_output() {
+        let (_dir, git) = scripted_git("printf 'not-a-commit\\n'");
+        let result = git.resolve_commit("abcdef0").await;
+        assert!(matches!(
+            result,
+            Err(GitError::NotACommit {
+                operation: GitOperation::RevParse,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn commit_lookup_propagates_a_missing_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git = isolated(&tmp.path().join("missing"), agent_identity());
+        let result = git.resolve_commit("abcdef0").await;
+        assert!(matches!(
+            result,
+            Err(GitError::Run {
+                operation: GitOperation::RevParse,
+                source: CaptureError::Spawn { .. }
+            })
+        ));
     }
 }
