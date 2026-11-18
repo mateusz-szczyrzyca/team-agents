@@ -97,6 +97,7 @@ fn retries_oversized_required_presentation_without_losing_full_facts() {
             worktrees_dir_bytes: None,
         },
         unreadable_parts: vec![UnreadablePartSummary {
+            section: agent_core::debug_summary::SummarySection::Machine,
             name: "worktree".to_owned(),
             reason: "λ".repeat(100_000),
         }],

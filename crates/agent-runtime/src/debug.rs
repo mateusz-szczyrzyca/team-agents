@@ -243,6 +243,7 @@ pub async fn execute_debug_at(
         .unreadable
         .iter()
         .map(|part| agent_core::debug_summary::UnreadablePartSummary {
+            section: part.section,
             name: part.part.clone(),
             reason: part.reason.clone(),
         })
@@ -351,6 +352,7 @@ async fn observe_daemon(
             .assessment
             .unreadable
             .push(agent_core::diagnostic_assessment::ReadFailure {
+                section: SummarySection::DaemonAndVersions,
                 part: "daemon process".to_owned(),
                 reason: crate::process::error_chain(&error),
             }),
@@ -374,6 +376,7 @@ async fn observe_daemon(
             .assessment
             .unreadable
             .push(agent_core::diagnostic_assessment::ReadFailure {
+                section: SummarySection::DaemonLog,
                 part: "daemon log".to_owned(),
                 reason: crate::process::error_chain(&error),
             }),

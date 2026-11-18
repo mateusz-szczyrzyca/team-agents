@@ -253,12 +253,14 @@ fn every_known_anomaly_is_reported_exactly_with_its_context() {
             {
                 let mut f = healthy();
                 f.unreadable = vec![ReadFailure {
+                    section: crate::debug_summary::SummarySection::Machine,
                     part: "git".into(),
                     reason: "worktree removed".into(),
                 }];
                 f
             },
             vec![Anomaly::Unreadable(ReadFailure {
+                section: crate::debug_summary::SummarySection::Machine,
                 part: "git".into(),
                 reason: "worktree removed".into(),
             })],
@@ -366,6 +368,7 @@ fn filesystem_thresholds_are_exact_overflow_safe_and_deduplicated() {
 fn unanswered_questions_read_failures_and_branch_anomalies_are_not_duplicated() {
     let mut facts = healthy();
     let failure = ReadFailure {
+        section: crate::debug_summary::SummarySection::Machine,
         part: "output".into(),
         reason: "cannot read".into(),
     };
@@ -493,6 +496,7 @@ fn each_anomaly_has_a_sentence_and_task_findings_offer_a_log_command() {
         ),
         (
             Anomaly::Unreadable(ReadFailure {
+                section: crate::debug_summary::SummarySection::Machine,
                 part: "prompt".into(),
                 reason: "file gone".into(),
             }),

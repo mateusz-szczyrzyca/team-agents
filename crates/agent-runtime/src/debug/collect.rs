@@ -163,6 +163,7 @@ impl Collection {
 
     fn failed(&mut self, part: impl Into<String>, reason: impl Into<String>) {
         self.assessment.unreadable.push(ReadFailure {
+            section: agent_core::debug_summary::SummarySection::Machine,
             part: part.into(),
             reason: reason.into(),
         });
@@ -496,7 +497,11 @@ impl Collection {
                         .into_bytes(),
                 );
             }
-            Err(error) => self.failed("team history", error_chain(&error)),
+            Err(error) => self.assessment.unreadable.push(ReadFailure {
+                section: agent_core::debug_summary::SummarySection::HistoryTail,
+                part: "team history".to_owned(),
+                reason: error_chain(&error),
+            }),
         }
         Ok(())
     }

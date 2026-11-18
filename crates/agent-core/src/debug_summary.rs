@@ -23,7 +23,7 @@ pub const MAX_SUMMARY_BYTES: usize = 100_000;
 pub const CUT_MARKER: &str = "\n[... cut ...]\n";
 
 /// Fixed section headings in specification order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SummarySection {
     /// 1. The anomalies.
     Anomalies,
@@ -311,6 +311,8 @@ pub struct FsUsageSummary {
 /// An unreadable collection part.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnreadablePartSummary {
+    /// Section responsible for this observation, independent of its display name.
+    pub section: SummarySection,
     /// Name or path of the part.
     pub name: String,
     /// Reason it could not be read.
