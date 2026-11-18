@@ -28,11 +28,7 @@ use crate::store::Home;
 use crate::text_file::{TextFileError, read_text_file};
 
 /// Observations deferred to the third diagnostic task, never interpreted as empty observations.
-const DEFERRED: &[SummarySection] = &[
-    SummarySection::Bus,
-    SummarySection::Notifications,
-    SummarySection::Machine,
-];
+const DEFERRED: &[SummarySection] = &[SummarySection::Notifications, SummarySection::Machine];
 /// Maximum state file size in bytes.
 const MAX_STATE_BYTES: usize = 16 * 1024 * 1024;
 /// Default inactivity threshold in minutes.
@@ -232,6 +228,7 @@ pub async fn execute_debug_at(
     collection.local_offset = location.local_offset;
     collection.observe(home, team, status).await?;
     observe_daemon(&mut collection, home, args.daemon_log.as_deref(), team).await;
+    observe_bus(&mut collection, home, team).await;
     let findings = assess(&collection.assessment);
     collection.summary.anomalies = findings
         .iter()
@@ -380,6 +377,32 @@ async fn observe_daemon(
             .push(agent_core::diagnostic_assessment::ReadFailure {
                 section: SummarySection::DaemonLog,
                 part: "daemon log".to_owned(),
+                reason: crate::process::error_chain(&error),
+            }),
+    }
+}
+
+/// Records readable bus messages or records an unreadable failure.
+async fn observe_bus(collection: &mut collect::Collection, home: &Home, team: &agent_core::state::Team) {
+    match bus::collect(home, team).await {
+        Ok(Some(messages)) => {
+            let text = if messages.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", messages.join("\n"))
+            };
+            collection.add("bus.txt", text.into_bytes());
+            collection.summary.bus_messages = messages;
+        }
+        Ok(None) => {
+            collection.add("bus.txt", Vec::new());
+        }
+        Err(error) => collection
+            .assessment
+            .unreadable
+            .push(agent_core::diagnostic_assessment::ReadFailure {
+                section: SummarySection::Bus,
+                part: "bus messages".to_owned(),
                 reason: crate::process::error_chain(&error),
             }),
     }

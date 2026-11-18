@@ -1005,7 +1005,11 @@ fn render_with_redaction(
             write_line(&mut out, "");
             if matches!(
                 section,
-                SummarySection::HistoryTail | SummarySection::DaemonAndVersions | SummarySection::DaemonLog
+                SummarySection::HistoryTail
+                    | SummarySection::DaemonAndVersions
+                    | SummarySection::DaemonLog
+                    | SummarySection::Bus
+                    | SummarySection::Notifications
             ) {
                 continue;
             }
