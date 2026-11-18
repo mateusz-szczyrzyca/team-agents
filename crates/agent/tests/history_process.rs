@@ -646,6 +646,28 @@ mod history_process {
                     .is_ok_and(|runs| !runs.is_empty() && runs.iter().all(|run| run.end.is_some()))
             })
         });
+        // RunEnd precedes team closure and asynchronous notification delivery. The writer commits
+        // event records before daemon-log records, so wait for both terminal producers' log entries too.
+        eventually("team closure and notification history to be committed", || {
+            use agent_core::history::{HistoryEvent, Record};
+            use agent_core::log::LogEvent;
+
+            Reader::open(&world.home.join("history.db")).is_ok_and(|reader| {
+                let events_ready = reader.team_records(team).is_ok_and(|records| {
+                    records.iter().any(|row| {
+                        matches!(&row.record, Record::Event(event) if matches!(event.event, HistoryEvent::TeamEnded {}))
+                    }) && records.iter().any(|row| {
+                        matches!(&row.record, Record::Event(event) if matches!(event.event, HistoryEvent::Notified { .. }))
+                    })
+                });
+                let logs_ready = reader.daemon_logs_for_team(team).is_ok_and(|logs| {
+                    logs.iter().any(|row| {
+                        row.event() == LogEvent::TeamChanged && row.message() == "a team is finished and closed"
+                    }) && logs.iter().any(|row| row.event() == LogEvent::NotificationSent)
+                });
+                events_ready && logs_ready
+            })
+        });
         let destination = tempfile::tempdir().unwrap();
         let before = diagnostic_snapshot(&world.home).unwrap();
         let pid = world.daemon.as_ref().unwrap().id();
