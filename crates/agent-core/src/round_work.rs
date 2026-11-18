@@ -6,7 +6,10 @@
 //! request that was opened and not yet marked ready ([`draft_pull`]).
 
 use crate::history::HistoryEvent;
+use crate::kinds::Role;
 use crate::protocol::RoundDetail;
+use crate::state::{Review, ReviewOutcome, RoundLife};
+use crate::status::ItemStatus;
 
 #[cfg(test)]
 mod tests;
@@ -47,13 +50,63 @@ pub enum DraftPull {
 
 /// Whether `events`, the events of one round in the order they were written, leave a draft pull request open.
 #[must_use]
-pub fn draft_pull<'a>(_events: impl IntoIterator<Item = &'a HistoryEvent>) -> DraftPull {
-    DraftPull::Unknown
+pub fn draft_pull<'a>(events: impl IntoIterator<Item = &'a HistoryEvent>) -> DraftPull {
+    events.into_iter().fold(DraftPull::Absent, |draft, event| match event {
+        HistoryEvent::PullOpened { .. } => DraftPull::Open,
+        HistoryEvent::PullReady { .. }
+        | HistoryEvent::PullApproved { .. }
+        | HistoryEvent::PullMerged { .. }
+        | HistoryEvent::PullHandedOver { .. }
+        | HistoryEvent::PullClosed { .. } => DraftPull::Absent,
+        HistoryEvent::Gate { .. }
+        | HistoryEvent::Checked { .. }
+        | HistoryEvent::PullPushed { .. }
+        | HistoryEvent::ReviewAsked { .. }
+        | HistoryEvent::ReviewSubmitted { .. }
+        | HistoryEvent::FixPassStarted { .. }
+        | HistoryEvent::QuestionAsked { .. }
+        | HistoryEvent::QuestionAnswered { .. }
+        | HistoryEvent::Controlled { .. }
+        | HistoryEvent::Notified { .. }
+        | HistoryEvent::RoundClosed { .. }
+        | HistoryEvent::TeamEnded {}
+        | HistoryEvent::Lost { .. } => draft,
+    })
 }
 
 /// Where the work of the round of `detail` is, given what the history says of its draft; `None` for a round that is
 /// closed or whose item is done: nothing is worked on.
 #[must_use]
-pub const fn round_work(_detail: &RoundDetail, _draft: DraftPull) -> Option<RoundWork> {
-    None
+pub fn round_work(detail: &RoundDetail, draft: DraftPull) -> Option<RoundWork> {
+    if *detail.round.life() != RoundLife::Open {
+        return None;
+    }
+    match detail.item.as_ref().map(|item| item.status) {
+        Some(ItemStatus::Done) => None,
+        Some(ItemStatus::Approved) => Some(RoundWork::PullApproved),
+        Some(ItemStatus::InReview) if review_started(detail) => Some(RoundWork::PullInReview),
+        Some(ItemStatus::InReview) => Some(RoundWork::PullReady),
+        // An item in progress that has a pull request is in a fix pass.
+        None | Some(ItemStatus::Pending | ItemStatus::InProgress) => Some(match (&detail.pr, draft) {
+            (Some(_), _) => RoundWork::PullInReview,
+            (None, DraftPull::Absent) => RoundWork::OnlyLocal,
+            (None, DraftPull::Open) => RoundWork::PullDraft,
+            (None, DraftPull::Unknown) => RoundWork::LocalOrDraft,
+        }),
+    }
+}
+
+/// Whether the review of the pull request of `detail` has begun: a fix pass is behind it, a verdict is in, or a
+/// reviewer has run for the round.
+fn review_started(detail: &RoundDetail) -> bool {
+    let reported = |review: &Review| match review.outcome {
+        ReviewOutcome::Submitted { .. } => true,
+        ReviewOutcome::Pending => false,
+    };
+    detail.review_passes.len() > 1
+        || detail.review_passes.iter().flat_map(|pass| &pass.reviews).any(reported)
+        || detail
+            .tasks
+            .iter()
+            .any(|task| task.role == Role::Reviewer && !task.runs.is_empty())
 }
