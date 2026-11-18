@@ -1259,3 +1259,51 @@ async fn filesystem_metadata_failure_records_unreadable() {
         obs.unreadable
     );
 }
+
+#[tokio::test]
+async fn temp_filesystem_metadata_failure_records_unreadable() {
+    let (dir, home, cut) = fixture();
+    let blocked_dir = dir.path().join("blocked");
+    fs::create_dir_all(&blocked_dir).expect("create blocked dir");
+    fs::set_permissions(&blocked_dir, std::fs::Permissions::from_mode(0o000)).expect("chmod 000");
+
+    let blocked_home = Home::new(
+        &agent_core::config::AbsolutePath::try_from(blocked_dir.join("home").to_str().unwrap().to_owned()).unwrap(),
+    );
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    let params = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: blocked_home.root(),
+        daemon_pid: None,
+        cut: &cut,
+        collected_at: test_now(),
+        clock_ticks: NonZeroU64::new(100),
+    };
+
+    let obs = observe_with_statvfs(params, |_| {
+        Ok(StatvfsStats {
+            fragment_size: 4096,
+            block_size: 4096,
+            total_blocks: 100,
+            available_blocks: 50,
+            total_inodes: 100,
+            available_inodes: 50,
+        })
+    })
+    .await;
+
+    fs::set_permissions(&blocked_dir, std::fs::Permissions::from_mode(0o755)).expect("restore permissions");
+
+    assert!(
+        obs.unreadable
+            .iter()
+            .any(|f| f.section == SummarySection::Machine && f.part == "temp filesystem metadata"),
+        "inaccessible temp parent must record temp filesystem metadata failure: {:?}",
+        obs.unreadable
+    );
+}
