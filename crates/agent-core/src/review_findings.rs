@@ -227,7 +227,9 @@ fn fence_marker(line: &str) -> Option<Fence> {
     let line = line.trim_start();
     let character = line.chars().next().filter(|c| matches!(c, '`' | '~'))?;
     let length = line.chars().take_while(|c| *c == character).count();
-    (length >= 3).then(|| Fence {
+    // The info string of a backtick fence cannot hold a backtick: such a line is inline code.
+    let inline_code = character == '`' && line.chars().skip(length).any(|c| c == '`');
+    (length >= 3 && !inline_code).then(|| Fence {
         character,
         length,
         bare: line.trim_end().chars().all(|c| c == character),
