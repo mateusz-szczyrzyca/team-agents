@@ -4,10 +4,12 @@
 mod tests;
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use agent_core::debug_summary::{SummarySection, UntrackedFileSummaryFacts};
 use agent_core::diagnostic_assessment::ReadFailure;
-use agent_core::state::Timestamp;
+use agent_core::state::{InvalidTimestamp, Timestamp};
+use time::{SignedDuration, UtcDateTime};
 
 use crate::process::error_chain;
 
@@ -20,6 +22,47 @@ pub(super) struct UntrackedCollection {
     pub artifact_text: String,
     /// Unreadable untracked paths with error reasons.
     pub unreadable: Vec<ReadFailure>,
+}
+
+/// Why a file's modification time cannot be recorded as a [`Timestamp`].
+#[derive(Debug, thiserror::Error)]
+enum ModifiedError {
+    /// The time is further from the epoch than the time crate can represent. The conversion
+    /// reports no detail beyond that, so there is no cause to keep.
+    #[error("modification time is outside the range the time crate represents")]
+    OutOfRange,
+    /// The time lies outside the years 0000 to 9999 that state timestamps hold.
+    #[error("cannot record modification time")]
+    Timestamp(#[source] InvalidTimestamp),
+}
+
+/// Converts a file's modification time into a [`Timestamp`] without panicking.
+///
+/// The time crate's `From<SystemTime>` panics on times past its own range, so the offset from the
+/// epoch is added with checked arithmetic instead.
+///
+/// # Errors
+/// [`ModifiedError::OutOfRange`] when the time crate cannot represent the time,
+/// [`ModifiedError::Timestamp`] when its year is outside 0000 to 9999.
+fn modified_timestamp(system_time: SystemTime) -> Result<Timestamp, ModifiedError> {
+    let utc = match system_time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(after) => {
+            let offset = match SignedDuration::try_from(after) {
+                Ok(offset) => offset,
+                Err(time::error::ConversionRange) => return Err(ModifiedError::OutOfRange),
+            };
+            UtcDateTime::UNIX_EPOCH.checked_add(offset)
+        }
+        Err(before) => {
+            let offset = match SignedDuration::try_from(before.duration()) {
+                Ok(offset) => offset,
+                Err(time::error::ConversionRange) => return Err(ModifiedError::OutOfRange),
+            };
+            UtcDateTime::UNIX_EPOCH.checked_sub(offset)
+        }
+    }
+    .ok_or(ModifiedError::OutOfRange)?;
+    Timestamp::from_utc(utc).map_err(ModifiedError::Timestamp)
 }
 
 /// Spells a worktree-relative path so that distinct paths stay distinct, including non-UTF-8 names.
@@ -59,7 +102,7 @@ pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> Unt
 
         let size_bytes = meta.len();
         let modified = match meta.modified() {
-            Ok(system_time) => match Timestamp::from_utc(time::UtcDateTime::from(system_time)) {
+            Ok(system_time) => match modified_timestamp(system_time) {
                 Ok(ts) => Some(ts),
                 Err(source) => {
                     unreadable.push(ReadFailure {
