@@ -2392,10 +2392,9 @@ async fn malformed_findings_are_returned_then_numbered_fixed_and_resolved() {
     assert!(fix.contains("1. [MAJOR] ERR-3 src/lib.rs:7"), "{fix}");
     assert!(correction.contains("line 3"), "{correction}");
     assert!(
-        rig.github
+        !rig.github
             .calls("PATCH", &format!("/repos/{SLUG}/issues/comments/1"))
-            .len()
-            >= 1
+            .is_empty()
     );
     rig.stop().await.unwrap();
 }
