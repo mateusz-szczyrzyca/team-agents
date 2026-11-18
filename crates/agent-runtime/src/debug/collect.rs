@@ -42,6 +42,8 @@ pub(super) struct Collection {
     pub(super) summary: SummaryInput,
     /// Root of the repository clone, if available for removed worktree fallbacks.
     pub(super) checkout: Option<PathBuf>,
+    /// Notice for merged worktrees whose retained branches were read in the clone.
+    pub(super) git_notice: Option<String>,
     /// Local timezone offset for presentation; defaults to UTC.
     pub(super) local_offset: time::UtcOffset,
     /// Relative artifact paths and their unredacted bytes; never logged.
@@ -148,6 +150,7 @@ impl Collection {
                 unreadable_parts: vec![],
             },
             checkout: None,
+            git_notice: None,
             local_offset: time::UtcOffset::UTC,
             artifacts: vec![],
             copied_bytes: 0,

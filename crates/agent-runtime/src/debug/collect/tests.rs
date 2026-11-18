@@ -540,6 +540,12 @@ fn merged_removed_worktree_falls_back_to_checkout() {
         .iter()
         .find(|(path, _)| path == &PathBuf::from("git").join("removed-worktrees.txt"));
     assert!(note.is_some());
+    assert_eq!(
+        collection.git_notice.as_deref(),
+        Some(
+            "Worktrees for merged rounds were removed; retained branches and commits were collected from the repository checkout."
+        )
+    );
 }
 
 #[test]
