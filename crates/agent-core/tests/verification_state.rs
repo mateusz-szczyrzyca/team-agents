@@ -14,3 +14,19 @@ fn rotating_verification_context_round_trips_and_legacy_context_stays_absent() {
     assert_eq!(Findings::independent(ReviewCount::TWO).verification(), None);
     assert_eq!(Findings::default().verification(), None);
 }
+
+#[test]
+fn schema_four_active_pr_keeps_its_reviewers_and_previous_protocol() {
+    use agent_core::state::{SCHEMA_VERSION, State};
+    let old = include_str!("fixtures/state-before-rotating-verification.json");
+    let state = State::from_json(old).unwrap();
+    assert_eq!(SCHEMA_VERSION, 5);
+    let item = state.teams()[0].item("1.2".parse().unwrap()).unwrap();
+    assert_eq!(item.findings().unwrap().review_count(), Some(ReviewCount::TWO));
+    assert_eq!(item.findings().unwrap().verification(), None);
+    assert_eq!(
+        state.to_json().unwrap(),
+        old.replacen("\"schema_version\": 4", "\"schema_version\": 5", 1)
+    );
+    assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
+}
