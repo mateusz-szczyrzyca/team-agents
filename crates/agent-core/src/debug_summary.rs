@@ -393,7 +393,12 @@ impl SummaryWriter {
         self.parts.push(SummaryPart::Tail(text.to_owned()));
     }
 
-    fn finish(self) -> Result<String, SummaryError> {
+    fn finish(mut self, redact: impl Fn(&str) -> String) -> Result<String, SummaryError> {
+        for part in &mut self.parts {
+            match part {
+                SummaryPart::Required(text) | SummaryPart::Tail(text) => *text = redact(text),
+            }
+        }
         let mut required = 0_usize;
         let mut lengths = Vec::new();
         for part in &self.parts {
@@ -583,7 +588,12 @@ fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
     clippy::unnecessary_debug_formatting,
     reason = "debug escapes paths losslessly, including non-UTF-8 bytes; display can replace bytes"
 )]
-fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut SummaryWriter) {
+fn render_git(
+    worktrees: &[GitWorktreeSummary],
+    offset: UtcOffset,
+    out: &mut SummaryWriter,
+    untracked: UntrackedCollection,
+) {
     for w in worktrees {
         write_line(out, &format!("### Worktree for Task `{}`", w.task_id));
         write_line(out, "");
@@ -617,6 +627,11 @@ fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut Sum
                     format_time(c.time, offset)
                 ),
             );
+        }
+        if untracked == UntrackedCollection::Deferred {
+            write_line(out, "- Untracked file metadata: Not collected in this version.");
+            write_line(out, "");
+            continue;
         }
         write_line(
             out,
@@ -792,6 +807,12 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
     } else {
         write_line(out, "- Worktrees directory size: unknown");
     }
+    render_unreadable(unreadable, out);
+    write_line(out, "");
+}
+
+/// Keeps collection failures visible independently of deferred machine observations.
+fn render_unreadable(unreadable: &[UnreadablePartSummary], out: &mut SummaryWriter) {
     if !unreadable.is_empty() {
         write_line(out, "");
         write_line(out, "### Unreadable Parts");
@@ -800,7 +821,6 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
             write_line(out, &format!("- `{}`: {}", u.name, u.reason));
         }
     }
-    write_line(out, "");
 }
 
 /// Renders the `SUMMARY.md` markdown text from `input`.
@@ -813,6 +833,77 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
 /// Returns [`SummaryError::RequiredFactsTooLarge`] when mandatory facts and cut
 /// markers alone would reach the byte limit; no partial document is returned.
 pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String, SummaryError> {
+    render_summary_with_uncollected(input, offset, &[])
+}
+
+/// Whether newest-untracked-file metadata was collected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UntrackedCollection {
+    /// Metadata was collected, including a genuinely empty result.
+    Collected,
+    /// Metadata is outside this collector's scope.
+    Deferred,
+}
+
+/// Renders a summary with explicit collection coverage for untracked metadata.
+///
+/// # Errors
+/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
+pub fn render_summary_with_coverage(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+    untracked: UntrackedCollection,
+) -> Result<String, SummaryError> {
+    render_with_coverage(input, offset, uncollected, untracked)
+}
+
+/// Renders collected text after redaction, before measuring or truncating any fragment.
+///
+/// The callback replaces confidential values in each complete presentation fragment.
+///
+/// # Errors
+/// Returns [`SummaryError::RequiredFactsTooLarge`] when redacted required facts exceed the budget.
+pub fn render_redacted_summary(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+    untracked: UntrackedCollection,
+    redact: impl Fn(&str) -> String,
+) -> Result<String, SummaryError> {
+    render_with_redaction(input, offset, uncollected, untracked, redact)
+}
+
+/// Renders a summary with explicit notices for sections outside the collection scope.
+///
+/// Collection failures remain visible even when machine observations are deferred.
+///
+/// # Errors
+/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
+pub fn render_summary_with_uncollected(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+) -> Result<String, SummaryError> {
+    render_with_coverage(input, offset, uncollected, UntrackedCollection::Collected)
+}
+
+fn render_with_coverage(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+    untracked: UntrackedCollection,
+) -> Result<String, SummaryError> {
+    render_with_redaction(input, offset, uncollected, untracked, str::to_owned)
+}
+
+fn render_with_redaction(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+    untracked: UntrackedCollection,
+    redact: impl Fn(&str) -> String,
+) -> Result<String, SummaryError> {
     let now = input.collected_at;
     let mut out = SummaryWriter::default();
 
@@ -828,13 +919,22 @@ pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String,
         write_line(&mut out, section.heading());
         write_line(&mut out, "");
 
+        if uncollected.contains(&section) {
+            write_line(&mut out, "Not collected in this version.");
+            if section == SummarySection::Machine {
+                render_unreadable(&input.unreadable_parts, &mut out);
+            }
+            write_line(&mut out, "");
+            continue;
+        }
+
         match section {
             SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
             SummarySection::DaemonAndVersions => render_daemon(input.daemon.as_ref(), offset, &mut out),
             SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut out),
             SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut out),
             SummarySection::TaskDetails => render_task_details(&input.tasks, &mut out),
-            SummarySection::GitWorktrees => render_git(&input.git, offset, &mut out),
+            SummarySection::GitWorktrees => render_git(&input.git, offset, &mut out, untracked),
             SummarySection::GateRecords => render_gate(&input.gate, offset, &mut out),
             SummarySection::HistoryTail => render_history(input.history_tail.as_deref(), &mut out),
             SummarySection::DaemonLog => render_daemon_log(input.daemon_log_lines.as_deref(), &mut out),
@@ -846,7 +946,7 @@ pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String,
         write_line(&mut out, "");
     }
 
-    out.finish()
+    out.finish(redact)
 }
 
 /// Mandatory summary facts exceed the pasteable document budget.

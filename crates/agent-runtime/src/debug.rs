@@ -1,0 +1,289 @@
+//! Read-only diagnostic bundles: observe a team, assess once, redact, then persist.
+
+#[cfg(test)]
+mod activity_tests;
+mod collect;
+#[cfg(test)]
+mod tests;
+
+use std::io::Write;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use agent_core::config::{MAX_SECRETS_BYTES, Secrets, SecretsError};
+use agent_core::debug_summary::{
+    SummaryError, SummaryInput, SummarySection, UntrackedCollection, render_redacted_summary,
+};
+use agent_core::diagnostic_assessment::assess;
+use agent_core::ids::{RoundId, TaskId, TeamId};
+use agent_core::state::{InvalidTimestamp, State, StateError, Timestamp};
+
+use crate::clock::SystemClock;
+use crate::debug_redaction::SecretsCut;
+use crate::store::Home;
+use crate::text_file::{TextFileError, read_text_file};
+
+/// Observations deferred to the third diagnostic task, never interpreted as empty observations.
+const DEFERRED: &[SummarySection] = &[
+    SummarySection::DaemonAndVersions,
+    SummarySection::DaemonLog,
+    SummarySection::Bus,
+    SummarySection::Notifications,
+    SummarySection::Machine,
+];
+/// Maximum state file size in bytes.
+const MAX_STATE_BYTES: usize = 16 * 1024 * 1024;
+/// Default inactivity threshold in minutes.
+const STALE_MINUTES: u64 = 120;
+
+/// A round, team or task whose whole team is collected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DebugTarget {
+    /// A round of the team.
+    Round(RoundId),
+    /// The team itself.
+    Team(TeamId),
+    /// Any task of the team, including reviewers and workers.
+    Task(TaskId),
+}
+
+/// Options for a diagnostic bundle.
+#[derive(Debug, Clone)]
+pub struct DebugArgs {
+    /// Existing round, team or task.
+    pub target: DebugTarget,
+    /// Parent of the new directory; defaults to the home's `debug` directory.
+    pub out: Option<PathBuf>,
+    /// Inactivity threshold in minutes; defaults to 120.
+    pub stale_minutes: Option<u64>,
+    /// Reserved log path; daemon process and log collection is deferred.
+    pub daemon_log: Option<PathBuf>,
+}
+
+/// Paths of a completed, redacted diagnostic bundle.
+#[derive(Debug, Clone)]
+pub struct DebugResult {
+    /// Directory containing all collected artifacts.
+    pub bundle_dir: PathBuf,
+    /// Bounded human-readable summary.
+    pub summary_path: PathBuf,
+}
+
+/// Failures that prevent a safe diagnostic bundle from being written.
+#[derive(Debug, thiserror::Error)]
+pub enum DebugRuntimeError {
+    /// An input required before collection could not be read.
+    #[error("cannot read diagnostic input {path:?}")]
+    Input {
+        /// Required input path.
+        path: PathBuf,
+        /// Bounded text reader's failure.
+        source: TextFileError,
+    },
+    /// A required input does not exist.
+    #[error("missing diagnostic input {path:?}")]
+    Missing {
+        /// Missing state or secrets file.
+        path: PathBuf,
+    },
+    /// Secrets cannot safely be used for redaction.
+    #[error("cannot use secrets file")]
+    Secrets(#[source] SecretsError),
+    /// The saved state violates its schema or invariants.
+    #[error("cannot parse diagnostic state")]
+    State(#[source] StateError),
+    /// No team owns the requested ID.
+    #[error("unknown diagnostic target {id}")]
+    UnknownTarget {
+        /// User-supplied ID.
+        id: String,
+    },
+    /// Collection time is outside the state model's supported range.
+    #[error("cannot determine collection time")]
+    Clock(#[source] InvalidTimestamp),
+    /// State or facts could not be serialized.
+    #[error("cannot encode diagnostic facts")]
+    Encode(#[source] serde_json::Error),
+    /// Required facts remain too large even after compact presentation.
+    #[error("cannot render diagnostic summary")]
+    Summary(#[source] SummaryError),
+    /// The new bundle could not be written.
+    #[error("cannot write diagnostic bundle {path:?}")]
+    Write {
+        /// Destination path.
+        path: PathBuf,
+        /// Filesystem failure.
+        source: std::io::Error,
+    },
+    /// A participant name cannot be represented in the summary.
+    #[error("cannot represent participant name")]
+    Name(#[source] agent_core::ids::InvalidName),
+    /// A worker performing blocking I/O failed.
+    #[error("diagnostic I/O worker failed")]
+    Worker(#[source] tokio::task::JoinError),
+}
+
+/// Resolves a target using persisted state, without asking a daemon.
+///
+/// # Errors
+/// [`DebugRuntimeError::UnknownTarget`] when no team owns the ID.
+pub fn resolve_debug_target(state: &State, target: &DebugTarget) -> Result<TeamId, DebugRuntimeError> {
+    let team = match target {
+        DebugTarget::Team(id) => state.team(id),
+        DebugTarget::Round(id) => state.find_round(id).map(|(team, _round)| team),
+        DebugTarget::Task(id) => state.find_task(id).map(|found| found.team),
+    };
+    team.map(|team| team.id().clone())
+        .ok_or_else(|| DebugRuntimeError::UnknownTarget {
+            id: match target {
+                DebugTarget::Team(id) => id.to_string(),
+                DebugTarget::Round(id) => id.to_string(),
+                DebugTarget::Task(id) => id.to_string(),
+            },
+        })
+}
+
+/// Reads secrets strictly before any bundle or output parent is created.
+///
+/// # Errors
+/// [`DebugRuntimeError::Input`], [`DebugRuntimeError::Missing`] or [`DebugRuntimeError::Secrets`]
+/// for an unreadable, missing, oversized, malformed or insecure secrets file.
+pub async fn load_debug_secrets(home: &Home) -> Result<Secrets, DebugRuntimeError> {
+    let path = home.secrets_file();
+    let file = required_text(&path, MAX_SECRETS_BYTES).await?;
+    Secrets::parse(&file.text, file.mode).map_err(DebugRuntimeError::Secrets)
+}
+
+/// Loads persisted state without opening the store's writable lock file.
+///
+/// # Errors
+/// [`DebugRuntimeError::Input`], [`DebugRuntimeError::Missing`] or [`DebugRuntimeError::State`].
+pub async fn load_debug_state(home: &Home) -> Result<State, DebugRuntimeError> {
+    let file = required_text(&home.state_file(), MAX_STATE_BYTES).await?;
+    State::from_json(&file.text).map_err(DebugRuntimeError::State)
+}
+
+async fn required_text(path: &std::path::Path, limit: usize) -> Result<crate::text_file::TextFile, DebugRuntimeError> {
+    read_text_file(path, limit)
+        .await
+        .map_err(|source| DebugRuntimeError::Input {
+            path: path.to_path_buf(),
+            source,
+        })?
+        .ok_or_else(|| DebugRuntimeError::Missing {
+            path: path.to_path_buf(),
+        })
+}
+
+/// Collects a team, makes one pure assessment, and writes only redacted artifacts.
+///
+/// `status` is the existing status command's output, or its connection/read failure. No daemon
+/// mutation or history write is made. Missing optional inputs become assessment read failures.
+///
+/// # Errors
+/// [`DebugRuntimeError`] when required state/secrets, rendering or bundle persistence fails.
+pub async fn execute_debug(
+    home: &Home,
+    args: DebugArgs,
+    status: Option<Result<String, String>>,
+    _out: &mut impl Write,
+) -> Result<DebugResult, DebugRuntimeError> {
+    let secrets = load_debug_secrets(home).await?;
+    let cut = SecretsCut::new(&secrets, std::env::vars_os());
+    let state = load_debug_state(home).await?;
+    let id = resolve_debug_target(&state, &args.target)?;
+    let team = state
+        .team(&id)
+        .ok_or_else(|| DebugRuntimeError::UnknownTarget { id: id.to_string() })?;
+    let now = Timestamp::now(&SystemClock).map_err(DebugRuntimeError::Clock)?;
+    let mut collection = collect::Collection::new(
+        team,
+        now,
+        Duration::from_secs(args.stale_minutes.unwrap_or(STALE_MINUTES).saturating_mul(60)),
+    )?;
+    collection.observe(home, team, status).await?;
+    let findings = assess(&collection.assessment);
+    collection.summary.anomalies = findings
+        .iter()
+        .map(|finding| agent_core::debug_summary::SummaryAnomaly {
+            message: finding.sentence(),
+            command: finding.suggested_command(),
+        })
+        .collect();
+    collection.summary.unreadable_parts = collection
+        .assessment
+        .unreadable
+        .iter()
+        .map(|part| agent_core::debug_summary::UnreadablePartSummary {
+            name: part.part.clone(),
+            reason: part.reason.clone(),
+        })
+        .collect();
+    collection.add(
+        "facts.txt",
+        format!("{:#?}\n{findings:#?}", collection.assessment).into_bytes(),
+    );
+    let summary = compact_summary_with(&collection.summary, |text| {
+        // Replacing valid UTF-8 patterns with ASCII preserves valid UTF-8.
+        cut.redact_text(text)
+    })
+    .map_err(DebugRuntimeError::Summary)?;
+    collection.add("NOT_COLLECTED.txt", b"Not collected in this version: daemon process and log; bus; notifications; configuration and secret key names; machine metrics; newest untracked file metadata.\n".to_vec());
+    let parent = args.out.unwrap_or_else(|| home.root().join("debug"));
+    collect::persist(
+        collection,
+        cut,
+        parent,
+        format!("debug-{id}-{}", now.as_utc().unix_timestamp()),
+        summary,
+    )
+    .await
+}
+
+fn short(text: &str, limit: usize) -> String {
+    let mut chars = text.chars();
+    let prefix: String = chars.by_ref().take(limit).collect();
+    if chars.next().is_some() {
+        format!("{prefix}… [full facts in facts.txt]")
+    } else {
+        prefix
+    }
+}
+
+#[cfg(test)]
+fn compact_summary(input: &SummaryInput) -> Result<String, SummaryError> {
+    compact_summary_with(input, str::to_owned)
+}
+
+fn compact_summary_with(input: &SummaryInput, redact: impl Fn(&str) -> String) -> Result<String, SummaryError> {
+    match render_redacted_summary(
+        input,
+        time::UtcOffset::UTC,
+        DEFERRED,
+        UntrackedCollection::Deferred,
+        &redact,
+    ) {
+        Ok(text) => Ok(text),
+        Err(SummaryError::RequiredFactsTooLarge { .. }) => {
+            let mut compact = input.clone();
+            for part in &mut compact.unreadable_parts {
+                part.reason = short(&redact(&part.reason), 120);
+            }
+            for anomaly in &mut compact.anomalies {
+                anomaly.message = short(&redact(&anomaly.message), 240);
+            }
+            for git in &mut compact.git {
+                git.commits_over_base.clear();
+                git.newest_untracked.clear();
+            }
+            render_redacted_summary(
+                &compact,
+                time::UtcOffset::UTC,
+                DEFERRED,
+                UntrackedCollection::Deferred,
+                &redact,
+            )
+        }
+        Err(error) => Err(error),
+    }
+}

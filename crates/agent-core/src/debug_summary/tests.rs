@@ -648,3 +648,64 @@ fn summary_budget_at_limit_returns_exact_required_bytes_with_short_and_long_tail
         );
     }
 }
+
+#[test]
+fn deferred_sections_say_not_collected_instead_of_reporting_empty_observations() {
+    let input = sample_input();
+    let sections = [
+        SummarySection::DaemonAndVersions,
+        SummarySection::DaemonLog,
+        SummarySection::Bus,
+        SummarySection::Notifications,
+        SummarySection::Machine,
+    ];
+    let rendered = render_summary_with_uncollected(&input, UtcOffset::UTC, &sections).unwrap();
+    for section in sections {
+        let body = rendered
+            .split(section.heading())
+            .nth(1)
+            .unwrap()
+            .split("\n## ")
+            .next()
+            .unwrap();
+        assert_eq!(body.trim(), "Not collected in this version.");
+    }
+    assert!(rendered.contains("Summary renderer"));
+    assert!(rendered.contains("none of the known ones"));
+}
+
+#[test]
+fn deferred_machine_section_keeps_collection_failures_visible() {
+    let mut input = sample_input();
+    input.unreadable_parts.push(UnreadablePartSummary {
+        name: "worktree".into(),
+        reason: "removed".into(),
+    });
+    let rendered = render_summary_with_uncollected(&input, UtcOffset::UTC, &[SummarySection::Machine]).unwrap();
+    assert!(rendered.contains("Not collected in this version."));
+    assert!(rendered.contains("### Unreadable Parts\n\n- `worktree`: removed"));
+    assert!(!rendered.contains("Load average"));
+}
+
+#[test]
+fn deferred_untracked_metadata_does_not_claim_zero_files() {
+    let mut input = sample_input();
+    input.git[0].newest_untracked.clear();
+    let summary = render_summary_with_coverage(&input, UtcOffset::UTC, &[], UntrackedCollection::Deferred).unwrap();
+    assert!(summary.contains("Untracked file metadata: Not collected in this version."));
+    assert!(!summary.contains("Untracked files (newest 0)"));
+    assert!(summary.contains("Commits over base"));
+}
+
+#[test]
+fn redacts_optional_text_before_truncation_and_byte_budgeting() {
+    let mut input = sample_input();
+    input.history_tail = Some("xy".repeat(100_000));
+    let mut expected = input.clone();
+    expected.history_tail = Some("<cut>".repeat(100_000));
+    assert_eq!(
+        render_redacted_summary(&input, UtcOffset::UTC, &[], UntrackedCollection::Collected, |text| text
+            .replace("xy", "<cut>")),
+        render_summary(&expected, UtcOffset::UTC)
+    );
+}
