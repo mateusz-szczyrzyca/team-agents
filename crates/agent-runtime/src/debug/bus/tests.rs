@@ -54,10 +54,7 @@ async fn collects_team_messages_and_end_of_whole_bus() {
 
     std::fs::write(bus_dir.join("messages.jsonl"), lines.join("\n") + "\n").unwrap();
 
-    let collected = collect(&home, &team, &default_cut())
-        .await
-        .unwrap()
-        .expect("bus messages");
+    let collected = collect(&home, &team, &default_cut()).await.unwrap();
     assert_eq!(collected.summary_messages.len(), 53);
     assert!(
         !collected
@@ -102,10 +99,10 @@ async fn collects_empty_when_bus_file_missing() {
     let collected = collect(&home, &team, &default_cut()).await.unwrap();
     assert_eq!(
         collected,
-        Some(BusCollection {
+        BusCollection {
             artifact_messages: Vec::new(),
             summary_messages: Vec::new(),
-        })
+        }
     );
 }
 
@@ -159,7 +156,7 @@ async fn retains_full_messages_in_artifact_and_redacts_before_summary_cut() {
         [(std::ffi::OsString::from("MY_TOKEN"), std::ffi::OsString::from(secret))],
     );
 
-    let collected = collect(&home, &team, &cut).await.unwrap().expect("bus messages");
+    let collected = collect(&home, &team, &cut).await.unwrap();
 
     let artifact_msg = &collected.artifact_messages[0];
     assert!(
@@ -211,7 +208,7 @@ async fn discards_partial_first_record_when_bus_exceeds_byte_limit() {
     let tail = r#"{"ts":"2026-11-17 12:00:00","from":"codex-1","to":"all","text":"newest"}"#;
     let text = format!("{}\n{tail}\n", "x".repeat(usize::try_from(LIMIT).unwrap()));
     std::fs::write(home.root().join("bus/messages.jsonl"), text).unwrap();
-    let collected = collect(&home, &team, &default_cut()).await.unwrap().unwrap();
+    let collected = collect(&home, &team, &default_cut()).await.unwrap();
     assert_eq!(
         collected.artifact_messages,
         vec!["[2026-11-17 12:00:00] codex-1 → all (chat): newest"]
