@@ -1078,3 +1078,18 @@ fn oversized_configuration_is_bounded_by_tail_budget_with_cut_marker() {
     assert!(daemon_section.contains("key = \"value\""), "{daemon_section}");
     assert!(daemon_section.contains("- Secret keys: API_KEY"), "{daemon_section}");
 }
+
+#[test]
+fn machine_descendants_are_unknown_when_their_collection_failed() {
+    let mut input = sample_input();
+    input.machine.daemon_descendants.clear();
+    input.unreadable_parts.push(UnreadablePartSummary {
+        section: SummarySection::Machine,
+        name: "daemon descendants".to_owned(),
+        reason: "procfs permission denied".to_owned(),
+    });
+    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    let descendant_line = rendered.lines().find(|line| line.starts_with("- Daemon descendants:"));
+    assert_eq!(descendant_line, Some("- Daemon descendants: unknown"));
+    assert!(rendered.contains("procfs permission denied"), "{rendered}");
+}
