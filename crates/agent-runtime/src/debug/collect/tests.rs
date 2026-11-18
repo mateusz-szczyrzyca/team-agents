@@ -1195,3 +1195,43 @@ async fn retained_member_branch_uses_run_round_when_pr_belongs_to_coordinator() 
         recorded
     );
 }
+
+#[tokio::test]
+async fn untracked_observation_preserves_a_task_artifact_with_the_same_name() {
+    use agent_core::config::AbsolutePath;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let team = team();
+    let task = team.crew().roster()[0].1.task().clone();
+    let worktree = home.worktree_dir(team.repo(), &task);
+    std::fs::create_dir_all(&worktree).unwrap();
+    git(&worktree, &["init", "--initial-branch=main"]);
+    git(&worktree, &["commit", "--allow-empty", "-m", "Base"]);
+    std::fs::write(worktree.join("new.txt"), "new file").unwrap();
+    std::fs::create_dir_all(home.task_dir(&task)).unwrap();
+    std::fs::write(home.task_dir(&task).join("untracked.txt"), "retained task artifact").unwrap();
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    collection.observe(&home, &team, None).await.unwrap();
+    let copied_path = PathBuf::from("tasks").join(task.as_str()).join("untracked.txt");
+    let copied: Vec<_> = collection
+        .artifacts
+        .iter()
+        .filter(|(path, _)| path == &copied_path)
+        .collect();
+    assert_eq!(
+        copied.len(),
+        1,
+        "the generated observation must not overwrite or duplicate a task file"
+    );
+    assert_eq!(copied[0].1, b"retained task artifact");
+    let generated_path = PathBuf::from("untracked").join(format!("{task}.txt"));
+    let generated = collection
+        .artifacts
+        .iter()
+        .find(|(path, _)| path == &generated_path)
+        .unwrap();
+    assert!(String::from_utf8(generated.1.clone()).unwrap().contains("new.txt"));
+    let paths: std::collections::BTreeSet<_> = collection.artifacts.iter().map(|(path, _)| path).collect();
+    assert_eq!(paths.len(), collection.artifacts.len());
+}
