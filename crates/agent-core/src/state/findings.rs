@@ -125,7 +125,10 @@ impl Findings {
     /// Starts independent reviews followed by rotating verification passes.
     #[must_use]
     pub fn verifying(count: crate::config::ReviewCount) -> Self {
-        Self::independent(count)
+        Self {
+            verification: Some(Verification::default()),
+            ..Self::independent(count)
+        }
     }
 
     /// The context of the rotating verification protocol, absent for legacy PRs.
