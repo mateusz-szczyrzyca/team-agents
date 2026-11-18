@@ -144,7 +144,7 @@ impl AutopilotPrompt {
             Self::NoticeStandingItem => (
                 "harness/pr/notice-standing-item.md",
                 Audience::Human,
-                &["team", "item", "member", "task", "lead"],
+                &["team", "item", "member", "task", "line"],
             ),
             Self::NoticeApproved => (
                 "harness/pr/notice-approved.md",

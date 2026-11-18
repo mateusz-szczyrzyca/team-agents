@@ -138,6 +138,14 @@ pub(super) struct PullWatch {
     refused: HashSet<(TeamId, PrNumber)>,
 }
 
+impl PullWatch {
+    /// Clears any blocked item announcements for `team`.
+    pub(super) fn reset_item_blocked(&mut self, team: &TeamId) {
+        self.announced
+            .retain(|announcement| !matches!(announcement, Announcement::ItemBlocked { team: t, .. } if t == team));
+    }
+}
+
 /// Something the human is told once.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Announcement {
@@ -203,6 +211,13 @@ pub(super) enum Announcement {
         team: TeamId,
         /// When its last run ended: a team that worked since and sleeps again is told again.
         since: Timestamp,
+    },
+    /// A team's item is blocked behind a failed member while its lead is done.
+    ItemBlocked {
+        /// The team.
+        team: TeamId,
+        /// The item.
+        item: String,
     },
     /// The gate still does not pass at this tip after the lead was sent back as often as it is.
     GateNotPassed {
