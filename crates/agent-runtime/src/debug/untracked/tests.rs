@@ -41,5 +41,5 @@ async fn collects_fifty_newest_untracked_files_sorted_by_mtime() {
 async fn empty_untracked_files_returns_empty_collection() {
     let dir = tempfile::tempdir().expect("tempdir");
     let result = collect(dir.path(), &[]).await;
-    assert!(result.summary_facts.is_empty());
+    assert_eq!(result.summary_facts, Vec::<UntrackedFileSummaryFacts>::new());
 }
