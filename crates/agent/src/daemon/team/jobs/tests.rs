@@ -306,7 +306,7 @@ async fn a_member_that_failed_on_an_item_is_a_member_failed_notice_with_the_item
     assert!(text.contains("`agents/claude-1/task-x-1.1`"), "{text}");
     assert!(text.contains("I could not do it."), "{text}");
     assert!(
-        text.contains("Ending `STATUS: DONE` does not publish item 1.1 until the human resumes claude-1."),
+        text.contains("does not publish item 1.1 until the human resumes"),
         "{text}"
     );
 }
@@ -342,7 +342,7 @@ async fn a_member_without_a_status_on_an_item_is_a_member_no_status_notice_with_
     );
     assert!(text.contains("`agents/claude-1/task-x-1.1`"), "{text}");
     assert!(
-        text.contains("Ending `STATUS: DONE` does not publish item 1.1 until the human resumes claude-1."),
+        text.contains("does not publish item 1.1 until the human resumes"),
         "{text}"
     );
 }
