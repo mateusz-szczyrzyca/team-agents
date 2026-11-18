@@ -531,49 +531,43 @@ fn write_process_line(out: &mut SummaryWriter, label: &str, value: &str) {
 
 fn render_daemon(
     daemon: Option<&DaemonSummary>,
+    daemon_process_unreadable: bool,
     command_version: &str,
     configuration: Option<&str>,
     secret_keys: &[String],
     offset: UtcOffset,
     out: &mut SummaryWriter,
 ) {
-    let Some(d) = daemon else {
-        write_line(out, "The daemon does not answer (unreachable).");
+    if let Some(d) = daemon {
+        write_line(out, &format!("- PID: {}", d.pid));
+        if let Some(started) = d.started_at {
+            write_line(out, &format!("- Started: {}", format_time(started, offset)));
+        }
         write_process_line(out, "- Command version: ", command_version);
-        if let Some(conf) = configuration {
-            if conf.contains('\n') {
-                write_line(out, "- Configuration:");
-                for line in conf.lines() {
-                    write_line(out, &format!("    {line}"));
-                }
-            } else {
-                write_process_line(out, "- Configuration: ", conf);
-            }
+        write_process_line(out, "- Daemon version: ", &d.version);
+        write_process_line(out, "- Executable: ", &d.exe_path);
+        if d.disk_newer_than_process {
+            write_line(out, "  (Warning: binary on disk is newer than running process)");
         }
-        if !secret_keys.is_empty() {
-            write_process_line(out, "- Secret keys: ", &secret_keys.join(", "));
+        write_process_line(out, "- Command line: ", &d.cmdline.join(" "));
+        write_process_line(out, "- Environment variables: ", &d.env_var_names.join(", "));
+    } else {
+        if !daemon_process_unreadable {
+            write_line(out, "The daemon does not answer (unreachable).");
         }
-        write_line(out, "");
-        return;
-    };
-    write_line(out, &format!("- PID: {}", d.pid));
-    if let Some(started) = d.started_at {
-        write_line(out, &format!("- Started: {}", format_time(started, offset)));
+        write_process_line(out, "- Command version: ", command_version);
     }
-    write_process_line(out, "- Command version: ", command_version);
-    write_process_line(out, "- Daemon version: ", &d.version);
-    write_process_line(out, "- Executable: ", &d.exe_path);
-    if d.disk_newer_than_process {
-        write_line(out, "  (Warning: binary on disk is newer than running process)");
-    }
-    write_process_line(out, "- Command line: ", &d.cmdline.join(" "));
-    write_process_line(out, "- Environment variables: ", &d.env_var_names.join(", "));
+
     if let Some(conf) = configuration {
         if conf.contains('\n') {
             write_line(out, "- Configuration:");
+            let mut text = String::new();
             for line in conf.lines() {
-                write_line(out, &format!("    {line}"));
+                text.push_str("    ");
+                text.push_str(line);
+                text.push('\n');
             }
+            out.tail(&text);
         } else {
             write_process_line(out, "- Configuration: ", conf);
         }
@@ -813,11 +807,13 @@ fn render_bus(messages: &[String], out: &mut SummaryWriter) {
     if messages.is_empty() {
         write_line(out, "No bus messages.");
     } else {
+        let mut text = String::new();
         for msg in messages {
-            out.push_str("- ");
-            out.tail(msg);
-            write_line(out, "");
+            text.push_str("- ");
+            text.push_str(msg);
+            text.push('\n');
         }
+        out.tail(&text);
     }
     write_line(out, "");
 }
@@ -826,11 +822,13 @@ fn render_notifications(notifications: &[String], out: &mut SummaryWriter) {
     if notifications.is_empty() {
         write_line(out, "No notifications.");
     } else {
+        let mut text = String::new();
         for n in notifications {
-            out.push_str("- ");
-            out.tail(n);
-            write_line(out, "");
+            text.push_str("- ");
+            text.push_str(n);
+            text.push('\n');
         }
+        out.tail(&text);
     }
     write_line(out, "");
 }
@@ -1053,8 +1051,13 @@ fn render_with_redaction(
         match section {
             SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
             SummarySection::DaemonAndVersions => {
+                let daemon_process_unreadable = input
+                    .unreadable_parts
+                    .iter()
+                    .any(|part| part.section == SummarySection::DaemonAndVersions && part.name == "daemon process");
                 render_daemon(
                     input.daemon.as_ref(),
+                    daemon_process_unreadable,
                     &input.command_version,
                     input.configuration.as_deref(),
                     &input.secret_keys,
