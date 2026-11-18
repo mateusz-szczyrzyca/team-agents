@@ -109,25 +109,25 @@ fn take_history_stamp(
     }
 
     let wal = file_stamp(wal_path)?;
-    if let Some(w) = wal {
-        if w.len > limit {
-            return Err(HistoryCollectionError::TooLarge {
-                path: wal_path.to_path_buf(),
-                size: w.len,
-                limit,
-            });
-        }
+    if let Some(w) = wal
+        && w.len > limit
+    {
+        return Err(HistoryCollectionError::TooLarge {
+            path: wal_path.to_path_buf(),
+            size: w.len,
+            limit,
+        });
     }
 
     let shm = file_stamp(shm_path)?;
-    if let Some(s) = shm {
-        if s.len > limit {
-            return Err(HistoryCollectionError::TooLarge {
-                path: shm_path.to_path_buf(),
-                size: s.len,
-                limit,
-            });
-        }
+    if let Some(s) = shm
+        && s.len > limit
+    {
+        return Err(HistoryCollectionError::TooLarge {
+            path: shm_path.to_path_buf(),
+            size: s.len,
+            limit,
+        });
     }
 
     Ok(HistoryStamp { db, wal, shm })
@@ -187,10 +187,7 @@ pub(crate) fn read_live_team_history(
     team: &TeamId,
 ) -> Result<Vec<SequencedRecord>, HistoryCollectionError> {
     if !history_path.exists() {
-        return Err(HistoryCollectionError::Io {
-            path: history_path.to_path_buf(),
-            source: std::io::Error::new(std::io::ErrorKind::NotFound, "history database does not exist"),
-        });
+        return Ok(Vec::new());
     }
 
     let wal_path = sidecar_path(history_path, "-wal");
@@ -212,16 +209,16 @@ pub(crate) fn read_live_team_history(
 
     copy_bounded(history_path, &copied_db, MAX_HISTORY_BYTES)?;
 
-    if let Some(w) = before.wal {
-        if w.len > 0 {
-            copy_bounded(&wal_path, &copied_wal, MAX_HISTORY_BYTES)?;
-        }
+    if let Some(w) = before.wal
+        && w.len > 0
+    {
+        copy_bounded(&wal_path, &copied_wal, MAX_HISTORY_BYTES)?;
     }
 
-    if let Some(s) = before.shm {
-        if s.len > 0 {
-            copy_bounded(&shm_path, &copied_shm, MAX_HISTORY_BYTES)?;
-        }
+    if let Some(s) = before.shm
+        && s.len > 0
+    {
+        copy_bounded(&shm_path, &copied_shm, MAX_HISTORY_BYTES)?;
     }
 
     let after = take_history_stamp(history_path, &wal_path, &shm_path, MAX_HISTORY_BYTES)?;

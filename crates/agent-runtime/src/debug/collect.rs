@@ -12,10 +12,12 @@ use agent_core::debug_summary::{
     RoundSummaryFacts, SummaryInput, TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts,
 };
 use agent_core::diagnostic_assessment::{Assessment, Branch, LeadGit, Origin, ReadFailure, Task};
-use agent_core::ids::{BranchName, TaskId};
+use agent_core::ids::{AgentName, BranchName, TaskId};
 use agent_core::kinds::Role;
 use agent_core::questions::QuestionsFile;
-use agent_core::state::{CommitId, GateRecord, ItemPhase, Member, RunEnd, RunState, Team, Timestamp};
+use agent_core::state::{
+    CommitId, GateRecord, ItemPhase, Member, RoundEnd, RoundLife, RunEnd, RunState, Team, Timestamp,
+};
 use tokio::io::AsyncReadExt;
 
 use super::{DebugResult, DebugRuntimeError};
@@ -468,7 +470,8 @@ impl Collection {
         match result {
             Ok(records) if records.is_empty() => {
                 self.summary.history_tail = Some("No history recorded for this team.".to_owned());
-                self.failed("team history", "no history records for this team");
+                self.add("history.txt", b"No history recorded for this team.\n".to_vec());
+                self.add("history.jsonl", Vec::new());
             }
             Ok(records) => {
                 let selection = agent_core::story::Selection::Team(team.id().clone());
@@ -538,10 +541,46 @@ impl Collection {
     }
 
     async fn git(&mut self, home: &Home, team: &Team) {
-        let tasks: Vec<_> = self.summary.tasks.iter().map(|task| task.id.clone()).collect();
-        for task in tasks {
+        let last_round_merged = team.rounds().last().is_some_and(|round| {
+            matches!(
+                round.life(),
+                RoundLife::Closed {
+                    how: RoundEnd::Merged,
+                    ..
+                }
+            )
+        });
+        let mut has_removed_merged_worktrees = false;
+
+        let tasks: Vec<_> = self
+            .summary
+            .tasks
+            .iter()
+            .map(|task| (task.id.clone(), task.agent.clone()))
+            .collect();
+        for (task, agent) in tasks {
             let path = home.worktree_dir(team.repo(), &task);
-            match read_git(&path, &task).await {
+            let worktree_missing = tokio::fs::metadata(&path)
+                .await
+                .is_err_and(|err| err.kind() == std::io::ErrorKind::NotFound);
+
+            let observation = if last_round_merged && worktree_missing {
+                if let Some(ref checkout) = self.checkout {
+                    match read_git_from_checkout(checkout, &task, &agent).await {
+                        Ok(obs) => {
+                            has_removed_merged_worktrees = true;
+                            Ok(obs)
+                        }
+                        Err(err) => Err(err),
+                    }
+                } else {
+                    read_git(&path, &task).await
+                }
+            } else {
+                read_git(&path, &task).await
+            };
+
+            match observation {
                 Ok(observation) => {
                     if task == self.assessment.lead {
                         self.assessment.lead_git = Some(LeadGit {
@@ -560,6 +599,12 @@ impl Collection {
                 Err(error) => self.failed(format!("worktree {}", escaped_path(&path)), diagnostic_error(&error)),
             }
         }
+        if has_removed_merged_worktrees {
+            self.add(
+                PathBuf::from("git").join("removed-worktrees.txt"),
+                b"Worktrees for merged rounds were removed; retained branches and commits were collected from the repository checkout.\n".to_vec(),
+            );
+        }
         self.git_details(home, team).await;
         for git in &self.summary.git {
             self.artifacts.push((
@@ -577,6 +622,15 @@ impl Collection {
             .find(|git| git.task_id == self.assessment.lead)
             .map(|git| git.tip.clone());
         let lead_path = home.worktree_dir(team.repo(), &self.assessment.lead);
+        let lead_worktree_missing = tokio::fs::metadata(&lead_path)
+            .await
+            .is_err_and(|err| err.kind() == std::io::ErrorKind::NotFound);
+        let ancestor_dir = if lead_worktree_missing {
+            self.checkout.clone().unwrap_or(lead_path.clone())
+        } else {
+            lead_path.clone()
+        };
+
         for index in 0..self.summary.git.len() {
             let Some(git) = self.summary.git.get(index) else {
                 continue;
@@ -585,7 +639,7 @@ impl Collection {
             let tip = git.tip.clone();
             let contains = match &lead_tip {
                 Some(lead) => match git_capture(
-                    &lead_path,
+                    &ancestor_dir,
                     &["merge-base", "--is-ancestor", tip.as_str(), lead.as_str()],
                 )
                 .await
@@ -607,11 +661,17 @@ impl Collection {
             };
             if let Some(git) = self.summary.git.get_mut(index) {
                 git.lead_contains_tip = contains;
+                let is_lead = task == self.assessment.lead;
+                let origin = if is_lead {
+                    Some(git.origin_tip.clone().map_or(Origin::Missing, Origin::Tip))
+                } else {
+                    git.origin_tip.clone().map(Origin::Tip)
+                };
                 self.assessment.branches.push(Branch {
                     task: task.clone(),
                     name: git.branch.clone(),
                     tip: git.tip.clone(),
-                    origin: Some(git.origin_tip.clone().map_or(Origin::Missing, Origin::Tip)),
+                    origin,
                     contained_in_lead: contains,
                 });
             }
@@ -638,17 +698,31 @@ impl Collection {
             self.failed("git base configuration", "repository has no configured base branch");
             return;
         };
-        let tasks: Vec<_> = self.summary.git.iter().map(|git| git.task_id.clone()).collect();
-        for task in tasks {
+        let tasks: Vec<_> = self
+            .summary
+            .git
+            .iter()
+            .map(|git| (git.task_id.clone(), git.branch.clone()))
+            .collect();
+        for (task, branch) in tasks {
             let path = home.worktree_dir(team.repo(), &task);
+            let worktree_missing = tokio::fs::metadata(&path)
+                .await
+                .is_err_and(|err| err.kind() == std::io::ErrorKind::NotFound);
+
+            let (target_dir, rev_range) = if worktree_missing {
+                if let Some(ref checkout) = self.checkout {
+                    (checkout.as_path(), format!("{base}..{branch}"))
+                } else {
+                    (path.as_path(), format!("{base}..HEAD"))
+                }
+            } else {
+                (path.as_path(), format!("{base}..HEAD"))
+            };
+
             match git_text(
-                &path,
-                &[
-                    "log",
-                    "--format=%H%x00%aI%x00%an%x00%s",
-                    "--no-decorate",
-                    &format!("{base}..HEAD"),
-                ],
+                target_dir,
+                &["log", "--format=%H%x00%aI%x00%an%x00%s", "--no-decorate", &rev_range],
             )
             .await
             {
@@ -864,6 +938,99 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
             origin_tip,
             commits_over_base: vec![],
             uncommitted_files: parse_status(&status)?,
+            harness_refs: harness
+                .lines()
+                .filter(|line| {
+                    line.split_once(' ')
+                        .is_some_and(|(name, _)| name == published || name == reviewed)
+                })
+                .map(str::to_owned)
+                .collect(),
+            lead_contains_tip: None,
+            newest_untracked: vec![],
+        },
+    })
+}
+
+async fn read_git_from_checkout(
+    checkout: &Path,
+    task: &TaskId,
+    agent: &AgentName,
+) -> Result<GitObservation, ObservationError> {
+    let branches_output = git_text(
+        checkout,
+        &["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/"],
+    )
+    .await?;
+
+    let exact = format!("agents/{agent}/{task}");
+    let prefix = format!("agents/{agent}/{task}-");
+    let agent_prefix = format!("agents/{agent}/");
+
+    let mut candidate: Option<(BranchName, CommitId)> = None;
+
+    for line in branches_output.lines() {
+        let Some((ref_name, hash)) = line.split_once(' ') else {
+            continue;
+        };
+
+        let is_match = ref_name == exact
+            || ref_name.starts_with(&prefix)
+            || (ref_name.starts_with(&agent_prefix) && ref_name.ends_with("-item"));
+
+        if is_match {
+            let branch: BranchName = ref_name.parse().map_err(ObservationError::Branch)?;
+            let tip: CommitId = hash.parse().map_err(ObservationError::Commit)?;
+            if ref_name.starts_with(&prefix) || candidate.is_none() {
+                candidate = Some((branch, tip));
+            }
+        }
+    }
+
+    let (branch, tip) = candidate.ok_or_else(|| {
+        ObservationError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("no retained branch found in checkout for task {task}"),
+        ))
+    })?;
+
+    let origin = git_text(
+        checkout,
+        &[
+            "for-each-ref",
+            "--format=%(objectname)",
+            &format!("refs/remotes/origin/{branch}"),
+        ],
+    )
+    .await?;
+    let origin_tip = if origin.trim().is_empty() {
+        None
+    } else {
+        Some(origin.trim().parse().map_err(ObservationError::Commit)?)
+    };
+
+    let published = format!("refs/team-agents/published/{branch}");
+    let reviewed = format!("refs/team-agents/reviewed/{branch}");
+    let harness = git_text(
+        checkout,
+        &[
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            &published,
+            &reviewed,
+        ],
+    )
+    .await?;
+
+    Ok(GitObservation {
+        dirty: false,
+        facts: GitWorktreeSummary {
+            task_id: task.clone(),
+            branch,
+            tip,
+            origin_tip,
+            commits_over_base: vec![],
+            uncommitted_files: vec![],
             harness_refs: harness
                 .lines()
                 .filter(|line| {
