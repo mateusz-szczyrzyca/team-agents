@@ -720,7 +720,7 @@ fn redacted_diagnostic_paths_are_plain_and_unread_history_is_named_in_its_sectio
         name: "team history".into(),
         reason: "database unavailable".into(),
     });
-    let summary = render_redacted_summary(
+    let summary = render_command_summary(
         &input,
         UtcOffset::from_hms(2, 0, 0).unwrap(),
         &[],
