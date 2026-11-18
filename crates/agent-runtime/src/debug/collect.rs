@@ -643,7 +643,15 @@ impl Collection {
 
             let observation = if round_merged && worktree_missing {
                 if let Some(ref checkout) = self.checkout {
-                    match read_git_from_checkout(checkout, &task, &agent, recorded).await {
+                    match read_git_from_checkout(
+                        checkout,
+                        &task,
+                        &agent,
+                        recorded,
+                        latest_round.filter(|_| task != self.assessment.lead),
+                    )
+                    .await
+                    {
                         Ok(obs) => {
                             has_removed_merged_worktrees = true;
                             Ok(obs)
@@ -1125,6 +1133,7 @@ async fn read_git_from_checkout(
     task: &TaskId,
     agent: &AgentName,
     recorded: Option<&BranchName>,
+    round: Option<&agent_core::state::Round>,
 ) -> Result<GitObservation, ObservationError> {
     let branches_output = git_text(
         checkout,
@@ -1134,6 +1143,13 @@ async fn read_git_from_checkout(
 
     let exact = format!("agents/{agent}/{task}");
     let prefix = format!("agents/{agent}/{task}-");
+
+    let derived = round
+        .and_then(agent_core::state::Round::item)
+        .map(|item| format!("{prefix}{item}").parse::<BranchName>())
+        .transpose()
+        .map_err(ObservationError::Branch)?;
+    let recorded = recorded.or(derived.as_ref());
 
     let mut candidate: Option<(BranchName, CommitId)> = None;
 
