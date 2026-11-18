@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use agent_core::config::{MAX_SECRETS_BYTES, Secrets, SecretsError};
 use agent_core::debug_summary::{
-    SummaryError, SummaryInput, SummarySection, UntrackedCollection, render_command_summary,
+    SummaryError, SummaryInput, SummarySection, UntrackedCollection, render_command_summary_with_git_notice,
 };
 use agent_core::diagnostic_assessment::assess;
 use agent_core::ids::{RoundId, TaskId, TeamId};
@@ -226,6 +226,8 @@ pub async fn execute_debug_at(
         now,
         Duration::from_secs(args.stale_minutes.unwrap_or(STALE_MINUTES).saturating_mul(60)),
     )?;
+    collection.checkout = location.checkout;
+    collection.local_offset = location.local_offset;
     collection.observe(home, team, status).await?;
     match process_facts::observe(home, std::path::Path::new("/proc")).await {
         Ok(Some(daemon)) => {
@@ -291,10 +293,15 @@ pub async fn execute_debug_at(
         "facts.txt",
         format!("{:#?}\n{findings:#?}", collection.assessment).into_bytes(),
     );
-    let summary = compact_summary_with(&collection.summary, location.local_offset, |text| {
-        // Replacing valid UTF-8 patterns with ASCII preserves valid UTF-8.
-        cut.redact_text(text)
-    })
+    let summary = compact_summary_with(
+        &collection.summary,
+        location.local_offset,
+        collection.git_notice.as_deref(),
+        |text| {
+            // Replacing valid UTF-8 patterns with ASCII preserves valid UTF-8.
+            cut.redact_text(text)
+        },
+    )
     .map_err(DebugRuntimeError::Summary)?;
     collection.add("NOT_COLLECTED.txt", b"Not collected in this version: bus; notifications; configuration and secret key names; machine metrics; newest untracked file metadata.\n".to_vec());
     let parent = args.out.unwrap_or_else(|| home.root().join("debug"));
@@ -320,15 +327,23 @@ fn short(text: &str, limit: usize) -> String {
 
 #[cfg(test)]
 fn compact_summary(input: &SummaryInput) -> Result<String, SummaryError> {
-    compact_summary_with(input, time::UtcOffset::UTC, str::to_owned)
+    compact_summary_with(input, time::UtcOffset::UTC, None, str::to_owned)
 }
 
 fn compact_summary_with(
     input: &SummaryInput,
     offset: time::UtcOffset,
+    git_notice: Option<&str>,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    match render_command_summary(input, offset, DEFERRED, UntrackedCollection::Deferred, &redact) {
+    match render_command_summary_with_git_notice(
+        input,
+        offset,
+        DEFERRED,
+        UntrackedCollection::Deferred,
+        &redact,
+        git_notice,
+    ) {
         Ok(text) => Ok(text),
         Err(SummaryError::RequiredFactsTooLarge { .. }) => {
             let mut compact = input.clone();
@@ -342,7 +357,14 @@ fn compact_summary_with(
                 git.commits_over_base.clear();
                 git.newest_untracked.clear();
             }
-            render_command_summary(&compact, offset, DEFERRED, UntrackedCollection::Deferred, &redact)
+            render_command_summary_with_git_notice(
+                &compact,
+                offset,
+                DEFERRED,
+                UntrackedCollection::Deferred,
+                &redact,
+                git_notice,
+            )
         }
         Err(error) => Err(error),
     }

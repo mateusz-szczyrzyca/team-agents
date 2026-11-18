@@ -603,6 +603,7 @@ impl Collection {
             }
         }
         if has_removed_merged_worktrees {
+            self.git_notice = Some("Worktrees for merged rounds were removed; retained branches and commits were collected from the repository checkout.".to_owned());
             self.add(
                 PathBuf::from("git").join("removed-worktrees.txt"),
                 b"Worktrees for merged rounds were removed; retained branches and commits were collected from the repository checkout.\n".to_vec(),
