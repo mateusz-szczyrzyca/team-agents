@@ -508,7 +508,7 @@ async fn member_nostatus_work_same_session_short_prompt_no_notices_then_pr() {
     rig.wake_sleeping_teams();
     rig.start().await;
 
-    let (_team, tasks) = rig
+    let (team, tasks) = rig
         .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
         .await;
 
@@ -519,9 +519,30 @@ async fn member_nostatus_work_same_session_short_prompt_no_notices_then_pr() {
 
     assert_eq!(rig.runs(&tasks[1]), 2);
     let prompt2 = rig.prompt(&tasks[1], 2).await;
+    assert_eq!(
+        prompt2.trim(),
+        "Your previous run ended without a `STATUS:` line. Continue in this session from where you stopped: do not redo work already done, finish any open work, and select your true `STATUS:` line (`DONE`, `SLEEPING`, `QUESTIONS`, or `FAILED`) following the rules of your first message."
+    );
+
+    let state = rig.state();
+    let member = state
+        .team(&team)
+        .unwrap()
+        .crew()
+        .roster()
+        .into_iter()
+        .find(|(_, m)| m.task() == &tasks[1])
+        .unwrap()
+        .1;
+    let runs = member.runs();
+    assert_eq!(runs.len(), 2);
+    assert!(runs[0].session().is_some());
+    assert_eq!(runs[0].session(), runs[1].session());
+
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap_or_default();
     assert!(
-        prompt2.contains("Your previous run ended without a `STATUS:` line"),
-        "{prompt2}"
+        !messages.contains("member_failed") && !messages.contains("member_no_status"),
+        "unexpected failure message on bus during retry: {messages}"
     );
 
     let failures: Vec<_> = rig
@@ -539,31 +560,39 @@ async fn member_nostatus_work_same_session_short_prompt_no_notices_then_pr() {
 async fn coordinator_first_nostatus_then_success() {
     let mut rig = Rig::new(
         &[
-            investigator("inv-lead", "nostatus,work"),
+            investigator("inv-lead", "nostatus,sleep,integrate"),
+            normal("claude-1", "work"),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
         ],
         5,
-        false,
+        true,
     )
     .await;
+    rig.wake_sleeping_teams();
     rig.start().await;
 
     let (_team, tasks) = rig
-        .run(&["inv-lead"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
         .await;
 
-    rig.status_is(&tasks[0], TaskStatus::Done).await;
     rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
         .await;
     let _merged = rig.notification_with("Status: 🟣 merged").await;
 
-    assert_eq!(rig.runs(&tasks[0]), 2);
+    assert_eq!(rig.runs(&tasks[0]), 3);
     let prompt2 = rig.prompt(&tasks[0], 2).await;
-    assert!(
-        prompt2.contains("Your previous run ended without a `STATUS:` line"),
-        "{prompt2}"
+    assert_eq!(
+        prompt2.trim(),
+        "Your previous run ended without a `STATUS:` line. Continue in this session from where you stopped: do not redo work already done, finish any open work, and select your true `STATUS:` line (`DONE`, `SLEEPING`, `QUESTIONS`, or `FAILED`) following the rules of your first message."
     );
+
+    let failures: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|n| n.contains("failed") || n.contains("no STATUS"))
+        .collect();
+    assert!(failures.is_empty(), "unexpected failure notices: {failures:?}");
 
     rig.stop().await.unwrap();
 }
@@ -598,6 +627,14 @@ async fn member_with_nostatus_alone_has_three_runs_and_fails_with_item_branch_no
         .collect();
     assert_eq!(told.len(), 1, "{told:?}");
 
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap_or_default();
+    assert!(
+        messages.contains("member_no_status")
+            && messages.contains("1.1")
+            && messages.contains(&format!("agents/claude-1/{}-1.1", tasks[1])),
+        "coordinator message must contain member_no_status, item 1.1 and branch: {messages}"
+    );
+
     rig.stop().await.unwrap();
 }
 
@@ -607,7 +644,7 @@ async fn restart_after_second_no_status_does_not_give_a_fourth_run() {
     let mut rig = Rig::new(
         &[
             investigator("inv-lead", "sleep"),
-            normal("claude-1", "nostatus"),
+            normal("claude-1", "nostatus-hold-2"),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
         ],
@@ -617,17 +654,34 @@ async fn restart_after_second_no_status_does_not_give_a_fourth_run() {
     .await;
     rig.start().await;
 
-    let (_team, tasks) = rig
+    let (team, tasks) = rig
         .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
         .await;
 
-    rig.wait_for("run 2 of member", || rig.runs(&tasks[1]) >= 2).await;
+    rig.wait_for("run 2 of member started", || rig.runs(&tasks[1]) >= 2)
+        .await;
 
     rig.stop().await.unwrap();
+
+    let worktree = rig.worktree(&tasks[1]);
+    std::fs::write(worktree.join(".fake-continue"), "").unwrap();
     rig.start().await;
 
     rig.status_is(&tasks[1], TaskStatus::Failed).await;
     assert_eq!(rig.runs(&tasks[1]), 3);
+
+    let state_after = rig.state();
+    let member_after = state_after
+        .team(&team)
+        .unwrap()
+        .crew()
+        .roster()
+        .into_iter()
+        .find(|(_, m)| m.task() == &tasks[1])
+        .unwrap()
+        .1;
+    assert_eq!(member_after.runs().len(), 3);
+    assert_eq!(member_after.status(), TaskStatus::Failed);
 
     rig.stop().await.unwrap();
 }

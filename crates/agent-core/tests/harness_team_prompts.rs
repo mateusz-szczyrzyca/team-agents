@@ -96,4 +96,45 @@ mod harness_team_prompts {
         assert_ne!(title.trim(), "");
         assert_ne!(body.len(), 0);
     }
+
+    #[test]
+    fn member_item_failure_messages_render_with_item_and_branch_guidance() {
+        for (id, filename, vars) in [
+            (
+                TeamPrompt::MemberFailedItem,
+                "bus-member-failed-item.md",
+                vec!["member", "item", "branch", "message"],
+            ),
+            (
+                TeamPrompt::MemberNoStatusItem,
+                "bus-member-no-status-item.md",
+                vec!["member", "item", "branch"],
+            ),
+        ] {
+            let spec = id.spec();
+            assert_eq!(spec.path(), format!("{TEAM_DIR}/{filename}"));
+            assert_eq!(spec.variables(), &vars);
+            let text = std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../")
+                    .join(PROMPTS_DIR)
+                    .join(spec.path()),
+            )
+            .unwrap();
+            let mut values = Variables::new()
+                .with("member", "claude-1")
+                .and_then(|v| v.with("item", "1.1"))
+                .and_then(|v| v.with("branch", "agents/claude-1/1.1"))
+                .unwrap();
+            if vars.contains(&"message") {
+                values = values.with("message", "the error message").unwrap();
+            }
+            let rendered = spec.render(&text, &values).unwrap();
+            assert!(rendered.contains("claude-1"));
+            assert!(rendered.contains("1.1"));
+            assert!(rendered.contains("agents/claude-1/1.1"));
+            assert!(rendered.contains("take over"));
+            assert!(rendered.contains("STATUS: DONE"));
+        }
+    }
 }
