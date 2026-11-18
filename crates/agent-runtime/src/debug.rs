@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use agent_core::config::{MAX_SECRETS_BYTES, Secrets, SecretsError};
 use agent_core::debug_summary::{
-    SummaryError, SummaryInput, SummarySection, UntrackedCollection, render_redacted_summary,
+    SummaryError, SummaryInput, SummarySection, UntrackedCollection, render_command_summary,
 };
 use agent_core::diagnostic_assessment::assess;
 use agent_core::ids::{RoundId, TaskId, TeamId};
@@ -188,6 +188,30 @@ pub async fn execute_debug(
     status: Option<Result<String, String>>,
     _out: &mut impl Write,
 ) -> Result<DebugResult, DebugRuntimeError> {
+    execute_debug_at(
+        home,
+        args,
+        status,
+        DebugLocation {
+            local_offset: time::UtcOffset::UTC,
+            checkout: None,
+        },
+        _out,
+    )
+    .await
+}
+
+/// Collects a diagnostic bundle using the caller's machine presentation context.
+///
+/// # Errors
+/// Returns [`DebugRuntimeError`] for required inputs, rendering or persistence failures.
+pub async fn execute_debug_at(
+    home: &Home,
+    args: DebugArgs,
+    status: Option<Result<String, String>>,
+    location: DebugLocation,
+    _out: &mut impl Write,
+) -> Result<DebugResult, DebugRuntimeError> {
     let secrets = load_debug_secrets(home).await?;
     let cut = SecretsCut::new(&secrets, std::env::vars_os());
     let state = load_debug_state(home).await?;
@@ -223,7 +247,7 @@ pub async fn execute_debug(
         "facts.txt",
         format!("{:#?}\n{findings:#?}", collection.assessment).into_bytes(),
     );
-    let summary = compact_summary_with(&collection.summary, |text| {
+    let summary = compact_summary_with(&collection.summary, location.local_offset, |text| {
         // Replacing valid UTF-8 patterns with ASCII preserves valid UTF-8.
         cut.redact_text(text)
     })
@@ -252,17 +276,15 @@ fn short(text: &str, limit: usize) -> String {
 
 #[cfg(test)]
 fn compact_summary(input: &SummaryInput) -> Result<String, SummaryError> {
-    compact_summary_with(input, str::to_owned)
+    compact_summary_with(input, time::UtcOffset::UTC, str::to_owned)
 }
 
-fn compact_summary_with(input: &SummaryInput, redact: impl Fn(&str) -> String) -> Result<String, SummaryError> {
-    match render_redacted_summary(
-        input,
-        time::UtcOffset::UTC,
-        DEFERRED,
-        UntrackedCollection::Deferred,
-        &redact,
-    ) {
+fn compact_summary_with(
+    input: &SummaryInput,
+    offset: time::UtcOffset,
+    redact: impl Fn(&str) -> String,
+) -> Result<String, SummaryError> {
+    match render_command_summary(input, offset, DEFERRED, UntrackedCollection::Deferred, &redact) {
         Ok(text) => Ok(text),
         Err(SummaryError::RequiredFactsTooLarge { .. }) => {
             let mut compact = input.clone();
@@ -276,13 +298,7 @@ fn compact_summary_with(input: &SummaryInput, redact: impl Fn(&str) -> String) -
                 git.commits_over_base.clear();
                 git.newest_untracked.clear();
             }
-            render_redacted_summary(
-                &compact,
-                time::UtcOffset::UTC,
-                DEFERRED,
-                UntrackedCollection::Deferred,
-                &redact,
-            )
+            render_command_summary(&compact, offset, DEFERRED, UntrackedCollection::Deferred, &redact)
         }
         Err(error) => Err(error),
     }
@@ -295,18 +311,4 @@ pub struct DebugLocation {
     pub local_offset: time::UtcOffset,
     /// Clone from which diagnostics were requested, when known.
     pub checkout: Option<PathBuf>,
-}
-
-/// Collects a diagnostic bundle using the caller's machine presentation context.
-///
-/// # Errors
-/// Returns [`DebugRuntimeError`] for required inputs, rendering or persistence failures.
-pub async fn execute_debug_at(
-    home: &Home,
-    args: DebugArgs,
-    status: Option<Result<String, String>>,
-    _location: DebugLocation,
-    out: &mut impl Write,
-) -> Result<DebugResult, DebugRuntimeError> {
-    execute_debug(home, args, status, out).await
 }
