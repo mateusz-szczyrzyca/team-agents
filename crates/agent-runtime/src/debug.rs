@@ -4,6 +4,7 @@
 mod activity_tests;
 mod bus;
 mod collect;
+mod config;
 mod daemon_log;
 pub(crate) mod history;
 mod notifications;
