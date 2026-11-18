@@ -210,6 +210,22 @@ case $action in
     fi
     result "$report"'\nSTATUS: DONE'
     ;;
+  rotating-verify)
+    # Each verification resolves the supplied findings and adds a regression in pass two.
+    answers=''
+    verifying=false
+    while IFS= read -r line; do
+      if [[ $line == '# OPEN FINDINGS TO VERIFY' ]]; then verifying=true; fi
+      if [[ $verifying == true && $line =~ ^([0-9]+)\.\ \[ ]]; then
+        answers+="FINDING ${BASH_REMATCH[1]}: RESOLVED\n"
+      fi
+    done <<< "$prompt"
+    if [[ $prompt == *'pass 3'* ]]; then
+      result "VERDICT: APPROVE\n$answers\nSUMMARY: verified\nSTATUS: DONE"
+    else
+      result "VERDICT: REQUEST_CHANGES\n$answers\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — missing regression → add it\n   CHECK: read src/lib.rs:7\nSTATUS: DONE"
+    fi
+    ;;
   verify:*|late-verify:*)
     # Structured reports answer the supplied permanent numbers before any new findings.
     if [[ $action == late-verify:* ]]; then

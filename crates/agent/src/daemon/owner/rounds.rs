@@ -749,3 +749,7 @@ mod publication_findings_tests;
 #[cfg(test)]
 #[path = "rounds/tests/joined_pass.rs"]
 mod joined_pass_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/verification.rs"]
+mod verification_tests;
