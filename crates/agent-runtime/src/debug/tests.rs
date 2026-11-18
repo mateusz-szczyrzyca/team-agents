@@ -470,7 +470,7 @@ async fn collects_redacted_notifications_in_bundle_and_summary() {
     std::fs::create_dir_all(&notif_dir).unwrap();
     std::fs::write(
         notif_dir.join("notification-20261117-120000.md"),
-        "Notice for team-20261117-120000-a1b2: secret test-confidential-λ reported\n",
+        "Notice\nTeam: team-20261117-120000-a1b2\n\nsecret test-confidential-λ reported\n",
     )
     .unwrap();
     let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
