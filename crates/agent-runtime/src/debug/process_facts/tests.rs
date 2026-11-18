@@ -157,3 +157,21 @@ fn start_time_reports_clock_overflow_and_calendar_errors() {
         Err(ProcessError::Time(_))
     ));
 }
+
+#[test]
+fn ignores_lock_with_the_same_inode_on_another_device() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("daemon.lock");
+    std::fs::write(&path, "").unwrap();
+    let metadata = std::fs::metadata(&path).unwrap();
+    let major = rustix::fs::major(metadata.dev());
+    let minor = rustix::fs::minor(metadata.dev());
+    let inode = metadata.ino();
+    for device in [(major ^ 1, minor), (major, minor ^ 1)] {
+        let text = format!(
+            "1: FLOCK ADVISORY WRITE 77 {:x}:{:x}:{inode} 0 EOF\n2: FLOCK ADVISORY WRITE 42 {major:x}:{minor:x}:{inode} 0 EOF\n",
+            device.0, device.1,
+        );
+        assert_eq!(lock_owner(&text, &metadata).unwrap(), Some(42));
+    }
+}
