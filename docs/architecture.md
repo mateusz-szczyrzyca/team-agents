@@ -199,13 +199,14 @@ end does (`settle.rs`):
 | quota exhausted, rate limited | `paused` | woken at the time the CLI gave (plus a minute), else after the `[limits]` minutes; the human is told |
 | turn limit | `queued`: resumed in the same session with a short continuation prompt | at most `[limits] turn_limit_resumes` consecutive automatic resumes (default `3`); the next exhaustion fails and notifies with the count; any other end resets the count |
 | hung | `queued`: resumed from its session | after `[watchdog] hang_strikes` hangs in a row without progress, `failed` and the human is told; a run that did something before it went silent starts the count again |
-| the daemon shut down | `queued` | the run is recorded as ended with no status and no exit code |
+| the daemon shut down | `queued`, or `failed` when the no-status budget is exhausted | the run is recorded as ended with no status and no exit code; resumable solo, coordinator and member tasks with sessions fail on the third consecutive no-status end |
 
 **The watchdog** is the engine's: a run whose output files show no change for `[watchdog] hang_minutes` is stopped (its
 whole process group, `SIGTERM` then `SIGKILL`) and classified as a hang unless the provider refused it. **A pause** is
 kept in no field of the state: its wake-up is worked out again from the last run's end, so it survives a restart; the
 daemon looks at the clock every 5 seconds, so a suspended machine does not stretch it. **Recovery**: a run that was going
-when the daemon died is ended as "no status, no exit code" and its task queued, to resume from its session; paused tasks get
+when the daemon died is ended as "no status, no exit code" and its task queued, to resume from its session, unless that
+end exhausts its no-status budget: the task then fails and its existing failure notices are sent. Paused tasks get
 their wake-ups again, hung ones their strikes (progress is not saved: every hang in a row counts); a clock set back never
 ends a run before it began. A run is a process group of its own: a daemon killed without `SIGTERM` (`SIGKILL`, the OOM
 killer) leaves it going, and only the unit's `KillMode=mixed` ends it — outside systemd, end such runs before a restart,

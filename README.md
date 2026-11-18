@@ -1034,13 +1034,15 @@ A run ending without a `STATUS:` line resumes automatically in the same session 
 notifies the coordinator (or human). Automatic retries apply only to resumable tasks with a session (solo tasks,
 coordinators, and team members), excluding workers serving requests, reviewers, tasks without a session, or failures
 during startup or execution. Runs ending without a status line upon daemon shutdown or interruption (exit code `None`)
-count toward the consecutive limit so restarts remain bounded. When a member fails or ends without status while
+count toward the consecutive limit; an interruption that exhausts the budget fails the task before another run starts.
+When a member fails or ends without status while
 holding an item, the coordinator receives a notice naming the item and the member's branch
 (`prompts/harness/team/bus-member-failed-item.md` or `bus-member-no-status-item.md`). When the lead has reported
 `STATUS: DONE` and waits while an item remains blocked behind a failed member, the human is told immediately once per
 item (`prompts/harness/pr/notice-standing-item.md`) with the member's last-run details and commands to speak to the
 member and resume it (`agent say <task>`, `agent resume <task>`). Resuming a task clears the notification deduplication
-for items assigned to that task.
+for items assigned to that task. Existing notification files identify the item and the failed run, preserving suppression
+across daemon restarts; a later failed run can notify again.
 
 `bin/agent` is being rewritten in Rust (the Cargo workspace in `crates/`; the plan and the layout are in
 [`docs/architecture.md`](docs/architecture.md)). The new `agent` is **not installed** by `install.sh` and is not what
