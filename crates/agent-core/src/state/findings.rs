@@ -105,6 +105,24 @@ pub enum FindingNumbersExhausted {
 }
 
 impl Findings {
+    /// A ledger holding `entries`, with no report waiting and no comment yet.
+    ///
+    /// # Errors
+    /// [`InvalidFindingNumbers`] when the entries are not numbered 1, 2, … in order.
+    pub fn new(entries: Vec<RecordedFinding>) -> Result<Self, InvalidFindingNumbers> {
+        Ok(Self {
+            entries,
+            pending: BTreeMap::new(),
+            comment: None,
+        })
+    }
+
+    /// The findings, in permanent-number order.
+    #[must_use]
+    pub fn entries(&self) -> &[RecordedFinding] {
+        &self.entries
+    }
+
     /// Open findings and their severities, for validating verification answers.
     #[must_use]
     pub fn open(&self) -> Vec<(NonZeroU32, Severity)> {

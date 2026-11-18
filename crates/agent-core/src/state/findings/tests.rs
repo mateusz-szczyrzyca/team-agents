@@ -130,3 +130,36 @@ fn one_open_vote_keeps_the_finding_open_and_missing_reports_do_not_resolve() {
     ledger.finish(&reviews, NonZeroU32::new(3).unwrap()).unwrap();
     assert_eq!(ledger.open(), vec![(NonZeroU32::MIN, Severity::Major)]);
 }
+
+fn recorded(number: u32) -> RecordedFinding {
+    RecordedFinding {
+        number: NonZeroU32::new(number).unwrap(),
+        finding: finding(Severity::Minor, "text"),
+        reporter: "inv-codex".parse().unwrap(),
+        pass: NonZeroU32::MIN,
+        status: FindingStatus::Open,
+    }
+}
+
+#[test]
+fn a_ledger_is_built_only_from_entries_numbered_one_to_n_in_order() {
+    for (numbers, expected) in [
+        (vec![1, 1], InvalidFindingNumbers { expected: 2, found: 1 }),
+        (vec![2, 1], InvalidFindingNumbers { expected: 1, found: 2 }),
+        (vec![1, 3], InvalidFindingNumbers { expected: 2, found: 3 }),
+        (vec![2], InvalidFindingNumbers { expected: 1, found: 2 }),
+    ] {
+        let entries = numbers.iter().map(|n| recorded(*n)).collect();
+        assert_eq!(Findings::new(entries), Err(expected), "numbers {numbers:?}");
+    }
+}
+
+#[test]
+fn a_ledger_of_entries_numbered_in_order_keeps_them() {
+    for count in [0, 1, 3] {
+        let entries: Vec<_> = (1..=count).map(recorded).collect();
+        let ledger = Findings::new(entries.clone()).unwrap();
+        assert_eq!(ledger.entries(), entries.as_slice());
+        assert_eq!(ledger.comment, None);
+    }
+}
