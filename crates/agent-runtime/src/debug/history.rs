@@ -199,7 +199,7 @@ pub(crate) fn read_live_team_history(
     history_path: &Path,
     team: &TeamId,
 ) -> Result<Vec<SequencedRecord>, HistoryCollectionError> {
-    if !history_path.exists() {
+    if file_stamp(history_path)?.is_none() {
         return Ok(Vec::new());
     }
 
