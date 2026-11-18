@@ -169,7 +169,10 @@ impl Owner {
                         item: progress.id().to_string(),
                         member: assignee.to_string(),
                         task: member.task().clone(),
-                        line: line(*role, member),
+                        line: match member.runs().last() {
+                            Some(run) => format!("{}; run {}", line(*role, member), run.id()),
+                            None => line(*role, member),
+                        },
                     })
                 } else {
                     None
