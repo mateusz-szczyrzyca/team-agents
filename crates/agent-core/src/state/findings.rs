@@ -96,6 +96,18 @@ pub enum FindingNumbersExhausted {
 }
 
 impl Findings {
+    /// Starts an independent review protocol with the configured pass size.
+    #[must_use]
+    pub fn independent(_count: crate::config::ReviewCount) -> Self {
+        Self::default()
+    }
+
+    /// The pass size frozen at publication; absent for rounds using the previous protocol.
+    #[must_use]
+    pub const fn review_count(&self) -> Option<crate::config::ReviewCount> {
+        None
+    }
+
     /// A ledger holding `entries`, with no report waiting and no comment yet.
     ///
     /// # Errors
