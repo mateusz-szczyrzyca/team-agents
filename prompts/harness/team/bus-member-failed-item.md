@@ -2,5 +2,4 @@
 
 {{message}}
 
-Decide: give its work to another member, do it yourself, or ask the human (a questions file, `STATUS: QUESTIONS`). Ending
-`STATUS: DONE` does not publish item {{item}} until the human resumes {{member}}.
+The harness publishes an item only while its assignee task waits. If you take over the work, still report `STATUS: DONE`: the harness will tell the human, the human will resume {{member}}, and {{member}} must end with a status. Or ask the human (a questions file, `STATUS: QUESTIONS`).
