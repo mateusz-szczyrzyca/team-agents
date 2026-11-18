@@ -507,9 +507,16 @@ fn render_anomalies(anomalies: &[SummaryAnomaly], out: &mut SummaryWriter) {
     }
 }
 
-fn write_tail_line(out: &mut SummaryWriter, label: &str, value: &str) {
+/// Preserves ordinary process facts while oversized values share the optional tail budget.
+fn write_process_line(out: &mut SummaryWriter, label: &str, value: &str) {
+    /// Maximum process field treated as an intact required fact, in bytes.
+    const INTACT_PROCESS_FIELD_BYTES: usize = 4096;
     out.push_str(label);
-    out.tail(value);
+    if value.len() <= INTACT_PROCESS_FIELD_BYTES {
+        out.push_str(value);
+    } else {
+        out.tail(value);
+    }
     write_line(out, "");
 }
 
@@ -523,13 +530,13 @@ fn render_daemon(daemon: Option<&DaemonSummary>, offset: UtcOffset, out: &mut Su
     if let Some(started) = d.started_at {
         write_line(out, &format!("- Started: {}", format_time(started, offset)));
     }
-    write_tail_line(out, "- Version: ", &d.version);
-    write_tail_line(out, "- Executable: ", &d.exe_path);
+    write_process_line(out, "- Version: ", &d.version);
+    write_process_line(out, "- Executable: ", &d.exe_path);
     if d.disk_newer_than_process {
         write_line(out, "  (Warning: binary on disk is newer than running process)");
     }
-    write_tail_line(out, "- Command line: ", &d.cmdline.join(" "));
-    write_tail_line(out, "- Environment variables: ", &d.env_var_names.join(", "));
+    write_process_line(out, "- Command line: ", &d.cmdline.join(" "));
+    write_process_line(out, "- Environment variables: ", &d.env_var_names.join(", "));
     write_line(out, "");
 }
 
