@@ -460,3 +460,37 @@ async fn collects_redacted_bus_messages_in_bundle_and_summary() {
     assert!(bus_section.contains("<cut>"), "{bus_section}");
     assert!(!bus_section.contains("test-confidential-λ"), "{bus_section}");
 }
+
+#[tokio::test]
+async fn collects_redacted_notifications_in_bundle_and_summary() {
+    let (_dir, home, args) = fixture();
+    let notif_dir = home.notifications_dir();
+    std::fs::create_dir_all(&notif_dir).unwrap();
+    std::fs::write(
+        notif_dir.join("notification-20261117-120000.md"),
+        "Notice for team-20261117-120000-a1b2: secret test-confidential-λ reported\n",
+    )
+    .unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    assert!(
+        result.bundle_dir.join("notifications.txt").is_file(),
+        "notifications.txt must be collected"
+    );
+    let notif_text = std::fs::read_to_string(result.bundle_dir.join("notifications.txt")).unwrap();
+    assert!(notif_text.contains("<cut>"), "{notif_text}");
+    assert!(!notif_text.contains("test-confidential-λ"), "{notif_text}");
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    let notif_section = summary
+        .split(SummarySection::Notifications.heading())
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    assert!(
+        !notif_section.contains("Not collected in this version."),
+        "{notif_section}"
+    );
+    assert!(notif_section.contains("<cut>"), "{notif_section}");
+    assert!(!notif_section.contains("test-confidential-λ"), "{notif_section}");
+}
