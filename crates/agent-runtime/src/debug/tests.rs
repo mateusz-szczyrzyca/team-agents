@@ -307,3 +307,40 @@ fn reports_active_history_wal_without_ignoring_committed_records_or_changing_it(
     assert!(!result.bundle_dir.join("history.jsonl").exists());
     drop(database);
 }
+
+#[test]
+fn resolve_target_known_team_returns_team() {
+    let (_dir, home, args) = fixture();
+    let state = State::from_json(&std::fs::read_to_string(home.state_file()).unwrap()).unwrap();
+    let DebugTarget::Team(team_id) = args.target else {
+        panic!("fixture targets a team");
+    };
+    assert_eq!(
+        resolve_debug_target(&state, &DebugTarget::Team(team_id.clone())).unwrap(),
+        team_id
+    );
+}
+
+#[test]
+fn resolve_target_unknown_team_returns_error() {
+    let state = State::new();
+    let id: TeamId = "team-20261117-230000-xxxx".parse().unwrap();
+    let result = resolve_debug_target(&state, &DebugTarget::Team(id.clone()));
+    assert!(matches!(result, Err(DebugRuntimeError::UnknownTarget { id: actual }) if actual == id.as_str()));
+}
+
+#[test]
+fn resolve_target_unknown_task_returns_error() {
+    let state = State::new();
+    let id: TaskId = "task-20261117-230000-xxxx".parse().unwrap();
+    let result = resolve_debug_target(&state, &DebugTarget::Task(id.clone()));
+    assert!(matches!(result, Err(DebugRuntimeError::UnknownTarget { id: actual }) if actual == id.as_str()));
+}
+
+#[test]
+fn resolve_target_unknown_round_returns_error() {
+    let state = State::new();
+    let id: RoundId = "round-20261117-230000-xxxx".parse().unwrap();
+    let result = resolve_debug_target(&state, &DebugTarget::Round(id.clone()));
+    assert!(matches!(result, Err(DebugRuntimeError::UnknownTarget { id: actual }) if actual == id.as_str()));
+}
