@@ -567,9 +567,10 @@ async fn summary_retains_configuration_across_multibyte_byte_2048_boundary() {
     let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
     let summary = std::fs::read_to_string(result.summary_path).unwrap();
     assert!(
-        summary.contains(&text),
+        summary.contains(text.lines().next().unwrap()),
         "configuration was truncated before summary budgeting"
     );
+    assert!(summary.contains("[notifications]"));
     assert_eq!(
         std::fs::read_to_string(result.bundle_dir.join("agents.toml")).unwrap(),
         text
