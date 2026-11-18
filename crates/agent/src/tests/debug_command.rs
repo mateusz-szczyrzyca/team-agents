@@ -985,7 +985,8 @@ fn debug_command_e2e_collects_bus_notifications_config_and_scans_secrets() {
     assert!(summary.contains("E2E Notification"), "{summary}");
     assert!(summary.contains("## Daemon and Versions"), "{summary}");
     assert!(summary.contains("- Command version: agent"), "{summary}");
-    assert!(summary.contains("- Configuration: agents.toml"), "{summary}");
+    assert!(summary.contains("- Configuration:"), "{summary}");
+    assert!(summary.contains("normal = [\"codex-1\"]"), "{summary}");
     assert!(summary.contains("- Secret keys: agent_env.MY_API_KEY"), "{summary}");
 
     // 7. Verify bus.txt retained the full message text
