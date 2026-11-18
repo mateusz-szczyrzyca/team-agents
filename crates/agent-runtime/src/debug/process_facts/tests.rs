@@ -114,3 +114,46 @@ fn resolves_replaced_executable_link_to_its_current_disk_path() {
         assert_eq!(disk_path(Path::new(link), links).unwrap(), PathBuf::from(expected));
     }
 }
+
+#[tokio::test]
+async fn helper_failures_keep_exit_signal_encoding_and_spawn_causes() {
+    let dir = tempfile::tempdir().unwrap();
+    let executable = dir.path().join("probe");
+    for (script, expected) in [
+        ("#!/bin/sh\nexit 17\n", "exit"),
+        ("#!/bin/sh\nkill -TERM $$\n", "signal"),
+        ("#!/bin/sh\nprintf '\\377'\n", "encoding"),
+    ] {
+        std::fs::write(&executable, script).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let error = helper(&executable, "--version").await.unwrap_err();
+        match expected {
+            "exit" => assert!(matches!(error, ProcessError::Exit(17))),
+            "signal" => assert!(matches!(error, ProcessError::Signal(15))),
+            "encoding" => assert!(matches!(error, ProcessError::Utf8(_))),
+            other => panic!("unknown case {other}"),
+        }
+    }
+    let error = helper(&dir.path().join("missing"), "--version").await.unwrap_err();
+    assert!(matches!(error, ProcessError::Capture(_)));
+}
+
+#[test]
+fn start_time_reports_clock_overflow_and_calendar_errors() {
+    let fields = (3..=21).map(|_| "0").collect::<Vec<_>>().join(" ");
+    let ticks = NonZeroU64::new(1).unwrap();
+    let overflow = format!("1 (x) {fields} 18446744073709551615");
+    assert!(matches!(
+        start_time(&overflow, "btime 1\n", ticks),
+        Err(ProcessError::Format("start time overflow"))
+    ));
+    let stat = format!("1 (x) {fields} 0");
+    assert!(matches!(
+        start_time(&stat, "btime 1000000000000000000\n", ticks),
+        Err(ProcessError::Time(_))
+    ));
+    assert!(matches!(
+        start_time(&stat, "btime 253402300800\n", ticks),
+        Err(ProcessError::Time(_))
+    ));
+}
