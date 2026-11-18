@@ -87,5 +87,17 @@ pub(super) async fn collect_config(home: &Home) -> Result<String, ConfigError> {
 /// # Errors
 /// Returns [`ConfigError`] when an existing configuration cannot be read or parsed.
 pub(super) async fn notification_directory(home: &Home) -> Result<PathBuf, ConfigError> {
-    Ok(home.notifications_dir())
+    let text = match collect_config(home).await {
+        Ok(text) => text,
+        Err(ConfigError::Missing { .. }) => return Ok(home.notifications_dir()),
+        Err(error) => return Err(error),
+    };
+    let config = agent_core::config::Config::from_toml_str(&text).map_err(|source| ConfigError::Parse {
+        path: home.config_file(),
+        source,
+    })?;
+    Ok(config.notifications().directory.as_ref().map_or_else(
+        || home.notifications_dir(),
+        |directory| directory.as_path().to_path_buf(),
+    ))
 }
