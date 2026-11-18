@@ -52,6 +52,8 @@ pub(super) struct Collection {
     pub(super) cut: SecretsCut,
     /// Total copied task bytes, bounded independently of file count.
     copied_bytes: usize,
+    /// Executable used for git operations (defaults to `"git"`).
+    pub(super) git_program: PathBuf,
 }
 
 impl std::fmt::Debug for Collection {
@@ -168,6 +170,7 @@ impl Collection {
             artifacts: vec![],
             copied_bytes: 0,
             cut: SecretsCut::new(&agent_core::config::Secrets::default(), []),
+            git_program: PathBuf::from("git"),
         })
     }
 
@@ -655,6 +658,7 @@ impl Collection {
             let observation = if round_merged && worktree_missing {
                 if let Some(ref checkout) = self.checkout {
                     match read_git_from_checkout(
+                        &self.git_program,
                         checkout,
                         &task,
                         &agent,
@@ -670,10 +674,10 @@ impl Collection {
                         Err(err) => Err(err),
                     }
                 } else {
-                    read_git(&path, &task).await
+                    read_git(&self.git_program, &path, &task).await
                 }
             } else {
-                read_git(&path, &task).await
+                read_git(&self.git_program, &path, &task).await
             };
 
             match observation {
@@ -750,6 +754,7 @@ impl Collection {
             let tip = git.tip.clone();
             let contains = match &lead_tip {
                 Some(lead) => match git_capture(
+                    &self.git_program,
                     &ancestor_dir,
                     &["merge-base", "--is-ancestor", tip.as_str(), lead.as_str()],
                 )
@@ -845,6 +850,7 @@ impl Collection {
             };
 
             match git_text(
+                &self.git_program,
                 target_dir,
                 &["log", "--format=%H%x00%aI%x00%an%x00%s", "--no-decorate", &rev_range],
             )
@@ -953,12 +959,12 @@ async fn bounded_bytes(path: &Path) -> Result<Vec<u8>, ObservationError> {
 #[cfg(test)]
 pub(super) static TEST_GIT_COMMANDS: std::sync::Mutex<Vec<(PathBuf, Vec<String>)>> = std::sync::Mutex::new(Vec::new());
 
-async fn git_capture(path: &Path, args: &[&str]) -> Result<crate::process::Captured, ObservationError> {
+async fn git_capture(git: &Path, path: &Path, args: &[&str]) -> Result<crate::process::Captured, ObservationError> {
     #[cfg(test)]
     if let Ok(mut log) = TEST_GIT_COMMANDS.lock() {
         log.push((path.to_path_buf(), args.iter().map(|s| (*s).to_owned()).collect()));
     }
-    let mut command = tokio::process::Command::new("git");
+    let mut command = tokio::process::Command::new(git);
     command
         .arg("--no-optional-locks")
         .arg("-C")
@@ -980,12 +986,12 @@ async fn git_capture(path: &Path, args: &[&str]) -> Result<crate::process::Captu
     Ok(result)
 }
 
-async fn git_text(path: &Path, args: &[&str]) -> Result<String, ObservationError> {
-    String::from_utf8(git_bytes(path, args).await?).map_err(ObservationError::Utf8)
+async fn git_text(git: &Path, path: &Path, args: &[&str]) -> Result<String, ObservationError> {
+    String::from_utf8(git_bytes(git, path, args).await?).map_err(ObservationError::Utf8)
 }
 
-async fn git_bytes(path: &Path, args: &[&str]) -> Result<Vec<u8>, ObservationError> {
-    let result = git_capture(path, args).await?;
+async fn git_bytes(git: &Path, path: &Path, args: &[&str]) -> Result<Vec<u8>, ObservationError> {
+    let result = git_capture(git, path, args).await?;
     match result.exit {
         ExitReport::Exited { code: 0 } => Ok(result.stdout.bytes),
         exit => Err(ObservationError::Git {
@@ -1068,18 +1074,19 @@ struct GitObservation {
     unreadable: Vec<ReadFailure>,
 }
 
-async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, ObservationError> {
-    let branch: BranchName = git_text(path, &["symbolic-ref", "--short", "HEAD"])
+async fn read_git(git: &Path, path: &Path, task: &TaskId) -> Result<GitObservation, ObservationError> {
+    let branch: BranchName = git_text(git, path, &["symbolic-ref", "--short", "HEAD"])
         .await?
         .trim()
         .parse()
         .map_err(ObservationError::Branch)?;
-    let tip: CommitId = git_text(path, &["rev-parse", "--verify", "HEAD"])
+    let tip: CommitId = git_text(git, path, &["rev-parse", "--verify", "HEAD"])
         .await?
         .trim()
         .parse()
         .map_err(ObservationError::Commit)?;
     let origin = git_text(
+        git,
         path,
         &[
             "for-each-ref",
@@ -1093,10 +1100,11 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
     } else {
         Some(origin.trim().parse().map_err(ObservationError::Commit)?)
     };
-    let status = git_bytes(path, &["status", "--porcelain=v1", "-z", "--untracked-files=all"]).await?;
+    let status = git_bytes(git, path, &["status", "--porcelain=v1", "-z", "--untracked-files=all"]).await?;
     let published = format!("refs/team-agents/published/{branch}");
     let reviewed = format!("refs/team-agents/reviewed/{branch}");
     let harness = git_text(
+        git,
         path,
         &[
             "for-each-ref",
@@ -1198,6 +1206,7 @@ fn ref_fields(line: &str) -> Result<(&str, &str), ObservationError> {
 }
 
 async fn read_git_from_checkout(
+    git: &Path,
     checkout: &Path,
     task: &TaskId,
     agent: &AgentName,
@@ -1205,6 +1214,7 @@ async fn read_git_from_checkout(
     round: Option<&agent_core::state::Round>,
 ) -> Result<GitObservation, ObservationError> {
     let branches_output = git_text(
+        git,
         checkout,
         &["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/"],
     )
@@ -1247,6 +1257,7 @@ async fn read_git_from_checkout(
     })?;
 
     let origin = git_text(
+        git,
         checkout,
         &[
             "for-each-ref",
@@ -1264,6 +1275,7 @@ async fn read_git_from_checkout(
     let published = format!("refs/team-agents/published/{branch}");
     let reviewed = format!("refs/team-agents/reviewed/{branch}");
     let harness = git_text(
+        git,
         checkout,
         &[
             "for-each-ref",

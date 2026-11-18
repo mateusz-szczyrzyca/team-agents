@@ -865,8 +865,20 @@ fn compute_process_age(
     Ok(now_u64.saturating_sub(start_sec))
 }
 
-/// Traverses descendant PIDs starting from daemon PID using BFS.
-fn find_descendant_pids(daemon_pid: u32, children_map: &HashMap<u32, Vec<u32>>) -> Vec<u32> {
+/// Candidate descendant process with its start ticks parsed from /proc/<pid>/stat.
+#[derive(Clone, Copy, Debug)]
+struct DescendantCandidate {
+    /// Process ID.
+    pid: u32,
+    /// Process start time in clock ticks since system boot.
+    start_ticks: u64,
+}
+
+/// Traverses descendant processes starting from daemon PID using BFS.
+fn find_descendants(
+    daemon_pid: u32,
+    children_map: &HashMap<u32, Vec<DescendantCandidate>>,
+) -> Vec<DescendantCandidate> {
     let mut descendants = Vec::new();
     let mut queue = VecDeque::new();
     let mut visited = HashSet::new();
@@ -874,17 +886,17 @@ fn find_descendant_pids(daemon_pid: u32, children_map: &HashMap<u32, Vec<u32>>) 
 
     if let Some(direct_children) = children_map.get(&daemon_pid) {
         for &child in direct_children {
-            if visited.insert(child) {
+            if visited.insert(child.pid) {
                 queue.push_back(child);
             }
         }
     }
 
-    while let Some(current_pid) = queue.pop_front() {
-        descendants.push(current_pid);
-        if let Some(children) = children_map.get(&current_pid) {
+    while let Some(current) = queue.pop_front() {
+        descendants.push(current);
+        if let Some(children) = children_map.get(&current.pid) {
             for &child in children {
-                if visited.insert(child) {
+                if visited.insert(child.pid) {
                     queue.push_back(child);
                 }
             }
@@ -987,8 +999,7 @@ async fn observe_descendants(
         source,
     })?;
 
-    let mut children_map: HashMap<u32, Vec<u32>> = HashMap::new();
-    let mut start_ticks_map: HashMap<u32, u64> = HashMap::new();
+    let mut children_map: HashMap<u32, Vec<DescendantCandidate>> = HashMap::new();
 
     while let Some(entry) = read_dir.next_entry().await.map_err(|source| MachineError::Io {
         path: procfs.to_path_buf(),
@@ -1026,11 +1037,13 @@ async fn observe_descendants(
             continue;
         };
 
-        children_map.entry(parent_pid).or_default().push(pid);
-        start_ticks_map.insert(pid, start_ticks);
+        children_map
+            .entry(parent_pid)
+            .or_default()
+            .push(DescendantCandidate { pid, start_ticks });
     }
 
-    let descendant_pids = find_descendant_pids(target_daemon_pid, &children_map);
+    let descendant_candidates = find_descendants(target_daemon_pid, &children_map);
     let ctx = DescendantReadContext {
         procfs,
         btime,
@@ -1039,9 +1052,8 @@ async fn observe_descendants(
         collected_at,
     };
     let mut descendants = Vec::new();
-    for pid in descendant_pids {
-        let start_ticks = start_ticks_map.get(&pid).copied().unwrap_or(0);
-        if let Some(proc) = read_descendant_process(&ctx, pid, start_ticks, unreadable).await {
+    for candidate in descendant_candidates {
+        if let Some(proc) = read_descendant_process(&ctx, candidate.pid, candidate.start_ticks, unreadable).await {
             descendants.push(proc);
         }
     }
