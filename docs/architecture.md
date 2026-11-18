@@ -492,18 +492,19 @@ the summary, replaces exact secrets-file values and values of environment variab
 assessment read failures and do not stop unrelated collection.
 Task files and subprocess output are bounded to 4 MiB each, task bytes to 64 MiB, directory entries to 4096 per
 task and nesting to 16 levels. Task symlinks are not followed. Diagnostic history copies the database and its
-WAL/SHM files (at most 64 MiB each) into a temporary directory before opening SQLite, preserving committed events while the daemon
-runs without creating or writing side files in the home. Changed sources are reported as unreadable.
+WAL/SHM files (at most 64 GiB each) into a temporary directory before opening SQLite, preserving committed events
+while the daemon runs without creating or writing side files in the home. Up to three snapshot attempts
+accommodate source changes before they are reported as unreadable.
 
 The daemon process is selected by the owner of `daemon.lock` in Linux procfs, never by its name. Bounded
 observations include its start time, command line, environment names without values, running executable version
 and whether the executable on disk is newer. Its log is the explicit `--daemon-log` file or `<home>/daemon.log`;
-the bounded tail retains team/task lines and warnings/errors from other teams. Missing defaults and unreadable
-explicit files are distinguished. No process is signalled or restarted.
+the bounded tail retains all team/task lines, plus warnings/errors in its last 500 lines. Missing defaults
+and unreadable explicit files are distinguished. No process is signalled or restarted.
 
 Task details include the latest run's reason, final message and steps. Questions are sorted numerically; gate
-outputs retain their paths and modification times. Missing worktrees of the latest merged round are expected,
-with retained branch tips and commits over the base read from the caller's clone. An unpublished member branch
+outputs retain their paths and modification times. Missing worktrees of each task's associated merged round
+are expected, with retained branch tips and commits over the base read from the caller's clone. An unpublished member branch
 is expected; coordinator origin differences remain assessable. Empty history and unreadable history have
 different section text.
 

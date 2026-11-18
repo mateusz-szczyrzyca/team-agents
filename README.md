@@ -1052,13 +1052,14 @@ The daemon log defaults to `<home>/daemon.log`; `--daemon-log FILE` selects anot
 keeps team/task lines and warnings or errors about any team. An unreadable explicit log is reported in its section.
 It works offline, reports unreadable parts, and changes no task or git ref. Before writing any artifact it replaces
 exact values from `secrets.toml` and environment variables ending in `TOKEN`, `SECRET`, `PASSWORD` or `KEY` with
-`<cut>`. An unreadable secrets file stops collection before any bundle is written.
+`<cut>`, including JSON-escaped values in daemon logs. An unreadable secrets file stops collection before any
+bundle is written.
 
 Task files and git output are bounded to 4 MiB each; task files together to 64 MiB, with at most
 4096 entries per task and 16 directory levels. Limits and skipped symlinks are reported as read failures.
 History is read from a temporary copy of the database and its WAL/SHM files, including committed events while
-the daemon holds the home. A source change during copying is reported as unreadable. SQLite creates no files
-beside the original database. Summary timestamps show UTC and the machine's local offset.
+the daemon holds the home. Each source file is bounded to 64 GiB; up to three snapshot attempts accommodate
+source changes before they are reported as unreadable. SQLite creates no files beside the original database. Summary timestamps show UTC and the machine's local offset.
 Each task shows its latest run's reason, final message and steps; earlier runs remain in the bundle.
 Questions are ordered numerically, and gate outputs name their source and modification time. Worktrees removed
 after a merged round are explained once, with retained branch facts read from the caller's clone.
