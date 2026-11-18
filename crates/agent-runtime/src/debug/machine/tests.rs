@@ -26,7 +26,6 @@ fn fixture() -> (tempfile::TempDir, Home, SecretsCut) {
     (dir, home, cut)
 }
 
-/// Fixed collection instant used by injected machine observations.
 fn test_now() -> Timestamp {
     "2026-11-18T12:00:00Z".parse::<Timestamp>().expect("valid timestamp")
 }
