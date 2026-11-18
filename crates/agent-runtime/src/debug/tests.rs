@@ -557,3 +557,21 @@ async fn not_collected_names_only_machine_metrics_and_untracked_files() {
         "Not collected in this version: machine metrics; newest untracked file metadata.\n"
     );
 }
+
+#[tokio::test]
+async fn summary_retains_configuration_across_multibyte_byte_2048_boundary() {
+    let (_dir, home, args) = fixture();
+    let text = format!("#{}λ\n[notifications]\n", "x".repeat(2046));
+    assert_eq!(text.find('λ'), Some(2047));
+    std::fs::write(home.config_file(), &text).unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(
+        summary.contains(&text),
+        "configuration was truncated before summary budgeting"
+    );
+    assert_eq!(
+        std::fs::read_to_string(result.bundle_dir.join("agents.toml")).unwrap(),
+        text
+    );
+}
