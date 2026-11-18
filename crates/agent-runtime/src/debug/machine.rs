@@ -338,11 +338,12 @@ pub(super) async fn observe(
 }
 
 /// Provider of clock ticks query command path.
-pub(crate) trait ClockTicksProvider: Send + Sync {
+trait ClockTicksProvider: Send + Sync {
     /// Helper program path to query clock ticks.
     fn program(&self) -> &Path;
 }
 
+/// Clock tick helper used for the host observation.
 struct DefaultClockTicks;
 
 impl ClockTicksProvider for DefaultClockTicks {
@@ -370,6 +371,7 @@ pub(super) async fn observe_with_statvfs_and_ticks_program<F>(
 where
     F: Fn(&Path) -> Result<StatvfsStats, rustix::io::Errno> + Send + Sync + 'static,
 {
+    /// Helper executable supplied by an isolated process-boundary fixture.
     struct InjectedClockTicks(PathBuf);
     impl ClockTicksProvider for InjectedClockTicks {
         fn program(&self) -> &Path {
@@ -385,7 +387,7 @@ where
 }
 
 /// Queries system clock ticks per second using a specified helper program.
-pub(super) async fn query_clock_ticks_from(program: &Path, argument: &str) -> Result<NonZeroU64, MachineError> {
+async fn query_clock_ticks_from(program: &Path, argument: &str) -> Result<NonZeroU64, MachineError> {
     let mut command = tokio::process::Command::new(program);
     command.arg(argument);
     let limits = crate::process::CaptureLimits {
@@ -901,7 +903,7 @@ pub(super) enum ProcessAgeError {
 }
 
 /// Computes process age in seconds from boot time and start ticks.
-pub(super) fn compute_process_age(
+fn compute_process_age(
     btime: Option<u64>,
     ticks: Option<NonZeroU64>,
     start_ticks: u64,
