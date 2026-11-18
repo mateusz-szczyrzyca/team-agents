@@ -456,20 +456,14 @@ impl Collection {
     async fn history(&mut self, home: &Home, team: &Team) -> Result<(), DebugRuntimeError> {
         let path = home.history_file();
         let id = team.id().clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let before = history_stamp(&path)?;
-            let reader =
-                crate::history::Reader::open_without_shared_memory(&path).map_err(ObservationError::History)?;
-            let records = reader.team_records(&id).map_err(ObservationError::History)?;
-            if before != history_stamp(&path)? {
-                return Err(ObservationError::HistoryChanged);
-            }
-            Ok(records)
-        })
-        .await
-        .map_err(DebugRuntimeError::Worker)?;
+        let result = tokio::task::spawn_blocking(move || super::history::read_live_team_history(&path, &id))
+            .await
+            .map_err(DebugRuntimeError::Worker)?;
         match result {
-            Ok(records) if records.is_empty() => self.failed("team history", "no history records for this team"),
+            Ok(records) if records.is_empty() => {
+                self.summary.history_tail = Some("No history recorded for this team.".to_owned());
+                self.failed("team history", "no history records for this team");
+            }
             Ok(records) => {
                 let selection = agent_core::story::Selection::Team(team.id().clone());
                 let text = agent_core::story::render(
@@ -481,6 +475,7 @@ impl Collection {
                     },
                 );
                 self.summary.history_tail = Some(text.clone());
+                self.enrich_last_run_details(&records, team);
                 self.add("history.txt", text.into_bytes());
                 self.add(
                     "history.jsonl",
@@ -492,6 +487,48 @@ impl Collection {
             Err(error) => self.failed("team history", error_chain(&error)),
         }
         Ok(())
+    }
+
+    fn enrich_last_run_details(&mut self, records: &[agent_core::history::SequencedRecord], team: &Team) {
+        let selection = agent_core::story::Selection::Team(team.id().clone());
+        let roster = team
+            .crew()
+            .roster()
+            .into_iter()
+            .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)));
+        for (_role, member) in roster {
+            let Some(last_run) = member.runs().last() else {
+                continue;
+            };
+            let run_id = last_run.id();
+            let run_records: Vec<_> = records
+                .iter()
+                .filter(|seq| super::history::record_run_id(&seq.record) == Some(run_id))
+                .cloned()
+                .collect();
+            if run_records.is_empty() {
+                continue;
+            }
+            let story_text = agent_core::story::render(
+                &run_records,
+                &selection,
+                agent_core::story::StoryOptions {
+                    prompts: agent_core::story::PromptView::Preview,
+                    steps: agent_core::story::StepView::Listed,
+                },
+            );
+            if let Some(task_summary) = self.summary.tasks.iter_mut().find(|t| t.id == *member.task()) {
+                match &mut task_summary.last_run_end_detail {
+                    Some(existing) => {
+                        existing.push('\n');
+                        existing.push_str(&story_text);
+                    }
+                    None => {
+                        task_summary.last_run_end_detail = Some(story_text);
+                    }
+                }
+            }
+        }
     }
 
     async fn git(&mut self, home: &Home, team: &Team) {
