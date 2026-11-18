@@ -527,12 +527,12 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         );
 
         let mut found_untracked_artifact = false;
-        let tasks_dir = bundle_path.join("tasks");
-        if tasks_dir.is_dir() {
-            let entries = std::fs::read_dir(&tasks_dir).expect("read_dir on tasks must succeed");
+        let untracked_dir = bundle_path.join("untracked");
+        if untracked_dir.is_dir() {
+            let entries = std::fs::read_dir(&untracked_dir).expect("read_dir on untracked must succeed");
             for task_entry in entries {
                 let task_entry = task_entry.expect("task entry must be readable");
-                let untracked_file = task_entry.path().join("untracked.txt");
+                let untracked_file = task_entry.path();
                 if untracked_file.is_file() {
                     let untracked_content =
                         std::fs::read_to_string(&untracked_file).expect("reading untracked.txt must succeed");
@@ -546,7 +546,7 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         }
         assert!(
             found_untracked_artifact,
-            "bundle tasks/*/untracked.txt must contain all untracked files"
+            "bundle untracked/*.txt must contain all untracked files"
         );
     }
 
