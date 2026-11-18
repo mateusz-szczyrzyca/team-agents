@@ -17,7 +17,7 @@ pub(crate) const MAX_HISTORY_BYTES: u64 = 64 * 1024 * 1024;
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum HistoryCollectionError {
     /// A database or sidecar file exceeds the maximum permitted size.
-    #[error("history file {path:?} exceeds limit ({size} bytes > {limit} bytes)")]
+    #[error("history file {} exceeds limit ({size} bytes > {limit} bytes)", path.display())]
     TooLarge {
         /// File that exceeded the limit.
         path: PathBuf,
@@ -27,7 +27,7 @@ pub(crate) enum HistoryCollectionError {
         limit: u64,
     },
     /// The database or WAL file could not be read or copied.
-    #[error("cannot read database file {path:?}")]
+    #[error("cannot read database file {}", path.display())]
     Io {
         /// Path that could not be accessed.
         path: PathBuf,
@@ -63,25 +63,38 @@ fn sidecar_path(db_path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+/// Fingerprint of a history file on disk before or after copying.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileStamp {
+    /// File size in bytes.
     len: u64,
-    modified: Option<std::time::SystemTime>,
+    /// Last modification timestamp.
+    modified: std::time::SystemTime,
 }
 
+/// Fingerprints of database and sidecar files across the copy operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct HistoryStamp {
+    /// Main database file stamp.
     db: FileStamp,
+    /// WAL sidecar file stamp, if present.
     wal: Option<FileStamp>,
+    /// SHM sidecar file stamp, if present.
     shm: Option<FileStamp>,
 }
 
 fn file_stamp(path: &Path) -> Result<Option<FileStamp>, HistoryCollectionError> {
     match std::fs::metadata(path) {
-        Ok(metadata) => Ok(Some(FileStamp {
-            len: metadata.len(),
-            modified: metadata.modified().ok(),
-        })),
+        Ok(metadata) => {
+            let modified = metadata.modified().map_err(|err| HistoryCollectionError::Io {
+                path: path.to_path_buf(),
+                source: err,
+            })?;
+            Ok(Some(FileStamp {
+                len: metadata.len(),
+                modified,
+            }))
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(HistoryCollectionError::Io {
             path: path.to_path_buf(),
