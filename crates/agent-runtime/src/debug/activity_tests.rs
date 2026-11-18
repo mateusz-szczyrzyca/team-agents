@@ -64,3 +64,51 @@ fn running_output_time_is_collected_even_when_the_output_exceeds_capture_limits(
         );
     }
 }
+
+#[test]
+fn missing_task_artifact_root_is_unreadable_only_after_a_run_started() {
+    for has_run in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+        let task: TaskId = "task-20261117-120000-a1b2".parse().unwrap();
+        let started: Timestamp = "2026-11-17T12:00:00Z".parse().unwrap();
+        let mut member = Member::new(task.clone(), Participant::Normal("codex-1".parse().unwrap()));
+        if has_run {
+            member
+                .begin_run("run-20261117-120001-a1b2".parse().unwrap(), started, None)
+                .unwrap();
+            member.transition(TaskStatus::Running).unwrap();
+        }
+        let team = Team::new(
+            "team-20261117-120000-a1b2".parse().unwrap(),
+            "example".parse().unwrap(),
+            started,
+            MergeMode::Autopilot,
+            TaskListText::new("Build.\n\n1. Feature\n[ ] 1.1 Work\n".to_owned()).unwrap(),
+            Crew::solo(member).unwrap(),
+        );
+        let mut collection = Collection::new(&team, started, Duration::from_secs(120)).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        runtime
+            .block_on(collection.observe(&home, &team, Some(Ok(String::new()))))
+            .unwrap();
+
+        let artifact_failures = collection
+            .assessment
+            .unreadable
+            .iter()
+            .filter(|failure| failure.part.starts_with("task artifact "))
+            .map(|failure| failure.part.clone())
+            .collect::<Vec<_>>();
+        let expected = if has_run {
+            vec![format!("task artifact {:?}", home.task_dir(&task).as_os_str())]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(artifact_failures, expected, "run started: {has_run}");
+    }
+}
