@@ -10,8 +10,8 @@ use agent_core::ids::{RunId, TeamId};
 #[cfg(test)]
 mod tests;
 
-/// Maximum permitted size for history files (64 MiB).
-pub(crate) const MAX_HISTORY_BYTES: u64 = 64 * 1024 * 1024;
+/// Per-file disk-copy ceiling (64 GiB), allowing long-lived homes without unbounded copies.
+pub(crate) const MAX_HISTORY_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
 /// Why reading live history failed.
 #[derive(Debug, thiserror::Error)]
