@@ -199,6 +199,14 @@ pub(crate) fn read_live_team_history(
     history_path: &Path,
     team: &TeamId,
 ) -> Result<Vec<SequencedRecord>, HistoryCollectionError> {
+    read_with_copy(history_path, team, &mut copy_bounded)
+}
+
+fn read_with_copy(
+    history_path: &Path,
+    team: &TeamId,
+    copy: &mut impl FnMut(&Path, &Path, u64) -> Result<u64, HistoryCollectionError>,
+) -> Result<Vec<SequencedRecord>, HistoryCollectionError> {
     if file_stamp(history_path)?.is_none() {
         return Ok(Vec::new());
     }
@@ -220,18 +228,18 @@ pub(crate) fn read_live_team_history(
     let copied_wal = temp_dir.path().join("history.db-wal");
     let copied_shm = temp_dir.path().join("history.db-shm");
 
-    copy_bounded(history_path, &copied_db, MAX_HISTORY_BYTES)?;
+    copy(history_path, &copied_db, MAX_HISTORY_BYTES)?;
 
     if let Some(w) = before.wal
         && w.len > 0
     {
-        copy_bounded(&wal_path, &copied_wal, MAX_HISTORY_BYTES)?;
+        copy(&wal_path, &copied_wal, MAX_HISTORY_BYTES)?;
     }
 
     if let Some(s) = before.shm
         && s.len > 0
     {
-        copy_bounded(&shm_path, &copied_shm, MAX_HISTORY_BYTES)?;
+        copy(&shm_path, &copied_shm, MAX_HISTORY_BYTES)?;
     }
 
     let after = take_history_stamp(history_path, &wal_path, &shm_path, MAX_HISTORY_BYTES)?;
