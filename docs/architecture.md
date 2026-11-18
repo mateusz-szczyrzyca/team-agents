@@ -508,7 +508,7 @@ are expected, with retained branch tips and commits over the base read from the 
 is expected; coordinator origin differences remain assessable. Empty history and unreadable history have
 different section text.
 
-Collection covers machine metrics (load average, memory and swap, filesystem space and inodes for home and temporary directories, daemon descendant processes with age and redacted command lines, and tasks and worktrees directory sizes) and the fifty newest untracked files per worktree from a single git listing. Filesystems at least 90% full by space or inodes trigger an anomaly.
+Collection covers machine metrics (load average, memory and swap, filesystem space and inodes for home and temporary directories, daemon descendant processes with age and redacted command lines, and tasks and worktrees directory sizes) and the fifty newest untracked files per worktree from a single git listing. Filesystems at least 90% full by space or inodes trigger an anomaly. Complete untracked listings are saved as `untracked/<task>.txt`, separate from copied task files.
 
 The pure layer receives observed facts, the collection time and a UTC offset from its caller. The CLI passes the
 machine's local offset; summaries show both UTC and local times.
