@@ -817,7 +817,7 @@ fn debug_reports_unreadable_explicit_daemon_log_in_its_bundle() {
         .split("\n## ")
         .next()
         .unwrap();
-    assert!(log.contains("Could not collect daemon log:"), "{log}");
+    assert!(log.contains("Could not read daemon log:"), "{log}");
     assert!(log.contains(missing.to_str().unwrap()), "{log}");
     assert!(!log.contains("not found."), "{log}");
 }
