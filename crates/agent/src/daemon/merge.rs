@@ -213,7 +213,7 @@ pub(super) fn after_verdict(
 }
 
 /// What follows the human's answer about the item `progress`, which waits for it after a request for changes that the
-/// fix passes could not take: one more fix pass.
+/// fix passes could not take: the first pass of the renewed allowance, or waiting when it is zero.
 ///
 /// # Errors
 /// [`VerdictError`].
@@ -225,7 +225,11 @@ pub(super) fn after_answer(progress: &ItemProgress, policy: RoundPolicy) -> Resu
             item: progress.id(),
             phase,
         })?;
-    Ok(next_of(&state.transition(&RoundEvent::HumanAnswered, policy)?)?)
+    let next = next_of(&state.transition(&RoundEvent::HumanAnswered, policy)?)?;
+    if policy.fix_passes == 0 && progress.findings().and_then(|ledger| ledger.verification()).is_some() {
+        return Ok(Next::Wait);
+    }
+    Ok(next)
 }
 
 /// A pull request whose reviewers still ask for changes when the fix passes are used up.

@@ -129,6 +129,8 @@ impl Owner {
             let next = after_answer(progress, policy);
             match next {
                 Ok(Next::FixPass { .. }) => moving.push(*id),
+                // A configured zero allowance cannot start a fix pass, even after an answer.
+                Ok(Next::Wait) => {}
                 Ok(other) => {
                     tracing::warn!(
                         event = LogEvent::QuestionsFileInvalid.as_str(),
