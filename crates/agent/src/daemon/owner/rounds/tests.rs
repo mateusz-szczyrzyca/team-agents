@@ -620,6 +620,13 @@ async fn member_with_nostatus_alone_has_three_runs_and_fails_with_item_branch_no
     rig.status_is(&tasks[1], TaskStatus::Failed).await;
     assert_eq!(rig.runs(&tasks[1]), 3);
 
+    rig.wait_for("the exhausted member failure notice to be delivered", || {
+        rig.notifications()
+            .iter()
+            .any(|text| text.contains("failed") || text.contains("no STATUS"))
+    })
+    .await;
+
     let told: Vec<_> = rig
         .notifications()
         .into_iter()
