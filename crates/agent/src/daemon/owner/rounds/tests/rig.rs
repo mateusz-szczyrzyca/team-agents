@@ -381,6 +381,23 @@ impl Rig {
         (team, tasks)
     }
 
+    /// Resumes `task`.
+    pub(super) async fn resume(&self, task: &TaskId) {
+        use agent_core::protocol::{ControlRequest, Target};
+        let reply = Connection::connect(&self.home.socket_file())
+            .await
+            .unwrap()
+            .request(
+                Client::Cli,
+                Command::Resume(ControlRequest {
+                    target: Target::Task(task.clone()),
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(reply, Reply::Applied { .. }), "unexpected reply: {reply:?}");
+    }
+
     /// The state as saved.
     pub(super) fn state(&self) -> State {
         match std::fs::read_to_string(self.home.state_file()) {
