@@ -119,3 +119,59 @@ async fn distinct_non_utf8_names_stay_distinct_in_artifact_and_failures() {
         result.unreadable[1].part
     );
 }
+
+#[tokio::test]
+async fn modification_time_beyond_year_9999_is_unreadable_and_sorts_last() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let worktree = dir.path();
+    // 10000-01-01T00:00:00Z: one day past the last instant the state timestamps can hold.
+    let beyond = SystemTime::UNIX_EPOCH + Duration::from_secs(253_402_300_800 + 86_400);
+    let known = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    for (name, time) in [("future.txt", beyond), ("known.txt", known)] {
+        let path = worktree.join(name);
+        fs::write(&path, b"x").expect("write");
+        let file = fs::OpenOptions::new().write(true).open(&path).expect("open file");
+        file.set_times(fs::FileTimes::new().set_modified(time))
+            .expect("set times");
+    }
+
+    let result = collect(worktree, &[PathBuf::from("future.txt"), PathBuf::from("known.txt")]).await;
+
+    assert_eq!(result.summary_facts.len(), 2);
+    assert_eq!(result.summary_facts[0].path, PathBuf::from("known.txt"));
+    assert!(result.summary_facts[0].modified.is_some());
+    assert_eq!(result.summary_facts[1].path, PathBuf::from("future.txt"));
+    assert_eq!(result.summary_facts[1].modified, None);
+    assert_eq!(result.unreadable.len(), 1, "{:?}", result.unreadable);
+    assert!(
+        result.unreadable[0].part.contains("future.txt"),
+        "{}",
+        result.unreadable[0].part
+    );
+    assert!(
+        result
+            .artifact_text
+            .contains("- \"future.txt\" (1 bytes, modified unknown)"),
+        "{}",
+        result.artifact_text
+    );
+}
+
+#[tokio::test]
+async fn directory_entries_are_not_listed_as_untracked_files() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let worktree = dir.path();
+    fs::create_dir(worktree.join("sub")).expect("mkdir");
+    fs::write(worktree.join("file.txt"), b"x").expect("write");
+
+    let result = collect(worktree, &[PathBuf::from("sub"), PathBuf::from("file.txt")]).await;
+
+    assert_eq!(result.summary_facts.len(), 1);
+    assert_eq!(result.summary_facts[0].path, PathBuf::from("file.txt"));
+    assert!(result.unreadable.is_empty(), "{:?}", result.unreadable);
+    assert!(
+        result.artifact_text.starts_with("### Untracked Files (1)\n"),
+        "{}",
+        result.artifact_text
+    );
+}
