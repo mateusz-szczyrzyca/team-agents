@@ -851,6 +851,11 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
     } else {
         write_line(out, "- Memory: unknown");
     }
+    if let (Some(free), Some(total)) = (machine.swap_free_bytes, machine.swap_total_bytes) {
+        write_line(out, &format!("- Swap: {free} / {total} bytes free"));
+    } else {
+        write_line(out, "- Swap: unknown");
+    }
     if let Some(home) = machine.home_fs {
         write_line(
             out,
@@ -873,13 +878,20 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
     } else {
         write_line(out, "- Temp filesystem: unknown");
     }
-    let pids = machine
-        .daemon_descendant_pids
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-    write_line(out, &format!("- Daemon descendant PIDs: {pids}"));
+    if machine.daemon_descendants.is_empty() {
+        write_line(out, "- Daemon descendants: none");
+    } else {
+        write_line(out, "- Daemon descendants:");
+        for p in &machine.daemon_descendants {
+            let age_str = match p.age_seconds {
+                Some(age) => format!("{age}s"),
+                None => "unknown".to_owned(),
+            };
+            let cmd = p.cmdline.join(" ");
+            let entry = format!("  - PID {}: age {age_str}, cmdline: {cmd}", p.pid);
+            write_process_line(out, "", &entry);
+        }
+    }
     if let Some(bytes) = machine.tasks_dir_bytes {
         write_line(out, &format!("- Tasks directory size: {bytes} bytes"));
     } else {
