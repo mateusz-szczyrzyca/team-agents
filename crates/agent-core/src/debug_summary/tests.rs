@@ -762,3 +762,31 @@ fn removed_worktree_notice_is_once_in_git_section_without_an_anomaly() {
     assert_eq!(summary.matches(notice).count(), 1);
     assert!(git.starts_with(&format!("\n\n{notice}\n")), "{git}");
 }
+
+#[test]
+fn review_daemon_bounds_variable_process_text_without_losing_required_facts() {
+    let mut input = sample_input();
+    let daemon = input.daemon.as_mut().unwrap();
+    daemon.cmdline = vec![format!("{}COMMAND-END", "x".repeat(110_000))];
+    daemon.version = "v".repeat(110_000);
+    daemon.env_var_names = vec!["ENV".repeat(40_000)];
+    daemon.exe_path = format!("/{}", "path".repeat(30_000));
+
+    let result = render_summary(&input, UtcOffset::UTC);
+    assert_eq!(result.as_ref().map(|text| text.len() < MAX_SUMMARY_BYTES), Ok(true));
+    let text = result.unwrap();
+
+    assert!(text.contains("- PID: 12345"));
+    assert!(text.contains("COMMAND-END"));
+    assert!(text.contains(CUT_MARKER.trim()));
+}
+
+#[test]
+fn review_daemon_explains_an_existing_log_with_no_matching_lines() {
+    let mut input = sample_input();
+    input.daemon_log_lines = Some(Vec::new());
+
+    let text = render_summary(&input, UtcOffset::UTC).unwrap();
+
+    assert!(text.contains("No daemon log lines about the team and no recent warnings."));
+}
