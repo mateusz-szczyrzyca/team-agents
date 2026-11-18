@@ -678,7 +678,11 @@ fn observe_fs_stats(path: &Path, stat: StatvfsStats) -> Result<FsFact, MachineEr
             field: "used space bytes",
         })?;
         let pct_u128 = used_bytes_u128.saturating_mul(100) / total_bytes_u128;
-        let pct = u8::try_from(pct_u128).unwrap_or(100);
+        // The validated ratio is 0..=100; enumerate that bounded domain to avoid a
+        // fallible narrowing conversion and its impossible error/fallback branch.
+        let pct = (1_u8..=100)
+            .take_while(|percent| u128::from(*percent) <= pct_u128)
+            .fold(0, |_, percent| percent);
         (
             Some(Usage {
                 used: used_bytes,
@@ -702,7 +706,11 @@ fn observe_fs_stats(path: &Path, stat: StatvfsStats) -> Result<FsFact, MachineEr
     let (inode_usage, inode_percent) = if let Some(non_zero_total) = NonZeroU64::new(total_inodes) {
         let used_inodes = total_inodes - free_inodes;
         let pct_u128 = (u128::from(used_inodes).saturating_mul(100)) / u128::from(total_inodes);
-        let pct = u8::try_from(pct_u128).unwrap_or(100);
+        // The validated ratio is 0..=100; enumerate that bounded domain to avoid a
+        // fallible narrowing conversion and its impossible error/fallback branch.
+        let pct = (1_u8..=100)
+            .take_while(|percent| u128::from(*percent) <= pct_u128)
+            .fold(0, |_, percent| percent);
         (
             Some(Usage {
                 used: used_inodes,
