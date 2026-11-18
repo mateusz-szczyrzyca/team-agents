@@ -2335,3 +2335,110 @@ async fn standing_item_notices_are_deduplicated_separately_for_each_item() {
         .collect();
     assert_eq!(notices.len(), 2, "{notices:?}");
 }
+
+#[tokio::test]
+async fn malformed_findings_are_returned_then_numbered_fixed_and_resolved() {
+    let bad_then_major = "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [HIGH] ERR-3 src/lib.rs:7 — broken → fix\\n   CHECK: read src/lib.rs,done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] ERR-3 src/lib.rs:7 — broken → fix\\n   CHECK: read src/lib.rs,done:VERDICT: APPROVE\\nFINDING 1: RESOLVED";
+    let peer = "done:VERDICT: APPROVE,done:VERDICT: APPROVE\\nFINDING 1: RESOLVED";
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", bad_then_major),
+            investigator("inv-r2", peer),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .state_where("resolved findings and merge", |state| {
+            state
+                .team(&team)
+                .and_then(|team| team.item("1.1".parse().unwrap()))
+                .is_some_and(|item| matches!(item.phase(), ItemPhase::Done { .. }))
+        })
+        .await;
+    let fix = rig.prompt(&tasks[0], 2).await;
+    assert!(
+        state
+            .team(&team)
+            .unwrap()
+            .item("1.1".parse().unwrap())
+            .unwrap()
+            .findings()
+            .is_some(),
+        "new pull requests keep findings"
+    );
+    let reviewer = state
+        .team(&team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .find(|member| member.agent().name() == "inv-r1")
+        .unwrap();
+    let correction = rig.prompt(reviewer.task(), 2).await;
+    let ledger = state
+        .team(&team)
+        .unwrap()
+        .item("1.1".parse().unwrap())
+        .unwrap()
+        .findings()
+        .unwrap();
+    assert_eq!(ledger.entries.len(), 1);
+    assert_eq!(ledger.entries[0].number.get(), 1);
+    assert_eq!(ledger.entries[0].status, agent_core::state::FindingStatus::Resolved);
+    assert!(fix.contains("1. [MAJOR] ERR-3 src/lib.rs:7"), "{fix}");
+    assert!(correction.contains("line 3"), "{correction}");
+    assert!(
+        rig.github
+            .calls("PATCH", &format!("/repos/{SLUG}/issues/comments/1"))
+            .len()
+            >= 1
+    );
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn an_open_minor_finding_does_not_prevent_merging_and_stays_in_the_table() {
+    let minor = "done:VERDICT: APPROVE\\nFINDINGS\\n1. [MINOR] DOC-3 src/lib.rs:7 — wording → clarify\\n   CHECK: read src/lib.rs";
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", minor),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .state_where("merged with minor", |state| {
+            state
+                .team(&team)
+                .and_then(|team| team.item("1.1".parse().unwrap()))
+                .is_some_and(|item| matches!(item.phase(), ItemPhase::Done { .. }))
+        })
+        .await;
+    let ledger = state
+        .team(&team)
+        .unwrap()
+        .item("1.1".parse().unwrap())
+        .unwrap()
+        .findings();
+    assert!(ledger.is_some_and(
+        |ledger| ledger.entries.len() == 1 && ledger.entries[0].status == agent_core::state::FindingStatus::Open
+    ));
+    let tables: Vec<_> = rig
+        .github
+        .comments(1)
+        .into_iter()
+        .filter(|body| body.contains("agent-findings"))
+        .collect();
+    assert_eq!(tables.len(), 1);
+    assert!(tables[0].contains("MINOR") && tables[0].contains("open"));
+    rig.stop().await.unwrap();
+}
