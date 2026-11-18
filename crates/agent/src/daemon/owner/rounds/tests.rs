@@ -2388,9 +2388,9 @@ async fn malformed_findings_are_returned_then_numbered_fixed_and_resolved() {
         .unwrap()
         .findings()
         .unwrap();
-    assert_eq!(ledger.entries.len(), 1);
-    assert_eq!(ledger.entries[0].number.get(), 1);
-    assert_eq!(ledger.entries[0].status, agent_core::state::FindingStatus::Resolved);
+    assert_eq!(ledger.entries().len(), 1);
+    assert_eq!(ledger.entries()[0].number.get(), 1);
+    assert_eq!(ledger.entries()[0].status, agent_core::state::FindingStatus::Resolved);
     assert!(fix.contains("1. [MAJOR] ERR-3 src/lib.rs:7"), "{fix}");
     assert!(correction.contains("line 3"), "{correction}");
     assert_eq!(
@@ -2431,9 +2431,10 @@ async fn an_open_minor_finding_does_not_prevent_merging_and_stays_in_the_table()
         .item("1.1".parse().unwrap())
         .unwrap()
         .findings();
-    assert!(ledger.is_some_and(
-        |ledger| ledger.entries.len() == 1 && ledger.entries[0].status == agent_core::state::FindingStatus::Open
-    ));
+    assert!(
+        ledger.is_some_and(|ledger| ledger.entries().len() == 1
+            && ledger.entries()[0].status == agent_core::state::FindingStatus::Open)
+    );
     let tables: Vec<_> = rig
         .github
         .comments(1)

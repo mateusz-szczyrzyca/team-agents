@@ -19,8 +19,7 @@ fn fixed_and_joined() -> (State, ItemProgress, ItemProgress) {
         panic!("fixture item is in review")
     };
     let pr = pr.clone();
-    let mut ledger = Findings::default();
-    ledger.entries.push(RecordedFinding {
+    let entry = RecordedFinding {
         number: NonZeroU32::MIN,
         finding: Finding {
             severity: Severity::Major,
@@ -32,7 +31,8 @@ fn fixed_and_joined() -> (State, ItemProgress, ItemProgress) {
         reporter: "inv-codex".parse().unwrap(),
         pass: NonZeroU32::MIN,
         status: FindingStatus::Open,
-    });
+    };
+    let ledger = Findings::new(vec![entry]).unwrap();
     {
         let mut found = state.team_mut(&team).unwrap();
         let mut item = found.item_mut(fixed).unwrap();

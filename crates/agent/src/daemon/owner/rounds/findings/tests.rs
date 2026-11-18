@@ -14,13 +14,13 @@ async fn findings_table_matches_the_golden_and_keeps_report_data_in_one_cell() {
     )
     .await
     .unwrap();
-    let mut ledger = Findings::default();
+    let mut entries = Vec::new();
     for (number, severity, status) in [
         (1, Severity::Blocker, FindingStatus::Resolved),
         (2, Severity::Major, FindingStatus::Open),
         (3, Severity::Minor, FindingStatus::Open),
     ] {
-        ledger.entries.push(RecordedFinding {
+        entries.push(RecordedFinding {
             number: NonZeroU32::new(number).unwrap(),
             finding: Finding {
                 severity,
@@ -34,6 +34,7 @@ async fn findings_table_matches_the_golden_and_keeps_report_data_in_one_cell() {
             status,
         });
     }
+    let ledger = Findings::new(entries).unwrap();
     assert_eq!(table(&texts, &ledger).unwrap(), include_str!("table.md"));
     assert_eq!(
         open_text(&texts, Some(&ledger)).unwrap(),

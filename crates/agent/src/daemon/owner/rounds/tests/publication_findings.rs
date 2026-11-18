@@ -23,9 +23,7 @@ async fn an_item_joining_a_fix_pass_inherits_the_pr_findings_or_legacy_protocol(
         };
         let pr = pr.clone();
         let branch = pr.branch.clone();
-        let mut ledger = Findings::default();
-        ledger.comment = Some(42);
-        ledger.entries.push(RecordedFinding {
+        let entry = RecordedFinding {
             number: NonZeroU32::MIN,
             finding: Finding {
                 severity: Severity::Major,
@@ -37,7 +35,9 @@ async fn an_item_joining_a_fix_pass_inherits_the_pr_findings_or_legacy_protocol(
             reporter: "inv-codex".parse().unwrap(),
             pass: NonZeroU32::MIN,
             status: FindingStatus::Open,
-        });
+        };
+        let mut ledger = Findings::new(vec![entry]).unwrap();
+        ledger.comment = Some(42);
         {
             let mut found = state.team_mut(&team).unwrap();
             let mut item = found.item_mut(fixed).unwrap();

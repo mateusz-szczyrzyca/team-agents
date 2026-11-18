@@ -186,7 +186,7 @@ use std::str::FromStr;
 
 use agent_core::ids::RoundId;
 use agent_core::protocol::{RoundDetail, RoundTask};
-use agent_core::state::{ItemPhase, NewRun, RoundEnd, State};
+use agent_core::state::{Findings, ItemPhase, NewRun, RoundEnd, State};
 
 use crate::fixtures::{at, run};
 
@@ -564,14 +564,14 @@ fn a_round_counts_only_open_findings_of_each_severity() {
         let mut team = state.team_mut(&team_id(0)).unwrap();
         let mut item = team.item_mut("1.2".parse().unwrap()).unwrap();
         item.start_findings();
-        let ledger = item.findings_mut().unwrap();
+        let mut entries = Vec::new();
         for (index, severity, status) in [
             (1, Severity::Blocker, FindingStatus::Open),
             (2, Severity::Major, FindingStatus::Open),
             (3, Severity::Minor, FindingStatus::Open),
             (4, Severity::Blocker, FindingStatus::Resolved),
         ] {
-            ledger.entries.push(RecordedFinding {
+            entries.push(RecordedFinding {
                 number: NonZeroU32::new(index).unwrap(),
                 finding: Finding {
                     severity,
@@ -585,6 +585,7 @@ fn a_round_counts_only_open_findings_of_each_severity() {
                 status,
             });
         }
+        *item.findings_mut().unwrap() = Findings::new(entries).unwrap();
     }
     let round = detail(&state);
     assert_eq!(round.findings.len(), 4);
