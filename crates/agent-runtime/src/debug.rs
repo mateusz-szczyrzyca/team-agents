@@ -4,6 +4,7 @@
 mod activity_tests;
 mod collect;
 pub(crate) mod history;
+mod process_facts;
 #[cfg(test)]
 mod tests;
 
