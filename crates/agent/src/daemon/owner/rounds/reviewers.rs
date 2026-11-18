@@ -97,9 +97,13 @@ impl Owner {
         let required = items
             .first()
             .and_then(|id| self.parts.state.team(team_id)?.item(*id)?.findings()?.review_count());
-        let history = items
+        let team = self.parts.state.team(team_id).ok_or(PublishError::Lost)?;
+        let progress = items
             .iter()
-            .filter_map(|id| self.parts.state.team(team_id)?.item(*id))
+            .map(|id| team.item(*id).ok_or(PublishError::Lost))
+            .collect::<Result<Vec<_>, _>>()?;
+        let history = progress
+            .into_iter()
             .filter(|item| item.findings().and_then(|ledger| ledger.verification()).is_some())
             .map(|item| item.fix_passes())
             .max_by_key(|passes| passes.len());

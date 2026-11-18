@@ -400,7 +400,7 @@ impl State {
         if probe.schema_version == u64::from(migrate::LEGACY_VERSION) {
             return migrate::from_v1(text);
         }
-        if matches!(probe.schema_version, 2 | 3 | 4) {
+        if matches!(probe.schema_version, 2..=4) {
             return migrate::from_v2(text);
         }
         if probe.schema_version != u64::from(SCHEMA_VERSION) {
