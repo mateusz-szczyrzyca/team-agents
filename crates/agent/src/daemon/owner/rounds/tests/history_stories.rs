@@ -488,7 +488,7 @@ async fn a_team_round_with_a_worker_one_fix_pass_and_a_second_review_pass_that_a
         &[
             // The coordinator waits for its member, integrates, and then fixes: each of its two commits is gated by the daemon.
             investigator("inv-lead", "sleep,lead-gated"),
-            normal("claude-1", "work,sleep"),
+            normal("claude-1", "script:wait-for-worker,sleep"),
             investigator("inv-r1", LATE_CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],
@@ -496,6 +496,24 @@ async fn a_team_round_with_a_worker_one_fix_pass_and_a_second_review_pass_that_a
         true,
     )
     .await;
+    // The member must not wake the lead before its worker request has been served.
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("wait-for-worker.sh"),
+        r#"set -eu
+printf 'run 1 of claude-1\n' > work-1.txt
+git add work-1.txt
+git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -qm 'Work of run 1 of claude-1'
+barrier="$(dirname "$0")/member-release"
+mkfifo "$barrier"
+: > "$barrier-ready"
+read -r -t 30 release < "$barrier"
+printf '%s\n' '.fake-*' >> "$(git rev-parse --git-path info/exclude)"
+rm "$barrier" "$barrier-ready"
+"#,
+    )
+    .unwrap();
     add_worker(&rig, "glm-1", "sleep,done:Result: looked");
     rig.start_with_rng(rand::SeedableRng::seed_from_u64(7)).await;
 
@@ -507,12 +525,11 @@ async fn a_team_round_with_a_worker_one_fix_pass_and_a_second_review_pass_that_a
             Some("inv-lead"),
         )
         .await;
-    rig.state_where("the member to have run", |state| {
-        state
-            .find_task(&tasks[1])
-            .is_some_and(|found| !found.member.runs().is_empty())
+    rig.wait_for("the member to wait for its worker", || {
+        scripts.join("member-release-ready").exists()
     })
     .await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Waiting).await;
     let bus = AgentBus::new(
         Program::from_str(super::super::fixture::agentbus_binary().to_str().unwrap()).unwrap(),
         AbsolutePath::from_str(rig.home.root().to_str().unwrap()).unwrap(),
@@ -530,6 +547,20 @@ async fn a_team_round_with_a_worker_one_fix_pass_and_a_second_review_pass_that_a
     })
     .await
     .unwrap();
+    rig.state_where("the worker's delegated run to finish", |state| {
+        state.find_task(&tasks[2]).is_some_and(|found| {
+            found.member.runs().len() == 2 && found.member.status() == agent_core::status::TaskStatus::Waiting
+        })
+    })
+    .await;
+    std::fs::write(scripts.join("member-release"), "done\n").unwrap();
+    // Gate recording is another history event: keep it after the member's wake-up run.
+    rig.state_where("the requester to finish its wake-up run", |state| {
+        state.find_task(&tasks[1]).is_some_and(|found| {
+            found.member.runs().len() == 2 && found.member.status() == agent_core::status::TaskStatus::Waiting
+        })
+    })
+    .await;
     gate_every_run(&rig, &tasks[0], |state| {
         state.teams()[0]
             .item("1.1".parse().unwrap())

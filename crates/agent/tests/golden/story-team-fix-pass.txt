@@ -55,23 +55,19 @@ STATUS: SLEEPING
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-5>/mcp.json --max-turns 300 --settings <home>/tasks/<task-6>/runs/<run-5>/claude-settings.json --session-id <uuid> --scenario work,sleep --as claude-1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-5>/mcp.json --max-turns 300 --settings <home>/tasks/<task-6>/runs/<run-5>/claude-settings.json --session-id <uuid> --scenario script:wait-for-worker,sleep --as claude-1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-6>, at commit <commit-1>
     steps (2):
       1. <time> info: session started, model fake-model
       2. <time> info: result: success
     ended: reported DONE
-    ----- final message (31 bytes) -----
-Finished the item.
+    ----- final message (35 bytes) -----
+Did the scripted work.
 STATUS: DONE
     ----- end of final message -----
     changes: head <commit-1> → <commit-2>
       commit <commit-2> Work of run 1 of claude-1
       added work-1.txt (+1 -0)
-      uncommitted: added .fake-args-1 (+<n> -<n>)
-      uncommitted: added .fake-log (+<n> -<n>)
-      uncommitted: added .fake-prompt-1 (+<n> -<n>)
-      uncommitted: added .fake-runs (+<n> -<n>)
 <time>  run <run-7>: glm-1 (worker, claude) as worker, because a worker serves a request of run <run-5>
     task <task-8>; worktree <home>/worktrees/example/<task-8>, branch agents/glm-1/<task-8>
     took <duration>
@@ -132,7 +128,7 @@ STATUS: DONE
       included.
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-10>/mcp.json --max-turns 300 --settings <home>/tasks/<task-6>/runs/<run-10>/claude-settings.json --resume <uuid> --scenario work,sleep --as claude-1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-10>/mcp.json --max-turns 300 --settings <home>/tasks/<task-6>/runs/<run-10>/claude-settings.json --resume <uuid> --scenario script:wait-for-worker,sleep --as claude-1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-6>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model
