@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod activity_tests;
 mod collect;
+pub(crate) mod history;
 #[cfg(test)]
 mod tests;
 
