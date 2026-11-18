@@ -755,7 +755,7 @@ async fn sleeping_team_with_failed_member_and_undone_lead_notifies_team_asleep()
 async fn unrelated_resume_does_not_clear_blocked_dedup_for_other_failed_members() {
     let mut rig = Rig::new(
         &[
-            investigator("inv-lead", "done"),
+            investigator("inv-lead", "done,done"),
             normal("claude-1", "fail,fail"),
             normal("claude-2", "fail"),
             investigator("inv-r1", APPROVING),
@@ -786,8 +786,12 @@ async fn unrelated_resume_does_not_clear_blocked_dedup_for_other_failed_members(
     looked_again(&rig).await;
 
     // Resuming claude-1 clears only claude-1's item (1.1), NOT claude-2's item (2.1)
+    let lead_runs = rig.runs(&tasks[0]);
     rig.resume(&tasks[1]).await;
     rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.wait_for("tasks[0] to run again", || rig.runs(&tasks[0]) > lead_runs)
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
     looked_again(&rig).await;
 
     let told_2_1: Vec<_> = rig
