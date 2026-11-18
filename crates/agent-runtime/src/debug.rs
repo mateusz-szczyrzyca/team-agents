@@ -7,6 +7,7 @@ mod collect;
 mod config;
 mod daemon_log;
 pub(crate) mod history;
+mod machine;
 mod notifications;
 mod process_facts;
 #[cfg(test)]
