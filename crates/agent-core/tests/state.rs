@@ -31,7 +31,7 @@ mod state_file {
 
         assert_eq!(
             state.to_json().unwrap(),
-            include_str!("fixtures/state-v1-as-v2.json").replacen("\"schema_version\": 2", "\"schema_version\": 4", 1)
+            include_str!("fixtures/state-v1-as-v2.json").replacen("\"schema_version\": 2", "\"schema_version\": 5", 1)
         );
     }
 

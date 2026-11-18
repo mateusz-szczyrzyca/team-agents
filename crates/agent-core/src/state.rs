@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn the_schema_version_is_one() {
-        assert_eq!(SCHEMA_VERSION, 4);
+        assert_eq!(SCHEMA_VERSION, 5);
         assert_eq!(serde_json::to_value(SchemaVersion).unwrap(), json!(4));
     }
 
@@ -687,7 +687,7 @@ mod tests {
     fn an_empty_state_is_written_with_its_schema_version_first() {
         let text = State::new().to_json().unwrap();
 
-        assert_eq!(text, "{\n  \"schema_version\": 4,\n  \"teams\": []\n}\n");
+        assert_eq!(text, "{\n  \"schema_version\": 5,\n  \"teams\": []\n}\n");
         assert_eq!(State::from_json(&text).unwrap(), State::new());
     }
 
@@ -695,7 +695,7 @@ mod tests {
     fn a_state_is_written_indented_and_ends_with_a_newline_and_the_schema_version_comes_first() {
         let text = two_teams().to_json().unwrap();
 
-        assert!(text.starts_with("{\n  \"schema_version\": 4,\n  \"teams\": [\n    {\n      \"id\": \"team-"));
+        assert!(text.starts_with("{\n  \"schema_version\": 5,\n  \"teams\": [\n    {\n      \"id\": \"team-"));
         assert!(text.ends_with("}\n"));
         assert!(!text.ends_with("\n\n"));
     }

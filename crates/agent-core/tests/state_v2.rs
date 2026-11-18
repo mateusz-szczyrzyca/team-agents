@@ -45,7 +45,7 @@ mod state_v2 {
 
         assert_eq!(
             state.to_json().unwrap(),
-            V2.replacen("\"schema_version\": 2", "\"schema_version\": 4", 1)
+            V2.replacen("\"schema_version\": 2", "\"schema_version\": 5", 1)
         );
     }
 
@@ -125,7 +125,7 @@ mod state_v2 {
 
         assert_eq!(
             state.to_json().unwrap(),
-            V1_AS_V2.replacen("\"schema_version\": 2", "\"schema_version\": 4", 1)
+            V1_AS_V2.replacen("\"schema_version\": 2", "\"schema_version\": 5", 1)
         );
         assert_eq!(State::from_json(V1_AS_V2).unwrap(), state);
     }
@@ -145,7 +145,7 @@ mod state_v2 {
 
         let saved = state.to_json().unwrap();
 
-        assert!(saved.starts_with("{\n  \"schema_version\": 4,\n"));
+        assert!(saved.starts_with("{\n  \"schema_version\": 5,\n"));
         assert_eq!(State::from_json(&saved).unwrap(), state);
     }
 
