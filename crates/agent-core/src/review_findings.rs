@@ -113,19 +113,24 @@ pub fn parse_report(
     let lines: Vec<&str> = text.lines().collect();
     let mut report = Report::default();
     let mut in_findings = false;
-    let mut in_fence = false;
+    let mut fence: Option<Fence> = None;
     for (index, line) in lines.iter().enumerate() {
         let line_number = index.saturating_add(1);
         let fail = |kind| ReportError {
             line: line_number,
             kind,
         };
-        if line.trim_start().starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
+        match (fence, fence_marker(line)) {
+            (None, Some(open)) => {
+                fence = Some(open);
+                continue;
+            }
+            (Some(open), Some(marker)) if marker.closes(open) => {
+                fence = None;
+                continue;
+            }
+            (Some(_), _) => continue,
+            (None, None) => {}
         }
         let trimmed = line.trim().trim_start_matches('#').trim();
         if trimmed.trim_matches(['*', '`']) == "FINDINGS" {
@@ -197,6 +202,36 @@ pub fn parse_report(
         });
     }
     Ok(report)
+}
+
+/// A Markdown code fence line: its character (backtick or tilde) and how many of them it has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Fence {
+    /// The fence character, `` ` `` or `~`.
+    character: char,
+    /// How many of the character open the line; at least three.
+    length: usize,
+    /// Whether nothing but the fence stands on the line, as a closing fence requires.
+    bare: bool,
+}
+
+impl Fence {
+    /// Whether this line closes `open`: the same character, at least as many, and nothing else on the line.
+    fn closes(self, open: Self) -> bool {
+        self.bare && self.character == open.character && self.length >= open.length
+    }
+}
+
+/// The fence a line is, if it starts with three or more backticks or tildes.
+fn fence_marker(line: &str) -> Option<Fence> {
+    let line = line.trim_start();
+    let character = line.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let length = line.chars().take_while(|c| *c == character).count();
+    (length >= 3).then(|| Fence {
+        character,
+        length,
+        bare: line.trim_end().chars().all(|c| c == character),
+    })
 }
 
 /// Whether a line looks like a finding: an optional report-local number, then a bracketed upper-case tag such as
