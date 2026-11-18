@@ -158,3 +158,66 @@ fn finding_text_and_checks_preserve_code_delimiters_and_globs() {
         }]
     );
 }
+
+#[test]
+fn refuses_a_numbered_finding_outside_the_findings_section() {
+    for text in [
+        "VERDICT: APPROVE\nSUMMARY: ok\n1. [MAJOR] ERR-3 x:1 — problem → fix\n   CHECK: read x\n",
+        "VERDICT: APPROVE\nBLOCKERS\n1. [COR] x:1 — problem → fix\n",
+    ] {
+        assert_eq!(
+            parse_report(text, ReviewVerdict::Approve, &[]),
+            Err(ReportError {
+                line: 3,
+                kind: ReportProblem::Finding
+            }),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn refuses_an_unnumbered_finding_line_anywhere() {
+    for text in [
+        "VERDICT: APPROVE\nFINDINGS\n[BLOCKER] ERR-3 x:1 — problem → fix\nCHECK: read x\n",
+        "VERDICT: APPROVE\nSUMMARY: ok\n**[MAJOR]** ERR-3 x:1 — problem → fix\n",
+    ] {
+        let line = text
+            .lines()
+            .position(|l| l.contains("[BLOCKER]") || l.contains("[MAJOR]"))
+            .unwrap()
+            + 1;
+        assert_eq!(
+            parse_report(text, ReviewVerdict::Approve, &[]),
+            Err(ReportError {
+                line,
+                kind: ReportProblem::Finding
+            }),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn ignores_the_contents_of_code_fences() {
+    let text = "VERDICT: REQUEST_CHANGES\nFINDINGS\n\
+1. [MINOR] API-1 x.rs:3 — takes &String → &str\n   CHECK: grep -n '&String' x.rs\n\n\
+```rust\n1. Install\n1. [BLOCKER] ERR-3 y:1 — in a fence → ignored\nFINDING 9: RESOLVED\n```\n\n\
+2. [MAJOR] ERR-3 y.rs:4 — problem → fix\n   CHECK: read y.rs\n";
+    let report = parse_report(text, ReviewVerdict::RequestChanges, &[]).unwrap();
+    assert_eq!(
+        report
+            .findings
+            .iter()
+            .map(|f| (f.severity, f.place.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(Severity::Minor, "x.rs:3"), (Severity::Major, "y.rs:4")]
+    );
+    assert_eq!(report.answers, vec![]);
+}
+
+#[test]
+fn links_and_prose_that_look_like_brackets_are_not_findings() {
+    let text = "VERDICT: APPROVE\nSUMMARY: see [the docs](https://example.com) and [note]\n1. [the docs](https://example.com) explain it\n";
+    assert_eq!(parse_report(text, ReviewVerdict::Approve, &[]), Ok(Report::default()));
+}
