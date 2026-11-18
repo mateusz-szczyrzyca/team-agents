@@ -234,8 +234,11 @@ fn render_with(
             items.approved,
             items.done,
         ));
-        lines.extend(team.rounds.iter().map(|round| format!("  {}", round_line(round))));
-        let _ = rounds;
+        lines.extend(
+            team.rounds
+                .iter()
+                .map(|round| format!("  {}{}", round_line(round), rounds(round))),
+        );
         for member in &team.members {
             let waiting = member.open_question.map_or_else(String::new, |number| {
                 format!(", questions number {number} wait for answers")
