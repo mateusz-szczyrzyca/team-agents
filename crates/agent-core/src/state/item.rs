@@ -1049,6 +1049,7 @@ mod tests {
                 phase: wire.phase,
                 fix_passes: wire.fix_passes,
                 gate: wire.gate,
+                ..Self::new(wire.id, ItemMark::Open)
             };
             check_has_fix_pass(&progress)?;
             Ok(progress)
