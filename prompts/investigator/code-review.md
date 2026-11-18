@@ -363,7 +363,7 @@ OUT OF SCOPE
   not met is a `[BLOCKER]`, listed under FINDINGS too.
 - A review that ended at step 2 or 3 reports only that blocker.
 
-## 8. Re-review
+## 8. Verification after a fix pass
 
 Your request names the open findings of the pull request, with their numbers and checks. Answer for every one of
 them, before any new finding, one line each:
@@ -378,8 +378,8 @@ A line for every open finding: a report that leaves one out is sent back. Run th
 `APPROVE`. A criterion that was `not met` is answered the same way, in CRITERIA.
 
 1. Re-run the size check and the gate. Review only what changed since the last round, and what that touches.
-2. New findings on unchanged code only if they are `[BLOCKER]`s; mark them `(missed earlier)`. They go under
-   FINDINGS in the format of §7, with new numbers.
+2. Add findings missed in the first pass at any severity; mark them `(missed earlier)`. They go under FINDINGS
+   in the format of §7, with new numbers. Do not repeat the full review.
 3. Do not reopen points you accepted. Do not raise an earlier `[MINOR]` without a new fact.
 4. Fixes stay in scope: a fix that brings unrelated changes is PR-7.
 5. A fix that changes a test of the PR is a `TEST-FIX` commit, listed in the PR (TDD-14) — also when your own finding asked for it. Step 4 again, against every RED commit.

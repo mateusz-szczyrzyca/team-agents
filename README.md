@@ -1170,11 +1170,16 @@ requires that many investigators outside the team. Files without the key retain 
 The first pass consists of independent full reviews: reviewers have no bus and must not read or discuss peer reports.
 The harness holds every report and its findings until the last verdict arrives, then posts reports in request order
 and the findings table. A replacement reviewer performs its own full review while the received reports keep waiting.
-Later passes retain the bus and post reports as they arrive. A pull request keeps its review count even if the
-configuration changes. Active pull requests migrated from an older daemon retain their original review protocol.
+Later passes retain the bus and post reports as they arrive. After a fix pass they verify the open findings and
+changes since the preceding reviewed commit, with the lead's final fix message. Investigators who reviewed this pull
+request longest ago go first; investigators who never reviewed it precede them, with random draws among equals.
+The preceding pair is reused only when other investigators are unavailable. Fewer than twice the review count
+outside the team produces a startup warning and does not prevent starting. A pull request keeps its review count
+even if the configuration changes. Active pull requests migrated from an older daemon retain their original review protocol.
 
 `agent run --no-merge` stops before the merge and tells you; after `[review] fix_passes` rounds of "changes
-requested" a question reaches you like any other. How it works, and its limits, are in
+requested" a question reaches you like any other. Answering grants another `[review] fix_passes` allowance.
+The notice names the allowance and open blocking findings. How it works, and its limits, are in
 [`docs/architecture.md`](docs/architecture.md) ("Pull requests, reviews and the merge").
 
 Each posted Rust review starts with the investigator, CLI and configured model, a green **APPROVED** (`✅✅`) or
