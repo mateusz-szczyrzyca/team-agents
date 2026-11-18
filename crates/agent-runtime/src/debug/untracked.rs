@@ -5,8 +5,6 @@ mod tests;
 
 use std::path::{Path, PathBuf};
 
-use std::fmt::Write as _;
-
 use agent_core::debug_summary::{SummarySection, UntrackedFileSummaryFacts};
 use agent_core::diagnostic_assessment::ReadFailure;
 use agent_core::state::Timestamp;
@@ -68,19 +66,22 @@ pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> Unt
     files.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.path.cmp(&b.path)));
 
     let mut artifact_text = String::new();
-    let _ = writeln!(artifact_text, "### Untracked Files ({})", files.len());
+    let mut append = |line: &str| {
+        artifact_text.push_str(line);
+        artifact_text.push('\n');
+    };
+    append(&format!("### Untracked Files ({})", files.len()));
     for f in &files {
         let time_str = match f.modified {
             Some(ts) => ts.to_string(),
             None => "unknown".to_owned(),
         };
-        let _ = writeln!(
-            artifact_text,
+        append(&format!(
             "- {} ({} bytes, modified {})",
             f.path.display(),
             f.size_bytes,
             time_str
-        );
+        ));
     }
 
     let summary_facts = files.iter().take(50).cloned().collect();

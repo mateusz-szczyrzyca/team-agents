@@ -62,6 +62,22 @@ impl std::fmt::Debug for Collection {
     }
 }
 
+fn empty_machine_summary() -> MachineSummary {
+    MachineSummary {
+        load_avg: None,
+        memory_total_bytes: None,
+        memory_available_bytes: None,
+        swap_total_bytes: None,
+        swap_free_bytes: None,
+        home_fs: None,
+        temp_fs: None,
+        daemon_descendants: vec![],
+        daemon_descendant_pids: vec![],
+        tasks_dir_bytes: None,
+        worktrees_dir_bytes: None,
+    }
+}
+
 impl Collection {
     pub(super) fn new(team: &Team, now: Timestamp, stale_after: Duration) -> Result<Self, DebugRuntimeError> {
         let lead = team
@@ -143,19 +159,7 @@ impl Collection {
                 notifications: vec![],
                 configuration: None,
                 secret_keys: vec![],
-                machine: MachineSummary {
-                    load_avg: None,
-                    memory_total_bytes: None,
-                    memory_available_bytes: None,
-                    swap_total_bytes: None,
-                    swap_free_bytes: None,
-                    home_fs: None,
-                    temp_fs: None,
-                    daemon_descendants: vec![],
-                    daemon_descendant_pids: vec![],
-                    tasks_dir_bytes: None,
-                    worktrees_dir_bytes: None,
-                },
+                machine: empty_machine_summary(),
                 unreadable_parts: vec![],
             },
             checkout: None,
