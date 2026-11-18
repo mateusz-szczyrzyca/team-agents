@@ -75,7 +75,7 @@ struct RawBusMessage {
 ///
 /// # Errors
 /// Returns [`BusError`] when reading the bus file fails.
-pub(super) async fn collect(home: &Home, team: &Team, _cut: &SecretsCut) -> Result<Option<BusCollection>, BusError> {
+pub(super) async fn collect(home: &Home, team: &Team, cut: &SecretsCut) -> Result<Option<BusCollection>, BusError> {
     let path = home.root().join("bus").join("messages.jsonl");
     let file = match tokio::fs::File::open(&path).await {
         Ok(file) => file,
@@ -135,7 +135,8 @@ pub(super) async fn collect(home: &Home, team: &Team, _cut: &SecretsCut) -> Resu
         parsed_lines.push(msg);
     }
 
-    let mut kept = Vec::new();
+    let mut artifact_messages = Vec::new();
+    let mut summary_messages = Vec::new();
     let total = parsed_lines.len();
 
     for (index, msg) in parsed_lines.into_iter().enumerate() {
@@ -156,18 +157,21 @@ pub(super) async fn collect(home: &Home, team: &Team, _cut: &SecretsCut) -> Resu
             let from = &msg.from;
             let to = &msg.to;
             let kind = msg.kind.as_deref().unwrap_or("chat");
-            let first_line = msg.text.lines().next().unwrap_or("");
+            artifact_messages.push(format!("[{ts}] {from} → {to} ({kind}): {}", msg.text));
+
+            let redacted = cut.redact_text(&msg.text);
+            let first_line = redacted.lines().next().unwrap_or("");
             let text_start = if first_line.chars().count() > 100 {
                 format!("{}…", first_line.chars().take(100).collect::<String>())
             } else {
                 first_line.to_owned()
             };
-            kept.push(format!("[{ts}] {from} → {to} ({kind}): {text_start}"));
+            summary_messages.push(format!("[{ts}] {from} → {to} ({kind}): {text_start}"));
         }
     }
     Ok(Some(BusCollection {
-        artifact_messages: kept.clone(),
-        summary_messages: kept,
+        artifact_messages,
+        summary_messages,
     }))
 }
 
