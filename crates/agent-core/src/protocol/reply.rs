@@ -352,7 +352,7 @@ impl RoundDetail {
             review_passes,
             findings: progress
                 .and_then(ItemProgress::findings)
-                .map(|ledger| ledger.entries.clone())
+                .map(|ledger| ledger.entries().to_vec())
                 .unwrap_or_default(),
         }
     }

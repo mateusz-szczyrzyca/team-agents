@@ -28,7 +28,7 @@ pub(super) fn open_text(texts: &AutopilotPrompts, ledger: Option<&Findings>) -> 
     let mut lines = Vec::new();
     if let Some(ledger) = ledger {
         for entry in ledger
-            .entries
+            .entries()
             .iter()
             .filter(|entry| entry.status == FindingStatus::Open)
         {
@@ -59,7 +59,7 @@ fn cell(text: &str) -> String {
 /// The complete findings table, including resolved and nonblocking entries.
 fn table(texts: &AutopilotPrompts, ledger: &Findings) -> Result<String, TextError> {
     let mut rows = Vec::new();
-    for entry in &ledger.entries {
+    for entry in ledger.entries() {
         let severity = match entry.finding.severity {
             Severity::Blocker => AutopilotPrompt::ReviewSeverityBlocker,
             Severity::Major => AutopilotPrompt::ReviewSeverityMajor,
@@ -111,7 +111,7 @@ impl Owner {
         else {
             return Ok(());
         };
-        if ledger.entries.is_empty() {
+        if ledger.entries().is_empty() {
             return Ok(());
         }
         let body = table(&pulls.texts, &ledger)?;

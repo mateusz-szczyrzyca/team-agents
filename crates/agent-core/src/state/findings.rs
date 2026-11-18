@@ -40,8 +40,9 @@ pub struct RecordedFinding {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(try_from = "FindingsWire")]
 pub struct Findings {
-    /// Findings, in permanent-number order.
-    pub entries: Vec<RecordedFinding>,
+    /// Findings, in permanent-number order; private so that only [`Findings::new`], the loader and
+    /// [`Findings::finish`] can set the numbers.
+    entries: Vec<RecordedFinding>,
     /// Reports received during the current pass; numbering waits for request order to be known in full.
     pending: BTreeMap<TaskId, Report>,
     /// The harness comment, updated instead of posting another table.
