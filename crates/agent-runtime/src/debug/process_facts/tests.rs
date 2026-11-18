@@ -45,7 +45,7 @@ async fn reads_actual_lock_holder_start_arguments_names_and_executable() {
     assert_eq!(observed.env_var_names, vec!["LANG", "TOKEN"]);
     assert_eq!(observed.exe_path, exe.to_str().unwrap());
     assert_eq!(observed.version, "agent 0.1.0");
-    assert_eq!(observed.disk_newer_than_process, true);
+    assert!(observed.disk_newer_than_process);
 }
 
 #[tokio::test]
