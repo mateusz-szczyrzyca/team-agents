@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests;
 use std::ffi::OsString;
-use std::os::unix::ffi::OsStringExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -615,7 +615,7 @@ enum ObservationError {
     #[error("cannot run read-only git command")]
     Capture(#[source] crate::process::CaptureError),
     /// Git returned a failure status.
-    #[error("read-only git command exited {exit:?}: {stderr:?}")]
+    #[error("read-only git command exited {exit:?}: {stderr:?}", stderr = std::ffi::OsStr::from_bytes(.stderr))]
     Git {
         /// Checked process exit.
         exit: ExitReport,
