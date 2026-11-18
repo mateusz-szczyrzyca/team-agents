@@ -103,3 +103,14 @@ async fn rejects_procfs_bytes_over_the_read_limit() {
     file.set_len(LIMIT + 1).unwrap();
     assert!(matches!(bytes(&path).await, Err(ProcessError::TooLarge)));
 }
+
+#[test]
+fn resolves_replaced_executable_link_to_its_current_disk_path() {
+    for (link, links, expected) in [
+        ("/tmp/café (deleted)", 0, "/tmp/café"),
+        ("/tmp/café (deleted)", 1, "/tmp/café (deleted)"),
+        ("/tmp/agent", 1, "/tmp/agent"),
+    ] {
+        assert_eq!(disk_path(Path::new(link), links).unwrap(), PathBuf::from(expected));
+    }
+}

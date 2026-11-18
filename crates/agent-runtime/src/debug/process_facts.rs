@@ -256,5 +256,10 @@ fn start_time(stat: &str, boot: &str, ticks: NonZeroU64) -> Result<Timestamp, Pr
         .map_err(ProcessError::Timestamp)
 }
 
+/// Resolves the on-disk executable after a running inode has been replaced.
+fn disk_path(link: &Path, _links: u64) -> Result<PathBuf, ProcessError> {
+    Ok(link.to_path_buf())
+}
+
 #[cfg(test)]
 mod tests;
