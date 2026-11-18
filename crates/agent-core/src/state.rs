@@ -49,7 +49,7 @@ use crate::kinds::Role;
 
 /// The schema version of the state that this build writes. It reads this version and migrates the one before it
 /// (version 1, which had no rounds).
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Largest state text accepted, in bytes: a bound on untrusted input, far above any real state.
 pub const MAX_STATE_BYTES: usize = 64 << 20;
@@ -65,7 +65,7 @@ version_type!(SchemaVersion, SCHEMA_VERSION, UnsupportedSchema);
 
 /// A state of a schema version this build does not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("the state has schema version {found}; this build reads versions 1 and {SCHEMA_VERSION}")]
+#[error("the state has schema version {found}; this build reads versions 1, 2 and {SCHEMA_VERSION}")]
 pub struct UnsupportedSchema {
     /// The version the state declares.
     pub found: u64,
@@ -382,11 +382,11 @@ impl State {
     /// Reads a state from JSON text.
     ///
     /// # Errors
-    /// [`StateError`]: the text is too large, declares a schema version other than 1 and 2 (checked first, so that a
+    /// [`StateError`]: the text is too large, declares a schema version other than 1, 2 and 3 (checked first, so that a
     /// state of a newer version is refused as such and not as malformed), is not a valid state, or has clashing teams,
     /// tasks or rounds.
     ///
-    /// A state of version 1 is migrated as it is read: it comes out as the state of version 2 that stands for it, and
+    /// A state of version 1 is migrated as it is read: it comes out as the state of version 3 that stands for it, and
     /// the same text always gives the same state.
     pub fn from_json(text: &str) -> Result<Self, StateError> {
         if text.len() > MAX_STATE_BYTES {
@@ -398,6 +398,9 @@ impl State {
         let probe: SchemaProbe = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
         if probe.schema_version == u64::from(migrate::LEGACY_VERSION) {
             return migrate::from_v1(text);
+        }
+        if probe.schema_version == 2 {
+            return migrate::from_v2(text);
         }
         if probe.schema_version != u64::from(SCHEMA_VERSION) {
             return Err(UnsupportedSchema {

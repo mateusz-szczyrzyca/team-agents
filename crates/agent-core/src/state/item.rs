@@ -507,7 +507,9 @@ impl CheckedMut<'_, ItemProgress> {
     }
 
     /// Enables numbered findings for a newly opened pull request.
-    pub fn start_findings(&mut self) {}
+    pub fn start_findings(&mut self) {
+        self.value.findings = Some(Findings::default());
+    }
 
     /// Changes the ledger of a pull request using the numbered protocol.
     pub fn findings_mut(&mut self) -> Option<&mut Findings> {

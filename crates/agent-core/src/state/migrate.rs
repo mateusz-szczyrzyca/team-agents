@@ -121,3 +121,13 @@ impl From<LegacyError> for StateError {
         }
     }
 }
+
+/// Reads version 2 without enabling numbered findings on its existing rounds.
+pub(super) fn from_v2(text: &str) -> Result<State, StateError> {
+    let mut value: Value = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
+    if let Some(version) = value.get_mut("schema_version") {
+        *version = Value::from(super::SCHEMA_VERSION);
+    }
+    let wire: StateWire = serde_json::from_value(value).map_err(|source| StateError::Malformed { source })?;
+    Ok(State::try_from(wire)?)
+}
