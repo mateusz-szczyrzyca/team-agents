@@ -844,14 +844,34 @@ pub enum AfterNoStatus {
 
 /// Counts consecutive no-status endings at the tail of persisted runs.
 #[must_use]
-pub fn consecutive_no_status(_runs: &[crate::state::Run]) -> u64 {
-    0
+pub fn consecutive_no_status(runs: &[crate::state::Run]) -> u64 {
+    let count = runs
+        .iter()
+        .rev()
+        .take_while(|run| {
+            matches!(
+                run.state(),
+                crate::state::RunState::Ended {
+                    end: RunEnd::NoStatus { .. },
+                    ..
+                }
+            )
+        })
+        .count();
+    u64::try_from(count).unwrap_or(u64::MAX)
 }
 
 /// Decides whether a run ending without `STATUS:` may be asked again in the same session.
 #[must_use]
-pub fn after_no_status(_role: Role, _count: u64, _session: Option<&crate::state::SessionId>) -> AfterNoStatus {
-    AfterNoStatus::Fail
+pub fn after_no_status(role: Role, count: u64, session: Option<&crate::state::SessionId>) -> AfterNoStatus {
+    if count == 0 || count > NO_STATUS_RETRIES || session.is_none() {
+        AfterNoStatus::Fail
+    } else {
+        match role {
+            Role::Solo | Role::Coordinator | Role::Member => AfterNoStatus::Resume,
+            Role::Worker | Role::Reviewer => AfterNoStatus::Fail,
+        }
+    }
 }
 
 #[cfg(test)]
