@@ -12,7 +12,7 @@ async fn collects_fifty_newest_untracked_files_sorted_by_mtime() {
     let worktree = dir.path();
 
     let mut paths = Vec::new();
-    let base_time = SystemTime::now() - Duration::from_secs(3600);
+    let base_time = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
 
     // Create 60 untracked files with increasing modification times
     for i in 0..60 {
