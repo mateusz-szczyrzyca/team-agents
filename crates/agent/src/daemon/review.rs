@@ -256,11 +256,20 @@ pub(super) fn choose_reviewers_for(
 mod tests;
 
 /// Whether this task is an independent first-pass reviewer, including replacement and correction runs.
+///
+/// The pass belongs to the pull request, not to one item: an item that joined a fix pass has none of its own, so the
+/// pass is the first one only when none of the items this task reviews has had a fix pass.
 pub(super) fn independent_first_review(team: &Team, task: &TaskId) -> bool {
-    team.items().iter().any(|item| {
-        item.fix_passes().is_empty()
-            && item.findings().is_some_and(|ledger| ledger.review_count().is_some())
-            && matches!(item.phase(), ItemPhase::InReview { reviews, .. }
-                if reviews.iter().any(|review| review.task == *task && matches!(review.outcome, ReviewOutcome::Pending)))
-    })
+    let reviewed = team.items().iter().filter(|item| {
+        matches!(item.phase(), ItemPhase::InReview { reviews, .. }
+            if reviews.iter().any(|review| review.task == *task && matches!(review.outcome, ReviewOutcome::Pending)))
+    });
+    let mut independent = false;
+    for item in reviewed {
+        if !item.fix_passes().is_empty() {
+            return false;
+        }
+        independent |= item.findings().is_some_and(|ledger| ledger.review_count().is_some());
+    }
+    independent
 }
