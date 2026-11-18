@@ -2166,6 +2166,73 @@ async fn standing_item_notice_survives_restart_and_names_the_last_failed_run() {
 }
 
 #[tokio::test]
+async fn standing_item_recovery_distinguishes_failed_runs_with_the_same_timestamp() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,done"),
+            normal("claude-1", "fail,fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let first_notice = rig.notification_with("waits with item 1.1 behind failed member").await;
+    let ended_at = |state: &agent_core::state::State| {
+        let roster = state.team(&team).unwrap().crew().roster();
+        let member = roster.iter().find(|(_, member)| member.task() == &tasks[1]).unwrap().1;
+        let agent_core::state::RunState::Ended { at, .. } = member.runs().last().unwrap().state() else {
+            panic!("the member's run ended");
+        };
+        at.to_string()
+    };
+    let first_at = ended_at(&rig.state());
+
+    rig.resume(&tasks[1]).await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.wait_for("the second failure was announced", || {
+        rig.notifications()
+            .iter()
+            .filter(|text| text.contains("behind failed member"))
+            .count()
+            == 2
+    })
+    .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let second_at = ended_at(&rig.state());
+    rig.stop().await.unwrap();
+
+    // Reproduce equal clock readings and recovery before delivery of the second failure's notice.
+    for entry in std::fs::read_dir(rig.home.notifications_dir()).unwrap() {
+        let path = entry.unwrap().path();
+        let text = std::fs::read_to_string(&path).unwrap();
+        if text == first_notice {
+            std::fs::write(&path, text.replace(&first_at, &second_at)).unwrap();
+        } else if text.contains("behind failed member") {
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
+    rig.start().await;
+    looked_again(&rig).await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    let notices: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("behind failed member"))
+        .collect();
+    assert_eq!(notices.len(), 2, "{notices:?}");
+}
+
+#[tokio::test]
 async fn standing_item_notice_keeps_the_failed_members_last_run_detail() {
     let mut rig = Rig::new(
         &[
