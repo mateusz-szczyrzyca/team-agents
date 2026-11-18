@@ -613,9 +613,7 @@ fn merged_removed_worktree_falls_back_to_checkout() {
     );
 
     assert!(
-        !collection
-            .assessment
-            .unreadable
+        !unreadable
             .iter()
             .any(|f| f.part.contains("task-20261117-120000-mem1") || f.part.contains("untracked")),
         "{:?}",
