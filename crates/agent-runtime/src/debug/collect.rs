@@ -563,9 +563,16 @@ impl Collection {
             .collect();
         for (task, agent) in tasks {
             let path = home.worktree_dir(team.repo(), &task);
-            let worktree_missing = tokio::fs::metadata(&path)
-                .await
-                .is_err_and(|err| err.kind() == std::io::ErrorKind::NotFound);
+            let worktree_missing = match worktree_is_missing(&path).await {
+                Ok(missing) => missing,
+                Err(error) => {
+                    self.failed(
+                        format!("worktree metadata {}", escaped_path(&path)),
+                        diagnostic_error(&error),
+                    );
+                    continue;
+                }
+            };
 
             let observation = if last_round_merged && worktree_missing {
                 if let Some(ref checkout) = self.checkout {
@@ -619,6 +626,9 @@ impl Collection {
     }
 
     async fn git_details(&mut self, home: &Home, team: &Team) {
+        if self.summary.git.is_empty() {
+            return;
+        }
         let lead_tip = self
             .summary
             .git
@@ -626,9 +636,16 @@ impl Collection {
             .find(|git| git.task_id == self.assessment.lead)
             .map(|git| git.tip.clone());
         let lead_path = home.worktree_dir(team.repo(), &self.assessment.lead);
-        let lead_worktree_missing = tokio::fs::metadata(&lead_path)
-            .await
-            .is_err_and(|err| err.kind() == std::io::ErrorKind::NotFound);
+        let lead_worktree_missing = match worktree_is_missing(&lead_path).await {
+            Ok(missing) => missing,
+            Err(error) => {
+                self.failed(
+                    format!("worktree metadata {}", escaped_path(&lead_path)),
+                    diagnostic_error(&error),
+                );
+                return;
+            }
+        };
         let ancestor_dir = if lead_worktree_missing {
             self.checkout.clone().unwrap_or(lead_path.clone())
         } else {
@@ -710,9 +727,16 @@ impl Collection {
             .collect();
         for (task, branch) in tasks {
             let path = home.worktree_dir(team.repo(), &task);
-            let worktree_missing = tokio::fs::metadata(&path)
-                .await
-                .is_err_and(|err| err.kind() == std::io::ErrorKind::NotFound);
+            let worktree_missing = match worktree_is_missing(&path).await {
+                Ok(missing) => missing,
+                Err(error) => {
+                    self.failed(
+                        format!("worktree metadata {}", escaped_path(&path)),
+                        diagnostic_error(&error),
+                    );
+                    continue;
+                }
+            };
 
             let (target_dir, rev_range) = if worktree_missing {
                 if let Some(ref checkout) = self.checkout {
@@ -748,6 +772,15 @@ impl Collection {
                 Err(error) => self.failed(format!("git commits {task}"), error_chain(&error)),
             }
         }
+    }
+}
+
+/// Distinguishes removed worktrees from metadata failures before choosing a clone fallback.
+async fn worktree_is_missing(path: &Path) -> Result<bool, ObservationError> {
+    match tokio::fs::metadata(path).await {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(ObservationError::Io(error)),
     }
 }
 
@@ -969,7 +1002,6 @@ async fn read_git_from_checkout(
 
     let exact = format!("agents/{agent}/{task}");
     let prefix = format!("agents/{agent}/{task}-");
-    let agent_prefix = format!("agents/{agent}/");
 
     let mut candidate: Option<(BranchName, CommitId)> = None;
 
@@ -978,9 +1010,7 @@ async fn read_git_from_checkout(
             continue;
         };
 
-        let is_match = ref_name == exact
-            || ref_name.starts_with(&prefix)
-            || (ref_name.starts_with(&agent_prefix) && ref_name.ends_with("-item"));
+        let is_match = ref_name == exact || ref_name.starts_with(&prefix);
 
         if is_match {
             let branch: BranchName = ref_name.parse().map_err(ObservationError::Branch)?;
