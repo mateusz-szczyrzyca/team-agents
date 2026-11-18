@@ -141,6 +141,67 @@ fn untracked_files_make_lead_dirty_without_becoming_tracked_changes() {
 }
 
 #[test]
+fn single_git_listing_per_worktree_reused_for_untracked_metadata() {
+    use agent_core::config::AbsolutePath;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let team = team();
+    let task = team.crew().roster()[0].1.task().clone();
+    let worktree = home.worktree_dir(team.repo(), &task);
+    std::fs::create_dir_all(&worktree).unwrap();
+    git(&worktree, &["init", "--initial-branch=main"]);
+    git(&worktree, &["commit", "--allow-empty", "-m", "Base"]);
+    std::fs::write(worktree.join("untracked_file.txt"), "content\n").unwrap();
+    std::fs::write(
+        home.config_file(),
+        "[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .unwrap();
+
+    let fake_git = dir.path().join("fake-git");
+    let log_file = dir.path().join("git-invocations.log");
+    let script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nexec git \"$@\"\n",
+        log_file.display()
+    );
+    std::fs::write(&fake_git, script).unwrap();
+    std::fs::set_permissions(&fake_git, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    collection.git_program = fake_git;
+    runtime.block_on(collection.observe(&home, &team, None)).unwrap();
+
+    let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
+    let invocations: Vec<&str> = log_content.lines().collect();
+    let untracked_listings: Vec<_> = invocations
+        .iter()
+        .filter(|line| line.contains(&worktree.to_string_lossy().into_owned()) && line.contains("--untracked-files"))
+        .collect();
+    assert_eq!(
+        untracked_listings.len(),
+        1,
+        "must execute exactly one git listing for untracked files across collection: {invocations:#?}"
+    );
+    assert!(
+        !invocations
+            .iter()
+            .any(|line| line.contains(&worktree.to_string_lossy().into_owned()) && line.contains("ls-files")),
+        "must not invoke ls-files or separate untracked walks: {invocations:#?}"
+    );
+
+    let newest = &collection.summary.git[0].newest_untracked;
+    assert_eq!(newest.len(), 1);
+    assert_eq!(newest[0].path, PathBuf::from("untracked_file.txt"));
+}
+
+#[test]
 fn rejects_malformed_porcelain_records_including_missing_rename_sources() {
     for bytes in [b"invalid\0".as_slice(), b"R  destination\0".as_slice()] {
         assert!(matches!(parse_status(bytes), Err(ObservationError::StatusFields)));
@@ -536,13 +597,25 @@ fn merged_removed_worktree_falls_back_to_checkout() {
     assert_eq!(member_git.commits_over_base.len(), 1);
     assert_eq!(member_git.commits_over_base[0].subject, "Member commit");
     assert_eq!(member_git.uncommitted_files, Vec::<PathBuf>::new());
-
+    assert_eq!(member_git.newest_untracked, Vec::new());
+    let member_untracked_artifact = PathBuf::from("untracked").join(format!("{member_task}.txt"));
     assert!(
         !collection
-            .assessment
-            .unreadable
+            .artifacts
             .iter()
-            .any(|f| f.part.contains("task-20261117-120000-mem1")),
+            .any(|(p, _)| p == &member_untracked_artifact)
+    );
+
+    let unreadable = &collection.assessment.unreadable;
+    assert!(
+        !unreadable.iter().any(|f| f.part.contains("task-20261117-120000-mem1")),
+        "{unreadable:?}"
+    );
+
+    assert!(
+        !unreadable
+            .iter()
+            .any(|f| f.part.contains("task-20261117-120000-mem1") || f.part.contains("untracked")),
         "{:?}",
         collection.assessment.unreadable
     );
@@ -816,14 +889,9 @@ async fn long_final_message_preserves_the_last_runs_reason_and_steps() {
         .await
         .unwrap();
     collection.enrich_last_run_details(&records, &team);
-    let summary = agent_core::debug_summary::render_command_summary(
-        &collection.summary,
-        time::UtcOffset::UTC,
-        &[],
-        agent_core::debug_summary::UntrackedCollection::Deferred,
-        str::to_owned,
-    )
-    .unwrap();
+    let summary =
+        agent_core::debug_summary::render_command_summary(&collection.summary, time::UtcOffset::UTC, str::to_owned)
+            .unwrap();
     assert!(
         summary.contains("Recorded café step"),
         "the step must survive the final-message budget"
@@ -1033,14 +1101,9 @@ async fn redacts_complete_final_message_before_taking_its_tail() {
         [],
     );
     collection.enrich_last_run_details(&records, &team);
-    let summary = agent_core::debug_summary::render_command_summary(
-        &collection.summary,
-        time::UtcOffset::UTC,
-        &[],
-        agent_core::debug_summary::UntrackedCollection::Deferred,
-        str::to_owned,
-    )
-    .unwrap();
+    let summary =
+        agent_core::debug_summary::render_command_summary(&collection.summary, time::UtcOffset::UTC, str::to_owned)
+            .unwrap();
     assert!(
         !summary.contains("suffix"),
         "a secret suffix must not survive truncation"
@@ -1131,4 +1194,44 @@ async fn retained_member_branch_uses_run_round_when_pr_belongs_to_coordinator() 
             .as_str(),
         recorded
     );
+}
+
+#[tokio::test]
+async fn untracked_observation_preserves_a_task_artifact_with_the_same_name() {
+    use agent_core::config::AbsolutePath;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let team = team();
+    let task = team.crew().roster()[0].1.task().clone();
+    let worktree = home.worktree_dir(team.repo(), &task);
+    std::fs::create_dir_all(&worktree).unwrap();
+    git(&worktree, &["init", "--initial-branch=main"]);
+    git(&worktree, &["commit", "--allow-empty", "-m", "Base"]);
+    std::fs::write(worktree.join("new.txt"), "new file").unwrap();
+    std::fs::create_dir_all(home.task_dir(&task)).unwrap();
+    std::fs::write(home.task_dir(&task).join("untracked.txt"), "retained task artifact").unwrap();
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    collection.observe(&home, &team, None).await.unwrap();
+    let copied_path = PathBuf::from("tasks").join(task.as_str()).join("untracked.txt");
+    let copied: Vec<_> = collection
+        .artifacts
+        .iter()
+        .filter(|(path, _)| path == &copied_path)
+        .collect();
+    assert_eq!(
+        copied.len(),
+        1,
+        "the generated observation must not overwrite or duplicate a task file"
+    );
+    assert_eq!(copied[0].1, b"retained task artifact");
+    let generated_path = PathBuf::from("untracked").join(format!("{task}.txt"));
+    let generated = collection
+        .artifacts
+        .iter()
+        .find(|(path, _)| path == &generated_path)
+        .unwrap();
+    assert!(String::from_utf8(generated.1.clone()).unwrap().contains("new.txt"));
+    let paths: std::collections::BTreeSet<_> = collection.artifacts.iter().map(|(path, _)| path).collect();
+    assert_eq!(paths.len(), collection.artifacts.len());
 }

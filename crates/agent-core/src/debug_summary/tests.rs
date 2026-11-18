@@ -122,14 +122,17 @@ fn sample_input() -> SummaryInput {
             load_avg: Some((0.5, 0.4, 0.3)),
             memory_total_bytes: Some(16_000_000_000),
             memory_available_bytes: Some(8_000_000_000),
+            swap_total_bytes: Some(4_000_000_000),
+            swap_free_bytes: Some(2_000_000_000),
             home_fs: Some(FsUsageSummary {
-                space_percent: 45,
-                inode_percent: 20,
+                space_percent: Some(45),
+                inode_percent: Some(20),
             }),
             temp_fs: Some(FsUsageSummary {
-                space_percent: 10,
-                inode_percent: 5,
+                space_percent: Some(10),
+                inode_percent: Some(5),
             }),
+            daemon_descendants: vec![],
             daemon_descendant_pids: vec![12346, 12347],
             tasks_dir_bytes: Some(50_000_000),
             worktrees_dir_bytes: Some(120_000_000),
@@ -428,8 +431,8 @@ fn format_time_handles_offset_seconds_and_extreme_timestamp_fallback() {
 fn filesystem_values_above_100_percent_render_raw_observed() {
     let mut input = sample_input();
     input.machine.home_fs = Some(FsUsageSummary {
-        space_percent: 105,
-        inode_percent: 110,
+        space_percent: Some(105),
+        inode_percent: Some(110),
     });
     let offset = UtcOffset::UTC;
 
@@ -654,51 +657,127 @@ fn summary_budget_at_limit_returns_exact_required_bytes_with_short_and_long_tail
 }
 
 #[test]
-fn deferred_sections_say_not_collected_instead_of_reporting_empty_observations() {
-    let input = sample_input();
-    let sections = [
-        SummarySection::DaemonAndVersions,
-        SummarySection::DaemonLog,
-        SummarySection::Bus,
-        SummarySection::Notifications,
-        SummarySection::Machine,
+fn machine_section_renders_all_metrics_without_not_collected() {
+    let mut input = sample_input();
+    input.machine.load_avg = Some((0.10, 0.20, 0.30));
+    input.machine.memory_total_bytes = Some(16_000_000_000);
+    input.machine.memory_available_bytes = Some(8_000_000_000);
+    input.machine.swap_total_bytes = Some(4_000_000_000);
+    input.machine.swap_free_bytes = Some(2_000_000_000);
+    input.machine.home_fs = Some(crate::debug_summary::FsUsageSummary {
+        space_percent: Some(50),
+        inode_percent: Some(25),
+    });
+    input.machine.temp_fs = Some(crate::debug_summary::FsUsageSummary {
+        space_percent: Some(10),
+        inode_percent: Some(5),
+    });
+    input.machine.daemon_descendants = vec![
+        DescendantProcessSummary {
+            pid: 101,
+            age_seconds: Some(42),
+            cmdline: vec!["agent".to_owned(), "worker".to_owned()],
+        },
+        DescendantProcessSummary {
+            pid: 102,
+            age_seconds: None,
+            cmdline: vec!["sleep".to_owned()],
+        },
     ];
-    let rendered = render_summary_with_uncollected(&input, UtcOffset::UTC, &sections).unwrap();
-    for section in sections {
-        let body = rendered
-            .split(section.heading())
-            .nth(1)
-            .unwrap()
-            .split("\n## ")
-            .next()
-            .unwrap();
-        assert_eq!(body.trim(), "Not collected in this version.");
-    }
+    input.machine.daemon_descendant_pids = vec![101, 102];
+    input.machine.tasks_dir_bytes = Some(1024);
+    input.machine.worktrees_dir_bytes = Some(2048);
+
+    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
     assert!(rendered.contains("Summary renderer"));
     assert!(rendered.contains("none of the known ones"));
+    let machine_section = rendered
+        .split("## Machine and Resources")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+
+    assert!(
+        machine_section.contains("- Load average: 0.10, 0.20, 0.30"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("- Memory: 8000000000 / 16000000000 bytes available"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("- Swap: 2000000000 / 4000000000 bytes free"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("- Home filesystem: 50% space, 25% inodes"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("- Temp filesystem: 10% space, 5% inodes"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("PID 101: age 42s, cmdline: agent worker"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("PID 102: age unknown, cmdline: sleep"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("- Tasks directory size: 1024 bytes"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("- Worktrees directory size: 2048 bytes"),
+        "{machine_section}"
+    );
+    assert!(!rendered.contains("Not collected in this version."), "{rendered}");
 }
 
 #[test]
-fn deferred_machine_section_keeps_collection_failures_visible() {
+fn machine_section_renders_none_when_no_daemon_descendants() {
     let mut input = sample_input();
+    input.machine.daemon_descendants = vec![];
+    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    let machine_section = rendered
+        .split("## Machine and Resources")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(
+        machine_section.contains("- Daemon descendants: none"),
+        "{machine_section}"
+    );
+}
+
+#[test]
+fn machine_section_preserves_collection_failures_without_deferred_notice() {
+    let mut input = sample_input();
+    input.machine.load_avg = None;
     input.unreadable_parts.push(UnreadablePartSummary {
         section: crate::debug_summary::SummarySection::Machine,
-        name: "worktree".into(),
-        reason: "removed".into(),
+        name: "loadavg".into(),
+        reason: "permission denied".into(),
     });
-    let rendered = render_summary_with_uncollected(&input, UtcOffset::UTC, &[SummarySection::Machine]).unwrap();
-    assert!(rendered.contains("Not collected in this version."));
-    assert!(rendered.contains("### Unreadable Parts\n\n- `worktree`: removed"));
-    assert!(!rendered.contains("Load average"));
+    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(!rendered.contains("Not collected in this version."));
+    assert!(rendered.contains("### Unreadable Parts\n\n- `loadavg`: permission denied"));
+    assert!(rendered.contains("- Load average: unknown"));
 }
 
 #[test]
-fn deferred_untracked_metadata_does_not_claim_zero_files() {
+fn untracked_files_metadata_renders_counts_and_entries() {
     let mut input = sample_input();
     input.git[0].newest_untracked.clear();
-    let summary = render_summary_with_coverage(&input, UtcOffset::UTC, &[], UntrackedCollection::Deferred).unwrap();
-    assert!(summary.contains("Untracked file metadata: Not collected in this version."));
-    assert!(!summary.contains("Untracked files (newest 0)"));
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(!summary.contains("Untracked file metadata: Not collected in this version."));
+    assert!(summary.contains("- Untracked files (newest 0):"));
     assert!(summary.contains("Commits over base"));
 }
 
@@ -709,8 +788,7 @@ fn redacts_optional_text_before_truncation_and_byte_budgeting() {
     let mut expected = input.clone();
     expected.history_tail = Some("<cut>".repeat(100_000));
     assert_eq!(
-        render_redacted_summary(&input, UtcOffset::UTC, &[], UntrackedCollection::Collected, |text| text
-            .replace("xy", "<cut>")),
+        render_redacted_summary(&input, UtcOffset::UTC, |text| text.replace("xy", "<cut>")),
         render_summary(&expected, UtcOffset::UTC)
     );
 }
@@ -726,14 +804,7 @@ fn redacted_diagnostic_paths_are_plain_and_unread_history_is_named_in_its_sectio
         name: "team history".into(),
         reason: "database unavailable".into(),
     });
-    let summary = render_command_summary(
-        &input,
-        UtcOffset::from_hms(2, 0, 0).unwrap(),
-        &[],
-        UntrackedCollection::Collected,
-        str::to_owned,
-    )
-    .unwrap();
+    let summary = render_command_summary(&input, UtcOffset::from_hms(2, 0, 0).unwrap(), str::to_owned).unwrap();
     assert!(summary.contains("Uncommitted files (1): café file.txt"), "{summary}");
     assert!(summary.contains("Log: `/tmp/gate.log`"), "{summary}");
     let history = summary
@@ -755,15 +826,8 @@ fn redacted_diagnostic_paths_are_plain_and_unread_history_is_named_in_its_sectio
 fn removed_worktree_notice_is_once_in_git_section_without_an_anomaly() {
     let input = sample_input();
     let notice = "Worktrees for the merged round were removed; retained branches were read from the clone.";
-    let summary = render_command_summary_with_git_notice(
-        &input,
-        UtcOffset::UTC,
-        &[],
-        UntrackedCollection::Collected,
-        str::to_owned,
-        Some(notice),
-    )
-    .expect("summary fits");
+    let summary = render_command_summary_with_git_notice(&input, UtcOffset::UTC, str::to_owned, Some(notice))
+        .expect("summary fits");
     let git = summary.split("## Git Worktrees").nth(1).expect("git section");
     assert_eq!(summary.matches(notice).count(), 1);
     assert!(git.starts_with(&format!("\n\n{notice}\n")), "{git}");
@@ -1013,4 +1077,37 @@ fn oversized_configuration_is_bounded_by_tail_budget_with_cut_marker() {
     assert!(daemon_section.contains(CUT_MARKER.trim()), "{daemon_section}");
     assert!(daemon_section.contains("key = \"value\""), "{daemon_section}");
     assert!(daemon_section.contains("- Secret keys: API_KEY"), "{daemon_section}");
+}
+
+#[test]
+fn machine_descendants_are_unknown_when_their_collection_failed() {
+    let mut input = sample_input();
+    input.machine.daemon_descendants.clear();
+    input.unreadable_parts.push(UnreadablePartSummary {
+        section: SummarySection::Machine,
+        name: "daemon descendants".to_owned(),
+        reason: "procfs permission denied".to_owned(),
+    });
+    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    let descendant_line = rendered.lines().find(|line| line.starts_with("- Daemon descendants:"));
+    assert_eq!(descendant_line, Some("- Daemon descendants: unknown"));
+    assert!(rendered.contains("procfs permission denied"), "{rendered}");
+}
+
+#[test]
+fn machine_preserves_observed_descendants_when_another_process_cannot_be_read() {
+    let mut input = sample_input();
+    input.machine.daemon_descendants.push(DescendantProcessSummary {
+        pid: 101,
+        age_seconds: Some(42),
+        cmdline: vec!["agent".to_owned()],
+    });
+    input.unreadable_parts.push(UnreadablePartSummary {
+        section: SummarySection::Machine,
+        name: "daemon descendant 102".to_owned(),
+        reason: "procfs permission denied".to_owned(),
+    });
+    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(rendered.contains("  - PID 101: age 42s, cmdline: agent"), "{rendered}");
+    assert!(rendered.contains("procfs permission denied"), "{rendered}");
 }

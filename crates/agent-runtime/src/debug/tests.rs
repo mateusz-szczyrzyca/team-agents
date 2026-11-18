@@ -2,7 +2,7 @@
 use super::*;
 use agent_core::config::AbsolutePath;
 use agent_core::state::{Crew, Member, MergeMode, Participant, State, TaskListText, Team, Timestamp};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
 fn fixture() -> (tempfile::TempDir, Home, DebugArgs) {
     let dir = tempfile::tempdir().unwrap();
@@ -63,7 +63,7 @@ fn collects_offline_team_without_mutating_state_and_redacts_raw_bytes() {
     );
     let summary = std::fs::read_to_string(result.summary_path).unwrap();
     assert!(summary.contains("daemon does not answer"), "{summary}");
-    assert!(summary.contains("Not collected in this version."), "{summary}");
+    assert!(!summary.contains("Not collected in this version."), "{summary}");
 }
 
 #[test]
@@ -93,8 +93,11 @@ fn retries_oversized_required_presentation_without_losing_full_facts() {
             load_avg: None,
             memory_total_bytes: None,
             memory_available_bytes: None,
+            swap_total_bytes: None,
+            swap_free_bytes: None,
             home_fs: None,
             temp_fs: None,
+            daemon_descendants: vec![],
             daemon_descendant_pids: vec![],
             tasks_dir_bytes: None,
             worktrees_dir_bytes: None,
@@ -548,14 +551,19 @@ async fn summary_renders_bounded_configuration_content_with_settings_and_values(
 }
 
 #[tokio::test]
-async fn not_collected_names_only_machine_metrics_and_untracked_files() {
+async fn diagnostic_bundle_and_summary_have_no_not_collected() {
     let (_dir, home, args) = fixture();
     let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
-    let content = std::fs::read_to_string(result.bundle_dir.join("NOT_COLLECTED.txt")).unwrap();
-    assert_eq!(
-        content,
-        "Not collected in this version: machine metrics; newest untracked file metadata.\n"
+    assert!(
+        !result.bundle_dir.join("NOT_COLLECTED.txt").exists(),
+        "NOT_COLLECTED.txt must not exist"
     );
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(
+        !summary.contains("Not collected in this version."),
+        "summary must not contain 'Not collected in this version.': {summary}"
+    );
+    assert!(result.bundle_dir.join("machine.txt").exists(), "machine.txt must exist");
 }
 
 #[tokio::test]
@@ -641,4 +649,89 @@ async fn unreadable_notification_configuration_reports_reason_in_notifications_s
         assert!(section.contains("configuration"), "{section}");
         assert!(!section.contains("No notifications."), "{section}");
     }
+}
+
+fn assert_no_secret_in_directory(dir: &std::path::Path, secret: &str) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_dir() {
+            assert_no_secret_in_directory(&path, secret);
+        } else if path.is_file() {
+            let bytes = std::fs::read(&path).unwrap();
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(
+                !text.contains(secret),
+                "file {} must not contain secret value",
+                path.display()
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn secret_in_process_command_line_is_in_no_file_of_bundle() {
+    let (dir, home, args) = fixture();
+    let secret = "test-confidential-λ";
+
+    let procfs = dir.path().join("fake-proc");
+    std::fs::create_dir_all(&procfs).unwrap();
+
+    std::fs::write(home.lock_file(), b"").unwrap();
+    let meta = std::fs::metadata(home.lock_file()).unwrap();
+    let locks = format!(
+        "1: FLOCK ADVISORY WRITE 42 {:x}:{:x}:{} 0 EOF\n",
+        rustix::fs::major(meta.dev()),
+        rustix::fs::minor(meta.dev()),
+        meta.ino()
+    );
+    std::fs::write(procfs.join("locks"), locks).unwrap();
+    std::fs::write(procfs.join("stat"), "cpu 0 0\nbtime 1735689600\n").unwrap();
+    std::fs::write(procfs.join("loadavg"), "0.10 0.20 0.30 1/100 1234\n").unwrap();
+    std::fs::write(
+        procfs.join("meminfo"),
+        "MemTotal: 1000 kB\nMemAvailable: 500 kB\nSwapTotal: 100 kB\nSwapFree: 50 kB\n",
+    )
+    .unwrap();
+
+    let fields = (3..=21).map(|_| "0").collect::<Vec<_>>().join(" ");
+    std::fs::create_dir_all(procfs.join("42")).unwrap();
+    std::fs::write(procfs.join("42/stat"), format!("42 (daemon) S 1 {fields} 1000 0\n")).unwrap();
+    std::fs::write(procfs.join("42/cmdline"), b"agent\0daemon\0").unwrap();
+    std::fs::write(procfs.join("42/environ"), b"LANG=en_US.UTF-8\0").unwrap();
+
+    let exe = dir.path().join("fake-version");
+    std::fs::write(&exe, "#!/bin/sh\nprintf 'agent 0.1.0\\n'\n").unwrap();
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::os::unix::fs::symlink(&exe, procfs.join("42/exe")).unwrap();
+
+    std::fs::create_dir_all(procfs.join("500")).unwrap();
+    std::fs::write(procfs.join("500/stat"), format!("500 (worker) S 42 {fields} 1100 0\n")).unwrap();
+    let worker_cmdline = format!("agent\0worker\0--token\0{secret}\0");
+    std::fs::write(procfs.join("500/cmdline"), worker_cmdline.as_bytes()).unwrap();
+
+    let temp_dir = dir.path().join("tmp");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let result = execute_debug_with_procfs(&home, args, &procfs, &temp_dir)
+        .await
+        .unwrap();
+
+    let machine_txt = std::fs::read_to_string(result.bundle_dir.join("machine.txt")).unwrap();
+    assert!(
+        machine_txt.contains("PID 500"),
+        "machine.txt must contain PID 500: {machine_txt}"
+    );
+    assert!(
+        machine_txt.contains("<cut>"),
+        "machine.txt must contain <cut> for secret: {machine_txt}"
+    );
+    assert!(
+        !machine_txt.contains(secret),
+        "machine.txt must not contain raw secret: {machine_txt}"
+    );
+
+    assert_no_secret_in_directory(&result.bundle_dir, secret);
+    let summary = std::fs::read_to_string(&result.summary_path).unwrap();
+    assert!(!summary.contains(secret), "summary must not contain secret: {summary}");
 }

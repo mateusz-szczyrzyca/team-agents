@@ -287,6 +287,17 @@ pub struct TaskGateSummary {
     pub recent_output_tails: Vec<String>,
 }
 
+/// Summary of a process descending from the daemon.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DescendantProcessSummary {
+    /// Process identifier.
+    pub pid: u32,
+    /// Age in seconds at collection time, if known.
+    pub age_seconds: Option<u64>,
+    /// Command line arguments, redacted.
+    pub cmdline: Vec<String>,
+}
+
 /// Machine and resource metrics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MachineSummary {
@@ -296,10 +307,16 @@ pub struct MachineSummary {
     pub memory_total_bytes: Option<u64>,
     /// Available system memory in bytes.
     pub memory_available_bytes: Option<u64>,
+    /// Total swap memory in bytes.
+    pub swap_total_bytes: Option<u64>,
+    /// Free swap memory in bytes.
+    pub swap_free_bytes: Option<u64>,
     /// Filesystem usage for home directory.
     pub home_fs: Option<FsUsageSummary>,
     /// Filesystem usage for temporary directory.
     pub temp_fs: Option<FsUsageSummary>,
+    /// Processes descending from the daemon.
+    pub daemon_descendants: Vec<DescendantProcessSummary>,
     /// Process IDs of daemon descendants.
     pub daemon_descendant_pids: Vec<u32>,
     /// Total size in bytes of tasks directory.
@@ -311,10 +328,10 @@ pub struct MachineSummary {
 /// Filesystem space and inode usage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FsUsageSummary {
-    /// Percentage of space used (0-100).
-    pub space_percent: u8,
-    /// Percentage of inodes used (0-100).
-    pub inode_percent: u8,
+    /// Percentage of space used (0-100), or None if unavailable.
+    pub space_percent: Option<u8>,
+    /// Percentage of inodes used (0-100), or None if unavailable.
+    pub inode_percent: Option<u8>,
 }
 
 /// An unreadable collection part.
@@ -661,12 +678,7 @@ fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
     }
 }
 
-fn render_git(
-    worktrees: &[GitWorktreeSummary],
-    offset: UtcOffset,
-    out: &mut SummaryWriter,
-    untracked: UntrackedCollection,
-) {
+fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut SummaryWriter) {
     for w in worktrees {
         write_line(out, &format!("### Worktree for Task `{}`", w.task_id));
         write_line(out, "");
@@ -700,11 +712,6 @@ fn render_git(
                     format_time(c.time, offset)
                 ),
             );
-        }
-        if untracked == UntrackedCollection::Deferred {
-            write_line(out, "- Untracked file metadata: Not collected in this version.");
-            write_line(out, "");
-            continue;
         }
         write_line(
             out,
@@ -844,35 +851,57 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
     } else {
         write_line(out, "- Memory: unknown");
     }
+    if let (Some(free), Some(total)) = (machine.swap_free_bytes, machine.swap_total_bytes) {
+        write_line(out, &format!("- Swap: {free} / {total} bytes free"));
+    } else {
+        write_line(out, "- Swap: unknown");
+    }
     if let Some(home) = machine.home_fs {
-        write_line(
-            out,
-            &format!(
-                "- Home filesystem: {}% space, {}% inodes",
-                home.space_percent, home.inode_percent
-            ),
-        );
+        let space_str = match home.space_percent {
+            Some(p) => format!("{p}% space"),
+            None => "unknown space".to_owned(),
+        };
+        let inode_str = match home.inode_percent {
+            Some(p) => format!("{p}% inodes"),
+            None => "unknown inodes".to_owned(),
+        };
+        write_line(out, &format!("- Home filesystem: {space_str}, {inode_str}"));
     } else {
         write_line(out, "- Home filesystem: unknown");
     }
     if let Some(temp) = machine.temp_fs {
-        write_line(
-            out,
-            &format!(
-                "- Temp filesystem: {}% space, {}% inodes",
-                temp.space_percent, temp.inode_percent
-            ),
-        );
+        let space_str = match temp.space_percent {
+            Some(p) => format!("{p}% space"),
+            None => "unknown space".to_owned(),
+        };
+        let inode_str = match temp.inode_percent {
+            Some(p) => format!("{p}% inodes"),
+            None => "unknown inodes".to_owned(),
+        };
+        write_line(out, &format!("- Temp filesystem: {space_str}, {inode_str}"));
     } else {
         write_line(out, "- Temp filesystem: unknown");
     }
-    let pids = machine
-        .daemon_descendant_pids
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-    write_line(out, &format!("- Daemon descendant PIDs: {pids}"));
+    if machine.daemon_descendants.is_empty()
+        && unreadable
+            .iter()
+            .any(|part| part.section == SummarySection::Machine && part.name.contains("descendant"))
+    {
+        write_line(out, "- Daemon descendants: unknown");
+    } else if machine.daemon_descendants.is_empty() {
+        write_line(out, "- Daemon descendants: none");
+    } else {
+        write_line(out, "- Daemon descendants:");
+        for p in &machine.daemon_descendants {
+            let age_str = match p.age_seconds {
+                Some(age) => format!("{age}s"),
+                None => "unknown".to_owned(),
+            };
+            let cmd = p.cmdline.join(" ");
+            let entry = format!("  - PID {}: age {age_str}, cmdline: {cmd}", p.pid);
+            write_process_line(out, "", &entry);
+        }
+    }
     if let Some(bytes) = machine.tasks_dir_bytes {
         write_line(out, &format!("- Tasks directory size: {bytes} bytes"));
     } else {
@@ -909,29 +938,7 @@ fn render_unreadable(unreadable: &[UnreadablePartSummary], out: &mut SummaryWrit
 /// Returns [`SummaryError::RequiredFactsTooLarge`] when mandatory facts and cut
 /// markers alone would reach the byte limit; no partial document is returned.
 pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String, SummaryError> {
-    render_summary_with_uncollected(input, offset, &[])
-}
-
-/// Whether newest-untracked-file metadata was collected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UntrackedCollection {
-    /// Metadata was collected, including a genuinely empty result.
-    Collected,
-    /// Metadata is outside this collector's scope.
-    Deferred,
-}
-
-/// Renders a summary with explicit collection coverage for untracked metadata.
-///
-/// # Errors
-/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
-pub fn render_summary_with_coverage(
-    input: &SummaryInput,
-    offset: UtcOffset,
-    uncollected: &[SummarySection],
-    untracked: UntrackedCollection,
-) -> Result<String, SummaryError> {
-    render_with_coverage(input, offset, uncollected, untracked)
+    render_with_redaction(input, offset, str::to_owned, PathPresentation::Escaped, None)
 }
 
 /// Renders collected text after redaction, before measuring or truncating any fragment.
@@ -943,57 +950,14 @@ pub fn render_summary_with_coverage(
 pub fn render_redacted_summary(
     input: &SummaryInput,
     offset: UtcOffset,
-    uncollected: &[SummarySection],
-    untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(
-        input,
-        offset,
-        uncollected,
-        untracked,
-        redact,
-        PathPresentation::Escaped,
-        None,
-    )
-}
-
-/// Renders a summary with explicit notices for sections outside the collection scope.
-///
-/// Collection failures remain visible even when machine observations are deferred.
-///
-/// # Errors
-/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
-pub fn render_summary_with_uncollected(
-    input: &SummaryInput,
-    offset: UtcOffset,
-    uncollected: &[SummarySection],
-) -> Result<String, SummaryError> {
-    render_with_coverage(input, offset, uncollected, UntrackedCollection::Collected)
-}
-
-fn render_with_coverage(
-    input: &SummaryInput,
-    offset: UtcOffset,
-    uncollected: &[SummarySection],
-    untracked: UntrackedCollection,
-) -> Result<String, SummaryError> {
-    render_with_redaction(
-        input,
-        offset,
-        uncollected,
-        untracked,
-        str::to_owned,
-        PathPresentation::Escaped,
-        None,
-    )
+    render_with_redaction(input, offset, redact, PathPresentation::Escaped, None)
 }
 
 fn render_with_redaction(
     input: &SummaryInput,
     offset: UtcOffset,
-    uncollected: &[SummarySection],
-    untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
     paths: PathPresentation,
     git_notice: Option<&str>,
@@ -1015,15 +979,6 @@ fn render_with_redaction(
     for section in SummarySection::ALL {
         write_line(&mut out, section.heading());
         write_line(&mut out, "");
-
-        if uncollected.contains(&section) {
-            write_line(&mut out, "Not collected in this version.");
-            if section == SummarySection::Machine {
-                render_unreadable(&input.unreadable_parts, &mut out);
-            }
-            write_line(&mut out, "");
-            continue;
-        }
 
         let unread = input
             .unreadable_parts
@@ -1058,7 +1013,7 @@ fn render_with_redaction(
                     write_line(&mut out, notice);
                     write_line(&mut out, "");
                 }
-                render_git(&input.git, offset, &mut out, untracked);
+                render_git(&input.git, offset, &mut out);
             }
             SummarySection::GateRecords => render_gate(&input.gate, offset, &mut out),
             SummarySection::HistoryTail => render_history(input.history_tail.as_deref(), &mut out),
@@ -1094,19 +1049,9 @@ pub enum SummaryError {
 pub fn render_command_summary(
     input: &SummaryInput,
     offset: UtcOffset,
-    uncollected: &[SummarySection],
-    untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(
-        input,
-        offset,
-        uncollected,
-        untracked,
-        redact,
-        PathPresentation::Plain,
-        None,
-    )
+    render_with_redaction(input, offset, redact, PathPresentation::Plain, None)
 }
 
 /// Renders a command summary with a retained-worktree notice in the git section.
@@ -1116,18 +1061,8 @@ pub fn render_command_summary(
 pub fn render_command_summary_with_git_notice(
     input: &SummaryInput,
     offset: UtcOffset,
-    uncollected: &[SummarySection],
-    untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
     git_notice: Option<&str>,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(
-        input,
-        offset,
-        uncollected,
-        untracked,
-        redact,
-        PathPresentation::Plain,
-        git_notice,
-    )
+    render_with_redaction(input, offset, redact, PathPresentation::Plain, git_notice)
 }

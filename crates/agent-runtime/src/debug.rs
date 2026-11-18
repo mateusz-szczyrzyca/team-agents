@@ -7,19 +7,19 @@ mod collect;
 mod config;
 mod daemon_log;
 pub(crate) mod history;
+mod machine;
 mod notifications;
 mod process_facts;
 #[cfg(test)]
 mod tests;
+mod untracked;
 
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use agent_core::config::{MAX_SECRETS_BYTES, Secrets, SecretsError};
-use agent_core::debug_summary::{
-    SummaryError, SummaryInput, SummarySection, UntrackedCollection, render_command_summary_with_git_notice,
-};
+use agent_core::debug_summary::{SummaryError, SummaryInput, SummarySection, render_command_summary_with_git_notice};
 use agent_core::diagnostic_assessment::assess;
 use agent_core::ids::{RoundId, TaskId, TeamId};
 use agent_core::state::{InvalidTimestamp, State, StateError, Timestamp};
@@ -28,9 +28,6 @@ use crate::clock::SystemClock;
 use crate::debug_redaction::SecretsCut;
 use crate::store::Home;
 use crate::text_file::{TextFileError, read_text_file};
-
-/// Observations deferred to the third diagnostic task, never interpreted as empty observations.
-const DEFERRED: &[SummarySection] = &[SummarySection::Machine];
 /// Maximum state file size in bytes.
 const MAX_STATE_BYTES: usize = 16 * 1024 * 1024;
 /// Default inactivity threshold in minutes.
@@ -212,6 +209,39 @@ pub async fn execute_debug_at(
     location: DebugLocation,
     _out: &mut impl Write,
 ) -> Result<DebugResult, DebugRuntimeError> {
+    execute_debug_internal(
+        home,
+        args,
+        status,
+        location,
+        std::path::Path::new("/proc"),
+        &std::env::temp_dir(),
+    )
+    .await
+}
+
+#[cfg(test)]
+pub(super) async fn execute_debug_with_procfs(
+    home: &Home,
+    args: DebugArgs,
+    procfs: &std::path::Path,
+    temp_dir: &std::path::Path,
+) -> Result<DebugResult, DebugRuntimeError> {
+    let location = DebugLocation {
+        local_offset: time::UtcOffset::UTC,
+        checkout: None,
+    };
+    execute_debug_internal(home, args, None, location, procfs, temp_dir).await
+}
+
+async fn execute_debug_internal(
+    home: &Home,
+    args: DebugArgs,
+    status: Option<Result<String, String>>,
+    location: DebugLocation,
+    procfs: &std::path::Path,
+    temp_dir: &std::path::Path,
+) -> Result<DebugResult, DebugRuntimeError> {
     let secrets = load_debug_secrets(home).await?;
     let cut = SecretsCut::new(&secrets, std::env::vars_os());
     let state = load_debug_state(home).await?;
@@ -229,10 +259,11 @@ pub async fn execute_debug_at(
     collection.checkout = location.checkout;
     collection.local_offset = location.local_offset;
     collection.observe(home, team, status).await?;
-    observe_daemon(&mut collection, home, args.daemon_log.as_deref(), team).await;
+    observe_daemon(&mut collection, home, args.daemon_log.as_deref(), team, procfs).await;
     observe_bus(&mut collection, home, team).await;
     observe_notifications(&mut collection, home, team).await;
     observe_config(&mut collection, home, &secrets).await;
+    observe_machine(&mut collection, home, procfs, temp_dir).await;
     let findings = assess(&collection.assessment);
     collection.summary.anomalies = findings
         .iter()
@@ -265,10 +296,6 @@ pub async fn execute_debug_at(
         },
     )
     .map_err(DebugRuntimeError::Summary)?;
-    collection.add(
-        "NOT_COLLECTED.txt",
-        b"Not collected in this version: machine metrics; newest untracked file metadata.\n".to_vec(),
-    );
     let parent = args.out.unwrap_or_else(|| home.root().join("debug"));
     collect::persist(
         collection,
@@ -301,14 +328,7 @@ fn compact_summary_with(
     git_notice: Option<&str>,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    match render_command_summary_with_git_notice(
-        input,
-        offset,
-        DEFERRED,
-        UntrackedCollection::Deferred,
-        &redact,
-        git_notice,
-    ) {
+    match render_command_summary_with_git_notice(input, offset, &redact, git_notice) {
         Ok(text) => Ok(text),
         Err(SummaryError::RequiredFactsTooLarge { .. }) => {
             let mut compact = input.clone();
@@ -322,14 +342,7 @@ fn compact_summary_with(
                 git.commits_over_base.clear();
                 git.newest_untracked.clear();
             }
-            render_command_summary_with_git_notice(
-                &compact,
-                offset,
-                DEFERRED,
-                UntrackedCollection::Deferred,
-                &redact,
-                git_notice,
-            )
+            render_command_summary_with_git_notice(&compact, offset, &redact, git_notice)
         }
         Err(error) => Err(error),
     }
@@ -341,8 +354,9 @@ async fn observe_daemon(
     home: &Home,
     daemon_log: Option<&std::path::Path>,
     team: &agent_core::state::Team,
+    procfs: &std::path::Path,
 ) {
-    match process_facts::observe(home, std::path::Path::new("/proc")).await {
+    match process_facts::observe(home, procfs).await {
         Ok(Some(daemon)) => {
             collection.assessment.daemon = Some(agent_core::diagnostic_assessment::Daemon::Present {
                 executable_newer: Some(daemon.disk_newer_than_process),
@@ -483,6 +497,29 @@ async fn observe_config(collection: &mut collect::Collection, home: &Home, secre
                 });
         }
     }
+}
+
+/// Records machine and resource observations, or records read failures.
+async fn observe_machine(
+    collection: &mut collect::Collection,
+    home: &Home,
+    procfs: &std::path::Path,
+    temp_dir: &std::path::Path,
+) {
+    let daemon_pid = collection.summary.daemon.as_ref().map(|d| d.pid);
+    let obs = machine::observe(
+        home,
+        procfs,
+        temp_dir,
+        daemon_pid,
+        &collection.cut,
+        collection.assessment.now,
+    )
+    .await;
+    collection.summary.machine = obs.summary;
+    collection.assessment.filesystems.extend(obs.filesystems);
+    collection.assessment.unreadable.extend(obs.unreadable);
+    collection.add("machine.txt", obs.artifact_bytes);
 }
 
 /// Machine presentation context captured by the CLI before it starts async workers.

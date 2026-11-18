@@ -52,6 +52,8 @@ pub(super) struct Collection {
     pub(super) cut: SecretsCut,
     /// Total copied task bytes, bounded independently of file count.
     copied_bytes: usize,
+    /// Executable used for git operations (defaults to `"git"`).
+    pub(super) git_program: PathBuf,
 }
 
 impl std::fmt::Debug for Collection {
@@ -59,6 +61,22 @@ impl std::fmt::Debug for Collection {
         f.debug_struct("Collection")
             .field("artifact_count", &self.artifacts.len())
             .finish_non_exhaustive()
+    }
+}
+
+fn empty_machine_summary() -> MachineSummary {
+    MachineSummary {
+        load_avg: None,
+        memory_total_bytes: None,
+        memory_available_bytes: None,
+        swap_total_bytes: None,
+        swap_free_bytes: None,
+        home_fs: None,
+        temp_fs: None,
+        daemon_descendants: vec![],
+        daemon_descendant_pids: vec![],
+        tasks_dir_bytes: None,
+        worktrees_dir_bytes: None,
     }
 }
 
@@ -143,16 +161,7 @@ impl Collection {
                 notifications: vec![],
                 configuration: None,
                 secret_keys: vec![],
-                machine: MachineSummary {
-                    load_avg: None,
-                    memory_total_bytes: None,
-                    memory_available_bytes: None,
-                    home_fs: None,
-                    temp_fs: None,
-                    daemon_descendant_pids: vec![],
-                    tasks_dir_bytes: None,
-                    worktrees_dir_bytes: None,
-                },
+                machine: empty_machine_summary(),
                 unreadable_parts: vec![],
             },
             checkout: None,
@@ -161,6 +170,7 @@ impl Collection {
             artifacts: vec![],
             copied_bytes: 0,
             cut: SecretsCut::new(&agent_core::config::Secrets::default(), []),
+            git_program: PathBuf::from("git"),
         })
     }
 
@@ -648,6 +658,7 @@ impl Collection {
             let observation = if round_merged && worktree_missing {
                 if let Some(ref checkout) = self.checkout {
                     match read_git_from_checkout(
+                        &self.git_program,
                         checkout,
                         &task,
                         &agent,
@@ -663,14 +674,18 @@ impl Collection {
                         Err(err) => Err(err),
                     }
                 } else {
-                    read_git(&path, &task).await
+                    read_git(&self.git_program, &path, &task).await
                 }
             } else {
-                read_git(&path, &task).await
+                read_git(&self.git_program, &path, &task).await
             };
 
             match observation {
                 Ok(observation) => {
+                    self.assessment.unreadable.extend(observation.unreadable);
+                    if let Some((artifact_path, bytes)) = observation.untracked_artifact {
+                        self.artifacts.push((artifact_path, bytes));
+                    }
                     if task == self.assessment.lead {
                         self.assessment.lead_git = Some(LeadGit {
                             tip: observation.facts.tip.clone(),
@@ -739,6 +754,7 @@ impl Collection {
             let tip = git.tip.clone();
             let contains = match &lead_tip {
                 Some(lead) => match git_capture(
+                    &self.git_program,
                     &ancestor_dir,
                     &["merge-base", "--is-ancestor", tip.as_str(), lead.as_str()],
                 )
@@ -834,6 +850,7 @@ impl Collection {
             };
 
             match git_text(
+                &self.git_program,
                 target_dir,
                 &["log", "--format=%H%x00%aI%x00%an%x00%s", "--no-decorate", &rev_range],
             )
@@ -939,8 +956,8 @@ async fn bounded_bytes(path: &Path) -> Result<Vec<u8>, ObservationError> {
     Ok(bytes)
 }
 
-async fn git_capture(path: &Path, args: &[&str]) -> Result<crate::process::Captured, ObservationError> {
-    let mut command = tokio::process::Command::new("git");
+async fn git_capture(git: &Path, path: &Path, args: &[&str]) -> Result<crate::process::Captured, ObservationError> {
+    let mut command = tokio::process::Command::new(git);
     command
         .arg("--no-optional-locks")
         .arg("-C")
@@ -962,12 +979,12 @@ async fn git_capture(path: &Path, args: &[&str]) -> Result<crate::process::Captu
     Ok(result)
 }
 
-async fn git_text(path: &Path, args: &[&str]) -> Result<String, ObservationError> {
-    String::from_utf8(git_bytes(path, args).await?).map_err(ObservationError::Utf8)
+async fn git_text(git: &Path, path: &Path, args: &[&str]) -> Result<String, ObservationError> {
+    String::from_utf8(git_bytes(git, path, args).await?).map_err(ObservationError::Utf8)
 }
 
-async fn git_bytes(path: &Path, args: &[&str]) -> Result<Vec<u8>, ObservationError> {
-    let result = git_capture(path, args).await?;
+async fn git_bytes(git: &Path, path: &Path, args: &[&str]) -> Result<Vec<u8>, ObservationError> {
+    let result = git_capture(git, path, args).await?;
     match result.exit {
         ExitReport::Exited { code: 0 } => Ok(result.stdout.bytes),
         exit => Err(ObservationError::Git {
@@ -1007,6 +1024,36 @@ fn parse_status(bytes: &[u8]) -> Result<Vec<PathBuf>, ObservationError> {
     Ok(paths)
 }
 
+fn parse_untracked(bytes: &[u8]) -> Result<Vec<PathBuf>, ObservationError> {
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let body = bytes.strip_suffix(&[0]).ok_or(ObservationError::StatusFields)?;
+    let mut records = body.split(|byte| *byte == 0);
+    let mut paths = Vec::new();
+    while let Some(record) = records.next() {
+        let [index, worktree, b' ', path @ ..] = record else {
+            return Err(ObservationError::StatusFields);
+        };
+        if path.is_empty() {
+            return Err(ObservationError::StatusFields);
+        }
+        if [index, worktree]
+            .iter()
+            .any(|status| **status == b'R' || **status == b'C')
+        {
+            records
+                .next()
+                .filter(|source| !source.is_empty())
+                .ok_or(ObservationError::StatusFields)?;
+        }
+        if (*index, *worktree) == (b'?', b'?') {
+            paths.push(PathBuf::from(OsString::from_vec(path.to_vec())));
+        }
+    }
+    Ok(paths)
+}
+
 /// Worktree facts plus dirtiness including files that git does not track.
 #[derive(Debug)]
 struct GitObservation {
@@ -1014,20 +1061,25 @@ struct GitObservation {
     facts: GitWorktreeSummary,
     /// Any status record makes the worktree dirty, including untracked files.
     dirty: bool,
+    /// Complete untracked files artifact to write into the diagnostic bundle.
+    untracked_artifact: Option<(PathBuf, Vec<u8>)>,
+    /// Unreadable untracked paths with reasons.
+    unreadable: Vec<ReadFailure>,
 }
 
-async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, ObservationError> {
-    let branch: BranchName = git_text(path, &["symbolic-ref", "--short", "HEAD"])
+async fn read_git(git: &Path, path: &Path, task: &TaskId) -> Result<GitObservation, ObservationError> {
+    let branch: BranchName = git_text(git, path, &["symbolic-ref", "--short", "HEAD"])
         .await?
         .trim()
         .parse()
         .map_err(ObservationError::Branch)?;
-    let tip: CommitId = git_text(path, &["rev-parse", "--verify", "HEAD"])
+    let tip: CommitId = git_text(git, path, &["rev-parse", "--verify", "HEAD"])
         .await?
         .trim()
         .parse()
         .map_err(ObservationError::Commit)?;
     let origin = git_text(
+        git,
         path,
         &[
             "for-each-ref",
@@ -1041,10 +1093,11 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
     } else {
         Some(origin.trim().parse().map_err(ObservationError::Commit)?)
     };
-    let status = git_bytes(path, &["status", "--porcelain=v1", "-z", "--untracked-files=all"]).await?;
+    let status = git_bytes(git, path, &["status", "--porcelain=v1", "-z", "--untracked-files=all"]).await?;
     let published = format!("refs/team-agents/published/{branch}");
     let reviewed = format!("refs/team-agents/reviewed/{branch}");
     let harness = git_text(
+        git,
         path,
         &[
             "for-each-ref",
@@ -1054,6 +1107,13 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
         ],
     )
     .await?;
+    let uncommitted_files = parse_status(&status)?;
+    let untracked_paths = parse_untracked(&status)?;
+    let untracked = super::untracked::collect(path, &untracked_paths).await;
+    let untracked_artifact = Some((
+        PathBuf::from("untracked").join(format!("{task}.txt")),
+        untracked.artifact_text.into_bytes(),
+    ));
     Ok(GitObservation {
         dirty: !status.is_empty(),
         facts: GitWorktreeSummary {
@@ -1062,7 +1122,7 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
             tip,
             origin_tip,
             commits_over_base: vec![],
-            uncommitted_files: parse_status(&status)?,
+            uncommitted_files,
             harness_refs: harness
                 .lines()
                 .filter(|line| {
@@ -1072,8 +1132,10 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
                 .map(str::to_owned)
                 .collect(),
             lead_contains_tip: None,
-            newest_untracked: vec![],
+            newest_untracked: untracked.summary_facts,
         },
+        untracked_artifact,
+        unreadable: untracked.unreadable,
     })
 }
 
@@ -1133,6 +1195,7 @@ fn ref_fields(line: &str) -> Result<(&str, &str), ObservationError> {
 }
 
 async fn read_git_from_checkout(
+    git: &Path,
     checkout: &Path,
     task: &TaskId,
     agent: &AgentName,
@@ -1140,6 +1203,7 @@ async fn read_git_from_checkout(
     round: Option<&agent_core::state::Round>,
 ) -> Result<GitObservation, ObservationError> {
     let branches_output = git_text(
+        git,
         checkout,
         &["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/"],
     )
@@ -1182,6 +1246,7 @@ async fn read_git_from_checkout(
     })?;
 
     let origin = git_text(
+        git,
         checkout,
         &[
             "for-each-ref",
@@ -1199,6 +1264,7 @@ async fn read_git_from_checkout(
     let published = format!("refs/team-agents/published/{branch}");
     let reviewed = format!("refs/team-agents/reviewed/{branch}");
     let harness = git_text(
+        git,
         checkout,
         &[
             "for-each-ref",
@@ -1229,6 +1295,8 @@ async fn read_git_from_checkout(
             lead_contains_tip: None,
             newest_untracked: vec![],
         },
+        untracked_artifact: None,
+        unreadable: vec![],
     })
 }
 
