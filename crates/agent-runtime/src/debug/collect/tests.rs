@@ -143,6 +143,8 @@ fn untracked_files_make_lead_dirty_without_becoming_tracked_changes() {
 #[test]
 fn single_git_listing_per_worktree_reused_for_untracked_metadata() {
     use agent_core::config::AbsolutePath;
+    use std::os::unix::fs::PermissionsExt;
+
     let dir = tempfile::tempdir().unwrap();
     let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
     let team = team();
@@ -158,7 +160,14 @@ fn single_git_listing_per_worktree_reused_for_untracked_metadata() {
     )
     .unwrap();
 
-    super::TEST_GIT_COMMANDS.lock().unwrap().clear();
+    let fake_git = dir.path().join("fake-git");
+    let log_file = dir.path().join("git-invocations.log");
+    let script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nexec git \"$@\"\n",
+        log_file.display()
+    );
+    std::fs::write(&fake_git, script).unwrap();
+    std::fs::set_permissions(&fake_git, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -166,23 +175,25 @@ fn single_git_listing_per_worktree_reused_for_untracked_metadata() {
         .unwrap();
     let mut collection =
         Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    collection.git_program = fake_git;
     runtime.block_on(collection.observe(&home, &team, None)).unwrap();
 
-    let commands = super::TEST_GIT_COMMANDS.lock().unwrap().clone();
-    let untracked_listings: Vec<_> = commands
+    let log_content = std::fs::read_to_string(&log_file).unwrap_or_default();
+    let invocations: Vec<&str> = log_content.lines().collect();
+    let untracked_listings: Vec<_> = invocations
         .iter()
-        .filter(|(p, args)| p == &worktree && args.iter().any(|arg| arg.contains("--untracked-files")))
+        .filter(|line| line.contains(&worktree.to_string_lossy().into_owned()) && line.contains("--untracked-files"))
         .collect();
     assert_eq!(
         untracked_listings.len(),
         1,
-        "must execute exactly one git listing for untracked files across collection: {commands:?}"
+        "must execute exactly one git listing for untracked files across collection: {invocations:#?}"
     );
     assert!(
-        !commands
+        !invocations
             .iter()
-            .any(|(p, args)| p == &worktree && args.contains(&"ls-files".to_owned())),
-        "must not invoke ls-files or separate untracked walks: {commands:?}"
+            .any(|line| line.contains(&worktree.to_string_lossy().into_owned()) && line.contains("ls-files")),
+        "must not invoke ls-files or separate untracked walks: {invocations:#?}"
     );
 
     let newest = &collection.summary.git[0].newest_untracked;
