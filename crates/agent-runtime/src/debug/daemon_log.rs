@@ -23,12 +23,9 @@ pub(super) enum LogError {
     /// Log bytes are not UTF-8.
     #[error("daemon log is not UTF-8")]
     Utf8(#[source] std::string::FromUtf8Error),
-    /// A source grew beyond its bounded snapshot.
-    #[error("daemon log changed beyond the read limit")]
-    TooLarge,
 }
 
-/// Reads the last 500 lines without retaining unrelated informational records.
+/// Reads team records from a bounded tail and warnings from its last 500 lines.
 ///
 /// # Errors
 /// Returns [`LogError`] for unreadable explicit paths or invalid log text.
@@ -38,7 +35,7 @@ pub(super) async fn collect(
     team: &Team,
 ) -> Result<Option<Vec<String>>, LogError> {
     let path = explicit.map_or_else(|| home.root().join("daemon.log"), Path::to_path_buf);
-    let mut file = match tokio::fs::File::open(&path).await {
+    let file = match tokio::fs::File::open(&path).await {
         Ok(file) => file,
         Err(source) if explicit.is_none() && source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(LogError::Read { path, source }),
@@ -52,20 +49,7 @@ pub(super) async fn collect(
         })?
         .len();
     let start = len.saturating_sub(LIMIT);
-    file.seek(std::io::SeekFrom::Start(start))
-        .await
-        .map_err(|source| LogError::Read {
-            path: path.clone(),
-            source,
-        })?;
-    let mut bytes = Vec::new();
-    file.take(LIMIT.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .await
-        .map_err(|source| LogError::Read { path, source })?;
-    if bytes.len() > 4 * 1024 * 1024 {
-        return Err(LogError::TooLarge);
-    }
+    let bytes = read_tail(file, len, &path).await?;
     // Seeking may land inside a UTF-8 character; discard only that incomplete first line.
     let body = if start == 0 {
         bytes
@@ -86,11 +70,13 @@ pub(super) async fn collect(
     let mut kept: Vec<_> = text
         .lines()
         .rev()
-        .take(LINES)
-        .filter(|line| {
-            line.contains(team.id().as_str()) || tasks.iter().any(|task| line.contains(task.as_str())) || warning(line)
+        .enumerate()
+        .filter(|(age, line)| {
+            line.contains(team.id().as_str())
+                || tasks.iter().any(|task| line.contains(task.as_str()))
+                || (*age < LINES && warning(line))
         })
-        .map(str::to_owned)
+        .map(|(_, line)| line.to_owned())
         .collect();
     kept.reverse();
     Ok(Some(kept))
@@ -119,6 +105,20 @@ fn warning(line: &str) -> bool {
 mod tests;
 
 /// Reads the byte window selected by a file length observed before reading.
-async fn read_tail(_file: tokio::fs::File, _len: u64, _path: &Path) -> Result<Vec<u8>, LogError> {
-    Ok(Vec::new())
+async fn read_tail(mut file: tokio::fs::File, len: u64, path: &Path) -> Result<Vec<u8>, LogError> {
+    file.seek(std::io::SeekFrom::Start(len.saturating_sub(LIMIT)))
+        .await
+        .map_err(|source| LogError::Read {
+            path: path.to_owned(),
+            source,
+        })?;
+    let mut bytes = Vec::new();
+    file.take(len.min(LIMIT))
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|source| LogError::Read {
+            path: path.to_owned(),
+            source,
+        })?;
+    Ok(bytes)
 }

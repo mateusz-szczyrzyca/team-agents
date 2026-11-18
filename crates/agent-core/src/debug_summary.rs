@@ -507,6 +507,12 @@ fn render_anomalies(anomalies: &[SummaryAnomaly], out: &mut SummaryWriter) {
     }
 }
 
+fn write_tail_line(out: &mut SummaryWriter, label: &str, value: &str) {
+    out.push_str(label);
+    out.tail(value);
+    write_line(out, "");
+}
+
 fn render_daemon(daemon: Option<&DaemonSummary>, offset: UtcOffset, out: &mut SummaryWriter) {
     let Some(d) = daemon else {
         write_line(out, "The daemon does not answer (unreachable).");
@@ -517,13 +523,13 @@ fn render_daemon(daemon: Option<&DaemonSummary>, offset: UtcOffset, out: &mut Su
     if let Some(started) = d.started_at {
         write_line(out, &format!("- Started: {}", format_time(started, offset)));
     }
-    write_line(out, &format!("- Version: {}", d.version));
-    write_line(out, &format!("- Executable: {}", d.exe_path));
+    write_tail_line(out, "- Version: ", &d.version);
+    write_tail_line(out, "- Executable: ", &d.exe_path);
     if d.disk_newer_than_process {
         write_line(out, "  (Warning: binary on disk is newer than running process)");
     }
-    write_line(out, &format!("- Command line: {}", d.cmdline.join(" ")));
-    write_line(out, &format!("- Environment variables: {}", d.env_var_names.join(", ")));
+    write_tail_line(out, "- Command line: ", &d.cmdline.join(" "));
+    write_tail_line(out, "- Environment variables: ", &d.env_var_names.join(", "));
     write_line(out, "");
 }
 
@@ -734,6 +740,9 @@ fn render_history(history: Option<&str>, out: &mut SummaryWriter) {
 
 fn render_daemon_log(lines: Option<&[String]>, out: &mut SummaryWriter) {
     if let Some(ls) = lines {
+        if ls.is_empty() {
+            write_line(out, "No daemon log lines about the team and no recent warnings.");
+        }
         let mut text = String::new();
         for line in ls {
             text.push_str(line);

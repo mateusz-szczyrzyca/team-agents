@@ -45,6 +45,63 @@ impl SecretsCut {
 
     /// Replaces secret values that can occur in a UTF-8 presentation string.
     pub(crate) fn redact_text(&self, text: &str) -> String {
+        let redacted: String = text
+            .split_inclusive('\n')
+            .map(|line| {
+                match serde_json::from_str::<serde_json::Value>(line) {
+                    Ok(mut value) => {
+                        if !self.redact_json(&mut value) {
+                            return line.to_owned();
+                        }
+                        let mut redacted = value.to_string();
+                        if line.ends_with('\n') {
+                            redacted.push('\n');
+                        }
+                        redacted
+                    }
+                    // Plain text is redacted together so multi-line values still match.
+                    Err(_) => line.to_owned(),
+                }
+            })
+            .collect();
+        self.redact_literal(&redacted)
+    }
+
+    /// Redacts decoded JSON strings before encoding can disguise configured values.
+    fn redact_json(&self, value: &mut serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::String(text) => {
+                let redacted = self.redact_literal(text);
+                let changed = redacted != *text;
+                *text = redacted;
+                changed
+            }
+            serde_json::Value::Array(values) => {
+                let mut changed = false;
+                for value in values {
+                    changed |= self.redact_json(value);
+                }
+                changed
+            }
+            serde_json::Value::Object(fields) => {
+                let mut changed = false;
+                *fields = std::mem::take(fields)
+                    .into_iter()
+                    .map(|(key, mut value)| {
+                        let redacted = self.redact_literal(&key);
+                        changed |= redacted != key;
+                        changed |= self.redact_json(&mut value);
+                        (redacted, value)
+                    })
+                    .collect();
+                changed
+            }
+            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => false,
+        }
+    }
+
+    /// Replaces configured UTF-8 patterns in a decoded string or plain-text line.
+    fn redact_literal(&self, text: &str) -> String {
         let mut remaining = text;
         let mut redacted = String::with_capacity(text.len());
         loop {
@@ -69,6 +126,11 @@ impl SecretsCut {
 
     /// Replaces exact occurrences, preserving unrelated bytes including non-UTF-8 output.
     pub(crate) fn redact(&self, bytes: &[u8]) -> Vec<u8> {
+        match std::str::from_utf8(bytes) {
+            Ok(text) => return self.redact_text(text).into_bytes(),
+            // Binary artifacts need byte matching rather than JSON decoding.
+            Err(_binary) => {}
+        }
         let mut remaining = bytes;
         let mut redacted = Vec::with_capacity(bytes.len());
         while let Some((first, tail)) = remaining.split_first() {
