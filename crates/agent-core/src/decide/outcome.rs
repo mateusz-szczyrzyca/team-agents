@@ -1876,39 +1876,30 @@ mod tests {
     #[test]
     fn after_no_status_resumes_only_supported_roles_with_session_up_to_retries() {
         let session = "session-1".parse().unwrap();
-        for role in [Role::Solo, Role::Coordinator, Role::Member] {
-            assert_eq!(
-                after_no_status(role, 1, Some(&session)),
-                AfterNoStatus::Resume,
-                "{role:?} at count 1"
-            );
-            assert_eq!(
-                after_no_status(role, 2, Some(&session)),
-                AfterNoStatus::Resume,
-                "{role:?} at count 2"
-            );
-            assert_eq!(
-                after_no_status(role, 3, Some(&session)),
-                AfterNoStatus::Fail,
-                "{role:?} at count 3"
-            );
-            assert_eq!(
-                after_no_status(role, 0, Some(&session)),
-                AfterNoStatus::Fail,
-                "{role:?} at count 0"
-            );
-            assert_eq!(
-                after_no_status(role, 1, None),
-                AfterNoStatus::Fail,
-                "{role:?} without session"
-            );
-        }
-        for role in [Role::Worker, Role::Reviewer] {
-            assert_eq!(
-                after_no_status(role, 1, Some(&session)),
-                AfterNoStatus::Fail,
-                "{role:?} worker/reviewer"
-            );
+        let all_roles = [
+            Role::Solo,
+            Role::Coordinator,
+            Role::Member,
+            Role::Worker,
+            Role::Reviewer,
+        ];
+        for role in all_roles {
+            let supported = matches!(role, Role::Solo | Role::Coordinator | Role::Member);
+            for has_session in [false, true] {
+                let session_opt = if has_session { Some(&session) } else { None };
+                for count in [0, 1, 2, 3, 4, 10] {
+                    let expected = if supported && has_session && (1..=NO_STATUS_RETRIES).contains(&count) {
+                        AfterNoStatus::Resume
+                    } else {
+                        AfterNoStatus::Fail
+                    };
+                    assert_eq!(
+                        after_no_status(role, count, session_opt),
+                        expected,
+                        "{role:?}, count={count}, has_session={has_session}"
+                    );
+                }
+            }
         }
     }
 
@@ -1944,8 +1935,28 @@ mod tests {
             0
         );
         assert_eq!(
-            consecutive_no_status(&[no_status_1, no_status_2, reported, no_status_3]),
+            consecutive_no_status(&[no_status_1.clone(), no_status_2.clone(), reported, no_status_3.clone()]),
             1
         );
+
+        // Every other kind of run end breaks the streak.
+        for breaker in [
+            json!({"kind": "turn_limit"}),
+            json!({"kind": "hung"}),
+            json!({"kind": "stopped"}),
+            json!({"kind": "quota_exhausted"}),
+            json!({"kind": "rate_limited"}),
+        ] {
+            let break_run = make_run(5, breaker);
+            assert_eq!(
+                consecutive_no_status(&[no_status_1.clone(), break_run.clone()]),
+                0,
+                "broken by {break_run:?}"
+            );
+            assert_eq!(
+                consecutive_no_status(&[no_status_1.clone(), break_run, no_status_3.clone()]),
+                1
+            );
+        }
     }
 }
