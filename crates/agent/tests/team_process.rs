@@ -426,4 +426,162 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         let notifications = std::fs::read_to_string(bundle_path.join("notifications.txt")).unwrap();
         assert!(notifications.contains("questions-1.md"), "{notifications}");
     }
+
+    fn collect_bundle_files(dir: &Path, files: &mut Vec<PathBuf>) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_bundle_files(&path, files);
+                } else if path.is_file() {
+                    files.push(path);
+                }
+            }
+        }
+    }
+
+    fn populate_untracked_files(worktree: &Path, count: u64) {
+        let base_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        for i in 1u64..=count {
+            let filename = format!("untracked_{i:02}.txt");
+            let file_path = worktree.join(&filename);
+            std::fs::write(&file_path, format!("content {i}\n")).unwrap();
+            let file = std::fs::File::options().write(true).open(&file_path).unwrap();
+            let mtime = base_time + std::time::Duration::from_secs(i);
+            let times = std::fs::FileTimes::new().set_modified(mtime);
+            file.set_times(times).unwrap();
+        }
+    }
+
+    fn verify_e2e_bundle(bundle_path: &Path) {
+        assert!(
+            !bundle_path.join("NOT_COLLECTED.txt").exists(),
+            "NOT_COLLECTED.txt must not exist"
+        );
+
+        let mut bundle_files = Vec::new();
+        collect_bundle_files(bundle_path, &mut bundle_files);
+        for file in &bundle_files {
+            if let Ok(content) = std::fs::read_to_string(file) {
+                assert!(
+                    !content.contains("Not collected in this version."),
+                    "file {file:?} must not mention 'Not collected in this version.'"
+                );
+            }
+        }
+
+        let machine_txt = bundle_path.join("machine.txt");
+        assert!(machine_txt.is_file(), "machine.txt must exist");
+        let machine_content = std::fs::read_to_string(&machine_txt).unwrap();
+        assert!(
+            machine_content.contains("## Machine Metrics and Resources"),
+            "{machine_content}"
+        );
+        assert!(
+            machine_content.contains("### Daemon Descendant Processes"),
+            "{machine_content}"
+        );
+
+        let summary_md = bundle_path.join("SUMMARY.md");
+        assert!(summary_md.is_file(), "SUMMARY.md must exist");
+        let summary_content = std::fs::read_to_string(&summary_md).unwrap();
+        assert!(
+            summary_content.contains("## Machine and Resources"),
+            "{summary_content}"
+        );
+        assert!(summary_content.contains("## Git Worktrees"), "{summary_content}");
+        assert!(
+            summary_content.contains("untracked_55.txt"),
+            "newest untracked file must be in summary: {summary_content}"
+        );
+        assert!(
+            !summary_content.contains("untracked_01.txt"),
+            "51st newest file must not be in summary: {summary_content}"
+        );
+
+        let mut found_untracked_artifact = false;
+        let tasks_dir = bundle_path.join("tasks");
+        if tasks_dir.is_dir() {
+            for task_entry in std::fs::read_dir(&tasks_dir).unwrap().flatten() {
+                let untracked_file = task_entry.path().join("untracked.txt");
+                if untracked_file.is_file() {
+                    let untracked_content = std::fs::read_to_string(&untracked_file).unwrap();
+                    if untracked_content.contains("untracked_01.txt") && untracked_content.contains("untracked_55.txt")
+                    {
+                        found_untracked_artifact = true;
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(
+            found_untracked_artifact,
+            "bundle tasks/*/untracked.txt must contain all untracked files"
+        );
+    }
+
+    #[test]
+    fn debug_e2e_collects_full_home_machine_and_untracked_with_fake_cli() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "script:post"),
+            ("claude-2", "agent", "ask"),
+        ]));
+        let secrets = world.home.join("secrets.toml");
+        std::fs::write(&secrets, "[agent_env]\nAPI_KEY = \"FAKE_KEY\"\n").unwrap();
+        std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let scripts = world.home.join("fake-scripts");
+        std::fs::create_dir(&scripts).unwrap();
+        let post = POST_SCRIPT
+            .replace("AGENTBUS", &agentbus_binary().display().to_string())
+            .replace("HOME_DIR", &world.home.display().to_string());
+        std::fs::write(scripts.join("post.sh"), post).unwrap();
+        world.start();
+
+        let output = world.agent(&["run", "inv-opus", "claude-1", "claude-2", "Do it all."]);
+        assert!(output.status.success(), "{}", stderr(&output));
+        let text = stdout(&output);
+        let team = text
+            .lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .to_owned();
+
+        world.status_where("the questions to be asked", |status| status.contains("questions"));
+
+        let worktrees_dir = world.home.join("worktrees");
+        let mut worktree_path = None;
+        if let Ok(repos) = std::fs::read_dir(&worktrees_dir) {
+            for repo_entry in repos.flatten() {
+                if let Ok(entries) = std::fs::read_dir(repo_entry.path()) {
+                    for entry in entries.flatten() {
+                        if entry.path().join(".git").exists() {
+                            worktree_path = Some(entry.path());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let worktree = worktree_path.expect("at least one task worktree with .git exists");
+
+        populate_untracked_files(&worktree, 55);
+
+        let diag_parent = world.home.join("diag_e2e");
+        let debug_output = world.agent(&["debug", "--team", &team, "--out", diag_parent.to_str().unwrap()]);
+        assert!(debug_output.status.success(), "{}", stderr(&debug_output));
+        let debug_text = stdout(&debug_output);
+        assert!(debug_text.contains("Debug summary:"), "{debug_text}");
+
+        let bundle_entry = std::fs::read_dir(&diag_parent).unwrap().next().unwrap().unwrap();
+        verify_e2e_bundle(&bundle_entry.path());
+
+        // Verify removed worktree causes no failure in debug
+        std::fs::remove_dir_all(&worktree).unwrap();
+        let diag_removed = world.home.join("diag_removed");
+        let debug_removed = world.agent(&["debug", "--team", &team, "--out", diag_removed.to_str().unwrap()]);
+        assert!(debug_removed.status.success(), "{}", stderr(&debug_removed));
+    }
 }
