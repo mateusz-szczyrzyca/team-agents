@@ -215,7 +215,7 @@ fn read_with_copy(
     }
     for _attempt in 0..SNAPSHOT_ATTEMPTS {
         match snapshot(history_path, team, copy) {
-            Err(HistoryCollectionError::Changed) => continue,
+            Err(HistoryCollectionError::Changed) => {}
             result => return result,
         }
     }
