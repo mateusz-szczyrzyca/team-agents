@@ -185,7 +185,7 @@ async fn review_head_and_commit_links_in_reviews_pr_description_and_update_comme
     let body1 = r1_pass1["body"].as_str().unwrap();
     assert!(body1.starts_with("### Review by `inv-r1` (claude)\n## ❌ $\\color{#d1242f}{\\textbf{REQUEST CHANGES}}$\nReview pass 1 of commit [`"));
     assert!(body1.contains(&format!("https://github.com/{SLUG}/commit/{initial_head}")));
-    assert!(body1.contains("\n---\n\nBLOCKERS\n1. [TDD-2] see"));
+    assert!(body1.contains("\n---\n\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — see"));
     assert!(!body1.contains("VERDICT: REQUEST_CHANGES"));
     // Commit in backticks in report is linked
     assert!(body1.contains(&format!(
