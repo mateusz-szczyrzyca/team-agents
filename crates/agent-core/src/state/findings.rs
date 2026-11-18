@@ -76,20 +76,10 @@ impl TryFrom<FindingsWire> for Findings {
     type Error = InvalidFindingNumbers;
 
     fn try_from(wire: FindingsWire) -> Result<Self, Self::Error> {
-        for (index, entry) in wire.entries.iter().enumerate() {
-            let expected = u32::try_from(index).map_or(u32::MAX, |n| n.saturating_add(1));
-            if entry.number.get() != expected {
-                return Err(InvalidFindingNumbers {
-                    expected,
-                    found: entry.number.get(),
-                });
-            }
-        }
-        Ok(Self {
-            entries: wire.entries,
-            pending: wire.pending,
-            comment: wire.comment,
-        })
+        let mut ledger = Self::new(wire.entries)?;
+        ledger.pending = wire.pending;
+        ledger.comment = wire.comment;
+        Ok(ledger)
     }
 }
 
@@ -110,6 +100,15 @@ impl Findings {
     /// # Errors
     /// [`InvalidFindingNumbers`] when the entries are not numbered 1, 2, … in order.
     pub fn new(entries: Vec<RecordedFinding>) -> Result<Self, InvalidFindingNumbers> {
+        for (index, entry) in entries.iter().enumerate() {
+            let expected = u32::try_from(index).map_or(u32::MAX, |n| n.saturating_add(1));
+            if entry.number.get() != expected {
+                return Err(InvalidFindingNumbers {
+                    expected,
+                    found: entry.number.get(),
+                });
+            }
+        }
         Ok(Self {
             entries,
             pending: BTreeMap::new(),
