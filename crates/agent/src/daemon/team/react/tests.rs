@@ -59,7 +59,7 @@ fn a_member_of_a_list_without_items_that_is_done_names_no_item_and_its_task_bran
 
 #[test]
 fn a_member_that_failed_says_so_with_the_end_of_its_message() {
-    let team = working();
+    let team = crew_of(PLAIN, 1, 0);
 
     let told = told(&team, 2, &reported(RunOutcome::Failed), Some("I could not do it.")).unwrap();
 
@@ -74,7 +74,14 @@ fn a_member_that_failed_says_so_with_the_end_of_its_message() {
 
 #[test]
 fn a_member_that_ended_without_a_status_says_so() {
-    let team = working();
+    let mut team = crew_of(PLAIN, 1, 0);
+    ran(
+        &mut team,
+        2,
+        1,
+        RunEnd::NoStatus { exit_code: Some(3) },
+        &[TaskStatus::Failed],
+    );
 
     let told = told(&team, 2, &RunEnd::NoStatus { exit_code: Some(3) }, None).unwrap();
 
@@ -250,7 +257,7 @@ fn a_request_goes_on_while_the_worker_is_paused_asks_or_is_queued_to_continue() 
 
 #[test]
 fn turn_limit_tells_the_coordinator_and_ends_a_worker_request_only_when_the_task_failed() {
-    let mut team = working();
+    let mut team = crew_of(PLAIN, 1, 0);
     assert_eq!(told(&team, 2, &RunEnd::TurnLimit, None), None);
     ran(&mut team, 2, 1, RunEnd::TurnLimit, &[TaskStatus::Failed]);
     assert_eq!(
