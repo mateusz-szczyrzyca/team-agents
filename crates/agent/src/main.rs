@@ -643,7 +643,21 @@ async fn execute_debug_cmd(
     out: &mut impl Write,
 ) -> Result<(), CommandError> {
     let home = environment.home()?;
-    debug(&home, args.into(), out).await.map_err(CommandError::Debug)
+    let checkout = match environment.directory() {
+        Ok(path) => Some(path.to_path_buf()),
+        Err(error) => {
+            // A missing caller directory must not prevent diagnostics of a surviving worktree.
+            tracing::warn!(error = %error, "debug clone fallback has no caller directory");
+            None
+        }
+    };
+    let location = agent_runtime::debug::DebugLocation {
+        local_offset: environment.local_offset(),
+        checkout,
+    };
+    debug(&home, args.into(), location, out)
+        .await
+        .map_err(CommandError::Debug)
 }
 
 /// Carries out `command`.

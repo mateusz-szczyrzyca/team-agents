@@ -28,7 +28,6 @@ use crate::text_file::{TextFileError, read_text_file};
 
 /// Observations deferred to the third diagnostic task, never interpreted as empty observations.
 const DEFERRED: &[SummarySection] = &[
-    SummarySection::DaemonLog,
     SummarySection::Bus,
     SummarySection::Notifications,
     SummarySection::Machine,
@@ -58,7 +57,7 @@ pub struct DebugArgs {
     pub out: Option<PathBuf>,
     /// Inactivity threshold in minutes; defaults to 120.
     pub stale_minutes: Option<u64>,
-    /// Reserved log path; daemon process and log collection is deferred.
+    /// Optional daemon log path; defaults to the home's `daemon.log`.
     pub daemon_log: Option<PathBuf>,
 }
 
@@ -248,6 +247,29 @@ pub async fn execute_debug_at(
                 reason: crate::process::error_chain(&error),
             }),
     }
+    match daemon_log::collect(home, args.daemon_log.as_deref(), team).await {
+        Ok(lines) => {
+            let text = lines.as_ref().map_or_else(
+                || "Daemon log not found.\n".to_owned(),
+                |lines| {
+                    if lines.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{}\n", lines.join("\n"))
+                    }
+                },
+            );
+            collection.add("daemon-log.txt", text.into_bytes());
+            collection.summary.daemon_log_lines = lines;
+        }
+        Err(error) => collection
+            .assessment
+            .unreadable
+            .push(agent_core::diagnostic_assessment::ReadFailure {
+                part: "daemon log".to_owned(),
+                reason: crate::process::error_chain(&error),
+            }),
+    }
     let findings = assess(&collection.assessment);
     collection.summary.anomalies = findings
         .iter()
@@ -274,7 +296,7 @@ pub async fn execute_debug_at(
         cut.redact_text(text)
     })
     .map_err(DebugRuntimeError::Summary)?;
-    collection.add("NOT_COLLECTED.txt", b"Not collected in this version: daemon process and log; bus; notifications; configuration and secret key names; machine metrics; newest untracked file metadata.\n".to_vec());
+    collection.add("NOT_COLLECTED.txt", b"Not collected in this version: bus; notifications; configuration and secret key names; machine metrics; newest untracked file metadata.\n".to_vec());
     let parent = args.out.unwrap_or_else(|| home.root().join("debug"));
     collect::persist(
         collection,

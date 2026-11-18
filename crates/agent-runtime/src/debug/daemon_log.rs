@@ -37,8 +37,63 @@ pub(super) async fn collect(
     explicit: Option<&Path>,
     team: &Team,
 ) -> Result<Option<Vec<String>>, LogError> {
-    let _inputs = (home, explicit, team);
-    Ok(None)
+    let path = explicit.map_or_else(|| home.root().join("daemon.log"), Path::to_path_buf);
+    let mut file = match tokio::fs::File::open(&path).await {
+        Ok(file) => file,
+        Err(source) if explicit.is_none() && source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(LogError::Read { path, source }),
+    };
+    let len = file
+        .metadata()
+        .await
+        .map_err(|source| LogError::Read {
+            path: path.clone(),
+            source,
+        })?
+        .len();
+    let start = len.saturating_sub(LIMIT);
+    file.seek(std::io::SeekFrom::Start(start))
+        .await
+        .map_err(|source| LogError::Read {
+            path: path.clone(),
+            source,
+        })?;
+    let mut bytes = Vec::new();
+    file.take(LIMIT.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|source| LogError::Read { path, source })?;
+    if bytes.len() > 4 * 1024 * 1024 {
+        return Err(LogError::TooLarge);
+    }
+    // Seeking may land inside a UTF-8 character; discard only that incomplete first line.
+    let body = if start == 0 {
+        bytes
+    } else {
+        bytes
+            .splitn(2, |byte| *byte == b'\n')
+            .nth(1)
+            .map_or_else(Vec::new, <[u8]>::to_vec)
+    };
+    let text = String::from_utf8(body).map_err(LogError::Utf8)?;
+    let tasks: Vec<_> = team
+        .crew()
+        .roster()
+        .into_iter()
+        .map(|(_, member)| member.task())
+        .chain(team.reviewers().iter().map(agent_core::state::Member::task))
+        .collect();
+    let mut kept: Vec<_> = text
+        .lines()
+        .rev()
+        .take(LINES)
+        .filter(|line| {
+            line.contains(team.id().as_str()) || tasks.iter().any(|task| line.contains(task.as_str())) || warning(line)
+        })
+        .map(str::to_owned)
+        .collect();
+    kept.reverse();
+    Ok(Some(kept))
 }
 
 /// The level of a JSON daemon record; unrelated fields are never retained.
