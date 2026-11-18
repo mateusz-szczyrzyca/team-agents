@@ -1293,10 +1293,10 @@ impl GitHub {
         let answer = self
             .call(Call {
                 operation,
-                method: Method::POST,
+                method: Method::PATCH,
                 path: self.repo_path(&format!("issues/comments/{id}")),
                 body: Some(json!({"body": body}).to_string()),
-                idempotency: Idempotency::Once,
+                idempotency: Idempotency::Idempotent,
             })
             .await?;
         let raw: RawComment = decode(operation, &answer)?;
