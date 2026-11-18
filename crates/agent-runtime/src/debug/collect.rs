@@ -1,4 +1,7 @@
 //! Bounded read-only observations and redacted bundle persistence.
+
+#[cfg(test)]
+mod tests;
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
