@@ -57,12 +57,16 @@ pub fn asleep_step(team: &Team<'_>) -> AsleepStep {
     };
     // A lead that is over cannot be woken; one that does not wait works, asks or will.
     let lead_sleeps = team.tasks.first() == Some(&TaskStatus::Waiting);
-    if !team.unfinished
-        || !lead_sleeps
-        || team.tasks.iter().any(busy)
-        || team.lead_done
-        || team.quiet_for < team.may_sleep
-    {
+    if !team.unfinished || !lead_sleeps || team.tasks.iter().any(busy) {
+        return AsleepStep::Nothing;
+    }
+    if team.lead_done {
+        if team.standing_item {
+            return AsleepStep::TellHuman;
+        }
+        return AsleepStep::Nothing;
+    }
+    if team.quiet_for < team.may_sleep {
         return AsleepStep::Nothing;
     }
     if team.woken >= team.wake_limit {
