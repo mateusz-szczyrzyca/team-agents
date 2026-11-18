@@ -1131,20 +1131,6 @@ How the human answers the agents and steers a task or a team, through the daemon
 `agent status` ends the line of a task that runs with `last activity HH:MM:SS`: the local time the output of its run last
 changed (the file `tasks/<task>/runs/<run>/out.jsonl`), which is how to tell a task that works from one that hangs.
 
-The line of a round ends with when the round started, in local time (`started DD-MM-YYYY HH:MM`), and for a round that
-is closed with how long it took (`took 3h 01m`). A round that goes on also says where its work is, after `open`:
-
-| Says | Means |
-|---|---|
-| `only local` | the work is in the worktrees; no pull request is open |
-| `PR draft` | the pull request is open as a draft: the checks before the review hold it |
-| `PR ready` | the pull request is ready for review and no reviewer has started |
-| `PR in review` | a reviewer works or has reported, or the team fixes what the reviewers asked for |
-| `PR approved` | the reviews approve; the pull request waits for its merge (with `--no-merge`, yours) |
-
-The draft is told from the history (`history.db`), the rest from the daemon. When the history cannot be read — it is
-turned off, or its file is missing — such a round says `only local or PR draft`, and a last line says why.
-
 A run that ends with questions leaves `questions-<round>.md` in the task's directory and a notification file; with
 `[questions] open = "vscode"` the file is also opened in the VS Code window connected to the host. Saving that file with the
 `**ANSWERED**` marker on its last line sends the answers as well (the daemon watches the file; a file saved while it was
