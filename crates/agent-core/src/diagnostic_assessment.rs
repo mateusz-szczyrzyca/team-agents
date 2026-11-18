@@ -208,7 +208,11 @@ impl Anomaly {
                 path.as_os_str()
             ),
             Self::Unreadable(failure) => format!("Could not collect {}: {}.", failure.part, failure.reason),
-            Self::VersionMismatch { .. } => String::new(),
+            Self::VersionMismatch { command, daemon } => {
+                format!(
+                    "The daemon was started from another build ({daemon}) than the command ({command}); restart the daemon or run the command from the daemon's build."
+                )
+            }
         }
     }
 
@@ -252,6 +256,20 @@ pub fn assess(facts: &Assessment) -> Vec<Anomaly> {
             ..
         })
         | None => {}
+    }
+    if let (
+        Some(Daemon::Present {
+            version: Some(daemon_version),
+            ..
+        }),
+        Some(command_version),
+    ) = (&facts.daemon, &facts.command_version)
+        && daemon_version != command_version
+    {
+        anomalies.push(Anomaly::VersionMismatch {
+            command: command_version.clone(),
+            daemon: daemon_version.clone(),
+        });
     }
     for task in &facts.tasks {
         match task.status {

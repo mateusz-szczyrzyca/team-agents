@@ -525,9 +525,10 @@ fn write_process_line(out: &mut SummaryWriter, label: &str, value: &str) {
     write_line(out, "");
 }
 
-fn render_daemon(daemon: Option<&DaemonSummary>, offset: UtcOffset, out: &mut SummaryWriter) {
+fn render_daemon(daemon: Option<&DaemonSummary>, command_version: &str, offset: UtcOffset, out: &mut SummaryWriter) {
     let Some(d) = daemon else {
         write_line(out, "The daemon does not answer (unreachable).");
+        write_process_line(out, "- Command version: ", command_version);
         write_line(out, "");
         return;
     };
@@ -535,7 +536,8 @@ fn render_daemon(daemon: Option<&DaemonSummary>, offset: UtcOffset, out: &mut Su
     if let Some(started) = d.started_at {
         write_line(out, &format!("- Started: {}", format_time(started, offset)));
     }
-    write_process_line(out, "- Version: ", &d.version);
+    write_process_line(out, "- Command version: ", command_version);
+    write_process_line(out, "- Daemon version: ", &d.version);
     write_process_line(out, "- Executable: ", &d.exe_path);
     if d.disk_newer_than_process {
         write_line(out, "  (Warning: binary on disk is newer than running process)");
@@ -1010,7 +1012,9 @@ fn render_with_redaction(
         }
         match section {
             SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
-            SummarySection::DaemonAndVersions => render_daemon(input.daemon.as_ref(), offset, &mut out),
+            SummarySection::DaemonAndVersions => {
+                render_daemon(input.daemon.as_ref(), &input.command_version, offset, &mut out);
+            }
             SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut out),
             SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut out),
             SummarySection::TaskDetails => render_task_details(&input.tasks, &mut out),

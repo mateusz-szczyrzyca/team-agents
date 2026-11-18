@@ -104,7 +104,7 @@ impl Collection {
                 now,
                 stale_after,
                 daemon: None,
-                command_version: None,
+                command_version: Some(format!("agent {}", env!("CARGO_PKG_VERSION"))),
                 lead,
                 tasks: vec![],
                 items: team.items().iter().map(|item| item.phase().clone()).collect(),
@@ -118,7 +118,7 @@ impl Collection {
                 collected_at: now,
                 anomalies: vec![],
                 daemon: None,
-                command_version: String::new(),
+                command_version: format!("agent {}", env!("CARGO_PKG_VERSION")),
                 team: TeamSummaryFacts {
                     id: team.id().clone(),
                     repo: team.repo().clone(),
