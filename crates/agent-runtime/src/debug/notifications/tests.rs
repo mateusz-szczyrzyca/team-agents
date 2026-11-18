@@ -58,5 +58,8 @@ async fn reports_unreadable_when_notifications_is_a_file() {
     let (_dir, home, team) = fixture();
     std::fs::write(home.notifications_dir(), b"not a directory\n").unwrap();
     let result = collect(&home, &team).await;
-    assert!(result.is_err(), "must report read error when dir is a file");
+    assert!(
+        matches!(result, Err(NotificationError::Read { .. })),
+        "must report read error when dir is a file: {result:?}"
+    );
 }

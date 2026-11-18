@@ -54,7 +54,7 @@ async fn collects_team_messages_and_end_of_whole_bus() {
     assert!(
         !collected
             .iter()
-            .any(|m| m.contains("old other message 1)") || m.contains("old other message 1 ")),
+            .any(|m| m.ends_with("old other message 1")),
         "old other message 1 should be excluded: {collected:?}"
     );
     assert!(
@@ -92,5 +92,8 @@ async fn reports_unreadable_when_bus_file_is_directory() {
     let bus_dir = home.root().join("bus");
     std::fs::create_dir_all(bus_dir.join("messages.jsonl")).unwrap();
     let result = collect(&home, &team).await;
-    assert!(result.is_err(), "directory must trigger read error");
+    assert!(
+        matches!(result, Err(BusError::Read { .. })),
+        "directory must trigger read error: {result:?}"
+    );
 }
