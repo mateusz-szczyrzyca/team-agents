@@ -384,11 +384,6 @@ where
     .await
 }
 
-/// Queries actual system clock ticks per second using getconf helper.
-async fn query_clock_ticks() -> Result<NonZeroU64, MachineError> {
-    query_clock_ticks_from(Path::new("getconf"), "CLK_TCK").await
-}
-
 /// Queries system clock ticks per second using a specified helper program.
 pub(super) async fn query_clock_ticks_from(program: &Path, argument: &str) -> Result<NonZeroU64, MachineError> {
     let mut command = tokio::process::Command::new(program);
@@ -632,7 +627,9 @@ async fn observe_filesystems_async(
         });
     }
 
-    if !same_fs && let Some(t) = &temp_fs {
+    if (!same_fs || home_fs.is_none())
+        && let Some(t) = &temp_fs
+    {
         filesystems.push(Filesystem {
             path: temp_dir.to_path_buf(),
             space: t.space_usage,
@@ -669,25 +666,19 @@ fn observe_fs_stats(path: &Path, stat: StatvfsStats) -> Result<FsFact, MachineEr
     let total_bytes_u128 = total_blocks.saturating_mul(bsize);
     let avail_bytes_u128 = avail_blocks.saturating_mul(bsize);
 
-    let (space_usage, space_percent) = if total_bytes_u128 > 0 {
+    let total_bytes = u64::try_from(total_bytes_u128).map_err(|_err| MachineError::Overflow {
+        path: path.to_path_buf(),
+        field: "total space bytes",
+    })?;
+
+    let (space_usage, space_percent) = if let Some(non_zero_total) = NonZeroU64::new(total_bytes) {
         let used_bytes_u128 = total_bytes_u128 - avail_bytes_u128;
         let used_bytes = u64::try_from(used_bytes_u128).map_err(|_err| MachineError::Overflow {
             path: path.to_path_buf(),
             field: "used space bytes",
         })?;
-        let total_bytes = u64::try_from(total_bytes_u128).map_err(|_err| MachineError::Overflow {
-            path: path.to_path_buf(),
-            field: "total space bytes",
-        })?;
-        let non_zero_total = NonZeroU64::new(total_bytes).ok_or_else(|| MachineError::InvalidFormat {
-            path: path.to_path_buf(),
-            message: "total space is zero".to_owned(),
-        })?;
         let pct_u128 = used_bytes_u128.saturating_mul(100) / total_bytes_u128;
-        let pct = u8::try_from(pct_u128).map_err(|_err| MachineError::Overflow {
-            path: path.to_path_buf(),
-            field: "space percent",
-        })?;
+        let pct = u8::try_from(pct_u128).unwrap_or(100);
         (
             Some(Usage {
                 used: used_bytes,
@@ -708,17 +699,10 @@ fn observe_fs_stats(path: &Path, stat: StatvfsStats) -> Result<FsFact, MachineEr
         });
     }
 
-    let (inode_usage, inode_percent) = if total_inodes > 0 {
+    let (inode_usage, inode_percent) = if let Some(non_zero_total) = NonZeroU64::new(total_inodes) {
         let used_inodes = total_inodes - free_inodes;
-        let non_zero_total = NonZeroU64::new(total_inodes).ok_or_else(|| MachineError::InvalidFormat {
-            path: path.to_path_buf(),
-            message: "total inodes is zero".to_owned(),
-        })?;
         let pct_u128 = (u128::from(used_inodes).saturating_mul(100)) / u128::from(total_inodes);
-        let pct = u8::try_from(pct_u128).map_err(|_err| MachineError::Overflow {
-            path: path.to_path_buf(),
-            field: "inode percent",
-        })?;
+        let pct = u8::try_from(pct_u128).unwrap_or(100);
         (
             Some(Usage {
                 used: used_inodes,
@@ -1174,21 +1158,6 @@ async fn directory_size(path: &Path) -> Result<u64, MachineError> {
 }
 
 async fn directory_size_bounded(path: &Path, max_entries: usize) -> Result<u64, MachineError> {
-    match tokio::fs::symlink_metadata(path).await {
-        Ok(meta) => {
-            if !meta.is_dir() {
-                return Ok(meta.len());
-            }
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(source) => {
-            return Err(MachineError::Io {
-                path: path.to_path_buf(),
-                source,
-            });
-        }
-    }
-
     let mut total_bytes = 0_u64;
     let mut pending = vec![path.to_path_buf()];
     let mut entries_count: usize = 0;
@@ -1211,13 +1180,9 @@ async fn directory_size_bounded(path: &Path, max_entries: usize) -> Result<u64, 
                 field: "directory entry count",
             })?;
             if entries_count > max_entries {
-                let limit = u64::try_from(max_entries).map_err(|_err| MachineError::Overflow {
+                return Err(MachineError::TooManyEntries {
                     path: path.to_path_buf(),
-                    field: "directory size entry limit",
-                })?;
-                return Err(MachineError::TooLarge {
-                    path: path.to_path_buf(),
-                    limit,
+                    limit: max_entries,
                 });
             }
 
