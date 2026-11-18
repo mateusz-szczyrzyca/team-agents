@@ -170,3 +170,52 @@ fn unreadable_history_metadata_is_not_reported_as_empty_history() {
     let error = read_live_team_history(&path, &team).unwrap_err();
     assert!(matches!(error, HistoryCollectionError::Io { path: failed, .. } if failed == path));
 }
+
+#[test]
+fn reads_history_after_database_grows_beyond_sixty_four_mib() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let team: TeamId = "team-20261118-060000-a1b2".parse().unwrap();
+    let at = "2026-11-18T06:00:00Z".parse().unwrap();
+    let mut database = HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
+    database
+        .write(&[Record::Team(Box::new(TeamStart {
+            team: team.clone(),
+            at,
+            repo: "example".to_owned(),
+            base_branch: "main".parse().unwrap(),
+            merge: MergeMode::NoMerge,
+            task_list: "Task list.".to_owned(),
+            plan: Vec::new(),
+        }))])
+        .unwrap();
+    drop(database);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(65 * 1024 * 1024)
+        .unwrap();
+
+    let records = read_live_team_history(&path, &team);
+
+    assert!(matches!(&records, Ok(records) if records.len() == 1), "{records:?}");
+}
+
+#[test]
+fn accepts_history_stamp_at_sixty_four_gib_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let file = std::fs::File::create(&path).unwrap();
+    let boundary = 64 * 1024 * 1024 * 1024;
+    file.set_len(boundary).unwrap();
+
+    let stamp = take_history_stamp(
+        &path,
+        &sidecar_path(&path, "-wal"),
+        &sidecar_path(&path, "-shm"),
+        MAX_HISTORY_BYTES,
+    );
+
+    assert!(matches!(&stamp, Ok(stamp) if stamp.db.len == boundary), "{stamp:?}");
+}
