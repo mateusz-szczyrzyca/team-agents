@@ -906,5 +906,6 @@ fn debug_collects_live_history_from_active_wal_without_modifying_home() {
         .join("SUMMARY.md");
     let summary = std::fs::read_to_string(summary_path).unwrap();
     assert!(summary.contains("Active WAL live prompt"), "{summary}");
+    assert!(summary.contains("Active WAL live step"), "{summary}");
     assert!(summary.contains("Active WAL live final message"), "{summary}");
 }
