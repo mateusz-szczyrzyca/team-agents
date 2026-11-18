@@ -1110,14 +1110,10 @@ async fn read_git(git: &Path, path: &Path, task: &TaskId) -> Result<GitObservati
     let uncommitted_files = parse_status(&status)?;
     let untracked_paths = parse_untracked(&status)?;
     let untracked = super::untracked::collect(path, &untracked_paths).await;
-    let untracked_artifact = if untracked.artifact_text.is_empty() {
-        None
-    } else {
-        Some((
-            PathBuf::from("tasks").join(task.as_str()).join("untracked.txt"),
-            untracked.artifact_text.into_bytes(),
-        ))
-    };
+    let untracked_artifact = Some((
+        PathBuf::from("untracked").join(format!("{task}.txt")),
+        untracked.artifact_text.into_bytes(),
+    ));
     Ok(GitObservation {
         dirty: !status.is_empty(),
         facts: GitWorktreeSummary {
