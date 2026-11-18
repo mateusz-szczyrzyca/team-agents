@@ -53,20 +53,16 @@ pub(super) enum BusError {
 /// Raw message payload parsed from JSON Lines on the bus.
 #[derive(serde::Deserialize)]
 struct RawBusMessage {
-    /// Timestamp when posted, if present.
-    #[serde(default)]
-    ts: Option<String>,
+    /// Timestamp when posted.
+    ts: String,
     /// Sender identifier.
-    #[serde(default)]
     from: String,
     /// Recipient identifier.
-    #[serde(default)]
     to: String,
     /// Message kind or category, if present.
     #[serde(default)]
     kind: Option<String>,
     /// Message text payload.
-    #[serde(default)]
     text: String,
 }
 
@@ -153,7 +149,7 @@ pub(super) async fn collect(home: &Home, team: &Team, cut: &SecretsCut) -> Resul
             || agents.iter().any(|a| msg.text.contains(a));
 
         if is_team || age < RECENT_MESSAGES {
-            let ts = msg.ts.as_deref().unwrap_or("-");
+            let ts = &msg.ts;
             let from = &msg.from;
             let to = &msg.to;
             let kind = msg.kind.as_deref().unwrap_or("chat");
