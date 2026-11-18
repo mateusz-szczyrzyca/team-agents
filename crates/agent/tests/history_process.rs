@@ -625,9 +625,10 @@ mod history_process {
 
     #[test]
     fn debug_reads_written_history_and_lock_owner_without_changing_a_running_daemons_home() {
+        use std::os::unix::fs::PermissionsExt;
+
         let mut world = World::new("done");
         std::fs::write(world.home.join("secrets.toml"), "").unwrap();
-        use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(world.home.join("secrets.toml"), std::fs::Permissions::from_mode(0o600)).unwrap();
         world.start();
         let output = world.agent(&["run", "claude-1", "Diagnose the fixture task."]);
