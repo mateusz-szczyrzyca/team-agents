@@ -34,8 +34,11 @@ pub struct RecordedFinding {
 }
 
 /// A pull request's findings; absent on rounds started under the old review protocol.
+///
+/// The permanent numbers of `entries` are exactly 1, 2, … in order: [`Findings::finish`] gives the next one by counting,
+/// so a ledger read back with a duplicate, a gap or another order is refused.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "FindingsWire")]
 pub struct Findings {
     /// Findings, in permanent-number order.
     pub entries: Vec<RecordedFinding>,
@@ -43,6 +46,51 @@ pub struct Findings {
     pending: BTreeMap<TaskId, Report>,
     /// The harness comment, updated instead of posting another table.
     pub comment: Option<u64>,
+}
+
+/// How a [`Findings`] ledger is read, before its numbering is checked.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FindingsWire {
+    /// See [`Findings::entries`].
+    entries: Vec<RecordedFinding>,
+    /// See [`Findings`]; absent when no report waits.
+    #[serde(default)]
+    pending: BTreeMap<TaskId, Report>,
+    /// See [`Findings::comment`].
+    #[serde(default)]
+    comment: Option<u64>,
+}
+
+/// A ledger whose permanent numbers are not 1, 2, … in order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("finding number {found} stands where {expected} must: numbers count from 1 in order")]
+pub struct InvalidFindingNumbers {
+    /// The number the position requires.
+    pub expected: u32,
+    /// The number the entry has.
+    pub found: u32,
+}
+
+impl TryFrom<FindingsWire> for Findings {
+    type Error = InvalidFindingNumbers;
+
+    fn try_from(wire: FindingsWire) -> Result<Self, Self::Error> {
+        for (index, entry) in wire.entries.iter().enumerate() {
+            let expected = u32::try_from(index).map_or(u32::MAX, |n| n.saturating_add(1));
+            if entry.number.get() != expected {
+                return Err(InvalidFindingNumbers {
+                    expected,
+                    found: entry.number.get(),
+                });
+            }
+        }
+        Ok(Self {
+            entries: wire.entries,
+            pending: wire.pending,
+            comment: wire.comment,
+        })
+    }
 }
 
 /// The pull request exhausted the representable finding numbers.
