@@ -689,6 +689,8 @@ fn machine_section_renders_all_metrics_without_not_collected() {
     input.machine.worktrees_dir_bytes = Some(2048);
 
     let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(rendered.contains("Summary renderer"));
+    assert!(rendered.contains("none of the known ones"));
     let machine_section = rendered
         .split("## Machine and Resources")
         .nth(1)
