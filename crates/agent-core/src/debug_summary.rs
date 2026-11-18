@@ -960,3 +960,17 @@ pub enum SummaryError {
         required_bytes: usize,
     },
 }
+
+/// Renders a command summary with readable paths, redacting before byte budgeting.
+///
+/// # Errors
+/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
+pub fn render_command_summary(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+    untracked: UntrackedCollection,
+    redact: impl Fn(&str) -> String,
+) -> Result<String, SummaryError> {
+    render_redacted_summary(input, offset, uncollected, untracked, redact)
+}
