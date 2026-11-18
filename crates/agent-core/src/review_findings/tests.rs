@@ -221,3 +221,28 @@ fn links_and_prose_that_look_like_brackets_are_not_findings() {
     let text = "VERDICT: APPROVE\nSUMMARY: see [the docs](https://example.com) and [note]\n1. [the docs](https://example.com) explain it\n";
     assert_eq!(parse_report(text, ReviewVerdict::Approve, &[]), Ok(Report::default()));
 }
+
+#[test]
+fn a_longer_fence_is_closed_only_by_an_equal_or_longer_fence_of_its_character() {
+    for (open, inner, close) in [
+        ("````text", "```", "````"),
+        ("~~~text", "```", "~~~"),
+        ("`````", "````", "`````"),
+        ("```", "~~~", "```"),
+    ] {
+        let text = format!(
+            "VERDICT: APPROVE\nSUMMARY: ok\n{open}\n{inner}\n1. [BLOCKER] ERR-3 y:1 — example → ignored\n{close}\n\
+FINDINGS\n1. [MAJOR] ERR-3 y.rs:4 — real problem → fix\n   CHECK: read y.rs\n"
+        );
+        assert_eq!(
+            parse_report(&text, ReviewVerdict::Approve, &[]),
+            Err(ReportError {
+                line: 1,
+                kind: ReportProblem::Verdict
+            }),
+            "{text}"
+        );
+        let report = parse_report(&text, ReviewVerdict::RequestChanges, &[]).unwrap();
+        assert_eq!(report.findings.len(), 1, "{text}");
+    }
+}
