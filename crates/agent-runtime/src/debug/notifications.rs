@@ -36,6 +36,24 @@ pub(super) enum NotificationError {
         /// Source error.
         source: crate::text_file::TextFileError,
     },
+    /// Directory holds more entries than allowed.
+    #[error("too many notification entries in {path:?} ({count} > {limit})")]
+    TooManyEntries {
+        /// Notifications directory.
+        path: PathBuf,
+        /// Number of entries observed before stopping.
+        count: usize,
+        /// Maximum allowed entries.
+        limit: usize,
+    },
+    /// Total bytes scanned across notification files exceeds budget.
+    #[error("total notification bytes exceeds limit ({bytes} > {limit})")]
+    TotalBytesExceeded {
+        /// Accumulated bytes scanned.
+        bytes: usize,
+        /// Maximum allowed bytes.
+        limit: usize,
+    },
 }
 
 /// Parses the timestamp and numeric sequence suffix of a notification filename.

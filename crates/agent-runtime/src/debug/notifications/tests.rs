@@ -122,3 +122,47 @@ async fn retains_full_notification_without_trim_end() {
         "notification must retain full text including trailing newlines"
     );
 }
+
+#[tokio::test]
+async fn reports_error_when_notification_directory_entries_exceed_limit() {
+    let (_dir, home, team) = fixture();
+    let notes_dir = home.notifications_dir();
+    std::fs::create_dir_all(&notes_dir).unwrap();
+
+    for i in 1..=4097 {
+        std::fs::write(notes_dir.join(format!("notification-20261117100000-{i}.md")), b"").unwrap();
+    }
+
+    let result = collect(&home, &team).await;
+    assert!(
+        matches!(
+            result,
+            Err(NotificationError::TooManyEntries {
+                count: 4097,
+                limit: 4096,
+                ..
+            })
+        ),
+        "must report too many entries error: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn reports_error_when_total_scanned_notification_bytes_exceed_limit() {
+    let (_dir, home, team) = fixture();
+    let notes_dir = home.notifications_dir();
+    std::fs::create_dir_all(&notes_dir).unwrap();
+
+    let chunk = vec![b'a'; 2_500_000];
+    std::fs::write(notes_dir.join("notification-20261117100000-1.md"), &chunk).unwrap();
+    std::fs::write(notes_dir.join("notification-20261117100000-2.md"), &chunk).unwrap();
+
+    let result = collect(&home, &team).await;
+    assert!(
+        matches!(
+            result,
+            Err(NotificationError::TotalBytesExceeded { bytes, limit }) if bytes > limit && limit == 4 * 1024 * 1024
+        ),
+        "must report total bytes exceeded error: {result:?}"
+    );
+}
