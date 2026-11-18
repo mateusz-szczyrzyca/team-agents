@@ -1029,6 +1029,14 @@ of its continuation. This build uses socket protocol `3` (upgrade clients and da
 state schema `2`, and migrates history to schema `7`. See [configuration](docs/configuration.md) and
 [state compatibility](docs/state.md#turn-limit-compatibility-item-88).
 
+A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt
+(`prompts/harness/run/resume-no-status.md`), up to twice in a row; a third failure in a row marks the task failed and
+notifies the coordinator (or human). When a member fails or ends without status while holding an item, the coordinator
+receives a notice naming the item and the member's branch (`prompts/harness/team/bus-member-failed-item.md` or
+`bus-member-no-status-item.md`). When the lead has reported `STATUS: DONE` and waits while an item remains blocked
+behind a failed member, the human is told immediately once per item (`prompts/harness/pr/notice-standing-item.md`) with
+the member's last-run details and commands to speak to the member and resume it (`agent say <task>`, `agent resume <task>`).
+
 `bin/agent` is being rewritten in Rust (the Cargo workspace in `crates/`; the plan and the layout are in
 [`docs/architecture.md`](docs/architecture.md)). The new `agent` is **not installed** by `install.sh` and is not what
 `agent` means in the rest of this README: it runs only against a separate `AGENTS_HOME` and never touches the home of the

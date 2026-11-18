@@ -193,7 +193,8 @@ end does (`settle.rs`):
 |---|---|---|
 | `STATUS: DONE` | `done` for a solo task and a review, `waiting` for a coordinator, member or worker | |
 | `STATUS: QUESTIONS` | `questions`, when `tasks/<task>/questions-<number>.md` is there and parses | the questions are recorded and the human told; a missing or unreadable file fails the task and says why |
-| `STATUS: FAILED`, no `STATUS:` line | `failed` | the human is told |
+| `STATUS: FAILED` | `failed` | the coordinator (or human) is told |
+| no `STATUS:` line | `queued`: resumed in the same session with a short prompt (`harness/run/resume-no-status.md`) | at most 2 consecutive automatic resumes; the 3rd fails and notifies. Any other end resets the count. Settle records `Settled::NoStatus` so human pause or stop overrules retry |
 | `STATUS: SLEEPING` / `EXCLUDED` | `waiting` / `done` | |
 | quota exhausted, rate limited | `paused` | woken at the time the CLI gave (plus a minute), else after the `[limits]` minutes; the human is told |
 | turn limit | `queued`: resumed in the same session with a short continuation prompt | at most `[limits] turn_limit_resumes` consecutive automatic resumes (default `3`); the next exhaustion fails and notifies with the count; any other end resets the count |
@@ -263,7 +264,7 @@ seconds, because the Go bus wakes a sleeper by marking it `waking` and spawns no
    and the human is notified, once.
 
 When a member ends, the coordinator gets a message on the bus (`member_finished` with the item and the branch,
-`member_failed`, `member_no_status`), which wakes it to integrate. A member's item stays `in_progress` until its pull
+`member_failed`, `member_no_status`), which wakes it to integrate. If the member failed or ended without status while holding an item, the message names the item and the branch (`prompts/harness/team/bus-member-failed-item.md`, `bus-member-no-status-item.md`), advising the coordinator to take over the item on that branch or reassign it. Because the harness only publishes while the assignee task is waiting, a coordinator taking over finishes its own work and reports `STATUS: DONE`, after which the human is alerted to resume the member with status. A member's item stays `in_progress` until its pull
 request is open ("Pull requests, reviews and the merge", below): the next item of a feature starts when the previous one is
 merged, so a member that is done waits. A solo task whose item is under way waits as well, instead of ending (`done` is
 final).
@@ -346,6 +347,7 @@ harness), and did the last run of the crew end `[watchdog] asleep_minutes` ago o
 prompt (`harness/pr/team-asleep.md`) says that nobody works and how every task ended; after two such wake-ups in a row
 (`ASLEEP_WAKES`) the human is told instead (`harness/pr/notice-team-asleep.md`), once for every time the team falls asleep again.
 The count starts over when the lead ends with `STATUS: DONE`, and with the daemon.
+When the lead has reported `STATUS: DONE` and waits, but an item in progress or being fixed stands behind a failed member, the lead cannot fix it and waking the lead would do nothing. The harness tells the human immediately, once per item (`harness/pr/notice-standing-item.md`), with the member's last-run detail line, showing how to speak to the member and resume it (`agent say <task>`, `agent resume <task>`) or stop the team (`agent stop <team>`). Resuming the task or reassigning the item clears the deduplication.
 
 **Reviewers** (`daemon/review.rs`). The review pass of an item in review starts empty and is filled once (`ItemMut::ask_reviews`) with
 two investigators drawn among the free ones — those that review for the team already (they wait in a review task of it) first,
