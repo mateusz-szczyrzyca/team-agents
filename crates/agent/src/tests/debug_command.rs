@@ -140,6 +140,12 @@ fn debug_offline_execution_succeeds_without_daemon() {
 
     assert_eq!(code, ExitCode::SUCCESS, "stderr was: {err}");
     assert!(out.contains("Debug summary:"), "stdout was: {out}");
+    let summary_path = find_summary(&home.root().join("debug")).unwrap().unwrap();
+    let summary = std::fs::read_to_string(summary_path).unwrap();
+    assert!(
+        summary.contains("Could not collect agent status (daemon does not answer):"),
+        "{summary}"
+    );
 }
 
 fn run_git(dir: &Path, args: &[&str]) {
@@ -325,6 +331,17 @@ fn debug_round_team_and_task_resolve_same_team() {
     );
     assert_eq!(code4, ExitCode::SUCCESS, "stderr was: {err4}");
     assert!(out4.contains("Debug summary:"), "stdout was: {out4}");
+    for output in [&out1, &out2, &out3, &out4] {
+        let path = output
+            .lines()
+            .find_map(|line| line.strip_prefix("Debug summary: "))
+            .unwrap();
+        let summary = std::fs::read_to_string(path).unwrap();
+        assert!(
+            summary.contains(&format!("Team `{team}` (repository `{}`)", repo())),
+            "{summary}"
+        );
+    }
 }
 
 #[test]
@@ -359,19 +376,33 @@ fn debug_failed_task_and_unanswered_questions() {
 
     let summary_path = find_summary(out_dir.path()).unwrap().expect("SUMMARY.md should exist");
     let summary = std::fs::read_to_string(&summary_path).unwrap();
+    assert!(summary.contains(&format!("Task {member_task} is failed.")), "{summary}");
     assert!(
-        summary.contains("failed") || summary.contains("Failed"),
-        "summary was: {summary}"
-    );
-    assert!(
-        summary.contains("questions-1.md") || summary.contains("unanswered") || summary.contains("Questions"),
-        "summary was: {summary}"
+        summary.contains(&format!(
+            "Questions file {:?} has no answer yet.",
+            question_file.as_os_str()
+        )),
+        "{summary}"
     );
 }
 
 #[test]
 fn debug_done_lead_lacking_unfinished_member_branch() {
-    let (_dir, home, _state, team, _lead_task, member_task, _round) = setup_test_home();
+    let (_dir, home, mut state, team, lead_task, member_task, _round) = setup_test_home();
+    let (_role, mut lead) = state.find_task_mut(&lead_task).unwrap();
+    lead.transition(TaskStatus::Running).unwrap();
+    lead.transition(TaskStatus::Done).unwrap();
+    state
+        .team_mut(&team)
+        .unwrap()
+        .item_mut("1.1".parse().unwrap())
+        .unwrap()
+        .advance(agent_core::state::ItemPhase::InProgress {
+            assignee: "claude-1".parse().unwrap(),
+            branch: "agents/claude-1/item-1-1".parse().unwrap(),
+        })
+        .unwrap();
+    std::fs::write(home.state_file(), state.to_json().unwrap()).unwrap();
     let member_wt = home.worktree_dir(&repo(), &member_task);
     std::fs::write(member_wt.join("unmerged.txt"), "unmerged content").unwrap();
     run_git(&member_wt, &["add", "unmerged.txt"]);
@@ -394,14 +425,14 @@ fn debug_done_lead_lacking_unfinished_member_branch() {
     let summary_path = find_summary(out_dir.path()).unwrap().expect("SUMMARY.md should exist");
     let summary = std::fs::read_to_string(&summary_path).unwrap();
     assert!(
-        summary.contains("branch") || summary.contains("Branch"),
+        summary.contains("The lead branch does not contain assigned unfinished branch agents/claude-1/item-1-1."),
         "summary was: {summary}"
     );
 }
 
 #[test]
 fn debug_removed_worktree_reports_read_failure_and_rest_continues() {
-    let (_dir, home, _state, team, _lead_task, member_task, _round) = setup_test_home();
+    let (_dir, home, _state, team, lead_task, member_task, _round) = setup_test_home();
     let member_wt = home.worktree_dir(&repo(), &member_task);
     std::fs::remove_dir_all(&member_wt).unwrap();
 
@@ -422,9 +453,13 @@ fn debug_removed_worktree_reports_read_failure_and_rest_continues() {
     let summary_path = find_summary(out_dir.path()).unwrap().expect("SUMMARY.md should exist");
     let summary = std::fs::read_to_string(&summary_path).unwrap();
     assert!(
-        summary.contains("unreadable") || summary.contains("failed") || summary.contains("Unreadable"),
+        summary.contains(&format!("Could not collect worktree {:?}:", member_wt.as_os_str())),
         "summary was: {summary}"
     );
+    let bundle = summary_path.parent().unwrap();
+    assert!(bundle.join("git").join(format!("{lead_task}.txt")).is_file());
+    assert!(!bundle.join("git").join(format!("{member_task}.txt")).exists());
+    assert!(summary.contains(&format!("### Task `{lead_task}`")), "{summary}");
 }
 
 #[test]
@@ -453,8 +488,6 @@ fn debug_redaction_secrets_prompt_raw_stdout_and_env_values() {
             "debug",
             "--team",
             team.as_str(),
-            "--daemon-log",
-            daemon_log.to_str().unwrap(),
             "--out",
             out_dir.path().to_str().unwrap(),
         ],
