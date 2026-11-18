@@ -80,6 +80,15 @@ impl Owner {
         if !self.watch.announced.insert(announcement) {
             return Ok(());
         }
+        let _blocking = match super::findings::blocking_text(&pulls.texts, None) {
+            Ok(text) => text,
+            Err(error) => {
+                // Notifications are best effort; failed rendering must not stop the round.
+                tracing::error!(event = LogEvent::NotificationFailed.as_str(), error = %error_chain(&error),
+                    "cannot render blocking findings for the human");
+                return Ok(());
+            }
+        };
         let now = Timestamp::now(&self.parts.clock)?;
         let values = Variables::new()
             .with("team", team_id.as_str())

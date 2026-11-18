@@ -45,6 +45,11 @@ pub(super) fn open_text(texts: &AutopilotPrompts, ledger: Option<&Findings>) -> 
     Ok(lines.join("\n"))
 }
 
+/// Open blocking findings for a human deciding whether to renew the fix budget.
+pub(super) fn blocking_text(_texts: &AutopilotPrompts, _ledger: Option<&Findings>) -> Result<String, TextError> {
+    Ok(String::new())
+}
+
 /// Escapes report data as one Markdown table cell without interpreting its markup.
 fn cell(text: &str) -> String {
     text.split_whitespace()
