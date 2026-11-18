@@ -298,13 +298,14 @@ pub(super) struct Verification<'a> {
 }
 
 /// The pass and the findings of the pull request that the `items` of a request share.
+///
+/// The pass is the one after the most fix passes of any item: an item that joined a fix pass has none of its own, and
+/// whatever the order of the task list, the report validation demands answers for the ledger that the request shows.
 pub(super) fn verification_of<'a>(items: &[&'a ItemProgress]) -> Verification<'a> {
-    let first = items.first().copied();
+    let passes = items.iter().map(|item| item.fix_passes().len()).max().unwrap_or(0);
     Verification {
-        pass: first.map_or(1, |item| item.fix_passes().len().saturating_add(1)),
-        findings: first
-            .and_then(|item| item.findings())
-            .filter(|_| first.is_some_and(|item| !item.fix_passes().is_empty())),
+        pass: passes.saturating_add(1),
+        findings: items.iter().find_map(|item| item.findings()),
     }
 }
 

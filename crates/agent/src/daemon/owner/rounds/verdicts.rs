@@ -532,14 +532,15 @@ pub(super) fn answer_among(offered: Vec<Offered>, started: Timestamp) -> Option<
         .filter(|found| found.requested_at == latest)
         .collect();
     let first = answered.first()?;
+    let of_pr: Vec<&Offered> = answered
+        .iter()
+        .filter(|found| found.pr.number == first.pr.number)
+        .collect();
     Some(Asked {
         pr: first.pr.clone(),
-        items: answered
-            .iter()
-            .filter(|found| found.pr.number == first.pr.number)
-            .map(|found| found.item)
-            .collect(),
-        passes: first.pass,
+        items: of_pr.iter().map(|found| found.item).collect(),
+        // An item that joined a fix pass has none of its own: the pull request is at the most advanced item's pass.
+        passes: of_pr.iter().map(|found| found.pass).max().unwrap_or(first.pass),
         reviewer: first.reviewer.clone(),
     })
 }
