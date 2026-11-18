@@ -211,3 +211,26 @@ async fn modification_time_before_year_0000_is_unreadable_and_unknown() {
         result.artifact_text
     );
 }
+
+#[tokio::test]
+async fn two_unknown_modification_times_are_ordered_by_path() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let worktree = dir.path();
+    let beyond = SystemTime::UNIX_EPOCH + Duration::from_secs(SECONDS_PER_DAY * 2_932_898);
+    for name in ["zeta.txt", "alpha.txt"] {
+        let path = worktree.join(name);
+        fs::write(&path, b"x").expect("write");
+        let file = fs::OpenOptions::new().write(true).open(&path).expect("open file");
+        file.set_times(fs::FileTimes::new().set_modified(beyond))
+            .expect("set times");
+    }
+
+    let result = collect(worktree, &[PathBuf::from("zeta.txt"), PathBuf::from("alpha.txt")]).await;
+
+    assert_eq!(result.summary_facts.len(), 2);
+    assert_eq!(result.summary_facts[0].path, PathBuf::from("alpha.txt"));
+    assert_eq!(result.summary_facts[1].path, PathBuf::from("zeta.txt"));
+    assert_eq!(result.summary_facts[0].modified, None);
+    assert_eq!(result.summary_facts[1].modified, None);
+    assert_eq!(result.unreadable.len(), 2, "{:?}", result.unreadable);
+}
