@@ -120,12 +120,15 @@ async fn distinct_non_utf8_names_stay_distinct_in_artifact_and_failures() {
     );
 }
 
+/// Seconds in one day, to count whole days from the epoch.
+const SECONDS_PER_DAY: u64 = 86_400;
+
 #[tokio::test]
 async fn modification_time_beyond_year_9999_is_unreadable_and_sorts_last() {
     let dir = tempfile::tempdir().expect("tempdir");
     let worktree = dir.path();
-    // 10000-01-01T00:00:00Z: one day past the last instant the state timestamps can hold.
-    let beyond = SystemTime::UNIX_EPOCH + Duration::from_secs(253_402_300_800 + 86_400);
+    // 10000-01-02T00:00:00Z: the second day past the last instant the state timestamps can hold.
+    let beyond = SystemTime::UNIX_EPOCH + Duration::from_secs(SECONDS_PER_DAY * 2_932_898);
     let known = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
     for (name, time) in [("future.txt", beyond), ("known.txt", known)] {
         let path = worktree.join(name);
