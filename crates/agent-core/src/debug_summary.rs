@@ -287,6 +287,17 @@ pub struct TaskGateSummary {
     pub recent_output_tails: Vec<String>,
 }
 
+/// Summary of a process descending from the daemon.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DescendantProcessSummary {
+    /// Process identifier.
+    pub pid: u32,
+    /// Age in seconds at collection time, if known.
+    pub age_seconds: Option<u64>,
+    /// Command line arguments, redacted.
+    pub cmdline: Vec<String>,
+}
+
 /// Machine and resource metrics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MachineSummary {
@@ -296,10 +307,16 @@ pub struct MachineSummary {
     pub memory_total_bytes: Option<u64>,
     /// Available system memory in bytes.
     pub memory_available_bytes: Option<u64>,
+    /// Total swap memory in bytes.
+    pub swap_total_bytes: Option<u64>,
+    /// Free swap memory in bytes.
+    pub swap_free_bytes: Option<u64>,
     /// Filesystem usage for home directory.
     pub home_fs: Option<FsUsageSummary>,
     /// Filesystem usage for temporary directory.
     pub temp_fs: Option<FsUsageSummary>,
+    /// Processes descending from the daemon.
+    pub daemon_descendants: Vec<DescendantProcessSummary>,
     /// Process IDs of daemon descendants.
     pub daemon_descendant_pids: Vec<u32>,
     /// Total size in bytes of tasks directory.

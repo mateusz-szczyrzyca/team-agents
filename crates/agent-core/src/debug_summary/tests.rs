@@ -122,6 +122,8 @@ fn sample_input() -> SummaryInput {
             load_avg: Some((0.5, 0.4, 0.3)),
             memory_total_bytes: Some(16_000_000_000),
             memory_available_bytes: Some(8_000_000_000),
+            swap_total_bytes: Some(4_000_000_000),
+            swap_free_bytes: Some(2_000_000_000),
             home_fs: Some(FsUsageSummary {
                 space_percent: 45,
                 inode_percent: 20,
@@ -130,6 +132,7 @@ fn sample_input() -> SummaryInput {
                 space_percent: 10,
                 inode_percent: 5,
             }),
+            daemon_descendants: vec![],
             daemon_descendant_pids: vec![12346, 12347],
             tasks_dir_bytes: Some(50_000_000),
             worktrees_dir_bytes: Some(120_000_000),
@@ -659,6 +662,8 @@ fn machine_section_renders_all_metrics_without_not_collected() {
     input.machine.load_avg = Some((0.10, 0.20, 0.30));
     input.machine.memory_total_bytes = Some(16_000_000_000);
     input.machine.memory_available_bytes = Some(8_000_000_000);
+    input.machine.swap_total_bytes = Some(4_000_000_000);
+    input.machine.swap_free_bytes = Some(2_000_000_000);
     input.machine.home_fs = Some(crate::debug_summary::FsUsageSummary {
         space_percent: 50,
         inode_percent: 25,
@@ -667,6 +672,18 @@ fn machine_section_renders_all_metrics_without_not_collected() {
         space_percent: 10,
         inode_percent: 5,
     });
+    input.machine.daemon_descendants = vec![
+        DescendantProcessSummary {
+            pid: 101,
+            age_seconds: Some(42),
+            cmdline: vec!["agent".to_owned(), "worker".to_owned()],
+        },
+        DescendantProcessSummary {
+            pid: 102,
+            age_seconds: None,
+            cmdline: vec!["sleep".to_owned()],
+        },
+    ];
     input.machine.daemon_descendant_pids = vec![101, 102];
     input.machine.tasks_dir_bytes = Some(1024);
     input.machine.worktrees_dir_bytes = Some(2048);
@@ -689,6 +706,10 @@ fn machine_section_renders_all_metrics_without_not_collected() {
         "{machine_section}"
     );
     assert!(
+        machine_section.contains("- Swap: 2000000000 / 4000000000 bytes free"),
+        "{machine_section}"
+    );
+    assert!(
         machine_section.contains("- Home filesystem: 50% space, 25% inodes"),
         "{machine_section}"
     );
@@ -701,6 +722,10 @@ fn machine_section_renders_all_metrics_without_not_collected() {
         "{machine_section}"
     );
     assert!(
+        machine_section.contains("PID 102: age unknown, cmdline: sleep"),
+        "{machine_section}"
+    );
+    assert!(
         machine_section.contains("- Tasks directory size: 1024 bytes"),
         "{machine_section}"
     );
@@ -709,6 +734,24 @@ fn machine_section_renders_all_metrics_without_not_collected() {
         "{machine_section}"
     );
     assert!(!rendered.contains("Not collected in this version."), "{rendered}");
+}
+
+#[test]
+fn machine_section_renders_none_when_no_daemon_descendants() {
+    let mut input = sample_input();
+    input.machine.daemon_descendants = vec![];
+    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    let machine_section = rendered
+        .split("## Machine and Resources")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(
+        machine_section.contains("- Daemon descendants: none"),
+        "{machine_section}"
+    );
 }
 
 #[test]
