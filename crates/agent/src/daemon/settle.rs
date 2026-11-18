@@ -16,6 +16,8 @@ pub(super) const MAX_MESSAGE_CHARS: usize = 2000;
 /// What a run's end does to its task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Settled {
+    /// The run ended without a status line: the persisted streak decides whether it continues.
+    NoStatus { exit_code: Option<i32> },
     /// The task goes to this status.
     Status(TaskStatus),
     /// The task failed: it goes to `failed` and the human is told.

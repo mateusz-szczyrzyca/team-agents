@@ -931,6 +931,10 @@ impl Owner {
                 self.hangs.remove(task);
                 (status, None)
             }
+            Settled::NoStatus { exit_code } => {
+                self.hangs.remove(task);
+                self.no_status(task, located.role, exit_code)?
+            }
             Settled::Failed(Notice::NoStatus { exit }) => {
                 self.hangs.remove(task);
                 self.no_status(task, located.role, exit)?
