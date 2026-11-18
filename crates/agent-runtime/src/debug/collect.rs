@@ -620,6 +620,9 @@ enum ObservationError {
         /// Bounded error bytes, escaped without losing data.
         stderr: Vec<u8>,
     },
+    /// Git did not return a complete porcelain status record.
+    #[error("git status record lacks required fields")]
+    StatusFields,
     /// Git did not return all requested commit fields.
     #[error("git commit record lacks required fields")]
     CommitFields,
@@ -710,6 +713,10 @@ async fn git_text(path: &Path, args: &[&str]) -> Result<String, ObservationError
             stderr: result.stderr.bytes,
         }),
     }
+}
+
+fn parse_status(_bytes: &[u8]) -> Result<Vec<PathBuf>, ObservationError> {
+    Ok(Vec::new())
 }
 
 async fn read_git(path: &Path, task: &TaskId) -> Result<GitWorktreeSummary, ObservationError> {

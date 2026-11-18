@@ -139,3 +139,30 @@ fn untracked_files_make_lead_dirty_without_becoming_tracked_changes() {
         Some(true)
     );
 }
+
+#[test]
+fn rejects_malformed_porcelain_records_including_missing_rename_sources() {
+    for bytes in [b"invalid\0".as_slice(), b"R  destination\0".as_slice()] {
+        assert!(matches!(parse_status(bytes), Err(ObservationError::StatusFields)));
+    }
+}
+
+#[test]
+fn porcelain_paths_are_lossless_and_rename_sources_are_not_changes() {
+    let cases = [
+        (b"".as_slice(), Vec::<PathBuf>::new()),
+        (b" M ordinary.txt\0".as_slice(), vec![PathBuf::from("ordinary.txt")]),
+        (
+            b"R  destination\0source\0?? ignored\0".as_slice(),
+            vec![PathBuf::from("destination")],
+        ),
+        (b" C copy\0source\0".as_slice(), vec![PathBuf::from("copy")]),
+        (
+            b"A  \xff\n.txt\0".as_slice(),
+            vec![PathBuf::from(OsString::from_vec(b"\xff\n.txt".to_vec()))],
+        ),
+    ];
+    for (bytes, expected) in cases {
+        assert_eq!(parse_status(bytes).unwrap(), expected);
+    }
+}
