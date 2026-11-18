@@ -6,9 +6,9 @@ use super::fake_github::SLUG;
 use super::rig::{Rig, git, investigator, normal};
 
 /// An approving final report.
-const APPROVING: &str = "done:VERDICT: APPROVE\\nSUMMARY: fine";
+const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 /// A requested fix followed by approval.
-const R1_SCENARIO: &str = "done:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] see `HEAD` for issue,done:VERDICT: APPROVE\\nSUMMARY: fixed in `HEAD`";
+const R1_SCENARIO: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — see `HEAD` for issue → fix it\\n   CHECK: read `HEAD`,verify:VERDICT: APPROVE\\nSUMMARY: fixed in `HEAD`";
 
 /// Captures the existing log event used when commit linking cannot consult git.
 #[derive(Clone, Default)]
@@ -287,8 +287,8 @@ Build the thing.
     - run the first thing
 ";
 
-    const R1_SCENARIO_FILES: &str = "done:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] see README.md:42 for issue,done:VERDICT: APPROVE\\nSUMMARY: fixed in `README.md`";
-    const APPROVING_FILES: &str = "done:VERDICT: APPROVE\\nSUMMARY: see README.md";
+    const R1_SCENARIO_FILES: &str = "verify:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] see README.md:42 for issue,verify:VERDICT: APPROVE\\nSUMMARY: fixed in `README.md`";
+    const APPROVING_FILES: &str = "verify:VERDICT: APPROVE\\nSUMMARY: see README.md";
 
     let mut rig = Rig::new(
         &[

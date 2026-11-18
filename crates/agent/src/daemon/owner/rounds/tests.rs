@@ -912,7 +912,7 @@ use agent_core::state::Completion;
 use super::rig::CHAIN;
 
 /// The reviewers that approve whatever they are asked to review.
-const APPROVING: &str = "done:VERDICT: APPROVE\\nSUMMARY: fine";
+const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 
 /// A rig with a solo agent that does two items one after the other and two reviewers that approve both.
 async fn approving_rig() -> Rig {
@@ -1133,7 +1133,7 @@ async fn a_report_without_a_verdict_is_asked_for_again_and_then_counts() {
             normal("claude-1", "work"),
             investigator(
                 "inv-r1",
-                "done:I read it and it looks fine.,done:VERDICT: APPROVE\\nSUMMARY: fine",
+                "done:I read it and it looks fine.,verify:VERDICT: APPROVE\\nSUMMARY: fine",
             ),
             investigator("inv-r2", APPROVING),
         ],
@@ -1163,7 +1163,7 @@ async fn a_report_without_a_verdict_is_asked_for_again_and_then_counts() {
 }
 
 /// A reviewer that always asks for changes.
-const CHANGES: &str = "done:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] src/lib.rs:7 — the case is untested";
+const CHANGES: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\\n   CHECK: read src/lib.rs:7";
 
 #[tokio::test]
 async fn a_request_for_changes_sends_the_item_back_to_its_lead_for_a_fix_pass_that_records_the_reviews() {
@@ -1211,7 +1211,7 @@ async fn a_request_for_changes_sends_the_item_back_to_its_lead_for_a_fix_pass_th
 // ---- fix passes ----------------------------------------------------------------------------------------------
 
 /// A reviewer that asks for changes the first time and approves afterwards.
-const CHANGES_ONCE: &str = "done:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] src/lib.rs:7 — the case is untested,done:VERDICT: APPROVE\\nSUMMARY: fixed";
+const CHANGES_ONCE: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\\n   CHECK: read src/lib.rs:7,verify:VERDICT: APPROVE\\nSUMMARY: fixed";
 
 /// A rig with a solo agent that works twice on its item (the second time is the fix pass), a reviewer that asks for
 /// changes once and one that approves.
@@ -1240,7 +1240,7 @@ async fn the_lead_is_given_the_fix_pass_with_the_findings_of_the_reviewers() {
     assert!(prompt.contains("THE REVIEWERS ASKED FOR CHANGES"), "{prompt}");
     assert!(prompt.contains("pull request #1, fix pass 1 of 5"), "{prompt}");
     assert!(
-        prompt.contains("1. [TDD-2] src/lib.rs:7 — the case is untested"),
+        prompt.contains("1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested"),
         "{prompt}"
     );
     assert!(prompt.contains("inv-r1"), "{prompt}");
@@ -1255,7 +1255,7 @@ async fn the_lead_is_given_the_fix_pass_with_the_findings_of_the_reviewers() {
 // once. A reviewer that is slower than one that asked for changes is waited for, and reviews the fix in its turn.
 #[tokio::test]
 async fn a_request_for_changes_waits_for_the_other_review_and_the_lead_is_given_both_reports() {
-    let slow = "late:VERDICT: APPROVE\\nSUMMARY: looks fine to me,done:VERDICT: APPROVE\\nSUMMARY: fine";
+    let slow = "late-verify:VERDICT: APPROVE\\nSUMMARY: looks fine to me,verify:VERDICT: APPROVE\\nSUMMARY: fine";
     let mut rig = Rig::new(
         &[
             normal("claude-1", "work"),
@@ -1277,7 +1277,7 @@ async fn a_request_for_changes_waits_for_the_other_review_and_the_lead_is_given_
 
     assert!(prompt.contains("fix pass 1 of 5"), "{prompt}");
     assert!(
-        prompt.contains("1. [TDD-2] src/lib.rs:7 — the case is untested"),
+        prompt.contains("1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested"),
         "{prompt}"
     );
     assert!(prompt.contains("inv-r2"), "{prompt}");
@@ -1449,7 +1449,7 @@ async fn when_the_fix_passes_are_used_up_the_lead_is_asked_to_put_the_question_t
     );
     assert!(prompt.contains("The team used its 1 fix passes"), "{prompt}");
     assert!(
-        prompt.contains("1. [TDD-2] src/lib.rs:7 — the case is untested"),
+        prompt.contains("1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested"),
         "{prompt}"
     );
     assert!(prompt.contains("questions-1.md"), "{prompt}");
@@ -1486,7 +1486,7 @@ async fn the_humans_answer_starts_one_more_fix_pass_with_the_findings_and_the_an
     assert!(prompt.contains("THE REVIEWERS ASKED FOR CHANGES"), "{prompt}");
     assert!(prompt.contains("fix pass 2 of 1"), "{prompt}");
     assert!(
-        prompt.contains("1. [TDD-2] src/lib.rs:7 — the case is untested"),
+        prompt.contains("1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested"),
         "{prompt}"
     );
     assert!(
@@ -1866,7 +1866,7 @@ async fn a_fix_pass_of_a_team_goes_to_its_coordinator_which_has_the_integrated_b
     assert!(prompt.contains("THE REVIEWERS ASKED FOR CHANGES"), "{prompt}");
     assert!(prompt.contains(&format!("agents/inv-lead/{}", tasks[0])), "{prompt}");
     assert!(
-        prompt.contains("1. [TDD-2] src/lib.rs:7 — the case is untested"),
+        prompt.contains("1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested"),
         "{prompt}"
     );
     assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);

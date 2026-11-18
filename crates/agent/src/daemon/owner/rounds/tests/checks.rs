@@ -19,10 +19,10 @@ use super::rig::{ONE, Rig, git, investigator, normal};
 const SILENT: &str = "sleep";
 
 /// A reviewer that approves.
-const APPROVE: &str = "done:VERDICT: APPROVE\\nSUMMARY: fine";
+const APPROVE: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 
 /// A reviewer that asks for changes the first time and approves afterwards.
-const CHANGES_ONCE: &str = "done:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] src/lib.rs:7 — the case is untested,done:VERDICT: APPROVE\\nSUMMARY: fixed";
+const CHANGES_ONCE: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\\n   CHECK: read src/lib.rs:7,verify:VERDICT: APPROVE\\nSUMMARY: fixed";
 
 /// What every script starts with: git commits as a stand-in without signing. A script adds the files it changed by name:
 /// the stand-in CLI leaves files of its own (`.fake-*`) in the worktree, which a commit must not carry to the reviewers.
