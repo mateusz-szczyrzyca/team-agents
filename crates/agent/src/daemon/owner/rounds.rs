@@ -741,3 +741,7 @@ mod notice_mapping_tests;
 #[cfg(test)]
 #[path = "rounds/tests/cleanup.rs"]
 mod cleanup_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/publication_findings.rs"]
+mod publication_findings_tests;
