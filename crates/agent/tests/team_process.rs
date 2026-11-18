@@ -376,7 +376,7 @@ mod team_process {
                 .home
                 .join("notifications")
                 .read_dir()
-                .map_or(false, |mut entries| entries.next().is_some())
+                .is_ok_and(|mut entries| entries.next().is_some())
         });
 
         let diag_parent = world.home.join("diag");
