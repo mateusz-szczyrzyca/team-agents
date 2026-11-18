@@ -47,7 +47,10 @@ async fn empty_untracked_files_returns_empty_collection() {
     let dir = tempfile::tempdir().expect("tempdir");
     let result = collect(dir.path(), &[]).await;
     assert_eq!(result.summary_facts, Vec::<UntrackedFileSummaryFacts>::new());
-    assert!(result.unreadable.is_empty());
+    assert_eq!(
+        result.unreadable,
+        Vec::<agent_core::diagnostic_assessment::ReadFailure>::new()
+    );
 }
 
 #[tokio::test]

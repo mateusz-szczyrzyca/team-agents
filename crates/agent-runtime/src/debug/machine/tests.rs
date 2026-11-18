@@ -434,7 +434,7 @@ async fn observed_descendants_compute_age_from_proc_stat_btime() {
     fs::write(pid_dir.join("stat"), stat).expect("write stat");
     write_proc_cmdline(&procfs, 20, &["worker", "run"]);
 
-    let collected_at = Timestamp::from_utc(time::UtcDateTime::from_unix_timestamp(1700000035).unwrap()).unwrap();
+    let collected_at = Timestamp::from_utc(time::UtcDateTime::from_unix_timestamp(1_700_000_035).unwrap()).unwrap();
 
     let params = MachineParams {
         home: &home,
@@ -481,9 +481,9 @@ async fn missing_meminfo_memavailable_field_records_unreadable_failure() {
     let obs = observe(&home, &procfs, &temp_dir, None, &cut, test_now()).await;
     assert_eq!(obs.summary.memory_available_bytes, None);
     assert!(
-        obs.unreadable.iter().any(|f| f.section == SummarySection::Machine
-            && f.part == "memory and swap"
-            && f.reason.contains("MemAvailable")),
+        obs.unreadable
+            .iter()
+            .any(|f| f.section == SummarySection::Machine && f.part == "memory" && f.reason.contains("MemAvailable")),
         "missing MemAvailable must record unreadable failure without substituting MemFree: {:?}",
         obs.unreadable
     );
