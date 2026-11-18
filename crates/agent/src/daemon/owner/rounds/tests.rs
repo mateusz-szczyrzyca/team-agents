@@ -2638,3 +2638,28 @@ async fn the_humans_answer_renews_the_entire_configured_fix_budget() {
     assert_eq!(item.findings().unwrap().verification().unwrap().extra_fix_passes, 2);
     assert!(first.contains("2 more fix passes"), "{first}");
 }
+
+#[tokio::test]
+async fn answering_with_zero_fix_allowance_does_not_wake_the_lead_for_a_fix() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,ask,done"),
+            investigator("inv-r1", CHANGES),
+            investigator("inv-r2", APPROVING),
+        ],
+        0,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    accept(&rig, &tasks[0], 1).await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let team = state.team(&team).unwrap();
+    let lead = team.find(&tasks[0]).unwrap().1;
+    assert_eq!(lead.runs().len(), 2);
+    assert_eq!(team.item("1.1".parse().unwrap()).unwrap().fix_passes().len(), 0);
+}
