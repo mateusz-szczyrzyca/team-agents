@@ -317,6 +317,8 @@ pub(super) enum AutopilotNotice {
     PublishFailed,
     /// Team asleep.
     TeamAsleep,
+    /// Standing item behind a failed member while lead is done.
+    StandingItem,
     /// Pull request closed without merge.
     Closed,
     /// Pull request approved.
@@ -336,6 +338,7 @@ impl AutopilotNotice {
             Self::NoVerdict => AutopilotPrompt::NoticeNoVerdict,
             Self::PublishFailed => AutopilotPrompt::NoticePublishFailed,
             Self::TeamAsleep => AutopilotPrompt::NoticeTeamAsleep,
+            Self::StandingItem => AutopilotPrompt::NoticeStandingItem,
             Self::Closed => AutopilotPrompt::NoticeClosed,
             Self::Approved => AutopilotPrompt::NoticeApproved,
             Self::MergeFailed => AutopilotPrompt::NoticeMergeFailed,
@@ -350,7 +353,7 @@ impl AutopilotNotice {
             Self::Decision => NoticeKind::Decision,
             Self::NoVerdict => NoticeKind::NoVerdict,
             Self::PublishFailed => NoticeKind::PublishFailed,
-            Self::TeamAsleep => NoticeKind::TeamAsleep,
+            Self::TeamAsleep | Self::StandingItem => NoticeKind::TeamAsleep,
             Self::Closed => NoticeKind::Closed,
             Self::Approved => NoticeKind::Approved,
             Self::MergeFailed => NoticeKind::MergeFailed,

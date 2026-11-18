@@ -27,6 +27,15 @@ struct Found {
     tasks: Vec<String>,
     /// When the last run of the crew ended; `None` while one runs or none has run.
     quiet_since: Option<Timestamp>,
+    /// A standing item: an item in progress whose assignee is failed, if any.
+    standing: Option<Standing>,
+}
+
+/// A standing item in progress whose assignee is failed.
+struct Standing {
+    item: String,
+    member: String,
+    task: agent_core::ids::TaskId,
 }
 
 /// How the task of `member` ended, in a line for the lead and the human.
@@ -79,11 +88,27 @@ impl Owner {
                 RunState::Running => None,
             })
             .collect();
+        let standing = team.items().iter().find_map(|progress| {
+            let (ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }) = progress.phase() else {
+                return None;
+            };
+            let (_, member) = roster.iter().find(|(_, m)| m.agent().name() == assignee.as_str())?;
+            if member.status() == TaskStatus::Failed {
+                Some(Standing {
+                    item: progress.id().to_string(),
+                    member: assignee.to_string(),
+                    task: member.task().clone(),
+                })
+            } else {
+                None
+            }
+        });
         Some(Found {
             unfinished,
             statuses: roster.iter().map(|(_, member)| member.status()).collect(),
             tasks: roster.iter().map(|(role, member)| line(*role, member)).collect(),
             quiet_since: ended.and_then(|times| times.into_iter().max()),
+            standing,
         })
     }
 
@@ -113,7 +138,7 @@ impl Owner {
             unfinished: !found.unfinished.is_empty(),
             tasks: &found.statuses,
             lead_done: lead.done,
-            standing_item: false,
+            standing_item: found.standing.is_some(),
             quiet_for,
             may_sleep: self.parts.settings.config.watchdog().asleep_minutes.as_duration(),
             woken,
@@ -164,8 +189,18 @@ impl Owner {
                     since: quiet_since,
                 };
                 if self.watch.announced.insert(announcement) {
-                    let values = values(woken).and_then(|values| values.with("lead", lead.task.as_str()));
-                    self.tell_human(pulls, AutopilotNotice::TeamAsleep, values, &lead, now);
+                    if let Some(standing) = found.standing {
+                        let values = Variables::new()
+                            .with("team", team_id.as_str())
+                            .and_then(|v| v.with("item", standing.item.as_str()))
+                            .and_then(|v| v.with("member", standing.member.as_str()))
+                            .and_then(|v| v.with("task", standing.task.as_str()))
+                            .and_then(|v| v.with("lead", lead.task.as_str()));
+                        self.tell_human(pulls, AutopilotNotice::StandingItem, values, &lead, now);
+                    } else {
+                        let values = values(woken).and_then(|values| values.with("lead", lead.task.as_str()));
+                        self.tell_human(pulls, AutopilotNotice::TeamAsleep, values, &lead, now);
+                    }
                 }
                 Ok(())
             }
