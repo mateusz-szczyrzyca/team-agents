@@ -453,7 +453,7 @@ fn debug_removed_worktree_reports_read_failure_and_rest_continues() {
     let summary_path = find_summary(out_dir.path()).unwrap().expect("SUMMARY.md should exist");
     let summary = std::fs::read_to_string(&summary_path).unwrap();
     assert!(
-        summary.contains(&format!("Could not collect worktree {:?}:", member_wt.as_os_str())),
+        summary.contains(&format!("Could not collect worktree {}:", member_wt.display())),
         "summary was: {summary}"
     );
     let bundle = summary_path.parent().unwrap();

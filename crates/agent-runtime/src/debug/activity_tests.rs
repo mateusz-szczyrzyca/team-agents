@@ -105,7 +105,7 @@ fn missing_task_artifact_root_is_unreadable_only_after_a_run_started() {
             .map(|failure| failure.part.clone())
             .collect::<Vec<_>>();
         let expected = if has_run {
-            vec![format!("task artifact {:?}", home.task_dir(&task).as_os_str())]
+            vec![format!("task artifact {}", home.task_dir(&task).display())]
         } else {
             Vec::new()
         };
