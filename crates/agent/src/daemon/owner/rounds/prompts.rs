@@ -439,16 +439,15 @@ pub(super) async fn verification_changes(
     previous: Option<&CommitId>,
     base: &str,
 ) -> Result<String, SectionError> {
-    if let Some(previous) = previous {
-        if git
+    if let Some(previous) = previous
+        && git
             .is_ancestor(&Revision::Commit(previous.clone()), &Revision::Head)
             .await?
-        {
-            return Ok(texts.render(
-                AutopilotPrompt::ReviewVerificationChanges,
-                &Variables::new().with("previous", previous.as_str())?,
-            )?);
-        }
+    {
+        return Ok(texts.render(
+            AutopilotPrompt::ReviewVerificationChanges,
+            &Variables::new().with("previous", previous.as_str())?,
+        )?);
     }
     Ok(texts.render(
         AutopilotPrompt::ReviewVerificationRewritten,

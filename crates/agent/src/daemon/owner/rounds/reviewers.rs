@@ -105,7 +105,7 @@ impl Owner {
         let history = progress
             .into_iter()
             .filter(|item| item.findings().and_then(|ledger| ledger.verification()).is_some())
-            .map(|item| item.fix_passes())
+            .map(agent_core::state::ItemProgress::fix_passes)
             .max_by_key(|passes| passes.len());
         let chosen = match (required, history) {
             (Some(count), Some(history)) if !history.is_empty() => {
