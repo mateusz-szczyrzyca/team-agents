@@ -205,7 +205,7 @@ impl Owner {
         // A team that was finished and is resumed has work again, and is looked at again.
         if steer == Steer::Resume {
             self.closed.remove(team);
-            self.watch.reset_item_blocked(team);
+            self.watch.reset_item_blocked_for_task(&self.parts.state, team, task);
         }
         Ok(())
     }

@@ -24,7 +24,7 @@ use std::sync::Arc;
 use agent_core::config::{AbsolutePath, GithubLogin, InvalidValue, RepoName, Secret};
 use agent_core::ids::{AgentName, BranchName, GenerateIdError, InvalidBranchName, InvalidName, TaskId, TeamId};
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
-use agent_core::state::{CommitId, PrNumber, Timestamp};
+use agent_core::state::{CommitId, ItemPhase, PrNumber, State, Timestamp};
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextError};
 use agent_runtime::checks_prompts::ChecksPrompts;
 use agent_runtime::git::{CommitIdentity, Git, GitError};
@@ -139,10 +139,25 @@ pub(super) struct PullWatch {
 }
 
 impl PullWatch {
-    /// Clears any blocked item announcements for `team`.
-    pub(super) fn reset_item_blocked(&mut self, team: &TeamId) {
-        self.announced
-            .retain(|announcement| !matches!(announcement, Announcement::ItemBlocked { team: t, .. } if t == team));
+    /// Clears blocked item announcements for any items in progress or fixing assigned to `task`.
+    pub(super) fn reset_item_blocked_for_task(&mut self, state: &State, team_id: &TeamId, task: &TaskId) {
+        let Some(team) = state.team(team_id) else {
+            return;
+        };
+        let Some((_, member)) = team.crew().roster().into_iter().find(|(_, m)| m.task() == task) else {
+            return;
+        };
+        let member_name = member.agent().name().to_string();
+        for item in team.items() {
+            if let ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } = item.phase() {
+                if assignee.as_str() == member_name {
+                    self.announced.remove(&Announcement::ItemBlocked {
+                        team: team_id.clone(),
+                        item: item.id().to_string(),
+                    });
+                }
+            }
+        }
     }
 }
 
