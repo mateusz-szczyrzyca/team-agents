@@ -160,3 +160,13 @@ fn rejects_oversized_history_database() {
         "{err:?}"
     );
 }
+
+#[test]
+fn unreadable_history_metadata_is_not_reported_as_empty_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    std::os::unix::fs::symlink(&path, &path).unwrap();
+    let team: TeamId = "team-20261118-060000-a1b2".parse().unwrap();
+    let error = read_live_team_history(&path, &team).unwrap_err();
+    assert!(matches!(error, HistoryCollectionError::Io { path: failed, .. } if failed == path));
+}
