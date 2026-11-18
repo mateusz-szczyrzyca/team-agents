@@ -23,6 +23,10 @@ fn fixture() -> (tempfile::TempDir, Home, Team) {
     (dir, home, team)
 }
 
+fn default_cut() -> SecretsCut {
+    SecretsCut::new(&agent_core::config::Secrets::default(), [])
+}
+
 #[tokio::test]
 async fn collects_team_messages_and_end_of_whole_bus() {
     let (_dir, home, team) = fixture();
@@ -50,29 +54,43 @@ async fn collects_team_messages_and_end_of_whole_bus() {
 
     std::fs::write(bus_dir.join("messages.jsonl"), lines.join("\n") + "\n").unwrap();
 
-    let collected = collect(&home, &team).await.unwrap().expect("bus messages");
+    let collected = collect(&home, &team, &default_cut())
+        .await
+        .unwrap()
+        .expect("bus messages");
     assert!(
-        !collected.iter().any(|m| m.ends_with("old other message 1")),
+        !collected
+            .summary_messages
+            .iter()
+            .any(|m| m.ends_with("old other message 1")),
         "old other message 1 should be excluded: {collected:?}"
     );
     assert!(
-        collected.iter().any(|m| m.contains("team:team-20261117-120000-a1b2")),
+        collected
+            .summary_messages
+            .iter()
+            .any(|m| m.contains("team:team-20261117-120000-a1b2")),
         "team message kept"
     );
     assert!(
         collected
+            .summary_messages
             .iter()
             .any(|m| m.contains("codex-1 → all (chat): hello from codex")),
         "agent message kept"
     );
     assert!(
         collected
+            .summary_messages
             .iter()
             .any(|m| m.contains("task-20261117-120000-a1b2 started")),
         "task message kept"
     );
     assert!(
-        collected.iter().any(|m| m.contains("recent unrelated message")),
+        collected
+            .summary_messages
+            .iter()
+            .any(|m| m.contains("recent unrelated message")),
         "recent message kept"
     );
 }
@@ -80,8 +98,14 @@ async fn collects_team_messages_and_end_of_whole_bus() {
 #[tokio::test]
 async fn collects_empty_when_bus_file_missing() {
     let (_dir, home, team) = fixture();
-    let collected = collect(&home, &team).await.unwrap();
-    assert_eq!(collected, Some(Vec::new()));
+    let collected = collect(&home, &team, &default_cut()).await.unwrap();
+    assert_eq!(
+        collected,
+        Some(BusCollection {
+            artifact_messages: Vec::new(),
+            summary_messages: Vec::new(),
+        })
+    );
 }
 
 #[tokio::test]
@@ -89,7 +113,7 @@ async fn reports_unreadable_when_bus_file_is_directory() {
     let (_dir, home, team) = fixture();
     let bus_dir = home.root().join("bus");
     std::fs::create_dir_all(bus_dir.join("messages.jsonl")).unwrap();
-    let result = collect(&home, &team).await;
+    let result = collect(&home, &team, &default_cut()).await;
     assert!(
         matches!(result, Err(BusError::Read { .. })),
         "directory must trigger read error: {result:?}"
@@ -106,7 +130,7 @@ async fn reports_error_when_bus_message_is_malformed() {
         "not valid json",
     ];
     std::fs::write(bus_dir.join("messages.jsonl"), lines.join("\n") + "\n").unwrap();
-    let result = collect(&home, &team).await;
+    let result = collect(&home, &team, &default_cut()).await;
     assert!(
         matches!(result, Err(BusError::Parse { line: 2, .. })),
         "malformed line 2 must trigger parse error: {result:?}"
