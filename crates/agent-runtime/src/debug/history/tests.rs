@@ -219,3 +219,56 @@ fn accepts_history_stamp_at_sixty_four_gib_boundary() {
 
     assert!(matches!(&stamp, Ok(stamp) if stamp.db.len == boundary), "{stamp:?}");
 }
+
+#[test]
+fn retries_changed_history_snapshot_until_a_stable_copy_is_available() {
+    for (changes, expected_copies) in [(1, 2), (3, 3)] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.db");
+        let database = HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
+        drop(database);
+        let team: TeamId = "team-20261118-060000-a1b2".parse().unwrap();
+        let mut copies = 0;
+        let result = read_with_copy(&path, &team, &mut |source, destination, limit| {
+            let copied = copy_bounded(source, destination, limit)?;
+            if source == path {
+                copies += 1;
+                if copies <= changes {
+                    // SQLite ignores trailing bytes; extend the source to model a concurrent write.
+                    let file = std::fs::OpenOptions::new().write(true).open(source).unwrap();
+                    file.set_len(file.metadata().unwrap().len() + 1).unwrap();
+                }
+            }
+            Ok(copied)
+        });
+
+        assert_eq!(copies, expected_copies);
+        match changes {
+            1 => assert!(matches!(&result, Ok(records) if records.is_empty()), "{result:?}"),
+            3 => assert!(matches!(result, Err(HistoryCollectionError::Changed))),
+            other => panic!("unexpected changes {other}"),
+        }
+    }
+}
+
+#[test]
+fn propagates_snapshot_io_failure_without_retrying() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    std::fs::write(&path, "database").unwrap();
+    let team: TeamId = "team-20261118-060000-a1b2".parse().unwrap();
+    let mut calls = 0;
+    let result = read_with_copy(&path, &team, &mut |source, _destination, _limit| {
+        calls += 1;
+        Err(HistoryCollectionError::Io {
+            path: source.to_owned(),
+            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "fixture denied"),
+        })
+    });
+
+    assert_eq!(calls, 1);
+    assert!(
+        matches!(result, Err(HistoryCollectionError::Io { path: failed, source })
+        if failed == path && source.kind() == std::io::ErrorKind::PermissionDenied)
+    );
+}
