@@ -118,6 +118,10 @@ pub struct SummaryInput {
     pub bus_messages: Vec<String>,
     /// Notifications written for team and tasks.
     pub notifications: Vec<String>,
+    /// Configuration status or loaded facts.
+    pub configuration: Option<String>,
+    /// Secret table and key names configured in `secrets.toml`.
+    pub secret_keys: Vec<String>,
     /// Machine health and resources.
     pub machine: MachineSummary,
     /// Names and error reasons for any collection parts that could not be read.

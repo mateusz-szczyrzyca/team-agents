@@ -141,6 +141,8 @@ impl Collection {
                 daemon_log_lines: None,
                 bus_messages: vec![],
                 notifications: vec![],
+                configuration: None,
+                secret_keys: vec![],
                 machine: MachineSummary {
                     load_avg: None,
                     memory_total_bytes: None,

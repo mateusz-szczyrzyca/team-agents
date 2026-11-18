@@ -116,6 +116,8 @@ fn sample_input() -> SummaryInput {
         daemon_log_lines: Some(vec!["2026-11-17 19:00:00 [info] round started".to_owned()]),
         bus_messages: vec!["[#1] agentbus: team created".to_owned()],
         notifications: vec!["Notification: round active".to_owned()],
+        configuration: None,
+        secret_keys: vec![],
         machine: MachineSummary {
             load_avg: Some((0.5, 0.4, 0.3)),
             memory_total_bytes: Some(16_000_000_000),

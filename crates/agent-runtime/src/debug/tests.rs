@@ -87,6 +87,8 @@ fn retries_oversized_required_presentation_without_losing_full_facts() {
         daemon_log_lines: None,
         bus_messages: vec![],
         notifications: vec![],
+        configuration: None,
+        secret_keys: vec![],
         machine: MachineSummary {
             load_avg: None,
             memory_total_bytes: None,
