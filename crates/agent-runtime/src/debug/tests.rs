@@ -521,3 +521,14 @@ async fn reports_unreadable_configuration_when_agents_toml_is_missing() {
     assert!(summary.contains("### Unreadable Parts"));
     assert!(summary.contains("configuration"));
 }
+
+#[tokio::test]
+async fn not_collected_names_only_machine_metrics_and_untracked_files() {
+    let (_dir, home, args) = fixture();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    let content = std::fs::read_to_string(result.bundle_dir.join("NOT_COLLECTED.txt")).unwrap();
+    assert_eq!(
+        content,
+        "Not collected in this version: machine metrics; newest untracked file metadata.\n"
+    );
+}
