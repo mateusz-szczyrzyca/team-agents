@@ -141,6 +141,54 @@ fn untracked_files_make_lead_dirty_without_becoming_tracked_changes() {
 }
 
 #[test]
+fn single_git_listing_per_worktree_reused_for_untracked_metadata() {
+    use agent_core::config::AbsolutePath;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let team = team();
+    let task = team.crew().roster()[0].1.task().clone();
+    let worktree = home.worktree_dir(team.repo(), &task);
+    std::fs::create_dir_all(&worktree).unwrap();
+    git(&worktree, &["init", "--initial-branch=main"]);
+    git(&worktree, &["commit", "--allow-empty", "-m", "Base"]);
+    std::fs::write(worktree.join("untracked_file.txt"), "content\n").unwrap();
+    std::fs::write(
+        home.config_file(),
+        "[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .unwrap();
+
+    super::TEST_GIT_COMMANDS.lock().unwrap().clear();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    runtime.block_on(collection.observe(&home, &team, None)).unwrap();
+
+    let commands = super::TEST_GIT_COMMANDS.lock().unwrap().clone();
+    let untracked_listings: Vec<_> = commands
+        .iter()
+        .filter(|(_, args)| args.iter().any(|arg| arg.contains("--untracked-files")))
+        .collect();
+    assert_eq!(
+        untracked_listings.len(),
+        1,
+        "must execute exactly one git listing for untracked files across collection: {commands:?}"
+    );
+    assert!(
+        !commands.iter().any(|(_, args)| args.contains(&"ls-files".to_owned())),
+        "must not invoke ls-files or separate untracked walks: {commands:?}"
+    );
+
+    let newest = &collection.summary.git[0].newest_untracked;
+    assert_eq!(newest.len(), 1);
+    assert_eq!(newest[0].path, PathBuf::from("untracked_file.txt"));
+}
+
+#[test]
 fn rejects_malformed_porcelain_records_including_missing_rename_sources() {
     for bytes in [b"invalid\0".as_slice(), b"R  destination\0".as_slice()] {
         assert!(matches!(parse_status(bytes), Err(ObservationError::StatusFields)));

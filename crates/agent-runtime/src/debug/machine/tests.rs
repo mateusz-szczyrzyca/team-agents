@@ -872,3 +872,118 @@ async fn directory_size_bounded_detects_exceeded_limit() {
     let size = super::directory_size_bounded(base, 10).await.unwrap();
     assert_eq!(size, 20);
 }
+
+#[tokio::test]
+async fn unrelated_proc_with_unreadable_cmdline_is_ignored_by_descendants() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    // Daemon PID 10
+    write_proc_stat(&procfs, 10, 1);
+    write_proc_cmdline(&procfs, 10, &["agent", "daemon"]);
+
+    // Descendant PID 20 (parent 10)
+    write_proc_stat(&procfs, 20, 10);
+    write_proc_cmdline(&procfs, 20, &["worker", "child"]);
+
+    // Unrelated PID 999 (parent 1, not under daemon)
+    let unrelated_dir = procfs.join("999");
+    fs::create_dir_all(&unrelated_dir).expect("create unrelated proc dir");
+    fs::write(unrelated_dir.join("stat"), "999 (unrelated) S 1 0 0 0\n").expect("write stat");
+    // Unreadable cmdline: create as a directory instead of a file so open/read fails with EISDIR
+    fs::create_dir(unrelated_dir.join("cmdline")).expect("create dir as cmdline");
+
+    let params = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: Some(10),
+        cut: &cut,
+        collected_at: test_now(),
+        clock_ticks: NonZeroU64::new(100),
+    };
+
+    let obs = observe_with_statvfs(params, |_| {
+        Ok(StatvfsStats {
+            fragment_size: 4096,
+            block_size: 4096,
+            total_blocks: 100,
+            available_blocks: 50,
+            total_inodes: 100,
+            available_inodes: 50,
+        })
+    })
+    .await;
+
+    // Descendants must contain PID 20 and NOT PID 999
+    assert_eq!(obs.summary.daemon_descendants.len(), 1);
+    assert_eq!(obs.summary.daemon_descendants[0].pid, 20);
+
+    // Unreadable failures must NOT contain PID 999
+    assert!(
+        !obs.unreadable.iter().any(|f| f.part.contains("999")),
+        "unrelated process must not generate read failures in unreadable: {:?}",
+        obs.unreadable
+    );
+}
+
+#[tokio::test]
+async fn error_chain_preserves_concrete_os_cause_in_unreadable_and_artifact() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    // Create a tasks directory that fails on read_dir with PermissionDenied
+    let tasks_dir = home.root().join("tasks");
+    fs::create_dir_all(&tasks_dir).expect("create tasks");
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&tasks_dir, std::fs::Permissions::from_mode(0o000)).expect("chmod 000");
+
+    let params = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: None,
+        cut: &cut,
+        collected_at: test_now(),
+        clock_ticks: NonZeroU64::new(100),
+    };
+
+    let obs = observe_with_statvfs(params, |_| {
+        Ok(StatvfsStats {
+            fragment_size: 4096,
+            block_size: 4096,
+            total_blocks: 100,
+            available_blocks: 50,
+            total_inodes: 100,
+            available_inodes: 50,
+        })
+    })
+    .await;
+
+    // Reset permissions for cleanup
+    drop(fs::set_permissions(&tasks_dir, std::fs::Permissions::from_mode(0o755)));
+
+    let failure = obs
+        .unreadable
+        .iter()
+        .find(|f| f.part == "tasks directory")
+        .expect("must report read failure for tasks directory");
+
+    assert!(
+        failure.reason.contains("cannot read") && failure.reason.contains("Permission denied"),
+        "reason must preserve complete error chain including OS cause: {}",
+        failure.reason
+    );
+
+    let artifact = String::from_utf8(obs.artifact_bytes).expect("artifact utf-8");
+    assert!(
+        artifact.contains("Permission denied"),
+        "artifact must contain concrete OS cause: {artifact}"
+    );
+}

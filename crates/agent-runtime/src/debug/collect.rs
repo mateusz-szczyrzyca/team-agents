@@ -950,6 +950,9 @@ async fn bounded_bytes(path: &Path) -> Result<Vec<u8>, ObservationError> {
     Ok(bytes)
 }
 
+#[cfg(test)]
+pub(super) static TEST_GIT_COMMANDS: std::sync::Mutex<Vec<(PathBuf, Vec<String>)>> = std::sync::Mutex::new(Vec::new());
+
 async fn git_capture(path: &Path, args: &[&str]) -> Result<crate::process::Captured, ObservationError> {
     let mut command = tokio::process::Command::new("git");
     command
