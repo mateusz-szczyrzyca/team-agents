@@ -361,3 +361,32 @@ fn redacts_secrets_before_compacting_required_summary_reasons() {
     assert!(summary.contains("<cut>"));
     assert!(summary.len() < agent_core::debug_summary::MAX_SUMMARY_BYTES);
 }
+
+#[test]
+fn command_summary_uses_supplied_machine_offset() {
+    let (_dir, home, args) = fixture();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = runtime
+        .block_on(execute_debug_at(
+            &home,
+            args,
+            None,
+            DebugLocation {
+                local_offset: time::UtcOffset::from_hms(5, 30, 0).unwrap(),
+                checkout: None,
+            },
+            &mut Vec::new(),
+        ))
+        .unwrap();
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(
+        summary
+            .lines()
+            .find(|line| line.starts_with("Collected at:"))
+            .unwrap()
+            .contains("+05:30")
+    );
+}

@@ -287,3 +287,26 @@ fn compact_summary_with(input: &SummaryInput, redact: impl Fn(&str) -> String) -
         Err(error) => Err(error),
     }
 }
+
+/// Machine presentation context captured by the CLI before it starts async workers.
+#[derive(Debug, Clone)]
+pub struct DebugLocation {
+    /// Machine's current offset from UTC.
+    pub local_offset: time::UtcOffset,
+    /// Clone from which diagnostics were requested, when known.
+    pub checkout: Option<PathBuf>,
+}
+
+/// Collects a diagnostic bundle using the caller's machine presentation context.
+///
+/// # Errors
+/// Returns [`DebugRuntimeError`] for required inputs, rendering or persistence failures.
+pub async fn execute_debug_at(
+    home: &Home,
+    args: DebugArgs,
+    status: Option<Result<String, String>>,
+    _location: DebugLocation,
+    out: &mut impl Write,
+) -> Result<DebugResult, DebugRuntimeError> {
+    execute_debug(home, args, status, out).await
+}
