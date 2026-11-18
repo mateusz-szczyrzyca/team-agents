@@ -139,3 +139,59 @@ fn a_team_whose_lead_is_done_and_has_a_standing_item_tells_the_human_immediately
 
     assert_eq!(asleep_step(&team), AsleepStep::TellHuman);
 }
+
+// Rule: pure table testing combinations of lead done, standing item, and crew activity.
+#[test]
+fn pure_c_table_standing_item_decisions() {
+    let all_statuses = [
+        TaskStatus::Waiting,
+        TaskStatus::Running,
+        TaskStatus::Queued,
+        TaskStatus::Questions,
+        TaskStatus::Paused,
+        TaskStatus::Done,
+        TaskStatus::Failed,
+        TaskStatus::Stopped,
+    ];
+
+    for lead_status in all_statuses {
+        for lead_done in [false, true] {
+            for standing_item in [false, true] {
+                for busy_member in [false, true] {
+                    let member_status = if busy_member {
+                        TaskStatus::Running
+                    } else {
+                        TaskStatus::Failed
+                    };
+                    let tasks = [lead_status, member_status];
+                    let team = Team {
+                        unfinished: true,
+                        tasks: &tasks,
+                        lead_done,
+                        standing_item,
+                        quiet_for: Duration::ZERO,
+                        may_sleep: MAY_SLEEP,
+                        woken: 0,
+                        wake_limit: 2,
+                    };
+                    let step = asleep_step(&team);
+                    let expected = if lead_status != TaskStatus::Waiting {
+                        AsleepStep::Nothing
+                    } else if lead_done {
+                        if standing_item {
+                            AsleepStep::TellHuman
+                        } else {
+                            AsleepStep::Nothing
+                        }
+                    } else {
+                        AsleepStep::Nothing
+                    };
+                    assert_eq!(
+                        step, expected,
+                        "lead_status={lead_status:?}, lead_done={lead_done}, standing={standing_item}, busy={busy_member}"
+                    );
+                }
+            }
+        }
+    }
+}
