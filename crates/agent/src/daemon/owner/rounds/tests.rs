@@ -2549,3 +2549,68 @@ async fn independent_three_review_pass_holds_reports_and_has_no_bus() {
     }
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn later_pass_reviewers_keep_the_bus_and_publish_without_waiting_for_peers() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", "held-review"),
+            investigator("inv-r2", "held-review"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let state = rig
+        .state_where("first pass", |state| {
+            state
+                .team(&team)
+                .and_then(|team| team.item("1.1".parse().unwrap()))
+                .is_some_and(|item| matches!(item.phase(), ItemPhase::InReview { reviews, .. } if reviews.len() == 2))
+        })
+        .await;
+    let ItemPhase::InReview { reviews, .. } = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap().phase()
+    else {
+        panic!("review phase")
+    };
+    for (index, review) in reviews.iter().enumerate() {
+        held_review_mcp(&rig, &review.task, 1).await;
+        let report = if index == 0 {
+            "VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] ERR-3 src/lib.rs:1 — broken → fix\\n   CHECK: read src/lib.rs:1"
+        } else {
+            "VERDICT: APPROVE"
+        };
+        release_review(&rig, &review.task, 1, report);
+    }
+    for review in reviews {
+        let mcp = held_review_mcp(&rig, &review.task, 2).await;
+        assert!(mcp["mcpServers"].get("agentbus").is_some());
+        let prompt = rig.prompt(&review.task, 2).await;
+        assert!(!prompt.contains("Read no other review"), "{prompt}");
+        assert!(prompt.contains("1. [MAJOR] ERR-3 src/lib.rs:1"), "{prompt}");
+    }
+    release_review(&rig, &reviews[0].task, 2, "VERDICT: APPROVE\\nFINDING 1: RESOLVED");
+    rig.wait_for("later report published immediately", || {
+        rig.github.reviews(1).len() == 3
+    })
+    .await;
+    let state = rig.state();
+    let item = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap();
+    let ItemPhase::InReview { reviews: current, .. } = item.phase() else {
+        panic!("waiting for peer")
+    };
+    assert_eq!(
+        current
+            .iter()
+            .filter(|r| matches!(r.outcome, ReviewOutcome::Pending))
+            .count(),
+        1
+    );
+    release_review(&rig, &reviews[1].task, 2, "VERDICT: APPROVE\\nFINDING 1: RESOLVED");
+    rig.item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
+        .await;
+    rig.stop().await.unwrap();
+}
