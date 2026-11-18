@@ -408,3 +408,23 @@ async fn observes_no_lock_owner_instead_of_deferring_daemon_collection() {
     assert!(facts.contains("Absent"), "{facts}");
     assert!(!home.lock_file().exists());
 }
+
+#[tokio::test]
+async fn collects_redacted_team_daemon_log_with_warning_tail() {
+    let (_dir, home, args) = fixture();
+    std::fs::write(
+        home.root().join("daemon.log"),
+        "team-20261117-120000-a1b2 test-confidential-λ\nother team quiet\nWARN other team test-confidential-λ\n",
+    )
+    .unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    assert!(
+        result.bundle_dir.join("daemon-log.txt").is_file(),
+        "the log must be collected"
+    );
+    let log = std::fs::read_to_string(result.bundle_dir.join("daemon-log.txt")).unwrap();
+    assert_eq!(log, "team-20261117-120000-a1b2 <cut>\nWARN other team <cut>\n");
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(summary.contains("team-20261117-120000-a1b2 <cut>"), "{summary}");
+    assert!(!summary.contains("test-confidential-λ"), "{summary}");
+}
