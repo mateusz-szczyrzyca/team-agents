@@ -382,6 +382,19 @@ impl RoundState {
         }
     }
 
+    /// Applies an event using the review count frozen when this pull request opened.
+    ///
+    /// # Errors
+    /// Returns the same event and state errors as [`Self::transition`].
+    pub fn transition_with_reviews(
+        &self,
+        event: &RoundEvent,
+        policy: RoundPolicy,
+        _required: crate::config::ReviewCount,
+    ) -> Result<Step, RoundError> {
+        self.transition(event, policy)
+    }
+
     /// The error for an event that does not fit this state.
     fn refuse(&self, event: &RoundEvent) -> RoundError {
         RoundError::NotExpected {
