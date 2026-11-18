@@ -229,49 +229,7 @@ pub async fn execute_debug_at(
     collection.checkout = location.checkout;
     collection.local_offset = location.local_offset;
     collection.observe(home, team, status).await?;
-    match process_facts::observe(home, std::path::Path::new("/proc")).await {
-        Ok(Some(daemon)) => {
-            collection.assessment.daemon = Some(agent_core::diagnostic_assessment::Daemon::Present {
-                executable_newer: Some(daemon.disk_newer_than_process),
-            });
-            collection.add("daemon-process.txt", format!("{daemon:#?}").into_bytes());
-            collection.summary.daemon = Some(daemon);
-        }
-        Ok(None) => {
-            collection.assessment.daemon = Some(agent_core::diagnostic_assessment::Daemon::Absent);
-            collection.add("daemon-process.txt", b"No process holds the home lock.\n".to_vec());
-        }
-        Err(error) => collection
-            .assessment
-            .unreadable
-            .push(agent_core::diagnostic_assessment::ReadFailure {
-                part: "daemon process".to_owned(),
-                reason: crate::process::error_chain(&error),
-            }),
-    }
-    match daemon_log::collect(home, args.daemon_log.as_deref(), team).await {
-        Ok(lines) => {
-            let text = lines.as_ref().map_or_else(
-                || "Daemon log not found.\n".to_owned(),
-                |lines| {
-                    if lines.is_empty() {
-                        String::new()
-                    } else {
-                        format!("{}\n", lines.join("\n"))
-                    }
-                },
-            );
-            collection.add("daemon-log.txt", text.into_bytes());
-            collection.summary.daemon_log_lines = lines;
-        }
-        Err(error) => collection
-            .assessment
-            .unreadable
-            .push(agent_core::diagnostic_assessment::ReadFailure {
-                part: "daemon log".to_owned(),
-                reason: crate::process::error_chain(&error),
-            }),
-    }
+    observe_daemon(&mut collection, home, args.daemon_log.as_deref(), team).await;
     let findings = assess(&collection.assessment);
     collection.summary.anomalies = findings
         .iter()
@@ -367,6 +325,58 @@ fn compact_summary_with(
             )
         }
         Err(error) => Err(error),
+    }
+}
+
+/// Records readable daemon facts and marks each failed observation in its own section.
+async fn observe_daemon(
+    collection: &mut collect::Collection,
+    home: &Home,
+    daemon_log: Option<&std::path::Path>,
+    team: &agent_core::state::Team,
+) {
+    match process_facts::observe(home, std::path::Path::new("/proc")).await {
+        Ok(Some(daemon)) => {
+            collection.assessment.daemon = Some(agent_core::diagnostic_assessment::Daemon::Present {
+                executable_newer: Some(daemon.disk_newer_than_process),
+            });
+            collection.add("daemon-process.txt", format!("{daemon:#?}").into_bytes());
+            collection.summary.daemon = Some(daemon);
+        }
+        Ok(None) => {
+            collection.assessment.daemon = Some(agent_core::diagnostic_assessment::Daemon::Absent);
+            collection.add("daemon-process.txt", b"No process holds the home lock.\n".to_vec());
+        }
+        Err(error) => collection
+            .assessment
+            .unreadable
+            .push(agent_core::diagnostic_assessment::ReadFailure {
+                part: "daemon process".to_owned(),
+                reason: crate::process::error_chain(&error),
+            }),
+    }
+    match daemon_log::collect(home, daemon_log, team).await {
+        Ok(lines) => {
+            let text = lines.as_ref().map_or_else(
+                || "Daemon log not found.\n".to_owned(),
+                |lines| {
+                    if lines.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{}\n", lines.join("\n"))
+                    }
+                },
+            );
+            collection.add("daemon-log.txt", text.into_bytes());
+            collection.summary.daemon_log_lines = lines;
+        }
+        Err(error) => collection
+            .assessment
+            .unreadable
+            .push(agent_core::diagnostic_assessment::ReadFailure {
+                part: "daemon log".to_owned(),
+                reason: crate::process::error_chain(&error),
+            }),
     }
 }
 
