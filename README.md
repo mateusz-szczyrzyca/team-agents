@@ -1031,11 +1031,16 @@ state schema `2`, and migrates history to schema `7`. See [configuration](docs/c
 
 A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt
 (`prompts/harness/run/resume-no-status.md`), up to twice in a row; a third failure in a row marks the task failed and
-notifies the coordinator (or human). When a member fails or ends without status while holding an item, the coordinator
-receives a notice naming the item and the member's branch (`prompts/harness/team/bus-member-failed-item.md` or
-`bus-member-no-status-item.md`). When the lead has reported `STATUS: DONE` and waits while an item remains blocked
-behind a failed member, the human is told immediately once per item (`prompts/harness/pr/notice-standing-item.md`) with
-the member's last-run details and commands to speak to the member and resume it (`agent say <task>`, `agent resume <task>`).
+notifies the coordinator (or human). Automatic retries apply only to resumable tasks with a session (solo tasks,
+coordinators, and team members), excluding workers serving requests, reviewers, tasks without a session, or failures
+during startup or execution. Runs ending without a status line upon daemon shutdown or interruption (exit code `None`)
+count toward the consecutive limit so restarts remain bounded. When a member fails or ends without status while
+holding an item, the coordinator receives a notice naming the item and the member's branch
+(`prompts/harness/team/bus-member-failed-item.md` or `bus-member-no-status-item.md`). When the lead has reported
+`STATUS: DONE` and waits while an item remains blocked behind a failed member, the human is told immediately once per
+item (`prompts/harness/pr/notice-standing-item.md`) with the member's last-run details and commands to speak to the
+member and resume it (`agent say <task>`, `agent resume <task>`). Resuming a task clears the notification deduplication
+for items assigned to that task.
 
 `bin/agent` is being rewritten in Rust (the Cargo workspace in `crates/`; the plan and the layout are in
 [`docs/architecture.md`](docs/architecture.md)). The new `agent` is **not installed** by `install.sh` and is not what
@@ -1125,6 +1130,20 @@ How the human answers the agents and steers a task or a team, through the daemon
 
 `agent status` ends the line of a task that runs with `last activity HH:MM:SS`: the local time the output of its run last
 changed (the file `tasks/<task>/runs/<run>/out.jsonl`), which is how to tell a task that works from one that hangs.
+
+The line of a round ends with when the round started, in local time (`started DD-MM-YYYY HH:MM`), and for a round that
+is closed with how long it took (`took 3h 01m`). A round that goes on also says where its work is, after `open`:
+
+| Says | Means |
+|---|---|
+| `only local` | the work is in the worktrees; no pull request is open |
+| `PR draft` | the pull request is open as a draft: the checks before the review hold it |
+| `PR ready` | the pull request is ready for review and no reviewer has started |
+| `PR in review` | a reviewer works or has reported, or the team fixes what the reviewers asked for |
+| `PR approved` | the reviews approve; the pull request waits for its merge (with `--no-merge`, yours) |
+
+The draft is told from the history (`history.db`), the rest from the daemon. When the history cannot be read — it is
+turned off, or its file is missing — such a round says `only local or PR draft`, and a last line says why.
 
 A run that ends with questions leaves `questions-<round>.md` in the task's directory and a notification file; with
 `[questions] open = "vscode"` the file is also opened in the VS Code window connected to the host. Saving that file with the

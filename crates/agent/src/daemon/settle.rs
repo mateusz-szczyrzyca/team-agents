@@ -29,7 +29,10 @@ pub(super) enum Settled {
     /// The run exhausted its turn budget: the persisted streak decides whether it continues.
     TurnLimit,
     /// The run ended without a status line: the persisted streak decides whether it continues.
-    NoStatus { exit_code: Option<i32> },
+    NoStatus {
+        /// The process's exit code, if it exited normally.
+        exit_code: Option<i32>,
+    },
 }
 
 /// What the end `end` of a run of the member of role `role` does to its task; `pause` is what the classifier made
