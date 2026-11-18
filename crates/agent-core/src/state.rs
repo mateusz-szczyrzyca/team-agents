@@ -23,7 +23,9 @@ mod values;
 
 pub use checked::CheckedMut;
 pub use checks::{Asked, ChecksRecord, ItemChecks, Sent};
-pub use findings::{FindingNumbersExhausted, FindingStatus, Findings, InvalidFindingNumbers, RecordedFinding};
+pub use findings::{
+    FindingNumbersExhausted, FindingStatus, Findings, InvalidFindingNumbers, RecordedFinding, Verification,
+};
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
 pub use item::{
     AdvanceError, AskReviewsError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut,
