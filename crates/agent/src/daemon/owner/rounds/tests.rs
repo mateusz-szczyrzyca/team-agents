@@ -435,6 +435,53 @@ async fn a_team_that_has_not_slept_as_long_as_it_may_is_left_alone() {
     assert_eq!(rig.runs(&tasks[0]), 1);
 }
 
+// Rule: when the lead is done and an item stands behind a failed member, the human is told immediately.
+#[tokio::test]
+async fn a_team_whose_lead_is_done_and_item_stands_behind_failed_member_tells_human_immediately() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,work"),
+            normal("claude-1", "fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+
+    let (team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+
+    let notice = rig.notification_with("waits with item 1.1 behind failed member").await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(notice.starts_with("💤 example\n"), "{notice}");
+    assert!(notice.contains("\nStatus: 💤 team asleep\n"), "{notice}");
+    assert!(
+        notice.contains(&format!(
+            "Note: Team {team} waits with item 1.1 behind failed member claude-1"
+        )),
+        "{notice}"
+    );
+    assert!(notice.contains(&format!("agent resume {}", tasks[1])), "{notice}");
+    assert!(notice.contains(&format!("agent say {} ", tasks[0])), "{notice}");
+    assert!(notice.contains(&format!("agent stop {team}")), "{notice}");
+
+    let told: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("behind failed member"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+}
+
 // ---- reviews and the merge -----------------------------------------------------------------------------------
 
 use agent_core::state::Completion;
