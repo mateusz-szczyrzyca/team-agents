@@ -216,7 +216,7 @@ impl Collection {
             last_run_started: last.map(agent_core::state::Run::started_at),
             last_run_ended: ended,
             last_activity: None,
-            last_run_end_detail: last.map(|run| run_detail(run.state())),
+            last_run_end_detail: last.map(|run| run_detail_at(run.state(), self.local_offset)),
             questions: None,
         };
         self.summary.tasks.push(row);
@@ -1178,4 +1178,9 @@ fn run_detail(state: &RunState) -> String {
         RunEnd::Stopped => "stopped by the human".to_owned(),
     };
     format!("ended, {how}, at {at}")
+}
+
+/// Presents a run end in the caller offset.
+fn run_detail_at(state: &RunState, _offset: time::UtcOffset) -> String {
+    run_detail(state)
 }

@@ -593,3 +593,33 @@ fn empty_team_history_records_history_artifacts_without_read_failure() {
             .any(|(p, _)| p == &PathBuf::from("history.jsonl"))
     );
 }
+
+#[test]
+fn diagnostic_error_formats_git_process_status_and_stderr() {
+    let err = ObservationError::Git {
+        exit: ExitReport::Exited { code: 128 },
+        stderr: b"fatal: bad object 1234\nextra details".to_vec(),
+    };
+    assert_eq!(
+        diagnostic_error(&err),
+        "read-only git command exited with 128: fatal: bad object 1234"
+    );
+}
+
+#[test]
+fn run_detail_formats_prose_with_local_offset() {
+    use agent_core::state::RunEnd;
+    use agent_core::status::RunOutcome;
+
+    let state = RunState::Ended {
+        at: "2026-11-17T12:00:00Z".parse().unwrap(),
+        end: RunEnd::Reported {
+            outcome: RunOutcome::Done,
+        },
+    };
+    let offset = time::UtcOffset::from_hms(1, 0, 0).unwrap();
+    assert_eq!(
+        run_detail_at(&state, offset),
+        "ended, reported DONE, at 2026-11-17 12:00:00 UTC (2026-11-17 13:00:00 +01:00)"
+    );
+}
