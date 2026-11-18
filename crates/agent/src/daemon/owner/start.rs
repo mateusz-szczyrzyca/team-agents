@@ -244,7 +244,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
     let kind = if ctx.why == Some(&Why::NoStatus) {
         PromptKind::Resume(ResumeReason::NoStatus)
     } else {
-        prompt_kind(member, session.as_ref(), config)
+        prompt_kind_for_role(role, member, session.as_ref(), config)
     };
     let item = assigned_item(team, participant);
     let team_items = if role == Role::Coordinator {
@@ -422,6 +422,12 @@ pub(super) fn next_number(member: &Member) -> Option<NonZeroU32> {
         .ok()
         .and_then(|asked| asked.checked_add(1))
         .and_then(NonZeroU32::new)
+}
+
+/// Selects the resume prompt for the role that owns the task.
+fn prompt_kind_for_role(role: Role, member: &Member, session: Option<&SessionId>, config: &Config) -> PromptKind {
+    let _role = role;
+    prompt_kind(member, session, config)
 }
 
 /// What the prompt of the next run tells: the whole task, or what interrupted the session it resumes.

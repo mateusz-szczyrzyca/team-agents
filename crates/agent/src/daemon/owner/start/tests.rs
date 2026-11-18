@@ -149,3 +149,33 @@ fn prompt_kind_resumes_no_status_up_to_retries() {
         PromptKind::Resume(ResumeReason::NoStatus)
     );
 }
+
+#[test]
+fn human_resumed_workers_and_reviewers_keep_the_full_prompt_after_no_status() {
+    use crate::fixtures::{at, run, task, team_state};
+    use agent_core::status::TaskStatus;
+
+    for (role, number, expected) in [
+        (Role::Solo, 1, PromptKind::Resume(ResumeReason::NoStatus)),
+        (Role::Coordinator, 1, PromptKind::Resume(ResumeReason::NoStatus)),
+        (Role::Member, 2, PromptKind::Resume(ResumeReason::NoStatus)),
+        (Role::Worker, 3, PromptKind::First),
+        (Role::Reviewer, 4, PromptKind::First),
+    ] {
+        let mut state = team_state();
+        let session: agent_core::state::SessionId = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+        let (_, mut member) = state.find_task_mut(&task(number)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.begin_run(run(1), at(1), Some(session.clone())).unwrap();
+        member.end_run(at(2), RunEnd::NoStatus { exit_code: Some(0) }).unwrap();
+        member.transition(TaskStatus::Failed).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+        let found = state.find_task(&task(number)).unwrap();
+        let cli_session = SessionId::from_str(session.as_str()).unwrap();
+        assert_eq!(
+            prompt_kind_for_role(role, found.member, Some(&cli_session), &Config::default()),
+            expected,
+            "{role:?}"
+        );
+    }
+}
