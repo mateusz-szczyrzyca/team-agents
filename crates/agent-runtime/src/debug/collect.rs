@@ -670,15 +670,6 @@ impl Collection {
 /// A bounded observation failure, converted to a read-failure only at its part's boundary.
 #[derive(Debug, thiserror::Error)]
 enum ObservationError {
-    /// A live WAL cannot be ignored without losing committed records.
-    #[error("history has a nonempty WAL; collection without shared-memory writes requires a checkpointed database")]
-    HistoryWal,
-    /// History cannot be decoded.
-    #[error("cannot read history records")]
-    History(#[source] crate::history::ReadError),
-    /// Concurrent writes prevented a stable observation.
-    #[error("history changed during collection")]
-    HistoryChanged,
     /// File access failed.
     #[error("cannot read file")]
     Io(#[source] std::io::Error),
@@ -714,20 +705,6 @@ enum ObservationError {
     /// A git object ID is invalid.
     #[error("git tip is invalid")]
     Commit(#[source] agent_core::state::InvalidCommitId),
-}
-
-/// Checks that immutable SQLite reading will include every committed record and remain stable.
-fn history_stamp(path: &Path) -> Result<(u64, std::time::SystemTime), ObservationError> {
-    let mut wal = path.as_os_str().to_os_string();
-    wal.push("-wal");
-    match std::fs::metadata(Path::new(&wal)) {
-        Ok(metadata) if metadata.len() != 0 => return Err(ObservationError::HistoryWal),
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(ObservationError::Io(error)),
-    }
-    let metadata = std::fs::metadata(path).map_err(ObservationError::Io)?;
-    Ok((metadata.len(), metadata.modified().map_err(ObservationError::Io)?))
 }
 
 fn parse_commit(line: &str) -> Result<GitCommitSummaryFacts, ObservationError> {
