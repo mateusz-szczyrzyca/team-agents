@@ -47,8 +47,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
 
-/// The schema version this build writes. It also reads version 2 (without findings) and version 1 (without rounds).
-pub const SCHEMA_VERSION: u32 = 3;
+/// The schema version this build writes. It also reads version 3 (dependent reviews), version 2 (without findings) and version 1 (without rounds).
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Largest state text accepted, in bytes: a bound on untrusted input, far above any real state.
 pub const MAX_STATE_BYTES: usize = 64 << 20;
@@ -64,7 +64,7 @@ version_type!(SchemaVersion, SCHEMA_VERSION, UnsupportedSchema);
 
 /// A state of a schema version this build does not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("the state has schema version {found}; this build reads versions 1, 2 and {SCHEMA_VERSION}")]
+#[error("the state has schema version {found}; this build reads versions 1, 2, 3 and {SCHEMA_VERSION}")]
 pub struct UnsupportedSchema {
     /// The version the state declares.
     pub found: u64,
@@ -381,11 +381,11 @@ impl State {
     /// Reads a state from JSON text.
     ///
     /// # Errors
-    /// [`StateError`]: the text is too large, declares a schema version other than 1, 2 and 3 (checked first, so that a
+    /// [`StateError`]: the text is too large, declares a schema version other than 1, 2, 3 and 4 (checked first, so that a
     /// state of a newer version is refused as such and not as malformed), is not a valid state, or has clashing teams,
     /// tasks or rounds.
     ///
-    /// A state of version 1 is migrated as it is read: it comes out as the state of version 3 that stands for it, and
+    /// A state of version 1 is migrated as it is read: it comes out as the state of version 4 that stands for it, and
     /// the same text always gives the same state.
     pub fn from_json(text: &str) -> Result<Self, StateError> {
         if text.len() > MAX_STATE_BYTES {
@@ -398,7 +398,7 @@ impl State {
         if probe.schema_version == u64::from(migrate::LEGACY_VERSION) {
             return migrate::from_v1(text);
         }
-        if probe.schema_version == 2 {
+        if matches!(probe.schema_version, 2 | 3) {
             return migrate::from_v2(text);
         }
         if probe.schema_version != u64::from(SCHEMA_VERSION) {
