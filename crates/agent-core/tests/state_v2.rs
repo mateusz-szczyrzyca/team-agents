@@ -88,14 +88,14 @@ mod state_v2 {
     #[test]
     fn a_state_of_schema_version_4_is_refused_as_an_unsupported_version_whatever_else_it_holds() {
         for text in [
-            V2.replacen("\"schema_version\": 2", "\"schema_version\": 5", 1),
-            "{\"schema_version\": 5, \"teams\": {\"by_id\": 5}}".to_owned(),
-            "{\"teams\": [], \"schema_version\": 5, \"future\": true}".to_owned(),
+            V2.replacen("\"schema_version\": 2", "\"schema_version\": 6", 1),
+            "{\"schema_version\": 6, \"teams\": {\"by_id\": 5}}".to_owned(),
+            "{\"teams\": [], \"schema_version\": 6, \"future\": true}".to_owned(),
         ] {
             let err = State::from_json(&text).unwrap_err();
 
             assert!(
-                matches!(err, StateError::UnsupportedSchema(UnsupportedSchema { found: 5 })),
+                matches!(err, StateError::UnsupportedSchema(UnsupportedSchema { found: 6 })),
                 "{err:?}"
             );
         }
