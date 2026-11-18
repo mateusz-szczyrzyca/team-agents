@@ -835,7 +835,12 @@ impl Owner {
         // limit's pause or a hang it wins entirely: the run ended by the human's word, with no wake-up, no strike and no
         // notice of a pause that nobody waits for.
         let halt = self.halts.remove(task);
-        let overruled = halt.filter(|_| matches!(settled, Settled::Paused(_) | Settled::Hung | Settled::TurnLimit));
+        let overruled = halt.filter(|_| {
+            matches!(
+                settled,
+                Settled::Paused(_) | Settled::Hung | Settled::TurnLimit | Settled::NoStatus { .. }
+            )
+        });
         let end = if overruled.is_some() {
             RunEnd::Stopped
         } else {
@@ -934,10 +939,6 @@ impl Owner {
             Settled::NoStatus { exit_code } => {
                 self.hangs.remove(task);
                 self.no_status(task, located.role, exit_code)?
-            }
-            Settled::Failed(Notice::NoStatus { exit }) => {
-                self.hangs.remove(task);
-                self.no_status(task, located.role, exit)?
             }
             Settled::Failed(notice) => {
                 self.hangs.remove(task);
