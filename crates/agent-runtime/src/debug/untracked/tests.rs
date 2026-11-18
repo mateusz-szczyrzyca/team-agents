@@ -178,3 +178,36 @@ async fn directory_entries_are_not_listed_as_untracked_files() {
         result.artifact_text
     );
 }
+
+#[tokio::test]
+async fn modification_time_before_year_0000_is_unreadable_and_unknown() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let worktree = dir.path();
+    // 0000-01-01T00:00:00Z is 62_167_219_200 seconds before the epoch; one day before it is year -1.
+    let before = SystemTime::UNIX_EPOCH - Duration::from_secs(62_167_219_200 + SECONDS_PER_DAY);
+    fs::write(worktree.join("ancient.txt"), b"x").expect("write");
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(worktree.join("ancient.txt"))
+        .expect("open file");
+    file.set_times(fs::FileTimes::new().set_modified(before))
+        .expect("set times");
+
+    let result = collect(worktree, &[PathBuf::from("ancient.txt")]).await;
+
+    assert_eq!(result.summary_facts.len(), 1);
+    assert_eq!(result.summary_facts[0].modified, None);
+    assert_eq!(result.unreadable.len(), 1, "{:?}", result.unreadable);
+    assert!(
+        result.unreadable[0].part.contains("ancient.txt"),
+        "{}",
+        result.unreadable[0].part
+    );
+    assert!(
+        result
+            .artifact_text
+            .contains("- \"ancient.txt\" (1 bytes, modified unknown)"),
+        "{}",
+        result.artifact_text
+    );
+}
