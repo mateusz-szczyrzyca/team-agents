@@ -10,7 +10,6 @@ use agent_core::diagnostic_assessment::{Anomaly, Assessment, Usage, assess};
 use agent_core::ids::TaskId;
 use agent_core::state::Timestamp;
 
-use crate::clock::SystemClock;
 use crate::debug_redaction::SecretsCut;
 use crate::store::Home;
 
@@ -166,7 +165,7 @@ fn filesystem_90_percent_full_by_space_or_inodes_triggers_anomaly() {
         }),
     };
 
-    let now = Timestamp::now(&SystemClock).expect("now");
+    let now = "2026-11-18T12:00:00Z".parse::<Timestamp>().expect("valid timestamp");
     let lead: TaskId = "task-20261118-120000-lead".parse().expect("task id");
     let assessment = Assessment {
         now,
