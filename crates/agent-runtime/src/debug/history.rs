@@ -13,6 +13,9 @@ mod tests;
 /// Per-file disk-copy ceiling (64 GiB), allowing long-lived homes without unbounded copies.
 pub(crate) const MAX_HISTORY_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
+/// Maximum snapshot attempts when the daemon changes a source during copying.
+const SNAPSHOT_ATTEMPTS: u8 = 3;
+
 /// Why reading live history failed.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum HistoryCollectionError {
@@ -193,7 +196,7 @@ fn copy_bounded(source: &Path, destination: &Path, limit: u64) -> Result<u64, Hi
 /// # Errors
 /// [`HistoryCollectionError::TooLarge`] if database or sidecar files exceed [`MAX_HISTORY_BYTES`].
 /// [`HistoryCollectionError::Io`] if files could not be read or copied.
-/// [`HistoryCollectionError::Changed`] if the database changed during copy.
+/// [`HistoryCollectionError::Changed`] if the source changes during all three copy attempts.
 /// [`HistoryCollectionError::Read`] if reading records from the snapshot fails.
 pub(crate) fn read_live_team_history(
     history_path: &Path,
@@ -210,7 +213,20 @@ fn read_with_copy(
     if file_stamp(history_path)?.is_none() {
         return Ok(Vec::new());
     }
+    for _attempt in 0..SNAPSHOT_ATTEMPTS {
+        match snapshot(history_path, team, copy) {
+            Err(HistoryCollectionError::Changed) => continue,
+            result => return result,
+        }
+    }
+    Err(HistoryCollectionError::Changed)
+}
 
+fn snapshot(
+    history_path: &Path,
+    team: &TeamId,
+    copy: &mut impl FnMut(&Path, &Path, u64) -> Result<u64, HistoryCollectionError>,
+) -> Result<Vec<SequencedRecord>, HistoryCollectionError> {
     let wal_path = sidecar_path(history_path, "-wal");
     let shm_path = sidecar_path(history_path, "-shm");
 
