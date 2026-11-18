@@ -446,16 +446,29 @@ async fn observe_config(collection: &mut collect::Collection, home: &Home, secre
     let secret_names = config::format_secret_names(secrets);
     collection.add("secrets.toml", secret_names.into_bytes());
 
+    let mut secret_keys = Vec::new();
+    if secrets.github_token().is_some() {
+        secret_keys.push("github_token".to_owned());
+    }
+    for key in secrets.agent_env().keys() {
+        secret_keys.push(format!("agent_env.{key}"));
+    }
+    for key in secrets.notification_env().keys() {
+        secret_keys.push(format!("notification_env.{key}"));
+    }
+    collection.summary.secret_keys = secret_keys;
+
     match config::collect_config(home).await {
         Ok(text) => {
             collection.add("agents.toml", text.into_bytes());
+            collection.summary.configuration = Some("agents.toml".to_owned());
         }
         Err(error) => {
             collection
                 .assessment
                 .unreadable
                 .push(agent_core::diagnostic_assessment::ReadFailure {
-                    section: SummarySection::CollectionFailures,
+                    section: SummarySection::DaemonAndVersions,
                     part: "configuration".to_owned(),
                     reason: crate::process::error_chain(&error),
                 });

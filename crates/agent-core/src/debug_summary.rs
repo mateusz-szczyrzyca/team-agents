@@ -529,10 +529,23 @@ fn write_process_line(out: &mut SummaryWriter, label: &str, value: &str) {
     write_line(out, "");
 }
 
-fn render_daemon(daemon: Option<&DaemonSummary>, command_version: &str, offset: UtcOffset, out: &mut SummaryWriter) {
+fn render_daemon(
+    daemon: Option<&DaemonSummary>,
+    command_version: &str,
+    configuration: Option<&str>,
+    secret_keys: &[String],
+    offset: UtcOffset,
+    out: &mut SummaryWriter,
+) {
     let Some(d) = daemon else {
         write_line(out, "The daemon does not answer (unreachable).");
         write_process_line(out, "- Command version: ", command_version);
+        if let Some(conf) = configuration {
+            write_process_line(out, "- Configuration: ", conf);
+        }
+        if !secret_keys.is_empty() {
+            write_process_line(out, "- Secret keys: ", &secret_keys.join(", "));
+        }
         write_line(out, "");
         return;
     };
@@ -548,6 +561,12 @@ fn render_daemon(daemon: Option<&DaemonSummary>, command_version: &str, offset: 
     }
     write_process_line(out, "- Command line: ", &d.cmdline.join(" "));
     write_process_line(out, "- Environment variables: ", &d.env_var_names.join(", "));
+    if let Some(conf) = configuration {
+        write_process_line(out, "- Configuration: ", conf);
+    }
+    if !secret_keys.is_empty() {
+        write_process_line(out, "- Secret keys: ", &secret_keys.join(", "));
+    }
     write_line(out, "");
 }
 
@@ -1010,7 +1029,6 @@ fn render_with_redaction(
             if matches!(
                 section,
                 SummarySection::HistoryTail
-                    | SummarySection::DaemonAndVersions
                     | SummarySection::DaemonLog
                     | SummarySection::Bus
                     | SummarySection::Notifications
@@ -1021,7 +1039,14 @@ fn render_with_redaction(
         match section {
             SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
             SummarySection::DaemonAndVersions => {
-                render_daemon(input.daemon.as_ref(), &input.command_version, offset, &mut out);
+                render_daemon(
+                    input.daemon.as_ref(),
+                    &input.command_version,
+                    input.configuration.as_deref(),
+                    &input.secret_keys,
+                    offset,
+                    &mut out,
+                );
             }
             SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut out),
             SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut out),
