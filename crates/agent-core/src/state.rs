@@ -644,13 +644,13 @@ mod tests {
 
     #[test]
     fn the_schema_version_is_one() {
-        assert_eq!(SCHEMA_VERSION, 2);
-        assert_eq!(serde_json::to_value(SchemaVersion).unwrap(), json!(2));
+        assert_eq!(SCHEMA_VERSION, 3);
+        assert_eq!(serde_json::to_value(SchemaVersion).unwrap(), json!(3));
     }
 
     #[test]
     fn only_the_schema_version_of_this_build_is_read() {
-        serde_json::from_value::<SchemaVersion>(json!(2)).unwrap();
+        serde_json::from_value::<SchemaVersion>(json!(3)).unwrap();
         for bad in [
             json!(0),
             json!(1),
@@ -686,7 +686,7 @@ mod tests {
     fn an_empty_state_is_written_with_its_schema_version_first() {
         let text = State::new().to_json().unwrap();
 
-        assert_eq!(text, "{\n  \"schema_version\": 2,\n  \"teams\": []\n}\n");
+        assert_eq!(text, "{\n  \"schema_version\": 3,\n  \"teams\": []\n}\n");
         assert_eq!(State::from_json(&text).unwrap(), State::new());
     }
 
@@ -694,14 +694,14 @@ mod tests {
     fn a_state_is_written_indented_and_ends_with_a_newline_and_the_schema_version_comes_first() {
         let text = two_teams().to_json().unwrap();
 
-        assert!(text.starts_with("{\n  \"schema_version\": 2,\n  \"teams\": [\n    {\n      \"id\": \"team-"));
+        assert!(text.starts_with("{\n  \"schema_version\": 3,\n  \"teams\": [\n    {\n      \"id\": \"team-"));
         assert!(text.ends_with("}\n"));
         assert!(!text.ends_with("\n\n"));
     }
 
     #[test]
     fn a_state_of_another_schema_version_is_refused_with_that_version() {
-        for found in [0_u64, 3, 99, u64::MAX] {
+        for found in [0_u64, 4, 99, u64::MAX] {
             let text = format!("{{\"schema_version\": {found}, \"teams\": []}}");
 
             let err = State::from_json(&text).unwrap_err();
@@ -716,9 +716,9 @@ mod tests {
     #[test]
     fn the_version_is_checked_before_the_rest_so_a_newer_state_is_not_called_malformed() {
         for text in [
-            "{\"schema_version\": 3, \"teams\": {\"by_id\": 5}}",
+            "{\"schema_version\": 4, \"teams\": {\"by_id\": 5}}",
             "{\"teams\": [], \"schema_version\": 4, \"future\": true}",
-            "{\"schema_version\": 3}",
+            "{\"schema_version\": 4}",
         ] {
             let err = State::from_json(text).unwrap_err();
 
@@ -813,7 +813,7 @@ mod tests {
     #[test]
     fn serde_reads_a_state_through_the_same_checks() {
         let good = State::new().to_json().unwrap();
-        let other_version = "{\"schema_version\": 3, \"teams\": []}";
+        let other_version = "{\"schema_version\": 4, \"teams\": []}";
         let one = serde_json::to_value(team_of(1, 1)).unwrap();
         let duplicate = json!({"schema_version": 1, "teams": [one, one]}).to_string();
 
