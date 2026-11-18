@@ -520,8 +520,15 @@ async fn reports_unreadable_configuration_when_agents_toml_is_missing() {
     let (_dir, home, args) = fixture();
     let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
     let summary = std::fs::read_to_string(result.summary_path).unwrap();
-    assert!(summary.contains("### Unreadable Parts"));
-    assert!(summary.contains("configuration"));
+    let daemon_section = summary
+        .split("## Daemon and Versions")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(daemon_section.contains("Could not read configuration"));
+    assert!(daemon_section.contains("Command version"));
 }
 
 #[tokio::test]
