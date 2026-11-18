@@ -7,7 +7,8 @@
 //! 1. No item of the team is in progress or being fixed: there is nothing to wake anybody for.
 //! 2. A task of the crew is not waiting — it is queued, runs, asks the human or is paused: somebody works or will.
 //! 3. The lead's last run ended with `STATUS: DONE`: its branch is with the harness (the gate, the pull request), which
-//!    says so itself when it cannot go on.
+//!    says so itself when it cannot go on — unless an item remains in progress behind a failed member, in which case the
+//!    human is told immediately.
 //! 4. The last run of the crew ended less than the time a team may sleep ago: a message may still wake somebody.
 //! 5. Otherwise the lead is woken and told that nobody works; when it was woken for it as often as it is, the human is
 //!    told instead.
@@ -57,13 +58,16 @@ pub fn asleep_step(team: &Team<'_>) -> AsleepStep {
     };
     // A lead that is over cannot be woken; one that does not wait works, asks or will.
     let lead_sleeps = team.tasks.first() == Some(&TaskStatus::Waiting);
-    if !team.unfinished || !lead_sleeps || team.tasks.iter().any(busy) {
+    if !team.unfinished || !lead_sleeps {
         return AsleepStep::Nothing;
     }
     if team.lead_done {
         if team.standing_item {
             return AsleepStep::TellHuman;
         }
+        return AsleepStep::Nothing;
+    }
+    if team.tasks.iter().any(busy) {
         return AsleepStep::Nothing;
     }
     if team.quiet_for < team.may_sleep {
