@@ -214,11 +214,12 @@ fn pure_blocked_item_step_table() {
         for lead_done in [false, true] {
             for assignee_status in all_statuses {
                 let step = blocked_item_step(lead_done, lead_status, assignee_status);
-                let expected = if lead_done && lead_status == TaskStatus::Waiting && assignee_status == TaskStatus::Failed {
-                    BlockedItemStep::TellHuman
-                } else {
-                    BlockedItemStep::Nothing
-                };
+                let expected =
+                    if lead_done && lead_status == TaskStatus::Waiting && assignee_status == TaskStatus::Failed {
+                        BlockedItemStep::TellHuman
+                    } else {
+                        BlockedItemStep::Nothing
+                    };
                 assert_eq!(
                     step, expected,
                     "lead_status={lead_status:?}, lead_done={lead_done}, assignee_status={assignee_status:?}"
