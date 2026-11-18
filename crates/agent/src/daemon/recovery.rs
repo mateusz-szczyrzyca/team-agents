@@ -1,9 +1,12 @@
 //! Recovery on start: what a restart left half done in the state.
 
 use agent_core::config::Limits;
-use agent_core::decide::outcome::ClassifyError;
+use agent_core::decide::outcome::{
+    AfterNoStatus, ClassifyError, NO_STATUS_RETRIES, after_no_status, consecutive_no_status,
+};
 use agent_core::ids::TaskId;
-use agent_core::state::{Run, RunEnd, RunError, RunState, State, Timestamp};
+use agent_core::kinds::Role;
+use agent_core::state::{Member, Run, RunEnd, RunError, RunState, State, Timestamp};
 use agent_core::status::{InvalidTransition, TaskStatus};
 
 use super::settle::wake_time;
@@ -11,8 +14,10 @@ use super::settle::wake_time;
 /// What recovery found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Recovery {
-    /// The tasks whose run was going when the daemon went down: the run is ended and the task queued.
+    /// Tasks whose runs a restart ended: queued again, or failed when no-status retries are exhausted.
     pub(super) interrupted: Vec<TaskId>,
+    /// The interrupted tasks whose persisted no-status retries are exhausted.
+    pub(super) exhausted: Vec<TaskId>,
     /// The paused tasks and when each goes on.
     pub(super) wakes: Vec<(Timestamp, TaskId)>,
     /// The queued tasks whose last runs hung, and how many hangs in a row: the watchdog's count, which a restart must
@@ -55,13 +60,17 @@ pub(crate) enum RecoveryError {
     },
 }
 
-/// Ends the runs that were going, queues their tasks and finds the pauses to wake.
+/// Ends interrupted runs, queues or fails their tasks within the retry budget, and finds the pauses to wake.
 ///
 /// # Errors
 /// [`RecoveryError`] when the state refuses a change or a pause cannot be timed.
 pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Result<Recovery, RecoveryError> {
     let mut recovery = Recovery::default();
     for task in all_tasks(state) {
+        let role = state
+            .find_task(&task)
+            .ok_or_else(|| RecoveryError::Missing { task: task.clone() })?
+            .role;
         let (_, mut member) = state
             .find_task_mut(&task)
             .ok_or_else(|| RecoveryError::Missing { task: task.clone() })?;
@@ -78,12 +87,14 @@ pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Res
                 })?;
         }
         if was_running {
-            member
-                .transition(TaskStatus::Queued)
-                .map_err(|source| RecoveryError::Status {
-                    task: task.clone(),
-                    source,
-                })?;
+            let status = interrupted_status(role, &member);
+            if status == TaskStatus::Failed {
+                recovery.exhausted.push(task.clone());
+            }
+            member.transition(status).map_err(|source| RecoveryError::Status {
+                task: task.clone(),
+                source,
+            })?;
         }
         if was_going || was_running {
             recovery.interrupted.push(task.clone());
@@ -102,6 +113,18 @@ pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Res
         }
     }
     Ok(recovery)
+}
+
+/// Keeps interruption recovery queued except when an eligible session has used its entire no-status budget.
+pub(super) fn interrupted_status(role: Role, member: &Member) -> TaskStatus {
+    // Ask the core decision at the last permitted retry to establish eligibility without changing the shutdown
+    // policy of workers, reviewers or tasks without a resumable session.
+    let eligible = after_no_status(role, NO_STATUS_RETRIES, member.last_session()) == AfterNoStatus::Resume;
+    if eligible && consecutive_no_status(member.runs()) > NO_STATUS_RETRIES {
+        TaskStatus::Failed
+    } else {
+        TaskStatus::Queued
+    }
 }
 
 /// How many of the last `runs` hung in a row. A run a restart interrupted is no strike and does not end the row.

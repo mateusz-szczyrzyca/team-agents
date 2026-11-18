@@ -67,7 +67,7 @@ use super::notice::{Notice, NoticeContext};
 use super::notifier::Delivery;
 use super::questions;
 use super::questions::watch::{Report, Saves, Watcher};
-use super::recovery::{RecoveryError, recover};
+use super::recovery::{RecoveryError, interrupted_status, recover};
 use super::settle::{Settled, settle};
 use super::team::{AssignmentError, DoneNoticeError, NoticeRenderError, Why};
 use agent_runtime::notify::Notification;
@@ -523,13 +523,19 @@ impl Owner {
         }
         self.hangs.extend(recovery.hangs);
         self.record_recovered_ends(&recovery.interrupted);
+        for task in &recovery.exhausted {
+            let located = self.locate(task)?;
+            self.commit(task, &located, now, Vec::new(), Some(Notice::NoStatus { exit: None }))
+                .await?;
+            self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)?;
+        }
         self.remember_closed_teams();
         self.look_at_every_team();
         if !recovery.interrupted.is_empty() {
             tracing::warn!(
                 event = LogEvent::RestartCorrected.as_str(),
                 tasks = recovery.interrupted.len(),
-                "runs that a restart interrupted are queued again"
+                "runs that a restart interrupted have been reconciled"
             );
             self.save().await?;
         }
@@ -783,7 +789,7 @@ impl Owner {
     }
 
     /// A run that was stopped: by the human, whose word sets the status of the task, or because the daemon shuts down, when
-    /// the run is recorded as interrupted and its task is queued for the next start.
+    /// the run is recorded as interrupted and queued, unless its no-status retry budget is exhausted.
     async fn interrupted(&mut self, task: &TaskId, session: Option<CliSessionId>) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
         let now = Timestamp::now(&self.parts.clock)?;
@@ -798,8 +804,19 @@ impl Owner {
                 None,
                 &mut events,
             )?;
-            self.move_to(task, &located.team, TaskStatus::Queued, &mut events)?;
-            return self.commit(task, &located, now, events, None).await;
+            let found = self
+                .parts
+                .state
+                .find_task(task)
+                .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+            let status = interrupted_status(located.role, found.member);
+            self.move_to(task, &located.team, status, &mut events)?;
+            let notice = (status == TaskStatus::Failed).then_some(Notice::NoStatus { exit: None });
+            self.commit(task, &located, now, events, notice).await?;
+            if status == TaskStatus::Failed {
+                self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)?;
+            }
+            return Ok(());
         };
         self.end_run(task, &located.team, now, RunEnd::Stopped, None, &mut events)?;
         self.move_to(task, &located.team, halted_status(halt), &mut events)?;
