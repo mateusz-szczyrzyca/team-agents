@@ -257,7 +257,7 @@ fn a_request_goes_on_while_the_worker_is_paused_asks_or_is_queued_to_continue() 
 
 #[test]
 fn turn_limit_tells_the_coordinator_and_ends_a_worker_request_only_when_the_task_failed() {
-    let mut team = crew_of(PLAIN, 1, 0);
+    let mut team = working();
     assert_eq!(told(&team, 2, &RunEnd::TurnLimit, None), None);
     ran(&mut team, 2, 1, RunEnd::TurnLimit, &[TaskStatus::Failed]);
     assert_eq!(
@@ -319,17 +319,15 @@ fn a_member_that_ended_without_a_status_on_an_item_tells_the_coordinator_only_wh
 }
 
 #[test]
-fn turn_limit_on_an_item_tells_the_coordinator_the_item_and_branch_when_failed() {
+fn turn_limit_on_an_item_keeps_the_original_no_status_notice_when_failed() {
     let mut team = working();
     ran(&mut team, 2, 1, RunEnd::TurnLimit, &[TaskStatus::Failed]);
     assert_eq!(
         told(&team, 2, &RunEnd::TurnLimit, None).unwrap(),
         Told {
             to: agent("inv-opus"),
-            notice: BusNotice::MemberNoStatusItem {
+            notice: BusNotice::MemberNoStatus {
                 member: agent("claude-1"),
-                item: "1.1".parse().unwrap(),
-                branch: "agents/claude-1/task-20261111-153002-k3x9-1.1".parse().unwrap(),
             },
         }
     );
