@@ -6,6 +6,7 @@ mod bus;
 mod collect;
 mod daemon_log;
 pub(crate) mod history;
+mod notifications;
 mod process_facts;
 #[cfg(test)]
 mod tests;
