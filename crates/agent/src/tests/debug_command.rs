@@ -957,6 +957,10 @@ fn debug_command_e2e_collects_bus_notifications_config_and_scans_secrets() {
         format!("E2E Notification\nTask: {lead_task}\nTeam: {team}\n\nNotice with secret: {secret_val}\n");
     std::fs::write(notif_dir.join("notification-20261117-120000-1.md"), notif_content).unwrap();
 
+    // 3b. Write a daemon log line of the team that carries the same secret
+    let daemon_line = format!("WARN team {team} task {lead_task} daemon line before the secret {secret_val}\n");
+    std::fs::write(home.root().join("daemon.log"), daemon_line).unwrap();
+
     // 4. Run `agent debug`
     let out_dir = tempfile::tempdir().unwrap();
     let parent = out_dir.path().join("diag");
@@ -988,6 +992,7 @@ fn debug_command_e2e_collects_bus_notifications_config_and_scans_secrets() {
     assert!(summary.contains("- Configuration:"), "{summary}");
     assert!(summary.contains("normal = [\"codex-1\"]"), "{summary}");
     assert!(summary.contains("- Secret keys: agent_env.MY_API_KEY"), "{summary}");
+    assert!(summary.contains("daemon line before the secret"), "{summary}");
 
     // 7. Verify bus.txt retained the full message text
     let bus_artifact = std::fs::read_to_string(bundle_path.join("bus.txt")).unwrap();
