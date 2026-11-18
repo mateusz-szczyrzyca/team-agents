@@ -170,7 +170,7 @@ mod state_file {
 
         assert!(matches!(
             err,
-            StateError::UnsupportedSchema(UnsupportedSchema { found: 4 })
+            StateError::UnsupportedSchema(UnsupportedSchema { found: 5 })
         ));
     }
 }

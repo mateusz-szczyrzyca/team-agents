@@ -95,7 +95,7 @@ mod state_v2 {
             let err = State::from_json(&text).unwrap_err();
 
             assert!(
-                matches!(err, StateError::UnsupportedSchema(UnsupportedSchema { found: 4 })),
+                matches!(err, StateError::UnsupportedSchema(UnsupportedSchema { found: 5 })),
                 "{err:?}"
             );
         }
