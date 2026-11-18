@@ -25,6 +25,8 @@ pub(in crate::daemon) enum Why {
     AskHuman,
     /// A reviewer's report had no verdict: it is asked for again.
     VerdictMissing,
+    /// A review report needs a correction at a specific line.
+    ReviewFormat(agent_core::review_findings::ReportError),
     /// The checks before a review hold the round back: the lead is sent back with the reasons, or put the question of the
     /// checks to the human; what its prompt says is made from the record of the checks.
     Checks,
@@ -107,6 +109,7 @@ pub(in crate::daemon) fn shape(
             | Why::FixPass
             | Why::AskHuman
             | Why::VerdictMissing
+            | Why::ReviewFormat(_)
             | Why::Checks
             | Why::Gate(_)
             | Why::Asleep(_)

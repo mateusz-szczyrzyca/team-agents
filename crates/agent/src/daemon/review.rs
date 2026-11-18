@@ -34,6 +34,8 @@ const STATUS_KEY: &str = "STATUS:";
 pub(super) enum VerdictProblem {
     /// No line of the message is a `VERDICT:` line.
     Missing,
+    /// Structured findings or verification answers are malformed.
+    Findings(agent_core::review_findings::ReportError),
     /// The first `VERDICT:` line has something other than one of the two verdicts.
     Unreadable {
         /// What the line says after `VERDICT:`, cut.

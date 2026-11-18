@@ -659,7 +659,7 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
                 .and_then(|asking| asking.member.runs().last().map(|run| run.id().clone())),
         },
         Some(Why::Review) => review_why(team, task),
-        Some(Why::VerdictMissing) => RunWhy::VerdictMissing,
+        Some(Why::VerdictMissing | Why::ReviewFormat(_)) => RunWhy::VerdictMissing,
         Some(Why::FixPass) => fix_pass_number(team).map_or_else(
             || {
                 tracing::warn!(

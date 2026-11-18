@@ -115,6 +115,12 @@ struct RunTaskFailed(#[source] JoinError);
 /// Why the owner stopped with an error: something it cannot go on without.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum OwnerError {
+    /// A structured report contradicts the review protocol.
+    #[error("cannot accept review findings")]
+    Findings(#[from] agent_core::review_findings::ReportError),
+    /// The permanent finding numbers have been used up.
+    #[error("cannot number review findings")]
+    FindingNumbers(#[from] agent_core::state::FindingNumbersExhausted),
     /// The state cannot be saved.
     #[error("the state cannot be saved")]
     Store(#[from] StoreError),

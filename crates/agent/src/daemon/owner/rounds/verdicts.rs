@@ -95,6 +95,17 @@ impl Owner {
         };
         match parse_verdict(message) {
             Ok(verdict) => {
+                if let Some(ledger) = asked
+                    .items
+                    .first()
+                    .and_then(|id| self.parts.state.team(&located.team)?.item(*id)?.findings())
+                {
+                    if let Err(problem) = agent_core::review_findings::parse_report(message, verdict, &ledger.open()) {
+                        return self
+                            .send_back(&pulls, task, located, &asked, &VerdictProblem::Findings(problem))
+                            .await;
+                    }
+                }
                 self.watch.bounces.remove(task);
                 self.take_verdict(&pulls, task, located, &asked, verdict, message).await
             }
@@ -132,7 +143,11 @@ impl Owner {
         );
         if count <= MAX_VERDICT_BOUNCES {
             let mut look = Look::default();
-            self.release(task, Why::VerdictMissing, &mut look)?;
+            let why = match problem {
+                VerdictProblem::Findings(problem) => Why::ReviewFormat(problem.clone()),
+                VerdictProblem::Missing | VerdictProblem::Unreadable { .. } => Why::VerdictMissing,
+            };
+            self.release(task, why, &mut look)?;
             return self.finish_look(&located.team, look).await;
         }
         let announcement = Announcement::NoVerdict { task: task.clone() };
@@ -172,6 +187,10 @@ impl Owner {
         let next = self.decide(team_id, asked, verdict);
         let mut look = Look::default();
         self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
+        let completed = self.record_findings(team_id, task, asked, verdict, message)?;
+        if completed {
+            self.post_findings(pulls, &lead, team_id, asked).await;
+        }
         self.record_event_at(
             now,
             team_id,
@@ -191,6 +210,48 @@ impl Owner {
         }
         look.changed = true;
         self.finish_look(team_id, look).await
+    }
+
+    /// Stages a parsed report and finalizes numbers only after every requested report is in.
+    fn record_findings(
+        &mut self,
+        team_id: &TeamId,
+        task: &TaskId,
+        asked: &Asked,
+        verdict: ReviewVerdict,
+        message: &str,
+    ) -> Result<bool, OwnerError> {
+        let mut completed = false;
+        for id in &asked.items {
+            let mut team = self
+                .parts
+                .state
+                .team_mut(team_id)
+                .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+            let mut item = team.item_mut(*id).ok_or_else(|| OwnerError::LostItem {
+                team: team_id.clone(),
+                item: *id,
+            })?;
+            let reviews = match item.phase() {
+                ItemPhase::InReview { reviews, .. } => reviews.clone(),
+                _ => continue,
+            };
+            let Some(ledger) = item.findings_mut() else {
+                continue;
+            };
+            let report = agent_core::review_findings::parse_report(message, verdict, &ledger.open())?;
+            ledger.record(task.clone(), report);
+            if reviews
+                .iter()
+                .all(|review| matches!(review.outcome, ReviewOutcome::Submitted { .. }))
+            {
+                let pass = std::num::NonZeroU32::new(count(asked.passes).saturating_add(1))
+                    .ok_or(agent_core::state::FindingNumbersExhausted::Exhausted)?;
+                ledger.finish(&reviews, pass)?;
+                completed = true;
+            }
+        }
+        Ok(completed)
     }
 
     /// What the verdict leads to, by the round machine; `None` when the round does not take it, which is told: the

@@ -58,6 +58,22 @@ pub enum AutopilotPrompt {
     ReviewAskHuman,
     /// What a reviewer is told when its report has no verdict.
     ReviewVerdictMissing,
+    /// Structured findings protocol and presentation.
+    ReviewSeverityMinor,
+    /// Structured findings protocol and presentation.
+    ReviewSeverityMajor,
+    /// Structured findings protocol and presentation.
+    ReviewSeverityBlocker,
+    /// Structured findings protocol and presentation.
+    ReviewFindingsRow,
+    /// Structured findings protocol and presentation.
+    ReviewFindingsTable,
+    /// Structured findings protocol and presentation.
+    ReviewOpenFinding,
+    /// Structured findings protocol and presentation.
+    ReviewOpenFindings,
+    /// Structured findings protocol and presentation.
+    ReviewFindingsInvalid,
     /// The notification that a reviewer gave no verdict.
     NoticeNoVerdict,
     /// The notification that the reviewers still ask for changes and the human has to decide.
@@ -92,6 +108,14 @@ impl AutopilotPrompt {
         Self::ReviewFinding,
         Self::ReviewAskHuman,
         Self::ReviewVerdictMissing,
+        Self::ReviewSeverityMinor,
+        Self::ReviewSeverityMajor,
+        Self::ReviewSeverityBlocker,
+        Self::ReviewFindingsRow,
+        Self::ReviewFindingsTable,
+        Self::ReviewOpenFinding,
+        Self::ReviewOpenFindings,
+        Self::ReviewFindingsInvalid,
         Self::NoticeNoVerdict,
         Self::NoticeDecision,
         Self::NoticeMerged,
@@ -192,6 +216,26 @@ impl AutopilotPrompt {
                 Audience::Model,
                 &["pr", "passes", "findings", "questions_file", "number", "task"],
             ),
+            Self::ReviewFindingsInvalid => (
+                "harness/review/findings-invalid.md",
+                Audience::Model,
+                &["line", "reason"],
+            ),
+            Self::ReviewOpenFindings => ("harness/review/open-findings.md", Audience::Model, &["findings"]),
+            Self::ReviewOpenFinding => (
+                "harness/review/open-finding.md",
+                Audience::Model,
+                &["number", "severity", "rule", "place", "text", "check"],
+            ),
+            Self::ReviewFindingsTable => ("harness/review/findings-table.md", Audience::Model, &["rows"]),
+            Self::ReviewFindingsRow => (
+                "harness/review/findings-row.md",
+                Audience::Model,
+                &["number", "severity", "rule", "place", "text", "status", "reporter"],
+            ),
+            Self::ReviewSeverityBlocker => ("harness/review/severity-blocker.md", Audience::Model, &[]),
+            Self::ReviewSeverityMajor => ("harness/review/severity-major.md", Audience::Model, &[]),
+            Self::ReviewSeverityMinor => ("harness/review/severity-minor.md", Audience::Model, &[]),
             Self::ReviewVerdictMissing => ("harness/review/verdict-missing.md", Audience::Model, &[]),
             Self::NoticeNoVerdict => (
                 "harness/review/notice-no-verdict.md",

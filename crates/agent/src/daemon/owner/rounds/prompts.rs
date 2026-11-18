@@ -25,6 +25,9 @@ use crate::daemon::merge::count;
 /// Why what the autopilot adds to a prompt cannot be made.
 #[derive(Debug, thiserror::Error)]
 pub(in crate::daemon::owner) enum SectionError {
+    /// A findings text cannot be rendered.
+    #[error("cannot render findings")]
+    Findings(#[from] super::findings::TextError),
     /// A text cannot be rendered.
     #[error("cannot render a text of the autopilot")]
     Render(#[from] RenderAutopilotTextError),
@@ -93,6 +96,14 @@ pub(in crate::daemon::owner) async fn sections_for(
     why: Option<&Why>,
 ) -> Result<Option<Addition>, SectionError> {
     match (found.role, why) {
+        (Role::Reviewer, Some(Why::ReviewFormat(problem))) => {
+            let values = Variables::new()
+                .with("line", problem.line.to_string())?
+                .with("reason", problem.kind.to_string())?;
+            Ok(Some(Addition::Replace(
+                texts.render(AutopilotPrompt::ReviewFindingsInvalid, &values)?,
+            )))
+        }
         (Role::Reviewer, Some(Why::VerdictMissing)) => {
             let text = texts.render(AutopilotPrompt::ReviewVerdictMissing, &Variables::new())?;
             Ok(Some(Addition::Replace(text.trim_end().to_owned())))
@@ -179,7 +190,8 @@ pub(super) async fn fix_pass(
     let passes = progress.fix_passes().len();
     // The reports of the review pass that asked for this pass were kept under the number of the passes before it.
     let kept = count(passes.saturating_sub(1));
-    let findings = reports_of(ctx, texts, &asked.requested_by, pr.number, kept).await?;
+    let mut findings = vec![super::findings::open_text(texts, progress.findings())?];
+    findings.extend(reports_of(ctx, texts, &asked.requested_by, pr.number, kept).await?);
     let values = Variables::new()
         .with("pr", pr.number.to_string())?
         .with("pass", passes.to_string())?
@@ -219,6 +231,7 @@ pub(super) async fn ask_human(
         let ItemPhase::InReview { reviews, .. } = progress.phase() else {
             continue;
         };
+        findings.push(super::findings::open_text(texts, progress.findings())?);
         let kept = count(progress.fix_passes().len());
         findings.extend(reports_of(ctx, texts, reviews, waits.pr.number, kept).await?);
     }
@@ -321,6 +334,10 @@ pub(super) async fn review_request(
         .with("head", head.as_str())?
         .with("pass", first.fix_passes().len().saturating_add(1).to_string())?;
     let mut sections = vec![texts.render(AutopilotPrompt::ReviewRequest, &values)?];
+    if first.findings().is_some() && !first.fix_passes().is_empty() {
+        let values = Variables::new().with("findings", super::findings::open_text(texts, first.findings())?)?;
+        sections.push(texts.render(AutopilotPrompt::ReviewOpenFindings, &values)?);
+    }
     let harness = PromptTexts {
         harness: ctx.texts,
         rules: ctx.rules,
