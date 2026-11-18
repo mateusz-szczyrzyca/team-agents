@@ -1307,3 +1307,68 @@ async fn temp_filesystem_metadata_failure_records_unreadable() {
         obs.unreadable
     );
 }
+
+#[tokio::test]
+async fn home_failure_preserves_same_device_temp_statistics_in_artifact() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    let params = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: None,
+        cut: &cut,
+        collected_at: test_now(),
+        clock_ticks: NonZeroU64::new(100),
+    };
+
+    let home_path = home.root().to_path_buf();
+    let obs = observe_with_statvfs(params, move |path| {
+        if path == home_path {
+            Err(rustix::io::Errno::IO)
+        } else {
+            Ok(StatvfsStats {
+                fragment_size: 4096,
+                block_size: 4096,
+                total_blocks: 100,
+                available_blocks: 10,
+                total_inodes: 100,
+                available_inodes: 80,
+            })
+        }
+    })
+    .await;
+
+    assert_eq!(
+        obs.filesystems.len(),
+        1,
+        "failed home on same device must preserve successful temp filesystem"
+    );
+    assert_eq!(obs.filesystems[0].path, temp_dir);
+
+    let assessment = Assessment {
+        now: "2026-11-18T12:00:00Z".parse::<Timestamp>().unwrap(),
+        stale_after: std::time::Duration::from_secs(3600),
+        daemon: None,
+        command_version: None,
+        lead: "task-20261118-120000-lead".parse().unwrap(),
+        tasks: vec![],
+        items: vec![],
+        lead_git: None,
+        branches: vec![],
+        filesystems: obs.filesystems,
+        unanswered: vec![],
+        unreadable: vec![],
+    };
+    let anomalies = assess(&assessment);
+    assert!(
+        anomalies.contains(&Anomaly::FullFilesystem(temp_dir)),
+        "temp filesystem >= 90% full must trigger anomaly even when home fails: {anomalies:?}"
+    );
+    let artifact = String::from_utf8(obs.artifact_bytes).expect("UTF-8 artifact");
+    assert!(artifact.contains("Space: 90% used; Inodes: 20% used"), "{artifact}");
+}
