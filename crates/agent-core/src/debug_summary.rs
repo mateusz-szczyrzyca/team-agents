@@ -541,7 +541,14 @@ fn render_daemon(
         write_line(out, "The daemon does not answer (unreachable).");
         write_process_line(out, "- Command version: ", command_version);
         if let Some(conf) = configuration {
-            write_process_line(out, "- Configuration: ", conf);
+            if conf.contains('\n') {
+                write_line(out, "- Configuration:");
+                for line in conf.lines() {
+                    write_line(out, &format!("    {line}"));
+                }
+            } else {
+                write_process_line(out, "- Configuration: ", conf);
+            }
         }
         if !secret_keys.is_empty() {
             write_process_line(out, "- Secret keys: ", &secret_keys.join(", "));
@@ -562,7 +569,14 @@ fn render_daemon(
     write_process_line(out, "- Command line: ", &d.cmdline.join(" "));
     write_process_line(out, "- Environment variables: ", &d.env_var_names.join(", "));
     if let Some(conf) = configuration {
-        write_process_line(out, "- Configuration: ", conf);
+        if conf.contains('\n') {
+            write_line(out, "- Configuration:");
+            for line in conf.lines() {
+                write_line(out, &format!("    {line}"));
+            }
+        } else {
+            write_process_line(out, "- Configuration: ", conf);
+        }
     }
     if !secret_keys.is_empty() {
         write_process_line(out, "- Secret keys: ", &secret_keys.join(", "));

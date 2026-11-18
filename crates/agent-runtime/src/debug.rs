@@ -460,8 +460,15 @@ async fn observe_config(collection: &mut collect::Collection, home: &Home, secre
 
     match config::collect_config(home).await {
         Ok(text) => {
-            collection.add("agents.toml", text.into_bytes());
-            collection.summary.configuration = Some("agents.toml".to_owned());
+            collection.add("agents.toml", text.clone().into_bytes());
+            let redacted = collection.cut.redact_text(&text);
+            const MAX_CONFIG_SUMMARY_BYTES: usize = 2048;
+            let presentation = if redacted.len() > MAX_CONFIG_SUMMARY_BYTES {
+                format!("{}…", &redacted[..MAX_CONFIG_SUMMARY_BYTES])
+            } else {
+                redacted
+            };
+            collection.summary.configuration = Some(presentation);
         }
         Err(error) => {
             collection
