@@ -265,7 +265,10 @@ pub async fn execute_debug_at(
         },
     )
     .map_err(DebugRuntimeError::Summary)?;
-    collection.add("NOT_COLLECTED.txt", b"Not collected in this version: bus; notifications; configuration and secret key names; machine metrics; newest untracked file metadata.\n".to_vec());
+    collection.add(
+        "NOT_COLLECTED.txt",
+        b"Not collected in this version: machine metrics; newest untracked file metadata.\n".to_vec(),
+    );
     let parent = args.out.unwrap_or_else(|| home.root().join("debug"));
     collect::persist(
         collection,
