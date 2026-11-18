@@ -1249,10 +1249,7 @@ async fn filesystem_metadata_failure_records_unreadable() {
     })
     .await;
 
-    drop(fs::set_permissions(
-        &blocked_dir,
-        std::fs::Permissions::from_mode(0o755),
-    ));
+    fs::set_permissions(&blocked_dir, std::fs::Permissions::from_mode(0o755)).expect("restore permissions");
 
     assert!(
         obs.unreadable
