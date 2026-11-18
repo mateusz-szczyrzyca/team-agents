@@ -14,7 +14,7 @@ use super::{Lead, PublishError, Pulls};
 
 /// Why a findings text could not be rendered.
 #[derive(Debug, thiserror::Error)]
-pub(super) enum TextError {
+pub(in crate::daemon::owner) enum TextError {
     /// A catalog variable is invalid.
     #[error("cannot set findings variables")]
     Variable(#[from] VariablesError),
@@ -132,3 +132,6 @@ impl Owner {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

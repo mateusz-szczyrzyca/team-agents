@@ -99,12 +99,11 @@ impl Owner {
                     .items
                     .first()
                     .and_then(|id| self.parts.state.team(&located.team)?.item(*id)?.findings())
+                    && let Err(problem) = agent_core::review_findings::parse_report(message, verdict, &ledger.open())
                 {
-                    if let Err(problem) = agent_core::review_findings::parse_report(message, verdict, &ledger.open()) {
-                        return self
-                            .send_back(&pulls, task, located, &asked, &VerdictProblem::Findings(problem))
-                            .await;
-                    }
+                    return self
+                        .send_back(&pulls, task, located, &asked, &VerdictProblem::Findings(problem))
+                        .await;
                 }
                 self.watch.bounces.remove(task);
                 self.take_verdict(&pulls, task, located, &asked, verdict, message).await

@@ -158,7 +158,7 @@ pub fn parse_report(
                 .map(str::trim)
                 .filter(|check| !check.is_empty())
                 .ok_or_else(|| fail(ReportProblem::Check))?;
-            finding.check = check.to_owned();
+            check.clone_into(&mut finding.check);
             report.findings.push(finding);
         }
     }

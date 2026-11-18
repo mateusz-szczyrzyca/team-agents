@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use agent_core::history::HistoryHealth;
 use agent_core::ids::{RoundId, TaskId};
 use agent_core::protocol::{Client, Command, Reply, RoundDetail, ShowRequest, StatusRequest, Target, TeamSummary};
+use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState};
 use agent_core::status::TaskStatus;
 use agent_runtime::process::error_chain;
@@ -303,7 +304,6 @@ pub(crate) fn render_round(detail: &RoundDetail) -> String {
                 })
                 .count()
         };
-        use agent_core::review_findings::Severity;
         lines.push(format!(
             "  open findings: {} BLOCKER, {} MAJOR, {} MINOR",
             count(Severity::Blocker),
