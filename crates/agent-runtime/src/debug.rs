@@ -19,9 +19,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use agent_core::config::{MAX_SECRETS_BYTES, Secrets, SecretsError};
-use agent_core::debug_summary::{
-    SummaryError, SummaryInput, SummarySection, UntrackedCollection, render_command_summary_with_git_notice,
-};
+use agent_core::debug_summary::{SummaryError, SummaryInput, SummarySection, render_command_summary_with_git_notice};
 use agent_core::diagnostic_assessment::assess;
 use agent_core::ids::{RoundId, TaskId, TeamId};
 use agent_core::state::{InvalidTimestamp, State, StateError, Timestamp};
@@ -31,8 +29,6 @@ use crate::debug_redaction::SecretsCut;
 use crate::store::Home;
 use crate::text_file::{TextFileError, read_text_file};
 
-/// Observations deferred to the third diagnostic task, never interpreted as empty observations.
-const DEFERRED: &[SummarySection] = &[SummarySection::Machine];
 /// Maximum state file size in bytes.
 const MAX_STATE_BYTES: usize = 16 * 1024 * 1024;
 /// Default inactivity threshold in minutes.
@@ -304,14 +300,7 @@ fn compact_summary_with(
     git_notice: Option<&str>,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    match render_command_summary_with_git_notice(
-        input,
-        offset,
-        DEFERRED,
-        UntrackedCollection::Deferred,
-        &redact,
-        git_notice,
-    ) {
+    match render_command_summary_with_git_notice(input, offset, &redact, git_notice) {
         Ok(text) => Ok(text),
         Err(SummaryError::RequiredFactsTooLarge { .. }) => {
             let mut compact = input.clone();
@@ -325,14 +314,7 @@ fn compact_summary_with(
                 git.commits_over_base.clear();
                 git.newest_untracked.clear();
             }
-            render_command_summary_with_git_notice(
-                &compact,
-                offset,
-                DEFERRED,
-                UntrackedCollection::Deferred,
-                &redact,
-                git_notice,
-            )
+            render_command_summary_with_git_notice(&compact, offset, &redact, git_notice)
         }
         Err(error) => Err(error),
     }

@@ -816,14 +816,9 @@ async fn long_final_message_preserves_the_last_runs_reason_and_steps() {
         .await
         .unwrap();
     collection.enrich_last_run_details(&records, &team);
-    let summary = agent_core::debug_summary::render_command_summary(
-        &collection.summary,
-        time::UtcOffset::UTC,
-        &[],
-        agent_core::debug_summary::UntrackedCollection::Deferred,
-        str::to_owned,
-    )
-    .unwrap();
+    let summary =
+        agent_core::debug_summary::render_command_summary(&collection.summary, time::UtcOffset::UTC, str::to_owned)
+            .unwrap();
     assert!(
         summary.contains("Recorded café step"),
         "the step must survive the final-message budget"
@@ -1033,14 +1028,9 @@ async fn redacts_complete_final_message_before_taking_its_tail() {
         [],
     );
     collection.enrich_last_run_details(&records, &team);
-    let summary = agent_core::debug_summary::render_command_summary(
-        &collection.summary,
-        time::UtcOffset::UTC,
-        &[],
-        agent_core::debug_summary::UntrackedCollection::Deferred,
-        str::to_owned,
-    )
-    .unwrap();
+    let summary =
+        agent_core::debug_summary::render_command_summary(&collection.summary, time::UtcOffset::UTC, str::to_owned)
+            .unwrap();
     assert!(
         !summary.contains("suffix"),
         "a secret suffix must not survive truncation"

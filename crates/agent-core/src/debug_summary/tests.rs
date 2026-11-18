@@ -709,8 +709,7 @@ fn redacts_optional_text_before_truncation_and_byte_budgeting() {
     let mut expected = input.clone();
     expected.history_tail = Some("<cut>".repeat(100_000));
     assert_eq!(
-        render_redacted_summary(&input, UtcOffset::UTC, &[], UntrackedCollection::Collected, |text| text
-            .replace("xy", "<cut>")),
+        render_redacted_summary(&input, UtcOffset::UTC, |text| text.replace("xy", "<cut>")),
         render_summary(&expected, UtcOffset::UTC)
     );
 }
@@ -726,14 +725,7 @@ fn redacted_diagnostic_paths_are_plain_and_unread_history_is_named_in_its_sectio
         name: "team history".into(),
         reason: "database unavailable".into(),
     });
-    let summary = render_command_summary(
-        &input,
-        UtcOffset::from_hms(2, 0, 0).unwrap(),
-        &[],
-        UntrackedCollection::Collected,
-        str::to_owned,
-    )
-    .unwrap();
+    let summary = render_command_summary(&input, UtcOffset::from_hms(2, 0, 0).unwrap(), str::to_owned).unwrap();
     assert!(summary.contains("Uncommitted files (1): café file.txt"), "{summary}");
     assert!(summary.contains("Log: `/tmp/gate.log`"), "{summary}");
     let history = summary
@@ -755,15 +747,8 @@ fn redacted_diagnostic_paths_are_plain_and_unread_history_is_named_in_its_sectio
 fn removed_worktree_notice_is_once_in_git_section_without_an_anomaly() {
     let input = sample_input();
     let notice = "Worktrees for the merged round were removed; retained branches were read from the clone.";
-    let summary = render_command_summary_with_git_notice(
-        &input,
-        UtcOffset::UTC,
-        &[],
-        UntrackedCollection::Collected,
-        str::to_owned,
-        Some(notice),
-    )
-    .expect("summary fits");
+    let summary = render_command_summary_with_git_notice(&input, UtcOffset::UTC, str::to_owned, Some(notice))
+        .expect("summary fits");
     let git = summary.split("## Git Worktrees").nth(1).expect("git section");
     assert_eq!(summary.matches(notice).count(), 1);
     assert!(git.starts_with(&format!("\n\n{notice}\n")), "{git}");

@@ -943,15 +943,13 @@ pub fn render_summary_with_coverage(
 pub fn render_redacted_summary(
     input: &SummaryInput,
     offset: UtcOffset,
-    uncollected: &[SummarySection],
-    untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
     render_with_redaction(
         input,
         offset,
-        uncollected,
-        untracked,
+        &[],
+        UntrackedCollection::Collected,
         redact,
         PathPresentation::Escaped,
         None,
@@ -1094,15 +1092,13 @@ pub enum SummaryError {
 pub fn render_command_summary(
     input: &SummaryInput,
     offset: UtcOffset,
-    uncollected: &[SummarySection],
-    untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
     render_with_redaction(
         input,
         offset,
-        uncollected,
-        untracked,
+        &[],
+        UntrackedCollection::Collected,
         redact,
         PathPresentation::Plain,
         None,
@@ -1116,16 +1112,14 @@ pub fn render_command_summary(
 pub fn render_command_summary_with_git_notice(
     input: &SummaryInput,
     offset: UtcOffset,
-    uncollected: &[SummarySection],
-    untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
     git_notice: Option<&str>,
 ) -> Result<String, SummaryError> {
     render_with_redaction(
         input,
         offset,
-        uncollected,
-        untracked,
+        &[],
+        UntrackedCollection::Collected,
         redact,
         PathPresentation::Plain,
         git_notice,
