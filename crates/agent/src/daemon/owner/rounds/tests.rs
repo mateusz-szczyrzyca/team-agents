@@ -2597,18 +2597,16 @@ async fn later_pass_reviewers_keep_the_bus_and_publish_without_waiting_for_peers
         rig.github.reviews(1).len() == 3
     })
     .await;
-    let state = rig.state();
-    let item = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap();
-    let ItemPhase::InReview { reviews: current, .. } = item.phase() else {
-        panic!("waiting for peer")
-    };
-    assert_eq!(
-        current
-            .iter()
-            .filter(|r| matches!(r.outcome, ReviewOutcome::Pending))
-            .count(),
-        1
-    );
+    rig.state_where("one peer still pending", |state| {
+        state
+            .team(&team)
+            .and_then(|team| team.item("1.1".parse().unwrap()))
+            .is_some_and(|item| {
+                matches!(item.phase(), ItemPhase::InReview { reviews: current, .. }
+                    if current.iter().filter(|r| matches!(r.outcome, ReviewOutcome::Pending)).count() == 1)
+            })
+    })
+    .await;
     release_review(&rig, &reviews[1].task, 2, "VERDICT: APPROVE\\nFINDING 1: RESOLVED");
     rig.item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
         .await;
