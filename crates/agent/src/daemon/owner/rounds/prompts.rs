@@ -8,7 +8,9 @@ use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
 use agent_core::ids::InvalidName;
 use agent_core::kinds::Role;
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
-use agent_core::state::{CommitId, ItemPhase, PrNumber, QuestionState, Review, ReviewOutcome, TaskRef, Timestamp};
+use agent_core::state::{
+    CommitId, Findings, ItemPhase, ItemProgress, PrNumber, QuestionState, Review, ReviewOutcome, TaskRef, Timestamp,
+};
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextError};
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision};
 use agent_runtime::run::compose::{ComposeError, PromptTexts, item_sections};
@@ -287,6 +289,25 @@ pub(super) async fn reports_of(
 /// The most bytes of a report that are read back: far above [`MAX_REPORT_CHARS`](crate::daemon::review::MAX_REPORT_CHARS).
 pub(super) const MAX_REPORT_BYTES: usize = 1 << 20;
 
+/// What a review request says of the earlier passes of its pull request.
+pub(super) struct Verification<'a> {
+    /// The review pass the request is for, counting from one.
+    pub(super) pass: usize,
+    /// The findings ledger of the pull request, when it has one.
+    pub(super) findings: Option<&'a Findings>,
+}
+
+/// The pass and the findings of the pull request that the `items` of a request share.
+pub(super) fn verification_of<'a>(items: &[&'a ItemProgress]) -> Verification<'a> {
+    let first = items.first().copied();
+    Verification {
+        pass: first.map_or(1, |item| item.fix_passes().len().saturating_add(1)),
+        findings: first
+            .and_then(|item| item.findings())
+            .filter(|_| first.is_some_and(|item| !item.fix_passes().is_empty())),
+    }
+}
+
 /// The request for a review that the reviewer `found` has pending, with the items of the pull request.
 pub(super) async fn review_request(
     ctx: &Context<'_>,
@@ -326,16 +347,17 @@ pub(super) async fn review_request(
             repo: team.repo().clone(),
         })?;
     let head = head_of(ctx, found, working).await?;
+    let verification = verification_of(&items);
     let values = Variables::new()
         .with("team", team.id().as_str())?
         .with("pr", pr.number.to_string())?
         .with("branch", pr.branch.as_str())?
         .with("base", base.as_str())?
         .with("head", head.as_str())?
-        .with("pass", first.fix_passes().len().saturating_add(1).to_string())?;
+        .with("pass", verification.pass.to_string())?;
     let mut sections = vec![texts.render(AutopilotPrompt::ReviewRequest, &values)?];
-    if first.findings().is_some() && !first.fix_passes().is_empty() {
-        let values = Variables::new().with("findings", super::findings::open_text(texts, first.findings())?)?;
+    if verification.pass > 1 && verification.findings.is_some() {
+        let values = Variables::new().with("findings", super::findings::open_text(texts, verification.findings)?)?;
         sections.push(texts.render(AutopilotPrompt::ReviewOpenFindings, &values)?);
     }
     let harness = PromptTexts {

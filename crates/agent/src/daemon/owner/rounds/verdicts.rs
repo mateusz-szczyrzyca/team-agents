@@ -521,7 +521,7 @@ fn offered_reviews(team: &Team, task: &TaskId) -> Vec<Offered> {
 
 /// What a run that started at `started` answers among the `offered` reviews: those of one pull request asked at the
 /// latest time that is not after it.
-fn answer_among(offered: Vec<Offered>, started: Timestamp) -> Option<Asked> {
+pub(super) fn answer_among(offered: Vec<Offered>, started: Timestamp) -> Option<Asked> {
     let latest = offered
         .iter()
         .map(|found| found.requested_at)

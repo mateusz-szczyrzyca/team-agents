@@ -745,3 +745,7 @@ mod cleanup_tests;
 #[cfg(test)]
 #[path = "rounds/tests/publication_findings.rs"]
 mod publication_findings_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/joined_pass.rs"]
+mod joined_pass_tests;
