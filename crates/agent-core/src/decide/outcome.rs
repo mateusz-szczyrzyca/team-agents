@@ -1937,7 +1937,7 @@ mod tests {
         let reported = make_run(3, json!({"kind": "reported", "outcome": "DONE"}));
         let no_status_3 = make_run(4, json!({"kind": "no_status", "exit_code": 1}));
 
-        assert_eq!(consecutive_no_status(&[no_status_1.clone()]), 1);
+        assert_eq!(consecutive_no_status(std::slice::from_ref(&no_status_1)), 1);
         assert_eq!(consecutive_no_status(&[no_status_1.clone(), no_status_2.clone()]), 2);
         assert_eq!(
             consecutive_no_status(&[no_status_1.clone(), no_status_2.clone(), reported.clone()]),
