@@ -55,3 +55,51 @@ async fn missing_home_lock_means_no_daemon_without_creating_a_lock() {
     assert_eq!(observe(&home, &dir.path().join("no-proc")).await.unwrap(), None);
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
+
+#[test]
+fn rejects_malformed_or_overflowing_process_start_fields() {
+    let ticks = std::num::NonZeroU64::new(100).unwrap();
+    assert!(matches!(
+        start_time("broken", "btime 0\n", ticks),
+        Err(ProcessError::Format("process name is missing"))
+    ));
+    assert!(matches!(
+        start_time("1 (x) S", "btime 0\n", ticks),
+        Err(ProcessError::Format("start ticks are missing"))
+    ));
+    let fields = (3..=21).map(|_| "0").collect::<Vec<_>>().join(" ");
+    let stat = format!("1 (x) {fields} 0");
+    assert!(matches!(
+        start_time(&stat, "cpu 0\n", ticks),
+        Err(ProcessError::Format("boot time is missing"))
+    ));
+    assert!(matches!(
+        start_time(&stat, "btime invalid\n", ticks),
+        Err(ProcessError::Number(_))
+    ));
+    assert!(matches!(
+        start_time(&stat, "btime 18446744073709551615\n", ticks),
+        Err(ProcessError::Range(_))
+    ));
+}
+
+#[tokio::test]
+async fn unreadable_procfs_is_a_failure_with_the_source_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    std::fs::write(home.lock_file(), "").unwrap();
+    let missing = dir.path().join("proc");
+    let result = observe_with_ticks(&home, &missing, std::num::NonZeroU64::new(100).unwrap()).await;
+    assert!(
+        matches!(result, Err(ProcessError::Io {path, source}) if path == missing.join("locks") && source.kind() == std::io::ErrorKind::NotFound)
+    );
+}
+
+#[tokio::test]
+async fn rejects_procfs_bytes_over_the_read_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large");
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len(LIMIT + 1).unwrap();
+    assert!(matches!(bytes(&path).await, Err(ProcessError::TooLarge)));
+}
