@@ -1,4 +1,4 @@
-//! The round of one item: member work → coordinator integration → gate green at the head → pull request open → two
+//! The round of one item: member work → coordinator integration → gate green at the head → pull request open → independent
 //! reviews → merge (or, with `--no-merge`, handed to the human) → item done. "Changes requested" sends the item back
 //! to the team for a fix pass, at most the configured number of times; after that the human is asked.
 //!

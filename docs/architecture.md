@@ -82,7 +82,7 @@ Both `Config` and `TaskList` take text, not paths: reading `agents.toml`, `secre
 
 | Module | Types |
 |---|---|
-| `state` | `State` (with its schema version 3; version 2 is read as it is and version 1 migrated as it is read; the `findings` ledger of an item), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `Round`, `RoundLife`, `RoundEnd`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `GateRecord`, `GateTree`, `ChecksRecord` (the checks' record of a lead, a file of its task directory), `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
+| `state` | `State` (with its schema version 4; versions 2 and 3 are migrated without changing active review rules and version 1 is migrated as it is read; the `findings` ledger of an item), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `Round`, `RoundLife`, `RoundEnd`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `GateRecord`, `GateTree`, `ChecksRecord` (the checks' record of a lead, a file of its task directory), `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
 | `protocol` | `Request`, `Command`, `Response`, `Reply`, `Failure`, `Event`, `EventKind`, `Frame`, with the protocol version and `ProtocolError`. JSON lines over the daemon's socket. See [`state.md`](state.md) |
 | `review_findings` | `Severity` (`BLOCKER`, `MAJOR`, `MINOR`), `Finding`, `Answer` (`FINDING 3: RESOLVED`, `OPEN — why`), `parse_report`: a review report read into its findings and its answers for the open ones, or the line that is wrong. Pure: the harness sends the report back to its reviewer when it fails |
 | `questions` | `QuestionsFile`, `Entry`, `Verdict`: parsing and rendering of the questions file, the `ok` verdict, the `**ANSWERED**` marker. See [`state.md`](state.md) |
@@ -142,10 +142,10 @@ engine relies on:
 
 | Module | What it decides |
 |---|---|
-| `decide::team` | `plan_team`: from the agents named, the configuration, the coordinator asked for (`--coordinator`, then the task list's `Coordinator:` line) and a random source, a `TeamPlan` — solo, or a team with its coordinator, members and workers — or a `TeamPlanError`: unknown agent, a worker as coordinator, a coordinator that was not named, only workers, no member besides the coordinator, and too many (or too few) investigators for two outside reviewers |
+| `decide::team` | `plan_team`: from the agents named, the configuration, the coordinator asked for (`--coordinator`, then the task list's `Coordinator:` line) and a random source, a `TeamPlan` — solo, or a team with its coordinator, members and workers — or a `TeamPlanError`: unknown agent, a worker as coordinator, a coordinator that was not named, only workers, no member besides the coordinator, and too many (or too few) investigators for the configured outside reviewers |
 | `decide::assign` | `next_assignments`: which item goes to which member next — one item per member, the items of a feature in order (the next starts when the previous is merged, with `--no-merge` approved), features in parallel once the features they depend on are merged; `first_free_worker` for `delegate` |
 | `decide::checks` | `assess`: from the facts of a round's diff (its files, the files whose mode changed, its commits with their parents, the lines it added, the description of its pull request) and the repository's `checks` lists, the `Issue`s — an existing test file that loses lines or is removed or renamed and a protected file that changes (only the human may allow them); a test of a `RED:` commit edited by a later commit unless a named `TEST-FIX:`; production code with no added test line and no `Test-First: not possible — <reason>`; an added line that skips a test, suppresses a lint or asks whether the code runs under test, in a file the description does not name (the built-in `markers` table per extension). See "Round checks before the review" |
-| `decide::round` | `RoundState`, `RoundEvent` and `RoundState::transition`: member work, integration, gate green at the head, pull request published for that head, two reviews, merge or hand-over to the human, item done; "changes requested" starts a fix pass until `[review] fix_passes`, then the human is asked, and the answer grants one more pass. Each transition says what the daemon does next (`RoundAction`); `Checking` is the phase before the reviews are asked: what the issues of the checks come to — the reviews start, the round goes back to the team (at most `[review] check_passes` times) or the human is asked |
+| `decide::round` | `RoundState`, `RoundEvent` and `RoundState::transition`: member work, integration, gate green at the head, pull request published for that head, the configured reviews, merge or hand-over to the human, item done; "changes requested" starts a fix pass until `[review] fix_passes`, then the human is asked, and the answer grants one more pass. Each transition says what the daemon does next (`RoundAction`); `Checking` is the phase before the reviews are asked: what the issues of the checks come to — the reviews start, the round goes back to the team (at most `[review] check_passes` times) or the human is asked |
 | `decide::round::rounds_of_run` | `rounds_of_run`: from the role of a task, why its run starts (`RunStart`: its own work, a request for a worker, a review, a continuation) and what the state says of its team's rounds (`TaskRounds`), the rounds the run works for. See "Rounds" |
 | `decide::outcome` | `classify_outcome`: from the final message, the exit status, the error tail and who ended the run, the `RunEnd` to record — reported status, no status, quota exhausted (with the reset time when the CLI gives one), rate limited, turn limit, hung, stopped — and the `Pause` it implies; `after_hang` for the watchdog's strikes; `after_turn_limit` for bounded same-session continuation. The CLIs' outputs are fixtures in `crates/agent-core/tests/fixtures/cli-outputs/` |
 
@@ -295,7 +295,7 @@ resumed session whose result it did not print is not done.
 ### Pull requests, reviews and the merge (the autopilot)
 
 The default `--autopilot` loop, in the owner (`owner/rounds.rs`), is: the lead's branch is pushed and opened as a pull
-request, two investigators from outside the team review it, and their verdicts lead to the merge and the next item, to a
+request, the configured number of investigators from outside the team review it, and their verdicts lead to the merge and the next item, to a
 fix pass, or to a question for the human. Without `github_token` in `secrets.toml` the autopilot is off (the daemon says so
 at its start) and the items stay where they are; `[github] api_base` points it at another API ([`configuration.md`](configuration.md)).
 
@@ -351,8 +351,14 @@ prompt (`harness/pr/team-asleep.md`) says that nobody works and how every task e
 The count starts over when the lead ends with `STATUS: DONE`, and with the daemon.
 When the lead has reported `STATUS: DONE` and waits, but an item in progress or being fixed stands behind a failed member, the lead cannot fix it and waking the lead would do nothing. The harness tells the human immediately, once per item (`harness/pr/notice-standing-item.md`), with the member's last-run detail line, showing how to speak to the member and resume it (`agent say <task>`, `agent resume <task>`) or stop the team (`agent stop <team>`). Resuming the failed task clears the deduplication for items assigned to that task.
 
+The first pass of a newly opened PR is independent: reviewer runs have no Agentbus MCP server, including replacement
+and report-correction runs. The harness keeps reports locally until all verdicts arrive, then posts them in request
+order and updates the findings table. The request forbids reading peer reviews or contacting other reviewers. Later
+passes retain the bus and post each report when received. Schema-three ledgers have no frozen `review_count` and retain
+two reviews, immediate publication and bus access until their PR ends; new PRs store the configured count.
+
 **Reviewers** (`daemon/review.rs`). The review pass of an item in review starts empty and is filled once (`ItemMut::ask_reviews`) with
-two investigators drawn among the free ones — those that review for the team already (they wait in a review task of it) first,
+`[review] min_first_full_reviews` investigators (default two) drawn among the free ones — those that review for the team already (they wait in a review task of it) first,
 so that the fix is reviewed by who asked for it, then at random: configured, not in the crew, with no task that is going, asking or paused,
 no review to give and no team to lead that is not finished; the pull request waits for them. A reviewer is a task of the team
 with a worktree at the head (a new branch of its own), one per investigator: it ends `waiting`, not `done`, is given the next
@@ -424,10 +430,8 @@ and their history retain the author's original text.
 Review and developer rules require language-labelled fenced code blocks (`text` for output); the harness does
 not infer languages.
 
-**What a verdict leads to** (`daemon/merge.rs`, the round machine). A review pass is decided when both reviews are in, never at
-the first one: the verdicts may differ, the team is to get every finding at once, and a reviewer that is still at work is not
-left reviewing a commit nobody waits for. The first verdict, an approval or a request for changes, waits for the second; two
-approvals mean `approved`; with at least one request for changes the next fix pass starts, until `[review] fix_passes`, and then
+**What a verdict leads to** (`daemon/merge.rs`, the round machine). A review pass is decided only when its configured number
+of verdicts is in. The count is frozen in the PR ledger when it opens. Every verdict must approve for the PR to be `approved`; with at least one request for changes the next fix pass starts, until `[review] fix_passes`, and then
 the human is asked. A reviewer that cannot give its review is replaced (above), not left out.
 
 - **Merge.** In autopilot the pull request is read from GitHub and merged with a merge commit at the head it carries (a merge
@@ -853,7 +857,7 @@ Merged item completion is saved before its notification is queued. If saving fai
 socket. One owner, no file races (CON-3).
 
 - `agent run <agents...> "tasks" | -f tasks.md [--coordinator NAME] [--no-merge]`: one agent is a solo task, more
-  than one is a team. `--autopilot` is the default: PR → two reviews → merge → next item; `--no-merge` stops before
+  than one is a team. `--autopilot` is the default: PR → configured reviews → merge → next item; `--no-merge` stops before
   the merge and hands the PR to the human.
 - The coordinator: an explicit `Coordinator: NAME` line at the top of the task list or `--coordinator` wins;
   otherwise an investigator in the team (randomly among two or more); otherwise a random normal agent. Workers never
@@ -862,8 +866,8 @@ socket. One owner, no file races (CON-3).
 - The daemon assigns items, one to each normal member at a time. Workers do not take items: they serve `delegate`
   requests, the first free worker in the configured order.
 - The coordinator integrates a member's branch, gets the gate green and opens the PR. The next item of a feature
-  starts when the previous one is merged (with `--no-merge`: approved by both reviews).
-- Every PR gets two reviews from investigators outside the team. A team that leaves fewer than two configured
+  starts when the previous one is merged (with `--no-merge`: approved by every reviewer).
+- Every PR gets `[review] min_first_full_reviews` reviews (default two) from investigators outside the team. A team that leaves fewer configured
   investigators outside it is refused at start: "too many investigators in the team". "Changes requested" goes back
   to the team at most 5 times; after that the human is asked.
 

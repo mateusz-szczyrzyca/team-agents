@@ -1,4 +1,4 @@
-//! The reviewers: drawing two free investigators for a pull request, giving them worktrees at its head, and asking them
+//! The reviewers: drawing the required free investigators for a pull request, giving them worktrees at its head, and asking them
 //! for their reviews.
 
 use std::str::FromStr;
@@ -31,7 +31,7 @@ pub(super) fn pending_review(reviewer: &agent_core::ids::InvestigatorName, task:
 }
 
 impl Owner {
-    /// Asks two free investigators from outside the team for the reviews of each pull request that has none asked.
+    /// Asks the required free investigators from outside the team for the reviews of each pull request that has none asked.
     pub(super) async fn ask_for_reviews(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let waiting = self.pull_requests_without_reviews(team_id);
         if waiting.is_empty() {
@@ -42,7 +42,7 @@ impl Owner {
             let now = Timestamp::now(&self.parts.clock)?;
             match self.try_ask(team_id, &lead, &pr, &items, now).await {
                 Ok(true) => look.changed = true,
-                // Fewer than two investigators are free: the pull request waits for them.
+                // Fewer than the required investigators are free: the pull request waits for them.
                 Ok(false) => {}
                 Err(error) => {
                     tracing::warn!(
@@ -79,7 +79,7 @@ impl Owner {
         found
     }
 
-    /// Asks two reviewers for the reviews of `pr`; `false` when fewer than two are free.
+    /// Asks the required reviewers for `pr`; `false` when too few are free.
     ///
     /// The worktrees of the reviewers are made, or moved to the commit under review, before the state records the
     /// reviews, so that a reviewer that is queued has a worktree to work in; the ones that were made are removed again

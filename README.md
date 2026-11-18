@@ -1157,8 +1157,23 @@ VS Code server discovery skips plain files beside builds (such as `cli/servers/l
 `remote-cli` directory in either server layout. Directory symlinks are followed; other listing errors are reported.
 
 With a `github_token` in `secrets.toml` the daemon runs the autopilot: when an item's branch has a green gate it opens the pull
-request, two investigators from outside the team review it (their reports are posted on it), and two approvals merge it and
-start the next item. `agent run --no-merge` stops before the merge and tells you; after `[review] fix_passes` rounds of "changes
+request, `[review] min_first_full_reviews` investigators from outside the team review it (default `2`). All their
+approvals merge it and start the next item. Set the key in `agents.toml`, for example:
+
+```toml
+[review]
+min_first_full_reviews = 3
+```
+
+An explicit value must be at least two and no greater than the configured investigator roster. Team creation also
+requires that many investigators outside the team. Files without the key retain the default of two and remain readable.
+The first pass consists of independent full reviews: reviewers have no bus and must not read or discuss peer reports.
+The harness holds every report and its findings until the last verdict arrives, then posts reports in request order
+and the findings table. A replacement reviewer performs its own full review while the received reports keep waiting.
+Later passes retain the bus and post reports as they arrive. A pull request keeps its review count even if the
+configuration changes. Active pull requests migrated from an older daemon retain their original review protocol.
+
+`agent run --no-merge` stops before the merge and tells you; after `[review] fix_passes` rounds of "changes
 requested" a question reaches you like any other. How it works, and its limits, are in
 [`docs/architecture.md`](docs/architecture.md) ("Pull requests, reviews and the merge").
 

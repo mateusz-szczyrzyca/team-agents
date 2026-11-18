@@ -93,6 +93,7 @@ tail_lines = 30
 # limit) after `replace_after_minutes`; when no investigator is free you are told.
 
 [review]
+min_first_full_reviews = 2
 fix_passes = 5
 check_passes = 2
 replace_after_minutes = 15
