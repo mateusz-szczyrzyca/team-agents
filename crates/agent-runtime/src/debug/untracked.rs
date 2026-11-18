@@ -45,7 +45,17 @@ pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> Unt
 
         let size_bytes = meta.len();
         let modified = match meta.modified() {
-            Ok(system_time) => Timestamp::from_utc(time::UtcDateTime::from(system_time)).ok(),
+            Ok(system_time) => match Timestamp::from_utc(time::UtcDateTime::from(system_time)) {
+                Ok(ts) => Some(ts),
+                Err(source) => {
+                    unreadable.push(ReadFailure {
+                        section: SummarySection::GitWorktrees,
+                        part: format!("untracked file {}", rel_path.display()),
+                        reason: source.to_string(),
+                    });
+                    None
+                }
+            },
             Err(source) => {
                 unreadable.push(ReadFailure {
                     section: SummarySection::GitWorktrees,

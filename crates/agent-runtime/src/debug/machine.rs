@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use agent_core::debug_summary::{DescendantProcessSummary, FsUsageSummary, MachineSummary, SummarySection};
 use agent_core::diagnostic_assessment::{Filesystem, ReadFailure, Usage};
 use agent_core::state::Timestamp;
+use tokio::io::AsyncReadExt;
 
 use crate::debug_redaction::SecretsCut;
 use crate::store::Home;
@@ -22,23 +23,31 @@ const PROC_FILE_LIMIT: u64 = 4 * 1024 * 1024;
 #[derive(Debug, thiserror::Error)]
 pub(super) enum MachineError {
     /// An I/O error occurred reading a path.
-    #[error("cannot read {path}: {source}")]
+    #[error("cannot read {}", path.display())]
     Io {
         /// Path that failed to read.
         path: PathBuf,
         /// Underlying I/O error.
+        #[source]
         source: std::io::Error,
     },
+    /// A process exited between directory listing and file read.
+    #[error("process at {} disappeared", path.display())]
+    ProcessDisappeared {
+        /// Path that disappeared.
+        path: PathBuf,
+    },
     /// Filesystem statistics query failed.
-    #[error("cannot stat filesystem {path}: {source}")]
+    #[error("cannot stat filesystem {}", path.display())]
     Statvfs {
         /// Filesystem path.
         path: PathBuf,
         /// Underlying errno.
+        #[source]
         source: rustix::io::Errno,
     },
     /// A required field was missing from an observation.
-    #[error("missing required field {field} in {path}")]
+    #[error("missing required field {field} in {}", path.display())]
     MissingField {
         /// Path observed.
         path: PathBuf,
@@ -46,26 +55,55 @@ pub(super) enum MachineError {
         field: &'static str,
     },
     /// An integer field could not be parsed.
-    #[error("invalid numeric value in {path}: {source}")]
+    #[error("invalid numeric value in {}", path.display())]
     Number {
         /// Path observed.
         path: PathBuf,
         /// Underlying parse error.
+        #[source]
         source: ParseIntError,
     },
     /// A floating-point field could not be parsed.
-    #[error("invalid float value in {path}: {source}")]
+    #[error("invalid float value in {}", path.display())]
     Float {
         /// Path observed.
         path: PathBuf,
         /// Underlying parse error.
+        #[source]
         source: ParseFloatError,
     },
+    /// An observation had an invalid format or encoding.
+    #[error("invalid format in {}: {message}", path.display())]
+    InvalidFormat {
+        /// Path observed.
+        path: PathBuf,
+        /// Description of why the format was invalid.
+        message: String,
+    },
+    /// A numeric calculation overflowed.
+    #[error("numeric overflow for field {field} in {}", path.display())]
+    Overflow {
+        /// Path observed.
+        path: PathBuf,
+        /// Field that overflowed.
+        field: &'static str,
+    },
+    /// A file exceeded the maximum allowed read size.
+    #[error("file {} exceeds limit of {limit} bytes", path.display())]
+    TooLarge {
+        /// Path observed.
+        path: PathBuf,
+        /// Maximum allowed bytes.
+        limit: u64,
+    },
+    /// A helper command failed.
+    #[error("helper command failed: {0}")]
+    Helper(String),
     /// An asynchronous blocking task panicked.
-    #[error("blocking task failed: {source}")]
+    #[error("blocking task failed")]
     Join {
         /// Join error.
-        #[from]
+        #[source]
         source: tokio::task::JoinError,
     },
 }
@@ -118,25 +156,40 @@ pub(super) struct MachineObservation {
     pub(super) artifact_bytes: Vec<u8>,
 }
 
+/// Observed descendant process information.
 #[derive(Debug, Clone)]
 struct DescendantProcess {
+    /// Process ID.
     pid: u32,
+    /// Age in seconds from process start time to collection timestamp.
     age_seconds: Option<u64>,
+    /// Command line arguments.
     cmdline: Vec<String>,
 }
 
+/// Memory and swap facts observed from procfs meminfo.
 #[derive(Debug, Default)]
 struct MemoryFacts {
+    /// Total usable physical memory in bytes.
     total_bytes: Option<u64>,
+    /// Available memory in bytes.
     available_bytes: Option<u64>,
+    /// Total swap in bytes.
     swap_total: Option<u64>,
+    /// Free swap in bytes.
     swap_free: Option<u64>,
+    /// Whether swap fields were present and readable in meminfo.
+    swap_available: bool,
 }
 
+/// Diagnostic filesystem statistics for assessment and summary.
 #[derive(Debug)]
 struct FsFact {
+    /// Space usage for assessment.
     space_usage: Option<Usage>,
+    /// Inode usage for assessment.
     inode_usage: Option<Usage>,
+    /// Summary percentage usage.
     summary: FsUsageSummary,
 }
 
@@ -155,18 +208,25 @@ where
     }
 }
 
+/// Default production provider delegating to `rustix::fs::statvfs`.
 struct DefaultStatvfs;
 
 impl StatvfsProvider for DefaultStatvfs {
     fn statvfs(&self, path: &Path) -> Result<StatvfsStats, rustix::io::Errno> {
         let stat = rustix::fs::statvfs(path)?;
+        let fragment_size = stat.f_frsize;
+        let block_size = stat.f_bsize;
+        let total_blocks = stat.f_blocks;
+        let available_blocks = stat.f_bavail;
+        let total_inodes = stat.f_files;
+        let available_inodes = stat.f_favail;
         Ok(StatvfsStats {
-            fragment_size: stat.f_frsize as u64,
-            block_size: stat.f_bsize as u64,
-            total_blocks: stat.f_blocks,
-            available_blocks: stat.f_bavail,
-            total_inodes: stat.f_files,
-            available_inodes: stat.f_favail,
+            fragment_size,
+            block_size,
+            total_blocks,
+            available_blocks,
+            total_inodes,
+            available_inodes,
         })
     }
 }
@@ -181,7 +241,51 @@ async fn query_statvfs(
             .statvfs(&path)
             .map_err(|source| MachineError::Statvfs { path, source })
     })
-    .await?
+    .await
+    .map_err(|source| MachineError::Join { source })?
+}
+
+/// Bounded read of a procfs file up to `limit` bytes.
+async fn read_proc_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, MachineError> {
+    let mut file = match tokio::fs::File::open(path).await {
+        Ok(f) => f,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Err(MachineError::ProcessDisappeared {
+                path: path.to_path_buf(),
+            });
+        }
+        Err(source) => {
+            return Err(MachineError::Io {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    let mut buf = Vec::new();
+    let read_limit = limit.saturating_add(1);
+    tokio::io::AsyncReadExt::take(&mut file, read_limit)
+        .read_to_end(&mut buf)
+        .await
+        .map_err(|source| MachineError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if buf.len() as u64 > limit {
+        return Err(MachineError::TooLarge {
+            path: path.to_path_buf(),
+            limit,
+        });
+    }
+    Ok(buf)
+}
+
+/// Bounded read of a procfs file converted to UTF-8 string up to `limit` bytes.
+async fn read_proc_string_bounded(path: &Path, limit: u64) -> Result<String, MachineError> {
+    let bytes = read_proc_bounded(path, limit).await?;
+    String::from_utf8(bytes).map_err(|_err| MachineError::InvalidFormat {
+        path: path.to_path_buf(),
+        message: "file is not valid UTF-8".to_owned(),
+    })
 }
 
 /// Collects machine metrics and descendant processes.
@@ -214,6 +318,37 @@ where
     observe_with_provider(params, std::sync::Arc::new(statvfs)).await
 }
 
+/// Queries actual system clock ticks per second using getconf helper.
+async fn query_clock_ticks() -> Result<NonZeroU64, MachineError> {
+    let mut command = tokio::process::Command::new("getconf");
+    command.arg("CLK_TCK");
+    let limits = crate::process::CaptureLimits {
+        timeout: std::time::Duration::from_secs(2),
+        max_bytes: 1024,
+    };
+    let captured = crate::process::capture(command, limits)
+        .await
+        .map_err(|err| MachineError::Helper(err.to_string()))?;
+    if !captured.exit.succeeded() {
+        return Err(MachineError::Helper(format!(
+            "getconf CLK_TCK exited with {:?}",
+            captured.exit
+        )));
+    }
+    let text = std::str::from_utf8(&captured.stdout.bytes).map_err(|_err| MachineError::InvalidFormat {
+        path: PathBuf::from("getconf CLK_TCK"),
+        message: "output is not UTF-8".to_owned(),
+    })?;
+    let ticks: u64 = text.trim().parse().map_err(|source| MachineError::Number {
+        path: PathBuf::from("getconf CLK_TCK"),
+        source,
+    })?;
+    NonZeroU64::new(ticks).ok_or_else(|| MachineError::InvalidFormat {
+        path: PathBuf::from("getconf CLK_TCK"),
+        message: "zero clock ticks per second".to_owned(),
+    })
+}
+
 /// Core machine observation pipeline parametrized by statvfs provider.
 async fn observe_with_provider(
     params: MachineParams<'_>,
@@ -234,7 +369,16 @@ async fn observe_with_provider(
     };
 
     let mem = match read_meminfo(params.procfs).await {
-        Ok(mem) => mem,
+        Ok(mem) => {
+            if !mem.swap_available {
+                unreadable.push(ReadFailure {
+                    section: SummarySection::Machine,
+                    part: "swap".to_owned(),
+                    reason: "SwapTotal or SwapFree missing in meminfo".to_owned(),
+                });
+            }
+            mem
+        }
         Err(err) => {
             unreadable.push(ReadFailure {
                 section: SummarySection::Machine,
@@ -249,12 +393,14 @@ async fn observe_with_provider(
     let (filesystems, home_fs, temp_fs, same_fs) =
         observe_filesystems_async(home_path, params.temp_dir, &mut unreadable, statvfs_provider).await;
 
+    let clock_ticks = params.clock_ticks.and_then(NonZeroU64::new);
     let descendants = match observe_descendants(
         params.procfs,
         params.daemon_pid,
         params.cut,
         params.collected_at,
-        params.clock_ticks,
+        clock_ticks,
+        &mut unreadable,
     )
     .await
     {
@@ -323,11 +469,18 @@ async fn observe_filesystems_async(
     unreadable: &mut Vec<ReadFailure>,
     statvfs_provider: std::sync::Arc<dyn StatvfsProvider>,
 ) -> (Vec<Filesystem>, Option<FsFact>, Option<FsFact>, bool) {
-    let home_fs = match query_statvfs(std::sync::Arc::clone(&statvfs_provider), home_path.to_path_buf())
-        .await
-        .map(|st| observe_fs_stats(home_path, st))
-    {
-        Ok(fs) => Some(fs),
+    let home_fs = match query_statvfs(std::sync::Arc::clone(&statvfs_provider), home_path.to_path_buf()).await {
+        Ok(st) => match observe_fs_stats(home_path, st) {
+            Ok(fs) => Some(fs),
+            Err(err) => {
+                unreadable.push(ReadFailure {
+                    section: SummarySection::Machine,
+                    part: format!("filesystem {}", home_path.display()),
+                    reason: err.to_string(),
+                });
+                None
+            }
+        },
         Err(err) => {
             unreadable.push(ReadFailure {
                 section: SummarySection::Machine,
@@ -338,11 +491,18 @@ async fn observe_filesystems_async(
         }
     };
 
-    let temp_fs = match query_statvfs(statvfs_provider, temp_dir.to_path_buf())
-        .await
-        .map(|st| observe_fs_stats(temp_dir, st))
-    {
-        Ok(fs) => Some(fs),
+    let temp_fs = match query_statvfs(statvfs_provider, temp_dir.to_path_buf()).await {
+        Ok(st) => match observe_fs_stats(temp_dir, st) {
+            Ok(fs) => Some(fs),
+            Err(err) => {
+                unreadable.push(ReadFailure {
+                    section: SummarySection::Machine,
+                    part: format!("filesystem {}", temp_dir.display()),
+                    reason: err.to_string(),
+                });
+                None
+            }
+        },
         Err(err) => {
             unreadable.push(ReadFailure {
                 section: SummarySection::Machine,
@@ -354,13 +514,34 @@ async fn observe_filesystems_async(
     };
 
     let mut filesystems = Vec::new();
-    let same_fs = match (
-        tokio::fs::metadata(home_path).await,
-        tokio::fs::metadata(temp_dir).await,
-    ) {
+
+    let home_meta = tokio::fs::metadata(home_path).await;
+    let temp_meta = tokio::fs::metadata(temp_dir).await;
+
+    let same_fs = match (&home_meta, &temp_meta) {
         (Ok(h), Ok(t)) => h.dev() == t.dev(),
         _ => false,
     };
+
+    if let Err(err) = &home_meta
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
+        unreadable.push(ReadFailure {
+            section: SummarySection::Machine,
+            part: "home filesystem metadata".to_owned(),
+            reason: err.to_string(),
+        });
+    }
+
+    if let Err(err) = &temp_meta
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
+        unreadable.push(ReadFailure {
+            section: SummarySection::Machine,
+            part: "temp filesystem metadata".to_owned(),
+            reason: err.to_string(),
+        });
+    }
 
     if let Some(h) = &home_fs {
         filesystems.push(Filesystem {
@@ -381,64 +562,87 @@ async fn observe_filesystems_async(
     (filesystems, home_fs, temp_fs, same_fs)
 }
 
-fn observe_fs_stats(_path: &Path, stat: StatvfsStats) -> FsFact {
+fn observe_fs_stats(path: &Path, stat: StatvfsStats) -> Result<FsFact, MachineError> {
     let bsize = if stat.fragment_size > 0 {
         u128::from(stat.fragment_size)
     } else {
         u128::from(stat.block_size)
     };
 
+    if bsize == 0 {
+        return Err(MachineError::InvalidFormat {
+            path: path.to_path_buf(),
+            message: "filesystem block size is zero".to_owned(),
+        });
+    }
+
     let total_blocks = u128::from(stat.total_blocks);
     let avail_blocks = u128::from(stat.available_blocks);
     let total_bytes_u128 = total_blocks.saturating_mul(bsize);
     let avail_bytes_u128 = avail_blocks.saturating_mul(bsize);
 
-    let (used_bytes_u64, total_bytes_u64) = if total_bytes_u128 > 0 {
-        let used = total_bytes_u128.saturating_sub(avail_bytes_u128);
+    let (space_usage, space_percent) = if total_bytes_u128 > 0 {
+        let used_bytes_u128 = total_bytes_u128.saturating_sub(avail_bytes_u128);
+        let used_bytes = u64::try_from(used_bytes_u128).map_err(|_err| MachineError::Overflow {
+            path: path.to_path_buf(),
+            field: "used space bytes",
+        })?;
+        let total_bytes = u64::try_from(total_bytes_u128).map_err(|_err| MachineError::Overflow {
+            path: path.to_path_buf(),
+            field: "total space bytes",
+        })?;
+        let non_zero_total = NonZeroU64::new(total_bytes).ok_or_else(|| MachineError::InvalidFormat {
+            path: path.to_path_buf(),
+            message: "total space is zero".to_owned(),
+        })?;
+        let pct_u128 = used_bytes_u128.saturating_mul(100) / total_bytes_u128;
+        let pct = u8::try_from(pct_u128).map_err(|_err| MachineError::Overflow {
+            path: path.to_path_buf(),
+            field: "space percent",
+        })?;
         (
-            u64::try_from(used).unwrap_or(u64::MAX),
-            u64::try_from(total_bytes_u128).ok(),
+            Some(Usage {
+                used: used_bytes,
+                total: non_zero_total,
+            }),
+            Some(pct),
         )
     } else {
-        (0, None)
+        (None, None)
     };
-
-    let space_usage = total_bytes_u64.and_then(NonZeroU64::new).map(|total| Usage {
-        used: used_bytes_u64,
-        total,
-    });
 
     let total_inodes = stat.total_inodes;
     let free_inodes = stat.available_inodes;
-    let used_inodes = total_inodes.saturating_sub(free_inodes);
-    let inode_usage = NonZeroU64::new(total_inodes).map(|total| Usage {
-        used: used_inodes,
-        total,
-    });
-
-    let space_percent = if total_bytes_u128 > 0 {
-        let used = total_bytes_u128.saturating_sub(avail_bytes_u128);
-        let pct = used.saturating_mul(100) / total_bytes_u128;
-        u8::try_from(pct).unwrap_or(255)
+    let (inode_usage, inode_percent) = if total_inodes > 0 {
+        let used_inodes = total_inodes.saturating_sub(free_inodes);
+        let non_zero_total = NonZeroU64::new(total_inodes).ok_or_else(|| MachineError::InvalidFormat {
+            path: path.to_path_buf(),
+            message: "total inodes is zero".to_owned(),
+        })?;
+        let pct_u128 = (u128::from(used_inodes).saturating_mul(100)) / u128::from(total_inodes);
+        let pct = u8::try_from(pct_u128).map_err(|_err| MachineError::Overflow {
+            path: path.to_path_buf(),
+            field: "inode percent",
+        })?;
+        (
+            Some(Usage {
+                used: used_inodes,
+                total: non_zero_total,
+            }),
+            Some(pct),
+        )
     } else {
-        0
+        (None, None)
     };
 
-    let inode_percent = if total_inodes > 0 {
-        let pct = (u128::from(used_inodes).saturating_mul(100)) / u128::from(total_inodes);
-        u8::try_from(pct).unwrap_or(255)
-    } else {
-        0
-    };
-
-    FsFact {
+    Ok(FsFact {
         space_usage,
         inode_usage,
         summary: FsUsageSummary {
-            space_percent,
-            inode_percent,
+            space_percent: space_percent.unwrap_or(0),
+            inode_percent: inode_percent.unwrap_or(0),
         },
-    }
+    })
 }
 
 async fn observe_dir_sizes(home_path: &Path, unreadable: &mut Vec<ReadFailure>) -> (Option<u64>, Option<u64>) {
@@ -473,12 +677,7 @@ async fn observe_dir_sizes(home_path: &Path, unreadable: &mut Vec<ReadFailure>) 
 
 async fn read_loadavg(procfs: &Path) -> Result<(f64, f64, f64), MachineError> {
     let path = procfs.join("loadavg");
-    let content = tokio::fs::read_to_string(&path)
-        .await
-        .map_err(|source| MachineError::Io {
-            path: path.clone(),
-            source,
-        })?;
+    let content = read_proc_string_bounded(&path, 4096).await?;
     let mut parts = content.split_whitespace();
     let one = parts
         .next()
@@ -518,12 +717,7 @@ async fn read_loadavg(procfs: &Path) -> Result<(f64, f64, f64), MachineError> {
 
 async fn read_meminfo(procfs: &Path) -> Result<MemoryFacts, MachineError> {
     let path = procfs.join("meminfo");
-    let content = tokio::fs::read_to_string(&path)
-        .await
-        .map_err(|source| MachineError::Io {
-            path: path.clone(),
-            source,
-        })?;
+    let content = read_proc_string_bounded(&path, 1024 * 1024).await?;
 
     let mut mem_total_kb = None;
     let mut mem_avail_kb = None;
@@ -534,14 +728,36 @@ async fn read_meminfo(procfs: &Path) -> Result<MemoryFacts, MachineError> {
         if let Some((key, rest)) = line.split_once(':') {
             let key = key.trim();
             let val_str = rest.split_whitespace().next().unwrap_or("");
-            if let Ok(val) = val_str.parse::<u64>() {
-                match key {
-                    "MemTotal" => mem_total_kb = Some(val),
-                    "MemAvailable" => mem_avail_kb = Some(val),
-                    "SwapTotal" => swap_total_kb = Some(val),
-                    "SwapFree" => swap_free_kb = Some(val),
-                    _ => {}
+            match key {
+                "MemTotal" => {
+                    let val = val_str.parse::<u64>().map_err(|source| MachineError::Number {
+                        path: path.clone(),
+                        source,
+                    })?;
+                    mem_total_kb = Some(val);
                 }
+                "MemAvailable" => {
+                    let val = val_str.parse::<u64>().map_err(|source| MachineError::Number {
+                        path: path.clone(),
+                        source,
+                    })?;
+                    mem_avail_kb = Some(val);
+                }
+                "SwapTotal" => {
+                    let val = val_str.parse::<u64>().map_err(|source| MachineError::Number {
+                        path: path.clone(),
+                        source,
+                    })?;
+                    swap_total_kb = Some(val);
+                }
+                "SwapFree" => {
+                    let val = val_str.parse::<u64>().map_err(|source| MachineError::Number {
+                        path: path.clone(),
+                        source,
+                    })?;
+                    swap_free_kb = Some(val);
+                }
+                _ => {}
             }
         }
     }
@@ -555,83 +771,56 @@ async fn read_meminfo(procfs: &Path) -> Result<MemoryFacts, MachineError> {
         field: "MemAvailable",
     })?;
 
-    let to_bytes = |kb: u64| kb.checked_mul(1024);
+    let to_bytes = |kb: u64, field: &'static str| -> Result<u64, MachineError> {
+        kb.checked_mul(1024).ok_or(MachineError::Overflow {
+            path: path.clone(),
+            field,
+        })
+    };
 
-    let total_bytes = to_bytes(mem_total);
-    let available_bytes = to_bytes(mem_avail);
-    let swap_total = swap_total_kb.and_then(to_bytes);
-    let swap_free = swap_free_kb.and_then(to_bytes);
+    let total_bytes = Some(to_bytes(mem_total, "MemTotal")?);
+    let available_bytes = Some(to_bytes(mem_avail, "MemAvailable")?);
+    let swap_total = swap_total_kb.map(|kb| to_bytes(kb, "SwapTotal")).transpose()?;
+    let swap_free = swap_free_kb.map(|kb| to_bytes(kb, "SwapFree")).transpose()?;
+    let swap_available = swap_total_kb.is_some() && swap_free_kb.is_some();
 
     Ok(MemoryFacts {
         total_bytes,
         available_bytes,
         swap_total,
         swap_free,
+        swap_available,
     })
 }
 
-async fn observe_descendants(
-    procfs: &Path,
-    daemon_pid: Option<u32>,
-    cut: &SecretsCut,
+/// Computes process age in seconds from boot time and start ticks.
+fn compute_process_age(
+    btime: Option<u64>,
+    ticks: Option<NonZeroU64>,
+    start_ticks: u64,
     collected_at: Timestamp,
-    clock_ticks: Option<u64>,
-) -> Result<Vec<DescendantProcess>, MachineError> {
-    let Some(target_daemon_pid) = daemon_pid else {
-        return Ok(Vec::new());
+) -> Option<u64> {
+    let (Some(boot), Some(clk_ticks)) = (btime, ticks) else {
+        return None;
     };
+    let start_sec = boot.checked_add(start_ticks / clk_ticks.get())?;
+    let now_sec = collected_at.as_utc().unix_timestamp();
+    let now_u64 = u64::try_from(now_sec).ok()?;
+    Some(now_u64.saturating_sub(start_sec))
+}
 
-    let btime = read_btime(procfs).await.ok();
-    let ticks = clock_ticks.unwrap_or(100);
-
-    let mut read_dir = tokio::fs::read_dir(procfs).await.map_err(|source| MachineError::Io {
-        path: procfs.to_path_buf(),
-        source,
-    })?;
-
-    let mut all_procs = HashMap::new();
-    let mut children_map: HashMap<u32, Vec<u32>> = HashMap::new();
-
-    while let Some(entry) = read_dir.next_entry().await.map_err(|source| MachineError::Io {
-        path: procfs.to_path_buf(),
-        source,
-    })? {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if let Ok(pid) = name_str.parse::<u32>() {
-            let pid_dir = procfs.join(&*name_str);
-            if let Ok(stat_content) = tokio::fs::read_to_string(pid_dir.join("stat")).await
-                && let Some((ppid, start_ticks)) = parse_ppid_and_start_ticks(&stat_content)
-            {
-                let cmdline = match tokio::fs::read(pid_dir.join("cmdline")).await {
-                    Ok(bytes) => parse_and_redact_cmdline(&bytes, cut),
-                    Err(_) => Vec::new(),
-                };
-                let age_seconds = btime.and_then(|boot| {
-                    let start_sec = boot.checked_add(start_ticks / ticks)?;
-                    let now_sec = collected_at.as_utc().unix_timestamp();
-                    let now_sec_u64 = u64::try_from(now_sec).ok()?;
-                    Some(now_sec_u64.saturating_sub(start_sec))
-                });
-                all_procs.insert(
-                    pid,
-                    DescendantProcess {
-                        pid,
-                        age_seconds,
-                        cmdline,
-                    },
-                );
-                children_map.entry(ppid).or_default().push(pid);
-            }
-        }
-    }
-
+/// Traverses descendant processes starting from daemon PID using BFS.
+fn traverse_descendants(
+    daemon_pid: u32,
+    all_procs: &HashMap<u32, DescendantProcess>,
+    children_map: &HashMap<u32, Vec<u32>>,
+) -> Vec<DescendantProcess> {
     let mut descendants = Vec::new();
     let mut queue = VecDeque::new();
     let mut visited = HashSet::new();
-    visited.insert(target_daemon_pid);
+    visited.insert(daemon_pid);
 
-    if let Some(direct_children) = children_map.get(&target_daemon_pid) {
+    if let Some(direct_children) = children_map.get(&daemon_pid) {
         for &child in direct_children {
             if visited.insert(child) {
                 queue.push_back(child);
@@ -653,17 +842,121 @@ async fn observe_descendants(
     }
 
     descendants.sort_by_key(|p| p.pid);
-    Ok(descendants)
+    descendants
+}
+
+async fn observe_descendants(
+    procfs: &Path,
+    daemon_pid: Option<u32>,
+    cut: &SecretsCut,
+    collected_at: Timestamp,
+    clock_ticks: Option<NonZeroU64>,
+    unreadable: &mut Vec<ReadFailure>,
+) -> Result<Vec<DescendantProcess>, MachineError> {
+    let Some(target_daemon_pid) = daemon_pid else {
+        return Ok(Vec::new());
+    };
+
+    let ticks = match clock_ticks {
+        Some(t) => Some(t),
+        None => query_clock_ticks().await.ok(),
+    };
+    if ticks.is_none() {
+        unreadable.push(ReadFailure {
+            section: SummarySection::Machine,
+            part: "process age".to_owned(),
+            reason: "clock ticks per second unavailable".to_owned(),
+        });
+    }
+
+    let btime = match read_btime(procfs).await {
+        Ok(b) => Some(b),
+        Err(err) => {
+            unreadable.push(ReadFailure {
+                section: SummarySection::Machine,
+                part: "process age".to_owned(),
+                reason: format!("cannot read boot time: {err}"),
+            });
+            None
+        }
+    };
+
+    let mut read_dir = tokio::fs::read_dir(procfs).await.map_err(|source| MachineError::Io {
+        path: procfs.to_path_buf(),
+        source,
+    })?;
+
+    let mut all_procs = HashMap::new();
+    let mut children_map: HashMap<u32, Vec<u32>> = HashMap::new();
+
+    while let Some(entry) = read_dir.next_entry().await.map_err(|source| MachineError::Io {
+        path: procfs.to_path_buf(),
+        source,
+    })? {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(pid) = name_str.parse::<u32>() else {
+            continue;
+        };
+
+        let pid_dir = procfs.join(&*name_str);
+        let stat_content = match read_proc_string_bounded(&pid_dir.join("stat"), 65536).await {
+            Ok(s) => s,
+            Err(MachineError::ProcessDisappeared { .. }) => continue,
+            Err(err) => {
+                unreadable.push(ReadFailure {
+                    section: SummarySection::Machine,
+                    part: format!("process {pid} stat"),
+                    reason: err.to_string(),
+                });
+                continue;
+            }
+        };
+
+        let Some((parent_pid, start_ticks)) = parse_ppid_and_start_ticks(&stat_content) else {
+            unreadable.push(ReadFailure {
+                section: SummarySection::Machine,
+                part: format!("process {pid} stat"),
+                reason: "cannot parse parent PID and start ticks from stat".to_owned(),
+            });
+            continue;
+        };
+
+        let cmdline = match read_proc_bounded(&pid_dir.join("cmdline"), PROC_FILE_LIMIT).await {
+            Ok(bytes) => parse_and_redact_cmdline(&bytes, cut),
+            Err(MachineError::ProcessDisappeared { .. }) => continue,
+            Err(err) => {
+                unreadable.push(ReadFailure {
+                    section: SummarySection::Machine,
+                    part: format!("process {pid} cmdline"),
+                    reason: err.to_string(),
+                });
+                Vec::new()
+            }
+        };
+
+        let age_seconds = compute_process_age(btime, ticks, start_ticks, collected_at);
+
+        all_procs.insert(
+            pid,
+            DescendantProcess {
+                pid,
+                age_seconds,
+                cmdline,
+            },
+        );
+        children_map.entry(parent_pid).or_default().push(pid);
+    }
+
+    Ok(traverse_descendants(target_daemon_pid, &all_procs, &children_map))
 }
 
 async fn read_btime(procfs: &Path) -> Result<u64, MachineError> {
     let stat_path = procfs.join("stat");
-    let text = tokio::fs::read_to_string(&stat_path)
-        .await
-        .map_err(|source| MachineError::Io {
-            path: stat_path.clone(),
-            source,
-        })?;
+    let text = read_proc_string_bounded(&stat_path, 1024 * 1024).await?;
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("btime ") {
             let btime = rest.trim().parse::<u64>().map_err(|source| MachineError::Number {
@@ -686,7 +979,6 @@ fn parse_ppid_and_start_ticks(stat: &str) -> Option<(u32, u64)> {
     let ppid_str = parts.next()?;
     let ppid = ppid_str.parse::<u32>().ok()?;
 
-    // starttime is the 22nd field of stat, which is 17th index after state (field 3) and ppid (field 4)
     let start_ticks_str = parts.nth(17)?;
     let start_ticks = start_ticks_str.parse::<u64>().ok()?;
 
@@ -694,9 +986,7 @@ fn parse_ppid_and_start_ticks(stat: &str) -> Option<(u32, u64)> {
 }
 
 fn parse_and_redact_cmdline(raw_bytes: &[u8], cut: &SecretsCut) -> Vec<String> {
-    let limit = usize::try_from(PROC_FILE_LIMIT).unwrap_or(raw_bytes.len());
-    let bounded = raw_bytes.get(..limit).unwrap_or(raw_bytes);
-    bounded
+    raw_bytes
         .split(|&b| b == 0)
         .filter(|arg| !arg.is_empty())
         .map(|arg| {
@@ -727,7 +1017,7 @@ async fn directory_size(path: &Path) -> Result<u64, std::io::Error> {
             Err(err) => return Err(err),
         };
 
-        while let Some(entry) = read_dir.next_entry().await? {
+        while let Ok(Some(entry)) = read_dir.next_entry().await {
             let meta = match entry.metadata().await {
                 Ok(m) => m,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
@@ -830,8 +1120,15 @@ fn format_artifact(ctx: &MachineArtifactContext<'_>) -> String {
     }
     append("");
 
+    let has_descendant_failure = ctx
+        .unreadable
+        .iter()
+        .any(|f| f.section == SummarySection::Machine && f.part.contains("descendant"));
+
     append(&format!("### Daemon Descendant Processes ({})", ctx.descendants.len()));
-    if ctx.descendants.is_empty() {
+    if has_descendant_failure {
+        append("Descendant processes could not be read completely.");
+    } else if ctx.descendants.is_empty() {
         append("No descendant processes found.");
     } else {
         for proc in ctx.descendants {
