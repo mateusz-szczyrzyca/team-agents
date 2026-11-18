@@ -8,7 +8,7 @@ use agent_core::protocol::{Client, Command, Reply, StatusRequest, Target};
 use agent_runtime::debug::{DebugArgs as RuntimeDebugArgs, DebugRuntimeError, DebugTarget, execute_debug};
 use agent_runtime::store::Home;
 
-use crate::client::{ClientError, Connection};
+use crate::client::Connection;
 
 /// Why `agent debug` failed.
 #[derive(Debug, thiserror::Error)]
@@ -19,9 +19,9 @@ pub(crate) enum DebugError {
     /// The output cannot be written.
     #[error("cannot write output")]
     Output(#[source] std::io::Error),
-    /// The client could not ask the daemon.
-    #[error("cannot query daemon status")]
-    Client(#[from] ClientError),
+    /// An explicitly requested observation is outside this command version's collected scope.
+    #[error("daemon log collection is not available in this version")]
+    DaemonLogUnavailable,
 }
 
 impl DebugError {
@@ -29,7 +29,7 @@ impl DebugError {
     pub(crate) const fn exit_code(&self) -> u8 {
         match self {
             Self::Runtime(DebugRuntimeError::UnknownTarget { .. }) => 3,
-            Self::Runtime(_) | Self::Output(_) | Self::Client(_) => 1,
+            Self::Runtime(_) | Self::Output(_) | Self::DaemonLogUnavailable => 1,
         }
     }
 }
@@ -47,7 +47,7 @@ pub(crate) struct DebugCliArgs {
     pub(crate) out: Option<PathBuf>,
     /// Stale threshold in minutes.
     pub(crate) stale_minutes: Option<u64>,
-    /// Daemon log file (accepted, deferred).
+    /// Daemon log file (explicit requests are rejected while collection is deferred).
     pub(crate) daemon_log: Option<PathBuf>,
 }
 
@@ -79,6 +79,9 @@ pub(crate) async fn query_daemon_status(home: &Home, target: &Target) -> Option<
 /// # Errors
 /// [`DebugError`].
 pub(crate) async fn debug(home: &Home, args: DebugCliArgs, out: &mut impl Write) -> Result<(), DebugError> {
+    if args.daemon_log.is_some() {
+        return Err(DebugError::DaemonLogUnavailable);
+    }
     let (target, protocol_target) = match (&args.round, &args.team, &args.task) {
         (Some(round), None, None) => (DebugTarget::Round(round.clone()), Target::Round(round.clone())),
         (None, Some(team), None) => (DebugTarget::Team(team.clone()), Target::Team(team.clone())),
