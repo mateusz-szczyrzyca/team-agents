@@ -275,6 +275,7 @@ pub(crate) async fn start(
     request: RunRequest,
     out: &mut impl Write,
 ) -> Result<(), RunError> {
+    let warning = rotation_warning(home, &request.agents).await?;
     let reply = connection.request(Client::Cli, Command::Run(request)).await?;
     let Reply::Started { team, .. } = reply else {
         return Err(RunError::UnexpectedReply { kind: kind_of(&reply) });
@@ -292,7 +293,18 @@ pub(crate) async fn start(
     };
     out.write_all(render_started(home, &team).as_bytes())
         .map_err(RunError::Output)?;
+    if let Some(warning) = warning {
+        out.write_all(warning.as_bytes()).map_err(RunError::Output)?;
+    }
     out.flush().map_err(RunError::Output)
+}
+
+/// Optional advisory for homes whose local configuration cannot provide disjoint review pairs.
+///
+/// # Errors
+/// [`RunError`] when the local configuration or warning cannot be read or rendered.
+async fn rotation_warning(_home: &Home, _agents: &AgentList) -> Result<Option<String>, RunError> {
+    Ok(None)
 }
 
 /// The text of the task list file at `path`.
