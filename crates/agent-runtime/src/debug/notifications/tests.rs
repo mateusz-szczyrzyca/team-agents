@@ -63,3 +63,62 @@ async fn reports_unreadable_when_notifications_is_a_file() {
         "must report read error when dir is a file: {result:?}"
     );
 }
+
+#[tokio::test]
+async fn sorts_numeric_suffixes_correctly() {
+    let (_dir, home, team) = fixture();
+    let notes_dir = home.notifications_dir();
+    std::fs::create_dir_all(&notes_dir).unwrap();
+
+    let note2 = "Notification 2\nTask: task-20261117-120000-a1b2\n\n";
+    let note10 = "Notification 10\nTask: task-20261117-120000-a1b2\n\n";
+
+    std::fs::write(notes_dir.join("notification-20261117100000-2.md"), note2).unwrap();
+    std::fs::write(notes_dir.join("notification-20261117100000-10.md"), note10).unwrap();
+
+    let collected = collect(&home, &team).await.unwrap().expect("notifications");
+    assert_eq!(collected.len(), 2);
+    assert!(
+        collected[0].contains("Notification 2"),
+        "expected -2 first, got: {}",
+        collected[0]
+    );
+    assert!(
+        collected[1].contains("Notification 10"),
+        "expected -10 second, got: {}",
+        collected[1]
+    );
+}
+
+#[tokio::test]
+async fn excludes_unrelated_notification_mentioning_team_only_in_body() {
+    let (_dir, home, team) = fixture();
+    let notes_dir = home.notifications_dir();
+    std::fs::create_dir_all(&notes_dir).unwrap();
+
+    let note_unrelated = "Other Title\nRepo: example\nTask: other-task\nTeam: other-team\n\nMentions team-20261117-120000-a1b2 in body\n";
+    std::fs::write(notes_dir.join("notification-20261117100000-1.md"), note_unrelated).unwrap();
+
+    let collected = collect(&home, &team).await.unwrap().expect("notifications");
+    assert!(
+        collected.is_empty(),
+        "unrelated notification mentioning team in body must be excluded: {collected:?}"
+    );
+}
+
+#[tokio::test]
+async fn retains_full_notification_without_trim_end() {
+    let (_dir, home, team) = fixture();
+    let notes_dir = home.notifications_dir();
+    std::fs::create_dir_all(&notes_dir).unwrap();
+
+    let note = "Notification\nTask: task-20261117-120000-a1b2\n\nBody line\n\n\n";
+    std::fs::write(notes_dir.join("notification-20261117100000-1.md"), note).unwrap();
+
+    let collected = collect(&home, &team).await.unwrap().expect("notifications");
+    assert_eq!(collected.len(), 1);
+    assert_eq!(
+        collected[0], note,
+        "notification must retain full text including trailing newlines"
+    );
+}
