@@ -350,7 +350,7 @@ async fn rotation_warning(home: &Home, agents: &AgentList) -> Result<Option<Stri
         )),
         &values,
     )?;
-    Ok(Some(text))
+    Ok(Some(text.lines().collect::<Vec<_>>().join(" ")))
 }
 
 /// The text of the task list file at `path`.
