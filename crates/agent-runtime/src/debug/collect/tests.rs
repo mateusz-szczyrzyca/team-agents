@@ -536,13 +536,21 @@ fn merged_removed_worktree_falls_back_to_checkout() {
     assert_eq!(member_git.commits_over_base.len(), 1);
     assert_eq!(member_git.commits_over_base[0].subject, "Member commit");
     assert_eq!(member_git.uncommitted_files, Vec::<PathBuf>::new());
+    assert_eq!(member_git.newest_untracked, Vec::new());
+    let member_untracked_artifact = PathBuf::from("tasks").join(member_task.as_str()).join("untracked.txt");
+    assert!(
+        !collection
+            .artifacts
+            .iter()
+            .any(|(p, _)| p == &member_untracked_artifact)
+    );
 
     assert!(
         !collection
             .assessment
             .unreadable
             .iter()
-            .any(|f| f.part.contains("task-20261117-120000-mem1")),
+            .any(|f| f.part.contains("task-20261117-120000-mem1") || f.part.contains("untracked")),
         "{:?}",
         collection.assessment.unreadable
     );

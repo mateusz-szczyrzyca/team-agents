@@ -428,14 +428,14 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
     }
 
     fn collect_bundle_files(dir: &Path, files: &mut Vec<PathBuf>) {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    collect_bundle_files(&path, files);
-                } else if path.is_file() {
-                    files.push(path);
-                }
+        let entries = std::fs::read_dir(dir).expect("read_dir on bundle directory must succeed");
+        for entry in entries {
+            let entry = entry.expect("directory entry must be readable");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_bundle_files(&path, files);
+            } else if path.is_file() {
+                files.push(path);
             }
         }
     }
@@ -462,17 +462,16 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         let mut bundle_files = Vec::new();
         collect_bundle_files(bundle_path, &mut bundle_files);
         for file in &bundle_files {
-            if let Ok(content) = std::fs::read_to_string(file) {
-                assert!(
-                    !content.contains("Not collected in this version."),
-                    "file {file:?} must not mention 'Not collected in this version.'"
-                );
-            }
+            let content = std::fs::read_to_string(file).expect("reading bundle file must succeed");
+            assert!(
+                !content.contains("Not collected in this version."),
+                "file {file:?} must not mention 'Not collected in this version.'"
+            );
         }
 
         let machine_txt = bundle_path.join("machine.txt");
         assert!(machine_txt.is_file(), "machine.txt must exist");
-        let machine_content = std::fs::read_to_string(&machine_txt).unwrap();
+        let machine_content = std::fs::read_to_string(&machine_txt).expect("reading machine.txt must succeed");
         assert!(
             machine_content.contains("## Machine Metrics and Resources"),
             "{machine_content}"
@@ -481,13 +480,41 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
             machine_content.contains("### Daemon Descendant Processes"),
             "{machine_content}"
         );
+        assert!(
+            machine_content.contains("- Load average: ") && !machine_content.contains("- Load average: unreadable"),
+            "machine.txt must report load average values: {machine_content}"
+        );
+        assert!(
+            machine_content.contains("bytes available"),
+            "machine.txt must report memory values: {machine_content}"
+        );
+        assert!(
+            machine_content.contains("- Home directory: "),
+            "machine.txt must report home directory: {machine_content}"
+        );
+        assert!(
+            machine_content.contains("Space: ") && machine_content.contains("Inodes: "),
+            "machine.txt must report filesystem usage: {machine_content}"
+        );
 
         let summary_md = bundle_path.join("SUMMARY.md");
         assert!(summary_md.is_file(), "SUMMARY.md must exist");
-        let summary_content = std::fs::read_to_string(&summary_md).unwrap();
+        let summary_content = std::fs::read_to_string(&summary_md).expect("reading SUMMARY.md must succeed");
         assert!(
             summary_content.contains("## Machine and Resources"),
             "{summary_content}"
+        );
+        assert!(
+            summary_content.contains("- Load average: ") && !summary_content.contains("- Load average: unknown"),
+            "SUMMARY.md must report load average values: {summary_content}"
+        );
+        assert!(
+            summary_content.contains("bytes available"),
+            "SUMMARY.md must report memory values: {summary_content}"
+        );
+        assert!(
+            summary_content.contains("- Home filesystem: ") && summary_content.contains("% space"),
+            "SUMMARY.md must report home filesystem space percentage: {summary_content}"
         );
         assert!(summary_content.contains("## Git Worktrees"), "{summary_content}");
         assert!(
@@ -502,10 +529,13 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         let mut found_untracked_artifact = false;
         let tasks_dir = bundle_path.join("tasks");
         if tasks_dir.is_dir() {
-            for task_entry in std::fs::read_dir(&tasks_dir).unwrap().flatten() {
+            let entries = std::fs::read_dir(&tasks_dir).expect("read_dir on tasks must succeed");
+            for task_entry in entries {
+                let task_entry = task_entry.expect("task entry must be readable");
                 let untracked_file = task_entry.path().join("untracked.txt");
                 if untracked_file.is_file() {
-                    let untracked_content = std::fs::read_to_string(&untracked_file).unwrap();
+                    let untracked_content =
+                        std::fs::read_to_string(&untracked_file).expect("reading untracked.txt must succeed");
                     if untracked_content.contains("untracked_01.txt") && untracked_content.contains("untracked_55.txt")
                     {
                         found_untracked_artifact = true;
@@ -553,16 +583,19 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
 
         let worktrees_dir = world.home.join("worktrees");
         let mut worktree_path = None;
-        if let Ok(repos) = std::fs::read_dir(&worktrees_dir) {
-            for repo_entry in repos.flatten() {
-                if let Ok(entries) = std::fs::read_dir(repo_entry.path()) {
-                    for entry in entries.flatten() {
-                        if entry.path().join(".git").exists() {
-                            worktree_path = Some(entry.path());
-                            break;
-                        }
-                    }
+        let repos = std::fs::read_dir(&worktrees_dir).expect("read_dir on worktrees must succeed");
+        for repo_entry in repos {
+            let repo_entry = repo_entry.expect("repo entry must be valid");
+            let entries = std::fs::read_dir(repo_entry.path()).expect("read_dir on repo path must succeed");
+            for entry in entries {
+                let entry = entry.expect("task worktree entry must be valid");
+                if entry.path().join(".git").exists() {
+                    worktree_path = Some(entry.path());
+                    break;
                 }
+            }
+            if worktree_path.is_some() {
+                break;
             }
         }
         let worktree = worktree_path.expect("at least one task worktree with .git exists");
@@ -575,13 +608,11 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         let debug_text = stdout(&debug_output);
         assert!(debug_text.contains("Debug summary:"), "{debug_text}");
 
-        let bundle_entry = std::fs::read_dir(&diag_parent).unwrap().next().unwrap().unwrap();
+        let bundle_entry = std::fs::read_dir(&diag_parent)
+            .expect("read_dir on diag_e2e must succeed")
+            .next()
+            .expect("bundle entry must exist")
+            .expect("bundle entry must be readable");
         verify_e2e_bundle(&bundle_entry.path());
-
-        // Verify removed worktree causes no failure in debug
-        std::fs::remove_dir_all(&worktree).unwrap();
-        let diag_removed = world.home.join("diag_removed");
-        let debug_removed = world.agent(&["debug", "--team", &team, "--out", diag_removed.to_str().unwrap()]);
-        assert!(debug_removed.status.success(), "{}", stderr(&debug_removed));
     }
 }

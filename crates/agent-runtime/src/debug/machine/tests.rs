@@ -326,18 +326,12 @@ async fn observed_filesystem_90_percent_space_triggers_anomaly_and_below_does_no
         daemon_pid: None,
         cut: &cut,
         collected_at: "2026-11-18T12:00:00Z".parse::<Timestamp>().unwrap(),
-        clock_ticks: Some(100_u64.try_into().unwrap()),
+        clock_ticks: NonZeroU64::new(100),
     };
 
     let obs = observe_with_statvfs(params, statvfs_mock).await;
-    assert_eq!(
-        Into::<Option<u8>>::into(obs.summary.home_fs.unwrap().space_percent),
-        Some(90)
-    );
-    assert_eq!(
-        Into::<Option<u8>>::into(obs.summary.temp_fs.unwrap().space_percent),
-        Some(50)
-    );
+    assert_eq!(obs.summary.home_fs.unwrap().space_percent, Some(90));
+    assert_eq!(obs.summary.temp_fs.unwrap().space_percent, Some(50));
 
     let assessment = Assessment {
         now: "2026-11-18T12:00:00Z".parse::<Timestamp>().unwrap(),
@@ -391,14 +385,11 @@ async fn observed_filesystem_90_percent_inodes_triggers_anomaly() {
         daemon_pid: None,
         cut: &cut,
         collected_at: "2026-11-18T12:00:00Z".parse::<Timestamp>().unwrap(),
-        clock_ticks: Some(100_u64.try_into().unwrap()),
+        clock_ticks: NonZeroU64::new(100),
     };
 
     let obs = observe_with_statvfs(params, statvfs_mock).await;
-    assert_eq!(
-        Into::<Option<u8>>::into(obs.summary.home_fs.unwrap().inode_percent),
-        Some(90)
-    );
+    assert_eq!(obs.summary.home_fs.unwrap().inode_percent, Some(90));
 
     let assessment = Assessment {
         now: "2026-11-18T12:00:00Z".parse::<Timestamp>().unwrap(),
@@ -451,7 +442,7 @@ async fn observed_descendants_compute_age_from_proc_stat_btime() {
         daemon_pid: Some(daemon_pid),
         cut: &cut,
         collected_at,
-        clock_ticks: Some(100_u64.try_into().unwrap()),
+        clock_ticks: NonZeroU64::new(100),
     };
 
     let obs = observe_with_statvfs(params, |_| {
