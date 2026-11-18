@@ -363,6 +363,18 @@ fn member_unpublished_origin_ref_does_not_trigger_origin_differs_anomaly() {
         Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
     runtime.block_on(collection.observe(&home, &team, None)).unwrap();
 
+    let containment_failure = collection
+        .assessment
+        .unreadable
+        .iter()
+        .find(|part| part.part == format!("git containment {member_task}"))
+        .expect("member object is absent from the independent lead clone");
+    assert!(
+        containment_failure.reason.contains("exited with 128:"),
+        "{}",
+        containment_failure.reason
+    );
+
     let lead_branch = collection
         .assessment
         .branches
