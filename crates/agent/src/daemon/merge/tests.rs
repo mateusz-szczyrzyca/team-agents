@@ -761,3 +761,28 @@ fn renewed_fix_budget_allows_each_granted_pass_and_then_asks_again() {
         );
     }
 }
+
+#[test]
+fn a_zero_fix_allowance_grants_no_new_pass_but_preserves_legacy_answers() {
+    for modern in [true, false] {
+        let mut team = in_review();
+        if modern {
+            let mut progress = team.item_mut(item("1.1")).unwrap();
+            progress.start_findings();
+            *progress.findings_mut().unwrap() =
+                agent_core::state::Findings::verifying(agent_core::config::ReviewCount::TWO);
+        }
+        submit(&mut team, "1.1", 20, ReviewVerdict::Approve, 390);
+        submit(&mut team, "1.1", 21, ReviewVerdict::RequestChanges, 400);
+        let policy = RoundPolicy {
+            fix_passes: 0,
+            ..AUTOPILOT
+        };
+        let expected = if modern {
+            Next::Wait
+        } else {
+            Next::FixPass { pass: pass(1) }
+        };
+        assert_eq!(after_answer(team.item(item("1.1")).unwrap(), policy), Ok(expected));
+    }
+}
