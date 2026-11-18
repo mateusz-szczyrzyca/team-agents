@@ -113,16 +113,27 @@ pub fn parse_report(
     let lines: Vec<&str> = text.lines().collect();
     let mut report = Report::default();
     let mut in_findings = false;
+    let mut in_fence = false;
     for (index, line) in lines.iter().enumerate() {
         let line_number = index.saturating_add(1);
         let fail = |kind| ReportError {
             line: line_number,
             kind,
         };
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
         let trimmed = line.trim().trim_start_matches('#').trim();
         if trimmed.trim_matches(['*', '`']) == "FINDINGS" {
             in_findings = true;
             continue;
+        }
+        if finding_like(trimmed) && !(in_findings && numbered(trimmed)) {
+            return Err(fail(ReportProblem::Finding));
         }
         if let Some(answer) = trimmed.strip_prefix("FINDING ") {
             if !report.findings.is_empty() {
@@ -186,6 +197,25 @@ pub fn parse_report(
         });
     }
     Ok(report)
+}
+
+/// Whether a line looks like a finding: an optional report-local number, then a bracketed upper-case tag such as
+/// `[MAJOR]` or `[ERR-3]`. Such a line outside the numbered list of `FINDINGS` would otherwise be dropped silently.
+fn finding_like(line: &str) -> bool {
+    let rest = match line.split_once('.') {
+        Some((n, rest)) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => rest,
+        _ => line,
+    };
+    let Some(tag) = rest.trim().trim_start_matches(['*', '`']).strip_prefix('[') else {
+        return false;
+    };
+    let Some((tag, _)) = tag.split_once(']') else {
+        return false;
+    };
+    !tag.is_empty()
+        && tag
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// Whether a line starts with a report-local numbered entry, including malformed zero entries.
