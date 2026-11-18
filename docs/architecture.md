@@ -492,7 +492,7 @@ the summary, replaces exact secrets-file values and values of environment variab
 assessment read failures and do not stop unrelated collection.
 Task files and subprocess output are bounded to 4 MiB each, task bytes to 64 MiB, directory entries to 4096 per
 task and nesting to 16 levels. Task symlinks are not followed. Diagnostic history copies the database and its
-WAL/SHM files into a temporary directory before opening SQLite, preserving committed events while the daemon
+WAL/SHM files (at most 64 MiB each) into a temporary directory before opening SQLite, preserving committed events while the daemon
 runs without creating or writing side files in the home. Changed sources are reported as unreadable.
 
 The daemon process is selected by the owner of `daemon.lock` in Linux procfs, never by its name. Bounded
@@ -507,7 +507,7 @@ with retained branch tips and commits over the base read from the caller's clone
 is expected; coordinator origin differences remain assessable. Empty history and unreadable history have
 different section text.
 
-The human approved a second diagnostics slice for bus messages, notifications, configuration with secret key
+The next diagnostics slice covers bus messages, notifications, configuration with secret key
 names, machine metrics and the fifty newest untracked files. These remaining sections are explicitly deferred;
 that is not an observation of absence or an anomaly.
 
