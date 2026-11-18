@@ -52,9 +52,7 @@ async fn collects_team_messages_and_end_of_whole_bus() {
 
     let collected = collect(&home, &team).await.unwrap().expect("bus messages");
     assert!(
-        !collected
-            .iter()
-            .any(|m| m.ends_with("old other message 1")),
+        !collected.iter().any(|m| m.ends_with("old other message 1")),
         "old other message 1 should be excluded: {collected:?}"
     );
     assert!(
