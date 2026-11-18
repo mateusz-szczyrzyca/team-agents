@@ -15,6 +15,9 @@ use tokio::io::AsyncReadExt;
 /// Maximum procfs file or helper output size, in bytes.
 const LIMIT: u64 = 4 * 1024 * 1024;
 
+/// Fresh procfs lock-table observations before concluding that no daemon owns the home.
+const LOCK_OBSERVATIONS: usize = 3;
+
 /// Why daemon process observation failed.
 #[derive(Debug, thiserror::Error)]
 pub(super) enum ProcessError {
@@ -213,8 +216,15 @@ async fn observed_lock_owner(
     meta: &std::fs::Metadata,
     mut read: impl AsyncFnMut() -> Result<Vec<u8>, ProcessError>,
 ) -> Result<Option<u32>, ProcessError> {
-    let locks = read().await?;
-    lock_owner(std::str::from_utf8(&locks).map_err(ProcessError::Utf8)?, meta)
+    // Unrelated lock churn can move entries between the seq_file reads that
+    // compose one procfs observation; a missing owner warrants a fresh table.
+    for _ in 0..LOCK_OBSERVATIONS {
+        let locks = read().await?;
+        if let Some(pid) = lock_owner(std::str::from_utf8(&locks).map_err(ProcessError::Utf8)?, meta)? {
+            return Ok(Some(pid));
+        }
+    }
+    Ok(None)
 }
 
 fn lock_owner(text: &str, meta: &std::fs::Metadata) -> Result<Option<u32>, ProcessError> {
