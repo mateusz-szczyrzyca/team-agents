@@ -422,7 +422,7 @@ impl Owner {
         self.deliver_reviews(team, look)?;
         self.deliver_fix_passes(team, look)?;
         self.ask_the_human(&pulls, team, look)?;
-        self.wake_sleeping_team(&pulls, team, look)?;
+        self.wake_sleeping_team(&pulls, team, look).await?;
         Ok(())
     }
 

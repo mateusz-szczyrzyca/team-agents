@@ -1,6 +1,10 @@
 //! A team that sleeps with its work unfinished: its lead is woken and told that nobody works, and when that does not
 //! help the human is told.
 
+use std::path::{Path, PathBuf};
+
+use tokio::io::AsyncReadExt;
+
 use agent_core::decide::asleep::{AsleepStep, BlockedItemStep, Team, asleep_step, blocked_item_step};
 use agent_core::ids::TeamId;
 use agent_core::kinds::Role;
@@ -16,6 +20,63 @@ use crate::daemon::team::Why;
 
 /// How many times in a row the lead of a team is woken because the team sleeps; after that the human is told.
 pub(super) const ASLEEP_WAKES: u32 = 2;
+
+/// Maximum saved notification size: the notifier's bounded title and body plus their separator.
+const SAVED_NOTICE_BYTES: u64 = 65_737;
+
+/// Why previously delivered standing-item notices could not be inspected.
+#[derive(Debug, thiserror::Error)]
+#[error("cannot inspect saved notifications at {path:?}")]
+struct SavedNoticeError {
+    /// Directory or file that could not be inspected.
+    path: PathBuf,
+    /// Filesystem failure, preserved for diagnostics.
+    source: std::io::Error,
+}
+
+/// Finds a saved notice for this item and failed run, independently of optional history recording.
+async fn standing_was_announced(
+    directory: &Path,
+    team: &TeamId,
+    standing: &Standing,
+) -> Result<bool, SavedNoticeError> {
+    let mut entries = match tokio::fs::read_dir(directory).await {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => {
+            return Err(SavedNoticeError {
+                path: directory.to_owned(),
+                source,
+            });
+        }
+    };
+    let item = format!(
+        "Team {team} waits with item {} behind failed member {}",
+        standing.item, standing.member
+    );
+    while let Some(entry) = entries.next_entry().await.map_err(|source| SavedNoticeError {
+        path: directory.to_owned(),
+        source,
+    })? {
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "md") {
+            continue;
+        }
+        let file = tokio::fs::File::open(&path).await.map_err(|source| SavedNoticeError {
+            path: path.clone(),
+            source,
+        })?;
+        let mut text = String::new();
+        file.take(SAVED_NOTICE_BYTES)
+            .read_to_string(&mut text)
+            .await
+            .map_err(|source| SavedNoticeError { path, source })?;
+        if text.contains(&item) && text.contains(&standing.line) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 
 /// What a look at a team found, kept apart from the state so that the owner can change it.
 struct Found {
@@ -42,8 +103,6 @@ struct Standing {
     task: agent_core::ids::TaskId,
     /// The member status and last run detail line.
     line: String,
-    /// The current status of the assignee task.
-    assignee_status: TaskStatus,
 }
 
 /// How the task of `member` ended, in a line for the lead and the human.
@@ -111,7 +170,6 @@ impl Owner {
                         member: assignee.to_string(),
                         task: member.task().clone(),
                         line: line(*role, member),
-                        assignee_status: member.status(),
                     })
                 } else {
                     None
@@ -128,7 +186,7 @@ impl Owner {
     }
 
     /// Checks standing items behind failed members, resets dedup when assignee leaves failed, and notifies human if lead is done.
-    fn check_standing_items(
+    async fn check_standing_items(
         &mut self,
         pulls: &Pulls,
         team_id: &TeamId,
@@ -147,15 +205,42 @@ impl Owner {
             }
         }
 
-        let lead_status = found.statuses.first().copied().unwrap_or(TaskStatus::Waiting);
+        let Some(lead_status) = found.statuses.first().copied() else {
+            return Ok(());
+        };
+        let directory = self
+            .parts
+            .settings
+            .config
+            .notifications()
+            .directory
+            .as_ref()
+            .map_or_else(
+                || self.parts.store.home().notifications_dir(),
+                |directory| directory.as_path().to_owned(),
+            );
         let now = Timestamp::now(&self.parts.clock)?;
         for standing in &found.standings {
-            if blocked_item_step(lead.done, lead_status, standing.assignee_status) == BlockedItemStep::TellHuman {
+            if blocked_item_step(lead.done, lead_status, TaskStatus::Failed) == BlockedItemStep::TellHuman {
                 let announcement = Announcement::ItemBlocked {
                     team: team_id.clone(),
                     item: standing.item.clone(),
                 };
                 if self.watch.announced.insert(announcement) {
+                    match standing_was_announced(&directory, team_id, standing).await {
+                        Ok(true) => continue,
+                        Ok(false) => {}
+                        Err(error) => {
+                            // A failed lookup must not hide an item that needs the human's intervention.
+                            tracing::warn!(
+                                event = LogEvent::NotificationFailed.as_str(),
+                                team = %team_id,
+                                item = %standing.item,
+                                error = %agent_runtime::process::error_chain(&error),
+                                "saved notices cannot be inspected; reporting the standing item"
+                            );
+                        }
+                    }
                     let values = Variables::new()
                         .with("team", team_id.as_str())
                         .and_then(|v| v.with("item", standing.item.as_str()))
@@ -171,7 +256,7 @@ impl Owner {
 
     /// Wakes the lead of the team `team_id` when every task of it sleeps and an item is unfinished, or tells the human
     /// when the lead was woken for it as often as it is.
-    pub(super) fn wake_sleeping_team(
+    pub(super) async fn wake_sleeping_team(
         &mut self,
         pulls: &Pulls,
         team_id: &TeamId,
@@ -187,7 +272,7 @@ impl Owner {
             self.watch.asleep_wakes.remove(team_id);
         }
 
-        self.check_standing_items(pulls, team_id, &lead, &found)?;
+        self.check_standing_items(pulls, team_id, &lead, &found).await?;
 
         let Some(quiet_since) = found.quiet_since else {
             return Ok(());
