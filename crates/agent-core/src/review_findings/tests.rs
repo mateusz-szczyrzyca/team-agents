@@ -138,3 +138,23 @@ fn later_pass_checks_old_severities_and_keeps_open_reasons() {
         ]
     );
 }
+
+#[test]
+fn finding_text_and_checks_preserve_code_delimiters_and_globs() {
+    let report = parse_report(
+        "FINDINGS\n1. **[MINOR]** API-1 x:1 — replace `&String` → `&str`\n   CHECK: rg '*' src",
+        ReviewVerdict::Approve,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        report.findings,
+        vec![Finding {
+            severity: Severity::Minor,
+            rule: "API-1".into(),
+            place: "x:1".into(),
+            text: "replace `&String` → `&str`".into(),
+            check: "rg '*' src".into(),
+        }]
+    );
+}
