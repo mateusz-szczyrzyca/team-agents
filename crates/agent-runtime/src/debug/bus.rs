@@ -108,18 +108,22 @@ pub(super) async fn collect(home: &Home, team: &Team) -> Result<Option<Vec<Strin
     let team_id = team.id().to_string();
     let team_to = format!("team:{team_id}");
 
-    let parsed_lines: Vec<Option<RawBusMessage>> = text
-        .lines()
-        .map(|line| serde_json::from_str::<RawBusMessage>(line).ok())
-        .collect();
+    let mut parsed_lines = Vec::new();
+    for (line_idx, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let msg = serde_json::from_str::<RawBusMessage>(line).map_err(|source| BusError::Parse {
+            line: line_idx + 1,
+            source,
+        })?;
+        parsed_lines.push(msg);
+    }
 
     let mut kept = Vec::new();
     let total = parsed_lines.len();
 
-    for (index, maybe_msg) in parsed_lines.into_iter().enumerate() {
-        let Some(msg) = maybe_msg else {
-            continue;
-        };
+    for (index, msg) in parsed_lines.into_iter().enumerate() {
         let age = total.saturating_sub(index).saturating_sub(1);
         let is_team = msg.from == team_id
             || agents.iter().any(|a| &msg.from == a)
