@@ -1,5 +1,7 @@
 //! Read-only diagnostic bundles: observe a team, assess once, redact, then persist.
 
+#[cfg(test)]
+mod activity_tests;
 mod collect;
 #[cfg(test)]
 mod tests;
