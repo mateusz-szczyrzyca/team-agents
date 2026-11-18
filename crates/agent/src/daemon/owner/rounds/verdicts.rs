@@ -188,11 +188,15 @@ impl Owner {
             .team(team_id)
             .is_some_and(|team| crate::daemon::review::independent_first_review(team, task));
         let lead = self.lead_of(team_id)?;
-        let next = self.decide(team_id, asked, verdict);
-        let mut look = Look::default();
-        self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
-        let completed = self.record_findings(team_id, task, asked, verdict, message)?;
-        if completed {
+        let rotating = asked.items.iter().any(|id| {
+            self.parts
+                .state
+                .team(team_id)
+                .and_then(|team| team.item(*id))
+                .and_then(|item| item.findings())
+                .is_some_and(|ledger| ledger.verification().is_some())
+        });
+        let reviewed_head = if rotating {
             let agent: AgentName = asked.reviewer.as_str().parse()?;
             let head = self
                 .worktree_git(&lead.repo, task, &agent)
@@ -206,6 +210,15 @@ impl Owner {
                     task: task.clone(),
                     source: PublishError::from(source),
                 })?;
+            Some(head)
+        } else {
+            None
+        };
+        let next = self.decide(team_id, asked, verdict);
+        let mut look = Look::default();
+        self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
+        let completed = self.record_findings(team_id, task, asked, verdict, message)?;
+        if let Some(head) = reviewed_head.filter(|_| completed) {
             let mut team = self
                 .parts
                 .state
