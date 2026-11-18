@@ -65,21 +65,30 @@ impl Collection {
         let items = team
             .items()
             .iter()
-            .map(|item| ItemSummaryFacts {
-                id: item.id(),
-                title: item.id().to_string(),
-                phase: item.status(),
-                assignee: match item.phase() {
-                    ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } => {
-                        Some(assignee.clone())
-                    }
-                    ItemPhase::Pending
-                    | ItemPhase::InReview { .. }
-                    | ItemPhase::Approved { .. }
-                    | ItemPhase::Done { .. } => None,
-                },
+            .map(|item| {
+                let listed =
+                    team.task_list()
+                        .list()
+                        .item(item.id())
+                        .ok_or_else(|| DebugRuntimeError::UnknownTarget {
+                            id: item.id().to_string(),
+                        })?;
+                Ok(ItemSummaryFacts {
+                    id: item.id(),
+                    title: listed.title.clone(),
+                    phase: item.status(),
+                    assignee: match item.phase() {
+                        ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } => {
+                            Some(assignee.clone())
+                        }
+                        ItemPhase::Pending
+                        | ItemPhase::InReview { .. }
+                        | ItemPhase::Approved { .. }
+                        | ItemPhase::Done { .. } => None,
+                    },
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, DebugRuntimeError>>()?;
         Ok(Self {
             assessment: Assessment {
                 now,
