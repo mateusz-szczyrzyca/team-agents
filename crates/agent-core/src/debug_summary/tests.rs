@@ -817,3 +817,19 @@ fn unreadable_sections_use_the_typed_destination_instead_of_the_display_name() {
     );
     assert!(!history.contains("No history recorded"));
 }
+
+#[test]
+fn partial_section_failure_preserves_collected_machine_facts() {
+    let input = sample_input();
+    let baseline = render_summary(&input, UtcOffset::UTC).unwrap();
+    let mut partial = input;
+    partial.unreadable_parts.push(UnreadablePartSummary {
+        section: SummarySection::Machine,
+        name: "swap".into(),
+        reason: "permission denied".into(),
+    });
+    let summary = render_summary(&partial, UtcOffset::UTC).unwrap();
+    let facts = baseline.split("## Machine and Resources\n\n").nth(1).unwrap();
+    assert!(summary.contains(facts.trim()), "{summary}");
+    assert!(summary.contains("Could not read swap: permission denied"));
+}

@@ -911,3 +911,15 @@ async fn earlier_merged_tasks_stay_readable_after_a_later_round_opens() {
         "the earlier merged member must remain readable"
     );
 }
+
+#[test]
+fn general_collection_failure_has_no_machine_destination() {
+    let team = team();
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    collection.failed("agent status", "daemon unavailable");
+    assert_eq!(
+        collection.assessment.unreadable[0].section,
+        agent_core::debug_summary::SummarySection::CollectionFailures
+    );
+}

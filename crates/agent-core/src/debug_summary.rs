@@ -49,6 +49,8 @@ pub enum SummarySection {
     Notifications,
     /// 12. The machine.
     Machine,
+    /// Collection failures without a dedicated section, listed below machine facts.
+    CollectionFailures,
 }
 
 impl SummarySection {
@@ -84,6 +86,7 @@ impl SummarySection {
             Self::Bus => "## Bus Messages",
             Self::Notifications => "## Notifications",
             Self::Machine => "## Machine and Resources",
+            Self::CollectionFailures => "### Unreadable Parts",
         }
     }
 }
@@ -1017,6 +1020,7 @@ fn render_with_redaction(
             SummarySection::Bus => render_bus(&input.bus_messages, &mut out),
             SummarySection::Notifications => render_notifications(&input.notifications, &mut out),
             SummarySection::Machine => render_machine(&input.machine, &input.unreadable_parts, &mut out),
+            SummarySection::CollectionFailures => render_unreadable(&input.unreadable_parts, &mut out),
         }
 
         write_line(&mut out, "");
