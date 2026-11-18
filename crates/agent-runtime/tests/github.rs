@@ -990,6 +990,22 @@ mod github_client {
     }
 
     #[tokio::test]
+    async fn edit_comment_patches_the_same_comment_and_keeps_its_id() {
+        let server = FakeServer::always(reply(200, &comment_json(901, "ms-ai-agents", "updated")))
+            .await
+            .unwrap();
+        let comment = github(&server).edit_comment(901, "updated").await.unwrap();
+        assert_eq!((comment.id, comment.body.as_str()), (901, "updated"));
+        let requests = server.requests();
+        let request = requests.first().unwrap();
+        assert_eq!(
+            (request.method.as_str(), request.target.as_str()),
+            ("PATCH", "/repos/octo/widgets/issues/comments/901")
+        );
+        assert_eq!(body_of(request), json!({"body": "updated"}));
+    }
+
+    #[tokio::test]
     async fn list_comments_keeps_the_trusted_accounts_and_counts_the_others() {
         let page = json!([
             comment_json(1, "octo-cat", "mine"),

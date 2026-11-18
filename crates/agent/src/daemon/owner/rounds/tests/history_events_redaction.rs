@@ -13,9 +13,9 @@ const MARKER: &str = "history-event-secret-marker-85";
 
 /// A reviewer that asks for a change in words that carry the secret, then approves.
 const REVIEWER: &str = concat!(
-    "done:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] src/lib.rs:7 — leaks ",
+    "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — leaks ",
     "history-event-secret-marker-85",
-    ",done:VERDICT: APPROVE\\nSUMMARY: fixed"
+    " → redact\\n   CHECK: read src/lib.rs:7,verify:VERDICT: APPROVE\\nSUMMARY: fixed"
 );
 
 #[tokio::test]
@@ -25,7 +25,7 @@ async fn a_secret_in_a_review_report_is_redacted_in_the_report_and_in_the_findin
         &[
             normal("claude-1", "work"),
             investigator("inv-r1", REVIEWER),
-            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "verify:VERDICT: APPROVE\\nSUMMARY: fine"),
         ],
         5,
         false,

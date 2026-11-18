@@ -348,6 +348,19 @@ fn route(world: &mut World, method: &str, target: &str, body: &str) -> Answer {
             }
             ok(json!({"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": false}}}}))
         }
+        ("PATCH", path) if path == format!("/repos/{SLUG}/issues/comments/1") => {
+            if let Some((_, comment)) = world
+                .comments
+                .iter_mut()
+                .find(|(_, text)| text.contains("agent-findings"))
+            {
+                *comment = body["body"].as_str().unwrap().to_owned();
+                return ok(
+                    json!({"id": 1, "user": {"login": ACCOUNT}, "body": body["body"], "created_at": "2026-11-13T10:00:00Z"}),
+                );
+            }
+            not_found()
+        }
         (method, path) => {
             if let Some((number, tail)) = numbered(path, "pulls") {
                 return pull_route(world, method, number, tail, &body);

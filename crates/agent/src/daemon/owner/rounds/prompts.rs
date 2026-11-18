@@ -8,7 +8,9 @@ use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
 use agent_core::ids::InvalidName;
 use agent_core::kinds::Role;
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
-use agent_core::state::{CommitId, ItemPhase, PrNumber, QuestionState, Review, ReviewOutcome, TaskRef, Timestamp};
+use agent_core::state::{
+    CommitId, Findings, ItemPhase, ItemProgress, PrNumber, QuestionState, Review, ReviewOutcome, TaskRef, Timestamp,
+};
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextError};
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision};
 use agent_runtime::run::compose::{ComposeError, PromptTexts, item_sections};
@@ -25,6 +27,9 @@ use crate::daemon::merge::count;
 /// Why what the autopilot adds to a prompt cannot be made.
 #[derive(Debug, thiserror::Error)]
 pub(in crate::daemon::owner) enum SectionError {
+    /// A findings text cannot be rendered.
+    #[error("cannot render findings")]
+    Findings(#[from] super::findings::TextError),
     /// A text cannot be rendered.
     #[error("cannot render a text of the autopilot")]
     Render(#[from] RenderAutopilotTextError),
@@ -93,6 +98,14 @@ pub(in crate::daemon::owner) async fn sections_for(
     why: Option<&Why>,
 ) -> Result<Option<Addition>, SectionError> {
     match (found.role, why) {
+        (Role::Reviewer, Some(Why::ReviewFormat(problem))) => {
+            let values = Variables::new()
+                .with("line", problem.line.to_string())?
+                .with("reason", problem.kind.to_string())?;
+            Ok(Some(Addition::Replace(
+                texts.render(AutopilotPrompt::ReviewFindingsInvalid, &values)?,
+            )))
+        }
         (Role::Reviewer, Some(Why::VerdictMissing)) => {
             let text = texts.render(AutopilotPrompt::ReviewVerdictMissing, &Variables::new())?;
             Ok(Some(Addition::Replace(text.trim_end().to_owned())))
@@ -179,7 +192,8 @@ pub(super) async fn fix_pass(
     let passes = progress.fix_passes().len();
     // The reports of the review pass that asked for this pass were kept under the number of the passes before it.
     let kept = count(passes.saturating_sub(1));
-    let findings = reports_of(ctx, texts, &asked.requested_by, pr.number, kept).await?;
+    let mut findings = vec![super::findings::open_text(texts, progress.findings())?];
+    findings.extend(reports_of(ctx, texts, &asked.requested_by, pr.number, kept).await?);
     let values = Variables::new()
         .with("pr", pr.number.to_string())?
         .with("pass", passes.to_string())?
@@ -219,6 +233,7 @@ pub(super) async fn ask_human(
         let ItemPhase::InReview { reviews, .. } = progress.phase() else {
             continue;
         };
+        findings.push(super::findings::open_text(texts, progress.findings())?);
         let kept = count(progress.fix_passes().len());
         findings.extend(reports_of(ctx, texts, reviews, waits.pr.number, kept).await?);
     }
@@ -274,6 +289,26 @@ pub(super) async fn reports_of(
 /// The most bytes of a report that are read back: far above [`MAX_REPORT_CHARS`](crate::daemon::review::MAX_REPORT_CHARS).
 pub(super) const MAX_REPORT_BYTES: usize = 1 << 20;
 
+/// What a review request says of the earlier passes of its pull request.
+pub(super) struct Verification<'a> {
+    /// The review pass the request is for, counting from one.
+    pub(super) pass: usize,
+    /// The findings ledger of the pull request, when it has one.
+    pub(super) findings: Option<&'a Findings>,
+}
+
+/// The pass and the findings of the pull request that the `items` of a request share.
+///
+/// The pass is the one after the most fix passes of any item: an item that joined a fix pass has none of its own, and
+/// whatever the order of the task list, the report validation demands answers for the ledger that the request shows.
+pub(super) fn verification_of<'a>(items: &[&'a ItemProgress]) -> Verification<'a> {
+    let passes = items.iter().map(|item| item.fix_passes().len()).max().unwrap_or(0);
+    Verification {
+        pass: passes.saturating_add(1),
+        findings: items.iter().find_map(|item| item.findings()),
+    }
+}
+
 /// The request for a review that the reviewer `found` has pending, with the items of the pull request.
 pub(super) async fn review_request(
     ctx: &Context<'_>,
@@ -313,14 +348,19 @@ pub(super) async fn review_request(
             repo: team.repo().clone(),
         })?;
     let head = head_of(ctx, found, working).await?;
+    let verification = verification_of(&items);
     let values = Variables::new()
         .with("team", team.id().as_str())?
         .with("pr", pr.number.to_string())?
         .with("branch", pr.branch.as_str())?
         .with("base", base.as_str())?
         .with("head", head.as_str())?
-        .with("pass", first.fix_passes().len().saturating_add(1).to_string())?;
+        .with("pass", verification.pass.to_string())?;
     let mut sections = vec![texts.render(AutopilotPrompt::ReviewRequest, &values)?];
+    if verification.pass > 1 && verification.findings.is_some() {
+        let values = Variables::new().with("findings", super::findings::open_text(texts, verification.findings)?)?;
+        sections.push(texts.render(AutopilotPrompt::ReviewOpenFindings, &values)?);
+    }
     let harness = PromptTexts {
         harness: ctx.texts,
         rules: ctx.rules,

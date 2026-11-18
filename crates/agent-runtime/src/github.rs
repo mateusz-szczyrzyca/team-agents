@@ -1284,6 +1284,26 @@ impl GitHub {
         Ok(raw.into_comment(author))
     }
 
+    /// Edits an existing comment in place.
+    ///
+    /// # Errors
+    /// The errors of a call or decoding its answer.
+    pub async fn edit_comment(&self, id: u64, body: &str) -> Result<Comment, GitHubError> {
+        let operation = GitHubOperation::PostComment;
+        let answer = self
+            .call(Call {
+                operation,
+                method: Method::PATCH,
+                path: self.repo_path(&format!("issues/comments/{id}")),
+                body: Some(json!({"body": body}).to_string()),
+                idempotency: Idempotency::Idempotent,
+            })
+            .await?;
+        let raw: RawComment = decode(operation, &answer)?;
+        let author = raw.author_or_decode_error(operation)?;
+        Ok(raw.into_comment(author))
+    }
+
     /// The comments on a pull request by the trusted accounts, oldest first. Retried, page by page.
     ///
     /// # Errors

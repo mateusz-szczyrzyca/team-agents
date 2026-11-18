@@ -186,7 +186,7 @@ use std::str::FromStr;
 
 use agent_core::ids::RoundId;
 use agent_core::protocol::{RoundDetail, RoundTask};
-use agent_core::state::{ItemPhase, NewRun, RoundEnd, State};
+use agent_core::state::{Findings, ItemPhase, NewRun, RoundEnd, State};
 
 use crate::fixtures::{at, run};
 
@@ -553,4 +553,41 @@ async fn another_kind_of_reply_to_the_status_of_a_round_is_an_error() {
         matches!(error, StatusError::UnexpectedReply { kind: "applied" }),
         "{error:?}"
     );
+}
+
+#[test]
+fn a_round_counts_only_open_findings_of_each_severity() {
+    use agent_core::review_findings::{Finding, Severity};
+    use agent_core::state::{FindingStatus, RecordedFinding};
+    let mut state = team_with_rounds();
+    {
+        let mut team = state.team_mut(&team_id(0)).unwrap();
+        let mut item = team.item_mut("1.2".parse().unwrap()).unwrap();
+        item.start_findings();
+        let mut entries = Vec::new();
+        for (index, severity, status) in [
+            (1, Severity::Blocker, FindingStatus::Open),
+            (2, Severity::Major, FindingStatus::Open),
+            (3, Severity::Minor, FindingStatus::Open),
+            (4, Severity::Blocker, FindingStatus::Resolved),
+        ] {
+            entries.push(RecordedFinding {
+                number: NonZeroU32::new(index).unwrap(),
+                finding: Finding {
+                    severity,
+                    rule: "ERR-3".into(),
+                    place: "lib.rs:1".into(),
+                    text: "problem → fix".into(),
+                    check: "read lib.rs:1".into(),
+                },
+                reporter: "inv-codex".parse().unwrap(),
+                pass: NonZeroU32::MIN,
+                status,
+            });
+        }
+        *item.findings_mut().unwrap() = Findings::new(entries).unwrap();
+    }
+    let round = detail(&state);
+    assert_eq!(round.findings.len(), 4);
+    assert!(render_round(&round).contains("open findings: 1 BLOCKER, 1 MAJOR, 1 MINOR"));
 }

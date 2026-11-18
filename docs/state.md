@@ -29,20 +29,22 @@ The state is one JSON document, written indented with a newline at the end, the 
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "teams": [ { "id": "team-20261111-193000-a1b2", "...": "..." } ]
 }
 ```
 
-A complete example, written by this format, is
-[`state-v2.json`](../crates/agent-core/tests/fixtures/state-v2.json): three teams — one of three roles and two
+A state of version 2, as `main` wrote it before the findings, is
+[`state-before-findings.json`](../crates/agent-core/tests/fixtures/state-before-findings.json) (and
+[`state-v2.json`](../crates/agent-core/tests/fixtures/state-v2.json)): three teams — one of three roles and two
 reviewers with a merged round and an open one, one solo that does not merge by itself with an approved round, one on a
-list without items — with the runs that name the rounds. A test loads it and writes it back to the same text; **it must
-keep loading** — a later build that cannot read it would lose the teams of an installation.
+list without items — with the runs that name the rounds. A test loads it; **it must keep loading** — a later build
+that cannot read it would lose the teams of an installation. A state of version 3 with findings is written and read
+back by the tests of the `findings` module.
 
 [`state-v1.json`](../crates/agent-core/tests/fixtures/state-v1.json) is a state of version 1, which had no rounds. It
 **must keep loading**: it is read through the migration (below) as exactly
-[`state-v1-as-v2.json`](../crates/agent-core/tests/fixtures/state-v1-as-v2.json), every time.
+[`state-v1-as-v3.json`](../crates/agent-core/tests/fixtures/state-v1-as-v3.json), every time.
 
 ### Reading and its rules
 
@@ -54,9 +56,11 @@ keep loading** — a later build that cannot read it would lose the teams of an 
   as one that was built through the API. There is one way to read a value, the `Deserialize` trait: the field-by-field
   reading that serde derives lives on a private mirror type (`remote`), so no public `T::deserialize` skips the checks.
 - **Versioned.** `State::from_json` reads `schema_version` **first**. A state of another version is refused with
-  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 2,
-  reads version 2 and migrates version 1 as it reads it (see "Version 1" below); any other version, 3 included, is
-  refused. A change that old files do not satisfy raises the version and comes with a migration, a fixture of the old
+  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 3,
+  reads versions 2 and 3 and migrates version 1 as it reads it (see "Version 1" below); any other version is
+  refused. Version 2 is read as it is: its items have no `findings`, so a round that was open when the daemon was
+  updated ends by the rules it started with (verdicts only), and the numbered findings hold for pull requests opened
+  after the update. A change that old files do not satisfy raises the version and comes with a migration, a fixture of the old
   format and tests (the same rule as `AGENTS.md` rule 9 sets for the old harness). Stricter validation of an old value
   is such a change too.
 - **Bounded.** The text may have 64 MiB (`MAX_STATE_BYTES`).
@@ -142,7 +146,7 @@ the `**ANSWERED**` marker, `dashboard`). **The questions and the answers are in 
 
 #### Items
 
-An item's progress is `{id, phase, fix_passes?, gate?}`. The `phase` carries exactly the data of that phase:
+An item's progress is `{id, phase, fix_passes?, gate?, findings?}`. The `phase` carries exactly the data of that phase:
 
 | `phase` | Data | Item status | Moves to |
 |---|---|---|---|
@@ -152,6 +156,15 @@ An item's progress is `{id, phase, fix_passes?, gate?}`. The `phase` carries exa
 | `fixing` | `assignee`, `branch`, `pr` | `in_progress` | `in_review` |
 | `approved` | `pr`, `reviews[]` | `approved` | `done` |
 | `done` | `completion`: `listed` (the list marked it `[x]`) or `merged` (`pr`, `at`) | `done` | — |
+
+**Findings.** An item of a pull request opened by this build carries `findings`: the permanent record of the review's
+findings, shared by the items of one pull request. Each entry has a `number` (given by the harness, counting up over the
+pull request in the order the reviews were asked and then the order of the report; it never changes), the `severity`
+(`BLOCKER`, `MAJOR` or `MINOR`), the `rule` ID, the `place`, the `text`, the `check`, the `reporter` (the investigator),
+the review `pass` and the `status` (`open` or `resolved`). `comment` is the id of the harness's one comment on the pull
+request, with the table of the findings, which is edited in place; reports that wait for the rest of their pass are
+kept there until the pass is complete. A finding is resolved when every reviewer of a later pass says so. The numbers are exactly 1, 2, … in order; a state whose ledger has a duplicate, a gap or another order is refused when read. An item
+without `findings` belongs to a round opened by an earlier daemon.
 
 The table is `PhaseKind::successors`; every change in it is a change `ItemStatus` allows, and every change `ItemStatus`
 allows is in it (two tests). The phase `fixing` exists so that the pull request survives a fix pass. Leaving

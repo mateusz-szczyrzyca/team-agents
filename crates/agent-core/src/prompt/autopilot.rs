@@ -58,6 +58,22 @@ pub enum AutopilotPrompt {
     ReviewAskHuman,
     /// What a reviewer is told when its report has no verdict.
     ReviewVerdictMissing,
+    /// Structured findings protocol and presentation.
+    ReviewSeverityMinor,
+    /// Structured findings protocol and presentation.
+    ReviewSeverityMajor,
+    /// Structured findings protocol and presentation.
+    ReviewSeverityBlocker,
+    /// Structured findings protocol and presentation.
+    ReviewFindingsRow,
+    /// Structured findings protocol and presentation.
+    ReviewFindingsTable,
+    /// Structured findings protocol and presentation.
+    ReviewOpenFinding,
+    /// Structured findings protocol and presentation.
+    ReviewOpenFindings,
+    /// Structured findings protocol and presentation.
+    ReviewFindingsInvalid,
     /// The notification that a reviewer gave no verdict.
     NoticeNoVerdict,
     /// The notification that the reviewers still ask for changes and the human has to decide.
@@ -92,6 +108,14 @@ impl AutopilotPrompt {
         Self::ReviewFinding,
         Self::ReviewAskHuman,
         Self::ReviewVerdictMissing,
+        Self::ReviewSeverityMinor,
+        Self::ReviewSeverityMajor,
+        Self::ReviewSeverityBlocker,
+        Self::ReviewFindingsRow,
+        Self::ReviewFindingsTable,
+        Self::ReviewOpenFinding,
+        Self::ReviewOpenFindings,
+        Self::ReviewFindingsInvalid,
         Self::NoticeNoVerdict,
         Self::NoticeDecision,
         Self::NoticeMerged,
@@ -100,109 +124,99 @@ impl AutopilotPrompt {
     /// Where the text is, who reads it and which variables it uses.
     #[must_use]
     pub const fn spec(self) -> PromptSpec {
-        let (path, audience, variables) = self.definition();
+        let (path, variables) = self.definition();
+        let audience = if matches!(
+            self,
+            Self::NoticeTeamAsleep
+                | Self::NoticeStandingItem
+                | Self::NoticeApproved
+                | Self::NoticePublishFailed
+                | Self::NoticeMergeFailed
+                | Self::NoticeClosed
+                | Self::NoticeNoVerdict
+                | Self::NoticeDecision
+                | Self::NoticeMerged
+        ) {
+            Audience::Human
+        } else {
+            Audience::Model
+        };
         PromptSpec::new(path, audience, variables)
     }
 
     /// The path, audience and variables of this text.
-    const fn definition(self) -> (&'static str, Audience, &'static [&'static str]) {
+    const fn definition(self) -> (&'static str, &'static [&'static str]) {
         match self {
-            Self::PrTitle => ("harness/pr/title.md", Audience::Model, &["item_ids", "item_titles"]),
-            Self::PrBody => (
-                "harness/pr/body.md",
-                Audience::Model,
-                &["team", "repo", "gate", "items"],
-            ),
+            Self::PrTitle => ("harness/pr/title.md", &["item_ids", "item_titles"]),
+            Self::PrBody => ("harness/pr/body.md", &["team", "repo", "gate", "items"]),
             Self::PrBodyItem => (
                 "harness/pr/body-item.md",
-                Audience::Model,
                 &["item_id", "item_title", "item_description"],
             ),
-            Self::PrBodyExpected => ("harness/pr/body-expected.md", Audience::Model, &["expected"]),
-            Self::PrBodyChecks => ("harness/pr/body-checks.md", Audience::Model, &["checks"]),
-            Self::PrUpdate => ("harness/pr/update.md", Audience::Model, &["head", "pass", "gate"]),
-            Self::GateNotPassed => (
-                "harness/pr/gate-not-passed.md",
-                Audience::Model,
-                &["branch", "reason", "sent", "limit"],
-            ),
+            Self::PrBodyExpected => ("harness/pr/body-expected.md", &["expected"]),
+            Self::PrBodyChecks => ("harness/pr/body-checks.md", &["checks"]),
+            Self::PrUpdate => ("harness/pr/update.md", &["head", "pass", "gate"]),
+            Self::GateNotPassed => ("harness/pr/gate-not-passed.md", &["branch", "reason", "sent", "limit"]),
             Self::BranchNotJoined => (
                 "harness/pr/branch-not-joined.md",
-                Audience::Model,
                 &["branch", "missing", "sent", "limit"],
             ),
             Self::TeamAsleep => (
                 "harness/pr/team-asleep.md",
-                Audience::Model,
                 &["team", "items", "minutes", "tasks", "woken", "limit"],
             ),
             Self::NoticeTeamAsleep => (
                 "harness/pr/notice-team-asleep.md",
-                Audience::Human,
                 &["team", "items", "minutes", "tasks", "woken", "lead"],
             ),
             Self::NoticeStandingItem => (
                 "harness/pr/notice-standing-item.md",
-                Audience::Human,
                 &["team", "item", "member", "task", "line"],
             ),
-            Self::NoticeApproved => (
-                "harness/pr/notice-approved.md",
-                Audience::Human,
-                &["team", "repo", "pr", "url"],
-            ),
-            Self::NoticePublishFailed => (
-                "harness/pr/notice-publish-failed.md",
-                Audience::Human,
-                &["team", "items", "reason"],
-            ),
-            Self::NoticeMergeFailed => (
-                "harness/pr/notice-merge-failed.md",
-                Audience::Human,
-                &["team", "pr", "url", "reason"],
-            ),
-            Self::NoticeClosed => ("harness/pr/notice-closed.md", Audience::Human, &["team", "pr", "url"]),
-            Self::NoticeMerged => (
-                "harness/pr/notice-merged.md",
-                Audience::Human,
-                &["team", "pr", "url", "items"],
-            ),
+            Self::NoticeApproved => ("harness/pr/notice-approved.md", &["team", "repo", "pr", "url"]),
+            Self::NoticePublishFailed => ("harness/pr/notice-publish-failed.md", &["team", "items", "reason"]),
+            Self::NoticeMergeFailed => ("harness/pr/notice-merge-failed.md", &["team", "pr", "url", "reason"]),
+            Self::NoticeClosed => ("harness/pr/notice-closed.md", &["team", "pr", "url"]),
+            Self::NoticeMerged => ("harness/pr/notice-merged.md", &["team", "pr", "url", "items"]),
             Self::ReviewRequest => (
                 "harness/review/request.md",
-                Audience::Model,
                 &["team", "pr", "branch", "base", "head", "pass"],
             ),
             Self::ReviewComment => (
                 "harness/review/comment.md",
-                Audience::Model,
                 &["reviewer", "client", "verdict", "pass", "commit", "report"],
             ),
-            Self::ReviewVerdictApprove => ("harness/review/verdict-approve.md", Audience::Model, &["icon"]),
-            Self::ReviewVerdictRequestChanges => {
-                ("harness/review/verdict-request-changes.md", Audience::Model, &["icon"])
-            }
+            Self::ReviewVerdictApprove => ("harness/review/verdict-approve.md", &["icon"]),
+            Self::ReviewVerdictRequestChanges => ("harness/review/verdict-request-changes.md", &["icon"]),
             Self::ReviewFixPass => (
                 "harness/review/fix-pass.md",
-                Audience::Model,
                 &["pr", "pass", "passes", "branch", "findings"],
             ),
-            Self::ReviewFinding => ("harness/review/finding.md", Audience::Model, &["reviewer", "report"]),
+            Self::ReviewFinding => ("harness/review/finding.md", &["reviewer", "report"]),
             Self::ReviewAskHuman => (
                 "harness/review/ask-human.md",
-                Audience::Model,
                 &["pr", "passes", "findings", "questions_file", "number", "task"],
             ),
-            Self::ReviewVerdictMissing => ("harness/review/verdict-missing.md", Audience::Model, &[]),
+            Self::ReviewFindingsInvalid => ("harness/review/findings-invalid.md", &["line", "reason"]),
+            Self::ReviewOpenFindings => ("harness/review/open-findings.md", &["findings"]),
+            Self::ReviewOpenFinding => (
+                "harness/review/open-finding.md",
+                &["number", "severity", "rule", "place", "text", "check"],
+            ),
+            Self::ReviewFindingsTable => ("harness/review/findings-table.md", &["rows"]),
+            Self::ReviewFindingsRow => (
+                "harness/review/findings-row.md",
+                &["number", "severity", "rule", "place", "text", "status", "reporter"],
+            ),
+            Self::ReviewSeverityBlocker => ("harness/review/severity-blocker.md", &[]),
+            Self::ReviewSeverityMajor => ("harness/review/severity-major.md", &[]),
+            Self::ReviewSeverityMinor => ("harness/review/severity-minor.md", &[]),
+            Self::ReviewVerdictMissing => ("harness/review/verdict-missing.md", &[]),
             Self::NoticeNoVerdict => (
                 "harness/review/notice-no-verdict.md",
-                Audience::Human,
                 &["reviewer", "pr", "task", "why"],
             ),
-            Self::NoticeDecision => (
-                "harness/review/notice-decision.md",
-                Audience::Human,
-                &["team", "pr", "passes"],
-            ),
+            Self::NoticeDecision => ("harness/review/notice-decision.md", &["team", "pr", "passes"]),
         }
     }
 }

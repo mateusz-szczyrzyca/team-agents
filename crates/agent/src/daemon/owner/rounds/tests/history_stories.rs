@@ -19,13 +19,13 @@ use super::rig::{ONE, Rig, investigator, normal};
 use crate::environment::Environment;
 
 /// Both outside reviewers approve every review pass.
-const APPROVING: &str = "done:VERDICT: APPROVE\\nSUMMARY: fine";
+const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 
 /// An approving reviewer that waits for the other reviewer's verdict to be recorded first, so that the order of the two is deterministic.
-const LATE_APPROVING: &str = "late:VERDICT: APPROVE\\nSUMMARY: fine";
+const LATE_APPROVING: &str = "late-verify:VERDICT: APPROVE\\nSUMMARY: fine";
 
 /// A reviewer that asks for changes after the other reviewer's verdict is recorded, and approves the second time after the other.
-const LATE_CHANGES_ONCE: &str = "late:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] src/lib.rs:7 — the case is untested,late:VERDICT: APPROVE\\nSUMMARY: fixed";
+const LATE_CHANGES_ONCE: &str = "late-verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\\n   CHECK: read src/lib.rs:7,late-verify:VERDICT: APPROVE\\nSUMMARY: fixed";
 
 /// A rig whose watchdog does not strike a stand-in waiting on a gate or peer-review barrier while the injected `TickingClock`
 /// advances on each reading.
@@ -705,8 +705,8 @@ async fn a_round_with_text_that_is_not_ascii_and_a_very_long_line_is_told_whole_
     let mut rig = patient(
         &[
             normal("claude-1", "gated"),
-            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: très bien — 日本語"),
-            investigator("inv-r2", "late:VERDICT: APPROVE\\nSUMMARY: zażółć gęślą jaźń"),
+            investigator("inv-r1", "verify:VERDICT: APPROVE\\nSUMMARY: très bien — 日本語"),
+            investigator("inv-r2", "late-verify:VERDICT: APPROVE\\nSUMMARY: zażółć gęślą jaźń"),
         ],
         5,
         false,

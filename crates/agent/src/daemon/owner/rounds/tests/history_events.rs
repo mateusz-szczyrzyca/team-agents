@@ -22,10 +22,10 @@ use super::rig::{ONE, Rig, investigator, normal};
 use crate::client::Connection;
 
 /// A reviewer that approves.
-const APPROVING: &str = "done:VERDICT: APPROVE\\nSUMMARY: fine";
+const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 
 /// A reviewer that asks for changes the first time and approves afterwards.
-const CHANGES_ONCE: &str = "done:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] src/lib.rs:7 — the case is untested,done:VERDICT: APPROVE\\nSUMMARY: fixed";
+const CHANGES_ONCE: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\\n   CHECK: read src/lib.rs:7,verify:VERDICT: APPROVE\\nSUMMARY: fixed";
 
 /// The events of `team` the history holds, in the order they were written, with their places.
 fn events(rig: &Rig, team: &TeamId) -> Vec<(u64, EventRecord)> {
@@ -230,7 +230,7 @@ async fn every_review_is_recorded_asked_of_a_reviewer_with_its_pass_and_head_and
         .unwrap();
     assert_eq!(changes.2, ReviewVerdict::RequestChanges);
     assert!(
-        changes.3.contains("[TDD-2] src/lib.rs:7 — the case is untested"),
+        changes.3.contains("[MAJOR] TDD-2 src/lib.rs:7 — the case is untested"),
         "{}",
         changes.3
     );
@@ -269,7 +269,7 @@ async fn a_fix_pass_is_recorded_with_its_number_of_how_many_and_the_findings_the
     };
     assert_eq!((pass.get(), *of), (1, 5));
     assert!(
-        findings.contains("[TDD-2] src/lib.rs:7 — the case is untested"),
+        findings.contains("[MAJOR] TDD-2 src/lib.rs:7 — the case is untested"),
         "{findings}"
     );
     // What the team was sent is what its prompt got.
@@ -821,7 +821,7 @@ async fn a_task_with_runs_in_two_rounds_links_second_round_events_only_to_the_se
     use agent_core::story::{PromptView, Selection, StepView, StoryOptions, render};
 
     /// Approves both rounds' pull requests.
-    const TWO_APPROVALS: &str = "done:VERDICT: APPROVE\\nSUMMARY: ok,done:VERDICT: APPROVE\\nSUMMARY: ok";
+    const TWO_APPROVALS: &str = "verify:VERDICT: APPROVE\\nSUMMARY: ok,verify:VERDICT: APPROVE\\nSUMMARY: ok";
     let mut rig = Rig::new(
         &[
             normal("claude-1", "gated,ask,gated"),
@@ -924,7 +924,7 @@ async fn a_task_with_runs_in_two_rounds_links_second_round_events_only_to_the_se
 
 #[tokio::test]
 async fn a_review_report_that_arrives_after_its_pass_was_decided_is_recorded_in_its_round() {
-    let late_approvals = "late:VERDICT: APPROVE\\nSUMMARY: late first,done:VERDICT: APPROVE\\nSUMMARY: fixed";
+    let late_approvals = "late-verify:VERDICT: APPROVE\\nSUMMARY: late first,verify:VERDICT: APPROVE\\nSUMMARY: fixed";
     let mut rig = Rig::new(
         &[
             normal("claude-1", "work"),

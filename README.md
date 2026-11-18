@@ -1169,6 +1169,16 @@ update comments and reviews become GitHub links when git resolves them. Longer i
 existing links (including bare URLs), HTML tags and comments stay unchanged. Lookup failures are logged and publication continues with the original text. The review layout is in
 `prompts/harness/review/`; review reports and PR descriptions must label code fences with their language.
 
+A review report lists numbered findings, each with one of three severities — `[BLOCKER]` (broken logic, build or gate: fixed in
+the code), `[MAJOR]` (a deviation from the task, the developer rules or `AGENTS.md` with no explanation) and `[MINOR]` (advice,
+never blocks) — a rule ID and a `CHECK:` line that tells how to see whether it still holds. The daemon reads them: a report whose
+finding has no or another severity or no check, or whose verdict contradicts its findings (`APPROVE` with a `[BLOCKER]` or
+`[MAJOR]`, `REQUEST_CHANGES` with neither), goes back to its reviewer. The findings of a pull request keep their numbers over
+all review passes; a reviewer of a later pass answers for every open one (`FINDING 3: RESOLVED` or `FINDING 3: OPEN — why`).
+The harness keeps one comment on the pull request with the table of all findings, edited after every pass, and the fix-pass
+text names the findings that block by number. `agent status <round>` counts the open ones of each severity. Pull requests
+opened before the daemon was updated keep the verdict-only review until they end.
+
 Before the review the daemon checks the round's own diff and commits through git, with no model, if the repository has a
 `[repos.NAME.checks]` table in `agents.toml` ([`docs/configuration.md`](docs/configuration.md)): the lists of path patterns that
 say what is a test, what is production code and what judges a round. A round that changes an existing test other than by added

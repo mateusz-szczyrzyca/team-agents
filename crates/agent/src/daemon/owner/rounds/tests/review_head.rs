@@ -6,9 +6,9 @@ use super::fake_github::SLUG;
 use super::rig::{Rig, git, investigator, normal};
 
 /// An approving final report.
-const APPROVING: &str = "done:VERDICT: APPROVE\\nSUMMARY: fine";
+const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 /// A requested fix followed by approval.
-const R1_SCENARIO: &str = "done:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] see `HEAD` for issue,done:VERDICT: APPROVE\\nSUMMARY: fixed in `HEAD`";
+const R1_SCENARIO: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — see `HEAD` for issue → fix it\\n   CHECK: read `HEAD`,verify:VERDICT: APPROVE\\nSUMMARY: fixed in `HEAD`";
 
 /// Captures the existing log event used when commit linking cannot consult git.
 #[derive(Clone, Default)]
@@ -162,13 +162,13 @@ async fn review_head_and_commit_links_in_reviews_pr_description_and_update_comme
 
     // 2. Updated branch comment links its commit ID
     let comments = rig.github.comments(1);
-    assert_eq!(comments.len(), 1);
+    assert_eq!(comments.len(), 2);
     let expected_update_link =
         format!("The branch was updated to [`{final_head}`](https://github.com/{SLUG}/commit/{final_head})");
     assert!(
-        comments[0].contains(&expected_update_link),
+        comments[1].contains(&expected_update_link),
         "Update comment missing commit link: {}",
-        comments[0]
+        comments[1]
     );
 
     // 3. Reviews: 4 reviews total (2 on pass 1, 2 on pass 2)
@@ -185,7 +185,7 @@ async fn review_head_and_commit_links_in_reviews_pr_description_and_update_comme
     let body1 = r1_pass1["body"].as_str().unwrap();
     assert!(body1.starts_with("### Review by `inv-r1` (claude)\n## ❌ $\\color{#d1242f}{\\textbf{REQUEST CHANGES}}$\nReview pass 1 of commit [`"));
     assert!(body1.contains(&format!("https://github.com/{SLUG}/commit/{initial_head}")));
-    assert!(body1.contains("\n---\n\nBLOCKERS\n1. [TDD-2] see"));
+    assert!(body1.contains("\n---\n\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — see"));
     assert!(!body1.contains("VERDICT: REQUEST_CHANGES"));
     // Commit in backticks in report is linked
     assert!(body1.contains(&format!(
@@ -218,20 +218,20 @@ async fn review_head_and_commit_links_in_reviews_pr_description_and_update_comme
         "### Review by `inv-r1` (claude)\n## ✅ $\\color{#1a7f37}{\\textbf{APPROVED}}$\nReview pass 2 of commit [`"
     ));
     assert!(body3.contains(&format!("https://github.com/{SLUG}/commit/{final_head}")));
-    assert!(body3.contains("\n---\n\nSUMMARY: fixed in"));
+    assert!(body3.contains("\n---\n\nFINDING 1: RESOLVED\nSUMMARY: fixed in"));
     assert!(!body3.contains("VERDICT: APPROVE"));
 }
 
 #[tokio::test]
 async fn modeled_reviews_and_late_reviews_link_the_reported_commit_on_each_pass() {
     for late in [
-        "late-commit:APPROVE,review-commit:APPROVE",
-        "late-commit:REQUEST_CHANGES,review-commit:APPROVE",
+        "late-structured-commit:APPROVE,structured-commit:APPROVE",
+        "late-structured-commit:REQUEST_CHANGES,structured-commit:APPROVE",
     ] {
         let mut rig = Rig::new(
             &[
                 normal("claude-1", "work"),
-                investigator("inv-r1", "review-commit:REQUEST_CHANGES,review-commit:APPROVE"),
+                investigator("inv-r1", "structured-commit:REQUEST_CHANGES,structured-commit:APPROVE"),
                 investigator("inv-r2", late),
             ],
             5,
@@ -287,8 +287,8 @@ Build the thing.
     - run the first thing
 ";
 
-    const R1_SCENARIO_FILES: &str = "done:VERDICT: REQUEST_CHANGES\\nBLOCKERS\\n1. [TDD-2] see README.md:42 for issue,done:VERDICT: APPROVE\\nSUMMARY: fixed in `README.md`";
-    const APPROVING_FILES: &str = "done:VERDICT: APPROVE\\nSUMMARY: see README.md";
+    const R1_SCENARIO_FILES: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 README.md:42 — see README.md:42 for issue → fix it\\n   CHECK: read README.md:42,verify:VERDICT: APPROVE\\nSUMMARY: fixed in `README.md`";
+    const APPROVING_FILES: &str = "verify:VERDICT: APPROVE\\nSUMMARY: see README.md";
 
     let mut rig = Rig::new(
         &[
@@ -341,13 +341,13 @@ Build the thing.
     );
 
     let comments = rig.github.comments(1);
-    assert_eq!(comments.len(), 1);
+    assert_eq!(comments.len(), 2);
     let expected_update_file_link =
         format!("[README.md:1-5](https://github.com/{SLUG}/blob/{final_head}/README.md#L1-L5)");
     assert!(
-        comments[0].contains(&expected_update_file_link),
+        comments[1].contains(&expected_update_file_link),
         "Update comment missing file link: {}",
-        comments[0]
+        comments[1]
     );
 
     let reviews = rig.github.reviews(1);

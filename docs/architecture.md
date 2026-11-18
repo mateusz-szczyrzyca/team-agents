@@ -82,8 +82,9 @@ Both `Config` and `TaskList` take text, not paths: reading `agents.toml`, `secre
 
 | Module | Types |
 |---|---|
-| `state` | `State` (with its schema version, version 1 migrated as it is read), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `Round`, `RoundLife`, `RoundEnd`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `GateRecord`, `GateTree`, `ChecksRecord` (the checks' record of a lead, a file of its task directory), `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
+| `state` | `State` (with its schema version 3; version 2 is read as it is and version 1 migrated as it is read; the `findings` ledger of an item), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `Round`, `RoundLife`, `RoundEnd`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `GateRecord`, `GateTree`, `ChecksRecord` (the checks' record of a lead, a file of its task directory), `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
 | `protocol` | `Request`, `Command`, `Response`, `Reply`, `Failure`, `Event`, `EventKind`, `Frame`, with the protocol version and `ProtocolError`. JSON lines over the daemon's socket. See [`state.md`](state.md) |
+| `review_findings` | `Severity` (`BLOCKER`, `MAJOR`, `MINOR`), `Finding`, `Answer` (`FINDING 3: RESOLVED`, `OPEN — why`), `parse_report`: a review report read into its findings and its answers for the open ones, or the line that is wrong. Pure: the harness sends the report back to its reviewer when it fails |
 | `questions` | `QuestionsFile`, `Entry`, `Verdict`: parsing and rendering of the questions file, the `ok` verdict, the `**ANSWERED**` marker. See [`state.md`](state.md) |
 
 They take and give text too (`State::from_json`, `Request::from_line`, `QuestionsFile::parse`): the state store, the
@@ -358,12 +359,31 @@ with a worktree at the head (a new branch of its own), one per investigator: it 
 pull request, and the same one again after a fix pass, in the same session, and is closed with the team. Its prompt is the
 working context, the review rules, the brief, the request (pull request, branch, base, the commit under review) and each item of
 the pull request with its expected result and checks. Its final message is the report: the first `VERDICT:` line says
-`APPROVE` or `REQUEST_CHANGES` (markup and case aside), or the report is asked for again, twice, and then the human is told. The
+`APPROVE` or `REQUEST_CHANGES` (markup and case aside), and its findings are read (below), or the report is asked for again, twice, and then the human is told. The
 report is kept in `tasks/<reviewer>/review-pr<N>-pass<K>.md` (`K` fix passes the pull request had), posted on the pull request
 as a **comment review** with the verdict in its body (the harness opens the pull request and posts with one account, which
 GitHub does not let approve it) and recorded in every item of the pull request (`review_submitted`). A report is matched with
 the review it answers by the time its run started: the latest review asked of its task at or before that time that is still
 pending. A report that answers none (a reviewer that was replaced, or woken with nothing to review) is logged and not taken.
+
+**Findings** (`agent_core::review_findings`, `owner/rounds/findings.rs`). A report lists its findings as
+`N. [SEVERITY] RULE place — problem → fix`, with a `CHECK:` line under each, and the severity is one of `[BLOCKER]`,
+`[MAJOR]`, `[MINOR]` (what each means is in the review rules, `prompts/investigator/code-review.md`, §6). A report goes back
+to its reviewer, with the budget of a report without a verdict, when a finding has another severity or none or no check, when
+the verdict is `APPROVE` and a finding is a `[BLOCKER]` or `[MAJOR]`, when it is `REQUEST_CHANGES` and none is, or, in a pass
+after the first, when it leaves an open finding without its `FINDING n: RESOLVED` / `FINDING n: OPEN — why` line
+(`harness/review/findings-invalid.md` says which line is wrong); a line that looks like a finding outside the numbered list under `FINDINGS` is refused rather than dropped, and fenced code blocks are not read. The findings of a pull request opened by this build are kept
+with its items (`findings`, [`state.md`](state.md)): numbers that never change, counted over the pull request in the order the
+reviews were asked and then the order of the report, and a status, `open` until every reviewer of a later pass says
+`RESOLVED`. A pass is numbered when all its reports are in. The text of a fix pass lists the open findings with number,
+severity and place, and says which block; every `[BLOCKER]` and `[MAJOR]` is fixed in the code. A review pass after a fix
+pass is given the open findings with their numbers and checks. The harness keeps **one comment** of its own on the pull
+request, made when the first findings are in and edited in place after every pass (`agent_runtime::github`, a `PATCH`): one row
+per finding with number, severity, rule, place, the text cut to a line, status and reporter, the severity in bold and colour
+(`[BLOCKER]` dark red, `[MAJOR]` light red, `[MINOR]` orange; the reports and the state carry the plain words). A comment
+that cannot be posted or edited is logged and holds nothing. `[MINOR]` findings that are open stay in it when the pull request
+is merged. A round opened before the update has no ledger and ends by the verdict-only rules it began with. `agent status
+<round>` shows how many findings are open of each severity.
 
 Every posted review starts with the investigator's name and its configured CLI and model
 (the model is omitted when none is configured), a verdict heading, and the review pass and commit. The approval
