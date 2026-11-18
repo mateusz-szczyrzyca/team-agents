@@ -341,6 +341,7 @@ async fn observe_daemon(
         Ok(Some(daemon)) => {
             collection.assessment.daemon = Some(agent_core::diagnostic_assessment::Daemon::Present {
                 executable_newer: Some(daemon.disk_newer_than_process),
+                version: None,
             });
             collection.add_daemon(daemon);
         }

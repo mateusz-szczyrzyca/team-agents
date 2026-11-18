@@ -93,6 +93,7 @@ fn sample_input() -> SummaryInput {
             disk_newer_than_process: false,
             version: "0.1.0".to_owned(),
         }),
+        command_version: "agent 0.1.0".to_owned(),
         team: sample_team(),
         tasks: vec![sample_task()],
         git: vec![sample_git()],
@@ -832,4 +833,26 @@ fn partial_section_failure_preserves_collected_machine_facts() {
     let facts = baseline.split("## Machine and Resources\n\n").nth(1).unwrap();
     assert!(summary.contains(facts.trim()), "{summary}");
     assert!(summary.contains("Could not read swap: permission denied"));
+}
+
+#[test]
+fn summary_shows_command_version_beside_daemon_version() {
+    let mut input = sample_input();
+    input.command_version = "agent 0.2.0".to_owned();
+    if let Some(d) = input.daemon.as_mut() {
+        d.version = "agent 0.1.0".to_owned();
+    }
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(summary.contains("- Command version: agent 0.2.0"), "{summary}");
+    assert!(summary.contains("- Daemon version: agent 0.1.0"), "{summary}");
+}
+
+#[test]
+fn summary_shows_single_command_version_when_daemon_unreachable() {
+    let mut input = sample_input();
+    input.daemon = None;
+    input.command_version = "agent 0.2.0".to_owned();
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(summary.contains("- Command version: agent 0.2.0"), "{summary}");
+    assert!(!summary.contains("- Daemon version:"), "{summary}");
 }

@@ -73,6 +73,7 @@ fn retries_oversized_required_presentation_without_losing_full_facts() {
         collected_at: "2026-11-17T12:00:00Z".parse::<Timestamp>().unwrap(),
         anomalies: vec![],
         daemon: None,
+        command_version: String::new(),
         team: TeamSummaryFacts {
             id: "team-20261117-120000-a1b2".parse().unwrap(),
             repo: "example".parse().unwrap(),

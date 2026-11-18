@@ -104,6 +104,7 @@ impl Collection {
                 now,
                 stale_after,
                 daemon: None,
+                command_version: None,
                 lead,
                 tasks: vec![],
                 items: team.items().iter().map(|item| item.phase().clone()).collect(),
@@ -117,6 +118,7 @@ impl Collection {
                 collected_at: now,
                 anomalies: vec![],
                 daemon: None,
+                command_version: String::new(),
                 team: TeamSummaryFacts {
                     id: team.id().clone(),
                     repo: team.repo().clone(),

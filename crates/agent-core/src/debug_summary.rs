@@ -100,6 +100,8 @@ pub struct SummaryInput {
     pub anomalies: Vec<SummaryAnomaly>,
     /// Information about the running daemon, or `None` if the daemon does not answer.
     pub daemon: Option<DaemonSummary>,
+    /// Version of the command running the summary, as `agent --version` prints it.
+    pub command_version: String,
     /// Information about the team, its items, and its rounds.
     pub team: TeamSummaryFacts,
     /// Per-task status rows and details.
