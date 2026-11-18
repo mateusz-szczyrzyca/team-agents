@@ -695,3 +695,219 @@ fn retained_reference_records_reject_missing_fields() {
         assert!(matches!(ref_fields(line), Err(ObservationError::RefFields)), "{line}");
     }
 }
+
+#[test]
+fn numbered_artifact_order_is_transitive_with_backups_and_leading_zeroes() {
+    let paths = [
+        "questions-2.md",
+        "questions-10.md",
+        "questions-10.md.bak",
+        "questions-02.md",
+    ];
+    for left in paths.map(Path::new) {
+        for middle in paths.map(Path::new) {
+            for right in paths.map(Path::new) {
+                if numbered_order(left, middle).is_lt() && numbered_order(middle, right).is_lt() {
+                    assert!(numbered_order(left, right).is_lt(), "{left:?} < {middle:?} < {right:?}");
+                }
+            }
+        }
+    }
+    assert_ne!(
+        numbered_order(Path::new(paths[0]), Path::new(paths[3])),
+        std::cmp::Ordering::Equal
+    );
+}
+
+#[tokio::test]
+async fn gate_source_timestamp_includes_the_machine_offset() {
+    use agent_core::config::AbsolutePath;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let team = team();
+    let member = team.crew().roster()[0].1;
+    let task_dir = home.task_dir(member.task());
+    std::fs::create_dir_all(&task_dir).unwrap();
+    let path = task_dir.join("gate-1.log");
+    std::fs::write(&path, "gate passed\n").unwrap();
+    let at: Timestamp = "2026-11-17T12:00:00Z".parse().unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::from(at.as_utc())))
+        .unwrap();
+    let mut collection = Collection::new(&team, at, Duration::from_secs(120)).unwrap();
+    collection.local_offset = time::UtcOffset::from_hms(5, 30, 0).unwrap();
+    collection.task(&home, member, Role::Solo).await.unwrap();
+    let output = &collection.summary.gate[0].recent_output_tails[0];
+    assert!(output.contains("+05:30"), "{output}");
+    assert!(output.contains("12:00:00") && output.contains("17:30:00"), "{output}");
+}
+
+#[tokio::test]
+async fn long_final_message_preserves_the_last_runs_reason_and_steps() {
+    use agent_core::config::AbsolutePath;
+    use agent_core::history::{AgentIdentity, Cut, Record, RunEndRecord, RunStart, RunWhy, SequencedRecord, Step};
+    use agent_core::kinds::{CliKind, Tier};
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let mut team = team();
+    let task = team.crew().roster()[0].1.task().clone();
+    let at: Timestamp = "2026-11-17T12:00:00Z".parse().unwrap();
+    let run: agent_core::ids::RunId = "run-20261117-120001-a1b2".parse().unwrap();
+    team.begin_run(
+        &task,
+        agent_core::state::NewRun {
+            id: run.clone(),
+            at,
+            session: None,
+            rounds: vec![],
+        },
+    )
+    .unwrap();
+    let records = [
+        Record::Run(Box::new(RunStart {
+            run: run.clone(),
+            team: team.id().clone(),
+            task,
+            at,
+            agent: AgentIdentity {
+                name: "codex-1".to_owned(),
+                tier: Tier::Normal,
+                cli: CliKind::Codex,
+                model: None,
+            },
+            role: Role::Solo,
+            rounds: vec![],
+            why: RunWhy::WakeUp,
+            prompt: "Please continue".to_owned(),
+            worktree: AbsolutePath::try_from("/tmp/example".to_owned()).unwrap(),
+            branch: "feature".parse().unwrap(),
+            session: None,
+        })),
+        Record::Step(Box::new(Step {
+            run: run.clone(),
+            number: std::num::NonZeroU32::MIN,
+            at,
+            event: agent_core::cli::ActivityEvent::Text("Recorded café step".to_owned()),
+        })),
+        Record::RunEnd(Box::new(RunEndRecord {
+            run,
+            at,
+            end: RunEnd::Stopped,
+            final_message: Some(format!("{} final café conclusion", "λ".repeat(150_000))),
+        })),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, record)| SequencedRecord {
+        sequence: u64::try_from(index).unwrap() + 1,
+        at,
+        team: team.id().clone(),
+        rounds: vec![],
+        record,
+        cut: Cut::default(),
+    })
+    .collect::<Vec<_>>();
+    let mut collection = Collection::new(&team, at, Duration::from_secs(120)).unwrap();
+    collection
+        .task(&home, team.crew().roster()[0].1, Role::Solo)
+        .await
+        .unwrap();
+    collection.enrich_last_run_details(&records, &team);
+    let summary = agent_core::debug_summary::render_command_summary(
+        &collection.summary,
+        time::UtcOffset::UTC,
+        &[],
+        agent_core::debug_summary::UntrackedCollection::Deferred,
+        str::to_owned,
+    )
+    .unwrap();
+    assert!(
+        summary.contains("Recorded café step"),
+        "the step must survive the final-message budget"
+    );
+    assert!(
+        summary.contains("a message or a board item woke the task"),
+        "the reason must survive the final-message budget"
+    );
+    assert!(summary.contains("final café conclusion"));
+}
+
+#[tokio::test]
+async fn retained_member_branch_uses_the_recorded_merged_item_not_lexical_order() {
+    use agent_core::config::AbsolutePath;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let checkout = tempfile::tempdir().unwrap();
+    git(checkout.path(), &["init", "--initial-branch=base"]);
+    git(checkout.path(), &["commit", "--allow-empty", "-m", "Base"]);
+    let recorded = "agents/claude-1/task-20261117-120000-mem1-1.10";
+    for branch in [recorded, "agents/claude-1/task-20261117-120000-mem1-1.9"] {
+        git(checkout.path(), &["branch", branch]);
+    }
+    let mut value = serde_json::to_value(setup_merged_team()).unwrap();
+    value["items"][0]["phase"]["completion"]["pr"]["branch"] = serde_json::json!(recorded);
+    let team: Team = serde_json::from_value(value).unwrap();
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    collection.checkout = Some(checkout.path().to_owned());
+    for (role, member) in team.crew().roster() {
+        collection.task(&home, member, role).await.unwrap();
+    }
+    collection.git(&home, &team).await;
+    assert_eq!(
+        collection
+            .summary
+            .git
+            .iter()
+            .find(|facts| facts.task_id == *team.crew().roster()[1].1.task())
+            .unwrap()
+            .branch
+            .as_str(),
+        recorded
+    );
+}
+
+#[tokio::test]
+async fn earlier_merged_tasks_stay_readable_after_a_later_round_opens() {
+    use agent_core::config::AbsolutePath;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let checkout = tempfile::tempdir().unwrap();
+    git(checkout.path(), &["init", "--initial-branch=base"]);
+    git(checkout.path(), &["commit", "--allow-empty", "-m", "Base"]);
+    git(
+        checkout.path(),
+        &["branch", "agents/claude-1/task-20261117-120000-mem1-1.1"],
+    );
+    let mut value = serde_json::to_value(setup_merged_team()).unwrap();
+    value["task_list"] = serde_json::json!("Build.\n\n1. Feature\n[ ] 1.1 Diagnose café\n[ ] 1.2 Next item\n");
+    value["items"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"id":"1.2", "phase":{"phase":"pending"}}));
+    let mut team: Team = serde_json::from_value(value).unwrap();
+    team.open_round(
+        "round-20261117-121000-r222".parse().unwrap(),
+        Some("1.2".parse().unwrap()),
+        "2026-11-17T12:10:00Z".parse().unwrap(),
+    )
+    .unwrap();
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:11:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    collection.checkout = Some(checkout.path().to_owned());
+    for (role, member) in team.crew().roster() {
+        collection.task(&home, member, role).await.unwrap();
+    }
+    collection.git(&home, &team).await;
+    assert!(
+        collection
+            .summary
+            .git
+            .iter()
+            .any(|facts| facts.task_id == *team.crew().roster()[1].1.task()),
+        "the earlier merged member must remain readable"
+    );
+}
