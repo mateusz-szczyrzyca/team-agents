@@ -25,8 +25,12 @@ pub enum TeamPrompt {
     MemberFinishedPlain,
     /// The message to the coordinator that a member failed.
     MemberFailed,
+    /// The message to the coordinator that a member failed while holding an item.
+    MemberFailedItem,
     /// The message to the coordinator that a member ended its turn without a status line.
     MemberNoStatus,
+    /// The message to the coordinator that a member ended its turn without a status line while holding an item.
+    MemberNoStatusItem,
     /// The message to a member that the worker finished its request.
     HelperResult,
     /// The message to a member that the worker failed its request.
@@ -57,7 +61,9 @@ impl TeamPrompt {
         Self::MemberFinished,
         Self::MemberFinishedPlain,
         Self::MemberFailed,
+        Self::MemberFailedItem,
         Self::MemberNoStatus,
+        Self::MemberNoStatusItem,
         Self::HelperResult,
         Self::HelperFailed,
         Self::WorkerFailed,
@@ -110,9 +116,19 @@ impl TeamPrompt {
                 Audience::Model,
                 &["member", "message"],
             ),
+            Self::MemberFailedItem => PromptSpec::new(
+                "harness/team/bus-member-failed-item.md",
+                Audience::Model,
+                &["member", "item", "branch", "message"],
+            ),
             Self::MemberNoStatus => {
                 PromptSpec::new("harness/team/bus-member-no-status.md", Audience::Model, &["member"])
             }
+            Self::MemberNoStatusItem => PromptSpec::new(
+                "harness/team/bus-member-no-status-item.md",
+                Audience::Model,
+                &["member", "item", "branch"],
+            ),
             Self::HelperResult => PromptSpec::new(
                 "harness/team/bus-helper-result.md",
                 Audience::Model,

@@ -32,6 +32,7 @@ use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcDa
 
 use crate::cli::{ErrorTail, RunOutput, SessionId, StreamOutcome};
 use crate::config::{Limits, Watchdog};
+use crate::kinds::Role;
 use crate::state::{InvalidTimestamp, RunEnd, Timestamp};
 use crate::status::RunOutcome;
 
@@ -826,6 +827,50 @@ pub fn after_turn_limit(count: u64, session: Option<&crate::state::SessionId>, l
         AfterTurnLimit::Resume
     } else {
         AfterTurnLimit::Exhausted
+    }
+}
+
+/// Maximum consecutive times a run ending without `STATUS:` is asked again.
+pub const NO_STATUS_RETRIES: u64 = 2;
+
+/// What happens to a task whose run ended without a `STATUS:` line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterNoStatus {
+    /// Queue another invocation in the same session.
+    Resume,
+    /// Retries are exhausted, there is no session to resume, or the role cannot be resumed.
+    Fail,
+}
+
+/// Counts consecutive no-status endings at the tail of persisted runs.
+#[must_use]
+pub fn consecutive_no_status(runs: &[crate::state::Run]) -> u64 {
+    let count = runs
+        .iter()
+        .rev()
+        .take_while(|run| {
+            matches!(
+                run.state(),
+                crate::state::RunState::Ended {
+                    end: RunEnd::NoStatus { .. },
+                    ..
+                }
+            )
+        })
+        .count();
+    u64::try_from(count).unwrap_or(u64::MAX)
+}
+
+/// Decides whether a run ending without `STATUS:` may be asked again in the same session.
+#[must_use]
+pub fn after_no_status(role: Role, count: u64, session: Option<&crate::state::SessionId>) -> AfterNoStatus {
+    if count == 0 || count > NO_STATUS_RETRIES || session.is_none() {
+        AfterNoStatus::Fail
+    } else {
+        match role {
+            Role::Solo | Role::Coordinator | Role::Member => AfterNoStatus::Resume,
+            Role::Worker | Role::Reviewer => AfterNoStatus::Fail,
+        }
     }
 }
 
@@ -1826,5 +1871,92 @@ mod tests {
             reset_of("usage limit reached, try again at Mar 3rd, 2027 9:00 AM").0,
             quota(Some("2027-03-03T08:00:00Z"))
         );
+    }
+
+    #[test]
+    fn after_no_status_resumes_only_supported_roles_with_session_up_to_retries() {
+        let session = "session-1".parse().unwrap();
+        let all_roles = [
+            Role::Solo,
+            Role::Coordinator,
+            Role::Member,
+            Role::Worker,
+            Role::Reviewer,
+        ];
+        for role in all_roles {
+            let supported = matches!(role, Role::Solo | Role::Coordinator | Role::Member);
+            for has_session in [false, true] {
+                let session_opt = if has_session { Some(&session) } else { None };
+                for count in [0, 1, 2, 3, 4, 10] {
+                    let expected = if supported && has_session && (1..=NO_STATUS_RETRIES).contains(&count) {
+                        AfterNoStatus::Resume
+                    } else {
+                        AfterNoStatus::Fail
+                    };
+                    assert_eq!(
+                        after_no_status(role, count, session_opt),
+                        expected,
+                        "{role:?}, count={count}, has_session={has_session}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn consecutive_no_status_counts_only_tail_no_status_runs() {
+        use crate::state::Run;
+        use serde_json::json;
+
+        assert_eq!(consecutive_no_status(&[]), 0);
+
+        let make_run = |index: usize, end: serde_json::Value| -> Run {
+            serde_json::from_value(json!({
+                "id": format!("run-20261116-000000-{index:04}"),
+                "started_at": "2026-11-16T00:00:00Z",
+                "state": {
+                    "status": "ended",
+                    "at": "2026-11-16T00:00:00Z",
+                    "end": end
+                }
+            }))
+            .unwrap()
+        };
+
+        let no_status_1 = make_run(1, json!({"kind": "no_status", "exit_code": 0}));
+        let no_status_2 = make_run(2, json!({"kind": "no_status", "exit_code": null}));
+        let reported = make_run(3, json!({"kind": "reported", "outcome": "DONE"}));
+        let no_status_3 = make_run(4, json!({"kind": "no_status", "exit_code": 1}));
+
+        assert_eq!(consecutive_no_status(std::slice::from_ref(&no_status_1)), 1);
+        assert_eq!(consecutive_no_status(&[no_status_1.clone(), no_status_2.clone()]), 2);
+        assert_eq!(
+            consecutive_no_status(&[no_status_1.clone(), no_status_2.clone(), reported.clone()]),
+            0
+        );
+        assert_eq!(
+            consecutive_no_status(&[no_status_1.clone(), no_status_2.clone(), reported, no_status_3.clone()]),
+            1
+        );
+
+        // Every other kind of run end breaks the streak.
+        for breaker in [
+            json!({"kind": "turn_limit"}),
+            json!({"kind": "hung"}),
+            json!({"kind": "stopped"}),
+            json!({"kind": "quota_exhausted"}),
+            json!({"kind": "rate_limited"}),
+        ] {
+            let break_run = make_run(5, breaker);
+            assert_eq!(
+                consecutive_no_status(&[no_status_1.clone(), break_run.clone()]),
+                0,
+                "broken by {break_run:?}"
+            );
+            assert_eq!(
+                consecutive_no_status(&[no_status_1.clone(), break_run, no_status_3.clone()]),
+                1
+            );
+        }
     }
 }

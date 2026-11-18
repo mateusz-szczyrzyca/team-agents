@@ -7,6 +7,7 @@ use agent_core::state::{ItemPhase, MergeMode, ReviewOutcome};
 use agent_core::status::TaskStatus;
 
 use super::fake_github::SLUG;
+use super::rig::PARALLEL;
 use super::rig::{ONE, Rig, git, investigator, normal};
 
 /// The reviewers that never give a verdict: they end their turn and wait.
@@ -433,6 +434,475 @@ async fn a_team_that_has_not_slept_as_long_as_it_may_is_left_alone() {
     rig.stop().await.unwrap();
 
     assert_eq!(rig.runs(&tasks[0]), 1);
+}
+
+// Rule: when the lead is done and an item stands behind a failed member, the human is told immediately.
+#[tokio::test]
+async fn a_team_whose_lead_is_done_and_item_stands_behind_failed_member_tells_human_immediately() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,work"),
+            normal("claude-1", "fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+
+    let (team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+
+    let notice = rig.notification_with("waits with item 1.1 behind failed member").await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(notice.starts_with("💤 example\n"), "{notice}");
+    assert!(notice.contains("\nStatus: 💤 team asleep\n"), "{notice}");
+    assert!(
+        notice.contains(&format!(
+            "Note: Team {team} waits with item 1.1 behind failed member claude-1"
+        )),
+        "{notice}"
+    );
+    let say_pos = notice
+        .find(&format!("agent say {} ", tasks[1]))
+        .expect("say member task");
+    let resume_pos = notice
+        .find(&format!("agent resume {}", tasks[1]))
+        .expect("resume member task");
+    assert!(
+        say_pos < resume_pos,
+        "agent say must come before agent resume in {notice}"
+    );
+    assert!(notice.contains(&format!("agent stop {team}")), "{notice}");
+
+    let told: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("behind failed member"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+}
+
+// Rule: a member with nostatus,work is asked again in the same session with short prompt, no notices, then PR.
+#[tokio::test]
+async fn member_nostatus_work_same_session_short_prompt_no_notices_then_pr() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,integrate,work"),
+            normal("claude-1", "nostatus,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+
+    let (team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+
+    rig.status_is(&tasks[1], TaskStatus::Waiting).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    let _merged = rig.notification_with("Status: 🟣 merged").await;
+
+    assert_eq!(rig.runs(&tasks[1]), 2);
+    let prompt2 = rig.prompt(&tasks[1], 2).await;
+    assert_eq!(
+        prompt2.trim(),
+        "Your previous run ended without a `STATUS:` line. Continue in this session from where you stopped: do not redo work already done, finish any open work, and select your true `STATUS:` line (`DONE`, `SLEEPING`, `QUESTIONS`, or `FAILED`) following the rules of your first message."
+    );
+
+    let state = rig.state();
+    let member = state
+        .team(&team)
+        .unwrap()
+        .crew()
+        .roster()
+        .into_iter()
+        .find(|(_, m)| m.task() == &tasks[1])
+        .unwrap()
+        .1;
+    let runs = member.runs();
+    assert_eq!(runs.len(), 2);
+    assert!(runs[0].session().is_some());
+    assert_eq!(runs[0].session(), runs[1].session());
+
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap_or_default();
+    assert!(
+        !messages.contains("member_failed") && !messages.contains("member_no_status"),
+        "unexpected failure message on bus during retry: {messages}"
+    );
+
+    let failures: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|n| n.contains("failed") || n.contains("no STATUS"))
+        .collect();
+    assert!(failures.is_empty(), "unexpected failure notices: {failures:?}");
+
+    rig.stop().await.unwrap();
+}
+
+// Rule: a coordinator with first run without status is asked again and succeeds.
+#[tokio::test]
+async fn coordinator_first_nostatus_then_success() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "nostatus,sleep,integrate"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+
+    let (_team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    let _merged = rig.notification_with("Status: 🟣 merged").await;
+
+    assert_eq!(rig.runs(&tasks[0]), 3);
+    let prompt2 = rig.prompt(&tasks[0], 2).await;
+    assert_eq!(
+        prompt2.trim(),
+        "Your previous run ended without a `STATUS:` line. Continue in this session from where you stopped: do not redo work already done, finish any open work, and select your true `STATUS:` line (`DONE`, `SLEEPING`, `QUESTIONS`, or `FAILED`) following the rules of your first message."
+    );
+
+    let failures: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|n| n.contains("failed") || n.contains("no STATUS"))
+        .collect();
+    assert!(failures.is_empty(), "unexpected failure notices: {failures:?}");
+
+    rig.stop().await.unwrap();
+}
+
+// Rule: a member with nostatus alone has three runs and then fails, with single human notice and item notice.
+#[tokio::test]
+async fn member_with_nostatus_alone_has_three_runs_and_fails_with_item_branch_notice() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep"),
+            normal("claude-1", "nostatus"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+
+    let (_team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    assert_eq!(rig.runs(&tasks[1]), 3);
+
+    rig.wait_for("the exhausted member failure notice to be delivered", || {
+        rig.notifications()
+            .iter()
+            .any(|text| text.contains("failed") || text.contains("no STATUS"))
+    })
+    .await;
+
+    let told: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("failed") || text.contains("no STATUS"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+
+    rig.wait_for("the exhausted member failure to reach the coordinator", || {
+        std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl"))
+            .expect("read the team bus messages")
+            .contains("member_no_status")
+    })
+    .await;
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap_or_default();
+    assert!(
+        messages.contains("member_no_status")
+            && messages.contains("1.1")
+            && messages.contains(&format!("agents/claude-1/{}-1.1", tasks[1])),
+        "coordinator message must contain member_no_status, item 1.1 and branch: {messages}"
+    );
+
+    rig.stop().await.unwrap();
+}
+
+// Rule: restart after second no-status does not give a fourth run.
+#[tokio::test]
+async fn restart_after_second_no_status_does_not_give_a_fourth_run() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep"),
+            normal("claude-1", "nostatus-hold-2"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+
+    let (team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+
+    rig.wait_for("run 2 of member started", || rig.runs(&tasks[1]) >= 2)
+        .await;
+
+    rig.stop().await.unwrap();
+
+    let worktree = rig.worktree(&tasks[1]);
+    std::fs::write(worktree.join(".fake-continue"), "").unwrap();
+    rig.start().await;
+
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    assert_eq!(rig.runs(&tasks[1]), 3);
+
+    let state_after = rig.state();
+    let member_after = state_after
+        .team(&team)
+        .unwrap()
+        .crew()
+        .roster()
+        .into_iter()
+        .find(|(_, m)| m.task() == &tasks[1])
+        .unwrap()
+        .1;
+    assert_eq!(member_after.runs().len(), 3);
+    assert_eq!(member_after.status(), TaskStatus::Failed);
+
+    rig.stop().await.unwrap();
+}
+
+// Rule: lead DONE blocked notice dedup, resume member with status then PR.
+#[tokio::test]
+async fn lead_done_blocked_notice_dedup_resume_member_with_status_then_pr() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,done,integrate"),
+            normal("claude-1", "fail,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+
+    let (_team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+
+    let _notice = rig.notification_with("waits with item 1.1 behind failed member").await;
+    looked_again(&rig).await;
+
+    // Only notified once while blocked
+    let told: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("behind failed member"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+
+    // Resume member: member does work, lead finishes round, PR merged
+    rig.resume(&tasks[1]).await;
+    rig.status_is(&tasks[1], TaskStatus::Waiting).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    let _merged = rig.notification_with("Status: 🟣 merged").await;
+
+    rig.stop().await.unwrap();
+}
+
+// Rule: re-failure reset: resuming clears dedup, so failing again notifies again.
+#[tokio::test]
+async fn refailure_reset_notifies_again_after_resume_and_second_failure() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,done"),
+            normal("claude-1", "fail,fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+
+    let (_team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+
+    let _notice = rig.notification_with("waits with item 1.1 behind failed member").await;
+    looked_again(&rig).await;
+
+    // Resume member: member fails a second time
+    rig.resume(&tasks[1]).await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.wait_for("tasks[0] run 3", || rig.runs(&tasks[0]) >= 3).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    looked_again(&rig).await;
+
+    rig.wait_for("the second failure's standing-item notice to be delivered", || {
+        rig.notifications()
+            .iter()
+            .filter(|text| text.contains("behind failed member"))
+            .count()
+            == 2
+    })
+    .await;
+
+    let told: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("behind failed member"))
+        .collect();
+    assert_eq!(told.len(), 2, "{told:?}");
+
+    rig.stop().await.unwrap();
+}
+
+// Rule: when lead.done is false and a failed member owns an unfinished item, ordinary sleeping-team handling wakes twice then tells human team asleep.
+#[tokio::test]
+async fn sleeping_team_with_failed_member_and_undone_lead_notifies_team_asleep() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,sleep,sleep"),
+            normal("claude-1", "fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+
+    let (_team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.wait_for("inv-lead runs 3", || rig.runs(&tasks[0]) >= 3).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+
+    let notice = rig.notification_with("sleeps with item 1.1 unfinished").await;
+    assert!(notice.contains("sleeps with item 1.1 unfinished"), "{notice}");
+
+    rig.stop().await.unwrap();
+}
+
+// Rule: resuming an unrelated task or another member does not clear blocked item dedup for members still failed.
+#[tokio::test]
+async fn unrelated_resume_does_not_clear_blocked_dedup_for_other_failed_members() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "done,done"),
+            normal("claude-1", "fail,fail"),
+            normal("claude-2", "fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+
+    let (_team, tasks) = rig
+        .run(
+            &["inv-lead", "claude-1", "claude-2"],
+            PARALLEL,
+            MergeMode::Autopilot,
+            Some("inv-lead"),
+        )
+        .await;
+
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[2], TaskStatus::Failed).await;
+
+    let _notice_1 = rig.notification_with("item 1.1 behind failed member claude-1").await;
+    let _notice_2 = rig.notification_with("item 2.1 behind failed member claude-2").await;
+    looked_again(&rig).await;
+
+    // Resuming claude-1 clears only claude-1's item (1.1), NOT claude-2's item (2.1)
+    let lead_runs = rig.runs(&tasks[0]);
+    rig.resume(&tasks[1]).await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.wait_for("tasks[0] to run again", || rig.runs(&tasks[0]) > lead_runs)
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    looked_again(&rig).await;
+
+    let told_2_1: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|t| t.contains("item 2.1 behind failed member claude-2"))
+        .collect();
+    assert_eq!(
+        told_2_1.len(),
+        1,
+        "item 2.1 must not be re-announced on claude-1 resume: {told_2_1:?}"
+    );
+
+    rig.wait_for("the second blocked notice for the resumed member", || {
+        rig.notifications()
+            .iter()
+            .filter(|text| text.contains("item 1.1 behind failed member claude-1"))
+            .count()
+            == 2
+    })
+    .await;
+
+    // claude-1 failed a second time: 1.1 IS re-announced
+    let told_1_1: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|t| t.contains("item 1.1 behind failed member claude-1"))
+        .collect();
+    assert_eq!(
+        told_1_1.len(),
+        2,
+        "item 1.1 must be re-announced after claude-1 refailure: {told_1_1:?}"
+    );
+
+    rig.stop().await.unwrap();
 }
 
 // ---- reviews and the merge -----------------------------------------------------------------------------------
@@ -1668,4 +2138,200 @@ async fn an_api_address_that_would_send_the_token_in_the_clear_is_refused_when_t
         ),
         "{refused:?}"
     );
+}
+
+#[tokio::test]
+async fn standing_item_notice_survives_restart_and_names_the_last_failed_run() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,work"),
+            normal("claude-1", "fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let notice = rig.notification_with("waits with item 1.1 behind failed member").await;
+    let state = rig.state();
+    let member = state
+        .team(&team)
+        .unwrap()
+        .crew()
+        .roster()
+        .into_iter()
+        .find(|(_, member)| member.task() == &tasks[1])
+        .unwrap()
+        .1;
+    let agent_core::state::RunState::Ended { at, end } = member.runs().last().unwrap().state() else {
+        panic!("the failed member's run ended");
+    };
+    assert!(matches!(
+        end,
+        agent_core::state::RunEnd::Reported {
+            outcome: agent_core::status::RunOutcome::Failed
+        }
+    ));
+    assert!(
+        notice.contains(&format!("its last run ended at {at} with: STATUS: FAILED")),
+        "{notice}"
+    );
+    rig.stop().await.unwrap();
+    rig.start().await;
+    looked_again(&rig).await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+    let notices: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("waits with item 1.1 behind failed member"))
+        .collect();
+    assert_eq!(notices, vec![notice]);
+}
+
+#[tokio::test]
+async fn standing_item_recovery_distinguishes_failed_runs_with_the_same_timestamp() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,done"),
+            normal("claude-1", "fail,fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let first_notice = rig.notification_with("waits with item 1.1 behind failed member").await;
+    let ended_at = |state: &agent_core::state::State| {
+        let roster = state.team(&team).unwrap().crew().roster();
+        let member = roster.iter().find(|(_, member)| member.task() == &tasks[1]).unwrap().1;
+        let agent_core::state::RunState::Ended { at, .. } = member.runs().last().unwrap().state() else {
+            panic!("the member's run ended");
+        };
+        at.to_string()
+    };
+    let first_at = ended_at(&rig.state());
+
+    rig.resume(&tasks[1]).await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.wait_for("the second failure was announced", || {
+        rig.notifications()
+            .iter()
+            .filter(|text| text.contains("behind failed member"))
+            .count()
+            == 2
+    })
+    .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let second_at = ended_at(&rig.state());
+    rig.stop().await.unwrap();
+
+    // Reproduce equal clock readings and recovery before delivery of the second failure's notice.
+    for entry in std::fs::read_dir(rig.home.notifications_dir()).unwrap() {
+        let path = entry.unwrap().path();
+        let text = std::fs::read_to_string(&path).unwrap();
+        if text == first_notice {
+            std::fs::write(&path, text.replace(&first_at, &second_at)).unwrap();
+        } else if text.contains("behind failed member") {
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
+    rig.start().await;
+    looked_again(&rig).await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    let notices: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("behind failed member"))
+        .collect();
+    assert_eq!(notices.len(), 2, "{notices:?}");
+}
+
+#[tokio::test]
+async fn standing_item_notice_keeps_the_failed_members_last_run_detail() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,done"),
+            normal("claude-1", "fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    let notice = rig.notification_with("waits with item 1.1 behind failed member").await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+    assert!(notice.contains("its last run ended at "), "{notice}");
+    assert!(notice.contains("STATUS: FAILED"), "{notice}");
+    let notices: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("behind failed member"))
+        .collect();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+}
+
+#[tokio::test]
+async fn standing_item_notices_are_deduplicated_separately_for_each_item() {
+    /// Independent items can both stand behind failed members in the same round.
+    const ITEMS: &str =
+        "Build the things.\n\n1. First\n[ ] 1.1 One\n    Do one.\n\n2. Second\n[ ] 2.1 Two\n    Do two.\n";
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,done"),
+            normal("claude-1", "fail"),
+            normal("claude-2", "fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        6,
+        true,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(
+            &["inv-lead", "claude-1", "claude-2"],
+            ITEMS,
+            MergeMode::Autopilot,
+            Some("inv-lead"),
+        )
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[2], TaskStatus::Failed).await;
+    rig.notification_with("waits with item 1.1 behind failed member").await;
+    rig.notification_with("waits with item 2.1 behind failed member").await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+    let notices: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("behind failed member"))
+        .collect();
+    assert_eq!(notices.len(), 2, "{notices:?}");
 }

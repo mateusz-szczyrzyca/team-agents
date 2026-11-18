@@ -242,3 +242,31 @@ fn a_task_whose_last_run_did_not_hang_has_no_hangs() {
 
     assert_eq!(recovery.hangs, []);
 }
+
+#[test]
+fn recovery_does_not_queue_a_fourth_no_status_run() {
+    for number in [1, 2, 3, 4] {
+        for prior in 0..=2 {
+            let mut state = team_state();
+            let (_, mut member) = state.find_task_mut(&task(number)).unwrap();
+            for index in 0..=prior {
+                member.transition(TaskStatus::Running).unwrap();
+                member
+                    .begin_run(run(index + 1), at(10), Some("session".parse().unwrap()))
+                    .unwrap();
+                if index < prior {
+                    member.end_run(at(20), RunEnd::NoStatus { exit_code: Some(0) }).unwrap();
+                    member.transition(TaskStatus::Queued).unwrap();
+                }
+            }
+            let recovery = recover(&mut state, at(100), &limits()).unwrap();
+            let expected = if prior == 2 && number <= 2 {
+                TaskStatus::Failed
+            } else {
+                TaskStatus::Queued
+            };
+            assert_eq!(status(&state, number), expected, "task {number}, prior {prior}");
+            assert_eq!(recovery.interrupted, [task(number)]);
+        }
+    }
+}

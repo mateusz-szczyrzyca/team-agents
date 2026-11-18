@@ -24,7 +24,10 @@ use std::time::Duration;
 
 use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, InvalidValue};
-use agent_core::decide::outcome::{AfterHang, AfterTurnLimit, after_hang, after_turn_limit, consecutive_turn_limits};
+use agent_core::decide::outcome::{
+    AfterHang, AfterNoStatus, AfterTurnLimit, after_hang, after_no_status, after_turn_limit, consecutive_no_status,
+    consecutive_turn_limits,
+};
 use agent_core::history::{HistoryEvent, RunWhy};
 use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
@@ -64,7 +67,7 @@ use super::notice::{Notice, NoticeContext};
 use super::notifier::Delivery;
 use super::questions;
 use super::questions::watch::{Report, Saves, Watcher};
-use super::recovery::{RecoveryError, recover};
+use super::recovery::{RecoveryError, interrupted_status, recover};
 use super::settle::{Settled, settle};
 use super::team::{AssignmentError, DoneNoticeError, NoticeRenderError, Why};
 use agent_runtime::notify::Notification;
@@ -520,13 +523,19 @@ impl Owner {
         }
         self.hangs.extend(recovery.hangs);
         self.record_recovered_ends(&recovery.interrupted);
+        for task in &recovery.exhausted {
+            let located = self.locate(task)?;
+            self.commit(task, &located, now, Vec::new(), Some(Notice::NoStatus { exit: None }))
+                .await?;
+            self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)?;
+        }
         self.remember_closed_teams();
         self.look_at_every_team();
         if !recovery.interrupted.is_empty() {
             tracing::warn!(
                 event = LogEvent::RestartCorrected.as_str(),
                 tasks = recovery.interrupted.len(),
-                "runs that a restart interrupted are queued again"
+                "runs that a restart interrupted have been reconciled"
             );
             self.save().await?;
         }
@@ -780,7 +789,7 @@ impl Owner {
     }
 
     /// A run that was stopped: by the human, whose word sets the status of the task, or because the daemon shuts down, when
-    /// the run is recorded as interrupted and its task is queued for the next start.
+    /// the run is recorded as interrupted and queued, unless its no-status retry budget is exhausted.
     async fn interrupted(&mut self, task: &TaskId, session: Option<CliSessionId>) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
         let now = Timestamp::now(&self.parts.clock)?;
@@ -795,8 +804,19 @@ impl Owner {
                 None,
                 &mut events,
             )?;
-            self.move_to(task, &located.team, TaskStatus::Queued, &mut events)?;
-            return self.commit(task, &located, now, events, None).await;
+            let found = self
+                .parts
+                .state
+                .find_task(task)
+                .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+            let status = interrupted_status(located.role, found.member);
+            self.move_to(task, &located.team, status, &mut events)?;
+            let notice = (status == TaskStatus::Failed).then_some(Notice::NoStatus { exit: None });
+            self.commit(task, &located, now, events, notice).await?;
+            if status == TaskStatus::Failed {
+                self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)?;
+            }
+            return Ok(());
         };
         self.end_run(task, &located.team, now, RunEnd::Stopped, None, &mut events)?;
         self.move_to(task, &located.team, halted_status(halt), &mut events)?;
@@ -832,7 +852,12 @@ impl Owner {
         // limit's pause or a hang it wins entirely: the run ended by the human's word, with no wake-up, no strike and no
         // notice of a pause that nobody waits for.
         let halt = self.halts.remove(task);
-        let overruled = halt.filter(|_| matches!(settled, Settled::Paused(_) | Settled::Hung | Settled::TurnLimit));
+        let overruled = halt.filter(|_| {
+            matches!(
+                settled,
+                Settled::Paused(_) | Settled::Hung | Settled::TurnLimit | Settled::NoStatus { .. }
+            )
+        });
         let end = if overruled.is_some() {
             RunEnd::Stopped
         } else {
@@ -928,6 +953,10 @@ impl Owner {
                 self.hangs.remove(task);
                 (status, None)
             }
+            Settled::NoStatus { exit_code } => {
+                self.hangs.remove(task);
+                self.no_status(task, located.role, exit_code)?
+            }
             Settled::Failed(notice) => {
                 self.hangs.remove(task);
                 (TaskStatus::Failed, Some(notice))
@@ -978,6 +1007,31 @@ impl Owner {
                 }),
             ),
             AfterTurnLimit::NoSession => (TaskStatus::Failed, Some(Notice::TurnLimitNoSession)),
+        };
+        Ok(next)
+    }
+
+    /// What follows a run that ended without a STATUS: line: it is resumed up to twice in a row,
+    /// or fails after retries are exhausted.
+    fn no_status(
+        &mut self,
+        task: &TaskId,
+        role: Role,
+        exit: Option<i32>,
+    ) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+        let found = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let count = consecutive_no_status(found.member.runs());
+        let session = found.member.runs().last().and_then(|run| run.session());
+        let next = match after_no_status(role, count, session) {
+            AfterNoStatus::Resume => {
+                self.reasons.insert(task.clone(), Why::NoStatus);
+                (TaskStatus::Queued, None)
+            }
+            AfterNoStatus::Fail => (TaskStatus::Failed, Some(Notice::NoStatus { exit })),
         };
         Ok(next)
     }

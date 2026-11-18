@@ -1,0 +1,1 @@
+Your previous run ended without a `STATUS:` line. Continue in this session from where you stopped: do not redo work already done, finish any open work, and select your true `STATUS:` line (`DONE`, `SLEEPING`, `QUESTIONS`, or `FAILED`) following the rules of your first message.

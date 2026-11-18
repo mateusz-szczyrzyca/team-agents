@@ -193,18 +193,20 @@ end does (`settle.rs`):
 |---|---|---|
 | `STATUS: DONE` | `done` for a solo task and a review, `waiting` for a coordinator, member or worker | |
 | `STATUS: QUESTIONS` | `questions`, when `tasks/<task>/questions-<number>.md` is there and parses | the questions are recorded and the human told; a missing or unreadable file fails the task and says why |
-| `STATUS: FAILED`, no `STATUS:` line | `failed` | the human is told |
+| `STATUS: FAILED` | `failed` | the coordinator (or human) is told |
+| no `STATUS:` line | `queued`: resumed in the same session with a short prompt (`harness/run/resume-no-status.md`) | at most 2 consecutive automatic resumes for resumable tasks with a session (solo, coordinator, member; excluding workers serving requests, reviewers, tasks without a session, or failures during startup/execution); the 3rd fails and notifies. Runs ending without a status line upon daemon shutdown/interruption (exit code `None`) count toward the streak so restarts remain bounded. Any other end resets the count. Settle records `Settled::NoStatus` so human pause or stop overrules retry |
 | `STATUS: SLEEPING` / `EXCLUDED` | `waiting` / `done` | |
 | quota exhausted, rate limited | `paused` | woken at the time the CLI gave (plus a minute), else after the `[limits]` minutes; the human is told |
 | turn limit | `queued`: resumed in the same session with a short continuation prompt | at most `[limits] turn_limit_resumes` consecutive automatic resumes (default `3`); the next exhaustion fails and notifies with the count; any other end resets the count |
 | hung | `queued`: resumed from its session | after `[watchdog] hang_strikes` hangs in a row without progress, `failed` and the human is told; a run that did something before it went silent starts the count again |
-| the daemon shut down | `queued` | the run is recorded as ended with no status and no exit code |
+| the daemon shut down | `queued`, or `failed` when the no-status budget is exhausted | the run is recorded as ended with no status and no exit code; resumable solo, coordinator and member tasks with sessions fail on the third consecutive no-status end |
 
 **The watchdog** is the engine's: a run whose output files show no change for `[watchdog] hang_minutes` is stopped (its
 whole process group, `SIGTERM` then `SIGKILL`) and classified as a hang unless the provider refused it. **A pause** is
 kept in no field of the state: its wake-up is worked out again from the last run's end, so it survives a restart; the
 daemon looks at the clock every 5 seconds, so a suspended machine does not stretch it. **Recovery**: a run that was going
-when the daemon died is ended as "no status, no exit code" and its task queued, to resume from its session; paused tasks get
+when the daemon died is ended as "no status, no exit code" and its task queued, to resume from its session, unless that
+end exhausts its no-status budget: the task then fails and its existing failure notices are sent. Paused tasks get
 their wake-ups again, hung ones their strikes (progress is not saved: every hang in a row counts); a clock set back never
 ends a run before it began. A run is a process group of its own: a daemon killed without `SIGTERM` (`SIGKILL`, the OOM
 killer) leaves it going, and only the unit's `KillMode=mixed` ends it — outside systemd, end such runs before a restart,
@@ -263,7 +265,7 @@ seconds, because the Go bus wakes a sleeper by marking it `waking` and spawns no
    and the human is notified, once.
 
 When a member ends, the coordinator gets a message on the bus (`member_finished` with the item and the branch,
-`member_failed`, `member_no_status`), which wakes it to integrate. A member's item stays `in_progress` until its pull
+`member_failed`, `member_no_status`), which wakes it to integrate. If the member failed or ended without status while holding an item, the message names the item and the branch (`prompts/harness/team/bus-member-failed-item.md`, `bus-member-no-status-item.md`), advising the coordinator that if it takes over the work, it should still report `STATUS: DONE`: the harness will tell the human, the human will resume the member, and the member must end with a status. Because the harness only publishes while the assignee task is waiting, a coordinator taking over finishes its own work and reports `STATUS: DONE`, after which the human is alerted to resume the member with status. A member's item stays `in_progress` until its pull
 request is open ("Pull requests, reviews and the merge", below): the next item of a feature starts when the previous one is
 merged, so a member that is done waits. A solo task whose item is under way waits as well, instead of ending (`done` is
 final).
@@ -346,6 +348,7 @@ harness), and did the last run of the crew end `[watchdog] asleep_minutes` ago o
 prompt (`harness/pr/team-asleep.md`) says that nobody works and how every task ended; after two such wake-ups in a row
 (`ASLEEP_WAKES`) the human is told instead (`harness/pr/notice-team-asleep.md`), once for every time the team falls asleep again.
 The count starts over when the lead ends with `STATUS: DONE`, and with the daemon.
+When the lead has reported `STATUS: DONE` and waits, but an item in progress or being fixed stands behind a failed member, the lead cannot fix it and waking the lead would do nothing. The harness tells the human immediately, once per item (`harness/pr/notice-standing-item.md`), with the member's last-run detail line, showing how to speak to the member and resume it (`agent say <task>`, `agent resume <task>`) or stop the team (`agent stop <team>`). Resuming the failed task clears the deduplication for items assigned to that task.
 
 **Reviewers** (`daemon/review.rs`). The review pass of an item in review starts empty and is filled once (`ItemMut::ask_reviews`) with
 two investigators drawn among the free ones — those that review for the team already (they wait in a review task of it) first,

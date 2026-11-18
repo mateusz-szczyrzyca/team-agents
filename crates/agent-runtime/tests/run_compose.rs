@@ -296,6 +296,7 @@ mod run_compose {
             ),
             (ResumeReason::Restart, "[harness/run/resume-restart.md]\n"),
             (ResumeReason::Limit, "[harness/run/resume-limit.md]\n"),
+            (ResumeReason::NoStatus, "[harness/run/resume-no-status.md]\n"),
         ];
 
         for (reason, expected) in cases {

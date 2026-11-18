@@ -28,10 +28,30 @@ pub(in crate::daemon) enum BusNotice {
         /// The end of its final message.
         message: String,
     },
+    /// A member reported `FAILED` while working on an item.
+    MemberFailedItem {
+        /// The member.
+        member: AgentName,
+        /// The end of its final message.
+        message: String,
+        /// The item it worked on.
+        item: ItemId,
+        /// The branch it worked on.
+        branch: BranchName,
+    },
     /// A member ended its turn without a status line.
     MemberNoStatus {
         /// The member.
         member: AgentName,
+    },
+    /// A member ended its turn without a status line while working on an item.
+    MemberNoStatusItem {
+        /// The member.
+        member: AgentName,
+        /// The item it worked on.
+        item: ItemId,
+        /// The branch it worked on.
+        branch: BranchName,
     },
     /// A worker finished a request of a member: the result goes to the member.
     HelperResult {
@@ -143,18 +163,34 @@ pub(in crate::daemon) fn notice_for(
         }
         RunEnd::Reported {
             outcome: RunOutcome::Failed,
-        } => BusNotice::MemberFailed {
-            member: who,
-            message: end_of(message.unwrap_or_default()),
+        } => match worked_on(team, member) {
+            Some((item, branch)) => BusNotice::MemberFailedItem {
+                member: who,
+                message: end_of(message.unwrap_or_default()),
+                item,
+                branch,
+            },
+            None => BusNotice::MemberFailed {
+                member: who,
+                message: end_of(message.unwrap_or_default()),
+            },
         },
-        RunEnd::NoStatus { .. } => BusNotice::MemberNoStatus { member: who },
+        RunEnd::NoStatus { .. } if member.status() == TaskStatus::Failed => match worked_on(team, member) {
+            Some((item, branch)) => BusNotice::MemberNoStatusItem {
+                member: who,
+                item,
+                branch,
+            },
+            None => BusNotice::MemberNoStatus { member: who },
+        },
         RunEnd::TurnLimit if member.status() == TaskStatus::Failed => BusNotice::MemberNoStatus { member: who },
         RunEnd::Reported { .. }
         | RunEnd::QuotaExhausted { .. }
         | RunEnd::RateLimited
         | RunEnd::TurnLimit
         | RunEnd::Hung
-        | RunEnd::Stopped => return Ok(None),
+        | RunEnd::Stopped
+        | RunEnd::NoStatus { .. } => return Ok(None),
     };
     Ok(Some(Told { to, notice }))
 }

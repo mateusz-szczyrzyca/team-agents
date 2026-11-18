@@ -32,6 +32,8 @@ pub enum AutopilotPrompt {
     TeamAsleep,
     /// The notification that a team sleeps with work unfinished after its lead was woken for it.
     NoticeTeamAsleep,
+    /// The notification that a team waits for a standing item behind a failed member while its lead is done.
+    NoticeStandingItem,
     /// The notification that a pull request is approved and waits for the human to merge it.
     NoticeApproved,
     /// The notification that a pull request could not be opened or updated.
@@ -77,6 +79,7 @@ impl AutopilotPrompt {
         Self::BranchNotJoined,
         Self::TeamAsleep,
         Self::NoticeTeamAsleep,
+        Self::NoticeStandingItem,
         Self::NoticeApproved,
         Self::NoticePublishFailed,
         Self::NoticeMergeFailed,
@@ -97,100 +100,105 @@ impl AutopilotPrompt {
     /// Where the text is, who reads it and which variables it uses.
     #[must_use]
     pub const fn spec(self) -> PromptSpec {
+        let (path, audience, variables) = self.definition();
+        PromptSpec::new(path, audience, variables)
+    }
+
+    /// The path, audience and variables of this text.
+    const fn definition(self) -> (&'static str, Audience, &'static [&'static str]) {
         match self {
-            Self::PrTitle => PromptSpec::new("harness/pr/title.md", Audience::Model, &["item_ids", "item_titles"]),
-            Self::PrBody => PromptSpec::new(
+            Self::PrTitle => ("harness/pr/title.md", Audience::Model, &["item_ids", "item_titles"]),
+            Self::PrBody => (
                 "harness/pr/body.md",
                 Audience::Model,
                 &["team", "repo", "gate", "items"],
             ),
-            Self::PrBodyItem => PromptSpec::new(
+            Self::PrBodyItem => (
                 "harness/pr/body-item.md",
                 Audience::Model,
                 &["item_id", "item_title", "item_description"],
             ),
-            Self::PrBodyExpected => PromptSpec::new("harness/pr/body-expected.md", Audience::Model, &["expected"]),
-            Self::PrBodyChecks => PromptSpec::new("harness/pr/body-checks.md", Audience::Model, &["checks"]),
-            Self::PrUpdate => PromptSpec::new("harness/pr/update.md", Audience::Model, &["head", "pass", "gate"]),
-            Self::GateNotPassed => PromptSpec::new(
+            Self::PrBodyExpected => ("harness/pr/body-expected.md", Audience::Model, &["expected"]),
+            Self::PrBodyChecks => ("harness/pr/body-checks.md", Audience::Model, &["checks"]),
+            Self::PrUpdate => ("harness/pr/update.md", Audience::Model, &["head", "pass", "gate"]),
+            Self::GateNotPassed => (
                 "harness/pr/gate-not-passed.md",
                 Audience::Model,
                 &["branch", "reason", "sent", "limit"],
             ),
-            Self::BranchNotJoined => PromptSpec::new(
+            Self::BranchNotJoined => (
                 "harness/pr/branch-not-joined.md",
                 Audience::Model,
                 &["branch", "missing", "sent", "limit"],
             ),
-            Self::TeamAsleep => PromptSpec::new(
+            Self::TeamAsleep => (
                 "harness/pr/team-asleep.md",
                 Audience::Model,
                 &["team", "items", "minutes", "tasks", "woken", "limit"],
             ),
-            Self::NoticeTeamAsleep => PromptSpec::new(
+            Self::NoticeTeamAsleep => (
                 "harness/pr/notice-team-asleep.md",
                 Audience::Human,
                 &["team", "items", "minutes", "tasks", "woken", "lead"],
             ),
-            Self::NoticeApproved => PromptSpec::new(
+            Self::NoticeStandingItem => (
+                "harness/pr/notice-standing-item.md",
+                Audience::Human,
+                &["team", "item", "member", "task", "line"],
+            ),
+            Self::NoticeApproved => (
                 "harness/pr/notice-approved.md",
                 Audience::Human,
                 &["team", "repo", "pr", "url"],
             ),
-            Self::NoticePublishFailed => PromptSpec::new(
+            Self::NoticePublishFailed => (
                 "harness/pr/notice-publish-failed.md",
                 Audience::Human,
                 &["team", "items", "reason"],
             ),
-            Self::NoticeMergeFailed => PromptSpec::new(
+            Self::NoticeMergeFailed => (
                 "harness/pr/notice-merge-failed.md",
                 Audience::Human,
                 &["team", "pr", "url", "reason"],
             ),
-            Self::NoticeClosed => {
-                PromptSpec::new("harness/pr/notice-closed.md", Audience::Human, &["team", "pr", "url"])
-            }
-            Self::NoticeMerged => PromptSpec::new(
+            Self::NoticeClosed => ("harness/pr/notice-closed.md", Audience::Human, &["team", "pr", "url"]),
+            Self::NoticeMerged => (
                 "harness/pr/notice-merged.md",
                 Audience::Human,
                 &["team", "pr", "url", "items"],
             ),
-            Self::ReviewRequest => PromptSpec::new(
+            Self::ReviewRequest => (
                 "harness/review/request.md",
                 Audience::Model,
                 &["team", "pr", "branch", "base", "head", "pass"],
             ),
-            Self::ReviewComment => PromptSpec::new(
+            Self::ReviewComment => (
                 "harness/review/comment.md",
                 Audience::Model,
                 &["reviewer", "client", "verdict", "pass", "commit", "report"],
             ),
-            Self::ReviewVerdictApprove => {
-                PromptSpec::new("harness/review/verdict-approve.md", Audience::Model, &["icon"])
-            }
+            Self::ReviewVerdictApprove => ("harness/review/verdict-approve.md", Audience::Model, &["icon"]),
             Self::ReviewVerdictRequestChanges => {
-                PromptSpec::new("harness/review/verdict-request-changes.md", Audience::Model, &["icon"])
+                ("harness/review/verdict-request-changes.md", Audience::Model, &["icon"])
             }
-            Self::ReviewFixPass => PromptSpec::new(
+            Self::ReviewFixPass => (
                 "harness/review/fix-pass.md",
                 Audience::Model,
                 &["pr", "pass", "passes", "branch", "findings"],
             ),
-            Self::ReviewFinding => {
-                PromptSpec::new("harness/review/finding.md", Audience::Model, &["reviewer", "report"])
-            }
-            Self::ReviewAskHuman => PromptSpec::new(
+            Self::ReviewFinding => ("harness/review/finding.md", Audience::Model, &["reviewer", "report"]),
+            Self::ReviewAskHuman => (
                 "harness/review/ask-human.md",
                 Audience::Model,
                 &["pr", "passes", "findings", "questions_file", "number", "task"],
             ),
-            Self::ReviewVerdictMissing => PromptSpec::new("harness/review/verdict-missing.md", Audience::Model, &[]),
-            Self::NoticeNoVerdict => PromptSpec::new(
+            Self::ReviewVerdictMissing => ("harness/review/verdict-missing.md", Audience::Model, &[]),
+            Self::NoticeNoVerdict => (
                 "harness/review/notice-no-verdict.md",
                 Audience::Human,
                 &["reviewer", "pr", "task", "why"],
             ),
-            Self::NoticeDecision => PromptSpec::new(
+            Self::NoticeDecision => (
                 "harness/review/notice-decision.md",
                 Audience::Human,
                 &["team", "pr", "passes"],

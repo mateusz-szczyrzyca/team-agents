@@ -564,6 +564,20 @@ async fn a_pause_that_arrives_as_a_hung_run_ends_holds_the_task_and_is_recorded_
     daemon.stop().await.unwrap();
 }
 
+#[tokio::test]
+async fn a_stop_that_arrives_as_a_no_status_run_ends_is_recorded_as_stopped_and_not_retried() {
+    let mut daemon = Daemon::new(&solo_state(), None);
+    daemon.scenario(1, "nostatus");
+    daemon.start().await;
+
+    daemon.ask(control(ControlAction::Stop, of_task(1))).await.unwrap();
+
+    daemon.status_is(1, TaskStatus::Stopped).await;
+    let state = daemon.state();
+    assert_eq!(last_end(&state, 1), RunEnd::Stopped);
+    daemon.stop().await.unwrap();
+}
+
 // ---- what a task that is queued has been told ------------------------------------------------------------------
 
 /// A queued task 1 that its team gave a reason to start with, in an owner that has not started it.
@@ -636,4 +650,45 @@ async fn a_clock_failure_while_recording_a_control_is_returned_not_silently_drop
         .await;
 
     assert!(matches!(result, Err(super::super::OwnerError::Clock(_))), "{result:?}");
+}
+
+#[tokio::test]
+async fn a_pending_stop_overrules_an_already_classified_no_status_end() {
+    use agent_core::decide::outcome::{Classified, ExitStatus, RunFinish, StoppedBy};
+    use agent_runtime::run::{FinishedRun, Progress};
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .begin_run(crate::fixtures::run(1), crate::fixtures::at(0), None)
+        .unwrap();
+    owner.halts.insert(task(1), crate::daemon::control::Halt::Stop);
+    let run = FinishedRun {
+        classified: Classified {
+            end: RunEnd::NoStatus { exit_code: Some(0) },
+            pause: None,
+        },
+        finish: RunFinish {
+            exit: ExitStatus::Code(0),
+            stopped_by: StoppedBy::Nobody,
+        },
+        session: None,
+        final_message: None,
+        progress: Progress::Made,
+    };
+
+    owner.finished(&task(1), run).await.unwrap();
+
+    assert_eq!(last_end(&owner.parts.state, 1), RunEnd::Stopped);
+    assert_eq!(status(&owner.parts.state, 1), TaskStatus::Stopped);
+    assert!(owner.reasons.is_empty());
 }

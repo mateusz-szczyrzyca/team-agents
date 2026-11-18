@@ -3,11 +3,12 @@
 use std::collections::BTreeMap;
 use std::io;
 use std::num::NonZeroU32;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use agent_core::cli::{McpServerKind, RunMode, SessionId};
 use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValue, ModelName};
+use agent_core::decide::outcome::{NO_STATUS_RETRIES, consecutive_no_status};
 use agent_core::history::RunWhy;
 use agent_core::ids::{BranchName, GenerateIdError, InvalidBranchName, InvalidName, RunId, TaskId};
 use agent_core::kinds::Role;
@@ -186,6 +187,36 @@ fn agent_setup(config: &Config, participant: &Participant) -> Option<AgentSetup>
     }
 }
 
+/// Finishes the prompt of a run with answers from the human and the sections of the autopilot.
+async fn compose_run_prompt(
+    ctx: &Context<'_>,
+    texts: &PromptTexts<'_>,
+    found: &TaskRef<'_>,
+    working: &Path,
+    kind: PromptKind,
+    prompt: String,
+) -> Result<(String, Option<String>), StartProblem> {
+    if matches!(
+        kind,
+        PromptKind::Resume(ResumeReason::TurnLimit | ResumeReason::NoStatus)
+    ) && (ctx.why.is_none() || ctx.why == Some(&Why::NoStatus))
+    {
+        Ok((prompt, None))
+    } else {
+        let answers = answers_text(ctx, found.member).await?;
+        let prompt = team_prompt(ctx, texts, found, prompt, answers.as_deref())?;
+        let (prompt, addition) = match ctx.autopilot {
+            Some(autopilot) => match sections_for(ctx, autopilot, found, working, ctx.why).await? {
+                Some(Addition::Append(sections)) => (format!("{}\n\n{sections}", prompt.trim_end()), Some(sections)),
+                Some(Addition::Replace(text)) => (format!("{text}\n"), Some(text)),
+                None => (prompt, None),
+            },
+            None => (prompt, None),
+        };
+        Ok((prompt, addition))
+    }
+}
+
 /// Makes the run of `task` ready.
 ///
 /// # Errors
@@ -210,7 +241,11 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         .last_session()
         .map(|session| SessionId::from_str(session.as_str()))
         .transpose()?;
-    let kind = prompt_kind(member, session.as_ref(), config);
+    let kind = if ctx.why == Some(&Why::NoStatus) {
+        PromptKind::Resume(ResumeReason::NoStatus)
+    } else {
+        prompt_kind_for_role(role, member, session.as_ref(), config)
+    };
     let item = assigned_item(team, participant);
     let team_items = if role == Role::Coordinator {
         items_of_team(team)
@@ -238,21 +273,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
         rules: ctx.rules,
     };
     let prompt = compose(&texts, &input)?;
-    let (prompt, addition) = if kind == PromptKind::Resume(ResumeReason::TurnLimit) && ctx.why.is_none() {
-        (prompt, None)
-    } else {
-        let answers = answers_text(ctx, member).await?;
-        let prompt = team_prompt(ctx, &texts, &found, prompt, answers.as_deref())?;
-        let (prompt, addition) = match ctx.autopilot {
-            Some(autopilot) => match sections_for(ctx, autopilot, &found, &working, ctx.why).await? {
-                Some(Addition::Append(sections)) => (format!("{}\n\n{sections}", prompt.trim_end()), Some(sections)),
-                Some(Addition::Replace(text)) => (format!("{text}\n"), Some(text)),
-                None => (prompt, None),
-            },
-            None => (prompt, None),
-        };
-        (prompt, addition)
-    };
+    let (prompt, addition) = compose_run_prompt(ctx, &texts, &found, &working, kind, prompt).await?;
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
         (RunMode::Resume { session_id }, member.last_session().cloned())
@@ -403,6 +424,15 @@ pub(super) fn next_number(member: &Member) -> Option<NonZeroU32> {
         .and_then(NonZeroU32::new)
 }
 
+/// Selects the resume prompt for the role that owns the task.
+fn prompt_kind_for_role(role: Role, member: &Member, session: Option<&SessionId>, config: &Config) -> PromptKind {
+    let kind = prompt_kind(member, session, config);
+    if matches!(role, Role::Worker | Role::Reviewer) && kind == PromptKind::Resume(ResumeReason::NoStatus) {
+        return PromptKind::First;
+    }
+    kind
+}
+
 /// What the prompt of the next run tells: the whole task, or what interrupted the session it resumes.
 fn prompt_kind(member: &Member, session: Option<&SessionId>, config: &Config) -> PromptKind {
     if session.is_none() {
@@ -414,6 +444,9 @@ fn prompt_kind(member: &Member, session: Option<&SessionId>, config: &Config) ->
     });
     match last_end {
         Some(RunEnd::NoStatus { exit_code: None }) => PromptKind::Resume(ResumeReason::Restart),
+        Some(RunEnd::NoStatus { exit_code: Some(_) }) if consecutive_no_status(member.runs()) <= NO_STATUS_RETRIES => {
+            PromptKind::Resume(ResumeReason::NoStatus)
+        }
         Some(RunEnd::Hung) => PromptKind::Resume(ResumeReason::Hang {
             after: config.watchdog().hang_minutes,
         }),
@@ -642,6 +675,7 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
         Some(Why::AskHuman) => RunWhy::AskHuman,
         // The gate is one of the checks a round passes before its review: the history has one reason for both.
         Some(Why::Checks | Why::Gate(_)) => RunWhy::Checks,
+        Some(Why::NoStatus) => RunWhy::Continuation,
         None if matches!(
             member.runs().last().map(Run::state),
             Some(RunState::Ended {

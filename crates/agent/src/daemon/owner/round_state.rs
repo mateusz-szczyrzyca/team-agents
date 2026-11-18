@@ -49,11 +49,20 @@ pub(super) fn rounds_for(state: &State, task: &TaskId, why: Option<&Why>) -> Res
         None if role == Role::Reviewer && !goes_on => RunStart::Review {
             round: reviewed.as_ref(),
         },
-        Some(Why::FixPass | Why::AskHuman | Why::Checks | Why::Gate(_) | Why::Asleep(_)) | None if goes_on => {
+        Some(Why::FixPass | Why::AskHuman | Why::Checks | Why::Gate(_) | Why::Asleep(_) | Why::NoStatus) | None
+            if goes_on =>
+        {
             RunStart::Continuation { previous: &previous }
         }
         Some(
-            Why::Woken | Why::Assigned(_) | Why::FixPass | Why::AskHuman | Why::Checks | Why::Gate(_) | Why::Asleep(_),
+            Why::Woken
+            | Why::Assigned(_)
+            | Why::FixPass
+            | Why::AskHuman
+            | Why::Checks
+            | Why::Gate(_)
+            | Why::Asleep(_)
+            | Why::NoStatus,
         )
         | None => RunStart::Work,
     };

@@ -1,21 +1,87 @@
 //! A team that sleeps with its work unfinished: its lead is woken and told that nobody works, and when that does not
 //! help the human is told.
 
-use agent_core::decide::asleep::{AsleepStep, Team, asleep_step};
+use std::path::{Path, PathBuf};
+
+use tokio::io::AsyncReadExt;
+
+use agent_core::decide::asleep::{AsleepStep, BlockedItemStep, Team, asleep_step, blocked_item_step};
 use agent_core::ids::TeamId;
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::state::{ItemPhase, Member, RunEnd, RunState, Timestamp};
 use agent_core::status::TaskStatus;
+use agent_runtime::notify::{MAX_BODY_BYTES, MAX_TITLE_BYTES};
 
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
-use super::{Announcement, AutopilotNotice, PublishError, Pulls};
+use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 use crate::daemon::team::Why;
 
 /// How many times in a row the lead of a team is woken because the team sleeps; after that the human is told.
 pub(super) const ASLEEP_WAKES: u32 = 2;
+
+/// Maximum saved notification size: the notifier's bounded title and body plus their separator.
+const SAVED_NOTICE_BYTES: usize = MAX_TITLE_BYTES + MAX_BODY_BYTES + 1;
+
+/// Why previously delivered standing-item notices could not be inspected.
+#[derive(Debug, thiserror::Error)]
+#[error("cannot inspect saved notifications at {path:?}")]
+struct SavedNoticeError {
+    /// Directory or file that could not be inspected.
+    path: PathBuf,
+    /// Read or limit-conversion failure, preserved for diagnostics.
+    source: std::io::Error,
+}
+
+/// Finds a saved notice for this item and failed run, independently of optional history recording.
+async fn standing_was_announced(
+    directory: &Path,
+    team: &TeamId,
+    standing: &Standing,
+) -> Result<bool, SavedNoticeError> {
+    let mut entries = match tokio::fs::read_dir(directory).await {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => {
+            return Err(SavedNoticeError {
+                path: directory.to_owned(),
+                source,
+            });
+        }
+    };
+    let read_limit = u64::try_from(SAVED_NOTICE_BYTES).map_err(|source| SavedNoticeError {
+        path: directory.to_owned(),
+        source: std::io::Error::other(source),
+    })?;
+    let item = format!(
+        "Team {team} waits with item {} behind failed member {}",
+        standing.item, standing.member
+    );
+    while let Some(entry) = entries.next_entry().await.map_err(|source| SavedNoticeError {
+        path: directory.to_owned(),
+        source,
+    })? {
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "md") {
+            continue;
+        }
+        let file = tokio::fs::File::open(&path).await.map_err(|source| SavedNoticeError {
+            path: path.clone(),
+            source,
+        })?;
+        let mut text = String::new();
+        file.take(read_limit)
+            .read_to_string(&mut text)
+            .await
+            .map_err(|source| SavedNoticeError { path, source })?;
+        if text.contains(&item) && text.contains(&standing.line) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 
 /// What a look at a team found, kept apart from the state so that the owner can change it.
 struct Found {
@@ -27,6 +93,21 @@ struct Found {
     tasks: Vec<String>,
     /// When the last run of the crew ended; `None` while one runs or none has run.
     quiet_since: Option<Timestamp>,
+    /// Standing items: items in progress whose assignee is failed.
+    standings: Vec<Standing>,
+}
+
+/// A standing item in progress whose assignee is failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Standing {
+    /// The item id.
+    item: String,
+    /// The member agent name.
+    member: String,
+    /// The member task id.
+    task: agent_core::ids::TaskId,
+    /// The member status and last run detail line.
+    line: String,
 }
 
 /// How the task of `member` ended, in a line for the lead and the human.
@@ -79,17 +160,111 @@ impl Owner {
                 RunState::Running => None,
             })
             .collect();
+        let standings: Vec<Standing> = team
+            .items()
+            .iter()
+            .filter_map(|progress| {
+                let (ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }) = progress.phase()
+                else {
+                    return None;
+                };
+                let (role, member) = roster.iter().find(|(_, m)| m.agent().name() == assignee.as_str())?;
+                if member.status() == TaskStatus::Failed {
+                    Some(Standing {
+                        item: progress.id().to_string(),
+                        member: assignee.to_string(),
+                        task: member.task().clone(),
+                        line: match member.runs().last() {
+                            Some(run) => format!("{}; run {}", line(*role, member), run.id()),
+                            None => line(*role, member),
+                        },
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
         Some(Found {
             unfinished,
             statuses: roster.iter().map(|(_, member)| member.status()).collect(),
             tasks: roster.iter().map(|(role, member)| line(*role, member)).collect(),
             quiet_since: ended.and_then(|times| times.into_iter().max()),
+            standings,
         })
+    }
+
+    /// Checks standing items behind failed members, resets dedup when assignee leaves failed, and notifies human if lead is done.
+    async fn check_standing_items(
+        &mut self,
+        pulls: &Pulls,
+        team_id: &TeamId,
+        lead: &Lead,
+        found: &Found,
+    ) -> Result<(), OwnerError> {
+        if let Some(team) = self.parts.state.team(team_id) {
+            for item in team.items() {
+                let item_id = item.id().to_string();
+                if !found.standings.iter().any(|s| s.item == item_id) {
+                    self.watch.announced.remove(&Announcement::ItemBlocked {
+                        team: team_id.clone(),
+                        item: item_id,
+                    });
+                }
+            }
+        }
+
+        let Some(lead_status) = found.statuses.first().copied() else {
+            return Ok(());
+        };
+        let directory = self
+            .parts
+            .settings
+            .config
+            .notifications()
+            .directory
+            .as_ref()
+            .map_or_else(
+                || self.parts.store.home().notifications_dir(),
+                |directory| directory.as_path().to_owned(),
+            );
+        let now = Timestamp::now(&self.parts.clock)?;
+        for standing in &found.standings {
+            if blocked_item_step(lead.done, lead_status, TaskStatus::Failed) == BlockedItemStep::TellHuman {
+                let announcement = Announcement::ItemBlocked {
+                    team: team_id.clone(),
+                    item: standing.item.clone(),
+                };
+                if self.watch.announced.insert(announcement) {
+                    match standing_was_announced(&directory, team_id, standing).await {
+                        Ok(true) => continue,
+                        Ok(false) => {}
+                        Err(error) => {
+                            // A failed lookup must not hide an item that needs the human's intervention.
+                            tracing::warn!(
+                                event = LogEvent::NotificationFailed.as_str(),
+                                team = %team_id,
+                                item = %standing.item,
+                                error = %agent_runtime::process::error_chain(&error),
+                                "saved notices cannot be inspected; reporting the standing item"
+                            );
+                        }
+                    }
+                    let values = Variables::new()
+                        .with("team", team_id.as_str())
+                        .and_then(|v| v.with("item", standing.item.as_str()))
+                        .and_then(|v| v.with("member", standing.member.as_str()))
+                        .and_then(|v| v.with("task", standing.task.as_str()))
+                        .and_then(|v| v.with("line", standing.line.as_str()));
+                    self.tell_human(pulls, AutopilotNotice::StandingItem, values, lead, now);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Wakes the lead of the team `team_id` when every task of it sleeps and an item is unfinished, or tells the human
     /// when the lead was woken for it as often as it is.
-    pub(super) fn wake_sleeping_team(
+    pub(super) async fn wake_sleeping_team(
         &mut self,
         pulls: &Pulls,
         team_id: &TeamId,
@@ -98,14 +273,18 @@ impl Owner {
         let Some(found) = self.look_at_sleep(team_id) else {
             return Ok(());
         };
-        let Some(quiet_since) = found.quiet_since else {
-            return Ok(());
-        };
+
         let lead = self.lead_of(team_id)?;
         if lead.done {
             // The lead handed its branch over: what follows is a new stretch of work.
             self.watch.asleep_wakes.remove(team_id);
         }
+
+        self.check_standing_items(pulls, team_id, &lead, &found).await?;
+
+        let Some(quiet_since) = found.quiet_since else {
+            return Ok(());
+        };
         let now = Timestamp::now(&self.parts.clock)?;
         let quiet_for = std::time::Duration::try_from(now.as_utc() - quiet_since.as_utc()).unwrap_or_default();
         let woken = self.watch.asleep_wakes.get(team_id).copied().unwrap_or(0);
@@ -113,6 +292,7 @@ impl Owner {
             unfinished: !found.unfinished.is_empty(),
             tasks: &found.statuses,
             lead_done: lead.done,
+            standing_item: !found.standings.is_empty(),
             quiet_for,
             may_sleep: self.parts.settings.config.watchdog().asleep_minutes.as_duration(),
             woken,
@@ -158,6 +338,9 @@ impl Owner {
                 self.release(&lead.task, Why::Asleep(text.trim_end().to_owned()), look)
             }
             AsleepStep::TellHuman => {
+                if lead.done {
+                    return Ok(());
+                }
                 let announcement = Announcement::TeamAsleep {
                     team: team_id.clone(),
                     since: quiet_since,

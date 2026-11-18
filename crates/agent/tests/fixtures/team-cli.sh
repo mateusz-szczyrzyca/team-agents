@@ -186,6 +186,14 @@ case $action in
   sleep) result 'Nothing to do now.\nSTATUS: SLEEPING' ;;
   fail) result 'I could not do it.\nSTATUS: FAILED' ;;
   nostatus) result 'I think that is all.' ;;
+  nostatus-hold-2)
+    if ((n == 2)); then
+      while [[ ! -f .fake-continue ]]; do
+        sleep 0.05
+      done
+    fi
+    result 'I think that is all.'
+    ;;
   fail-first:*)
     # Bash noclobber claims the marker with exclusive creation; some mkdir implementations report success to both racers.
     if (set -o noclobber; > "$home/.fake-first-failed") 2> /dev/null; then

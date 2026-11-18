@@ -59,7 +59,7 @@ fn a_member_of_a_list_without_items_that_is_done_names_no_item_and_its_task_bran
 
 #[test]
 fn a_member_that_failed_says_so_with_the_end_of_its_message() {
-    let team = working();
+    let team = crew_of(PLAIN, 1, 0);
 
     let told = told(&team, 2, &reported(RunOutcome::Failed), Some("I could not do it.")).unwrap();
 
@@ -74,7 +74,14 @@ fn a_member_that_failed_says_so_with_the_end_of_its_message() {
 
 #[test]
 fn a_member_that_ended_without_a_status_says_so() {
-    let team = working();
+    let mut team = crew_of(PLAIN, 1, 0);
+    ran(
+        &mut team,
+        2,
+        1,
+        RunEnd::NoStatus { exit_code: Some(3) },
+        &[TaskStatus::Failed],
+    );
 
     let told = told(&team, 2, &RunEnd::NoStatus { exit_code: Some(3) }, None).unwrap();
 
@@ -269,5 +276,59 @@ fn turn_limit_tells_the_coordinator_and_ends_a_worker_request_only_when_the_task
             how: WorkerEnd::NoStatus,
             said: Some("partial work".to_owned()),
         })
+    );
+}
+
+#[test]
+fn a_member_that_failed_on_an_item_tells_the_coordinator_the_item_its_branch_and_what_it_said() {
+    let team = working();
+
+    let told = told(&team, 2, &reported(RunOutcome::Failed), Some("I could not do it.")).unwrap();
+
+    assert_eq!(
+        told.notice,
+        BusNotice::MemberFailedItem {
+            member: agent("claude-1"),
+            message: "I could not do it.".to_owned(),
+            item: "1.1".parse().unwrap(),
+            branch: "agents/claude-1/task-20261111-153002-k3x9-1.1".parse().unwrap(),
+        }
+    );
+}
+
+#[test]
+fn a_member_that_ended_without_a_status_on_an_item_tells_the_coordinator_only_when_failed() {
+    let mut team = working();
+    assert_eq!(told(&team, 2, &RunEnd::NoStatus { exit_code: Some(3) }, None), None);
+    ran(
+        &mut team,
+        2,
+        1,
+        RunEnd::NoStatus { exit_code: Some(3) },
+        &[TaskStatus::Failed],
+    );
+    let told = told(&team, 2, &RunEnd::NoStatus { exit_code: Some(3) }, None).unwrap();
+    assert_eq!(
+        told.notice,
+        BusNotice::MemberNoStatusItem {
+            member: agent("claude-1"),
+            item: "1.1".parse().unwrap(),
+            branch: "agents/claude-1/task-20261111-153002-k3x9-1.1".parse().unwrap(),
+        }
+    );
+}
+
+#[test]
+fn turn_limit_on_an_item_keeps_the_original_no_status_notice_when_failed() {
+    let mut team = working();
+    ran(&mut team, 2, 1, RunEnd::TurnLimit, &[TaskStatus::Failed]);
+    assert_eq!(
+        told(&team, 2, &RunEnd::TurnLimit, None).unwrap(),
+        Told {
+            to: agent("inv-opus"),
+            notice: BusNotice::MemberNoStatus {
+                member: agent("claude-1"),
+            },
+        }
     );
 }

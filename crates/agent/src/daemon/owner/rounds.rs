@@ -24,7 +24,7 @@ use std::sync::Arc;
 use agent_core::config::{AbsolutePath, GithubLogin, InvalidValue, RepoName, Secret};
 use agent_core::ids::{AgentName, BranchName, GenerateIdError, InvalidBranchName, InvalidName, TaskId, TeamId};
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
-use agent_core::state::{CommitId, PrNumber, Timestamp};
+use agent_core::state::{CommitId, ItemPhase, PrNumber, State, Timestamp};
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextError};
 use agent_runtime::checks_prompts::ChecksPrompts;
 use agent_runtime::git::{CommitIdentity, Git, GitError};
@@ -138,6 +138,29 @@ pub(super) struct PullWatch {
     refused: HashSet<(TeamId, PrNumber)>,
 }
 
+impl PullWatch {
+    /// Clears blocked item announcements for any items in progress or fixing assigned to `task`.
+    pub(super) fn reset_item_blocked_for_task(&mut self, state: &State, team_id: &TeamId, task: &TaskId) {
+        let Some(team) = state.team(team_id) else {
+            return;
+        };
+        let Some((_, member)) = team.crew().roster().into_iter().find(|(_, m)| m.task() == task) else {
+            return;
+        };
+        let member_name = member.agent().name().to_string();
+        for item in team.items() {
+            if let ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } = item.phase()
+                && assignee.as_str() == member_name
+            {
+                self.announced.remove(&Announcement::ItemBlocked {
+                    team: team_id.clone(),
+                    item: item.id().to_string(),
+                });
+            }
+        }
+    }
+}
+
 /// Something the human is told once.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Announcement {
@@ -203,6 +226,13 @@ pub(super) enum Announcement {
         team: TeamId,
         /// When its last run ended: a team that worked since and sleeps again is told again.
         since: Timestamp,
+    },
+    /// A team's item is blocked behind a failed member while its lead is done.
+    ItemBlocked {
+        /// The team.
+        team: TeamId,
+        /// The item.
+        item: String,
     },
     /// The gate still does not pass at this tip after the lead was sent back as often as it is.
     GateNotPassed {
@@ -317,6 +347,8 @@ pub(super) enum AutopilotNotice {
     PublishFailed,
     /// Team asleep.
     TeamAsleep,
+    /// Standing item behind a failed member while lead is done.
+    StandingItem,
     /// Pull request closed without merge.
     Closed,
     /// Pull request approved.
@@ -336,6 +368,7 @@ impl AutopilotNotice {
             Self::NoVerdict => AutopilotPrompt::NoticeNoVerdict,
             Self::PublishFailed => AutopilotPrompt::NoticePublishFailed,
             Self::TeamAsleep => AutopilotPrompt::NoticeTeamAsleep,
+            Self::StandingItem => AutopilotPrompt::NoticeStandingItem,
             Self::Closed => AutopilotPrompt::NoticeClosed,
             Self::Approved => AutopilotPrompt::NoticeApproved,
             Self::MergeFailed => AutopilotPrompt::NoticeMergeFailed,
@@ -350,7 +383,7 @@ impl AutopilotNotice {
             Self::Decision => NoticeKind::Decision,
             Self::NoVerdict => NoticeKind::NoVerdict,
             Self::PublishFailed => NoticeKind::PublishFailed,
-            Self::TeamAsleep => NoticeKind::TeamAsleep,
+            Self::TeamAsleep | Self::StandingItem => NoticeKind::TeamAsleep,
             Self::Closed => NoticeKind::Closed,
             Self::Approved => NoticeKind::Approved,
             Self::MergeFailed => NoticeKind::MergeFailed,
@@ -389,7 +422,7 @@ impl Owner {
         self.deliver_reviews(team, look)?;
         self.deliver_fix_passes(team, look)?;
         self.ask_the_human(&pulls, team, look)?;
-        self.wake_sleeping_team(&pulls, team, look)?;
+        self.wake_sleeping_team(&pulls, team, look).await?;
         Ok(())
     }
 

@@ -28,6 +28,11 @@ pub(super) enum Settled {
     Hung,
     /// The run exhausted its turn budget: the persisted streak decides whether it continues.
     TurnLimit,
+    /// The run ended without a status line: the persisted streak decides whether it continues.
+    NoStatus {
+        /// The process's exit code, if it exited normally.
+        exit_code: Option<i32>,
+    },
 }
 
 /// What the end `end` of a run of the member of role `role` does to its task; `pause` is what the classifier made
@@ -45,7 +50,7 @@ pub(super) fn settle(role: Role, end: &RunEnd, pause: Option<&Pause>, final_mess
             RunOutcome::Excluded => Settled::Status(TaskStatus::Done),
         },
         RunEnd::TurnLimit => Settled::TurnLimit,
-        RunEnd::NoStatus { exit_code } => Settled::Failed(Notice::NoStatus { exit: *exit_code }),
+        RunEnd::NoStatus { exit_code } => Settled::NoStatus { exit_code: *exit_code },
         RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited => pause.map_or(
             // The classifier gives every limit a pause, so this is not reached; a limit that cannot be waited for is
             // a run that failed.
