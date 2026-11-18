@@ -684,3 +684,14 @@ async fn worktree_metadata_failure_is_recorded_before_running_git() {
     assert_eq!(failures.len(), 1);
     assert!(failures[0].reason.contains("Too many levels of symbolic links"));
 }
+
+#[test]
+fn retained_reference_records_reject_missing_fields() {
+    assert_eq!(
+        ref_fields("refs/heads/feature abc123").unwrap(),
+        ("refs/heads/feature", "abc123")
+    );
+    for line in ["", "refs/heads/feature", " refs", "refs/heads/feature "] {
+        assert!(matches!(ref_fields(line), Err(ObservationError::RefFields)), "{line}");
+    }
+}

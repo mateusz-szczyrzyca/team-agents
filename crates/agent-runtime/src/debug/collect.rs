@@ -813,6 +813,9 @@ enum ObservationError {
     /// Git did not return a complete porcelain status record.
     #[error("git status record lacks required fields")]
     StatusFields,
+    /// Git did not return a complete retained reference record.
+    #[error("git reference record lacks required fields")]
+    RefFields,
     /// Git did not return all requested commit fields.
     #[error("git commit record lacks required fields")]
     CommitFields,
@@ -995,6 +998,14 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
     })
 }
 
+/// Decodes the name and object ID fields of a retained reference record.
+fn ref_fields(line: &str) -> Result<(&str, &str), ObservationError> {
+    if line.is_empty() {
+        return Err(ObservationError::RefFields);
+    }
+    Ok(line.split_once(' ').unwrap_or((line, line)))
+}
+
 async fn read_git_from_checkout(
     checkout: &Path,
     task: &TaskId,
@@ -1012,9 +1023,7 @@ async fn read_git_from_checkout(
     let mut candidate: Option<(BranchName, CommitId)> = None;
 
     for line in branches_output.lines() {
-        let Some((ref_name, hash)) = line.split_once(' ') else {
-            continue;
-        };
+        let (ref_name, hash) = ref_fields(line)?;
 
         let is_match = ref_name == exact || ref_name.starts_with(&prefix);
 
