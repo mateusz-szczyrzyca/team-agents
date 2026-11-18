@@ -606,14 +606,10 @@ fn merged_removed_worktree_falls_back_to_checkout() {
             .any(|(p, _)| p == &member_untracked_artifact)
     );
 
+    let unreadable = &collection.assessment.unreadable;
     assert!(
-        !collection
-            .assessment
-            .unreadable
-            .iter()
-            .any(|f| f.part.contains("task-20261117-120000-mem1")),
-        "{:?}",
-        collection.assessment.unreadable
+        !unreadable.iter().any(|f| f.part.contains("task-20261117-120000-mem1")),
+        "{unreadable:?}"
     );
 
     assert!(
