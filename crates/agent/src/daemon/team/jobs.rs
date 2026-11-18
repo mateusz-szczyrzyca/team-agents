@@ -67,6 +67,7 @@ pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) 
                     .with("message", message)?,
             )?,
         ),
+        BusNotice::MemberFailedItem { .. } => (NoticeKind::MemberFailed, Vec::new(), String::new()),
         BusNotice::MemberNoStatus { member } => (
             NoticeKind::MemberNoStatus,
             vec![("member", member.to_string())],
@@ -75,6 +76,7 @@ pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) 
                 &Variables::new().with("member", member.as_str())?,
             )?,
         ),
+        BusNotice::MemberNoStatusItem { .. } => (NoticeKind::MemberNoStatus, Vec::new(), String::new()),
         BusNotice::HelperResult {
             request,
             worker,

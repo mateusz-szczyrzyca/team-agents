@@ -28,10 +28,30 @@ pub(in crate::daemon) enum BusNotice {
         /// The end of its final message.
         message: String,
     },
+    /// A member reported `FAILED` while working on an item.
+    MemberFailedItem {
+        /// The member.
+        member: AgentName,
+        /// The end of its final message.
+        message: String,
+        /// The item it worked on.
+        item: ItemId,
+        /// The branch it worked on.
+        branch: BranchName,
+    },
     /// A member ended its turn without a status line.
     MemberNoStatus {
         /// The member.
         member: AgentName,
+    },
+    /// A member ended its turn without a status line while working on an item.
+    MemberNoStatusItem {
+        /// The member.
+        member: AgentName,
+        /// The item it worked on.
+        item: ItemId,
+        /// The branch it worked on.
+        branch: BranchName,
     },
     /// A worker finished a request of a member: the result goes to the member.
     HelperResult {

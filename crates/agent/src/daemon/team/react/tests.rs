@@ -278,3 +278,59 @@ fn turn_limit_tells_the_coordinator_and_ends_a_worker_request_only_when_the_task
         })
     );
 }
+
+#[test]
+fn a_member_that_failed_on_an_item_tells_the_coordinator_the_item_its_branch_and_what_it_said() {
+    let team = working();
+
+    let told = told(&team, 2, &reported(RunOutcome::Failed), Some("I could not do it.")).unwrap();
+
+    assert_eq!(
+        told.notice,
+        BusNotice::MemberFailedItem {
+            member: agent("claude-1"),
+            message: "I could not do it.".to_owned(),
+            item: "1.1".parse().unwrap(),
+            branch: "agents/claude-1/task-20261111-153002-k3x9-1.1".parse().unwrap(),
+        }
+    );
+}
+
+#[test]
+fn a_member_that_ended_without_a_status_on_an_item_tells_the_coordinator_only_when_failed() {
+    let mut team = working();
+    assert_eq!(told(&team, 2, &RunEnd::NoStatus { exit_code: Some(3) }, None), None);
+    ran(
+        &mut team,
+        2,
+        1,
+        RunEnd::NoStatus { exit_code: Some(3) },
+        &[TaskStatus::Failed],
+    );
+    let told = told(&team, 2, &RunEnd::NoStatus { exit_code: Some(3) }, None).unwrap();
+    assert_eq!(
+        told.notice,
+        BusNotice::MemberNoStatusItem {
+            member: agent("claude-1"),
+            item: "1.1".parse().unwrap(),
+            branch: "agents/claude-1/task-20261111-153002-k3x9-1.1".parse().unwrap(),
+        }
+    );
+}
+
+#[test]
+fn turn_limit_on_an_item_tells_the_coordinator_the_item_and_branch_when_failed() {
+    let mut team = working();
+    ran(&mut team, 2, 1, RunEnd::TurnLimit, &[TaskStatus::Failed]);
+    assert_eq!(
+        told(&team, 2, &RunEnd::TurnLimit, None).unwrap(),
+        Told {
+            to: agent("inv-opus"),
+            notice: BusNotice::MemberNoStatusItem {
+                member: agent("claude-1"),
+                item: "1.1".parse().unwrap(),
+                branch: "agents/claude-1/task-20261111-153002-k3x9-1.1".parse().unwrap(),
+            },
+        }
+    );
+}

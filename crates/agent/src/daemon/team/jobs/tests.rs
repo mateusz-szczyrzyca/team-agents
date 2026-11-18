@@ -275,3 +275,74 @@ async fn the_requester_reads_the_reason_between_the_request_and_what_to_do_now()
         "{text}"
     );
 }
+
+#[tokio::test]
+async fn a_member_that_failed_on_an_item_is_a_member_failed_notice_with_the_item_and_the_branch() {
+    let texts = texts().await;
+
+    let (kind, fields, text) = notice(
+        render_notice(
+            &texts,
+            &BusNotice::MemberFailedItem {
+                member: agent("claude-1"),
+                message: "I could not do it.".to_owned(),
+                item: "1.1".parse().unwrap(),
+                branch: "agents/claude-1/task-x-1.1".parse().unwrap(),
+            },
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(kind, NoticeKind::MemberFailed);
+    assert_eq!(
+        fields,
+        [
+            pair("branch", "agents/claude-1/task-x-1.1"),
+            pair("item", "1.1"),
+            pair("member", "claude-1"),
+        ]
+    );
+    assert!(text.contains("claude-1 failed on item 1.1"), "{text}");
+    assert!(text.contains("`agents/claude-1/task-x-1.1`"), "{text}");
+    assert!(text.contains("I could not do it."), "{text}");
+    assert!(
+        text.contains("Ending `STATUS: DONE` does not publish item 1.1 until the human resumes claude-1."),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn a_member_without_a_status_on_an_item_is_a_member_no_status_notice_with_the_item_and_the_branch() {
+    let texts = texts().await;
+
+    let (kind, fields, text) = notice(
+        render_notice(
+            &texts,
+            &BusNotice::MemberNoStatusItem {
+                member: agent("claude-1"),
+                item: "1.1".parse().unwrap(),
+                branch: "agents/claude-1/task-x-1.1".parse().unwrap(),
+            },
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(kind, NoticeKind::MemberNoStatus);
+    assert_eq!(
+        fields,
+        [
+            pair("branch", "agents/claude-1/task-x-1.1"),
+            pair("item", "1.1"),
+            pair("member", "claude-1"),
+        ]
+    );
+    assert!(
+        text.contains("claude-1 ended its turn without a `STATUS:` line on item 1.1"),
+        "{text}"
+    );
+    assert!(text.contains("`agents/claude-1/task-x-1.1`"), "{text}");
+    assert!(
+        text.contains("Ending `STATUS: DONE` does not publish item 1.1 until the human resumes claude-1."),
+        "{text}"
+    );
+}
