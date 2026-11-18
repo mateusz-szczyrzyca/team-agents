@@ -141,3 +141,22 @@ fn reads_live_history_from_active_wal_without_modifying_home_files() {
     after_entries.sort();
     assert_eq!(after_entries, before_entries);
 }
+
+#[test]
+fn rejects_oversized_history_database() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let history_path = temp_dir.path().join("history.db");
+    let file = std::fs::File::create(&history_path).unwrap();
+    file.set_len(MAX_HISTORY_BYTES.saturating_add(1)).unwrap();
+    let team: TeamId = "team-20261118-060000-a1b2".parse().unwrap();
+
+    let err = read_live_team_history(&history_path, &team).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            HistoryCollectionError::TooLarge { ref path, size, limit }
+            if *path == history_path && size == MAX_HISTORY_BYTES + 1 && limit == MAX_HISTORY_BYTES
+        ),
+        "{err:?}"
+    );
+}

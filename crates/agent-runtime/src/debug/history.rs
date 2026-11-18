@@ -9,9 +9,24 @@ use agent_core::ids::{RunId, TeamId};
 #[cfg(test)]
 mod tests;
 
+/// Maximum permitted size for history files (64 MiB).
+#[cfg_attr(not(test), expect(dead_code, reason = "wired in GREEN commit"))]
+pub(crate) const MAX_HISTORY_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Why reading live history failed.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum HistoryCollectionError {
+    /// A database or sidecar file exceeds the maximum permitted size.
+    #[error("history file {path:?} exceeds limit ({size} bytes > {limit} bytes)")]
+    #[cfg_attr(not(test), expect(dead_code, reason = "wired in GREEN commit"))]
+    TooLarge {
+        /// File that exceeded the limit.
+        path: PathBuf,
+        /// Observed size in bytes.
+        size: u64,
+        /// Maximum allowed size in bytes.
+        limit: u64,
+    },
     /// The database or WAL file could not be read or copied.
     #[error("cannot read database file {path:?}")]
     Io {
