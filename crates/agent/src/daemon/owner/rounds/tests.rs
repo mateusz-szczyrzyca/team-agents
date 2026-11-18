@@ -627,6 +627,12 @@ async fn member_with_nostatus_alone_has_three_runs_and_fails_with_item_branch_no
         .collect();
     assert_eq!(told.len(), 1, "{told:?}");
 
+    rig.wait_for("the exhausted member failure to reach the coordinator", || {
+        std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl"))
+            .expect("read the team bus messages")
+            .contains("member_no_status")
+    })
+    .await;
     let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap_or_default();
     assert!(
         messages.contains("member_no_status")
