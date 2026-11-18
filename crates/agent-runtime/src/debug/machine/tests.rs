@@ -513,3 +513,183 @@ async fn descendant_cycle_terminates_without_infinite_loop() {
     let pids: Vec<u32> = obs.summary.daemon_descendants.iter().map(|d| d.pid).collect();
     assert_eq!(pids, vec![200, 201, 202]);
 }
+
+#[tokio::test]
+async fn malformed_meminfo_numeric_field_records_error() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    fs::write(
+        procfs.join("meminfo"),
+        "MemTotal:       invalid_kb\nMemAvailable:   1000 kB\n",
+    )
+    .expect("write meminfo");
+
+    let obs = observe(&home, &procfs, &temp_dir, None, &cut, test_now()).await;
+    assert!(
+        obs.unreadable.iter().any(|f| f.section == SummarySection::Machine
+            && f.part == "memory"
+            && f.reason.contains("invalid numeric value")),
+        "malformed numeric field must record error: {:?}",
+        obs.unreadable
+    );
+}
+
+#[tokio::test]
+async fn meminfo_checked_mul_overflow_records_error() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    fs::write(
+        procfs.join("meminfo"),
+        "MemTotal:       18446744073709551615 kB\nMemAvailable:   1000 kB\n",
+    )
+    .expect("write meminfo");
+
+    let obs = observe(&home, &procfs, &temp_dir, None, &cut, test_now()).await;
+    assert!(
+        obs.unreadable
+            .iter()
+            .any(|f| f.section == SummarySection::Machine && f.part == "memory" && f.reason.contains("overflow")),
+        "multiplication overflow must record error: {:?}",
+        obs.unreadable
+    );
+}
+
+#[tokio::test]
+async fn unavailable_swap_records_unreadable_reason() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    fs::write(
+        procfs.join("meminfo"),
+        "MemTotal:       10000 kB\nMemAvailable:   5000 kB\n",
+    )
+    .expect("write meminfo");
+
+    let obs = observe(&home, &procfs, &temp_dir, None, &cut, test_now()).await;
+    assert_eq!(obs.summary.swap_total_bytes, None);
+    assert_eq!(obs.summary.swap_free_bytes, None);
+    assert!(
+        obs.unreadable
+            .iter()
+            .any(|f| f.section == SummarySection::Machine && f.part == "swap"),
+        "unavailable swap must record unreadable failure: {:?}",
+        obs.unreadable
+    );
+}
+
+#[tokio::test]
+async fn unavailable_clock_ticks_or_btime_reports_age_unavailable() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    let daemon_pid = 100;
+    write_proc_stat(&procfs, 100, 1);
+    write_proc_cmdline(&procfs, 100, &["daemon"]);
+    write_proc_stat(&procfs, 200, 100);
+    write_proc_cmdline(&procfs, 200, &["worker"]);
+
+    // No /proc/stat file created, so btime is missing
+    let params = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: Some(daemon_pid),
+        cut: &cut,
+        collected_at: test_now(),
+        clock_ticks: None,
+    };
+
+    let obs = observe_with_statvfs(params, |_| {
+        Ok(StatvfsStats {
+            fragment_size: 4096,
+            block_size: 4096,
+            total_blocks: 100,
+            available_blocks: 50,
+            total_inodes: 100,
+            available_inodes: 50,
+        })
+    })
+    .await;
+
+    assert_eq!(obs.summary.daemon_descendants.len(), 1);
+    assert_eq!(obs.summary.daemon_descendants[0].pid, 200);
+    assert_eq!(obs.summary.daemon_descendants[0].age_seconds, None);
+    assert!(
+        obs.unreadable
+            .iter()
+            .any(|f| f.section == SummarySection::Machine && f.part == "process age"),
+        "missing btime/ticks must report process age unavailable: {:?}",
+        obs.unreadable
+    );
+}
+
+#[tokio::test]
+async fn process_disappeared_race_ignored_while_malformed_stat_recorded() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    fs::write(procfs.join("stat"), "btime 1700000000\n").expect("write stat");
+
+    let daemon_pid = 100;
+    write_proc_stat(&procfs, 100, 1);
+    write_proc_cmdline(&procfs, 100, &["daemon"]);
+
+    // Process 200: directory exists, but stat file does NOT exist (disappeared race)
+    fs::create_dir_all(procfs.join("200")).expect("create 200");
+
+    // Process 300: directory exists, but stat file is malformed
+    fs::create_dir_all(procfs.join("300")).expect("create 300");
+    fs::write(procfs.join("300/stat"), "malformed stat content\n").expect("write 300 stat");
+    write_proc_cmdline(&procfs, 300, &["proc300"]);
+
+    // Process 400: non-numeric directory (e.g. sys, net)
+    fs::create_dir_all(procfs.join("sys")).expect("create sys");
+
+    let obs = observe(&home, &procfs, &temp_dir, Some(daemon_pid), &cut, test_now()).await;
+
+    assert!(
+        obs.unreadable
+            .iter()
+            .any(|f| f.section == SummarySection::Machine && f.part.contains("process 300")),
+        "malformed stat must be recorded as unreadable: {:?}",
+        obs.unreadable
+    );
+}
+
+#[tokio::test]
+async fn descendant_collection_failure_does_not_print_none_in_artifact() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("unreadable-proc");
+    // Make procfs a file instead of directory to cause read_dir failure
+    fs::write(&procfs, "not a directory").expect("write file");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    let obs = observe(&home, &procfs, &temp_dir, Some(100), &cut, test_now()).await;
+    let artifact = String::from_utf8(obs.artifact_bytes).expect("utf8 artifact");
+    assert!(
+        !artifact.contains("No descendant processes found."),
+        "must not print 'No descendant processes found.' when descendant collection failed: {artifact}"
+    );
+    assert!(
+        artifact.contains("could not be read"),
+        "must explain that descendants could not be read: {artifact}"
+    );
+}
