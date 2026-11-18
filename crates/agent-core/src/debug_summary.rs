@@ -973,12 +973,7 @@ fn render_with_redaction(
         let unread = input
             .unreadable_parts
             .iter()
-            .filter(|part| match section {
-                SummarySection::HistoryTail => part.name == "team history",
-                SummarySection::DaemonLog => part.name == "daemon log",
-                SummarySection::DaemonAndVersions => part.name == "daemon process",
-                _ => false,
-            })
+            .filter(|part| part.section == section)
             .collect::<Vec<_>>();
         if !unread.is_empty() {
             for part in unread {
