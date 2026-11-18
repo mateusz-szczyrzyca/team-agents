@@ -111,7 +111,7 @@ STATUS: DONE
 <time>  gate for task <task-4>: passed at <commit-2> (took <duration>); output <home>/tasks/<task-4>/gate-1.log
 <time>  pull request #1 opened: branch agents/claude-1/<task-4>-1.1 at <commit-2>
   title: Item 1.1: The first item
-  ----- pull request body (504 bytes) -----
+  ----- pull request body (525 bytes) -----
 Work of the team `<team-2>` on `example`, opened by the harness after the repository's gate passed on this branch
 (passed at [`<commit-2>`](https://github.com/octo/example/commit/<commit-2>)).
 
@@ -129,7 +129,7 @@ Do the first thing in the repository.
 
 ## Reviews
 
-Two investigators from outside the team review this pull request. Their reports are posted here as reviews.
+The configured number of investigators from outside the team review this pull request. Their reports are posted here as reviews.
   ----- end of pull request body -----
 <time>  pull request #1 marked ready for review
 <time>  review pass 1 of #1 asked of inv-r2 (task <task-6>) at <commit-2>
@@ -188,7 +188,7 @@ SUMMARY: fine
 VERDICT: APPROVE
 SUMMARY: fine
   ----- end of review report -----
-<time>  pull request #1 approved by both reviews
+<time>  pull request #1 approved by all reviews
 <time>  pull request #1 merged as <commit-2>
 <time>  round <round-1> closed: merged
 <time>  notification sent: 🟣 example (task <task-4>)

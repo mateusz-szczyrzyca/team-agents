@@ -142,7 +142,7 @@ STATUS: SLEEPING
 <time>  gate for task <task-4>: passed at <commit-2> (took <duration>); output <home>/tasks/<task-4>/gate-1.log
 <time>  pull request #1 opened: branch agents/inv-lead/<task-4> at <commit-2>
   title: Item 1.1: The first item
-  ----- pull request body (504 bytes) -----
+  ----- pull request body (525 bytes) -----
 Work of the team `<team-2>` on `example`, opened by the harness after the repository's gate passed on this branch
 (passed at [`<commit-2>`](https://github.com/octo/example/commit/<commit-2>)).
 
@@ -160,7 +160,7 @@ Do the first thing in the repository.
 
 ## Reviews
 
-Two investigators from outside the team review this pull request. Their reports are posted here as reviews.
+The configured number of investigators from outside the team review this pull request. Their reports are posted here as reviews.
   ----- end of pull request body -----
 <time>  pull request #1 marked ready for review
 <time>  review pass 1 of #1 asked of inv-r1 (task <task-11>) at <commit-2>
@@ -224,10 +224,10 @@ FINDINGS
    CHECK: read src/lib.rs:7
   ----- end of review report -----
 <time>  fix pass 1 of 5 on #1 started
-  ----- findings sent to the team (979 bytes) -----
+  ----- findings sent to the team (978 bytes) -----
 # THE REVIEWERS ASKED FOR CHANGES (pull request #1, fix pass 1 of 5)
 
-Both reviews of your pull request are in, and at least one asks for changes. The reports, each with its verdict:
+All reviews of your pull request are in, and at least one asks for changes. The reports, each with its verdict:
 
 1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage
    CHECK: read src/lib.rs:7
@@ -337,7 +337,7 @@ VERDICT: APPROVE
 FINDING 1: RESOLVED
 SUMMARY: fixed
   ----- end of review report -----
-<time>  pull request #1 approved by both reviews
+<time>  pull request #1 approved by all reviews
 <time>  pull request #1 merged as <commit-3>
 <time>  round <round-1> closed: merged
 <time>  notification sent: 🟣 example (task <task-4>)

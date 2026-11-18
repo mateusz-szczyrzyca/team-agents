@@ -47,7 +47,7 @@ STATUS: DONE
       uncommitted: added .fake-runs (+<n> -<n>)
 <time>  pull request #1 opened: branch agents/claude-1/<task-4>-1.1 at <commit-2>
   title: Item 1.1: The first item
-  ----- pull request body (504 bytes) -----
+  ----- pull request body (525 bytes) -----
 Work of the team `<team-2>` on `example`, opened by the harness after the repository's gate passed on this branch
 (passed at [`<commit-2>`](https://github.com/octo/example/commit/<commit-2>)).
 
@@ -65,7 +65,7 @@ Do the first thing in the repository.
 
 ## Reviews
 
-Two investigators from outside the team review this pull request. Their reports are posted here as reviews.
+The configured number of investigators from outside the team review this pull request. Their reports are posted here as reviews.
   ----- end of pull request body -----
 <time>  checks before a review found 1 issue at <commit-2>:
   - The round changes production code and adds no line to a test file. Every change of behaviour comes with its test, written first and committed before the code. A change that cannot have its test first (layout, prompt wording, a line of configuration) says so in a commit message: `Test-First: not possible — <reason>`.
