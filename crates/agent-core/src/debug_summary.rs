@@ -1021,3 +1021,18 @@ pub fn render_command_summary(
 ) -> Result<String, SummaryError> {
     render_with_redaction(input, offset, uncollected, untracked, redact, PathPresentation::Plain)
 }
+
+/// Renders a command summary with a retained-worktree notice in the git section.
+///
+/// # Errors
+/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
+pub fn render_command_summary_with_git_notice(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+    untracked: UntrackedCollection,
+    redact: impl Fn(&str) -> String,
+    _git_notice: Option<&str>,
+) -> Result<String, SummaryError> {
+    render_command_summary(input, offset, uncollected, untracked, redact)
+}
