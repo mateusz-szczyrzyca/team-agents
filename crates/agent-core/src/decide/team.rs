@@ -259,6 +259,22 @@ fn worker_names<'a>(people: impl Iterator<Item = &'a Participant>) -> Vec<AgentN
         .collect()
 }
 
+/// Whether the requested team leaves too few configured investigators for two disjoint review passes.
+#[must_use]
+pub fn needs_review_rotation_warning(config: &Config, agents: &AgentList) -> bool {
+    let outside = config
+        .investigators()
+        .keys()
+        .filter(|investigator| {
+            !agents
+                .as_slice()
+                .iter()
+                .any(|agent| agent.as_str() == investigator.as_str())
+        })
+        .count();
+    outside < config.review().min_first_full_reviews().get().saturating_mul(2)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -767,20 +783,4 @@ normal = ["claude-1"]
         assert_eq!(team.coordinator, investigator("inv-opus"));
         assert_eq!(team.workers, vec![worker("glm")]);
     }
-}
-
-/// Whether the requested team leaves too few configured investigators for two disjoint review passes.
-#[must_use]
-pub fn needs_review_rotation_warning(config: &Config, agents: &AgentList) -> bool {
-    let outside = config
-        .investigators()
-        .keys()
-        .filter(|investigator| {
-            !agents
-                .as_slice()
-                .iter()
-                .any(|agent| agent.as_str() == investigator.as_str())
-        })
-        .count();
-    outside < config.review().min_first_full_reviews().get().saturating_mul(2)
 }
