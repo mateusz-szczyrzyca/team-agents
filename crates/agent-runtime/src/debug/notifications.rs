@@ -3,11 +3,10 @@
 #[cfg(test)]
 mod tests;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use agent_core::state::Team;
 
-use crate::store::Home;
 use crate::text_file::read_text_file;
 
 /// Maximum bytes read per notification file.
@@ -91,11 +90,11 @@ fn matches_team_headers(text: &str, team_id: &str, tasks: &[String]) -> bool {
 ///
 /// # Errors
 /// Returns [`NotificationError`] when reading the directory or any notification file fails.
-pub(super) async fn collect(home: &Home, team: &Team) -> Result<Option<Vec<String>>, NotificationError> {
-    let dir = home.notifications_dir();
+pub(super) async fn collect(directory: &Path, team: &Team) -> Result<Vec<String>, NotificationError> {
+    let dir = directory.to_path_buf();
     let mut entries = match tokio::fs::read_dir(&dir).await {
         Ok(entries) => entries,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Some(Vec::new())),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(source) => return Err(NotificationError::Read { path: dir, source }),
     };
 
@@ -165,5 +164,5 @@ pub(super) async fn collect(home: &Home, team: &Team) -> Result<Option<Vec<Strin
         }
     }
 
-    Ok(Some(kept))
+    Ok(kept)
 }

@@ -392,7 +392,7 @@ async fn observe_daemon(
 /// Records readable bus messages or records an unreadable failure.
 async fn observe_bus(collection: &mut collect::Collection, home: &Home, team: &agent_core::state::Team) {
     match bus::collect(home, team, &collection.cut).await {
-        Ok(Some(bus)) => {
+        Ok(bus) => {
             let text = if bus.artifact_messages.is_empty() {
                 String::new()
             } else {
@@ -400,9 +400,6 @@ async fn observe_bus(collection: &mut collect::Collection, home: &Home, team: &a
             };
             collection.add("bus.txt", text.into_bytes());
             collection.summary.bus_messages = bus.summary_messages;
-        }
-        Ok(None) => {
-            collection.add("bus.txt", Vec::new());
         }
         Err(error) => collection
             .assessment
@@ -417,8 +414,8 @@ async fn observe_bus(collection: &mut collect::Collection, home: &Home, team: &a
 
 /// Records readable notifications or records an unreadable failure.
 async fn observe_notifications(collection: &mut collect::Collection, home: &Home, team: &agent_core::state::Team) {
-    match notifications::collect(home, team).await {
-        Ok(Some(notifs)) => {
+    match notifications::collect(&home.notifications_dir(), team).await {
+        Ok(notifs) => {
             let text = if notifs.is_empty() {
                 String::new()
             } else {
@@ -426,9 +423,6 @@ async fn observe_notifications(collection: &mut collect::Collection, home: &Home
             };
             collection.add("notifications.txt", text.into_bytes());
             collection.summary.notifications = notifs;
-        }
-        Ok(None) => {
-            collection.add("notifications.txt", Vec::new());
         }
         Err(error) => collection
             .assessment

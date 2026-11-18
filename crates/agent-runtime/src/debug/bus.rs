@@ -71,15 +71,15 @@ struct RawBusMessage {
 ///
 /// # Errors
 /// Returns [`BusError`] when reading the bus file fails.
-pub(super) async fn collect(home: &Home, team: &Team, cut: &SecretsCut) -> Result<Option<BusCollection>, BusError> {
+pub(super) async fn collect(home: &Home, team: &Team, cut: &SecretsCut) -> Result<BusCollection, BusError> {
     let path = home.root().join("bus").join("messages.jsonl");
     let file = match tokio::fs::File::open(&path).await {
         Ok(file) => file,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Some(BusCollection {
+            return Ok(BusCollection {
                 artifact_messages: Vec::new(),
                 summary_messages: Vec::new(),
-            }));
+            });
         }
         Err(source) => return Err(BusError::Read { path, source }),
     };
@@ -165,10 +165,10 @@ pub(super) async fn collect(home: &Home, team: &Team, cut: &SecretsCut) -> Resul
             summary_messages.push(format!("[{ts}] {from} → {to} ({kind}): {text_start}"));
         }
     }
-    Ok(Some(BusCollection {
+    Ok(BusCollection {
         artifact_messages,
         summary_messages,
-    }))
+    })
 }
 
 async fn read_tail(mut file: tokio::fs::File, len: u64, path: &Path) -> Result<Vec<u8>, BusError> {
