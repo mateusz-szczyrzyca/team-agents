@@ -890,7 +890,15 @@ pub fn render_redacted_summary(
     untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(input, offset, uncollected, untracked, redact, PathPresentation::Escaped)
+    render_with_redaction(
+        input,
+        offset,
+        uncollected,
+        untracked,
+        redact,
+        PathPresentation::Escaped,
+        None,
+    )
 }
 
 /// Renders a summary with explicit notices for sections outside the collection scope.
@@ -920,6 +928,7 @@ fn render_with_coverage(
         untracked,
         str::to_owned,
         PathPresentation::Escaped,
+        None,
     )
 }
 
@@ -930,6 +939,7 @@ fn render_with_redaction(
     untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
     paths: PathPresentation,
+    git_notice: Option<&str>,
 ) -> Result<String, SummaryError> {
     let now = input.collected_at;
     let mut out = SummaryWriter {
@@ -981,7 +991,13 @@ fn render_with_redaction(
             SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut out),
             SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut out),
             SummarySection::TaskDetails => render_task_details(&input.tasks, &mut out),
-            SummarySection::GitWorktrees => render_git(&input.git, offset, &mut out, untracked),
+            SummarySection::GitWorktrees => {
+                if let Some(notice) = git_notice {
+                    write_line(&mut out, notice);
+                    write_line(&mut out, "");
+                }
+                render_git(&input.git, offset, &mut out, untracked);
+            }
             SummarySection::GateRecords => render_gate(&input.gate, offset, &mut out),
             SummarySection::HistoryTail => render_history(input.history_tail.as_deref(), &mut out),
             SummarySection::DaemonLog => render_daemon_log(input.daemon_log_lines.as_deref(), &mut out),
@@ -1019,7 +1035,15 @@ pub fn render_command_summary(
     untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(input, offset, uncollected, untracked, redact, PathPresentation::Plain)
+    render_with_redaction(
+        input,
+        offset,
+        uncollected,
+        untracked,
+        redact,
+        PathPresentation::Plain,
+        None,
+    )
 }
 
 /// Renders a command summary with a retained-worktree notice in the git section.
@@ -1032,7 +1056,15 @@ pub fn render_command_summary_with_git_notice(
     uncollected: &[SummarySection],
     untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
-    _git_notice: Option<&str>,
+    git_notice: Option<&str>,
 ) -> Result<String, SummaryError> {
-    render_command_summary(input, offset, uncollected, untracked, redact)
+    render_with_redaction(
+        input,
+        offset,
+        uncollected,
+        untracked,
+        redact,
+        PathPresentation::Plain,
+        git_notice,
+    )
 }
