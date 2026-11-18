@@ -288,3 +288,229 @@ async fn tasks_and_worktrees_directory_sizes_measured() {
     assert_eq!(obs.summary.tasks_dir_bytes, Some(15));
     assert_eq!(obs.summary.worktrees_dir_bytes, Some(5));
 }
+
+#[tokio::test]
+async fn observed_filesystem_90_percent_space_triggers_anomaly_and_below_does_not() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    let home_path = home.root().to_path_buf();
+    let statvfs_mock = move |path: &Path| -> Result<StatvfsStats, rustix::io::Errno> {
+        if path == home_path {
+            Ok(StatvfsStats {
+                fragment_size: 4096,
+                block_size: 4096,
+                total_blocks: 100,
+                available_blocks: 10,
+                total_inodes: 100,
+                available_inodes: 80,
+            })
+        } else {
+            Ok(StatvfsStats {
+                fragment_size: 4096,
+                block_size: 4096,
+                total_blocks: 100,
+                available_blocks: 50,
+                total_inodes: 100,
+                available_inodes: 80,
+            })
+        }
+    };
+
+    let params = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: None,
+        cut: &cut,
+        collected_at: "2026-11-18T12:00:00Z".parse::<Timestamp>().unwrap(),
+        clock_ticks: Some(100),
+    };
+
+    let obs = observe_with_statvfs(params, statvfs_mock).await;
+    assert_eq!(obs.summary.home_fs.unwrap().space_percent, 90);
+    assert_eq!(obs.summary.temp_fs.unwrap().space_percent, 50);
+
+    let assessment = Assessment {
+        now: "2026-11-18T12:00:00Z".parse::<Timestamp>().unwrap(),
+        stale_after: std::time::Duration::from_secs(3600),
+        daemon: None,
+        command_version: None,
+        lead: "task-20261118-120000-lead".parse().unwrap(),
+        tasks: vec![],
+        items: vec![],
+        lead_git: None,
+        branches: vec![],
+        filesystems: obs.filesystems,
+        unanswered: vec![],
+        unreadable: vec![],
+    };
+
+    let anomalies = assess(&assessment);
+    assert!(
+        anomalies.contains(&Anomaly::FullFilesystem(home.root().to_path_buf())),
+        "90% space usage must trigger FullFilesystem anomaly"
+    );
+    assert!(
+        !anomalies.contains(&Anomaly::FullFilesystem(temp_dir.clone())),
+        "50% space usage must not trigger FullFilesystem anomaly"
+    );
+}
+
+#[tokio::test]
+async fn observed_filesystem_90_percent_inodes_triggers_anomaly() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    let statvfs_mock = move |_path: &Path| -> Result<StatvfsStats, rustix::io::Errno> {
+        Ok(StatvfsStats {
+            fragment_size: 4096,
+            block_size: 4096,
+            total_blocks: 100,
+            available_blocks: 80,
+            total_inodes: 100,
+            available_inodes: 10,
+        })
+    };
+
+    let params = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: None,
+        cut: &cut,
+        collected_at: "2026-11-18T12:00:00Z".parse::<Timestamp>().unwrap(),
+        clock_ticks: Some(100),
+    };
+
+    let obs = observe_with_statvfs(params, statvfs_mock).await;
+    assert_eq!(obs.summary.home_fs.unwrap().inode_percent, 90);
+
+    let assessment = Assessment {
+        now: "2026-11-18T12:00:00Z".parse::<Timestamp>().unwrap(),
+        stale_after: std::time::Duration::from_secs(3600),
+        daemon: None,
+        command_version: None,
+        lead: "task-20261118-120000-lead".parse().unwrap(),
+        tasks: vec![],
+        items: vec![],
+        lead_git: None,
+        branches: vec![],
+        filesystems: obs.filesystems,
+        unanswered: vec![],
+        unreadable: vec![],
+    };
+
+    let anomalies = assess(&assessment);
+    assert!(
+        anomalies.contains(&Anomaly::FullFilesystem(home.root().to_path_buf())),
+        "90% inode usage must trigger FullFilesystem anomaly"
+    );
+}
+
+#[tokio::test]
+async fn observed_descendants_compute_age_from_proc_stat_btime() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    fs::write(procfs.join("stat"), "cpu 0 0 0 0\nbtime 1700000000\n").expect("write stat");
+
+    let daemon_pid = 10;
+    write_proc_stat(&procfs, 10, 1);
+    write_proc_cmdline(&procfs, 10, &["agent", "daemon"]);
+
+    let pid_dir = procfs.join("20");
+    fs::create_dir_all(&pid_dir).expect("create pid dir");
+    let stat = "20 (worker) S 10 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1000 0\n";
+    fs::write(pid_dir.join("stat"), stat).expect("write stat");
+    write_proc_cmdline(&procfs, 20, &["worker", "run"]);
+
+    let collected_at = Timestamp::from_utc(time::UtcDateTime::from_unix_timestamp(1700000035).unwrap()).unwrap();
+
+    let params = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: Some(daemon_pid),
+        cut: &cut,
+        collected_at,
+        clock_ticks: Some(100),
+    };
+
+    let obs = observe_with_statvfs(params, |_| {
+        Ok(StatvfsStats {
+            fragment_size: 4096,
+            block_size: 4096,
+            total_blocks: 100,
+            available_blocks: 50,
+            total_inodes: 100,
+            available_inodes: 50,
+        })
+    })
+    .await;
+
+    assert_eq!(obs.summary.daemon_descendants.len(), 1);
+    assert_eq!(obs.summary.daemon_descendants[0].pid, 20);
+    assert_eq!(obs.summary.daemon_descendants[0].age_seconds, Some(25));
+    assert_eq!(obs.summary.daemon_descendants[0].cmdline, vec!["worker", "run"]);
+}
+
+#[tokio::test]
+async fn missing_meminfo_memavailable_field_records_unreadable_failure() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    fs::write(
+        procfs.join("meminfo"),
+        "MemTotal:       16384000 kB\nMemFree:        8192000 kB\n",
+    )
+    .expect("write meminfo");
+
+    let obs = observe(&home, &procfs, &temp_dir, None, &cut, test_now()).await;
+    assert_eq!(obs.summary.memory_available_bytes, None);
+    assert!(
+        obs.unreadable.iter().any(|f| f.section == SummarySection::Machine
+            && f.part == "memory and swap"
+            && f.reason.contains("MemAvailable")),
+        "missing MemAvailable must record unreadable failure without substituting MemFree: {:?}",
+        obs.unreadable
+    );
+}
+
+#[tokio::test]
+async fn descendant_cycle_terminates_without_infinite_loop() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    let daemon_pid = 100;
+    write_proc_stat(&procfs, 100, 1);
+    write_proc_cmdline(&procfs, 100, &["daemon"]);
+
+    write_proc_stat(&procfs, 200, 100);
+    write_proc_cmdline(&procfs, 200, &["proc200"]);
+
+    write_proc_stat(&procfs, 201, 200);
+    write_proc_cmdline(&procfs, 201, &["proc201"]);
+
+    write_proc_stat(&procfs, 202, 201);
+    write_proc_cmdline(&procfs, 202, &["proc202"]);
+
+    let obs = observe(&home, &procfs, &temp_dir, Some(daemon_pid), &cut, test_now()).await;
+    let pids: Vec<u32> = obs.summary.daemon_descendants.iter().map(|d| d.pid).collect();
+    assert_eq!(pids, vec![200, 201, 202]);
+}

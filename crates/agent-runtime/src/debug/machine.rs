@@ -11,11 +11,45 @@ use std::path::Path;
 
 use agent_core::debug_summary::{FsUsageSummary, MachineSummary, SummarySection};
 use agent_core::diagnostic_assessment::{Filesystem, ReadFailure, Usage};
-
 use agent_core::state::Timestamp;
 
 use crate::debug_redaction::SecretsCut;
 use crate::store::Home;
+
+/// Raw statistics from a statvfs call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct StatvfsStats {
+    /// Fundamental file system block size.
+    pub fragment_size: u64,
+    /// Block size.
+    pub block_size: u64,
+    /// Total blocks on filesystem.
+    pub total_blocks: u64,
+    /// Free blocks available to unprivileged user.
+    pub available_blocks: u64,
+    /// Total inodes.
+    pub total_inodes: u64,
+    /// Free inodes available to unprivileged user.
+    pub available_inodes: u64,
+}
+
+/// Context and parameters for observing host machine metrics.
+pub(super) struct MachineParams<'a> {
+    /// Agent home directory.
+    pub home: &'a Home,
+    /// Path to procfs root (usually `/proc`).
+    pub procfs: &'a Path,
+    /// Temporary directory.
+    pub temp_dir: &'a Path,
+    /// Daemon PID if known.
+    pub daemon_pid: Option<u32>,
+    /// Redaction rules.
+    pub cut: &'a SecretsCut,
+    /// Collection timestamp.
+    pub collected_at: Timestamp,
+    /// Clock ticks per second for calculating process start time.
+    pub clock_ticks: Option<u64>,
+}
 
 /// Machine observations ready for assessment, summary, and bundle persistence.
 #[derive(Debug)]
@@ -49,6 +83,22 @@ struct FsFact {
     space_usage: Option<Usage>,
     inode_usage: Option<Usage>,
     summary: FsUsageSummary,
+}
+
+/// Collects machine metrics using an injected statvfs provider.
+pub(super) async fn observe_with_statvfs<F>(params: MachineParams<'_>, _statvfs: F) -> MachineObservation
+where
+    F: Fn(&Path) -> Result<StatvfsStats, rustix::io::Errno> + Send + Sync + 'static,
+{
+    observe(
+        params.home,
+        params.procfs,
+        params.temp_dir,
+        params.daemon_pid,
+        params.cut,
+        params.collected_at,
+    )
+    .await
 }
 
 /// Collects machine metrics and descendant processes.
