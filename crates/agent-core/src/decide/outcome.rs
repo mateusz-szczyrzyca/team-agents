@@ -32,6 +32,7 @@ use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcDa
 
 use crate::cli::{ErrorTail, RunOutput, SessionId, StreamOutcome};
 use crate::config::{Limits, Watchdog};
+use crate::kinds::Role;
 use crate::state::{InvalidTimestamp, RunEnd, Timestamp};
 use crate::status::RunOutcome;
 
@@ -827,6 +828,30 @@ pub fn after_turn_limit(count: u64, session: Option<&crate::state::SessionId>, l
     } else {
         AfterTurnLimit::Exhausted
     }
+}
+
+/// Maximum consecutive times a run ending without `STATUS:` is asked again.
+pub const NO_STATUS_RETRIES: u64 = 2;
+
+/// What happens to a task whose run ended without a `STATUS:` line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterNoStatus {
+    /// Queue another invocation in the same session.
+    Resume,
+    /// Retries are exhausted, there is no session to resume, or the role cannot be resumed.
+    Fail,
+}
+
+/// Counts consecutive no-status endings at the tail of persisted runs.
+#[must_use]
+pub fn consecutive_no_status(_runs: &[crate::state::Run]) -> u64 {
+    0
+}
+
+/// Decides whether a run ending without `STATUS:` may be asked again in the same session.
+#[must_use]
+pub fn after_no_status(_role: Role, _count: u64, _session: Option<&crate::state::SessionId>) -> AfterNoStatus {
+    AfterNoStatus::Fail
 }
 
 #[cfg(test)]
@@ -1825,6 +1850,82 @@ mod tests {
         assert_eq!(
             reset_of("usage limit reached, try again at Mar 3rd, 2027 9:00 AM").0,
             quota(Some("2027-03-03T08:00:00Z"))
+        );
+    }
+
+    #[test]
+    fn after_no_status_resumes_only_supported_roles_with_session_up_to_retries() {
+        let session = "session-1".parse().unwrap();
+        for role in [Role::Solo, Role::Coordinator, Role::Member] {
+            assert_eq!(
+                after_no_status(role, 1, Some(&session)),
+                AfterNoStatus::Resume,
+                "{role:?} at count 1"
+            );
+            assert_eq!(
+                after_no_status(role, 2, Some(&session)),
+                AfterNoStatus::Resume,
+                "{role:?} at count 2"
+            );
+            assert_eq!(
+                after_no_status(role, 3, Some(&session)),
+                AfterNoStatus::Fail,
+                "{role:?} at count 3"
+            );
+            assert_eq!(
+                after_no_status(role, 0, Some(&session)),
+                AfterNoStatus::Fail,
+                "{role:?} at count 0"
+            );
+            assert_eq!(
+                after_no_status(role, 1, None),
+                AfterNoStatus::Fail,
+                "{role:?} without session"
+            );
+        }
+        for role in [Role::Worker, Role::Reviewer] {
+            assert_eq!(
+                after_no_status(role, 1, Some(&session)),
+                AfterNoStatus::Fail,
+                "{role:?} worker/reviewer"
+            );
+        }
+    }
+
+    #[test]
+    fn consecutive_no_status_counts_only_tail_no_status_runs() {
+        use crate::state::Run;
+        use serde_json::json;
+
+        assert_eq!(consecutive_no_status(&[]), 0);
+
+        let make_run = |index: usize, end: serde_json::Value| -> Run {
+            serde_json::from_value(json!({
+                "id": format!("run-20261116-000000-{index:04}"),
+                "started_at": "2026-11-16T00:00:00Z",
+                "state": {
+                    "status": "ended",
+                    "at": "2026-11-16T00:00:00Z",
+                    "end": end
+                }
+            }))
+            .unwrap()
+        };
+
+        let no_status_1 = make_run(1, json!({"kind": "no_status", "exit_code": 0}));
+        let no_status_2 = make_run(2, json!({"kind": "no_status", "exit_code": null}));
+        let reported = make_run(3, json!({"kind": "reported", "outcome": "DONE"}));
+        let no_status_3 = make_run(4, json!({"kind": "no_status", "exit_code": 1}));
+
+        assert_eq!(consecutive_no_status(&[no_status_1.clone()]), 1);
+        assert_eq!(consecutive_no_status(&[no_status_1.clone(), no_status_2.clone()]), 2);
+        assert_eq!(
+            consecutive_no_status(&[no_status_1.clone(), no_status_2.clone(), reported.clone()]),
+            0
+        );
+        assert_eq!(
+            consecutive_no_status(&[no_status_1, no_status_2, reported, no_status_3]),
+            1
         );
     }
 }
