@@ -275,11 +275,32 @@ pub(super) fn independent_first_review(team: &Team, task: &TaskId) -> bool {
 }
 
 /// Draws verifiers, taking investigators never used on this PR before the least recently used.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired after persisted verification protocol is introduced")
+)]
 pub(super) fn choose_verifiers(
     free: Vec<Reviewer>,
     required: ReviewCount,
-    _history: &[agent_core::state::FixPass],
+    history: &[agent_core::state::FixPass],
     rng: &mut impl Rng,
 ) -> Option<Vec<Reviewer>> {
-    choose_reviewers_for(free, required, rng)
+    if free.len() < required.get() {
+        return None;
+    }
+    let mut pools = std::collections::BTreeMap::<Option<usize>, Vec<Reviewer>>::new();
+    for reviewer in free {
+        let last = history
+            .iter()
+            .rposition(|pass| pass.requested_by.iter().any(|r| r.reviewer == reviewer.name));
+        pools.entry(last).or_default().push(reviewer);
+    }
+    let mut chosen = Vec::with_capacity(required.get());
+    for mut pool in pools.into_values() {
+        while !pool.is_empty() && chosen.len() < required.get() {
+            let index = rng.random_range(0..pool.len());
+            chosen.push(pool.swap_remove(index));
+        }
+    }
+    Some(chosen)
 }
