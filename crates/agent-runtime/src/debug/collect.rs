@@ -674,6 +674,10 @@ impl Collection {
 
             match observation {
                 Ok(observation) => {
+                    self.assessment.unreadable.extend(observation.unreadable);
+                    if let Some((artifact_path, bytes)) = observation.untracked_artifact {
+                        self.artifacts.push((artifact_path, bytes));
+                    }
                     if task == self.assessment.lead {
                         self.assessment.lead_git = Some(LeadGit {
                             tip: observation.facts.tip.clone(),
@@ -1047,6 +1051,10 @@ struct GitObservation {
     facts: GitWorktreeSummary,
     /// Any status record makes the worktree dirty, including untracked files.
     dirty: bool,
+    /// Complete untracked files artifact to write into the diagnostic bundle.
+    untracked_artifact: Option<(PathBuf, Vec<u8>)>,
+    /// Unreadable untracked paths with reasons.
+    unreadable: Vec<ReadFailure>,
 }
 
 async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, ObservationError> {
@@ -1089,7 +1097,15 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
     .await?;
     let uncommitted_files = parse_status(&status)?;
     let untracked_paths = parse_untracked(&status)?;
-    let newest_untracked = super::untracked::collect(path, &untracked_paths).await.summary_facts;
+    let untracked = super::untracked::collect(path, &untracked_paths).await;
+    let untracked_artifact = if untracked.artifact_text.is_empty() {
+        None
+    } else {
+        Some((
+            PathBuf::from("tasks").join(task.as_str()).join("untracked.txt"),
+            untracked.artifact_text.into_bytes(),
+        ))
+    };
     Ok(GitObservation {
         dirty: !status.is_empty(),
         facts: GitWorktreeSummary {
@@ -1108,8 +1124,10 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
                 .map(str::to_owned)
                 .collect(),
             lead_contains_tip: None,
-            newest_untracked,
+            newest_untracked: untracked.summary_facts,
         },
+        untracked_artifact,
+        unreadable: untracked.unreadable,
     })
 }
 
@@ -1265,6 +1283,8 @@ async fn read_git_from_checkout(
             lead_contains_tip: None,
             newest_untracked: vec![],
         },
+        untracked_artifact: None,
+        unreadable: vec![],
     })
 }
 

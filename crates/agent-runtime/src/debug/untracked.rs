@@ -5,7 +5,9 @@ mod tests;
 
 use std::path::{Path, PathBuf};
 
-use agent_core::debug_summary::UntrackedFileSummaryFacts;
+use std::fmt::Write as _;
+
+use agent_core::debug_summary::{SummarySection, UntrackedFileSummaryFacts};
 use agent_core::diagnostic_assessment::ReadFailure;
 use agent_core::state::Timestamp;
 
@@ -23,11 +25,20 @@ pub(super) struct UntrackedCollection {
 /// Collects metadata for up to fifty newest untracked files in `worktree`.
 pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> UntrackedCollection {
     let mut files = Vec::new();
+    let mut unreadable = Vec::new();
 
     for rel_path in untracked_paths {
         let full_path = worktree.join(rel_path);
-        let Ok(meta) = tokio::fs::symlink_metadata(&full_path).await else {
-            continue;
+        let meta = match tokio::fs::symlink_metadata(&full_path).await {
+            Ok(m) => m,
+            Err(source) => {
+                unreadable.push(ReadFailure {
+                    section: SummarySection::GitWorktrees,
+                    part: format!("untracked file {}", rel_path.display()),
+                    reason: source.to_string(),
+                });
+                continue;
+            }
         };
 
         if meta.is_dir() {
@@ -35,10 +46,17 @@ pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> Unt
         }
 
         let size_bytes = meta.len();
-        let modified = meta
-            .modified()
-            .ok()
-            .and_then(|st| Timestamp::from_utc(time::UtcDateTime::from(st)).ok());
+        let modified = match meta.modified() {
+            Ok(system_time) => Timestamp::from_utc(time::UtcDateTime::from(system_time)).ok(),
+            Err(source) => {
+                unreadable.push(ReadFailure {
+                    section: SummarySection::GitWorktrees,
+                    part: format!("untracked file {}", rel_path.display()),
+                    reason: source.to_string(),
+                });
+                None
+            }
+        };
 
         files.push(UntrackedFileSummaryFacts {
             path: rel_path.clone(),
@@ -48,10 +66,28 @@ pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> Unt
     }
 
     files.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.path.cmp(&b.path)));
-    files.truncate(50);
+
+    let mut artifact_text = String::new();
+    let _ = writeln!(artifact_text, "### Untracked Files ({})", files.len());
+    for f in &files {
+        let time_str = match f.modified {
+            Some(ts) => ts.to_string(),
+            None => "unknown".to_owned(),
+        };
+        let _ = writeln!(
+            artifact_text,
+            "- {} ({} bytes, modified {})",
+            f.path.display(),
+            f.size_bytes,
+            time_str
+        );
+    }
+
+    let summary_facts = files.iter().take(50).cloned().collect();
+
     UntrackedCollection {
-        summary_facts: files,
-        artifact_text: String::new(),
-        unreadable: Vec::new(),
+        summary_facts,
+        artifact_text,
+        unreadable,
     }
 }
