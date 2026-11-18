@@ -1310,13 +1310,13 @@ async fn a_fixed_branch_updates_the_pull_request_and_is_reviewed_again_until_it_
         .await;
     rig.stop().await.unwrap();
 
-    // One pull request, updated: the second push of the branch is a comment on it.
+    // One pull request, its findings table, and the update comment for the second push.
     assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
     let comments = rig.github.comments(1);
-    assert_eq!(comments.len(), 1, "{comments:?}");
-    assert!(comments[0].contains("The branch was updated to"), "{}", comments[0]);
+    assert_eq!(comments.len(), 2, "{comments:?}");
+    assert!(comments[1].contains("The branch was updated to"), "{}", comments[1]);
     let branch = format!("agents/claude-1/{}-1.1", tasks[0]);
-    assert!(comments[0].contains(&rig.remote_tip(&branch)), "{}", comments[0]);
+    assert!(comments[1].contains(&rig.remote_tip(&branch)), "{}", comments[1]);
     // Four reviews were posted: two on the first head, two on the fixed one.
     assert_eq!(rig.github.reviews(1).len(), 4);
     let merges = rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge"));
@@ -1354,9 +1354,9 @@ async fn a_fix_that_is_on_origin_already_is_still_reviewed_again() {
     rig.stop().await.unwrap();
 
     let comments = rig.github.comments(1);
-    assert_eq!(comments.len(), 1, "{comments:?}");
+    assert_eq!(comments.len(), 2, "{comments:?}");
     let branch = format!("agents/claude-1/{}-1.1", tasks[0]);
-    assert!(comments[0].contains(&rig.remote_tip(&branch)), "{}", comments[0]);
+    assert!(comments[1].contains(&rig.remote_tip(&branch)), "{}", comments[1]);
     assert_eq!(rig.github.reviews(1).len(), 4);
 }
 
@@ -1381,7 +1381,8 @@ async fn a_fix_pass_whose_gate_has_not_passed_does_not_update_the_pull_request()
     looked_again(&rig).await;
     rig.stop().await.unwrap();
 
-    assert_eq!(rig.github.comments(1), Vec::<String>::new());
+    assert_eq!(rig.github.comments(1).len(), 1);
+    assert!(rig.github.comments(1)[0].starts_with("<!-- agent-findings -->"));
     assert_eq!(rig.github.reviews(1).len(), 2);
     assert!(matches!(phase_of(&rig.state(), "1.1"), ItemPhase::Fixing { .. }));
 }
@@ -1870,7 +1871,7 @@ async fn a_fix_pass_of_a_team_goes_to_its_coordinator_which_has_the_integrated_b
         "{prompt}"
     );
     assert_eq!(rig.github.calls("POST", &format!("/repos/{SLUG}/pulls")).len(), 1);
-    assert_eq!(rig.github.comments(1).len(), 1);
+    assert_eq!(rig.github.comments(1).len(), 2);
     let progress = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
     assert_eq!(progress.fix_passes().len(), 1);
 }
@@ -2099,7 +2100,8 @@ async fn a_branch_that_moved_after_the_gate_passed_is_not_published_with_that_ga
     looked_again(&rig).await;
     rig.stop().await.unwrap();
 
-    assert_eq!(rig.github.comments(1), Vec::<String>::new());
+    assert_eq!(rig.github.comments(1).len(), 1);
+    assert!(rig.github.comments(1)[0].starts_with("<!-- agent-findings -->"));
     assert!(matches!(phase_of(&rig.state(), "1.1"), ItemPhase::Fixing { .. }));
     assert_ne!(git(&rig.repo, &["rev-parse", &branch]), rig.remote_tip(&branch));
 }

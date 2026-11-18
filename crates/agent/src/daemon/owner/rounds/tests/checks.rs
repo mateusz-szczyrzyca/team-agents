@@ -438,7 +438,8 @@ async fn the_checks_run_again_on_the_head_of_a_fix_pass_and_a_head_they_hold_bac
     assert!(matches!(phase(&rig), ItemPhase::Fixing { .. }));
     // The held head stayed on the worktree's branch: the remote still has the head that was reviewed.
     assert_ne!(rig.remote_tip(&branch), git(&rig.repo, &["rev-parse", &branch]));
-    assert_eq!(rig.github.comments(1), Vec::<String>::new());
+    assert_eq!(rig.github.comments(1).len(), 1);
+    assert!(rig.github.comments(1)[0].starts_with("<!-- agent-findings -->"));
 }
 
 // ---- no table ---------------------------------------------------------------------------------------------------------

@@ -230,7 +230,7 @@ async fn every_review_is_recorded_asked_of_a_reviewer_with_its_pass_and_head_and
         .unwrap();
     assert_eq!(changes.2, ReviewVerdict::RequestChanges);
     assert!(
-        changes.3.contains("[TDD-2] src/lib.rs:7 — the case is untested"),
+        changes.3.contains("[MAJOR] TDD-2 src/lib.rs:7 — the case is untested"),
         "{}",
         changes.3
     );
@@ -269,7 +269,7 @@ async fn a_fix_pass_is_recorded_with_its_number_of_how_many_and_the_findings_the
     };
     assert_eq!((pass.get(), *of), (1, 5));
     assert!(
-        findings.contains("[TDD-2] src/lib.rs:7 — the case is untested"),
+        findings.contains("[MAJOR] TDD-2 src/lib.rs:7 — the case is untested"),
         "{findings}"
     );
     // What the team was sent is what its prompt got.
