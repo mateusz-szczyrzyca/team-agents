@@ -618,3 +618,27 @@ async fn unreadable_bus_and_notifications_report_reasons_without_empty_messages(
         assert!(!section.contains(empty), "{section}");
     }
 }
+
+#[tokio::test]
+async fn unreadable_notification_configuration_reports_reason_in_notifications_section() {
+    for invalid_text in [Some("invalid TOML ["), None] {
+        let (_dir, home, args) = fixture();
+        if let Some(text) = invalid_text {
+            std::fs::write(home.config_file(), text).unwrap();
+        } else {
+            std::fs::create_dir(home.config_file()).unwrap();
+        }
+        let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+        let summary = std::fs::read_to_string(result.summary_path).unwrap();
+        let section = summary
+            .split(SummarySection::Notifications.heading())
+            .nth(1)
+            .unwrap()
+            .split("\n## ")
+            .next()
+            .unwrap();
+        assert!(section.contains("Could not read notifications"), "{section}");
+        assert!(section.contains("configuration"), "{section}");
+        assert!(!section.contains("No notifications."), "{section}");
+    }
+}
