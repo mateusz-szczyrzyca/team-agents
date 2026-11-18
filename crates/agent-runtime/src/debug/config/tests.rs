@@ -49,3 +49,42 @@ async fn reports_missing_when_agents_toml_absent() {
     let result = collect_config(&home).await;
     assert!(matches!(result, Err(ConfigError::Missing { .. })));
 }
+
+#[tokio::test]
+async fn reports_read_failure_for_configuration_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let absolute = AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap();
+    let home = Home::new(&absolute);
+    std::fs::create_dir(home.config_file()).unwrap();
+    assert!(
+        matches!(collect_config(&home).await, Err(ConfigError::Read { path, source: TextFileError::Read(_) }) if path == home.config_file())
+    );
+}
+
+#[tokio::test]
+async fn resolves_notification_directory_and_reports_invalid_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    let absolute = AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap();
+    let home = Home::new(&absolute);
+    assert_eq!(notification_directory(&home).await.unwrap(), home.notifications_dir());
+    std::fs::write(home.config_file(), "[notifications]\n").unwrap();
+    assert_eq!(notification_directory(&home).await.unwrap(), home.notifications_dir());
+    let configured = dir.path().join("custom-notices");
+    std::fs::write(
+        home.config_file(),
+        format!("[notifications]\ndirectory = {:?}\n", configured.to_str().unwrap()),
+    )
+    .unwrap();
+    assert_eq!(notification_directory(&home).await.unwrap(), configured);
+    std::fs::write(home.config_file(), "invalid TOML [").unwrap();
+    assert!(matches!(
+        notification_directory(&home).await,
+        Err(ConfigError::Parse { path, .. }) if path == home.config_file()
+    ));
+    std::fs::remove_file(home.config_file()).unwrap();
+    std::fs::create_dir(home.config_file()).unwrap();
+    assert!(matches!(
+        notification_directory(&home).await,
+        Err(ConfigError::Read { path, .. }) if path == home.config_file()
+    ));
+}

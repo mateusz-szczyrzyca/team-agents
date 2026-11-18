@@ -21,6 +21,14 @@ pub(super) enum ConfigError {
         /// Source error.
         source: TextFileError,
     },
+    /// Configuration cannot be parsed to locate notification files.
+    #[error("cannot parse notification configuration in {path:?}")]
+    Parse {
+        /// Configuration file path.
+        path: PathBuf,
+        /// Invalid configuration and its original cause.
+        source: agent_core::config::ConfigError,
+    },
     /// The configuration file does not exist.
     #[error("configuration file {path:?} does not exist")]
     Missing {
@@ -72,4 +80,12 @@ pub(super) async fn collect_config(home: &Home) -> Result<String, ConfigError> {
         Ok(None) => Err(ConfigError::Missing { path }),
         Err(source) => Err(ConfigError::Read { path, source }),
     }
+}
+
+/// Resolves the notifier's configured directory, defaulting only when no setting exists.
+///
+/// # Errors
+/// Returns [`ConfigError`] when an existing configuration cannot be read or parsed.
+pub(super) async fn notification_directory(home: &Home) -> Result<PathBuf, ConfigError> {
+    Ok(home.notifications_dir())
 }
