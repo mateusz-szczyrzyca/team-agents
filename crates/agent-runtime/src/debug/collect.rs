@@ -270,11 +270,11 @@ impl Collection {
                     Err(error) => self.failed(format!("task artifact {}", escaped_path(&source)), error.to_string()),
                 }
             } else if metadata.is_file() {
+                self.activity(&source, task, &metadata);
                 match bounded_bytes(&source).await {
                     Ok(bytes) if self.copied_bytes.saturating_add(bytes.len()) <= TOTAL_LIMIT => {
                         self.copied_bytes = self.copied_bytes.saturating_add(bytes.len());
                         self.questions(&source, task, &bytes);
-                        self.activity(&source, task, &metadata);
                         self.add(target, bytes);
                     }
                     Ok(_) => self.failed(
@@ -295,7 +295,7 @@ impl Collection {
     fn activity(&mut self, source: &Path, task: &TaskId, metadata: &std::fs::Metadata) {
         if !source
             .file_name()
-            .is_some_and(|name| name == "stdout" || name == "activity.jsonl")
+            .is_some_and(|name| name == "stdout" || name == "activity.jsonl" || name == "out.jsonl")
         {
             return;
         }
