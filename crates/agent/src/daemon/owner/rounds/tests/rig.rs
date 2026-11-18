@@ -61,6 +61,19 @@ Build the thing.
     - run the first thing
 ";
 
+/// A list of two features that do not wait for each other, with one item each.
+pub(super) const PARALLEL: &str = "\
+Build the things.
+
+1. First
+[ ] 1.1 One
+    Do one.
+
+2. Second
+[ ] 2.1 Two
+    Do two.
+";
+
 /// A clock whose every reading is a second later than the one before: the events of a test have an order that whole
 /// seconds of the system clock would blur.
 #[derive(Debug, Clone)]

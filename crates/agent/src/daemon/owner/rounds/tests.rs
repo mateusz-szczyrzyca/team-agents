@@ -7,6 +7,7 @@ use agent_core::state::{ItemPhase, MergeMode, ReviewOutcome};
 use agent_core::status::TaskStatus;
 
 use super::fake_github::SLUG;
+use super::rig::PARALLEL;
 use super::rig::{ONE, Rig, git, investigator, normal};
 
 /// The reviewers that never give a verdict: they end their turn and wait.
@@ -745,6 +746,72 @@ async fn sleeping_team_with_failed_member_and_undone_lead_notifies_team_asleep()
 
     let notice = rig.notification_with("sleeps with item 1.1 unfinished").await;
     assert!(notice.contains("sleeps with item 1.1 unfinished"), "{notice}");
+
+    rig.stop().await.unwrap();
+}
+
+// Rule: resuming an unrelated task or another member does not clear blocked item dedup for members still failed.
+#[tokio::test]
+async fn unrelated_resume_does_not_clear_blocked_dedup_for_other_failed_members() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "done"),
+            normal("claude-1", "fail,fail"),
+            normal("claude-2", "fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+
+    let (_team, tasks) = rig
+        .run(
+            &["inv-lead", "claude-1", "claude-2"],
+            PARALLEL,
+            MergeMode::Autopilot,
+            Some("inv-lead"),
+        )
+        .await;
+
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[2], TaskStatus::Failed).await;
+
+    let _notice_1 = rig.notification_with("item 1.1 behind failed member claude-1").await;
+    let _notice_2 = rig.notification_with("item 2.1 behind failed member claude-2").await;
+    looked_again(&rig).await;
+
+    // Resuming claude-1 clears only claude-1's item (1.1), NOT claude-2's item (2.1)
+    rig.resume(&tasks[1]).await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    looked_again(&rig).await;
+
+    let told_2_1: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|t| t.contains("item 2.1 behind failed member claude-2"))
+        .collect();
+    assert_eq!(
+        told_2_1.len(),
+        1,
+        "item 2.1 must not be re-announced on claude-1 resume: {told_2_1:?}"
+    );
+
+    // claude-1 failed a second time: 1.1 IS re-announced
+    let told_1_1: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|t| t.contains("item 1.1 behind failed member claude-1"))
+        .collect();
+    assert_eq!(
+        told_1_1.len(),
+        2,
+        "item 1.1 must be re-announced after claude-1 refailure: {told_1_1:?}"
+    );
 
     rig.stop().await.unwrap();
 }
