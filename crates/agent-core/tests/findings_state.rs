@@ -1,6 +1,7 @@
 //! Schema migration keeps old rounds on their original protocol; new ledgers survive a restart.
 use agent_core::state::{SCHEMA_VERSION, State};
 
+/// A state written by the schema immediately before findings were introduced.
 const OLD: &str = include_str!("fixtures/state-before-findings.json");
 #[test]
 fn reads_the_previous_schema_without_enabling_new_rules_for_open_rounds() {
@@ -10,7 +11,7 @@ fn reads_the_previous_schema_without_enabling_new_rules_for_open_rounds() {
         state
             .teams()
             .iter()
-            .flat_map(|team| team.items())
+            .flat_map(agent_core::state::Team::items)
             .all(|item| item.findings().is_none())
     );
     assert_eq!(
