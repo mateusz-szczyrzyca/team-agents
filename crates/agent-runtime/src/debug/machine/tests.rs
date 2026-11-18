@@ -859,14 +859,14 @@ async fn directory_size_bounded_detects_exceeded_limit() {
         fs::write(base.join(format!("file_{i}.txt")), "data").expect("write file");
     }
 
-    // Bound of 3 should trigger TooLarge error
+    // Bound of 3 should trigger TooManyEntries error
     let err = super::directory_size_bounded(base, 3).await.unwrap_err();
     match err {
-        MachineError::TooLarge { path, limit } => {
+        MachineError::TooManyEntries { path, limit } => {
             assert_eq!(path, base);
             assert_eq!(limit, 3);
         }
-        other => panic!("expected TooLarge error, got {other:?}"),
+        other => panic!("expected TooManyEntries error, got {other:?}"),
     }
 
     // Bound of 10 should succeed and calculate total size (5 files * 4 bytes = 20)
