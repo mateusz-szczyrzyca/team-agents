@@ -923,3 +923,35 @@ fn general_collection_failure_has_no_machine_destination() {
         agent_core::debug_summary::SummarySection::CollectionFailures
     );
 }
+
+#[tokio::test]
+async fn artifact_failures_use_the_sections_of_the_observed_parts() {
+    use agent_core::config::AbsolutePath;
+    use agent_core::debug_summary::SummarySection;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let team = team();
+    let member = team.crew().roster()[0].1;
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    std::fs::create_dir_all(home.task_dir(member.task())).unwrap();
+    std::fs::write(home.gate_record_file(member.task()), b"invalid JSON").unwrap();
+    collection.gate(&home, member.task()).await;
+    assert_eq!(
+        collection.assessment.unreadable.last().unwrap().section,
+        SummarySection::GateRecords
+    );
+    collection
+        .tree(dir.path().join("missing"), PathBuf::from("tasks"), member)
+        .await;
+    assert_eq!(
+        collection.assessment.unreadable.last().unwrap().section,
+        SummarySection::TaskDetails
+    );
+    collection.task(&home, member, Role::Solo).await.unwrap();
+    collection.git(&home, &team).await;
+    assert_eq!(
+        collection.assessment.unreadable.last().unwrap().section,
+        SummarySection::GitWorktrees
+    );
+}
