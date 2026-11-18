@@ -51,3 +51,25 @@ fn explicit_counts_cannot_exceed_the_configured_investigators() {
         assert!(matches!(error, ConfigError::Parse(_)));
     }
 }
+
+#[test]
+fn a_team_must_leave_the_configured_count_outside_it() {
+    use agent_core::decide::team::{TeamPlanError, TeamRequest, plan_team};
+    use rand::SeedableRng;
+    let config = Config::from_toml_str(&format!("{INVESTIGATORS}\n[review]\nmin_first_full_reviews = 3\n")).unwrap();
+    let agents = agent_core::protocol::AgentList::try_from(vec!["a".parse().unwrap()]).unwrap();
+    let request = TeamRequest {
+        agents: &agents,
+        flag_coordinator: None,
+        listed_coordinator: None,
+    };
+    let error = plan_team(&request, &config, &mut rand::rngs::Xoshiro256PlusPlus::seed_from_u64(1)).unwrap_err();
+    assert_eq!(
+        error,
+        TeamPlanError::TooManyInvestigators {
+            in_team: 1,
+            configured: 3,
+            required: 3
+        }
+    );
+}
