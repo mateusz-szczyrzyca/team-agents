@@ -2663,3 +2663,42 @@ async fn answering_with_zero_fix_allowance_resumes_answers_without_granting_a_fi
     assert_eq!(lead.runs().len(), 3);
     assert_eq!(team.item("1.1".parse().unwrap()).unwrap().fix_passes().len(), 0);
 }
+
+#[tokio::test]
+async fn a_zero_fix_allowance_does_not_restart_the_lead_again_after_its_answer_was_delivered() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,ask,done,done,done,done"),
+            investigator("inv-r1", CHANGES),
+            investigator("inv-r2", APPROVING),
+        ],
+        0,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    accept(&rig, &tasks[0], 1).await;
+    let lead = tasks[0].clone();
+    rig.state_where("the answered lead ran again", |state| {
+        state.teams().iter().any(|team| {
+            team.find(&lead).is_some_and(|(_, member)| {
+                member.runs().len() >= 3
+                    && member
+                        .runs()
+                        .iter()
+                        .all(|run| matches!(run.state(), agent_core::state::RunState::Ended { .. }))
+            })
+        })
+    })
+    .await;
+    for _ in 0..5 {
+        looked_again(&rig).await;
+    }
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let team = state.team(&team).unwrap();
+    let lead = team.find(&tasks[0]).unwrap().1;
+    assert_eq!(lead.runs().len(), 3);
+}
