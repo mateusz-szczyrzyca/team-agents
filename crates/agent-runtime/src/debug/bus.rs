@@ -8,12 +8,22 @@ use std::path::{Path, PathBuf};
 use agent_core::state::Team;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
+use crate::debug_redaction::SecretsCut;
 use crate::store::Home;
 
 /// Maximum bytes read from the end of the bus log.
 const LIMIT: u64 = 4 * 1024 * 1024;
 /// Number of recent bus messages inspected from the end of the whole bus.
 const RECENT_MESSAGES: usize = 50;
+
+/// Artifact and summary representations of collected bus messages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct BusCollection {
+    /// Full selected messages for the `bus.txt` artifact.
+    pub(super) artifact_messages: Vec<String>,
+    /// Redacted and truncated message lines for the markdown summary.
+    pub(super) summary_messages: Vec<String>,
+}
 
 /// Why the bus log could not be read.
 #[derive(Debug, thiserror::Error)]
@@ -65,11 +75,16 @@ struct RawBusMessage {
 ///
 /// # Errors
 /// Returns [`BusError`] when reading the bus file fails.
-pub(super) async fn collect(home: &Home, team: &Team) -> Result<Option<Vec<String>>, BusError> {
+pub(super) async fn collect(home: &Home, team: &Team, _cut: &SecretsCut) -> Result<Option<BusCollection>, BusError> {
     let path = home.root().join("bus").join("messages.jsonl");
     let file = match tokio::fs::File::open(&path).await {
         Ok(file) => file,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Some(Vec::new())),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Some(BusCollection {
+                artifact_messages: Vec::new(),
+                summary_messages: Vec::new(),
+            }));
+        }
         Err(source) => return Err(BusError::Read { path, source }),
     };
     let len = file
@@ -150,7 +165,10 @@ pub(super) async fn collect(home: &Home, team: &Team) -> Result<Option<Vec<Strin
             kept.push(format!("[{ts}] {from} → {to} ({kind}): {text_start}"));
         }
     }
-    Ok(Some(kept))
+    Ok(Some(BusCollection {
+        artifact_messages: kept.clone(),
+        summary_messages: kept,
+    }))
 }
 
 async fn read_tail(mut file: tokio::fs::File, len: u64, path: &Path) -> Result<Vec<u8>, BusError> {

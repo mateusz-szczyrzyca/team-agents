@@ -391,15 +391,15 @@ async fn observe_daemon(
 
 /// Records readable bus messages or records an unreadable failure.
 async fn observe_bus(collection: &mut collect::Collection, home: &Home, team: &agent_core::state::Team) {
-    match bus::collect(home, team).await {
-        Ok(Some(messages)) => {
-            let text = if messages.is_empty() {
+    match bus::collect(home, team, &collection.cut).await {
+        Ok(Some(bus)) => {
+            let text = if bus.artifact_messages.is_empty() {
                 String::new()
             } else {
-                format!("{}\n", messages.join("\n"))
+                format!("{}\n", bus.artifact_messages.join("\n"))
             };
             collection.add("bus.txt", text.into_bytes());
-            collection.summary.bus_messages = messages;
+            collection.summary.bus_messages = bus.summary_messages;
         }
         Ok(None) => {
             collection.add("bus.txt", Vec::new());
