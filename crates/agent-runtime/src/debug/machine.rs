@@ -301,9 +301,9 @@ async fn read_proc_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, MachineEr
 /// Bounded read of a procfs file converted to UTF-8 string up to `limit` bytes.
 async fn read_proc_string_bounded(path: &Path, limit: u64) -> Result<String, MachineError> {
     let bytes = read_proc_bounded(path, limit).await?;
-    String::from_utf8(bytes).map_err(|_err| MachineError::InvalidFormat {
+    String::from_utf8(bytes).map_err(|source| MachineError::Utf8 {
         path: path.to_path_buf(),
-        message: "file is not valid UTF-8".to_owned(),
+        source,
     })
 }
 
@@ -597,11 +597,18 @@ fn observe_fs_stats(path: &Path, stat: StatvfsStats) -> Result<FsFact, MachineEr
 
     let total_blocks = u128::from(stat.total_blocks);
     let avail_blocks = u128::from(stat.available_blocks);
+    if avail_blocks > total_blocks {
+        return Err(MachineError::InvalidFormat {
+            path: path.to_path_buf(),
+            message: "available space blocks exceed total blocks".to_owned(),
+        });
+    }
+
     let total_bytes_u128 = total_blocks.saturating_mul(bsize);
     let avail_bytes_u128 = avail_blocks.saturating_mul(bsize);
 
     let (space_usage, space_percent) = if total_bytes_u128 > 0 {
-        let used_bytes_u128 = total_bytes_u128.saturating_sub(avail_bytes_u128);
+        let used_bytes_u128 = total_bytes_u128 - avail_bytes_u128;
         let used_bytes = u64::try_from(used_bytes_u128).map_err(|_err| MachineError::Overflow {
             path: path.to_path_buf(),
             field: "used space bytes",
@@ -632,8 +639,15 @@ fn observe_fs_stats(path: &Path, stat: StatvfsStats) -> Result<FsFact, MachineEr
 
     let total_inodes = stat.total_inodes;
     let free_inodes = stat.available_inodes;
+    if free_inodes > total_inodes {
+        return Err(MachineError::InvalidFormat {
+            path: path.to_path_buf(),
+            message: "available inodes exceed total inodes".to_owned(),
+        });
+    }
+
     let (inode_usage, inode_percent) = if total_inodes > 0 {
-        let used_inodes = total_inodes.saturating_sub(free_inodes);
+        let used_inodes = total_inodes - free_inodes;
         let non_zero_total = NonZeroU64::new(total_inodes).ok_or_else(|| MachineError::InvalidFormat {
             path: path.to_path_buf(),
             message: "total inodes is zero".to_owned(),
@@ -658,8 +672,8 @@ fn observe_fs_stats(path: &Path, stat: StatvfsStats) -> Result<FsFact, MachineEr
         space_usage,
         inode_usage,
         summary: FsUsageSummary {
-            space_percent: Some(space_percent.unwrap_or(0)),
-            inode_percent: Some(inode_percent.unwrap_or(0)),
+            space_percent,
+            inode_percent,
         },
     })
 }
@@ -839,16 +853,15 @@ fn compute_process_age(
     start_ticks: u64,
     collected_at: Timestamp,
 ) -> Result<u64, ProcessAgeError> {
-    let old_value = (|| -> Option<u64> {
-        let (Some(boot), Some(clk_ticks)) = (btime, ticks) else {
-            return None;
-        };
-        let start_sec = boot.checked_add(start_ticks / clk_ticks.get())?;
-        let now_sec = collected_at.as_utc().unix_timestamp();
-        let now_u64 = u64::try_from(now_sec).ok()?;
-        Some(now_u64.saturating_sub(start_sec))
-    })();
-    old_value.ok_or(ProcessAgeError::BootTimeUnavailable)
+    let boot = btime.ok_or(ProcessAgeError::BootTimeUnavailable)?;
+    let clk_ticks = ticks.ok_or(ProcessAgeError::ClockTicksUnavailable)?;
+    let start_sec = boot
+        .checked_add(start_ticks / clk_ticks.get())
+        .ok_or(ProcessAgeError::StartSecOverflow)?;
+    let now_sec = collected_at.as_utc().unix_timestamp();
+    let now_u64 =
+        u64::try_from(now_sec).map_err(|_err| ProcessAgeError::TimestampBeforeEpoch { timestamp: now_sec })?;
+    Ok(now_u64.saturating_sub(start_sec))
 }
 
 /// Traverses descendant processes starting from daemon PID using BFS.
@@ -1086,7 +1099,7 @@ async fn directory_size(path: &Path) -> Result<u64, MachineError> {
     directory_size_bounded(path, MAX_DIRECTORY_SIZE_ENTRIES).await
 }
 
-async fn directory_size_bounded(path: &Path, _max_entries: usize) -> Result<u64, MachineError> {
+async fn directory_size_bounded(path: &Path, max_entries: usize) -> Result<u64, MachineError> {
     match tokio::fs::symlink_metadata(path).await {
         Ok(meta) => {
             if !meta.is_dir() {
@@ -1104,6 +1117,7 @@ async fn directory_size_bounded(path: &Path, _max_entries: usize) -> Result<u64,
 
     let mut total_bytes = 0_u64;
     let mut pending = vec![path.to_path_buf()];
+    let mut entries_count: usize = 0;
 
     while let Some(dir) = pending.pop() {
         let mut read_dir = match tokio::fs::read_dir(&dir).await {
@@ -1118,6 +1132,21 @@ async fn directory_size_bounded(path: &Path, _max_entries: usize) -> Result<u64,
             path: dir.clone(),
             source,
         })? {
+            entries_count = entries_count.checked_add(1).ok_or_else(|| MachineError::Overflow {
+                path: path.to_path_buf(),
+                field: "directory entry count",
+            })?;
+            if entries_count > max_entries {
+                let limit = u64::try_from(max_entries).map_err(|_err| MachineError::Overflow {
+                    path: path.to_path_buf(),
+                    field: "directory size entry limit",
+                })?;
+                return Err(MachineError::TooLarge {
+                    path: path.to_path_buf(),
+                    limit,
+                });
+            }
+
             let meta = match entry.metadata().await {
                 Ok(m) => m,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
