@@ -70,7 +70,8 @@ fn the_request_has_the_pass_and_the_findings_of_the_fixed_item_when_the_joined_i
 
     let verification = verification_of(&[&joined, &fixed]);
 
-    assert_eq!(verification.pass, 2);
+    assert_eq!(verification.pass, fixed.fix_passes().len() + 1);
+    assert!(verification.pass > joined.fix_passes().len() + 1);
     assert_eq!(verification.findings, fixed.findings());
     assert!(verification.findings.is_some());
 }
