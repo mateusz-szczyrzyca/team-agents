@@ -576,3 +576,45 @@ async fn summary_retains_configuration_across_multibyte_byte_2048_boundary() {
         text
     );
 }
+#[tokio::test]
+async fn collects_notifications_from_configured_directory() {
+    let (dir, home, args) = fixture();
+    let configured = dir.path().join("custom-notices");
+    std::fs::create_dir_all(&configured).unwrap();
+    let note = "Configured notice\nTeam: team-20261117-120000-a1b2\n\nconfigured-directory-content\n";
+    std::fs::write(configured.join("notification-20261117100000-1.md"), note).unwrap();
+    std::fs::write(
+        home.config_file(),
+        format!("[notifications]\ndirectory = {:?}\n", configured.to_str().unwrap()),
+    )
+    .unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(result.bundle_dir.join("notifications.txt")).unwrap(),
+        format!("{note}\n")
+    );
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(summary.contains("configured-directory-content"), "{summary}");
+}
+
+#[tokio::test]
+async fn unreadable_bus_and_notifications_report_reasons_without_empty_messages() {
+    let (_dir, home, args) = fixture();
+    std::fs::create_dir_all(home.root().join("bus/messages.jsonl")).unwrap();
+    std::fs::write(home.notifications_dir(), b"not a directory").unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    for (heading, part, empty) in [
+        (SummarySection::Bus.heading(), "bus messages", "No bus messages."),
+        (
+            SummarySection::Notifications.heading(),
+            "notifications",
+            "No notifications.",
+        ),
+    ] {
+        let section = summary.split(heading).nth(1).unwrap().split("\n## ").next().unwrap();
+        assert!(section.contains(&format!("Could not read {part}:")), "{section}");
+        assert!(section.contains("cannot read"), "missing underlying reason: {section}");
+        assert!(!section.contains(empty), "{section}");
+    }
+}
