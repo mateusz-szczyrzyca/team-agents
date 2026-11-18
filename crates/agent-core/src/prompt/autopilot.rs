@@ -44,6 +44,8 @@ pub enum AutopilotPrompt {
     NoticeClosed,
     /// What a reviewer is told about the pull request it reviews.
     ReviewRequest,
+    /// Independence instructions for first-pass reviewers without a bus.
+    ReviewIndependent,
     /// The review the harness posts on the pull request for a reviewer's report.
     ReviewComment,
     /// The verdict line of an approved review.
@@ -101,6 +103,7 @@ impl AutopilotPrompt {
         Self::NoticeMergeFailed,
         Self::NoticeClosed,
         Self::ReviewRequest,
+        Self::ReviewIndependent,
         Self::ReviewComment,
         Self::ReviewVerdictApprove,
         Self::ReviewVerdictRequestChanges,
@@ -182,6 +185,7 @@ impl AutopilotPrompt {
                 "harness/review/request.md",
                 &["team", "pr", "branch", "base", "head", "pass"],
             ),
+            Self::ReviewIndependent => ("harness/review/independent.md", &[]),
             Self::ReviewComment => (
                 "harness/review/comment.md",
                 &["reviewer", "client", "verdict", "pass", "commit", "report"],

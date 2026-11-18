@@ -197,7 +197,11 @@ pub(super) fn after_verdict(
         reviewer: reviewer.clone(),
         verdict,
     };
-    Ok(next_of(&state.transition(&event, policy)?)?)
+    let required = progress
+        .findings()
+        .and_then(agent_core::state::Findings::review_count)
+        .unwrap_or_default();
+    Ok(next_of(&state.transition_with_reviews(&event, policy, required)?)?)
 }
 
 /// What follows the human's answer about the item `progress`, which waits for it after a request for changes that the

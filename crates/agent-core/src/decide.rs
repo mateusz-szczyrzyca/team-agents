@@ -15,6 +15,3 @@ pub mod publish;
 pub mod reviewer;
 pub mod round;
 pub mod team;
-
-/// How many reviews every pull request gets, each from a different investigator outside the team.
-pub const REVIEWS_REQUIRED: usize = 2;

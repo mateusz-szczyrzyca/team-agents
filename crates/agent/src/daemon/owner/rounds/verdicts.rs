@@ -182,14 +182,16 @@ impl Owner {
             .store
             .save_review_report(task, asked.pr.number, passes, &report)
             .await?;
+        let independent = self
+            .parts
+            .state
+            .team(team_id)
+            .is_some_and(|team| crate::daemon::review::independent_first_review(team, task));
         let lead = self.lead_of(team_id)?;
         let next = self.decide(team_id, asked, verdict);
         let mut look = Look::default();
         self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
         let completed = self.record_findings(team_id, task, asked, verdict, message)?;
-        if completed {
-            self.post_findings(pulls, &lead, team_id, asked).await;
-        }
         self.record_event_at(
             now,
             team_id,
@@ -203,12 +205,71 @@ impl Owner {
                 report: report.clone(),
             },
         );
-        self.post_review(pulls, &lead, task, asked, verdict, &report).await;
+        if independent {
+            if completed {
+                self.post_pass_reviews(pulls, &lead, team_id, asked).await;
+            }
+        } else {
+            self.post_review(pulls, &lead, task, asked, verdict, &report).await;
+        }
+        if completed {
+            self.post_findings(pulls, &lead, team_id, asked).await;
+        }
         if let Some(next) = next {
             self.apply_next(team_id, &lead, asked, next, &mut look)?;
         }
         look.changed = true;
         self.finish_look(team_id, look).await
+    }
+
+    /// Publishes the completed independent pass in request order, using the saved reports across restarts.
+    async fn post_pass_reviews(&mut self, pulls: &Pulls, lead: &Lead, team: &TeamId, asked: &Asked) {
+        let reviews = asked
+            .items
+            .first()
+            .and_then(|id| self.parts.state.team(team)?.item(*id))
+            .and_then(|item| match item.phase() {
+                ItemPhase::InReview { reviews, .. } => Some(reviews.clone()),
+                ItemPhase::Pending
+                | ItemPhase::InProgress { .. }
+                | ItemPhase::Fixing { .. }
+                | ItemPhase::Approved { .. }
+                | ItemPhase::Done { .. } => None,
+            })
+            .unwrap_or_default();
+        for review in reviews {
+            let ReviewOutcome::Submitted { verdict, .. } = review.outcome else {
+                continue;
+            };
+            let report = match self
+                .parts
+                .store
+                .load_review_report(&review.task, asked.pr.number, count(asked.passes))
+                .await
+            {
+                Ok(Some(report)) => report,
+                Ok(None) => {
+                    // Publication is best effort: the recorded verdict still decides the round.
+                    tracing::warn!(event = LogEvent::GitCallFailed.as_str(), task = %review.task,
+                        pr = %asked.pr.number, "saved review report is missing; cannot publish it");
+                    continue;
+                }
+                Err(error) => {
+                    // Publication is best effort, as with an unavailable GitHub.
+                    tracing::warn!(event = LogEvent::GitCallFailed.as_str(), task = %review.task,
+                        pr = %asked.pr.number, error = %error_chain(&error), "cannot load held review for publication");
+                    continue;
+                }
+            };
+            let source = Asked {
+                pr: asked.pr.clone(),
+                items: asked.items.clone(),
+                passes: asked.passes,
+                reviewer: review.reviewer,
+            };
+            self.post_review(pulls, lead, &review.task, &source, verdict, &report)
+                .await;
+        }
     }
 
     /// Stages a parsed report and finalizes numbers only after every requested report is in.

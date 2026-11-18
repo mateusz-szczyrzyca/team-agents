@@ -6,8 +6,7 @@
 
 use std::collections::HashSet;
 
-use agent_core::config::Config;
-use agent_core::decide::REVIEWS_REQUIRED;
+use agent_core::config::{Config, ReviewCount};
 use agent_core::ids::{InvestigatorName, TaskId, TeamId};
 use agent_core::kinds::UnknownKeyword;
 use agent_core::state::{ItemPhase, Member, Participant, ReviewOutcome, State, Team};
@@ -224,19 +223,28 @@ fn has_pending_review(team: &Team, member: &Member) -> bool {
     })
 }
 
-/// [`REVIEWS_REQUIRED`] of the `free` reviewers, drawn at random; `None` while fewer are free: the pull request waits.
+/// Two reviewers for a pull request opened under the preceding protocol.
 ///
 /// The reviewers that review for the team already (they wait in a review task of it) are drawn before new ones: they
 /// know the pull request and look at what became of their own findings.
 pub(super) fn choose_reviewers(free: Vec<Reviewer>, rng: &mut impl Rng) -> Option<Vec<Reviewer>> {
-    if free.len() < REVIEWS_REQUIRED {
+    choose_reviewers_for(free, ReviewCount::TWO, rng)
+}
+
+/// Draws a complete configured pass, preferring the team's existing available review tasks.
+pub(super) fn choose_reviewers_for(
+    free: Vec<Reviewer>,
+    required: ReviewCount,
+    rng: &mut impl Rng,
+) -> Option<Vec<Reviewer>> {
+    if free.len() < required.get() {
         return None;
     }
     let (mut known, mut new): (Vec<Reviewer>, Vec<Reviewer>) = free
         .into_iter()
         .partition(|reviewer| matches!(reviewer.slot, Slot::Task(_)));
-    let mut chosen = Vec::with_capacity(REVIEWS_REQUIRED);
-    for _ in 0..REVIEWS_REQUIRED {
+    let mut chosen = Vec::with_capacity(required.get());
+    for _ in 0..required.get() {
         let pool = if known.is_empty() { &mut new } else { &mut known };
         let index = rng.random_range(0..pool.len());
         chosen.push(pool.swap_remove(index));
@@ -246,3 +254,13 @@ pub(super) fn choose_reviewers(free: Vec<Reviewer>, rng: &mut impl Rng) -> Optio
 
 #[cfg(test)]
 mod tests;
+
+/// Whether this task is an independent first-pass reviewer, including replacement and correction runs.
+pub(super) fn independent_first_review(team: &Team, task: &TaskId) -> bool {
+    team.items().iter().any(|item| {
+        item.fix_passes().is_empty()
+            && item.findings().is_some_and(|ledger| ledger.review_count().is_some())
+            && matches!(item.phase(), ItemPhase::InReview { reviews, .. }
+                if reviews.iter().any(|review| review.task == *task && matches!(review.outcome, ReviewOutcome::Pending)))
+    })
+}

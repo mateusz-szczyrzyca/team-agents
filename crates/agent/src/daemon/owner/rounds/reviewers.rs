@@ -14,7 +14,7 @@ use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
 use crate::daemon::merge::{count, review_deliveries};
-use crate::daemon::review::{Reviewer, Slot, choose_reviewers, free_reviewers};
+use crate::daemon::review::{Reviewer, Slot, choose_reviewers, choose_reviewers_for, free_reviewers};
 use crate::daemon::team::{Why, task_branch};
 
 use super::super::{Owner, OwnerError};
@@ -94,7 +94,14 @@ impl Owner {
     ) -> Result<bool, PublishError> {
         let free = free_reviewers(&self.parts.state, &self.parts.settings.config, team_id);
         let among: Vec<_> = free.iter().map(|r| r.name.clone()).collect();
-        let Some(chosen) = choose_reviewers(free, &mut self.parts.rng) else {
+        let required = items
+            .first()
+            .and_then(|id| self.parts.state.team(team_id)?.item(*id)?.findings()?.review_count());
+        let chosen = match required {
+            Some(count) => choose_reviewers_for(free, count, &mut self.parts.rng),
+            None => choose_reviewers(free, &mut self.parts.rng),
+        };
+        let Some(chosen) = chosen else {
             return Ok(false);
         };
         let chosen_names: Vec<_> = chosen.iter().map(|r| r.name.as_str()).collect();
