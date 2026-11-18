@@ -34,12 +34,6 @@ async fn collects_team_messages_and_end_of_whole_bus() {
     std::fs::create_dir_all(&bus_dir).unwrap();
 
     let mut lines = Vec::new();
-    // 60 old unrelated messages (older than RECENT_MESSAGES threshold of 50)
-    for i in 1..=60 {
-        lines.push(format!(
-            r#"{{"id":{i},"ts":"2026-11-17 09:00:00","from":"other-1","to":"other-2","kind":"chat","text":"old other message {i}"}}"#
-        ));
-    }
     // Old message about this team (must be kept even though > 50 messages old)
     lines.push(r#"{"id":61,"ts":"2026-11-17 10:05:00","from":"agentbus","to":"team:team-20261117-120000-a1b2","kind":"team","text":"team created"}"#.to_string());
     // Message from agent of this team
@@ -49,6 +43,12 @@ async fn collects_team_messages_and_end_of_whole_bus() {
     );
     // Message mentioning task
     lines.push(r#"{"id":63,"ts":"2026-11-17 10:15:00","from":"agentbus","to":"all","kind":"notice","text":"task-20261117-120000-a1b2 started"}"#.to_string());
+    // Enough unrelated messages to put the team messages outside the global tail.
+    for i in 1..=60 {
+        lines.push(format!(
+            r#"{{"id":{i},"ts":"2026-11-17 09:00:00","from":"other-1","to":"other-2","kind":"chat","text":"old other message {i}"}}"#
+        ));
+    }
     // Recent message from another team (within recent limit of 50)
     lines.push(r#"{"id":64,"ts":"2026-11-17 11:00:00","from":"unrelated","to":"all","kind":"chat","text":"recent unrelated message"}"#.to_string());
 
@@ -58,6 +58,7 @@ async fn collects_team_messages_and_end_of_whole_bus() {
         .await
         .unwrap()
         .expect("bus messages");
+    assert_eq!(collected.summary_messages.len(), 53);
     assert!(
         !collected
             .summary_messages
