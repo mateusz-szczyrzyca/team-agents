@@ -661,12 +661,7 @@ fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
     }
 }
 
-fn render_git(
-    worktrees: &[GitWorktreeSummary],
-    offset: UtcOffset,
-    out: &mut SummaryWriter,
-    untracked: UntrackedCollection,
-) {
+fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut SummaryWriter) {
     for w in worktrees {
         write_line(out, &format!("### Worktree for Task `{}`", w.task_id));
         write_line(out, "");
@@ -700,11 +695,6 @@ fn render_git(
                     format_time(c.time, offset)
                 ),
             );
-        }
-        if untracked == UntrackedCollection::Deferred {
-            write_line(out, "- Untracked file metadata: Not collected in this version.");
-            write_line(out, "");
-            continue;
         }
         write_line(
             out,
@@ -909,29 +899,7 @@ fn render_unreadable(unreadable: &[UnreadablePartSummary], out: &mut SummaryWrit
 /// Returns [`SummaryError::RequiredFactsTooLarge`] when mandatory facts and cut
 /// markers alone would reach the byte limit; no partial document is returned.
 pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String, SummaryError> {
-    render_summary_with_uncollected(input, offset, &[])
-}
-
-/// Whether newest-untracked-file metadata was collected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UntrackedCollection {
-    /// Metadata was collected, including a genuinely empty result.
-    Collected,
-    /// Metadata is outside this collector's scope.
-    Deferred,
-}
-
-/// Renders a summary with explicit collection coverage for untracked metadata.
-///
-/// # Errors
-/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
-pub fn render_summary_with_coverage(
-    input: &SummaryInput,
-    offset: UtcOffset,
-    uncollected: &[SummarySection],
-    untracked: UntrackedCollection,
-) -> Result<String, SummaryError> {
-    render_with_coverage(input, offset, uncollected, untracked)
+    render_with_redaction(input, offset, str::to_owned, PathPresentation::Escaped, None)
 }
 
 /// Renders collected text after redaction, before measuring or truncating any fragment.
@@ -945,53 +913,12 @@ pub fn render_redacted_summary(
     offset: UtcOffset,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(
-        input,
-        offset,
-        &[],
-        UntrackedCollection::Collected,
-        redact,
-        PathPresentation::Escaped,
-        None,
-    )
-}
-
-/// Renders a summary with explicit notices for sections outside the collection scope.
-///
-/// Collection failures remain visible even when machine observations are deferred.
-///
-/// # Errors
-/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
-pub fn render_summary_with_uncollected(
-    input: &SummaryInput,
-    offset: UtcOffset,
-    uncollected: &[SummarySection],
-) -> Result<String, SummaryError> {
-    render_with_coverage(input, offset, uncollected, UntrackedCollection::Collected)
-}
-
-fn render_with_coverage(
-    input: &SummaryInput,
-    offset: UtcOffset,
-    uncollected: &[SummarySection],
-    untracked: UntrackedCollection,
-) -> Result<String, SummaryError> {
-    render_with_redaction(
-        input,
-        offset,
-        uncollected,
-        untracked,
-        str::to_owned,
-        PathPresentation::Escaped,
-        None,
-    )
+    render_with_redaction(input, offset, redact, PathPresentation::Escaped, None)
 }
 
 fn render_with_redaction(
     input: &SummaryInput,
     offset: UtcOffset,
-    uncollected: &[SummarySection],
-    untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
     paths: PathPresentation,
     git_notice: Option<&str>,
@@ -1013,15 +940,6 @@ fn render_with_redaction(
     for section in SummarySection::ALL {
         write_line(&mut out, section.heading());
         write_line(&mut out, "");
-
-        if uncollected.contains(&section) {
-            write_line(&mut out, "Not collected in this version.");
-            if section == SummarySection::Machine {
-                render_unreadable(&input.unreadable_parts, &mut out);
-            }
-            write_line(&mut out, "");
-            continue;
-        }
 
         let unread = input
             .unreadable_parts
@@ -1056,7 +974,7 @@ fn render_with_redaction(
                     write_line(&mut out, notice);
                     write_line(&mut out, "");
                 }
-                render_git(&input.git, offset, &mut out, untracked);
+                render_git(&input.git, offset, &mut out);
             }
             SummarySection::GateRecords => render_gate(&input.gate, offset, &mut out),
             SummarySection::HistoryTail => render_history(input.history_tail.as_deref(), &mut out),
@@ -1094,15 +1012,7 @@ pub fn render_command_summary(
     offset: UtcOffset,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(
-        input,
-        offset,
-        &[],
-        UntrackedCollection::Collected,
-        redact,
-        PathPresentation::Plain,
-        None,
-    )
+    render_with_redaction(input, offset, redact, PathPresentation::Plain, None)
 }
 
 /// Renders a command summary with a retained-worktree notice in the git section.
@@ -1115,13 +1025,5 @@ pub fn render_command_summary_with_git_notice(
     redact: impl Fn(&str) -> String,
     git_notice: Option<&str>,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(
-        input,
-        offset,
-        &[],
-        UntrackedCollection::Collected,
-        redact,
-        PathPresentation::Plain,
-        git_notice,
-    )
+    render_with_redaction(input, offset, redact, PathPresentation::Plain, git_notice)
 }

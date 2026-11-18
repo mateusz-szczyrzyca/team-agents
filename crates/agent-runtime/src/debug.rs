@@ -28,7 +28,6 @@ use crate::clock::SystemClock;
 use crate::debug_redaction::SecretsCut;
 use crate::store::Home;
 use crate::text_file::{TextFileError, read_text_file};
-
 /// Maximum state file size in bytes.
 const MAX_STATE_BYTES: usize = 16 * 1024 * 1024;
 /// Default inactivity threshold in minutes.
@@ -264,10 +263,6 @@ pub async fn execute_debug_at(
         },
     )
     .map_err(DebugRuntimeError::Summary)?;
-    collection.add(
-        "NOT_COLLECTED.txt",
-        b"Not collected in this version: machine metrics; newest untracked file metadata.\n".to_vec(),
-    );
     let parent = args.out.unwrap_or_else(|| home.root().join("debug"));
     collect::persist(
         collection,
