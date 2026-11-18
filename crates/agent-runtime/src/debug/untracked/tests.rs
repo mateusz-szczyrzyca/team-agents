@@ -75,3 +75,47 @@ async fn unreadable_untracked_path_records_failure_reason() {
         result.unreadable[0].part
     );
 }
+
+#[tokio::test]
+async fn distinct_non_utf8_names_stay_distinct_in_artifact_and_failures() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let worktree = dir.path();
+    let base_time = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let first = OsStr::from_bytes(b"f\xFE");
+    let second = OsStr::from_bytes(b"f\xFF");
+    for name in [first, second] {
+        let path = worktree.join(name);
+        fs::write(&path, b"same").expect("write");
+        let file = fs::OpenOptions::new().write(true).open(&path).expect("open file");
+        file.set_times(fs::FileTimes::new().set_modified(base_time))
+            .expect("set times");
+    }
+    let missing_first = OsStr::from_bytes(b"gone\xFE");
+    let missing_second = OsStr::from_bytes(b"gone\xFF");
+    let paths = [
+        PathBuf::from(first),
+        PathBuf::from(second),
+        PathBuf::from(missing_first),
+        PathBuf::from(missing_second),
+    ];
+
+    let result = collect(worktree, &paths).await;
+
+    assert!(result.artifact_text.contains(r#""f\xFE""#), "{}", result.artifact_text);
+    assert!(result.artifact_text.contains(r#""f\xFF""#), "{}", result.artifact_text);
+    assert_eq!(result.unreadable.len(), 2, "{:?}", result.unreadable);
+    assert_ne!(result.unreadable[0].part, result.unreadable[1].part);
+    assert!(
+        result.unreadable[0].part.contains(r#""gone\xFE""#),
+        "{}",
+        result.unreadable[0].part
+    );
+    assert!(
+        result.unreadable[1].part.contains(r#""gone\xFF""#),
+        "{}",
+        result.unreadable[1].part
+    );
+}
