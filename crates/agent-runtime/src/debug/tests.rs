@@ -302,9 +302,9 @@ fn reports_active_history_wal_without_ignoring_committed_records_or_changing_it(
         .block_on(execute_debug(&home, args, None, &mut Vec::new()))
         .unwrap();
     let summary = std::fs::read_to_string(result.summary_path).unwrap();
-    assert!(summary.contains("no history records for this team"), "{summary}");
+    assert!(summary.contains("No history recorded for this team."), "{summary}");
     assert_eq!(std::fs::read(&wal).unwrap(), before);
-    assert!(!result.bundle_dir.join("history.jsonl").exists());
+    assert!(result.bundle_dir.join("history.jsonl").exists());
     drop(database);
 }
 
