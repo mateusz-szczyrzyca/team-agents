@@ -92,7 +92,7 @@ async fn review_daemon_reads_only_the_snapshot_window_when_the_log_grows() {
     let bytes = read_tail(file, len, &path).await.unwrap();
 
     assert_eq!(
-        (bytes.len(), bytes.chunks_exact(2).all(|pair| pair == b"x\n")),
+        (bytes.len(), bytes.as_chunks::<2>().0.iter().all(|pair| pair == b"x\n")),
         (4 * 1024 * 1024, true)
     );
 }

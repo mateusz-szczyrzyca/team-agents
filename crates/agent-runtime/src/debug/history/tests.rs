@@ -230,7 +230,7 @@ fn retries_changed_history_snapshot_until_a_stable_copy_is_available() {
         let team: TeamId = "team-20261118-060000-a1b2".parse().unwrap();
         let mut copies = 0;
         let result = read_with_copy(&path, &team, &mut |source, destination, limit| {
-            let copied = copy_bounded(source, destination, limit)?;
+            let byte_count = copy_bounded(source, destination, limit)?;
             if source == path {
                 copies += 1;
                 if copies <= changes {
@@ -239,7 +239,7 @@ fn retries_changed_history_snapshot_until_a_stable_copy_is_available() {
                     file.set_len(file.metadata().unwrap().len() + 1).unwrap();
                 }
             }
-            Ok(copied)
+            Ok(byte_count)
         });
 
         assert_eq!(copies, expected_copies);
