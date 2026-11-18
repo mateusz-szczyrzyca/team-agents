@@ -41,7 +41,10 @@ impl From<ReviewCount> for usize {
 impl TryFrom<usize> for ReviewCount {
     type Error = ReviewCountError;
 
-    fn try_from(_value: usize) -> Result<Self, Self::Error> {
-        Ok(Self::TWO)
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        if value < Self::TWO.get() {
+            return Err(ReviewCountError { value });
+        }
+        Ok(Self(value))
     }
 }
