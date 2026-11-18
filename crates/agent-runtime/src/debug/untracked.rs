@@ -22,6 +22,18 @@ pub(super) struct UntrackedCollection {
     pub unreadable: Vec<ReadFailure>,
 }
 
+/// Spells a worktree-relative path so that distinct paths stay distinct, including non-UTF-8 names.
+///
+/// `Path::display` replaces invalid bytes with U+FFFD, so two names differing only in such bytes would
+/// print the same. The `Debug` spelling of the OS string escapes them (`"f\xFE"`) and is injective.
+#[expect(
+    clippy::unnecessary_debug_formatting,
+    reason = "the Debug spelling is the lossless one; Display drops invalid bytes"
+)]
+fn lossless_path(path: &Path) -> String {
+    format!("{:?}", path.as_os_str())
+}
+
 /// Collects metadata for up to fifty newest untracked files in `worktree`.
 pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> UntrackedCollection {
     let mut files = Vec::new();
@@ -34,7 +46,7 @@ pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> Unt
             Err(source) => {
                 unreadable.push(ReadFailure {
                     section: SummarySection::GitWorktrees,
-                    part: format!("untracked file {}", rel_path.display()),
+                    part: format!("untracked file {}", lossless_path(rel_path)),
                     reason: error_chain(&source),
                 });
                 continue;
@@ -52,7 +64,7 @@ pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> Unt
                 Err(source) => {
                     unreadable.push(ReadFailure {
                         section: SummarySection::GitWorktrees,
-                        part: format!("untracked file {}", rel_path.display()),
+                        part: format!("untracked file {}", lossless_path(rel_path)),
                         reason: error_chain(&source),
                     });
                     None
@@ -61,7 +73,7 @@ pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> Unt
             Err(source) => {
                 unreadable.push(ReadFailure {
                     section: SummarySection::GitWorktrees,
-                    part: format!("untracked file {}", rel_path.display()),
+                    part: format!("untracked file {}", lossless_path(rel_path)),
                     reason: error_chain(&source),
                 });
                 None
@@ -90,7 +102,7 @@ pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> Unt
         };
         append(&format!(
             "- {} ({} bytes, modified {})",
-            f.path.display(),
+            lossless_path(&f.path),
             f.size_bytes,
             time_str
         ));
