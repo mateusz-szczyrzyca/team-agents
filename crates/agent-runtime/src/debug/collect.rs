@@ -669,12 +669,18 @@ impl Collection {
                         ExitReport::Exited { code: 0 } => Some(true),
                         ExitReport::Exited { code: 1 } => Some(false),
                         other => {
-                            self.failed(format!("git containment {task}"), format!("git exited {other:?}"));
+                            self.failed(
+                                format!("git containment {task}"),
+                                diagnostic_error(&ObservationError::Git {
+                                    exit: other,
+                                    stderr: output.stderr.bytes,
+                                }),
+                            );
                             None
                         }
                     },
                     Err(error) => {
-                        self.failed(format!("git containment {task}"), error_chain(&error));
+                        self.failed(format!("git containment {task}"), diagnostic_error(&error));
                         None
                     }
                 },
@@ -762,14 +768,14 @@ impl Collection {
                                 git.commits_over_base = commits;
                             }
                         }
-                        Err(error) => self.failed(format!("git commit details {task}"), error_chain(&error)),
+                        Err(error) => self.failed(format!("git commit details {task}"), diagnostic_error(&error)),
                     }
                     self.add(
                         PathBuf::from("git").join(format!("{task}-commits.txt")),
                         text.into_bytes(),
                     );
                 }
-                Err(error) => self.failed(format!("git commits {task}"), error_chain(&error)),
+                Err(error) => self.failed(format!("git commits {task}"), diagnostic_error(&error)),
             }
         }
     }
