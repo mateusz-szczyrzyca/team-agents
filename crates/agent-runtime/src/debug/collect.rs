@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use agent_core::debug_summary::{
     GitCommitSummaryFacts, GitWorktreeSummary, ItemSummaryFacts, MachineSummary, QuestionsSummaryFacts,
-    RoundSummaryFacts, SummaryInput, TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts,
+    RoundSummaryFacts, SummaryInput, SummarySection, TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts,
 };
 use agent_core::diagnostic_assessment::{Assessment, Branch, LeadGit, Origin, ReadFailure, Task};
 use agent_core::ids::{AgentName, BranchName, TaskId};
@@ -162,8 +162,24 @@ impl Collection {
     }
 
     fn failed(&mut self, part: impl Into<String>, reason: impl Into<String>) {
+        self.failed_in(SummarySection::CollectionFailures, part, reason);
+    }
+
+    fn task_failed(&mut self, part: impl Into<String>, reason: impl Into<String>) {
+        self.failed_in(SummarySection::TaskDetails, part, reason);
+    }
+
+    fn gate_failed(&mut self, part: impl Into<String>, reason: impl Into<String>) {
+        self.failed_in(SummarySection::GateRecords, part, reason);
+    }
+
+    fn git_failed(&mut self, part: impl Into<String>, reason: impl Into<String>) {
+        self.failed_in(SummarySection::GitWorktrees, part, reason);
+    }
+
+    fn failed_in(&mut self, section: SummarySection, part: impl Into<String>, reason: impl Into<String>) {
         self.assessment.unreadable.push(ReadFailure {
-            section: agent_core::debug_summary::SummarySection::Machine,
+            section,
             part: part.into(),
             reason: reason.into(),
         });
@@ -241,7 +257,7 @@ impl Collection {
         let mut visited = 0_usize;
         while let Some((source, target, depth)) = pending.pop() {
             if visited >= ENTRY_LIMIT {
-                self.failed("task artifacts", "directory entry limit reached");
+                self.task_failed("task artifacts", "directory entry limit reached");
                 break;
             }
             visited = visited.saturating_add(1);
@@ -253,13 +269,13 @@ impl Collection {
                     continue;
                 }
                 Err(error) => {
-                    self.failed(format!("task artifact {}", escaped_path(&source)), error.to_string());
+                    self.task_failed(format!("task artifact {}", escaped_path(&source)), error.to_string());
                     continue;
                 }
             };
             if metadata.is_dir() {
                 if depth >= DEPTH_LIMIT {
-                    self.failed(
+                    self.task_failed(
                         format!("task artifact {}", escaped_path(&source)),
                         "directory nesting limit reached",
                     );
@@ -281,7 +297,7 @@ impl Collection {
                                     ));
                                 }
                                 Ok(Some(_)) => {
-                                    self.failed(
+                                    self.task_failed(
                                         format!("task artifact {}", escaped_path(&source)),
                                         "directory entry limit reached",
                                     );
@@ -289,7 +305,10 @@ impl Collection {
                                 }
                                 Ok(None) => break,
                                 Err(error) => {
-                                    self.failed(format!("task artifact {}", escaped_path(&source)), error.to_string());
+                                    self.task_failed(
+                                        format!("task artifact {}", escaped_path(&source)),
+                                        error.to_string(),
+                                    );
                                     break;
                                 }
                             }
@@ -297,28 +316,34 @@ impl Collection {
                         children.sort_by(|left, right| numbered_order(&right.0, &left.0));
                         pending.extend(children);
                     }
-                    Err(error) => self.failed(format!("task artifact {}", escaped_path(&source)), error.to_string()),
+                    Err(error) => {
+                        self.task_failed(format!("task artifact {}", escaped_path(&source)), error.to_string());
+                    }
                 }
             } else if metadata.is_file() {
-                self.activity(&source, task, &metadata);
-                match bounded_bytes(&source).await {
-                    Ok(bytes) if self.copied_bytes.saturating_add(bytes.len()) <= TOTAL_LIMIT => {
-                        self.copied_bytes = self.copied_bytes.saturating_add(bytes.len());
-                        self.questions(&source, task, &bytes);
-                        self.add(target, bytes);
-                    }
-                    Ok(_) => self.failed(
-                        format!("task artifact {}", escaped_path(&source)),
-                        "total artifact byte limit reached",
-                    ),
-                    Err(error) => self.failed(format!("task artifact {}", escaped_path(&source)), error_chain(&error)),
-                }
+                self.task_file(&source, target, task, &metadata).await;
             } else {
-                self.failed(
+                self.task_failed(
                     format!("task artifact {}", escaped_path(&source)),
                     "symlink or special file is not followed",
                 );
             }
+        }
+    }
+
+    async fn task_file(&mut self, source: &Path, target: PathBuf, task: &TaskId, metadata: &std::fs::Metadata) {
+        self.activity(source, task, metadata);
+        match bounded_bytes(source).await {
+            Ok(bytes) if self.copied_bytes.saturating_add(bytes.len()) <= TOTAL_LIMIT => {
+                self.copied_bytes = self.copied_bytes.saturating_add(bytes.len());
+                self.questions(source, task, &bytes);
+                self.add(target, bytes);
+            }
+            Ok(_) => self.task_failed(
+                format!("task artifact {}", escaped_path(source)),
+                "total artifact byte limit reached",
+            ),
+            Err(error) => self.task_failed(format!("task artifact {}", escaped_path(source)), error_chain(&error)),
         }
     }
 
@@ -332,14 +357,14 @@ impl Collection {
         let modified = match metadata.modified() {
             Ok(value) => value,
             Err(error) => {
-                self.failed(format!("output time {}", escaped_path(source)), error.to_string());
+                self.task_failed(format!("output time {}", escaped_path(source)), error.to_string());
                 return;
             }
         };
         let at = match Timestamp::from_utc(time::UtcDateTime::from(modified)) {
             Ok(at) => at,
             Err(error) => {
-                self.failed(format!("output time {}", escaped_path(source)), error.to_string());
+                self.task_failed(format!("output time {}", escaped_path(source)), error.to_string());
                 return;
             }
         };
@@ -360,14 +385,14 @@ impl Collection {
         let text = match std::str::from_utf8(bytes) {
             Ok(text) => text,
             Err(error) => {
-                self.failed(format!("questions {}", escaped_path(source)), error.to_string());
+                self.task_failed(format!("questions {}", escaped_path(source)), error.to_string());
                 return;
             }
         };
         let questions = match QuestionsFile::parse(text) {
             Ok(value) => value,
             Err(error) => {
-                self.failed(format!("questions {}", escaped_path(source)), error.to_string());
+                self.task_failed(format!("questions {}", escaped_path(source)), error.to_string());
                 return;
             }
         };
@@ -394,13 +419,13 @@ impl Collection {
             Ok(bytes) => match serde_json::from_slice::<GateRecord>(&bytes) {
                 Ok(record) => Some(record),
                 Err(error) => {
-                    self.failed(format!("gate {}", escaped_path(&path)), error.to_string());
+                    self.gate_failed(format!("gate {}", escaped_path(&path)), error.to_string());
                     None
                 }
             },
             Err(ObservationError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => {
-                self.failed(format!("gate {}", escaped_path(&path)), error_chain(&error));
+                self.gate_failed(format!("gate {}", escaped_path(&path)), error_chain(&error));
                 None
             }
         };
@@ -432,12 +457,12 @@ impl Collection {
                 Ok(at) => match Timestamp::from_utc(time::UtcDateTime::from(at)) {
                     Ok(at) => agent_core::debug_summary::format_time(at, self.local_offset),
                     Err(error) => {
-                        self.failed(format!("gate time {}", escaped_path(&source)), error_chain(&error));
+                        self.gate_failed(format!("gate time {}", escaped_path(&source)), error_chain(&error));
                         "unreadable".to_owned()
                     }
                 },
                 Err(error) => {
-                    self.failed(format!("gate time {}", escaped_path(&source)), error_chain(&error));
+                    self.gate_failed(format!("gate time {}", escaped_path(&source)), error_chain(&error));
                     "unreadable".to_owned()
                 }
             };
@@ -452,7 +477,7 @@ impl Collection {
                     .collect::<Vec<_>>()
                     .join("\n"),
                 Err(error) => {
-                    self.failed(format!("gate text {}", escaped_path(&source)), error_chain(&error));
+                    self.gate_failed(format!("gate text {}", escaped_path(&source)), error_chain(&error));
                     "gate output is not UTF-8; raw bytes are retained".to_owned()
                 }
             };
@@ -590,7 +615,7 @@ impl Collection {
             let worktree_missing = match worktree_is_missing(&path).await {
                 Ok(missing) => missing,
                 Err(error) => {
-                    self.failed(
+                    self.git_failed(
                         format!("worktree metadata {}", escaped_path(&path)),
                         diagnostic_error(&error),
                     );
@@ -630,7 +655,7 @@ impl Collection {
                     }
                     self.summary.git.push(observation.facts);
                 }
-                Err(error) => self.failed(format!("worktree {}", escaped_path(&path)), diagnostic_error(&error)),
+                Err(error) => self.git_failed(format!("worktree {}", escaped_path(&path)), diagnostic_error(&error)),
             }
         }
         if has_removed_merged_worktrees {
@@ -663,7 +688,7 @@ impl Collection {
         let lead_worktree_missing = match worktree_is_missing(&lead_path).await {
             Ok(missing) => missing,
             Err(error) => {
-                self.failed(
+                self.git_failed(
                     format!("worktree metadata {}", escaped_path(&lead_path)),
                     diagnostic_error(&error),
                 );
@@ -693,7 +718,7 @@ impl Collection {
                         ExitReport::Exited { code: 0 } => Some(true),
                         ExitReport::Exited { code: 1 } => Some(false),
                         other => {
-                            self.failed(
+                            self.git_failed(
                                 format!("git containment {task}"),
                                 diagnostic_error(&ObservationError::Git {
                                     exit: other,
@@ -704,7 +729,7 @@ impl Collection {
                         }
                     },
                     Err(error) => {
-                        self.failed(format!("git containment {task}"), diagnostic_error(&error));
+                        self.git_failed(format!("git containment {task}"), diagnostic_error(&error));
                         None
                     }
                 },
@@ -736,17 +761,17 @@ impl Collection {
             Ok(file) => match agent_core::config::Config::from_toml_str(&file.text) {
                 Ok(config) => config.repo(team.repo()).map(|repo| repo.base_branch.clone()),
                 Err(error) => {
-                    self.failed("git base configuration", error_chain(&error));
+                    self.git_failed("git base configuration", error_chain(&error));
                     return;
                 }
             },
             Err(error) => {
-                self.failed("git base configuration", error_chain(&error));
+                self.git_failed("git base configuration", error_chain(&error));
                 return;
             }
         };
         let Some(base) = base else {
-            self.failed("git base configuration", "repository has no configured base branch");
+            self.git_failed("git base configuration", "repository has no configured base branch");
             return;
         };
         let tasks: Vec<_> = self
@@ -760,7 +785,7 @@ impl Collection {
             let worktree_missing = match worktree_is_missing(&path).await {
                 Ok(missing) => missing,
                 Err(error) => {
-                    self.failed(
+                    self.git_failed(
                         format!("worktree metadata {}", escaped_path(&path)),
                         diagnostic_error(&error),
                     );
@@ -792,14 +817,14 @@ impl Collection {
                                 git.commits_over_base = commits;
                             }
                         }
-                        Err(error) => self.failed(format!("git commit details {task}"), diagnostic_error(&error)),
+                        Err(error) => self.git_failed(format!("git commit details {task}"), diagnostic_error(&error)),
                     }
                     self.add(
                         PathBuf::from("git").join(format!("{task}-commits.txt")),
                         text.into_bytes(),
                     );
                 }
-                Err(error) => self.failed(format!("git commits {task}"), diagnostic_error(&error)),
+                Err(error) => self.git_failed(format!("git commits {task}"), diagnostic_error(&error)),
             }
         }
     }

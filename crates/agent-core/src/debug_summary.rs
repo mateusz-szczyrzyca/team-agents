@@ -999,7 +999,12 @@ fn render_with_redaction(
                 write_line(&mut out, &format!("Could not read {}: {}", part.name, part.reason));
             }
             write_line(&mut out, "");
-            continue;
+            if matches!(
+                section,
+                SummarySection::HistoryTail | SummarySection::DaemonAndVersions | SummarySection::DaemonLog
+            ) {
+                continue;
+            }
         }
         match section {
             SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
