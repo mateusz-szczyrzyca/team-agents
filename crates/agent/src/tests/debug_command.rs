@@ -787,3 +787,29 @@ async fn debug_status_preserves_the_daemons_history_health_line() {
         .unwrap();
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn debug_rejects_deferred_daemon_log_without_writing_a_bundle() {
+    let (_dir, home, _state, team, _lead, _member, _round) = setup_test_home();
+    let output = tempfile::tempdir().unwrap();
+    let parent = output.path().join("diagnostics");
+    let (code, out, err) = agent(
+        &environment(home.root()),
+        &[
+            "debug",
+            "--team",
+            team.as_str(),
+            "--daemon-log",
+            "daemon.log",
+            "--out",
+            parent.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, ExitCode::from(1), "{err}");
+    assert_eq!(out, "");
+    assert_eq!(
+        err,
+        "agent debug: daemon log collection is not available in this version\n"
+    );
+    assert!(!parent.exists());
+}
