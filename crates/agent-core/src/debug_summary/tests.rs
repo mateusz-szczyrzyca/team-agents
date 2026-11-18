@@ -896,3 +896,21 @@ fn unreadable_configuration_preserves_daemon_facts_in_daemon_section() {
     assert!(daemon_section.contains("- PID: 12345"));
     assert!(daemon_section.contains("- Command version: agent 0.1.0"));
 }
+
+#[test]
+fn daemon_section_renders_configuration_content_with_settings_and_values() {
+    let mut input = sample_input();
+    input.configuration = Some("[agents.codex-1]\ncli = \"codex\"\nmodel = \"medium\"".into());
+    input.secret_keys = vec!["github_token".into()];
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let daemon_section = summary
+        .split("## Daemon and Versions")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(daemon_section.contains("- Configuration:"));
+    assert!(daemon_section.contains("cli = \"codex\""));
+    assert!(daemon_section.contains("model = \"medium\""));
+}

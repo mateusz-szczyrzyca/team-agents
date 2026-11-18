@@ -532,6 +532,22 @@ async fn reports_unreadable_configuration_when_agents_toml_is_missing() {
 }
 
 #[tokio::test]
+async fn summary_renders_bounded_configuration_content_with_settings_and_values() {
+    let (_dir, home, args) = fixture();
+    std::fs::write(home.config_file(), "[repos.example]\ngate = \"make gate\"\n").unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    let daemon_section = summary
+        .split("## Daemon and Versions")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(daemon_section.contains("gate = \"make gate\""));
+}
+
+#[tokio::test]
 async fn not_collected_names_only_machine_metrics_and_untracked_files() {
     let (_dir, home, args) = fixture();
     let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
