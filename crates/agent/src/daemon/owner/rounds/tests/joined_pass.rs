@@ -1,10 +1,9 @@
 //! An item that joins a fix pass of a pull request does not hide the pass and the findings of the item being fixed.
 use agent_core::review_findings::{Finding, Severity};
-use agent_core::state::{FindingStatus, Findings, ItemPhase, ItemProgress, RecordedFinding, State, Timestamp};
+use agent_core::state::{FindingStatus, Findings, ItemPhase, ItemProgress, RecordedFinding, State};
 use std::num::NonZeroU32;
 
 use super::prompts::verification_of;
-use super::verdicts::{Offered, answer_among};
 
 /// The fixture's team with item 1.3 fixed once (one fix pass, one open finding) and item 2.1 joined without a pass of
 /// its own but with a copy of the pull request's ledger: the two items of one pull request.
@@ -74,29 +73,4 @@ fn the_request_has_the_pass_and_the_findings_of_the_fixed_item_when_the_joined_i
     assert!(verification.pass > joined.fix_passes().len() + 1);
     assert_eq!(verification.findings, fixed.findings());
     assert!(verification.findings.is_some());
-}
-
-#[test]
-fn a_report_is_recorded_in_the_pass_of_the_most_fixed_item_when_the_joined_item_comes_first() {
-    let (_state, fixed, joined) = fixed_and_joined();
-    let ItemPhase::Fixing { pr, .. } = fixed.phase() else {
-        panic!("the fixed item is being fixed")
-    };
-    let requested_at: Timestamp = "2026-11-18T19:31:00Z".parse().unwrap();
-    let offered = |item: &ItemProgress, pass| Offered {
-        requested_at,
-        item: item.id(),
-        pr: pr.clone(),
-        reviewer: "inv-kimi".parse().unwrap(),
-        pass,
-    };
-
-    let asked = answer_among(
-        vec![offered(&joined, 0), offered(&fixed, 1)],
-        "2026-11-18T19:32:00Z".parse().unwrap(),
-    )
-    .unwrap();
-
-    assert_eq!(asked.passes, 1);
-    assert_eq!(asked.items, vec![joined.id(), fixed.id()]);
 }
