@@ -175,7 +175,7 @@ Two investigators from outside the team review this pull request. Their reports 
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-11>/runs/<run-13>/mcp.json --max-turns 300 --settings <home>/tasks/<task-11>/runs/<run-13>/claude-settings.json --session-id <uuid> --scenario 'late-verify:VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\n   CHECK: read src/lib.rs:7,late-verify:VERDICT: APPROVE\nSUMMARY: fixed' --as inv-r1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-11>/runs/<run-13>/mcp.json --max-turns 300 --strict-mcp-config --settings <home>/tasks/<task-11>/runs/<run-13>/claude-settings.json --session-id <uuid> --scenario 'late-verify:VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\n   CHECK: read src/lib.rs:7,late-verify:VERDICT: APPROVE\nSUMMARY: fixed' --as inv-r1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-11>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -199,7 +199,7 @@ STATUS: DONE
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-12>/runs/<run-14>/mcp.json --max-turns 300 --settings <home>/tasks/<task-12>/runs/<run-14>/claude-settings.json --session-id <uuid> --scenario 'verify:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-12>/runs/<run-14>/mcp.json --max-turns 300 --strict-mcp-config --settings <home>/tasks/<task-12>/runs/<run-14>/claude-settings.json --session-id <uuid> --scenario 'verify:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-12>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model

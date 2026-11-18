@@ -77,7 +77,7 @@ Two investigators from outside the team review this pull request. Their reports 
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-5>/runs/<run-7>/mcp.json --max-turns 300 --settings <home>/tasks/<task-5>/runs/<run-7>/claude-settings.json --session-id <uuid> --scenario 'verify:VERDICT: APPROVE\nSUMMARY: très bien — 日本語' --as inv-r1 --home <home> <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-5>/runs/<run-7>/mcp.json --max-turns 300 --strict-mcp-config --settings <home>/tasks/<task-5>/runs/<run-7>/claude-settings.json --session-id <uuid> --scenario 'verify:VERDICT: APPROVE\nSUMMARY: très bien — 日本語' --as inv-r1 --home <home> <the prompt>
     started <time> in <home>/worktrees/example/<task-5>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -99,7 +99,7 @@ STATUS: DONE
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-8>/mcp.json --max-turns 300 --settings <home>/tasks/<task-6>/runs/<run-8>/claude-settings.json --session-id <uuid> --scenario 'late-verify:VERDICT: APPROVE\nSUMMARY: zażółć gęślą jaźń' --as inv-r2 --home <home> <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-8>/mcp.json --max-turns 300 --strict-mcp-config --settings <home>/tasks/<task-6>/runs/<run-8>/claude-settings.json --session-id <uuid> --scenario 'late-verify:VERDICT: APPROVE\nSUMMARY: zażółć gęślą jaźń' --as inv-r2 --home <home> <the prompt>
     started <time> in <home>/worktrees/example/<task-6>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model
