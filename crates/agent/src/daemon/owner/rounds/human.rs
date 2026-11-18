@@ -31,7 +31,7 @@ impl Owner {
     }
 
     /// What the pull requests that wait for the human need: the lead is woken to put the question; a lead that ran and put
-    /// none leaves the human told directly; an answer gives one more fix pass.
+    /// none leaves the human told directly; an answer renews the configured fix budget.
     pub(super) fn ask_the_human(&mut self, pulls: &Pulls, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
@@ -89,7 +89,7 @@ impl Owner {
         Ok(())
     }
 
-    /// The human answered the question about `waits`: the round machine gives the lead one more fix pass.
+    /// The human answered the question about `waits`: the round machine starts a renewed fix budget.
     pub(super) fn start_pass_after_answer(
         &mut self,
         team_id: &TeamId,
@@ -139,6 +139,9 @@ impl Owner {
                 team: team_id.clone(),
                 item: id,
             })?;
+            if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
+                context.extra_fix_passes = context.extra_fix_passes.saturating_add(policy.fix_passes);
+            }
             let after = ItemPhase::Fixing {
                 assignee: lead.agent.clone(),
                 branch: waits.pr.branch.clone(),

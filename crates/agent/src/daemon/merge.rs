@@ -201,6 +201,14 @@ pub(super) fn after_verdict(
         .findings()
         .and_then(agent_core::state::Findings::review_count)
         .unwrap_or_default();
+    let extra = progress
+        .findings()
+        .and_then(|ledger| ledger.verification())
+        .map_or(0, |context| context.extra_fix_passes);
+    let policy = RoundPolicy {
+        fix_passes: policy.fix_passes.saturating_add(extra),
+        ..policy
+    };
     Ok(next_of(&state.transition_with_reviews(&event, policy, required)?)?)
 }
 

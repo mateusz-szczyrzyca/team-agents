@@ -223,7 +223,15 @@ impl AutopilotPrompt {
             Self::ReviewFinding => ("harness/review/finding.md", &["reviewer", "report"]),
             Self::ReviewAskHuman => (
                 "harness/review/ask-human.md",
-                &["pr", "passes", "findings", "questions_file", "number", "task"],
+                &[
+                    "pr",
+                    "passes",
+                    "additional_passes",
+                    "findings",
+                    "questions_file",
+                    "number",
+                    "task",
+                ],
             ),
             Self::ReviewFindingsInvalid => ("harness/review/findings-invalid.md", &["line", "reason"]),
             Self::ReviewOpenFindings => ("harness/review/open-findings.md", &["findings"]),

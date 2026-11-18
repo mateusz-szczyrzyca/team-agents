@@ -241,6 +241,17 @@ pub(super) async fn ask_human(
     let values = Variables::new()
         .with("pr", waits.pr.number.to_string())?
         .with("passes", waits.passes.to_string())?
+        .with(
+            "additional_passes",
+            waits
+                .items
+                .first()
+                .and_then(|id| team.item(*id))
+                .and_then(|item| item.findings())
+                .and_then(|ledger| ledger.verification())
+                .map_or(1, |_| ctx.settings.config.review().fix_passes)
+                .to_string(),
+        )?
         .with("findings", findings.join("\n\n"))?
         .with("questions_file", file.display().to_string())?
         .with("number", number.to_string())?
