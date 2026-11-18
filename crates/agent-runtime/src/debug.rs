@@ -29,7 +29,7 @@ use crate::store::Home;
 use crate::text_file::{TextFileError, read_text_file};
 
 /// Observations deferred to the third diagnostic task, never interpreted as empty observations.
-const DEFERRED: &[SummarySection] = &[SummarySection::Notifications, SummarySection::Machine];
+const DEFERRED: &[SummarySection] = &[SummarySection::Machine];
 /// Maximum state file size in bytes.
 const MAX_STATE_BYTES: usize = 16 * 1024 * 1024;
 /// Default inactivity threshold in minutes.
@@ -230,6 +230,7 @@ pub async fn execute_debug_at(
     collection.observe(home, team, status).await?;
     observe_daemon(&mut collection, home, args.daemon_log.as_deref(), team).await;
     observe_bus(&mut collection, home, team).await;
+    observe_notifications(&mut collection, home, team).await;
     let findings = assess(&collection.assessment);
     collection.summary.anomalies = findings
         .iter()
@@ -404,6 +405,32 @@ async fn observe_bus(collection: &mut collect::Collection, home: &Home, team: &a
             .push(agent_core::diagnostic_assessment::ReadFailure {
                 section: SummarySection::Bus,
                 part: "bus messages".to_owned(),
+                reason: crate::process::error_chain(&error),
+            }),
+    }
+}
+
+/// Records readable notifications or records an unreadable failure.
+async fn observe_notifications(collection: &mut collect::Collection, home: &Home, team: &agent_core::state::Team) {
+    match notifications::collect(home, team).await {
+        Ok(Some(notifs)) => {
+            let text = if notifs.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", notifs.join("\n\n"))
+            };
+            collection.add("notifications.txt", text.into_bytes());
+            collection.summary.notifications = notifs;
+        }
+        Ok(None) => {
+            collection.add("notifications.txt", Vec::new());
+        }
+        Err(error) => collection
+            .assessment
+            .unreadable
+            .push(agent_core::diagnostic_assessment::ReadFailure {
+                section: SummarySection::Notifications,
+                part: "notifications".to_owned(),
                 reason: crate::process::error_chain(&error),
             }),
     }
