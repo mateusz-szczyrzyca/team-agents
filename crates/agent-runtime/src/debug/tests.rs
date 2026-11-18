@@ -430,3 +430,33 @@ async fn collects_redacted_team_daemon_log_with_warning_tail() {
     assert!(summary.contains("team-20261117-120000-a1b2 <cut>"), "{summary}");
     assert!(!summary.contains("test-confidential-λ"), "{summary}");
 }
+
+#[tokio::test]
+async fn collects_redacted_bus_messages_in_bundle_and_summary() {
+    let (_dir, home, args) = fixture();
+    let bus_dir = home.root().join("bus");
+    std::fs::create_dir_all(&bus_dir).unwrap();
+    std::fs::write(
+        bus_dir.join("messages.jsonl"),
+        r#"{"id":1,"ts":"2026-11-17 12:00:00","from":"codex-1","to":"all","kind":"chat","text":"token test-confidential-λ in bus"}"#
+            .to_string()
+            + "\n",
+    )
+    .unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    assert!(result.bundle_dir.join("bus.txt").is_file(), "bus.txt must be collected");
+    let bus_text = std::fs::read_to_string(result.bundle_dir.join("bus.txt")).unwrap();
+    assert!(bus_text.contains("<cut>"), "{bus_text}");
+    assert!(!bus_text.contains("test-confidential-λ"), "{bus_text}");
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    let bus_section = summary
+        .split(SummarySection::Bus.heading())
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    assert!(!bus_section.contains("Not collected in this version."), "{bus_section}");
+    assert!(bus_section.contains("<cut>"), "{bus_section}");
+    assert!(!bus_section.contains("test-confidential-λ"), "{bus_section}");
+}
