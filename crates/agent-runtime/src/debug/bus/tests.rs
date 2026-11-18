@@ -173,3 +173,48 @@ async fn retains_full_messages_in_artifact_and_redacts_before_summary_cut() {
         "summary must not leak partial secret prefix, got: {summary_msg}"
     );
 }
+
+#[tokio::test]
+async fn rejects_records_missing_required_fields() {
+    let (_dir, home, team) = fixture();
+    let bus_dir = home.root().join("bus");
+    std::fs::create_dir_all(&bus_dir).unwrap();
+    for field in ["ts", "from", "to", "text"] {
+        let mut message = serde_json::json!({
+            "ts": "2026-11-17 12:00:00", "from": "codex-1", "to": "all", "text": "hello"
+        });
+        message.as_object_mut().unwrap().remove(field);
+        std::fs::write(bus_dir.join("messages.jsonl"), message.to_string()).unwrap();
+        let result = collect(&home, &team, &default_cut()).await;
+        assert!(
+            matches!(result, Err(BusError::Parse { line: 1, .. })),
+            "missing {field}: {result:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn reports_non_utf8_bus_bytes() {
+    let (_dir, home, team) = fixture();
+    std::fs::create_dir_all(home.root().join("bus")).unwrap();
+    std::fs::write(home.root().join("bus/messages.jsonl"), [0xff]).unwrap();
+    assert!(matches!(
+        collect(&home, &team, &default_cut()).await,
+        Err(BusError::Utf8(_))
+    ));
+}
+
+#[tokio::test]
+async fn discards_partial_first_record_when_bus_exceeds_byte_limit() {
+    let (_dir, home, team) = fixture();
+    std::fs::create_dir_all(home.root().join("bus")).unwrap();
+    let tail = r#"{"ts":"2026-11-17 12:00:00","from":"codex-1","to":"all","text":"newest"}"#;
+    let text = format!("{}\n{tail}\n", "x".repeat(usize::try_from(LIMIT).unwrap()));
+    std::fs::write(home.root().join("bus/messages.jsonl"), text).unwrap();
+    let collected = collect(&home, &team, &default_cut()).await.unwrap().unwrap();
+    assert_eq!(
+        collected.artifact_messages,
+        vec!["[2026-11-17 12:00:00] codex-1 → all (chat): newest"]
+    );
+    assert_eq!(collected.summary_messages, collected.artifact_messages);
+}
