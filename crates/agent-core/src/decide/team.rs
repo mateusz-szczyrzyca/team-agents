@@ -771,6 +771,16 @@ normal = ["claude-1"]
 
 /// Whether the requested team leaves too few configured investigators for two disjoint review passes.
 #[must_use]
-pub fn needs_review_rotation_warning(_config: &Config, _agents: &AgentList) -> bool {
-    false
+pub fn needs_review_rotation_warning(config: &Config, agents: &AgentList) -> bool {
+    let outside = config
+        .investigators()
+        .keys()
+        .filter(|investigator| {
+            !agents
+                .as_slice()
+                .iter()
+                .any(|agent| agent.as_str() == investigator.as_str())
+        })
+        .count();
+    outside < config.review().min_first_full_reviews().get().saturating_mul(2)
 }
