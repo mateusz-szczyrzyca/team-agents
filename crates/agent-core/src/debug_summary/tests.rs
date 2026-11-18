@@ -858,3 +858,41 @@ fn summary_shows_single_command_version_when_daemon_unreachable() {
     assert!(summary.contains("- Command version: agent 0.2.0"), "{summary}");
     assert!(!summary.contains("- Daemon version:"), "{summary}");
 }
+
+#[test]
+fn daemon_section_renders_configuration_and_secret_keys() {
+    let mut input = sample_input();
+    input.configuration = Some("agents.toml".into());
+    input.secret_keys = vec!["github_token".into(), "agent_env.API_KEY".into()];
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let daemon_section = summary
+        .split("## Daemon and Versions")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(daemon_section.contains("- Configuration: agents.toml"));
+    assert!(daemon_section.contains("- Secret keys: github_token, agent_env.API_KEY"));
+}
+
+#[test]
+fn unreadable_configuration_preserves_daemon_facts_in_daemon_section() {
+    let mut input = sample_input();
+    input.unreadable_parts.push(UnreadablePartSummary {
+        section: SummarySection::DaemonAndVersions,
+        name: "configuration".into(),
+        reason: "file missing".into(),
+    });
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let daemon_section = summary
+        .split("## Daemon and Versions")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(daemon_section.contains("Could not read configuration: file missing"));
+    assert!(daemon_section.contains("- PID: 12345"));
+    assert!(daemon_section.contains("- Command version: agent 0.1.0"));
+}
