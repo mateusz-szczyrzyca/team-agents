@@ -2110,6 +2110,62 @@ async fn an_api_address_that_would_send_the_token_in_the_clear_is_refused_when_t
 }
 
 #[tokio::test]
+async fn standing_item_notice_survives_restart_and_names_the_last_failed_run() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,work"),
+            normal("claude-1", "fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let notice = rig.notification_with("waits with item 1.1 behind failed member").await;
+    let state = rig.state();
+    let member = state
+        .team(&team)
+        .unwrap()
+        .crew()
+        .roster()
+        .into_iter()
+        .find(|(_, member)| member.task() == &tasks[1])
+        .unwrap()
+        .1;
+    let agent_core::state::RunState::Ended { at, end } = member.runs().last().unwrap().state() else {
+        panic!("the failed member's run ended");
+    };
+    assert!(matches!(
+        end,
+        agent_core::state::RunEnd::Reported {
+            outcome: agent_core::status::RunOutcome::Failed
+        }
+    ));
+    assert!(
+        notice.contains(&format!("its last run ended at {at} with: STATUS: FAILED")),
+        "{notice}"
+    );
+    rig.stop().await.unwrap();
+    rig.start().await;
+    looked_again(&rig).await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+    let notices: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("waits with item 1.1 behind failed member"))
+        .collect();
+    assert_eq!(notices, vec![notice]);
+}
+
+#[tokio::test]
 async fn standing_item_notice_keeps_the_failed_members_last_run_detail() {
     let mut rig = Rig::new(
         &[
