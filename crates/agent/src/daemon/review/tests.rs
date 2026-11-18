@@ -600,7 +600,7 @@ fn a_joined_item_without_fix_passes_does_not_make_a_later_pass_independent() {
     let (state, team, task) = fixed_and_joined_in_review();
     let team = state.team(&team).unwrap();
 
-    assert!(!team.item("1.3".parse().unwrap()).unwrap().fix_passes().is_empty());
-    assert!(team.item("2.1".parse().unwrap()).unwrap().fix_passes().is_empty());
+    assert_ne!(team.item("1.3".parse().unwrap()).unwrap().fix_passes().len(), 0);
+    assert_eq!(team.item("2.1".parse().unwrap()).unwrap().fix_passes().len(), 0);
     assert!(!super::independent_first_review(team, &task));
 }
