@@ -80,7 +80,9 @@ pub(crate) async fn status_active(
         return show_round(connection, round, out).await;
     }
     let (teams, history) = teams(connection, target).await?;
-    write(out, &render_active(&teams, &|task| activity.of(task)), history.as_ref())
+    let told = rounds::told(connection, activity, &teams).await?;
+    let text = render_with(&teams, &|task| activity.of(task), &|round| told.of(round));
+    write(out, &format!("{text}{}", told.unread()), history.as_ref())
 }
 
 /// [`status_active`] without the last activity of the tasks: what the tests of the status ask for.
@@ -112,7 +114,9 @@ pub(crate) async fn status_running(
     let text = if teams.is_empty() {
         NO_OPEN_ROUNDS.to_owned()
     } else {
-        render_active(&teams, &|task| activity.of(task))
+        let told = rounds::told(connection, activity, &teams).await?;
+        let text = render_with(&teams, &|task| activity.of(task), &|round| told.of(round));
+        format!("{text}{}", told.unread())
     };
     write(out, &text, history.as_ref())
 }
@@ -151,8 +155,8 @@ fn write(out: &mut impl Write, text: &str, history: Option<&HistoryHealth>) -> R
     out.flush().map_err(StatusError::Output)
 }
 
-/// Asks the daemon to show the round `round` and writes it to `out`.
-async fn show_round(connection: &mut Connection, round: RoundId, out: &mut impl Write) -> Result<(), StatusError> {
+/// Asks the daemon to show the round `round`.
+async fn round_detail(connection: &mut Connection, round: RoundId) -> Result<RoundDetail, StatusError> {
     let reply = connection
         .request(
             Client::Cli,
@@ -161,9 +165,15 @@ async fn show_round(connection: &mut Connection, round: RoundId, out: &mut impl 
             }),
         )
         .await?;
-    let Reply::Round { round } = reply else {
-        return Err(StatusError::UnexpectedReply { kind: kind_of(&reply) });
-    };
+    match reply {
+        Reply::Round { round } => Ok(*round),
+        other => Err(StatusError::UnexpectedReply { kind: kind_of(&other) }),
+    }
+}
+
+/// Asks the daemon to show the round `round` and writes it to `out`.
+async fn show_round(connection: &mut Connection, round: RoundId, out: &mut impl Write) -> Result<(), StatusError> {
+    let round = round_detail(connection, round).await?;
     out.write_all(render_round(&round).as_bytes())
         .map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)
@@ -193,8 +203,17 @@ pub(crate) fn render(teams: &[TeamSummary]) -> String {
 }
 
 /// The teams as text: a line for each team, and under it a line for each of its tasks, with what `activity` says of each
-/// task that runs after its status.
+/// task that runs after its status; the rounds say nothing beyond their lines.
 pub(crate) fn render_active(teams: &[TeamSummary], activity: &dyn Fn(&TaskId) -> Option<String>) -> String {
+    render_with(teams, activity, &|_| String::new())
+}
+
+/// [`render_active`] with what `rounds` says of each round after its line.
+fn render_with(
+    teams: &[TeamSummary],
+    activity: &dyn Fn(&TaskId) -> Option<String>,
+    rounds: &dyn Fn(&Round) -> String,
+) -> String {
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
     }
@@ -215,7 +234,11 @@ pub(crate) fn render_active(teams: &[TeamSummary], activity: &dyn Fn(&TaskId) ->
             items.approved,
             items.done,
         ));
-        lines.extend(team.rounds.iter().map(|round| format!("  {}", round_line(round))));
+        lines.extend(
+            team.rounds
+                .iter()
+                .map(|round| format!("  {}{}", round_line(round), rounds(round))),
+        );
         for member in &team.members {
             let waiting = member.open_question.map_or_else(String::new, |number| {
                 format!(", questions number {number} wait for answers")
@@ -314,6 +337,8 @@ const NO_TEAMS: &str = "no teams\n";
 
 /// What `agent status --running` writes when no round goes on.
 const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
+
+mod rounds;
 
 #[cfg(test)]
 #[path = "status/history/tests.rs"]
