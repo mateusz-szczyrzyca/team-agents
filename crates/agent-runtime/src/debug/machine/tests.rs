@@ -32,11 +32,11 @@ fn test_now() -> Timestamp {
     "2026-11-18T12:00:00Z".parse::<Timestamp>().expect("valid timestamp")
 }
 
-fn write_proc_stat(proc_dir: &Path, pid: u32, ppid: u32) {
+fn write_proc_stat(proc_dir: &Path, pid: u32, parent_pid: u32) {
     let pid_dir = proc_dir.join(pid.to_string());
     fs::create_dir_all(&pid_dir).expect("create pid dir");
     // stat: pid (comm) state ppid ... field 22: starttime
-    let stat = format!("{pid} (test_proc) S {ppid} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1000 0\n");
+    let stat = format!("{pid} (test_proc) S {parent_pid} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1000 0\n");
     fs::write(pid_dir.join("stat"), stat).expect("write stat");
 }
 
