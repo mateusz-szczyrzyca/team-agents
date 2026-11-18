@@ -496,7 +496,8 @@ only for an unchanged, checkpointed database; a nonempty WAL or changed file is 
 collection neither creates SQLite side files nor silently excludes committed WAL records.
 
 A third task adds daemon process facts and log collection, bus messages, notifications, configuration with secret
-key names, machine metrics and the fifty newest untracked files. `--daemon-log` is accepted for that extension.
+key names, machine metrics and the fifty newest untracked files. An explicit `--daemon-log` request currently
+returns an unsupported-collection error before any bundle is written.
 Deferred sections explicitly say "Not collected in this version." They are not observations of absence or anomalies.
 
 The pure layer receives observed facts, the collection time and a UTC offset from its caller; this collector uses UTC.
@@ -512,7 +513,8 @@ last three gate outputs for each task are included. If mandatory facts and cut m
 limit, the renderer returns `SummaryError::RequiredFactsTooLarge` instead of omitting facts. Times include UTC
 and the injected local offset; the collection timestamp is the only reference for activity ages.
 The collector retains full details in separate artifacts and retries `RequiredFactsTooLarge` with shorter
-presentation fields, including unreadable-part reasons and commit lists. It fills
+presentation fields, including unreadable-part reasons and commit lists. Secret redaction precedes both
+presentation shortening and renderer byte budgeting, including expansion of short secrets to `<cut>`. It fills
 `diagnostic_assessment::Assessment` once, then maps its
 deduplicated findings and read failures to the presentation input; summary fields are for presentation, not
 a second source of anomaly decisions. A known missing origin ref is deliberately reported as differing from

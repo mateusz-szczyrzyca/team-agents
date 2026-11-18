@@ -1057,8 +1057,8 @@ History is read without SQLite side files: a nonempty WAL or concurrent database
 failure rather than risking an incomplete history or changing the home. Summary timestamps use UTC.
 
 The summary uses the pure anomaly assessment and stays below 100,000 bytes; full collected details are separate
-artifacts. Deferred sections explicitly say "Not collected in this version." A third task will add daemon process
-facts and logs (`--daemon-log FILE` is accepted for that extension), bus messages, notifications, configuration
+artifacts. Summary redaction precedes truncation and byte budgeting. Deferred sections explicitly say "Not collected in this version." A third task will add daemon process
+facts and logs (`--daemon-log FILE` currently returns an explicit unsupported-collection error), bus messages, notifications, configuration
 and secret key names, machine metrics and the fifty newest untracked files. See the
 [diagnostics design](docs/architecture.md#debug-diagnostics-commands-and-pure-decisions).
 
