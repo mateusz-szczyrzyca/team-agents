@@ -972,7 +972,7 @@ fn bus_and_notifications_sections_coalesce_into_single_tail_preserving_newest_me
         .split("##")
         .next()
         .unwrap();
-    assert!(bus_section.contains("<cut>"), "{bus_section}");
+    assert!(bus_section.contains(CUT_MARKER.trim()), "{bus_section}");
     assert!(
         bus_section.contains("- [2026-11-18 10:00:00] agent-1 → all (chat): message 5999"),
         "{bus_section}"
@@ -985,7 +985,7 @@ fn bus_and_notifications_sections_coalesce_into_single_tail_preserving_newest_me
         .split("##")
         .next()
         .unwrap();
-    assert!(notif_section.contains("<cut>"), "{notif_section}");
+    assert!(notif_section.contains(CUT_MARKER.trim()), "{notif_section}");
     assert!(
         notif_section.contains("- Notification 5999: task active"),
         "{notif_section}"
@@ -1010,7 +1010,7 @@ fn oversized_configuration_is_bounded_by_tail_budget_with_cut_marker() {
         .unwrap();
 
     assert!(daemon_section.contains("- Configuration:"), "{daemon_section}");
-    assert!(daemon_section.contains("<cut>"), "{daemon_section}");
+    assert!(daemon_section.contains(CUT_MARKER.trim()), "{daemon_section}");
     assert!(daemon_section.contains("key = \"value\""), "{daemon_section}");
     assert!(daemon_section.contains("- Secret keys: API_KEY"), "{daemon_section}");
 }
