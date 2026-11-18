@@ -166,6 +166,14 @@ wait_for_peer_review() {
 init
 read_messages
 case $action in
+  held-review)
+    # A test releases each report explicitly, without depending on which reviewer finishes first.
+    mkfifo ".fake-review-result-$n"
+    : > ".fake-review-ready-$n"
+    IFS= read -r -t 30 report < ".fake-review-result-$n"
+    rm ".fake-review-result-$n"
+    result "$report\nSTATUS: DONE"
+    ;;
   turn-limit-quota)
     printf '%s\n' 'quota exhausted' >&2
     printf '{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"%s"}\n' "$session"
