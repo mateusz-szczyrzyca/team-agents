@@ -47,8 +47,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
 
-/// The schema version of the state that this build writes. It reads this version and migrates the one before it
-/// (version 1, which had no rounds).
+/// The schema version this build writes. It also reads version 2 (without findings) and version 1 (without rounds).
 pub const SCHEMA_VERSION: u32 = 3;
 
 /// Largest state text accepted, in bytes: a bound on untrusted input, far above any real state.

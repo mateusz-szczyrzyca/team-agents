@@ -1,7 +1,8 @@
 # THE REVIEWERS STILL ASK FOR CHANGES (pull request #{{pr}})
 
 The team used its {{passes}} fix passes and a reviewer still asks for changes. Change nothing now: the human decides.
-The reports of the reviewers:
+The open findings, with their permanent numbers, precede the reports. Open [BLOCKER] and [MAJOR] findings block
+approval; [MINOR] never does. Name the finding numbers in your questions. The reports of the reviewers:
 
 {{findings}}
 

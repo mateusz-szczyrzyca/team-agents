@@ -233,7 +233,11 @@ impl Owner {
             })?;
             let reviews = match item.phase() {
                 ItemPhase::InReview { reviews, .. } => reviews.clone(),
-                _ => continue,
+                ItemPhase::Pending
+                | ItemPhase::InProgress { .. }
+                | ItemPhase::Fixing { .. }
+                | ItemPhase::Approved { .. }
+                | ItemPhase::Done { .. } => continue,
             };
             let Some(ledger) = item.findings_mut() else {
                 continue;
