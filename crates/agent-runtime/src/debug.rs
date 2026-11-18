@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod activity_tests;
 mod collect;
+mod daemon_log;
 pub(crate) mod history;
 mod process_facts;
 #[cfg(test)]
