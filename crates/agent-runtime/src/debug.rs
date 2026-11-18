@@ -232,6 +232,7 @@ pub async fn execute_debug_at(
     observe_daemon(&mut collection, home, args.daemon_log.as_deref(), team).await;
     observe_bus(&mut collection, home, team).await;
     observe_notifications(&mut collection, home, team).await;
+    observe_config(&mut collection, home, &secrets).await;
     let findings = assess(&collection.assessment);
     collection.summary.anomalies = findings
         .iter()
@@ -434,6 +435,28 @@ async fn observe_notifications(collection: &mut collect::Collection, home: &Home
                 part: "notifications".to_owned(),
                 reason: crate::process::error_chain(&error),
             }),
+    }
+}
+
+/// Records readable configuration and redacted secrets, or records an unreadable failure.
+async fn observe_config(collection: &mut collect::Collection, home: &Home, secrets: &agent_core::config::Secrets) {
+    let secret_names = config::format_secret_names(secrets);
+    collection.add("secrets.toml", secret_names.into_bytes());
+
+    match config::collect_config(home).await {
+        Ok(text) => {
+            collection.add("agents.toml", text.into_bytes());
+        }
+        Err(error) => {
+            collection
+                .assessment
+                .unreadable
+                .push(agent_core::diagnostic_assessment::ReadFailure {
+                    section: SummarySection::CollectionFailures,
+                    part: "configuration".to_owned(),
+                    reason: crate::process::error_chain(&error),
+                });
+        }
     }
 }
 
