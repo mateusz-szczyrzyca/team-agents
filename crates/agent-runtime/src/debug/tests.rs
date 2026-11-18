@@ -559,6 +559,22 @@ async fn not_collected_names_only_machine_metrics_and_untracked_files() {
 }
 
 #[tokio::test]
+async fn diagnostic_bundle_and_summary_have_no_not_collected() {
+    let (_dir, home, args) = fixture();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    assert!(
+        !result.bundle_dir.join("NOT_COLLECTED.txt").exists(),
+        "NOT_COLLECTED.txt must not exist"
+    );
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(
+        !summary.contains("Not collected in this version."),
+        "summary must not contain 'Not collected in this version.': {summary}"
+    );
+    assert!(result.bundle_dir.join("machine.txt").exists(), "machine.txt must exist");
+}
+
+#[tokio::test]
 async fn summary_retains_configuration_across_multibyte_byte_2048_boundary() {
     let (_dir, home, args) = fixture();
     let text = format!("#{}λ\n[notifications]\n", "x".repeat(2046));
