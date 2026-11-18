@@ -125,12 +125,12 @@ fn sample_input() -> SummaryInput {
             swap_total_bytes: Some(4_000_000_000),
             swap_free_bytes: Some(2_000_000_000),
             home_fs: Some(FsUsageSummary {
-                space_percent: 45,
-                inode_percent: 20,
+                space_percent: 45.into(),
+                inode_percent: 20.into(),
             }),
             temp_fs: Some(FsUsageSummary {
-                space_percent: 10,
-                inode_percent: 5,
+                space_percent: 10.into(),
+                inode_percent: 5.into(),
             }),
             daemon_descendants: vec![],
             daemon_descendant_pids: vec![12346, 12347],
@@ -431,8 +431,8 @@ fn format_time_handles_offset_seconds_and_extreme_timestamp_fallback() {
 fn filesystem_values_above_100_percent_render_raw_observed() {
     let mut input = sample_input();
     input.machine.home_fs = Some(FsUsageSummary {
-        space_percent: 105,
-        inode_percent: 110,
+        space_percent: 105.into(),
+        inode_percent: 110.into(),
     });
     let offset = UtcOffset::UTC;
 
@@ -665,12 +665,12 @@ fn machine_section_renders_all_metrics_without_not_collected() {
     input.machine.swap_total_bytes = Some(4_000_000_000);
     input.machine.swap_free_bytes = Some(2_000_000_000);
     input.machine.home_fs = Some(crate::debug_summary::FsUsageSummary {
-        space_percent: 50,
-        inode_percent: 25,
+        space_percent: 50.into(),
+        inode_percent: 25.into(),
     });
     input.machine.temp_fs = Some(crate::debug_summary::FsUsageSummary {
-        space_percent: 10,
-        inode_percent: 5,
+        space_percent: 10.into(),
+        inode_percent: 5.into(),
     });
     input.machine.daemon_descendants = vec![
         DescendantProcessSummary {
