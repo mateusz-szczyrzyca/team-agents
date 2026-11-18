@@ -941,8 +941,10 @@ async fn artifact_failures_use_the_sections_of_the_observed_parts() {
         collection.assessment.unreadable.last().unwrap().section,
         SummarySection::GateRecords
     );
+    let blocked = dir.path().join("not-a-directory");
+    std::fs::write(&blocked, b"file").unwrap();
     collection
-        .tree(dir.path().join("missing"), PathBuf::from("tasks"), member)
+        .tree(blocked.join("child"), PathBuf::from("tasks"), member)
         .await;
     assert_eq!(
         collection.assessment.unreadable.last().unwrap().section,
