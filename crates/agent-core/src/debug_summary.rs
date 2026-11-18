@@ -529,16 +529,9 @@ fn write_process_line(out: &mut SummaryWriter, label: &str, value: &str) {
     write_line(out, "");
 }
 
-fn render_daemon(
-    daemon: Option<&DaemonSummary>,
-    daemon_process_unreadable: bool,
-    command_version: &str,
-    configuration: Option<&str>,
-    secret_keys: &[String],
-    offset: UtcOffset,
-    out: &mut SummaryWriter,
-) {
-    if let Some(d) = daemon {
+fn render_daemon(input: &SummaryInput, offset: UtcOffset, out: &mut SummaryWriter) {
+    let command_version = &input.command_version;
+    if let Some(d) = &input.daemon {
         write_line(out, &format!("- PID: {}", d.pid));
         if let Some(started) = d.started_at {
             write_line(out, &format!("- Started: {}", format_time(started, offset)));
@@ -552,13 +545,17 @@ fn render_daemon(
         write_process_line(out, "- Command line: ", &d.cmdline.join(" "));
         write_process_line(out, "- Environment variables: ", &d.env_var_names.join(", "));
     } else {
-        if !daemon_process_unreadable {
+        if !input
+            .unreadable_parts
+            .iter()
+            .any(|part| part.section == SummarySection::DaemonAndVersions && part.name == "daemon process")
+        {
             write_line(out, "The daemon does not answer (unreachable).");
         }
         write_process_line(out, "- Command version: ", command_version);
     }
 
-    if let Some(conf) = configuration {
+    if let Some(conf) = &input.configuration {
         if conf.contains('\n') {
             write_line(out, "- Configuration:");
             let mut text = String::new();
@@ -572,8 +569,8 @@ fn render_daemon(
             write_process_line(out, "- Configuration: ", conf);
         }
     }
-    if !secret_keys.is_empty() {
-        write_process_line(out, "- Secret keys: ", &secret_keys.join(", "));
+    if !input.secret_keys.is_empty() {
+        write_process_line(out, "- Secret keys: ", &input.secret_keys.join(", "));
     }
     write_line(out, "");
 }
@@ -1051,19 +1048,7 @@ fn render_with_redaction(
         match section {
             SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
             SummarySection::DaemonAndVersions => {
-                let daemon_process_unreadable = input
-                    .unreadable_parts
-                    .iter()
-                    .any(|part| part.section == SummarySection::DaemonAndVersions && part.name == "daemon process");
-                render_daemon(
-                    input.daemon.as_ref(),
-                    daemon_process_unreadable,
-                    &input.command_version,
-                    input.configuration.as_deref(),
-                    &input.secret_keys,
-                    offset,
-                    &mut out,
-                );
+                render_daemon(input, offset, &mut out);
             }
             SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut out),
             SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut out),
