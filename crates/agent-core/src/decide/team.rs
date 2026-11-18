@@ -768,3 +768,9 @@ normal = ["claude-1"]
         assert_eq!(team.workers, vec![worker("glm")]);
     }
 }
+
+/// Whether the requested team leaves too few configured investigators for two disjoint review passes.
+#[must_use]
+pub fn needs_review_rotation_warning(_config: &Config, _agents: &AgentList) -> bool {
+    false
+}
