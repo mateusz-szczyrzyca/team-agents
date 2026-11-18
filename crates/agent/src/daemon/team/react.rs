@@ -175,16 +175,15 @@ pub(in crate::daemon) fn notice_for(
                 message: end_of(message.unwrap_or_default()),
             },
         },
-        RunEnd::NoStatus { .. } | RunEnd::TurnLimit if member.status() == TaskStatus::Failed => {
-            match worked_on(team, member) {
-                Some((item, branch)) => BusNotice::MemberNoStatusItem {
-                    member: who,
-                    item,
-                    branch,
-                },
-                None => BusNotice::MemberNoStatus { member: who },
-            }
-        }
+        RunEnd::NoStatus { .. } if member.status() == TaskStatus::Failed => match worked_on(team, member) {
+            Some((item, branch)) => BusNotice::MemberNoStatusItem {
+                member: who,
+                item,
+                branch,
+            },
+            None => BusNotice::MemberNoStatus { member: who },
+        },
+        RunEnd::TurnLimit if member.status() == TaskStatus::Failed => BusNotice::MemberNoStatus { member: who },
         RunEnd::Reported { .. }
         | RunEnd::QuotaExhausted { .. }
         | RunEnd::RateLimited
