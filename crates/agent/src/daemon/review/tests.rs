@@ -538,3 +538,69 @@ fn removing_the_first_verdict_preserves_every_other_report_byte() {
         assert_eq!(super::report_without_verdict(report), expected);
     }
 }
+
+/// The fixture's team with item 1.3 in review after a fix pass, and item 2.1 joined to the same pull request with the
+/// same pending review and no fix pass of its own; both carry an independent-review ledger.
+fn fixed_and_joined_in_review() -> (
+    agent_core::state::State,
+    agent_core::ids::TeamId,
+    agent_core::ids::TaskId,
+) {
+    use agent_core::config::ReviewCount;
+    use agent_core::state::{Findings, ItemPhase, Review, ReviewOutcome, State};
+
+    let mut state = State::from_json(include_str!(
+        "../../../../agent-core/tests/fixtures/state-before-findings.json"
+    ))
+    .unwrap();
+    let team = state.teams()[0].id().clone();
+    let (fixed, joined): (agent_core::ids::ItemId, agent_core::ids::ItemId) =
+        ("1.3".parse().unwrap(), "2.1".parse().unwrap());
+    let (pr, pending) = match state.team(&team).unwrap().item(fixed).unwrap().phase() {
+        ItemPhase::InReview { pr, reviews } => (
+            pr.clone(),
+            reviews
+                .iter()
+                .find(|review| matches!(review.outcome, ReviewOutcome::Pending))
+                .unwrap()
+                .clone(),
+        ),
+        _ => panic!("the fixture item is in review"),
+    };
+    let ledger = Findings::independent(ReviewCount::try_from(2).unwrap());
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        let mut fixing = found.item_mut(fixed).unwrap();
+        fixing.start_findings();
+        *fixing.findings_mut().unwrap() = ledger.clone();
+        let mut item = found.item_mut(joined).unwrap();
+        item.advance(ItemPhase::InProgress {
+            assignee: "inv-opus".parse().unwrap(),
+            branch: pr.branch.clone(),
+        })
+        .unwrap();
+        item.advance(ItemPhase::InReview {
+            pr,
+            reviews: Vec::new(),
+        })
+        .unwrap();
+        item.ask_reviews(vec![Review {
+            outcome: ReviewOutcome::Pending,
+            ..pending.clone()
+        }])
+        .unwrap();
+        item.start_findings();
+        *item.findings_mut().unwrap() = ledger;
+    }
+    (state, team, pending.task)
+}
+
+#[test]
+fn a_joined_item_without_fix_passes_does_not_make_a_later_pass_independent() {
+    let (state, team, task) = fixed_and_joined_in_review();
+    let team = state.team(&team).unwrap();
+
+    assert_ne!(team.item("1.3".parse().unwrap()).unwrap().fix_passes().len(), 0);
+    assert_eq!(team.item("2.1".parse().unwrap()).unwrap().fix_passes().len(), 0);
+    assert!(!super::independent_first_review(team, &task));
+}

@@ -173,7 +173,7 @@ mod story_text {
             "fix pass 1 of 5 on #7 started\n",
             "pull request #7: pushed 3333333\n",
             "review pass 2 of #7 by inv-c: APPROVE\n",
-            "pull request #7 approved by both reviews\n",
+            "pull request #7 approved by all reviews\n",
             "pull request #7 merged as 4444444\n",
             "round {round} closed: merged\n",
         ];

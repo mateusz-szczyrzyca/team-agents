@@ -40,6 +40,9 @@ pub struct RecordedFinding {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(try_from = "FindingsWire")]
 pub struct Findings {
+    /// The independent protocol's pass size; absent on pull requests opened before its introduction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    review_count: Option<crate::config::ReviewCount>,
     /// Findings, in permanent-number order; private so that only [`Findings::new`], the loader and
     /// [`Findings::finish`] can set the numbers.
     entries: Vec<RecordedFinding>,
@@ -53,6 +56,9 @@ pub struct Findings {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FindingsWire {
+    /// See [`Findings::review_count`]; absence retains the previous protocol.
+    #[serde(default)]
+    review_count: Option<crate::config::ReviewCount>,
     /// See [`Findings::entries`].
     entries: Vec<RecordedFinding>,
     /// See [`Findings`]; absent when no report waits.
@@ -80,6 +86,7 @@ impl TryFrom<FindingsWire> for Findings {
         let mut ledger = Self::new(wire.entries)?;
         ledger.pending = wire.pending;
         ledger.comment = wire.comment;
+        ledger.review_count = wire.review_count;
         Ok(ledger)
     }
 }
@@ -96,6 +103,21 @@ pub enum FindingNumbersExhausted {
 }
 
 impl Findings {
+    /// Starts an independent review protocol with the configured pass size.
+    #[must_use]
+    pub fn independent(count: crate::config::ReviewCount) -> Self {
+        Self {
+            review_count: Some(count),
+            ..Self::default()
+        }
+    }
+
+    /// The pass size frozen at publication; absent for rounds using the previous protocol.
+    #[must_use]
+    pub const fn review_count(&self) -> Option<crate::config::ReviewCount> {
+        self.review_count
+    }
+
     /// A ledger holding `entries`, with no report waiting and no comment yet.
     ///
     /// # Errors
@@ -111,6 +133,7 @@ impl Findings {
             }
         }
         Ok(Self {
+            review_count: None,
             entries,
             pending: BTreeMap::new(),
             comment: None,

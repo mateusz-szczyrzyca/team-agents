@@ -47,7 +47,7 @@ STATUS: DONE
       uncommitted: added .fake-runs (+<n> -<n>)
 <time>  pull request #1 opened: branch agents/claude-1/<task-4>-1.1 at <commit-2>
   title: Item 1.1: The first item
-  ----- pull request body (504 bytes) -----
+  ----- pull request body (525 bytes) -----
 Work of the team `<team-2>` on `example`, opened by the harness after the repository's gate passed on this branch
 (passed at [`<commit-2>`](https://github.com/octo/example/commit/<commit-2>)).
 
@@ -65,7 +65,7 @@ Do the first thing in the repository.
 
 ## Reviews
 
-Two investigators from outside the team review this pull request. Their reports are posted here as reviews.
+The configured number of investigators from outside the team review this pull request. Their reports are posted here as reviews.
   ----- end of pull request body -----
 <time>  checks before a review found 1 issue at <commit-2>:
   - The round changes production code and adds no line to a test file. Every change of behaviour comes with its test, written first and committed before the code. A change that cannot have its test first (layout, prompt wording, a line of configuration) says so in a commit message: `Test-First: not possible — <reason>`.
@@ -224,7 +224,7 @@ STATUS: DONE
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-8>/runs/<run-10>/mcp.json --max-turns 300 --settings <home>/tasks/<task-8>/runs/<run-10>/claude-settings.json --session-id <uuid> --scenario sleep --as inv-r1 --home <home> <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-8>/runs/<run-10>/mcp.json --max-turns 300 --strict-mcp-config --settings <home>/tasks/<task-8>/runs/<run-10>/claude-settings.json --session-id <uuid> --scenario sleep --as inv-r1 --home <home> <the prompt>
     started <time> in <home>/worktrees/example/<task-8>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -249,7 +249,7 @@ STATUS: SLEEPING
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-9>/runs/<run-11>/mcp.json --max-turns 300 --settings <home>/tasks/<task-9>/runs/<run-11>/claude-settings.json --session-id <uuid> --scenario sleep --as inv-r2 --home <home> <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-9>/runs/<run-11>/mcp.json --max-turns 300 --strict-mcp-config --settings <home>/tasks/<task-9>/runs/<run-11>/claude-settings.json --session-id <uuid> --scenario sleep --as inv-r2 --home <home> <the prompt>
     started <time> in <home>/worktrees/example/<task-9>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model

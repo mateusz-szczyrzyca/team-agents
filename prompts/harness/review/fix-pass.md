@@ -1,6 +1,6 @@
 # THE REVIEWERS ASKED FOR CHANGES (pull request #{{pr}}, fix pass {{pass}} of {{passes}})
 
-Both reviews of your pull request are in, and at least one asks for changes. The reports, each with its verdict:
+All reviews of your pull request are in, and at least one asks for changes. The reports, each with its verdict:
 
 {{findings}}
 

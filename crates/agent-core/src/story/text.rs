@@ -853,7 +853,7 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             entry(page, at, &format!("fix pass {pass} of {of} on #{pr} started"));
             page.raw(2, "findings sent to the team", findings);
         }
-        HistoryEvent::PullApproved { pr } => entry(page, at, &format!("pull request #{pr} approved by both reviews")),
+        HistoryEvent::PullApproved { pr } => entry(page, at, &format!("pull request #{pr} approved by all reviews")),
         HistoryEvent::PullMerged { pr, commit: Some(c) } => {
             entry(page, at, &format!("pull request #{pr} merged as {}", short(c)));
         }

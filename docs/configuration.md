@@ -65,8 +65,8 @@ branch names, file names and unit names. The two tables have the same keys:
 | `args` | array of texts (at most 64, each up to 4096 bytes, no NUL) | `[]` | extra arguments for the CLI, one array element each |
 
 An agent runs one task at a time: add `claude-2` for more parallel work. The investigators review every pull request
-and may coordinate a team. Every pull request gets two reviews from investigators outside the team, so configure at
-least two, and more than the number you put in one team.
+and may coordinate a team. Every pull request gets `[review] min_first_full_reviews` reviews (default two) from investigators outside the team.
+Configure that many outside each team.
 
 ### `[tiers]`
 
@@ -122,6 +122,7 @@ Provider quota exhaustion takes precedence over a turn limit and uses the quota 
 
 | Key | Default | Meaning |
 |---|---|---|
+| `min_first_full_reviews` | `2` | reviews per pass; explicit values below two or above the configured investigator count are refused; team creation requires this many outside investigators |
 | `fix_passes` | `5` | "changes requested" goes back to the team at most this many times; then the human is asked. `0` asks at once |
 | `check_passes` | `2` | the checks before a review ([`[repos.NAME.checks]`](#reposnamechecks)) send a round back to the team at most this many times; then the human is asked. `0` asks at once |
 | `replace_after_minutes` | `15` | a reviewer that is paused this long with its review still to come is replaced by another free investigator; one whose task failed or was stopped is replaced at once. With no investigator free the human is told |

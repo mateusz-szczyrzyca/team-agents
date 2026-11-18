@@ -1,4 +1,4 @@
-//! The round of one item: member work → coordinator integration → gate green at the head → pull request open → two
+//! The round of one item: member work → coordinator integration → gate green at the head → pull request open → independent
 //! reviews → merge (or, with `--no-merge`, handed to the human) → item done. "Changes requested" sends the item back
 //! to the team for a fix pass, at most the configured number of times; after that the human is asked.
 //!
@@ -15,9 +15,8 @@
 
 use std::num::NonZeroU32;
 
-use super::REVIEWS_REQUIRED;
 use super::checks::{Issue, Judge, Subject};
-use crate::config::Review as ReviewConfig;
+use crate::config::{Review as ReviewConfig, ReviewCount};
 use crate::ids::InvestigatorName;
 use crate::state::{CommitId, MergeMode, PhaseKind, PrNumber};
 use crate::status::ReviewVerdict;
@@ -301,6 +300,19 @@ impl RoundState {
     /// take it, [`RoundError::DuplicateReview`], [`RoundError::HeadChanged`] and [`RoundError::OtherPullRequest`]
     /// for data that contradicts what the round knows.
     pub fn transition(&self, event: &RoundEvent, policy: RoundPolicy) -> Result<Step, RoundError> {
+        self.transition_with_reviews(event, policy, ReviewCount::TWO)
+    }
+
+    /// Applies an event using the review count frozen when this pull request opened.
+    ///
+    /// # Errors
+    /// Returns the same event and state errors as [`Self::transition`].
+    pub fn transition_with_reviews(
+        &self,
+        event: &RoundEvent,
+        policy: RoundPolicy,
+        required: ReviewCount,
+    ) -> Result<Step, RoundError> {
         match self {
             Self::MemberWork { stage } => match event {
                 RoundEvent::MemberDone => Ok(Step::to(
@@ -345,7 +357,7 @@ impl RoundState {
                 changes,
             } => match event {
                 RoundEvent::ReviewSubmitted { reviewer, verdict } => {
-                    review(*pr, *passes, approvals, changes, reviewer, *verdict, policy)
+                    review(*pr, *passes, (approvals, changes), reviewer, *verdict, policy, required)
                 }
                 RoundEvent::MemberDone
                 | RoundEvent::GateGreen { .. }
@@ -444,12 +456,13 @@ fn publish(stage: Stage, gated: &CommitId, pr: PrNumber, published: &CommitId) -
 fn review(
     pr: PrNumber,
     passes: u32,
-    approvals: &[InvestigatorName],
-    changes: &[InvestigatorName],
+    previous: (&[InvestigatorName], &[InvestigatorName]),
     reviewer: &InvestigatorName,
     verdict: ReviewVerdict,
     policy: RoundPolicy,
+    required: ReviewCount,
 ) -> Result<Step, RoundError> {
+    let (approvals, changes) = previous;
     if approvals.contains(reviewer) || changes.contains(reviewer) {
         return Err(RoundError::DuplicateReview {
             reviewer: reviewer.clone(),
@@ -461,7 +474,7 @@ fn review(
         ReviewVerdict::RequestChanges => changes.push(reviewer.clone()),
     }
     // The pass is decided when every review is in: the verdicts may differ, and the team gets all the findings at once.
-    if approvals.len().saturating_add(changes.len()) < REVIEWS_REQUIRED {
+    if approvals.len().saturating_add(changes.len()) < required.get() {
         return Ok(Step::to(
             RoundState::InReview {
                 pr,

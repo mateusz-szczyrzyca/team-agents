@@ -2445,3 +2445,170 @@ async fn an_open_minor_finding_does_not_prevent_merging_and_stays_in_the_table()
     assert!(tables[0].contains("MINOR") && tables[0].contains("open"));
     rig.stop().await.unwrap();
 }
+
+/// A held fake reviewer starts with a real adapter-generated MCP file.
+async fn held_review_mcp(rig: &Rig, task: &agent_core::ids::TaskId, pass: u32) -> serde_json::Value {
+    let tree = rig.worktree(task);
+    rig.wait_for("held reviewer ready", || {
+        tree.join(format!(".fake-review-ready-{pass}")).is_file()
+    })
+    .await;
+    let args = std::fs::read_to_string(tree.join(format!(".fake-args-{pass}"))).unwrap();
+    let path = args.lines().skip_while(|line| *line != "--mcp-config").nth(1).unwrap();
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// Sends an encoded report to a held fake reviewer.
+fn release_review(rig: &Rig, task: &agent_core::ids::TaskId, pass: u32, report: &str) {
+    std::fs::write(
+        rig.worktree(task).join(format!(".fake-review-result-{pass}")),
+        format!("{report}\n"),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn independent_three_review_pass_holds_reports_and_has_no_bus() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", "held-review"),
+            investigator("inv-r2", "held-review"),
+            investigator("inv-r3", "held-review"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[review]", "[review]\nmin_first_full_reviews = 3"),
+    )
+    .unwrap();
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let state = rig
+        .state_where("three reviews asked", |state| {
+            state
+                .team(&team)
+                .and_then(|team| team.item("1.1".parse().unwrap()))
+                .is_some_and(|item| matches!(item.phase(), ItemPhase::InReview { reviews, .. } if reviews.len() >= 2))
+        })
+        .await;
+    let ItemPhase::InReview { reviews, .. } = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap().phase()
+    else {
+        panic!("review phase")
+    };
+    assert_eq!(reviews.len(), 3);
+    for review in reviews {
+        let mcp = held_review_mcp(&rig, &review.task, 1).await;
+        assert_eq!(mcp["mcpServers"].get("agentbus"), None);
+        let prompt = rig.prompt(&review.task, 1).await;
+        assert!(prompt.contains("Read no other review"), "{prompt}");
+    }
+    // Finish in reverse request order; publication must still follow request order.
+    for (index, review) in reviews.iter().rev().enumerate() {
+        release_review(
+            &rig,
+            &review.task,
+            1,
+            "VERDICT: APPROVE\\nFINDINGS\\n1. [MINOR] DOC-3 src/lib.rs:1 — wording → clarify\\n   CHECK: read src/lib.rs:1",
+        );
+        rig.state_where("verdict recorded", |state| {
+            state
+                .team(&team)
+                .and_then(|team| team.item("1.1".parse().unwrap()))
+                .is_some_and(|item| match item.phase() {
+                    ItemPhase::InReview { reviews, .. } => {
+                        reviews
+                            .iter()
+                            .filter(|r| matches!(r.outcome, ReviewOutcome::Submitted { .. }))
+                            .count()
+                            == index + 1
+                    }
+                    ItemPhase::Approved { .. } => index == 2,
+                    _ => false,
+                })
+        })
+        .await;
+        looked_again(&rig).await;
+        if index < 2 {
+            assert_eq!(rig.github.reviews(1), Vec::<serde_json::Value>::new());
+            assert_eq!(rig.github.comments(1), Vec::<String>::new());
+            assert_eq!(rig.runs(&tasks[0]), 1);
+        }
+    }
+    rig.wait_for("all reports published", || {
+        rig.github.reviews(1).len() == 3 && rig.github.comments(1).len() == 1
+    })
+    .await;
+    let published = rig.github.reviews(1);
+    for (review, body) in reviews.iter().zip(published) {
+        assert!(body["body"].as_str().unwrap().contains(review.reviewer.as_str()));
+    }
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn later_pass_reviewers_keep_the_bus_and_publish_without_waiting_for_peers() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", "held-review"),
+            investigator("inv-r2", "held-review"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let state = rig
+        .state_where("first pass", |state| {
+            state
+                .team(&team)
+                .and_then(|team| team.item("1.1".parse().unwrap()))
+                .is_some_and(|item| matches!(item.phase(), ItemPhase::InReview { reviews, .. } if reviews.len() == 2))
+        })
+        .await;
+    let ItemPhase::InReview { reviews, .. } = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap().phase()
+    else {
+        panic!("review phase")
+    };
+    for (index, review) in reviews.iter().enumerate() {
+        held_review_mcp(&rig, &review.task, 1).await;
+        let report = if index == 0 {
+            "VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] ERR-3 src/lib.rs:1 — broken → fix\\n   CHECK: read src/lib.rs:1"
+        } else {
+            "VERDICT: APPROVE"
+        };
+        release_review(&rig, &review.task, 1, report);
+    }
+    for review in reviews {
+        let mcp = held_review_mcp(&rig, &review.task, 2).await;
+        assert!(mcp["mcpServers"].get("agentbus").is_some());
+        let prompt = rig.prompt(&review.task, 2).await;
+        assert!(!prompt.contains("Read no other review"), "{prompt}");
+        assert!(prompt.contains("1. [MAJOR] ERR-3 src/lib.rs:1"), "{prompt}");
+    }
+    release_review(&rig, &reviews[0].task, 2, "VERDICT: APPROVE\\nFINDING 1: RESOLVED");
+    rig.wait_for("later report published immediately", || {
+        rig.github.reviews(1).len() == 3
+    })
+    .await;
+    rig.state_where("one peer still pending", |state| {
+        state
+            .team(&team)
+            .and_then(|team| team.item("1.1".parse().unwrap()))
+            .is_some_and(|item| {
+                matches!(item.phase(), ItemPhase::InReview { reviews: current, .. }
+                    if current.iter().filter(|r| matches!(r.outcome, ReviewOutcome::Pending)).count() == 1)
+            })
+    })
+    .await;
+    release_review(&rig, &reviews[1].task, 2, "VERDICT: APPROVE\\nFINDING 1: RESOLVED");
+    rig.item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
+        .await;
+    rig.stop().await.unwrap();
+}

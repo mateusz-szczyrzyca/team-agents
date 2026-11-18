@@ -7,7 +7,7 @@
 //! - The coordinator is the explicit one — `--coordinator`, which wins over the task list's `Coordinator:` line —;
 //!   otherwise an investigator of the team (drawn among two or more); otherwise a normal agent, drawn. A worker never
 //!   coordinates and never takes items: it serves `delegate` requests, the first free one in the configured order.
-//! - Every pull request gets [`REVIEWS_REQUIRED`] reviews from investigators outside the team, so a team that leaves
+//! - Every pull request gets the configured number of reviews from investigators outside the team, so a team that leaves
 //!   fewer configured investigators outside it is refused.
 //!
 //! The checks run in this order and the first fault found is the one reported: every requested agent is configured;
@@ -16,7 +16,6 @@
 
 use rand::{Rng, RngExt};
 
-use super::REVIEWS_REQUIRED;
 use crate::config::Config;
 use crate::ids::AgentName;
 use crate::protocol::AgentList;
@@ -226,19 +225,17 @@ fn draw<'a>(mut candidates: impl Iterator<Item = &'a Participant>, rng: &mut imp
 /// Checks that the investigators the team does not have are enough for the reviews of its pull requests.
 fn check_reviewers(in_team: usize, config: &Config) -> Result<(), TeamPlanError> {
     let configured = config.investigators().len();
-    if configured.saturating_sub(in_team) >= REVIEWS_REQUIRED {
+    let required = config.review().min_first_full_reviews().get();
+    if configured.saturating_sub(in_team) >= required {
         return Ok(());
     }
     if in_team == 0 {
-        return Err(TeamPlanError::TooFewInvestigators {
-            configured,
-            required: REVIEWS_REQUIRED,
-        });
+        return Err(TeamPlanError::TooFewInvestigators { configured, required });
     }
     Err(TeamPlanError::TooManyInvestigators {
         in_team,
         configured,
-        required: REVIEWS_REQUIRED,
+        required,
     })
 }
 

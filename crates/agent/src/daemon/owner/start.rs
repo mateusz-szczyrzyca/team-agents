@@ -590,7 +590,9 @@ fn mcp_servers(
         text(&bus_dir)?,
     ];
     let mut servers = BTreeMap::new();
-    servers.insert(McpServerKind::Agentbus, CommandLine::try_from(words)?);
+    if !crate::daemon::review::independent_first_review(team, task) {
+        servers.insert(McpServerKind::Agentbus, CommandLine::try_from(words)?);
+    }
     if let Some(serena) = &binaries.serena {
         let words = vec![
             text(serena.as_path())?,

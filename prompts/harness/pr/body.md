@@ -5,4 +5,4 @@ Work of the team `{{team}}` on `{{repo}}`, opened by the harness after the repos
 
 ## Reviews
 
-Two investigators from outside the team review this pull request. Their reports are posted here as reviews.
+The configured number of investigators from outside the team review this pull request. Their reports are posted here as reviews.

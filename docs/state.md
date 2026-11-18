@@ -29,7 +29,7 @@ The state is one JSON document, written indented with a newline at the end, the 
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "teams": [ { "id": "team-20261111-193000-a1b2", "...": "..." } ]
 }
 ```
@@ -40,11 +40,14 @@ A state of version 2, as `main` wrote it before the findings, is
 reviewers with a merged round and an open one, one solo that does not merge by itself with an approved round, one on a
 list without items — with the runs that name the rounds. A test loads it; **it must keep loading** — a later build
 that cannot read it would lose the teams of an installation. A state of version 3 with findings is written and read
-back by the tests of the `findings` module.
+back by the tests of the `findings` module. The previous daemon's state is also kept in
+[`state-before-independent-reviews.json`](../crates/agent-core/tests/fixtures/state-before-independent-reviews.json).
+Version 3 migrates without enabling independent reviews: its active PRs keep two reviewers, the bus and immediate
+publication. New PRs freeze the configured `review_count` in their ledger.
 
 [`state-v1.json`](../crates/agent-core/tests/fixtures/state-v1.json) is a state of version 1, which had no rounds. It
 **must keep loading**: it is read through the migration (below) as exactly
-[`state-v1-as-v3.json`](../crates/agent-core/tests/fixtures/state-v1-as-v3.json), every time.
+[`state-v1-as-v3.json`](../crates/agent-core/tests/fixtures/state-v1-as-v3.json), with only the schema version advanced to 4, every time.
 
 ### Reading and its rules
 
@@ -56,8 +59,8 @@ back by the tests of the `findings` module.
   as one that was built through the API. There is one way to read a value, the `Deserialize` trait: the field-by-field
   reading that serde derives lives on a private mirror type (`remote`), so no public `T::deserialize` skips the checks.
 - **Versioned.** `State::from_json` reads `schema_version` **first**. A state of another version is refused with
-  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 3,
-  reads versions 2 and 3 and migrates version 1 as it reads it (see "Version 1" below); any other version is
+  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 4,
+  migrates versions 1, 2 and 3 as it reads them (see "Version 1" below); any other version is
   refused. Version 2 is read as it is: its items have no `findings`, so a round that was open when the daemon was
   updated ends by the rules it started with (verdicts only), and the numbered findings hold for pull requests opened
   after the update. A change that old files do not satisfy raises the version and comes with a migration, a fixture of the old
@@ -164,7 +167,10 @@ pull request in the order the reviews were asked and then the order of the repor
 the review `pass` and the `status` (`open` or `resolved`). `comment` is the id of the harness's one comment on the pull
 request, with the table of the findings, which is edited in place; reports that wait for the rest of their pass are
 kept there until the pass is complete. A finding is resolved when every reviewer of a later pass says so. The numbers are exactly 1, 2, … in order; a state whose ledger has a duplicate, a gap or another order is refused when read. An item
-without `findings` belongs to a round opened by an earlier daemon.
+without `findings` belongs to a round opened by an earlier daemon. The optional `review_count` is at least two:
+when present it freezes the number of reviews per pass and enables independent first-pass reviews. When absent the
+PR retains the preceding protocol. Pending first-pass reports survive daemon restarts and wait for all verdicts
+before publication.
 
 The table is `PhaseKind::successors`; every change in it is a change `ItemStatus` allows, and every change `ItemStatus`
 allows is in it (two tests). The phase `fixing` exists so that the pull request survives a fix pass. Leaving

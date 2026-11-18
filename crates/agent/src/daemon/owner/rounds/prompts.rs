@@ -357,6 +357,9 @@ pub(super) async fn review_request(
         .with("head", head.as_str())?
         .with("pass", verification.pass.to_string())?;
     let mut sections = vec![texts.render(AutopilotPrompt::ReviewRequest, &values)?];
+    if crate::daemon::review::independent_first_review(team, task) {
+        sections.push(texts.render(AutopilotPrompt::ReviewIndependent, &Variables::new())?);
+    }
     if verification.pass > 1 && verification.findings.is_some() {
         let values = Variables::new().with("findings", super::findings::open_text(texts, verification.findings)?)?;
         sections.push(texts.render(AutopilotPrompt::ReviewOpenFindings, &values)?);
