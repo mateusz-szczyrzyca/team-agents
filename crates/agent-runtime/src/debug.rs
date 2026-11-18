@@ -27,7 +27,6 @@ use crate::text_file::{TextFileError, read_text_file};
 
 /// Observations deferred to the third diagnostic task, never interpreted as empty observations.
 const DEFERRED: &[SummarySection] = &[
-    SummarySection::DaemonAndVersions,
     SummarySection::DaemonLog,
     SummarySection::Bus,
     SummarySection::Notifications,
@@ -188,7 +187,7 @@ pub async fn execute_debug(
     home: &Home,
     args: DebugArgs,
     status: Option<Result<String, String>>,
-    _out: &mut impl Write,
+    out: &mut impl Write,
 ) -> Result<DebugResult, DebugRuntimeError> {
     execute_debug_at(
         home,
@@ -198,7 +197,7 @@ pub async fn execute_debug(
             local_offset: time::UtcOffset::UTC,
             checkout: None,
         },
-        _out,
+        out,
     )
     .await
 }
@@ -228,6 +227,26 @@ pub async fn execute_debug_at(
         Duration::from_secs(args.stale_minutes.unwrap_or(STALE_MINUTES).saturating_mul(60)),
     )?;
     collection.observe(home, team, status).await?;
+    match process_facts::observe(home, std::path::Path::new("/proc")).await {
+        Ok(Some(daemon)) => {
+            collection.assessment.daemon = Some(agent_core::diagnostic_assessment::Daemon::Present {
+                executable_newer: Some(daemon.disk_newer_than_process),
+            });
+            collection.add("daemon-process.txt", format!("{daemon:#?}").into_bytes());
+            collection.summary.daemon = Some(daemon);
+        }
+        Ok(None) => {
+            collection.assessment.daemon = Some(agent_core::diagnostic_assessment::Daemon::Absent);
+            collection.add("daemon-process.txt", b"No process holds the home lock.\n".to_vec());
+        }
+        Err(error) => collection
+            .assessment
+            .unreadable
+            .push(agent_core::diagnostic_assessment::ReadFailure {
+                part: "daemon process".to_owned(),
+                reason: crate::process::error_chain(&error),
+            }),
+    }
     let findings = assess(&collection.assessment);
     collection.summary.anomalies = findings
         .iter()
