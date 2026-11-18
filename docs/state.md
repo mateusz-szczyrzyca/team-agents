@@ -163,7 +163,7 @@ pull request in the order the reviews were asked and then the order of the repor
 (`BLOCKER`, `MAJOR` or `MINOR`), the `rule` ID, the `place`, the `text`, the `check`, the `reporter` (the investigator),
 the review `pass` and the `status` (`open` or `resolved`). `comment` is the id of the harness's one comment on the pull
 request, with the table of the findings, which is edited in place; reports that wait for the rest of their pass are
-kept there until the pass is complete. A finding is resolved when every reviewer of a later pass says so. An item
+kept there until the pass is complete. A finding is resolved when every reviewer of a later pass says so. The numbers are exactly 1, 2, … in order; a state whose ledger has a duplicate, a gap or another order is refused when read. An item
 without `findings` belongs to a round opened by an earlier daemon.
 
 The table is `PhaseKind::successors`; every change in it is a change `ItemStatus` allows, and every change `ItemStatus`

@@ -351,6 +351,8 @@ OUT OF SCOPE
 - `CHECK:` is for someone who verifies the finding later without having done your review: the command to run, or
   the lines to read, that show whether it still holds. Concrete and short. Every finding has one, `[MINOR]` too.
   A code block that belongs to a finding goes after its `CHECK:` line.
+- Findings go only in the numbered list under FINDINGS. A line outside it, or an unnumbered line, that starts with a
+  bracketed tag such as `[MAJOR]` is sent back; the contents of fenced code blocks are never read as findings.
 - Number the findings from 1. Where your request gives you open findings with numbers, keep their numbers and
   number your new findings after the highest one given.
 - Group repeats into one finding: `also: a.rs:10, b.rs:22`.

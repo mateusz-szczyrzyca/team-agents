@@ -372,7 +372,7 @@ pending. A report that answers none (a reviewer that was replaced, or woken with
 to its reviewer, with the budget of a report without a verdict, when a finding has another severity or none or no check, when
 the verdict is `APPROVE` and a finding is a `[BLOCKER]` or `[MAJOR]`, when it is `REQUEST_CHANGES` and none is, or, in a pass
 after the first, when it leaves an open finding without its `FINDING n: RESOLVED` / `FINDING n: OPEN — why` line
-(`harness/review/findings-invalid.md` says which line is wrong). The findings of a pull request opened by this build are kept
+(`harness/review/findings-invalid.md` says which line is wrong); a line that looks like a finding outside the numbered list under `FINDINGS` is refused rather than dropped, and fenced code blocks are not read. The findings of a pull request opened by this build are kept
 with its items (`findings`, [`state.md`](state.md)): numbers that never change, counted over the pull request in the order the
 reviews were asked and then the order of the report, and a status, `open` until every reviewer of a later pass says
 `RESOLVED`. A pass is numbered when all its reports are in. The text of a fix pass lists the open findings with number,
