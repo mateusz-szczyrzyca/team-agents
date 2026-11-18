@@ -151,6 +151,11 @@ impl Owner {
                 }
             }
         }
+        if moving.is_empty() {
+            // No fix pass starts (a zero allowance): the lead has nothing new to do, and releasing it on every look would
+            // start it again and again.
+            return Ok(());
+        }
         for id in moving {
             let mut team_mut = self
                 .parts
