@@ -2612,3 +2612,29 @@ async fn later_pass_reviewers_keep_the_bus_and_publish_without_waiting_for_peers
         .await;
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn the_humans_answer_renews_the_entire_configured_fix_budget() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,work,work,ask,work,work,ask"),
+            investigator("inv-r1", CHANGES),
+            investigator("inv-r2", APPROVING),
+        ],
+        2,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let first = rig.kept_prompt(&tasks[0], 4);
+    accept(&rig, &tasks[0], 1).await;
+    rig.prompt(&tasks[0], 6).await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let item = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(item.fix_passes().len(), 4);
+    assert_eq!(item.findings().unwrap().verification().unwrap().extra_fix_passes, 2);
+    assert!(first.contains("2 more fix passes"), "{first}");
+}

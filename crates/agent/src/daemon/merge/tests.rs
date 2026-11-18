@@ -728,3 +728,36 @@ fn an_answer_about_an_item_that_is_not_in_review_is_refused_with_its_phase() {
         })
     );
 }
+
+#[test]
+fn renewed_fix_budget_allows_each_granted_pass_and_then_asks_again() {
+    use agent_core::config::ReviewCount;
+    use agent_core::state::Findings;
+    for (passes, expected) in [
+        (5, Next::FixPass { pass: pass(6) }),
+        (9, Next::FixPass { pass: pass(10) }),
+        (10, Next::AskHuman),
+    ] {
+        let mut team = after_passes(in_review(), passes);
+        {
+            let mut item = team.item_mut(item("1.1")).unwrap();
+            item.start_findings();
+            *item.findings_mut().unwrap() = Findings::verifying(ReviewCount::TWO);
+            item.findings_mut()
+                .unwrap()
+                .verification_mut()
+                .unwrap()
+                .extra_fix_passes = 5;
+        }
+        submit(&mut team, "1.1", 20, ReviewVerdict::Approve, 2000);
+        assert_eq!(
+            after_verdict(
+                team.item(item("1.1")).unwrap(),
+                &reviewer("inv-gemini"),
+                ReviewVerdict::RequestChanges,
+                AUTOPILOT
+            ),
+            Ok(expected)
+        );
+    }
+}
