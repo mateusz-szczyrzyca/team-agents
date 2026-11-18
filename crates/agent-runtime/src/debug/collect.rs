@@ -462,17 +462,31 @@ impl Collection {
         for task in tasks {
             let path = home.worktree_dir(team.repo(), &task);
             match read_git(&path, &task).await {
-                Ok(git) => {
-                    self.add(
-                        PathBuf::from("git").join(format!("{task}.txt")),
-                        format!("{git:#?}").into_bytes(),
-                    );
-                    self.summary.git.push(git);
+                Ok(observation) => {
+                    if task == self.assessment.lead {
+                        self.assessment.lead_git = Some(LeadGit {
+                            tip: observation.facts.tip.clone(),
+                            dirty: observation.dirty,
+                            gate: self
+                                .summary
+                                .gate
+                                .iter()
+                                .find(|gate| gate.task_id == task)
+                                .and_then(|gate| gate.record.clone()),
+                        });
+                    }
+                    self.summary.git.push(observation.facts);
                 }
                 Err(error) => self.failed(format!("worktree {}", escaped_path(&path)), error_chain(&error)),
             }
         }
         self.git_details(home, team).await;
+        for git in &self.summary.git {
+            self.artifacts.push((
+                PathBuf::from("git").join(format!("{}.txt", git.task_id)),
+                format!("{git:#?}").into_bytes(),
+            ));
+        }
     }
 
     async fn git_details(&mut self, home: &Home, team: &Team) {
@@ -520,18 +534,6 @@ impl Collection {
                     origin: Some(git.origin_tip.clone().map_or(Origin::Missing, Origin::Tip)),
                     contained_in_lead: contains,
                 });
-                if task == self.assessment.lead {
-                    self.assessment.lead_git = Some(LeadGit {
-                        tip,
-                        dirty: !git.uncommitted_files.is_empty(),
-                        gate: self
-                            .summary
-                            .gate
-                            .iter()
-                            .find(|gate| gate.task_id == task)
-                            .and_then(|gate| gate.record.clone()),
-                    });
-                }
             }
         }
         self.commits(home, team).await;
@@ -705,9 +707,13 @@ async fn git_capture(path: &Path, args: &[&str]) -> Result<crate::process::Captu
 }
 
 async fn git_text(path: &Path, args: &[&str]) -> Result<String, ObservationError> {
+    String::from_utf8(git_bytes(path, args).await?).map_err(ObservationError::Utf8)
+}
+
+async fn git_bytes(path: &Path, args: &[&str]) -> Result<Vec<u8>, ObservationError> {
     let result = git_capture(path, args).await?;
     match result.exit {
-        ExitReport::Exited { code: 0 } => String::from_utf8(result.stdout.bytes).map_err(ObservationError::Utf8),
+        ExitReport::Exited { code: 0 } => Ok(result.stdout.bytes),
         exit => Err(ObservationError::Git {
             exit,
             stderr: result.stderr.bytes,
@@ -715,11 +721,46 @@ async fn git_text(path: &Path, args: &[&str]) -> Result<String, ObservationError
     }
 }
 
-fn parse_status(_bytes: &[u8]) -> Result<Vec<PathBuf>, ObservationError> {
-    Ok(Vec::new())
+fn parse_status(bytes: &[u8]) -> Result<Vec<PathBuf>, ObservationError> {
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let body = bytes.strip_suffix(&[0]).ok_or(ObservationError::StatusFields)?;
+    let mut records = body.split(|byte| *byte == 0);
+    let mut paths = Vec::new();
+    while let Some(record) = records.next() {
+        let [index, worktree, b' ', path @ ..] = record else {
+            return Err(ObservationError::StatusFields);
+        };
+        if path.is_empty() {
+            return Err(ObservationError::StatusFields);
+        }
+        if [index, worktree]
+            .iter()
+            .any(|status| **status == b'R' || **status == b'C')
+        {
+            records
+                .next()
+                .filter(|source| !source.is_empty())
+                .ok_or(ObservationError::StatusFields)?;
+        }
+        if (*index, *worktree) != (b'?', b'?') {
+            paths.push(PathBuf::from(OsString::from_vec(path.to_vec())));
+        }
+    }
+    Ok(paths)
 }
 
-async fn read_git(path: &Path, task: &TaskId) -> Result<GitWorktreeSummary, ObservationError> {
+/// Worktree facts plus dirtiness including files that git does not track.
+#[derive(Debug)]
+struct GitObservation {
+    /// Details retained in the summary and worktree artifact.
+    facts: GitWorktreeSummary,
+    /// Any status record makes the worktree dirty, including untracked files.
+    dirty: bool,
+}
+
+async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, ObservationError> {
     let branch: BranchName = git_text(path, &["symbolic-ref", "--short", "HEAD"])
         .await?
         .trim()
@@ -744,22 +785,39 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitWorktreeSummary, Obse
     } else {
         Some(origin.trim().parse().map_err(ObservationError::Commit)?)
     };
-    let status = git_text(path, &["status", "--porcelain=v1", "--untracked-files=all"]).await?;
+    let status = git_bytes(path, &["status", "--porcelain=v1", "-z", "--untracked-files=all"]).await?;
+    let published = format!("refs/team-agents/published/{branch}");
+    let reviewed = format!("refs/team-agents/reviewed/{branch}");
     let harness = git_text(
         path,
-        &["for-each-ref", "--format=%(refname) %(objectname)", "refs/team-agents/"],
+        &[
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            &published,
+            &reviewed,
+        ],
     )
     .await?;
-    Ok(GitWorktreeSummary {
-        task_id: task.clone(),
-        branch,
-        tip,
-        origin_tip,
-        commits_over_base: vec![],
-        uncommitted_files: status.lines().map(PathBuf::from).collect(),
-        harness_refs: harness.lines().map(str::to_owned).collect(),
-        lead_contains_tip: None,
-        newest_untracked: vec![],
+    Ok(GitObservation {
+        dirty: !status.is_empty(),
+        facts: GitWorktreeSummary {
+            task_id: task.clone(),
+            branch,
+            tip,
+            origin_tip,
+            commits_over_base: vec![],
+            uncommitted_files: parse_status(&status)?,
+            harness_refs: harness
+                .lines()
+                .filter(|line| {
+                    line.split_once(' ')
+                        .is_some_and(|(name, _)| name == published || name == reviewed)
+                })
+                .map(str::to_owned)
+                .collect(),
+            lead_contains_tip: None,
+            newest_untracked: vec![],
+        },
     })
 }
 
