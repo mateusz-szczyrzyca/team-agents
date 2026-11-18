@@ -865,6 +865,15 @@ async fn unrelated_resume_does_not_clear_blocked_dedup_for_other_failed_members(
         "item 2.1 must not be re-announced on claude-1 resume: {told_2_1:?}"
     );
 
+    rig.wait_for("the second blocked notice for the resumed member", || {
+        rig.notifications()
+            .iter()
+            .filter(|text| text.contains("item 1.1 behind failed member claude-1"))
+            .count()
+            == 2
+    })
+    .await;
+
     // claude-1 failed a second time: 1.1 IS re-announced
     let told_1_1: Vec<_> = rig
         .notifications()
