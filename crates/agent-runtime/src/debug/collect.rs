@@ -217,13 +217,14 @@ impl Collection {
             status: member.status(),
             last_activity: None,
         });
-        self.tree(home.task_dir(id), PathBuf::from("tasks").join(id.as_str()), id)
+        self.tree(home.task_dir(id), PathBuf::from("tasks").join(id.as_str()), member)
             .await;
         self.gate(home, id).await;
         Ok(())
     }
 
-    async fn tree(&mut self, root: PathBuf, destination: PathBuf, task: &TaskId) {
+    async fn tree(&mut self, root: PathBuf, destination: PathBuf, member: &Member) {
+        let task = member.task();
         let mut pending = vec![(root, destination, 0_usize)];
         let mut visited = 0_usize;
         while let Some((source, target, depth)) = pending.pop() {
@@ -234,6 +235,11 @@ impl Collection {
             visited = visited.saturating_add(1);
             let metadata = match tokio::fs::symlink_metadata(&source).await {
                 Ok(value) => value,
+                Err(error)
+                    if depth == 0 && error.kind() == std::io::ErrorKind::NotFound && member.runs().is_empty() =>
+                {
+                    continue;
+                }
                 Err(error) => {
                     self.failed(format!("task artifact {}", escaped_path(&source)), error.to_string());
                     continue;
