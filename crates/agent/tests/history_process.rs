@@ -598,4 +598,105 @@ mod history_process {
         assert_eq!(starts, recorded);
         assert_eq!(starts.len(), 2);
     }
+    /// Captures regular-file bytes and modification times, including SQLite side files.
+    fn diagnostic_snapshot(
+        root: &Path,
+    ) -> std::io::Result<std::collections::BTreeMap<PathBuf, (Vec<u8>, std::time::SystemTime)>> {
+        let mut files = std::collections::BTreeMap::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(directory) = pending.pop() {
+            for entry in std::fs::read_dir(directory)? {
+                let entry = entry?;
+                let kind = entry.file_type()?;
+                let path = entry.path();
+                if kind.is_dir() {
+                    pending.push(path);
+                } else if kind.is_file() {
+                    let relative = path.strip_prefix(root).map_err(std::io::Error::other)?;
+                    files.insert(
+                        relative.to_path_buf(),
+                        (std::fs::read(&path)?, entry.metadata()?.modified()?),
+                    );
+                }
+            }
+        }
+        Ok(files)
+    }
+
+    #[test]
+    fn debug_reads_written_history_and_lock_owner_without_changing_a_running_daemons_home() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut world = World::new("done");
+        std::fs::write(world.home.join("secrets.toml"), "").unwrap();
+        std::fs::set_permissions(world.home.join("secrets.toml"), std::fs::Permissions::from_mode(0o600)).unwrap();
+        world.start();
+        let output = world.agent(&["run", "claude-1", "Diagnose the fixture task."]);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        world.status_where("the task to finish", |status| {
+            status.contains("solo") && status.contains("done")
+        });
+        let state = world.state();
+        let team = state.teams().first().unwrap().id();
+        // Use the existing readiness helper: the event writer can finish just after the status transition.
+        eventually("the final history record", || {
+            Reader::open(&world.home.join("history.db")).is_ok_and(|reader| {
+                reader
+                    .runs_of_team(team)
+                    .is_ok_and(|runs| !runs.is_empty() && runs.iter().all(|run| run.end.is_some()))
+            })
+        });
+        // RunEnd precedes team closure and asynchronous notification delivery. The writer commits
+        // event records before daemon-log records, so wait for both terminal producers' log entries too.
+        eventually("team closure and notification history to be committed", || {
+            use agent_core::history::{HistoryEvent, Record};
+            use agent_core::log::LogEvent;
+
+            Reader::open(&world.home.join("history.db")).is_ok_and(|reader| {
+                let events_ready = reader.team_records(team).is_ok_and(|records| {
+                    records.iter().any(|row| {
+                        matches!(&row.record, Record::Event(event) if matches!(event.event, HistoryEvent::TeamEnded {}))
+                    }) && records.iter().any(|row| {
+                        matches!(&row.record, Record::Event(event) if matches!(event.event, HistoryEvent::Notified { .. }))
+                    })
+                });
+                let logs_ready = reader.daemon_logs_for_team(team).is_ok_and(|logs| {
+                    logs.iter().any(|row| {
+                        row.event() == LogEvent::TeamChanged && row.message() == "a team is finished and closed"
+                    }) && logs.iter().any(|row| row.event() == LogEvent::NotificationSent)
+                });
+                events_ready && logs_ready
+            })
+        });
+        let destination = tempfile::tempdir().unwrap();
+        let before = diagnostic_snapshot(&world.home).unwrap();
+        let pid = world.daemon.as_ref().unwrap().id();
+        let output = world.agent(&[
+            "debug",
+            "--team",
+            team.as_str(),
+            "--out",
+            destination.path().to_str().unwrap(),
+        ]);
+        let after = diagnostic_snapshot(&world.home).unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(
+            before, after,
+            "debug must preserve the home, including database, WAL and SHM bytes"
+        );
+        let bundle = std::fs::read_dir(destination.path())
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let summary = std::fs::read_to_string(bundle.join("SUMMARY.md")).unwrap();
+        let process = std::fs::read_to_string(bundle.join("daemon-process.txt")).unwrap();
+        let history = std::fs::read_to_string(bundle.join("history.txt")).unwrap();
+        assert!(process.contains(&pid.to_string()), "{process}");
+        assert!(!summary.contains("No daemon holds this home."), "{summary}");
+        assert!(history.contains("Finished the work."), "{history}");
+        assert!(summary.contains("Finished the work."), "{summary}");
+        world.end(Signal::TERM);
+    }
 }

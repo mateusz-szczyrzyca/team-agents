@@ -453,7 +453,7 @@ fn debug_removed_worktree_reports_read_failure_and_rest_continues() {
     let summary_path = find_summary(out_dir.path()).unwrap().expect("SUMMARY.md should exist");
     let summary = std::fs::read_to_string(&summary_path).unwrap();
     assert!(
-        summary.contains(&format!("Could not collect worktree {:?}:", member_wt.as_os_str())),
+        summary.contains(&format!("Could not collect worktree {}:", member_wt.display())),
         "summary was: {summary}"
     );
     let bundle = summary_path.parent().unwrap();
@@ -789,10 +789,11 @@ async fn debug_status_preserves_the_daemons_history_health_line() {
 }
 
 #[test]
-fn debug_rejects_deferred_daemon_log_without_writing_a_bundle() {
+fn debug_reports_unreadable_explicit_daemon_log_in_its_bundle() {
     let (_dir, home, _state, team, _lead, _member, _round) = setup_test_home();
     let output = tempfile::tempdir().unwrap();
     let parent = output.path().join("diagnostics");
+    let missing = output.path().join("missing-daemon.log");
     let (code, out, err) = agent(
         &environment(home.root()),
         &[
@@ -800,13 +801,111 @@ fn debug_rejects_deferred_daemon_log_without_writing_a_bundle() {
             "--team",
             team.as_str(),
             "--daemon-log",
-            "daemon.log",
+            missing.to_str().unwrap(),
             "--out",
             parent.to_str().unwrap(),
         ],
     );
-    assert_eq!(code, ExitCode::from(1), "{err}");
-    assert_eq!(out, "");
-    assert_eq!(err, "agent: daemon log collection is not available in this version\n");
-    assert!(!parent.exists());
+    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    assert_eq!(err, "");
+    assert!(out.contains("Debug summary:"), "{out}");
+    let summary = std::fs::read_to_string(find_summary(&parent).unwrap().unwrap()).unwrap();
+    let log = summary
+        .split(agent_core::debug_summary::SummarySection::DaemonLog.heading())
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    assert!(log.contains("Could not read daemon log:"), "{log}");
+    assert!(log.contains(missing.to_str().unwrap()), "{log}");
+    assert!(!log.contains("not found."), "{log}");
+}
+
+#[test]
+fn debug_collects_live_history_from_active_wal_without_modifying_home() {
+    use agent_runtime::history::Store;
+
+    let (_dir, home, _state, team, _lead, member, _round) = setup_test_home();
+    let history_file = home.history_file();
+    let at = "2026-11-18T06:00:00Z".parse().unwrap();
+    let run: agent_core::ids::RunId = "run-20261118-060000-a1b2".parse().unwrap();
+    let task = member;
+    let mut database =
+        agent_runtime::history::HistoryDb::open(&history_file, agent_core::history::MaxTextBytes::default()).unwrap();
+    database
+        .write(&[
+            agent_core::history::Record::Team(Box::new(agent_core::history::TeamStart {
+                team: team.clone(),
+                at,
+                repo: "example".to_owned(),
+                base_branch: "main".parse().unwrap(),
+                merge: agent_core::state::MergeMode::NoMerge,
+                task_list: "Live task list.".to_owned(),
+                plan: Vec::new(),
+            })),
+            agent_core::history::Record::Run(Box::new(agent_core::history::RunStart {
+                run: run.clone(),
+                team: team.clone(),
+                task,
+                at,
+                agent: agent_core::history::AgentIdentity {
+                    name: "codex-1".to_owned(),
+                    tier: agent_core::kinds::Tier::Normal,
+                    cli: agent_core::kinds::CliKind::Codex,
+                    model: None,
+                },
+                role: agent_core::kinds::Role::Member,
+                rounds: vec![],
+                why: agent_core::history::RunWhy::FirstRun,
+                prompt: "Active WAL live prompt".to_owned(),
+                worktree: agent_core::config::AbsolutePath::try_from("/tmp/worktree".to_owned()).unwrap(),
+                branch: "feature".parse().unwrap(),
+                session: None,
+            })),
+            agent_core::history::Record::Step(Box::new(agent_core::history::Step {
+                run: run.clone(),
+                number: std::num::NonZeroU32::MIN,
+                at,
+                event: agent_core::cli::ActivityEvent::Text("Active WAL live step".to_owned()),
+            })),
+            agent_core::history::Record::RunEnd(Box::new(agent_core::history::RunEndRecord {
+                run,
+                at,
+                end: agent_core::state::RunEnd::Stopped,
+                final_message: Some("Active WAL live final message".to_owned()),
+            })),
+        ])
+        .unwrap();
+
+    let wal = home.root().join("history.db-wal");
+    assert!(wal.exists());
+    let before_db = std::fs::read(&history_file).unwrap();
+    let before_wal = std::fs::read(&wal).unwrap();
+
+    let output = tempfile::tempdir().unwrap();
+    let parent = output.path().join("diagnostics");
+    let (code, out, err) = agent(
+        &environment(home.root()),
+        &["debug", "--team", team.as_str(), "--out", parent.to_str().unwrap()],
+    );
+    assert_eq!(code, ExitCode::from(0), "{err}");
+    assert!(out.contains("Debug summary:"), "{out}");
+
+    assert_eq!(std::fs::read(&history_file).unwrap(), before_db);
+    assert_eq!(std::fs::read(&wal).unwrap(), before_wal);
+    drop(database);
+
+    let summary_path = parent
+        .read_dir()
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path()
+        .join("SUMMARY.md");
+    let summary = std::fs::read_to_string(summary_path).unwrap();
+    assert!(summary.contains("Active WAL live prompt"), "{summary}");
+    assert!(summary.contains("Active WAL live step"), "{summary}");
+    assert!(summary.contains("Active WAL live final message"), "{summary}");
 }

@@ -46,3 +46,22 @@ fn preserves_binary_bytes_and_cuts_non_utf8_environment_values() {
     assert_eq!(cut.redact(&[0xff, 0xfe, 0xfd, 0x00]), b"\xff<cut>\x00");
     assert_eq!(cut.redact(&[]), Vec::<u8>::new());
 }
+
+#[test]
+fn review_daemon_redacts_decoded_json_secrets_in_text_and_bytes() {
+    let cut = SecretsCut::new(&Secrets::default(), [("API_KEY".into(), "quote\"secret".into())]);
+    for line in [
+        r#"{"message":"quote\"secret","level":"WARN"}"#,
+        r#"{"message":"\u0071uote\"secret","level":"WARN"}"#,
+    ] {
+        let expected = serde_json::json!({"message": "<cut>", "level": "WARN"});
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&cut.redact_text(line)).unwrap(),
+            expected
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&cut.redact(line.as_bytes())).unwrap(),
+            expected
+        );
+    }
+}

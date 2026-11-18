@@ -117,6 +117,8 @@ pub struct Filesystem {
 /// Failure to read one diagnostic part; already suitable for display and redaction by the caller.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ReadFailure {
+    /// Summary section responsible for the failed observation.
+    pub section: crate::debug_summary::SummarySection,
     /// Part that was unavailable.
     pub part: String,
     /// Human-readable explanation of the failed collection.

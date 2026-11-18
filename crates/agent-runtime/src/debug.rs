@@ -3,6 +3,9 @@
 #[cfg(test)]
 mod activity_tests;
 mod collect;
+mod daemon_log;
+pub(crate) mod history;
+mod process_facts;
 #[cfg(test)]
 mod tests;
 
@@ -12,7 +15,7 @@ use std::time::Duration;
 
 use agent_core::config::{MAX_SECRETS_BYTES, Secrets, SecretsError};
 use agent_core::debug_summary::{
-    SummaryError, SummaryInput, SummarySection, UntrackedCollection, render_redacted_summary,
+    SummaryError, SummaryInput, SummarySection, UntrackedCollection, render_command_summary_with_git_notice,
 };
 use agent_core::diagnostic_assessment::assess;
 use agent_core::ids::{RoundId, TaskId, TeamId};
@@ -25,8 +28,6 @@ use crate::text_file::{TextFileError, read_text_file};
 
 /// Observations deferred to the third diagnostic task, never interpreted as empty observations.
 const DEFERRED: &[SummarySection] = &[
-    SummarySection::DaemonAndVersions,
-    SummarySection::DaemonLog,
     SummarySection::Bus,
     SummarySection::Notifications,
     SummarySection::Machine,
@@ -56,7 +57,7 @@ pub struct DebugArgs {
     pub out: Option<PathBuf>,
     /// Inactivity threshold in minutes; defaults to 120.
     pub stale_minutes: Option<u64>,
-    /// Reserved log path; daemon process and log collection is deferred.
+    /// Optional daemon log path; defaults to the home's `daemon.log`.
     pub daemon_log: Option<PathBuf>,
 }
 
@@ -186,6 +187,30 @@ pub async fn execute_debug(
     home: &Home,
     args: DebugArgs,
     status: Option<Result<String, String>>,
+    out: &mut impl Write,
+) -> Result<DebugResult, DebugRuntimeError> {
+    execute_debug_at(
+        home,
+        args,
+        status,
+        DebugLocation {
+            local_offset: time::UtcOffset::UTC,
+            checkout: None,
+        },
+        out,
+    )
+    .await
+}
+
+/// Collects a diagnostic bundle using the caller's machine presentation context.
+///
+/// # Errors
+/// Returns [`DebugRuntimeError`] for required inputs, rendering or persistence failures.
+pub async fn execute_debug_at(
+    home: &Home,
+    args: DebugArgs,
+    status: Option<Result<String, String>>,
+    location: DebugLocation,
     _out: &mut impl Write,
 ) -> Result<DebugResult, DebugRuntimeError> {
     let secrets = load_debug_secrets(home).await?;
@@ -201,7 +226,11 @@ pub async fn execute_debug(
         now,
         Duration::from_secs(args.stale_minutes.unwrap_or(STALE_MINUTES).saturating_mul(60)),
     )?;
+    collection.cut = cut.clone();
+    collection.checkout = location.checkout;
+    collection.local_offset = location.local_offset;
     collection.observe(home, team, status).await?;
+    observe_daemon(&mut collection, home, args.daemon_log.as_deref(), team).await;
     let findings = assess(&collection.assessment);
     collection.summary.anomalies = findings
         .iter()
@@ -215,6 +244,7 @@ pub async fn execute_debug(
         .unreadable
         .iter()
         .map(|part| agent_core::debug_summary::UnreadablePartSummary {
+            section: part.section,
             name: part.part.clone(),
             reason: part.reason.clone(),
         })
@@ -223,12 +253,17 @@ pub async fn execute_debug(
         "facts.txt",
         format!("{:#?}\n{findings:#?}", collection.assessment).into_bytes(),
     );
-    let summary = compact_summary_with(&collection.summary, |text| {
-        // Replacing valid UTF-8 patterns with ASCII preserves valid UTF-8.
-        cut.redact_text(text)
-    })
+    let summary = compact_summary_with(
+        &collection.summary,
+        location.local_offset,
+        collection.git_notice.as_deref(),
+        |text| {
+            // Replacing valid UTF-8 patterns with ASCII preserves valid UTF-8.
+            cut.redact_text(text)
+        },
+    )
     .map_err(DebugRuntimeError::Summary)?;
-    collection.add("NOT_COLLECTED.txt", b"Not collected in this version: daemon process and log; bus; notifications; configuration and secret key names; machine metrics; newest untracked file metadata.\n".to_vec());
+    collection.add("NOT_COLLECTED.txt", b"Not collected in this version: bus; notifications; configuration and secret key names; machine metrics; newest untracked file metadata.\n".to_vec());
     let parent = args.out.unwrap_or_else(|| home.root().join("debug"));
     collect::persist(
         collection,
@@ -252,16 +287,22 @@ fn short(text: &str, limit: usize) -> String {
 
 #[cfg(test)]
 fn compact_summary(input: &SummaryInput) -> Result<String, SummaryError> {
-    compact_summary_with(input, str::to_owned)
+    compact_summary_with(input, time::UtcOffset::UTC, None, str::to_owned)
 }
 
-fn compact_summary_with(input: &SummaryInput, redact: impl Fn(&str) -> String) -> Result<String, SummaryError> {
-    match render_redacted_summary(
+fn compact_summary_with(
+    input: &SummaryInput,
+    offset: time::UtcOffset,
+    git_notice: Option<&str>,
+    redact: impl Fn(&str) -> String,
+) -> Result<String, SummaryError> {
+    match render_command_summary_with_git_notice(
         input,
-        time::UtcOffset::UTC,
+        offset,
         DEFERRED,
         UntrackedCollection::Deferred,
         &redact,
+        git_notice,
     ) {
         Ok(text) => Ok(text),
         Err(SummaryError::RequiredFactsTooLarge { .. }) => {
@@ -276,14 +317,77 @@ fn compact_summary_with(input: &SummaryInput, redact: impl Fn(&str) -> String) -
                 git.commits_over_base.clear();
                 git.newest_untracked.clear();
             }
-            render_redacted_summary(
+            render_command_summary_with_git_notice(
                 &compact,
-                time::UtcOffset::UTC,
+                offset,
                 DEFERRED,
                 UntrackedCollection::Deferred,
                 &redact,
+                git_notice,
             )
         }
         Err(error) => Err(error),
     }
+}
+
+/// Records readable daemon facts and marks each failed observation in its own section.
+async fn observe_daemon(
+    collection: &mut collect::Collection,
+    home: &Home,
+    daemon_log: Option<&std::path::Path>,
+    team: &agent_core::state::Team,
+) {
+    match process_facts::observe(home, std::path::Path::new("/proc")).await {
+        Ok(Some(daemon)) => {
+            collection.assessment.daemon = Some(agent_core::diagnostic_assessment::Daemon::Present {
+                executable_newer: Some(daemon.disk_newer_than_process),
+            });
+            collection.add_daemon(daemon);
+        }
+        Ok(None) => {
+            collection.assessment.daemon = Some(agent_core::diagnostic_assessment::Daemon::Absent);
+            collection.add("daemon-process.txt", b"No process holds the home lock.\n".to_vec());
+        }
+        Err(error) => collection
+            .assessment
+            .unreadable
+            .push(agent_core::diagnostic_assessment::ReadFailure {
+                section: SummarySection::DaemonAndVersions,
+                part: "daemon process".to_owned(),
+                reason: crate::process::error_chain(&error),
+            }),
+    }
+    match daemon_log::collect(home, daemon_log, team).await {
+        Ok(lines) => {
+            let text = lines.as_ref().map_or_else(
+                || "Daemon log not found.\n".to_owned(),
+                |lines| {
+                    if lines.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{}\n", lines.join("\n"))
+                    }
+                },
+            );
+            collection.add("daemon-log.txt", text.into_bytes());
+            collection.summary.daemon_log_lines = lines;
+        }
+        Err(error) => collection
+            .assessment
+            .unreadable
+            .push(agent_core::diagnostic_assessment::ReadFailure {
+                section: SummarySection::DaemonLog,
+                part: "daemon log".to_owned(),
+                reason: crate::process::error_chain(&error),
+            }),
+    }
+}
+
+/// Machine presentation context captured by the CLI before it starts async workers.
+#[derive(Debug, Clone)]
+pub struct DebugLocation {
+    /// Machine's current offset from UTC.
+    pub local_offset: time::UtcOffset,
+    /// Clone from which diagnostics were requested, when known.
+    pub checkout: Option<PathBuf>,
 }

@@ -7,7 +7,7 @@
 mod tests;
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use time::UtcOffset;
 
 use crate::config::RepoName;
@@ -23,7 +23,7 @@ pub const MAX_SUMMARY_BYTES: usize = 100_000;
 pub const CUT_MARKER: &str = "\n[... cut ...]\n";
 
 /// Fixed section headings in specification order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SummarySection {
     /// 1. The anomalies.
     Anomalies,
@@ -49,6 +49,8 @@ pub enum SummarySection {
     Notifications,
     /// 12. The machine.
     Machine,
+    /// Collection failures without a dedicated section, listed below machine facts.
+    CollectionFailures,
 }
 
 impl SummarySection {
@@ -84,6 +86,7 @@ impl SummarySection {
             Self::Bus => "## Bus Messages",
             Self::Notifications => "## Notifications",
             Self::Machine => "## Machine and Resources",
+            Self::CollectionFailures => "### Unreadable Parts",
         }
     }
 }
@@ -311,6 +314,8 @@ pub struct FsUsageSummary {
 /// An unreadable collection part.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnreadablePartSummary {
+    /// Section responsible for this observation, independent of its display name.
+    pub section: SummarySection,
     /// Name or path of the part.
     pub name: String,
     /// Reason it could not be read.
@@ -318,7 +323,8 @@ pub struct UnreadablePartSummary {
 }
 
 /// Formats a timestamp into human-readable UTC and local time representation.
-fn format_time(ts: Timestamp, offset: UtcOffset) -> String {
+#[must_use]
+pub fn format_time(ts: Timestamp, offset: UtcOffset) -> String {
     let utc = ts.as_utc();
     let (hours, mins, secs) = offset.as_hms();
     let sign = if hours < 0 || mins < 0 || secs < 0 { '-' } else { '+' };
@@ -377,14 +383,40 @@ enum SummaryPart {
     Tail(String),
 }
 
+/// Selects the legacy escaped API or the command's readable paths.
+#[derive(Debug, Default)]
+enum PathPresentation {
+    /// Preserve the original renderer's escaping contract.
+    #[default]
+    Escaped,
+    /// Preserve Unicode text without Rust string delimiters.
+    Plain,
+}
+
 /// Defers text budgets until every mandatory fact has been rendered.
 #[derive(Debug, Default)]
 struct SummaryWriter {
     /// Ordered fragments, including all structural delimiters.
     parts: Vec<SummaryPart>,
+    /// Path spelling for this presentation API.
+    paths: PathPresentation,
 }
 
 impl SummaryWriter {
+    #[expect(
+        clippy::unnecessary_debug_formatting,
+        reason = "the legacy renderer promises Rust path escaping"
+    )]
+    fn path(&self, path: &Path) -> String {
+        match self.paths {
+            PathPresentation::Escaped => format!("{:?}", path.as_os_str()),
+            PathPresentation::Plain => match path.to_str() {
+                Some(text) => text.to_owned(),
+                None => path.as_os_str().as_encoded_bytes().escape_ascii().to_string(),
+            },
+        }
+    }
+
     fn push_str(&mut self, text: &str) {
         self.parts.push(SummaryPart::Required(text.to_owned()));
     }
@@ -478,6 +510,19 @@ fn render_anomalies(anomalies: &[SummaryAnomaly], out: &mut SummaryWriter) {
     }
 }
 
+/// Preserves ordinary process facts while oversized values share the optional tail budget.
+fn write_process_line(out: &mut SummaryWriter, label: &str, value: &str) {
+    /// Maximum process field treated as an intact required fact, in bytes.
+    const INTACT_PROCESS_FIELD_BYTES: usize = 4096;
+    out.push_str(label);
+    if value.len() <= INTACT_PROCESS_FIELD_BYTES {
+        out.push_str(value);
+    } else {
+        out.tail(value);
+    }
+    write_line(out, "");
+}
+
 fn render_daemon(daemon: Option<&DaemonSummary>, offset: UtcOffset, out: &mut SummaryWriter) {
     let Some(d) = daemon else {
         write_line(out, "The daemon does not answer (unreachable).");
@@ -488,13 +533,13 @@ fn render_daemon(daemon: Option<&DaemonSummary>, offset: UtcOffset, out: &mut Su
     if let Some(started) = d.started_at {
         write_line(out, &format!("- Started: {}", format_time(started, offset)));
     }
-    write_line(out, &format!("- Version: {}", d.version));
-    write_line(out, &format!("- Executable: {}", d.exe_path));
+    write_process_line(out, "- Version: ", &d.version);
+    write_process_line(out, "- Executable: ", &d.exe_path);
     if d.disk_newer_than_process {
         write_line(out, "  (Warning: binary on disk is newer than running process)");
     }
-    write_line(out, &format!("- Command line: {}", d.cmdline.join(" ")));
-    write_line(out, &format!("- Environment variables: {}", d.env_var_names.join(", ")));
+    write_process_line(out, "- Command line: ", &d.cmdline.join(" "));
+    write_process_line(out, "- Environment variables: ", &d.env_var_names.join(", "));
     write_line(out, "");
 }
 
@@ -584,10 +629,6 @@ fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
     }
 }
 
-#[expect(
-    clippy::unnecessary_debug_formatting,
-    reason = "debug escapes paths losslessly, including non-UTF-8 bytes; display can replace bytes"
-)]
 fn render_git(
     worktrees: &[GitWorktreeSummary],
     offset: UtcOffset,
@@ -607,7 +648,7 @@ fn render_git(
         let files = w
             .uncommitted_files
             .iter()
-            .map(|p| format!("{:?}", p.as_os_str()))
+            .map(|p| out.path(p))
             .collect::<Vec<_>>()
             .join(", ");
         write_line(
@@ -642,8 +683,8 @@ fn render_git(
             write_line(
                 out,
                 &format!(
-                    "  * {:?} ({} bytes, modified: {})",
-                    u.path.as_os_str(),
+                    "  * {} ({} bytes, modified: {})",
+                    out.path(&u.path),
                     u.size_bytes,
                     mod_str
                 ),
@@ -653,10 +694,6 @@ fn render_git(
     }
 }
 
-#[expect(
-    clippy::unnecessary_debug_formatting,
-    reason = "debug escapes quotes and path bytes consistently with worktree paths"
-)]
 fn render_gate(gates: &[TaskGateSummary], offset: UtcOffset, out: &mut SummaryWriter) {
     for g in gates {
         write_line(out, &format!("### Gate for Task `{}`", g.task_id));
@@ -682,7 +719,7 @@ fn render_gate(gates: &[TaskGateSummary], offset: UtcOffset, out: &mut SummaryWr
                 out,
                 &format!("  Finished: {}", format_time(rec.result.finished_at, offset)),
             );
-            write_line(out, &format!("  Log: `{:?}`", rec.result.log.as_path()));
+            write_line(out, &format!("  Log: `{}`", out.path(rec.result.log.as_path())));
         } else {
             write_line(out, "- Record: none");
         }
@@ -713,6 +750,9 @@ fn render_history(history: Option<&str>, out: &mut SummaryWriter) {
 
 fn render_daemon_log(lines: Option<&[String]>, out: &mut SummaryWriter) {
     if let Some(ls) = lines {
+        if ls.is_empty() {
+            write_line(out, "No daemon log lines about the team and no recent warnings.");
+        }
         let mut text = String::new();
         for line in ls {
             text.push_str(line);
@@ -871,7 +911,15 @@ pub fn render_redacted_summary(
     untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(input, offset, uncollected, untracked, redact)
+    render_with_redaction(
+        input,
+        offset,
+        uncollected,
+        untracked,
+        redact,
+        PathPresentation::Escaped,
+        None,
+    )
 }
 
 /// Renders a summary with explicit notices for sections outside the collection scope.
@@ -894,7 +942,15 @@ fn render_with_coverage(
     uncollected: &[SummarySection],
     untracked: UntrackedCollection,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(input, offset, uncollected, untracked, str::to_owned)
+    render_with_redaction(
+        input,
+        offset,
+        uncollected,
+        untracked,
+        str::to_owned,
+        PathPresentation::Escaped,
+        None,
+    )
 }
 
 fn render_with_redaction(
@@ -903,9 +959,14 @@ fn render_with_redaction(
     uncollected: &[SummarySection],
     untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
+    paths: PathPresentation,
+    git_notice: Option<&str>,
 ) -> Result<String, SummaryError> {
     let now = input.collected_at;
-    let mut out = SummaryWriter::default();
+    let mut out = SummaryWriter {
+        paths,
+        ..SummaryWriter::default()
+    };
 
     write_line(&mut out, &format!("# Debug Summary — Team `{}`", input.team.id));
     write_line(&mut out, "");
@@ -928,19 +989,43 @@ fn render_with_redaction(
             continue;
         }
 
+        let unread = input
+            .unreadable_parts
+            .iter()
+            .filter(|part| part.section == section)
+            .collect::<Vec<_>>();
+        if !unread.is_empty() {
+            for part in unread {
+                write_line(&mut out, &format!("Could not read {}: {}", part.name, part.reason));
+            }
+            write_line(&mut out, "");
+            if matches!(
+                section,
+                SummarySection::HistoryTail | SummarySection::DaemonAndVersions | SummarySection::DaemonLog
+            ) {
+                continue;
+            }
+        }
         match section {
             SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
             SummarySection::DaemonAndVersions => render_daemon(input.daemon.as_ref(), offset, &mut out),
             SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut out),
             SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut out),
             SummarySection::TaskDetails => render_task_details(&input.tasks, &mut out),
-            SummarySection::GitWorktrees => render_git(&input.git, offset, &mut out, untracked),
+            SummarySection::GitWorktrees => {
+                if let Some(notice) = git_notice {
+                    write_line(&mut out, notice);
+                    write_line(&mut out, "");
+                }
+                render_git(&input.git, offset, &mut out, untracked);
+            }
             SummarySection::GateRecords => render_gate(&input.gate, offset, &mut out),
             SummarySection::HistoryTail => render_history(input.history_tail.as_deref(), &mut out),
             SummarySection::DaemonLog => render_daemon_log(input.daemon_log_lines.as_deref(), &mut out),
             SummarySection::Bus => render_bus(&input.bus_messages, &mut out),
             SummarySection::Notifications => render_notifications(&input.notifications, &mut out),
             SummarySection::Machine => render_machine(&input.machine, &input.unreadable_parts, &mut out),
+            SummarySection::CollectionFailures => render_unreadable(&input.unreadable_parts, &mut out),
         }
 
         write_line(&mut out, "");
@@ -959,4 +1044,49 @@ pub enum SummaryError {
         /// Bytes required before allocating any optional text tails.
         required_bytes: usize,
     },
+}
+
+/// Renders a command summary with readable paths, redacting before byte budgeting.
+///
+/// # Errors
+/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
+pub fn render_command_summary(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+    untracked: UntrackedCollection,
+    redact: impl Fn(&str) -> String,
+) -> Result<String, SummaryError> {
+    render_with_redaction(
+        input,
+        offset,
+        uncollected,
+        untracked,
+        redact,
+        PathPresentation::Plain,
+        None,
+    )
+}
+
+/// Renders a command summary with a retained-worktree notice in the git section.
+///
+/// # Errors
+/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
+pub fn render_command_summary_with_git_notice(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+    untracked: UntrackedCollection,
+    redact: impl Fn(&str) -> String,
+    git_notice: Option<&str>,
+) -> Result<String, SummaryError> {
+    render_with_redaction(
+        input,
+        offset,
+        uncollected,
+        untracked,
+        redact,
+        PathPresentation::Plain,
+        git_notice,
+    )
 }

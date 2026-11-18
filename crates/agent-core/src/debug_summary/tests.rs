@@ -267,6 +267,7 @@ fn large_content_truncated_under_100k_bytes_keeps_tail_and_preserves_headings() 
 fn unreadable_parts_named_in_summary() {
     let mut input = sample_input();
     input.unreadable_parts = vec![UnreadablePartSummary {
+        section: crate::debug_summary::SummarySection::Machine,
         name: "daemon.log".to_owned(),
         reason: "permission denied".to_owned(),
     }];
@@ -678,6 +679,7 @@ fn deferred_sections_say_not_collected_instead_of_reporting_empty_observations()
 fn deferred_machine_section_keeps_collection_failures_visible() {
     let mut input = sample_input();
     input.unreadable_parts.push(UnreadablePartSummary {
+        section: crate::debug_summary::SummarySection::Machine,
         name: "worktree".into(),
         reason: "removed".into(),
     });
@@ -708,4 +710,126 @@ fn redacts_optional_text_before_truncation_and_byte_budgeting() {
             .replace("xy", "<cut>")),
         render_summary(&expected, UtcOffset::UTC)
     );
+}
+
+#[test]
+fn redacted_diagnostic_paths_are_plain_and_unread_history_is_named_in_its_section() {
+    let mut input = sample_input();
+    input.git[0].uncommitted_files = vec![PathBuf::from("café file.txt")];
+    input.gate[0].record.as_mut().unwrap().result.log = "/tmp/gate.log".parse().unwrap();
+    input.history_tail = None;
+    input.unreadable_parts.push(UnreadablePartSummary {
+        section: crate::debug_summary::SummarySection::HistoryTail,
+        name: "team history".into(),
+        reason: "database unavailable".into(),
+    });
+    let summary = render_command_summary(
+        &input,
+        UtcOffset::from_hms(2, 0, 0).unwrap(),
+        &[],
+        UntrackedCollection::Collected,
+        str::to_owned,
+    )
+    .unwrap();
+    assert!(summary.contains("Uncommitted files (1): café file.txt"), "{summary}");
+    assert!(summary.contains("Log: `/tmp/gate.log`"), "{summary}");
+    let history = summary
+        .split("## Team History")
+        .nth(1)
+        .unwrap()
+        .split("## Daemon Log")
+        .next()
+        .unwrap();
+    assert!(
+        history.contains("Could not read team history: database unavailable"),
+        "{history}"
+    );
+    assert!(!history.contains("No history recorded"));
+    assert!(summary.contains("+02:00"));
+}
+
+#[test]
+fn removed_worktree_notice_is_once_in_git_section_without_an_anomaly() {
+    let input = sample_input();
+    let notice = "Worktrees for the merged round were removed; retained branches were read from the clone.";
+    let summary = render_command_summary_with_git_notice(
+        &input,
+        UtcOffset::UTC,
+        &[],
+        UntrackedCollection::Collected,
+        str::to_owned,
+        Some(notice),
+    )
+    .expect("summary fits");
+    let git = summary.split("## Git Worktrees").nth(1).expect("git section");
+    assert_eq!(summary.matches(notice).count(), 1);
+    assert!(git.starts_with(&format!("\n\n{notice}\n")), "{git}");
+}
+
+#[test]
+fn review_daemon_bounds_variable_process_text_without_losing_required_facts() {
+    let mut input = sample_input();
+    let daemon = input.daemon.as_mut().unwrap();
+    daemon.cmdline = vec![format!("{}COMMAND-END", "x".repeat(110_000))];
+    daemon.version = "v".repeat(110_000);
+    daemon.env_var_names = vec!["ENV".repeat(40_000)];
+    daemon.exe_path = format!("/{}", "path".repeat(30_000));
+
+    let result = render_summary(&input, UtcOffset::UTC);
+    assert_eq!(result.as_ref().map(|text| text.len() < MAX_SUMMARY_BYTES), Ok(true));
+    let text = result.unwrap();
+
+    assert!(text.contains("- PID: 12345"));
+    assert!(text.contains("COMMAND-END"));
+    assert!(text.contains(CUT_MARKER.trim()));
+}
+
+#[test]
+fn review_daemon_explains_an_existing_log_with_no_matching_lines() {
+    let mut input = sample_input();
+    input.daemon_log_lines = Some(Vec::new());
+
+    let text = render_summary(&input, UtcOffset::UTC).unwrap();
+
+    assert!(text.contains("No daemon log lines about the team and no recent warnings."));
+}
+
+#[test]
+fn unreadable_sections_use_the_typed_destination_instead_of_the_display_name() {
+    let mut input = sample_input();
+    input.history_tail = None;
+    input.unreadable_parts.push(UnreadablePartSummary {
+        section: SummarySection::HistoryTail,
+        name: "retained event archive".into(),
+        reason: "permission denied".into(),
+    });
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let history = summary
+        .split(SummarySection::HistoryTail.heading())
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    assert!(
+        history.contains("Could not read retained event archive: permission denied"),
+        "{history}"
+    );
+    assert!(!history.contains("No history recorded"));
+}
+
+#[test]
+fn partial_section_failure_preserves_collected_machine_facts() {
+    let input = sample_input();
+    let baseline = render_summary(&input, UtcOffset::UTC).unwrap();
+    let mut partial = input;
+    partial.unreadable_parts.push(UnreadablePartSummary {
+        section: SummarySection::Machine,
+        name: "swap".into(),
+        reason: "permission denied".into(),
+    });
+    let summary = render_summary(&partial, UtcOffset::UTC).unwrap();
+    let facts = baseline.split("## Machine and Resources\n\n").nth(1).unwrap();
+    assert!(summary.contains(facts.trim()), "{summary}");
+    assert!(summary.contains("Could not read swap: permission denied"));
 }

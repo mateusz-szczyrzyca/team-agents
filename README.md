@@ -1047,19 +1047,28 @@ AGENTS_HOME=/tmp/trial-home target/debug/agent debug --team TEAM_ID
 sets the activity threshold. The command prints the paths of the new directory and its `SUMMARY.md`.
 It collects the saved state, status when the daemon answers, team tasks and their runs, prompts, final messages,
 steps, raw output and standard error, questions and answers, gates, checks, worktree git facts and team history.
+It also identifies the daemon by ownership of the home lock and collects its process facts and version.
+The daemon log defaults to `<home>/daemon.log`; `--daemon-log FILE` selects another file. Its bounded tail
+keeps team/task lines and warnings or errors about any team. An unreadable explicit log is reported in its section.
 It works offline, reports unreadable parts, and changes no task or git ref. Before writing any artifact it replaces
 exact values from `secrets.toml` and environment variables ending in `TOKEN`, `SECRET`, `PASSWORD` or `KEY` with
-`<cut>`. An unreadable secrets file stops collection before any bundle is written.
+`<cut>`, including JSON-escaped values in daemon logs. An unreadable secrets file stops collection before any
+bundle is written.
 
 Task files and git output are bounded to 4 MiB each; task files together to 64 MiB, with at most
 4096 entries per task and 16 directory levels. Limits and skipped symlinks are reported as read failures.
-History is read without SQLite side files: a nonempty WAL or concurrent database change is reported as a read
-failure rather than risking an incomplete history or changing the home. Summary timestamps use UTC.
+History is read from a temporary copy of the database and its WAL/SHM files, including committed events while
+the daemon holds the home. Each source file is bounded to 64 GiB; up to three snapshot attempts accommodate
+source changes before they are reported as unreadable. SQLite creates no files beside the original database. Summary timestamps show UTC and the machine's local offset.
+Each task shows its latest run's reason, final message and steps; earlier runs remain in the bundle.
+Questions are ordered numerically, and gate outputs name their source and modification time. Worktrees removed
+after a merged round are explained once, with retained branch facts read from the caller's clone.
+An unpublished member branch is expected; the coordinator's origin ref is still checked.
 
 The summary uses the pure anomaly assessment and stays below 100,000 bytes; full collected details are separate
-artifacts. Summary redaction precedes truncation and byte budgeting. Deferred sections explicitly say "Not collected in this version." A third task will add daemon process
-facts and logs (`--daemon-log FILE` currently returns an explicit unsupported-collection error), bus messages, notifications, configuration
-and secret key names, machine metrics and the fifty newest untracked files. See the
+artifacts. Summary redaction precedes truncation and byte budgeting, including daemon logs and process command lines.
+The next diagnostics slice adds bus messages, notifications, full configuration and secret key names,
+machine metrics and the fifty newest untracked files; those remaining sections are explicitly marked as deferred. See the
 [diagnostics design](docs/architecture.md#debug-diagnostics-commands-and-pure-decisions).
 
 The daemon records teams, rounds, runs and their steps and changes in `history.db`, together with gates, checks,

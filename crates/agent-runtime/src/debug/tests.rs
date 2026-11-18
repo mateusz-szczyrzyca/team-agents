@@ -97,6 +97,7 @@ fn retries_oversized_required_presentation_without_losing_full_facts() {
             worktrees_dir_bytes: None,
         },
         unreadable_parts: vec![UnreadablePartSummary {
+            section: agent_core::debug_summary::SummarySection::Machine,
             name: "worktree".to_owned(),
             reason: "λ".repeat(100_000),
         }],
@@ -302,9 +303,9 @@ fn reports_active_history_wal_without_ignoring_committed_records_or_changing_it(
         .block_on(execute_debug(&home, args, None, &mut Vec::new()))
         .unwrap();
     let summary = std::fs::read_to_string(result.summary_path).unwrap();
-    assert!(summary.contains("history has a nonempty WAL"), "{summary}");
+    assert!(summary.contains("No history recorded for this team."), "{summary}");
     assert_eq!(std::fs::read(&wal).unwrap(), before);
-    assert!(!result.bundle_dir.join("history.jsonl").exists());
+    assert!(result.bundle_dir.join("history.jsonl").exists());
     drop(database);
 }
 
@@ -360,4 +361,71 @@ fn redacts_secrets_before_compacting_required_summary_reasons() {
     assert!(!summary.contains("test-co"), "secret prefix survived compaction");
     assert!(summary.contains("<cut>"));
     assert!(summary.len() < agent_core::debug_summary::MAX_SUMMARY_BYTES);
+}
+
+#[test]
+fn command_summary_uses_supplied_machine_offset() {
+    let (_dir, home, args) = fixture();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = runtime
+        .block_on(execute_debug_at(
+            &home,
+            args,
+            None,
+            DebugLocation {
+                local_offset: time::UtcOffset::from_hms(5, 30, 0).unwrap(),
+                checkout: None,
+            },
+            &mut Vec::new(),
+        ))
+        .unwrap();
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(
+        summary
+            .lines()
+            .find(|line| line.starts_with("Collected at:"))
+            .unwrap()
+            .contains("+05:30")
+    );
+}
+
+#[tokio::test]
+async fn observes_no_lock_owner_instead_of_deferring_daemon_collection() {
+    let (_dir, home, args) = fixture();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    let summary = std::fs::read_to_string(&result.summary_path).unwrap();
+    let daemon = summary
+        .split(SummarySection::DaemonAndVersions.heading())
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    assert!(!daemon.contains("Not collected"), "{daemon}");
+    let facts = std::fs::read_to_string(result.bundle_dir.join("facts.txt")).unwrap();
+    assert!(facts.contains("Absent"), "{facts}");
+    assert!(!home.lock_file().exists());
+}
+
+#[tokio::test]
+async fn collects_redacted_team_daemon_log_with_warning_tail() {
+    let (_dir, home, args) = fixture();
+    std::fs::write(
+        home.root().join("daemon.log"),
+        "team-20261117-120000-a1b2 test-confidential-λ\nother team quiet\nWARN other team test-confidential-λ\n",
+    )
+    .unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    assert!(
+        result.bundle_dir.join("daemon-log.txt").is_file(),
+        "the log must be collected"
+    );
+    let log = std::fs::read_to_string(result.bundle_dir.join("daemon-log.txt")).unwrap();
+    assert_eq!(log, "team-20261117-120000-a1b2 <cut>\nWARN other team <cut>\n");
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(summary.contains("team-20261117-120000-a1b2 <cut>"), "{summary}");
+    assert!(!summary.contains("test-confidential-λ"), "{summary}");
 }

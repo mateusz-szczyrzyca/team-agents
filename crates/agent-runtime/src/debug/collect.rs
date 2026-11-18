@@ -9,13 +9,15 @@ use std::time::Duration;
 
 use agent_core::debug_summary::{
     GitCommitSummaryFacts, GitWorktreeSummary, ItemSummaryFacts, MachineSummary, QuestionsSummaryFacts,
-    RoundSummaryFacts, SummaryInput, TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts,
+    RoundSummaryFacts, SummaryInput, SummarySection, TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts,
 };
 use agent_core::diagnostic_assessment::{Assessment, Branch, LeadGit, Origin, ReadFailure, Task};
-use agent_core::ids::{BranchName, TaskId};
+use agent_core::ids::{AgentName, BranchName, TaskId};
 use agent_core::kinds::Role;
 use agent_core::questions::QuestionsFile;
-use agent_core::state::{CommitId, GateRecord, ItemPhase, Member, RunState, Team, Timestamp};
+use agent_core::state::{
+    CommitId, GateRecord, ItemPhase, Member, RoundEnd, RoundLife, RunEnd, RunState, Team, Timestamp,
+};
 use tokio::io::AsyncReadExt;
 
 use super::{DebugResult, DebugRuntimeError};
@@ -38,8 +40,16 @@ pub(super) struct Collection {
     pub(super) assessment: Assessment,
     /// Presentation of the same observations.
     pub(super) summary: SummaryInput,
+    /// Root of the repository clone, if available for removed worktree fallbacks.
+    pub(super) checkout: Option<PathBuf>,
+    /// Notice for merged worktrees whose retained branches were read in the clone.
+    pub(super) git_notice: Option<String>,
+    /// Local timezone offset for presentation; defaults to UTC.
+    pub(super) local_offset: time::UtcOffset,
     /// Relative artifact paths and their unredacted bytes; never logged.
     artifacts: Vec<(PathBuf, Vec<u8>)>,
+    /// Secret patterns applied before truncating or encoding structured observations.
+    pub(super) cut: SecretsCut,
     /// Total copied task bytes, bounded independently of file count.
     copied_bytes: usize,
 }
@@ -141,8 +151,12 @@ impl Collection {
                 },
                 unreadable_parts: vec![],
             },
+            checkout: None,
+            git_notice: None,
+            local_offset: time::UtcOffset::UTC,
             artifacts: vec![],
             copied_bytes: 0,
+            cut: SecretsCut::new(&agent_core::config::Secrets::default(), []),
         })
     }
 
@@ -150,8 +164,39 @@ impl Collection {
         self.artifacts.push((path.into(), bytes));
     }
 
+    /// Adds the daemon artifact and its structured summary facts.
+    pub(super) fn add_daemon(&mut self, mut daemon: agent_core::debug_summary::DaemonSummary) {
+        for field in daemon
+            .cmdline
+            .iter_mut()
+            .chain(&mut daemon.env_var_names)
+            .chain([&mut daemon.exe_path, &mut daemon.version])
+        {
+            *field = self.cut.redact_text(field);
+        }
+        self.add("daemon-process.txt", format!("{daemon:#?}").into_bytes());
+        self.summary.daemon = Some(daemon);
+    }
+
     fn failed(&mut self, part: impl Into<String>, reason: impl Into<String>) {
+        self.failed_in(SummarySection::CollectionFailures, part, reason);
+    }
+
+    fn task_failed(&mut self, part: impl Into<String>, reason: impl Into<String>) {
+        self.failed_in(SummarySection::TaskDetails, part, reason);
+    }
+
+    fn gate_failed(&mut self, part: impl Into<String>, reason: impl Into<String>) {
+        self.failed_in(SummarySection::GateRecords, part, reason);
+    }
+
+    fn git_failed(&mut self, part: impl Into<String>, reason: impl Into<String>) {
+        self.failed_in(SummarySection::GitWorktrees, part, reason);
+    }
+
+    fn failed_in(&mut self, section: SummarySection, part: impl Into<String>, reason: impl Into<String>) {
         self.assessment.unreadable.push(ReadFailure {
+            section,
             part: part.into(),
             reason: reason.into(),
         });
@@ -208,7 +253,7 @@ impl Collection {
             last_run_started: last.map(agent_core::state::Run::started_at),
             last_run_ended: ended,
             last_activity: None,
-            last_run_end_detail: last.map(|run| format!("{:?}", run.state())),
+            last_run_end_detail: last.map(|run| run_detail_at(run.state(), self.local_offset)),
             questions: None,
         };
         self.summary.tasks.push(row);
@@ -229,7 +274,7 @@ impl Collection {
         let mut visited = 0_usize;
         while let Some((source, target, depth)) = pending.pop() {
             if visited >= ENTRY_LIMIT {
-                self.failed("task artifacts", "directory entry limit reached");
+                self.task_failed("task artifacts", "directory entry limit reached");
                 break;
             }
             visited = visited.saturating_add(1);
@@ -241,60 +286,81 @@ impl Collection {
                     continue;
                 }
                 Err(error) => {
-                    self.failed(format!("task artifact {}", escaped_path(&source)), error.to_string());
+                    self.task_failed(format!("task artifact {}", escaped_path(&source)), error.to_string());
                     continue;
                 }
             };
             if metadata.is_dir() {
                 if depth >= DEPTH_LIMIT {
-                    self.failed(
+                    self.task_failed(
                         format!("task artifact {}", escaped_path(&source)),
                         "directory nesting limit reached",
                     );
                     continue;
                 }
                 match tokio::fs::read_dir(&source).await {
-                    Ok(mut entries) => loop {
-                        match entries.next_entry().await {
-                            Ok(Some(entry)) if pending.len().saturating_add(visited) < ENTRY_LIMIT => {
-                                pending.push((entry.path(), target.join(entry.file_name()), depth.saturating_add(1)));
-                            }
-                            Ok(Some(_)) => {
-                                self.failed(
-                                    format!("task artifact {}", escaped_path(&source)),
-                                    "directory entry limit reached",
-                                );
-                                break;
-                            }
-                            Ok(None) => break,
-                            Err(error) => {
-                                self.failed(format!("task artifact {}", escaped_path(&source)), error.to_string());
-                                break;
+                    Ok(mut entries) => {
+                        let mut children = Vec::new();
+                        loop {
+                            match entries.next_entry().await {
+                                Ok(Some(entry))
+                                    if pending.len().saturating_add(children.len()).saturating_add(visited)
+                                        < ENTRY_LIMIT =>
+                                {
+                                    children.push((
+                                        entry.path(),
+                                        target.join(entry.file_name()),
+                                        depth.saturating_add(1),
+                                    ));
+                                }
+                                Ok(Some(_)) => {
+                                    self.task_failed(
+                                        format!("task artifact {}", escaped_path(&source)),
+                                        "directory entry limit reached",
+                                    );
+                                    break;
+                                }
+                                Ok(None) => break,
+                                Err(error) => {
+                                    self.task_failed(
+                                        format!("task artifact {}", escaped_path(&source)),
+                                        error.to_string(),
+                                    );
+                                    break;
+                                }
                             }
                         }
-                    },
-                    Err(error) => self.failed(format!("task artifact {}", escaped_path(&source)), error.to_string()),
+                        children.sort_by(|left, right| numbered_order(&right.0, &left.0));
+                        pending.extend(children);
+                    }
+                    Err(error) => {
+                        self.task_failed(format!("task artifact {}", escaped_path(&source)), error.to_string());
+                    }
                 }
             } else if metadata.is_file() {
-                self.activity(&source, task, &metadata);
-                match bounded_bytes(&source).await {
-                    Ok(bytes) if self.copied_bytes.saturating_add(bytes.len()) <= TOTAL_LIMIT => {
-                        self.copied_bytes = self.copied_bytes.saturating_add(bytes.len());
-                        self.questions(&source, task, &bytes);
-                        self.add(target, bytes);
-                    }
-                    Ok(_) => self.failed(
-                        format!("task artifact {}", escaped_path(&source)),
-                        "total artifact byte limit reached",
-                    ),
-                    Err(error) => self.failed(format!("task artifact {}", escaped_path(&source)), error_chain(&error)),
-                }
+                self.task_file(&source, target, task, &metadata).await;
             } else {
-                self.failed(
+                self.task_failed(
                     format!("task artifact {}", escaped_path(&source)),
                     "symlink or special file is not followed",
                 );
             }
+        }
+    }
+
+    async fn task_file(&mut self, source: &Path, target: PathBuf, task: &TaskId, metadata: &std::fs::Metadata) {
+        self.activity(source, task, metadata);
+        match bounded_bytes(source).await {
+            Ok(bytes) if self.copied_bytes.saturating_add(bytes.len()) <= TOTAL_LIMIT => {
+                self.copied_bytes = self.copied_bytes.saturating_add(bytes.len());
+                self.questions(source, task, &bytes);
+                self.add(target, bytes);
+            }
+            Ok(_) => self.task_failed(
+                format!("task artifact {}", escaped_path(source)),
+                "total artifact byte limit reached",
+            ),
+            Err(error) => self.task_failed(format!("task artifact {}", escaped_path(source)), error_chain(&error)),
         }
     }
 
@@ -308,14 +374,14 @@ impl Collection {
         let modified = match metadata.modified() {
             Ok(value) => value,
             Err(error) => {
-                self.failed(format!("output time {}", escaped_path(source)), error.to_string());
+                self.task_failed(format!("output time {}", escaped_path(source)), error.to_string());
                 return;
             }
         };
         let at = match Timestamp::from_utc(time::UtcDateTime::from(modified)) {
             Ok(at) => at,
             Err(error) => {
-                self.failed(format!("output time {}", escaped_path(source)), error.to_string());
+                self.task_failed(format!("output time {}", escaped_path(source)), error.to_string());
                 return;
             }
         };
@@ -336,14 +402,14 @@ impl Collection {
         let text = match std::str::from_utf8(bytes) {
             Ok(text) => text,
             Err(error) => {
-                self.failed(format!("questions {}", escaped_path(source)), error.to_string());
+                self.task_failed(format!("questions {}", escaped_path(source)), error.to_string());
                 return;
             }
         };
         let questions = match QuestionsFile::parse(text) {
             Ok(value) => value,
             Err(error) => {
-                self.failed(format!("questions {}", escaped_path(source)), error.to_string());
+                self.task_failed(format!("questions {}", escaped_path(source)), error.to_string());
                 return;
             }
         };
@@ -370,13 +436,13 @@ impl Collection {
             Ok(bytes) => match serde_json::from_slice::<GateRecord>(&bytes) {
                 Ok(record) => Some(record),
                 Err(error) => {
-                    self.failed(format!("gate {}", escaped_path(&path)), error.to_string());
+                    self.gate_failed(format!("gate {}", escaped_path(&path)), error.to_string());
                     None
                 }
             },
             Err(ObservationError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => {
-                self.failed(format!("gate {}", escaped_path(&path)), error_chain(&error));
+                self.gate_failed(format!("gate {}", escaped_path(&path)), error_chain(&error));
                 None
             }
         };
@@ -391,12 +457,33 @@ impl Collection {
                     })
             })
             .collect();
-        outputs.sort_by(|(left, _), (right, _)| left.cmp(right));
-        let tails = outputs
+        outputs.sort_by(|(left, _), (right, _)| numbered_order(left, right));
+        let selected: Vec<_> = outputs
             .into_iter()
             .rev()
             .take(3)
-            .map(|(_, bytes)| match std::str::from_utf8(bytes) {
+            .map(|(path, bytes)| (path.clone(), bytes.clone()))
+            .collect();
+        let mut tails = Vec::new();
+        for (path, bytes) in selected {
+            let source = home.root().join(&path);
+            let modified = match tokio::fs::metadata(&source)
+                .await
+                .and_then(|metadata| metadata.modified())
+            {
+                Ok(at) => match Timestamp::from_utc(time::UtcDateTime::from(at)) {
+                    Ok(at) => agent_core::debug_summary::format_time(at, self.local_offset),
+                    Err(error) => {
+                        self.gate_failed(format!("gate time {}", escaped_path(&source)), error_chain(&error));
+                        "unreadable".to_owned()
+                    }
+                },
+                Err(error) => {
+                    self.gate_failed(format!("gate time {}", escaped_path(&source)), error_chain(&error));
+                    "unreadable".to_owned()
+                }
+            };
+            let text = match std::str::from_utf8(&bytes) {
                 Ok(text) => text
                     .lines()
                     .rev()
@@ -406,9 +493,13 @@ impl Collection {
                     .rev()
                     .collect::<Vec<_>>()
                     .join("\n"),
-                Err(error) => format!("gate output is not UTF-8: {error}; raw bytes are retained"),
-            })
-            .collect();
+                Err(error) => {
+                    self.gate_failed(format!("gate text {}", escaped_path(&source)), error_chain(&error));
+                    "gate output is not UTF-8; raw bytes are retained".to_owned()
+                }
+            };
+            tails.push(format!("{} (modified: {modified})\n{text}", escaped_path(&source)));
+        }
         self.summary.gate.push(TaskGateSummary {
             task_id: task.clone(),
             record,
@@ -419,20 +510,15 @@ impl Collection {
     async fn history(&mut self, home: &Home, team: &Team) -> Result<(), DebugRuntimeError> {
         let path = home.history_file();
         let id = team.id().clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let before = history_stamp(&path)?;
-            let reader =
-                crate::history::Reader::open_without_shared_memory(&path).map_err(ObservationError::History)?;
-            let records = reader.team_records(&id).map_err(ObservationError::History)?;
-            if before != history_stamp(&path)? {
-                return Err(ObservationError::HistoryChanged);
-            }
-            Ok(records)
-        })
-        .await
-        .map_err(DebugRuntimeError::Worker)?;
+        let result = tokio::task::spawn_blocking(move || super::history::read_live_team_history(&path, &id))
+            .await
+            .map_err(DebugRuntimeError::Worker)?;
         match result {
-            Ok(records) if records.is_empty() => self.failed("team history", "no history records for this team"),
+            Ok(records) if records.is_empty() => {
+                self.summary.history_tail = Some("No history recorded for this team.".to_owned());
+                self.add("history.txt", b"No history recorded for this team.\n".to_vec());
+                self.add("history.jsonl", Vec::new());
+            }
             Ok(records) => {
                 let selection = agent_core::story::Selection::Team(team.id().clone());
                 let text = agent_core::story::render(
@@ -444,6 +530,7 @@ impl Collection {
                     },
                 );
                 self.summary.history_tail = Some(text.clone());
+                self.enrich_last_run_details(&records, team);
                 self.add("history.txt", text.into_bytes());
                 self.add(
                     "history.jsonl",
@@ -452,16 +539,133 @@ impl Collection {
                         .into_bytes(),
                 );
             }
-            Err(error) => self.failed("team history", error_chain(&error)),
+            Err(error) => self.assessment.unreadable.push(ReadFailure {
+                section: agent_core::debug_summary::SummarySection::HistoryTail,
+                part: "team history".to_owned(),
+                reason: error_chain(&error),
+            }),
         }
         Ok(())
     }
 
+    fn enrich_last_run_details(&mut self, records: &[agent_core::history::SequencedRecord], team: &Team) {
+        let selection = agent_core::story::Selection::Team(team.id().clone());
+        let roster = team
+            .crew()
+            .roster()
+            .into_iter()
+            .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)));
+        for (_role, member) in roster {
+            let Some(last_run) = member.runs().last() else {
+                continue;
+            };
+            let run_id = last_run.id();
+            let mut run_records: Vec<_> = records
+                .iter()
+                .filter(|seq| super::history::record_run_id(&seq.record) == Some(run_id))
+                .cloned()
+                .collect();
+            if run_records.is_empty() {
+                continue;
+            }
+            // The message has its own budget so its tail cannot evict the run's reason and steps.
+            for record in &mut run_records {
+                if let agent_core::history::Record::RunEnd(end) = &mut record.record
+                    && let Some(message) = &mut end.final_message
+                {
+                    /// Maximum final-message tail in the summary; complete text stays in history artifacts.
+                    const FINAL_MESSAGE_BYTES: usize = 4096;
+                    *message = self.cut.redact_text(message);
+                    if message.len() > FINAL_MESSAGE_BYTES {
+                        let first = message.len().saturating_sub(FINAL_MESSAGE_BYTES);
+                        let tail: String = message
+                            .char_indices()
+                            .skip_while(|(index, _)| *index < first)
+                            .map(|(_, ch)| ch)
+                            .collect();
+                        *message = format!("{}{tail}", agent_core::debug_summary::CUT_MARKER);
+                    }
+                }
+            }
+            let story_text = agent_core::story::render(
+                &run_records,
+                &selection,
+                agent_core::story::StoryOptions {
+                    prompts: agent_core::story::PromptView::Preview,
+                    steps: agent_core::story::StepView::Listed,
+                },
+            );
+            if let Some(task_summary) = self.summary.tasks.iter_mut().find(|t| t.id == *member.task()) {
+                match &mut task_summary.last_run_end_detail {
+                    Some(existing) => {
+                        existing.push('\n');
+                        existing.push_str(&story_text);
+                    }
+                    None => {
+                        task_summary.last_run_end_detail = Some(story_text);
+                    }
+                }
+            }
+        }
+    }
+
     async fn git(&mut self, home: &Home, team: &Team) {
-        let tasks: Vec<_> = self.summary.tasks.iter().map(|task| task.id.clone()).collect();
-        for task in tasks {
+        let mut has_removed_merged_worktrees = false;
+
+        let tasks: Vec<_> = self
+            .summary
+            .tasks
+            .iter()
+            .map(|task| (task.id.clone(), task.agent.clone()))
+            .collect();
+        for (task, agent) in tasks {
+            let (latest_round, recorded) = task_round(team, &task, &agent);
+            let round_merged = latest_round.is_some_and(|round| {
+                matches!(
+                    round.life(),
+                    RoundLife::Closed {
+                        how: RoundEnd::Merged,
+                        ..
+                    }
+                )
+            });
             let path = home.worktree_dir(team.repo(), &task);
-            match read_git(&path, &task).await {
+            let worktree_missing = match worktree_is_missing(&path).await {
+                Ok(missing) => missing,
+                Err(error) => {
+                    self.git_failed(
+                        format!("worktree metadata {}", escaped_path(&path)),
+                        diagnostic_error(&error),
+                    );
+                    continue;
+                }
+            };
+
+            let observation = if round_merged && worktree_missing {
+                if let Some(ref checkout) = self.checkout {
+                    match read_git_from_checkout(
+                        checkout,
+                        &task,
+                        &agent,
+                        recorded,
+                        latest_round.filter(|_| task != self.assessment.lead),
+                    )
+                    .await
+                    {
+                        Ok(obs) => {
+                            has_removed_merged_worktrees = true;
+                            Ok(obs)
+                        }
+                        Err(err) => Err(err),
+                    }
+                } else {
+                    read_git(&path, &task).await
+                }
+            } else {
+                read_git(&path, &task).await
+            };
+
+            match observation {
                 Ok(observation) => {
                     if task == self.assessment.lead {
                         self.assessment.lead_git = Some(LeadGit {
@@ -477,8 +681,15 @@ impl Collection {
                     }
                     self.summary.git.push(observation.facts);
                 }
-                Err(error) => self.failed(format!("worktree {}", escaped_path(&path)), error_chain(&error)),
+                Err(error) => self.git_failed(format!("worktree {}", escaped_path(&path)), diagnostic_error(&error)),
             }
+        }
+        if has_removed_merged_worktrees {
+            self.git_notice = Some("Worktrees for merged rounds were removed; retained branches and commits were collected from the repository checkout.".to_owned());
+            self.add(
+                PathBuf::from("git").join("removed-worktrees.txt"),
+                b"Worktrees for merged rounds were removed; retained branches and commits were collected from the repository checkout.\n".to_vec(),
+            );
         }
         self.git_details(home, team).await;
         for git in &self.summary.git {
@@ -490,6 +701,9 @@ impl Collection {
     }
 
     async fn git_details(&mut self, home: &Home, team: &Team) {
+        if self.summary.git.is_empty() {
+            return;
+        }
         let lead_tip = self
             .summary
             .git
@@ -497,6 +711,22 @@ impl Collection {
             .find(|git| git.task_id == self.assessment.lead)
             .map(|git| git.tip.clone());
         let lead_path = home.worktree_dir(team.repo(), &self.assessment.lead);
+        let lead_worktree_missing = match worktree_is_missing(&lead_path).await {
+            Ok(missing) => missing,
+            Err(error) => {
+                self.git_failed(
+                    format!("worktree metadata {}", escaped_path(&lead_path)),
+                    diagnostic_error(&error),
+                );
+                return;
+            }
+        };
+        let ancestor_dir = if lead_worktree_missing {
+            self.checkout.clone().unwrap_or(lead_path.clone())
+        } else {
+            lead_path.clone()
+        };
+
         for index in 0..self.summary.git.len() {
             let Some(git) = self.summary.git.get(index) else {
                 continue;
@@ -505,7 +735,7 @@ impl Collection {
             let tip = git.tip.clone();
             let contains = match &lead_tip {
                 Some(lead) => match git_capture(
-                    &lead_path,
+                    &ancestor_dir,
                     &["merge-base", "--is-ancestor", tip.as_str(), lead.as_str()],
                 )
                 .await
@@ -514,12 +744,18 @@ impl Collection {
                         ExitReport::Exited { code: 0 } => Some(true),
                         ExitReport::Exited { code: 1 } => Some(false),
                         other => {
-                            self.failed(format!("git containment {task}"), format!("git exited {other:?}"));
+                            self.git_failed(
+                                format!("git containment {task}"),
+                                diagnostic_error(&ObservationError::Git {
+                                    exit: other,
+                                    stderr: output.stderr.bytes,
+                                }),
+                            );
                             None
                         }
                     },
                     Err(error) => {
-                        self.failed(format!("git containment {task}"), error_chain(&error));
+                        self.git_failed(format!("git containment {task}"), diagnostic_error(&error));
                         None
                     }
                 },
@@ -527,11 +763,17 @@ impl Collection {
             };
             if let Some(git) = self.summary.git.get_mut(index) {
                 git.lead_contains_tip = contains;
+                let is_lead = task == self.assessment.lead;
+                let origin = if is_lead {
+                    Some(git.origin_tip.clone().map_or(Origin::Missing, Origin::Tip))
+                } else {
+                    git.origin_tip.clone().map(Origin::Tip)
+                };
                 self.assessment.branches.push(Branch {
                     task: task.clone(),
                     name: git.branch.clone(),
                     tip: git.tip.clone(),
-                    origin: Some(git.origin_tip.clone().map_or(Origin::Missing, Origin::Tip)),
+                    origin,
                     contained_in_lead: contains,
                 });
             }
@@ -545,30 +787,51 @@ impl Collection {
             Ok(file) => match agent_core::config::Config::from_toml_str(&file.text) {
                 Ok(config) => config.repo(team.repo()).map(|repo| repo.base_branch.clone()),
                 Err(error) => {
-                    self.failed("git base configuration", error_chain(&error));
+                    self.git_failed("git base configuration", error_chain(&error));
                     return;
                 }
             },
             Err(error) => {
-                self.failed("git base configuration", error_chain(&error));
+                self.git_failed("git base configuration", error_chain(&error));
                 return;
             }
         };
         let Some(base) = base else {
-            self.failed("git base configuration", "repository has no configured base branch");
+            self.git_failed("git base configuration", "repository has no configured base branch");
             return;
         };
-        let tasks: Vec<_> = self.summary.git.iter().map(|git| git.task_id.clone()).collect();
-        for task in tasks {
+        let tasks: Vec<_> = self
+            .summary
+            .git
+            .iter()
+            .map(|git| (git.task_id.clone(), git.branch.clone()))
+            .collect();
+        for (task, branch) in tasks {
             let path = home.worktree_dir(team.repo(), &task);
+            let worktree_missing = match worktree_is_missing(&path).await {
+                Ok(missing) => missing,
+                Err(error) => {
+                    self.git_failed(
+                        format!("worktree metadata {}", escaped_path(&path)),
+                        diagnostic_error(&error),
+                    );
+                    continue;
+                }
+            };
+
+            let (target_dir, rev_range) = if worktree_missing {
+                if let Some(ref checkout) = self.checkout {
+                    (checkout.as_path(), format!("{base}..{branch}"))
+                } else {
+                    (path.as_path(), format!("{base}..HEAD"))
+                }
+            } else {
+                (path.as_path(), format!("{base}..HEAD"))
+            };
+
             match git_text(
-                &path,
-                &[
-                    "log",
-                    "--format=%H%x00%aI%x00%an%x00%s",
-                    "--no-decorate",
-                    &format!("{base}..HEAD"),
-                ],
+                target_dir,
+                &["log", "--format=%H%x00%aI%x00%an%x00%s", "--no-decorate", &rev_range],
             )
             .await
             {
@@ -580,31 +843,31 @@ impl Collection {
                                 git.commits_over_base = commits;
                             }
                         }
-                        Err(error) => self.failed(format!("git commit details {task}"), error_chain(&error)),
+                        Err(error) => self.git_failed(format!("git commit details {task}"), diagnostic_error(&error)),
                     }
                     self.add(
                         PathBuf::from("git").join(format!("{task}-commits.txt")),
                         text.into_bytes(),
                     );
                 }
-                Err(error) => self.failed(format!("git commits {task}"), error_chain(&error)),
+                Err(error) => self.git_failed(format!("git commits {task}"), diagnostic_error(&error)),
             }
         }
+    }
+}
+
+/// Distinguishes removed worktrees from metadata failures before choosing a clone fallback.
+async fn worktree_is_missing(path: &Path) -> Result<bool, ObservationError> {
+    match tokio::fs::metadata(path).await {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(ObservationError::Io(error)),
     }
 }
 
 /// A bounded observation failure, converted to a read-failure only at its part's boundary.
 #[derive(Debug, thiserror::Error)]
 enum ObservationError {
-    /// A live WAL cannot be ignored without losing committed records.
-    #[error("history has a nonempty WAL; collection without shared-memory writes requires a checkpointed database")]
-    HistoryWal,
-    /// History cannot be decoded.
-    #[error("cannot read history records")]
-    History(#[source] crate::history::ReadError),
-    /// Concurrent writes prevented a stable observation.
-    #[error("history changed during collection")]
-    HistoryChanged,
     /// File access failed.
     #[error("cannot read file")]
     Io(#[source] std::io::Error),
@@ -625,6 +888,9 @@ enum ObservationError {
     /// Git did not return a complete porcelain status record.
     #[error("git status record lacks required fields")]
     StatusFields,
+    /// Git did not return a complete retained reference record.
+    #[error("git reference record lacks required fields")]
+    RefFields,
     /// Git did not return all requested commit fields.
     #[error("git commit record lacks required fields")]
     CommitFields,
@@ -640,20 +906,6 @@ enum ObservationError {
     /// A git object ID is invalid.
     #[error("git tip is invalid")]
     Commit(#[source] agent_core::state::InvalidCommitId),
-}
-
-/// Checks that immutable SQLite reading will include every committed record and remain stable.
-fn history_stamp(path: &Path) -> Result<(u64, std::time::SystemTime), ObservationError> {
-    let mut wal = path.as_os_str().to_os_string();
-    wal.push("-wal");
-    match std::fs::metadata(Path::new(&wal)) {
-        Ok(metadata) if metadata.len() != 0 => return Err(ObservationError::HistoryWal),
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(ObservationError::Io(error)),
-    }
-    let metadata = std::fs::metadata(path).map_err(ObservationError::Io)?;
-    Ok((metadata.len(), metadata.modified().map_err(ObservationError::Io)?))
 }
 
 fn parse_commit(line: &str) -> Result<GitCommitSummaryFacts, ObservationError> {
@@ -821,6 +1073,161 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
     })
 }
 
+/// Resolves a task's last round and its recorded merged branch, including older states without run-round links.
+fn task_round<'a>(
+    team: &'a Team,
+    task: &TaskId,
+    agent: &AgentName,
+) -> (Option<&'a agent_core::state::Round>, Option<&'a BranchName>) {
+    let prefix = format!("agents/{agent}/{task}-");
+    let member = team
+        .crew()
+        .roster()
+        .into_iter()
+        .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)))
+        .find(|(_, member)| member.task() == task)
+        .map(|(_, member)| member);
+    let run_round = member
+        .and_then(|member| member.runs().last())
+        .and_then(|run| run.rounds().last())
+        .and_then(|id| team.rounds().iter().find(|round| round.id() == id));
+    let recorded = team.items().iter().rev().find_map(|item| match item.phase() {
+        ItemPhase::Done {
+            completion: agent_core::state::Completion::Merged { pr, .. },
+        } => (pr.branch.as_str().starts_with(&prefix) && run_round.is_none_or(|round| round.item() == Some(item.id())))
+            .then_some((item.id(), &pr.branch)),
+        ItemPhase::Done {
+            completion: agent_core::state::Completion::Listed,
+        }
+        | ItemPhase::Pending
+        | ItemPhase::InProgress { .. }
+        | ItemPhase::InReview { .. }
+        | ItemPhase::Fixing { .. }
+        | ItemPhase::Approved { .. } => None,
+    });
+    let latest_round = run_round
+        .or_else(|| recorded.and_then(|(item, _)| team.rounds().iter().find(|round| round.item() == Some(item))))
+        .or_else(|| {
+            (team
+                .crew()
+                .roster()
+                .first()
+                .is_some_and(|(_, member)| member.task() == task))
+            .then(|| team.rounds().last())
+            .flatten()
+        });
+    (latest_round, recorded.map(|(_, branch)| branch))
+}
+
+/// Decodes the name and object ID fields of a retained reference record.
+fn ref_fields(line: &str) -> Result<(&str, &str), ObservationError> {
+    let (name, hash) = line.split_once(' ').ok_or(ObservationError::RefFields)?;
+    if name.is_empty() || hash.is_empty() {
+        return Err(ObservationError::RefFields);
+    }
+    Ok((name, hash))
+}
+
+async fn read_git_from_checkout(
+    checkout: &Path,
+    task: &TaskId,
+    agent: &AgentName,
+    recorded: Option<&BranchName>,
+    round: Option<&agent_core::state::Round>,
+) -> Result<GitObservation, ObservationError> {
+    let branches_output = git_text(
+        checkout,
+        &["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/"],
+    )
+    .await?;
+
+    let exact = format!("agents/{agent}/{task}");
+    let prefix = format!("agents/{agent}/{task}-");
+
+    let derived = round
+        .and_then(agent_core::state::Round::item)
+        .map(|item| format!("{prefix}{item}").parse::<BranchName>())
+        .transpose()
+        .map_err(ObservationError::Branch)?;
+    let recorded = recorded.or(derived.as_ref());
+
+    let mut candidate: Option<(BranchName, CommitId)> = None;
+
+    for line in branches_output.lines() {
+        let (ref_name, hash) = ref_fields(line)?;
+
+        let is_match = match recorded {
+            Some(branch) => ref_name == branch.as_str(),
+            None => ref_name == exact || ref_name.starts_with(&prefix),
+        };
+
+        if is_match {
+            let branch: BranchName = ref_name.parse().map_err(ObservationError::Branch)?;
+            let tip: CommitId = hash.parse().map_err(ObservationError::Commit)?;
+            if ref_name.starts_with(&prefix) || candidate.is_none() {
+                candidate = Some((branch, tip));
+            }
+        }
+    }
+
+    let (branch, tip) = candidate.ok_or_else(|| {
+        ObservationError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("no retained branch found in checkout for task {task}"),
+        ))
+    })?;
+
+    let origin = git_text(
+        checkout,
+        &[
+            "for-each-ref",
+            "--format=%(objectname)",
+            &format!("refs/remotes/origin/{branch}"),
+        ],
+    )
+    .await?;
+    let origin_tip = if origin.trim().is_empty() {
+        None
+    } else {
+        Some(origin.trim().parse().map_err(ObservationError::Commit)?)
+    };
+
+    let published = format!("refs/team-agents/published/{branch}");
+    let reviewed = format!("refs/team-agents/reviewed/{branch}");
+    let harness = git_text(
+        checkout,
+        &[
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            &published,
+            &reviewed,
+        ],
+    )
+    .await?;
+
+    Ok(GitObservation {
+        dirty: false,
+        facts: GitWorktreeSummary {
+            task_id: task.clone(),
+            branch,
+            tip,
+            origin_tip,
+            commits_over_base: vec![],
+            uncommitted_files: vec![],
+            harness_refs: harness
+                .lines()
+                .filter(|line| {
+                    line.split_once(' ')
+                        .is_some_and(|(name, _)| name == published || name == reviewed)
+                })
+                .map(str::to_owned)
+                .collect(),
+            lead_contains_tip: None,
+            newest_untracked: vec![],
+        },
+    })
+}
+
 pub(super) async fn persist(
     collection: Collection,
     cut: SecretsCut,
@@ -895,11 +1302,73 @@ pub(super) async fn persist(
     .map_err(DebugRuntimeError::Worker)?
 }
 
-/// Escapes paths without losing non-UTF-8 bytes or allowing control characters to hide file names.
-#[expect(
-    clippy::unnecessary_debug_formatting,
-    reason = "debug preserves invalid UTF-8 and escapes control bytes in diagnostic paths"
-)]
+/// Spells paths as text while retaining otherwise invalid UTF-8 bytes.
 fn escaped_path(path: &Path) -> String {
-    format!("{:?}", path.as_os_str())
+    match path.to_str() {
+        Some(text) => text.to_owned(),
+        None => path.as_os_str().as_bytes().escape_ascii().to_string(),
+    }
+}
+
+/// Orders numbered artifact names without numeric overflow or lexical 10-before-2 order.
+fn numbered_order(left: &Path, right: &Path) -> std::cmp::Ordering {
+    fn key(path: &Path) -> Option<(&Path, &str, usize, &str)> {
+        let stem = path.file_stem()?.to_str()?;
+        let (prefix, number) = stem.rsplit_once('-')?;
+        if !number.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let digits = number.trim_start_matches('0');
+        Some((path.parent()?, prefix, digits.len(), digits))
+    }
+    match (key(left), key(right)) {
+        (Some(left_key), Some(right_key)) => left_key.cmp(&right_key).then_with(|| left.cmp(right)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => left.cmp(right),
+    }
+}
+
+/// Converts the bounded process failure into prose without Rust value formatting.
+fn diagnostic_error(error: &ObservationError) -> String {
+    if let ObservationError::Git { exit, stderr } = error {
+        let status = match exit {
+            ExitReport::Exited { code } => format!("exited with {code}"),
+            ExitReport::Signaled { signal } => format!("terminated by signal {signal}"),
+        };
+        let line = stderr.split(|byte| *byte == b'\n').next().unwrap_or_default();
+        let text = match std::str::from_utf8(line) {
+            Ok(text) => text.to_owned(),
+            Err(_) => line.escape_ascii().to_string(),
+        };
+        return format!("read-only git command {status}: {text}");
+    }
+    error_chain(error)
+}
+
+/// Describes a run end as the diagnosis a reader can act on.
+fn run_detail_at(state: &RunState, offset: time::UtcOffset) -> String {
+    let RunState::Ended { at, end } = state else {
+        return "running".to_owned();
+    };
+    let how = match end {
+        RunEnd::Reported { outcome } => format!("reported {}", outcome.to_string().to_uppercase()),
+        RunEnd::NoStatus { exit_code: Some(code) } => format!("without a status, exited with {code}"),
+        RunEnd::NoStatus { exit_code: None } => "without a status, terminated by signal".to_owned(),
+        RunEnd::QuotaExhausted { resets_at: Some(at) } => {
+            format!(
+                "quota exhausted, resets at {}",
+                agent_core::debug_summary::format_time(*at, offset)
+            )
+        }
+        RunEnd::QuotaExhausted { resets_at: None } => "quota exhausted".to_owned(),
+        RunEnd::RateLimited => "rate limited".to_owned(),
+        RunEnd::Hung => "stopped by the watchdog".to_owned(),
+        RunEnd::TurnLimit => "turn limit reached".to_owned(),
+        RunEnd::Stopped => "stopped by the human".to_owned(),
+    };
+    format!(
+        "ended, {how}, at {}",
+        agent_core::debug_summary::format_time(*at, offset)
+    )
 }
