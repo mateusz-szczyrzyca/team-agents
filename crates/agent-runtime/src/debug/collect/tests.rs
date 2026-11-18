@@ -1046,3 +1046,39 @@ async fn redacts_complete_final_message_before_taking_its_tail() {
         "a secret suffix must not survive truncation"
     );
 }
+
+#[tokio::test]
+async fn daemon_artifact_redacts_fields_before_debug_encoding() {
+    let dir = tempfile::tempdir().unwrap();
+    let team = team();
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    let secret = "quote\"secret\\café";
+    let secrets = agent_core::config::Secrets::parse(
+        &format!("github_token = {}", serde_json::to_string(secret).unwrap()),
+        0o600,
+    )
+    .unwrap();
+    collection.cut = SecretsCut::new(&secrets, []);
+    collection.add_daemon(agent_core::debug_summary::DaemonSummary {
+        pid: 42,
+        started_at: None,
+        cmdline: vec!["agent".to_owned(), secret.to_owned()],
+        env_var_names: vec![secret.to_owned()],
+        exe_path: secret.to_owned(),
+        disk_newer_than_process: false,
+        version: secret.to_owned(),
+    });
+    let result = persist(
+        collection,
+        SecretsCut::new(&secrets, []),
+        dir.path().to_owned(),
+        "bundle".to_owned(),
+        "summary".to_owned(),
+    )
+    .await
+    .unwrap();
+    let artifact = std::fs::read_to_string(result.bundle_dir.join("daemon-process.txt")).unwrap();
+    assert_eq!(artifact.matches("<cut>").count(), 4, "{artifact}");
+    assert!(!artifact.contains("secret"), "{artifact}");
+}

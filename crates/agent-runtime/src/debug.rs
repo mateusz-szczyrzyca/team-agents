@@ -342,8 +342,7 @@ async fn observe_daemon(
             collection.assessment.daemon = Some(agent_core::diagnostic_assessment::Daemon::Present {
                 executable_newer: Some(daemon.disk_newer_than_process),
             });
-            collection.add("daemon-process.txt", format!("{daemon:#?}").into_bytes());
-            collection.summary.daemon = Some(daemon);
+            collection.add_daemon(daemon);
         }
         Ok(None) => {
             collection.assessment.daemon = Some(agent_core::diagnostic_assessment::Daemon::Absent);

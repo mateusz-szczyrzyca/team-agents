@@ -164,6 +164,12 @@ impl Collection {
         self.artifacts.push((path.into(), bytes));
     }
 
+    /// Adds the daemon artifact and its structured summary facts.
+    pub(super) fn add_daemon(&mut self, daemon: agent_core::debug_summary::DaemonSummary) {
+        self.add("daemon-process.txt", format!("{daemon:#?}").into_bytes());
+        self.summary.daemon = Some(daemon);
+    }
+
     fn failed(&mut self, part: impl Into<String>, reason: impl Into<String>) {
         self.failed_in(SummarySection::CollectionFailures, part, reason);
     }
