@@ -494,3 +494,30 @@ async fn collects_redacted_notifications_in_bundle_and_summary() {
     assert!(notif_section.contains("<cut>"), "{notif_section}");
     assert!(!notif_section.contains("test-confidential-λ"), "{notif_section}");
 }
+
+#[tokio::test]
+async fn collects_configuration_and_secret_names_in_bundle() {
+    let (_dir, home, args) = fixture();
+    std::fs::write(home.config_file(), "[repos.example]\ngate = \"make gate\"\n").unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+
+    assert!(result.bundle_dir.join("agents.toml").is_file());
+    assert_eq!(
+        std::fs::read_to_string(result.bundle_dir.join("agents.toml")).unwrap(),
+        "[repos.example]\ngate = \"make gate\"\n"
+    );
+
+    assert!(result.bundle_dir.join("secrets.toml").is_file());
+    let secrets_text = std::fs::read_to_string(result.bundle_dir.join("secrets.toml")).unwrap();
+    assert!(secrets_text.contains("github_token"));
+    assert!(!secrets_text.contains("test-confidential-λ"));
+}
+
+#[tokio::test]
+async fn reports_unreadable_configuration_when_agents_toml_is_missing() {
+    let (_dir, home, args) = fixture();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(summary.contains("### Unreadable Parts"));
+    assert!(summary.contains("configuration"));
+}
