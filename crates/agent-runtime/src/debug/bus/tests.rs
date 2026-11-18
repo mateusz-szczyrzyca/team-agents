@@ -95,3 +95,20 @@ async fn reports_unreadable_when_bus_file_is_directory() {
         "directory must trigger read error: {result:?}"
     );
 }
+
+#[tokio::test]
+async fn reports_error_when_bus_message_is_malformed() {
+    let (_dir, home, team) = fixture();
+    let bus_dir = home.root().join("bus");
+    std::fs::create_dir_all(&bus_dir).unwrap();
+    let lines = [
+        r#"{"id":1,"ts":"2026-11-17 09:00:00","from":"codex-1","to":"all","kind":"chat","text":"ok"}"#,
+        "not valid json",
+    ];
+    std::fs::write(bus_dir.join("messages.jsonl"), lines.join("\n") + "\n").unwrap();
+    let result = collect(&home, &team).await;
+    assert!(
+        matches!(result, Err(BusError::Parse { line: 2, .. })),
+        "malformed line 2 must trigger parse error: {result:?}"
+    );
+}

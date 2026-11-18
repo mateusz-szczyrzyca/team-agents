@@ -26,21 +26,36 @@ pub(super) enum BusError {
         /// Original operating system failure.
         source: std::io::Error,
     },
+    /// A bus message line could not be parsed as JSON.
+    #[error("cannot parse bus message line {line}")]
+    Parse {
+        /// 1-based line number.
+        line: usize,
+        /// Original JSON deserialization error.
+        #[source]
+        source: serde_json::Error,
+    },
     /// Log bytes are not UTF-8.
     #[error("bus messages log is not UTF-8")]
     Utf8(#[source] std::string::FromUtf8Error),
 }
 
+/// Raw message payload parsed from JSON Lines on the bus.
 #[derive(serde::Deserialize)]
 struct RawBusMessage {
+    /// Timestamp when posted, if present.
     #[serde(default)]
     ts: Option<String>,
+    /// Sender identifier.
     #[serde(default)]
     from: String,
+    /// Recipient identifier.
     #[serde(default)]
     to: String,
+    /// Message kind or category, if present.
     #[serde(default)]
     kind: Option<String>,
+    /// Message text payload.
     #[serde(default)]
     text: String,
 }
