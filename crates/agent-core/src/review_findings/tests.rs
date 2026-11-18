@@ -246,3 +246,26 @@ FINDINGS\n1. [MAJOR] ERR-3 y.rs:4 — real problem → fix\n   CHECK: read y.rs\
         assert_eq!(report.findings.len(), 1, "{text}");
     }
 }
+
+#[test]
+fn a_line_with_inline_triple_backticks_does_not_open_a_fence() {
+    let text = "VERDICT: APPROVE\n```cargo test``` passed\n\
+FINDINGS\n1. [MAJOR] ERR-3 y.rs:4 — problem → fix\n   CHECK: read y.rs\n";
+    assert_eq!(
+        parse_report(text, ReviewVerdict::Approve, &[]),
+        Err(ReportError {
+            line: 1,
+            kind: ReportProblem::Verdict
+        })
+    );
+    let report = parse_report(text, ReviewVerdict::RequestChanges, &[]).unwrap();
+    assert_eq!(report.findings.len(), 1);
+}
+
+#[test]
+fn a_tilde_fence_may_carry_backticks_in_its_info_string() {
+    let text = "VERDICT: REQUEST_CHANGES\n~~~ `text`\n1. [BLOCKER] ERR-3 y:1 — in a fence → ignored\n~~~\n\
+FINDINGS\n1. [MAJOR] ERR-3 y.rs:4 — real → fix\n   CHECK: read y.rs\n";
+    let report = parse_report(text, ReviewVerdict::RequestChanges, &[]).unwrap();
+    assert_eq!(report.findings.len(), 1);
+}
