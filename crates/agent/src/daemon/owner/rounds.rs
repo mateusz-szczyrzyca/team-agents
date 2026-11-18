@@ -149,13 +149,13 @@ impl PullWatch {
         };
         let member_name = member.agent().name().to_string();
         for item in team.items() {
-            if let ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } = item.phase() {
-                if assignee.as_str() == member_name {
-                    self.announced.remove(&Announcement::ItemBlocked {
-                        team: team_id.clone(),
-                        item: item.id().to_string(),
-                    });
-                }
+            if let ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } = item.phase()
+                && assignee.as_str() == member_name
+            {
+                self.announced.remove(&Announcement::ItemBlocked {
+                    team: team_id.clone(),
+                    item: item.id().to_string(),
+                });
             }
         }
     }
