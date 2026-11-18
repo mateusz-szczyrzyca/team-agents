@@ -614,5 +614,10 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
             .expect("bundle entry must exist")
             .expect("bundle entry must be readable");
         verify_e2e_bundle(&bundle_entry.path());
+
+        std::fs::remove_dir_all(&worktree).unwrap();
+        let diag_removed = world.home.join("diag_removed");
+        let debug_removed = world.agent(&["debug", "--team", &team, "--out", diag_removed.to_str().unwrap()]);
+        assert!(debug_removed.status.success(), "{}", stderr(&debug_removed));
     }
 }
