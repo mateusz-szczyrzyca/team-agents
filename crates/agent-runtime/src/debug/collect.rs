@@ -15,7 +15,7 @@ use agent_core::diagnostic_assessment::{Assessment, Branch, LeadGit, Origin, Rea
 use agent_core::ids::{BranchName, TaskId};
 use agent_core::kinds::Role;
 use agent_core::questions::QuestionsFile;
-use agent_core::state::{CommitId, GateRecord, ItemPhase, Member, RunState, Team, Timestamp};
+use agent_core::state::{CommitId, GateRecord, ItemPhase, Member, RunEnd, RunState, Team, Timestamp};
 use tokio::io::AsyncReadExt;
 
 use super::{DebugResult, DebugRuntimeError};
@@ -208,7 +208,7 @@ impl Collection {
             last_run_started: last.map(agent_core::state::Run::started_at),
             last_run_ended: ended,
             last_activity: None,
-            last_run_end_detail: last.map(|run| format!("{:?}", run.state())),
+            last_run_end_detail: last.map(|run| run_detail(run.state())),
             questions: None,
         };
         self.summary.tasks.push(row);
@@ -254,25 +254,37 @@ impl Collection {
                     continue;
                 }
                 match tokio::fs::read_dir(&source).await {
-                    Ok(mut entries) => loop {
-                        match entries.next_entry().await {
-                            Ok(Some(entry)) if pending.len().saturating_add(visited) < ENTRY_LIMIT => {
-                                pending.push((entry.path(), target.join(entry.file_name()), depth.saturating_add(1)));
-                            }
-                            Ok(Some(_)) => {
-                                self.failed(
-                                    format!("task artifact {}", escaped_path(&source)),
-                                    "directory entry limit reached",
-                                );
-                                break;
-                            }
-                            Ok(None) => break,
-                            Err(error) => {
-                                self.failed(format!("task artifact {}", escaped_path(&source)), error.to_string());
-                                break;
+                    Ok(mut entries) => {
+                        let mut children = Vec::new();
+                        loop {
+                            match entries.next_entry().await {
+                                Ok(Some(entry))
+                                    if pending.len().saturating_add(children.len()).saturating_add(visited)
+                                        < ENTRY_LIMIT =>
+                                {
+                                    children.push((
+                                        entry.path(),
+                                        target.join(entry.file_name()),
+                                        depth.saturating_add(1),
+                                    ));
+                                }
+                                Ok(Some(_)) => {
+                                    self.failed(
+                                        format!("task artifact {}", escaped_path(&source)),
+                                        "directory entry limit reached",
+                                    );
+                                    break;
+                                }
+                                Ok(None) => break,
+                                Err(error) => {
+                                    self.failed(format!("task artifact {}", escaped_path(&source)), error.to_string());
+                                    break;
+                                }
                             }
                         }
-                    },
+                        children.sort_by(|left, right| numbered_order(&right.0, &left.0));
+                        pending.extend(children);
+                    }
                     Err(error) => self.failed(format!("task artifact {}", escaped_path(&source)), error.to_string()),
                 }
             } else if metadata.is_file() {
@@ -391,12 +403,33 @@ impl Collection {
                     })
             })
             .collect();
-        outputs.sort_by(|(left, _), (right, _)| left.cmp(right));
-        let tails = outputs
+        outputs.sort_by(|(left, _), (right, _)| numbered_order(left, right));
+        let selected: Vec<_> = outputs
             .into_iter()
             .rev()
             .take(3)
-            .map(|(_, bytes)| match std::str::from_utf8(bytes) {
+            .map(|(path, bytes)| (path.clone(), bytes.clone()))
+            .collect();
+        let mut tails = Vec::new();
+        for (path, bytes) in selected {
+            let source = home.root().join(&path);
+            let modified = match tokio::fs::metadata(&source)
+                .await
+                .and_then(|metadata| metadata.modified())
+            {
+                Ok(at) => match Timestamp::from_utc(time::UtcDateTime::from(at)) {
+                    Ok(at) => at.to_string(),
+                    Err(error) => {
+                        self.failed(format!("gate time {}", escaped_path(&source)), error_chain(&error));
+                        "unreadable".to_owned()
+                    }
+                },
+                Err(error) => {
+                    self.failed(format!("gate time {}", escaped_path(&source)), error_chain(&error));
+                    "unreadable".to_owned()
+                }
+            };
+            let text = match std::str::from_utf8(&bytes) {
                 Ok(text) => text
                     .lines()
                     .rev()
@@ -406,9 +439,13 @@ impl Collection {
                     .rev()
                     .collect::<Vec<_>>()
                     .join("\n"),
-                Err(error) => format!("gate output is not UTF-8: {error}; raw bytes are retained"),
-            })
-            .collect();
+                Err(error) => {
+                    self.failed(format!("gate text {}", escaped_path(&source)), error_chain(&error));
+                    "gate output is not UTF-8; raw bytes are retained".to_owned()
+                }
+            };
+            tails.push(format!("{} (modified: {modified} UTC)\n{text}", escaped_path(&source)));
+        }
         self.summary.gate.push(TaskGateSummary {
             task_id: task.clone(),
             record,
@@ -477,7 +514,7 @@ impl Collection {
                     }
                     self.summary.git.push(observation.facts);
                 }
-                Err(error) => self.failed(format!("worktree {}", escaped_path(&path)), error_chain(&error)),
+                Err(error) => self.failed(format!("worktree {}", escaped_path(&path)), diagnostic_error(&error)),
             }
         }
         self.git_details(home, team).await;
@@ -895,11 +932,63 @@ pub(super) async fn persist(
     .map_err(DebugRuntimeError::Worker)?
 }
 
-/// Escapes paths without losing non-UTF-8 bytes or allowing control characters to hide file names.
-#[expect(
-    clippy::unnecessary_debug_formatting,
-    reason = "debug preserves invalid UTF-8 and escapes control bytes in diagnostic paths"
-)]
+/// Spells paths as text while retaining otherwise invalid UTF-8 bytes.
 fn escaped_path(path: &Path) -> String {
-    format!("{:?}", path.as_os_str())
+    match path.to_str() {
+        Some(text) => text.to_owned(),
+        None => path.as_os_str().as_bytes().escape_ascii().to_string(),
+    }
+}
+
+/// Orders numbered artifact names without numeric overflow or lexical 10-before-2 order.
+fn numbered_order(left: &Path, right: &Path) -> std::cmp::Ordering {
+    fn key(path: &Path) -> Option<(&Path, &str, usize, &str)> {
+        let stem = path.file_stem()?.to_str()?;
+        let (prefix, number) = stem.rsplit_once('-')?;
+        if !number.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let digits = number.trim_start_matches('0');
+        Some((path.parent()?, prefix, digits.len(), digits))
+    }
+    match (key(left), key(right)) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        _ => left.cmp(right),
+    }
+}
+
+/// Converts the bounded process failure into prose without Rust value formatting.
+fn diagnostic_error(error: &ObservationError) -> String {
+    if let ObservationError::Git { exit, stderr } = error {
+        let status = match exit {
+            ExitReport::Exited { code } => format!("exited with {code}"),
+            ExitReport::Signaled { signal } => format!("terminated by signal {signal}"),
+        };
+        let line = stderr.split(|byte| *byte == b'\n').next().unwrap_or_default();
+        let text = match std::str::from_utf8(line) {
+            Ok(text) => text.to_owned(),
+            Err(_) => line.escape_ascii().to_string(),
+        };
+        return format!("read-only git command {status}: {text}");
+    }
+    error_chain(error)
+}
+
+/// Describes a run end as the diagnosis a reader can act on.
+fn run_detail(state: &RunState) -> String {
+    let RunState::Ended { at, end } = state else {
+        return "running".to_owned();
+    };
+    let how = match end {
+        RunEnd::Reported { outcome } => format!("reported {}", outcome.to_string().to_uppercase()),
+        RunEnd::NoStatus { exit_code: Some(code) } => format!("without a status, exited with {code}"),
+        RunEnd::NoStatus { exit_code: None } => "without a status, terminated by signal".to_owned(),
+        RunEnd::QuotaExhausted { resets_at: Some(at) } => format!("quota exhausted, resets at {at}"),
+        RunEnd::QuotaExhausted { resets_at: None } => "quota exhausted".to_owned(),
+        RunEnd::RateLimited => "rate limited".to_owned(),
+        RunEnd::Hung => "stopped by the watchdog".to_owned(),
+        RunEnd::TurnLimit => "turn limit reached".to_owned(),
+        RunEnd::Stopped => "stopped by the human".to_owned(),
+    };
+    format!("ended, {how}, at {at}")
 }
