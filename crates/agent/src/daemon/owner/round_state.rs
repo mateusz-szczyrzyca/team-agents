@@ -42,7 +42,7 @@ pub(super) fn rounds_for(state: &State, task: &TaskId, why: Option<&Why>) -> Res
     let goes_on = !member.runs().is_empty();
     let start = match why {
         Some(Why::Delegated(_)) => RunStart::Request { asked_by: &asked_by },
-        Some(Why::Review | Why::VerdictMissing) => RunStart::Review {
+        Some(Why::Review | Why::VerdictMissing | Why::ReviewFormat(_)) => RunStart::Review {
             round: reviewed.as_ref(),
         },
         // A reviewer's task is made when its review is asked: its first run is that review, with no reason given.

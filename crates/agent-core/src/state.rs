@@ -7,6 +7,7 @@
 
 mod checked;
 mod checks;
+mod findings;
 #[cfg(test)]
 pub(crate) mod fixtures;
 mod gate;
@@ -22,6 +23,7 @@ mod values;
 
 pub use checked::CheckedMut;
 pub use checks::{Asked, ChecksRecord, ItemChecks, Sent};
+pub use findings::{FindingNumbersExhausted, FindingStatus, Findings, RecordedFinding};
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
 pub use item::{
     AdvanceError, AskReviewsError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut,
@@ -45,9 +47,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
 
-/// The schema version of the state that this build writes. It reads this version and migrates the one before it
-/// (version 1, which had no rounds).
-pub const SCHEMA_VERSION: u32 = 2;
+/// The schema version this build writes. It also reads version 2 (without findings) and version 1 (without rounds).
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Largest state text accepted, in bytes: a bound on untrusted input, far above any real state.
 pub const MAX_STATE_BYTES: usize = 64 << 20;
@@ -63,7 +64,7 @@ version_type!(SchemaVersion, SCHEMA_VERSION, UnsupportedSchema);
 
 /// A state of a schema version this build does not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("the state has schema version {found}; this build reads versions 1 and {SCHEMA_VERSION}")]
+#[error("the state has schema version {found}; this build reads versions 1, 2 and {SCHEMA_VERSION}")]
 pub struct UnsupportedSchema {
     /// The version the state declares.
     pub found: u64,
@@ -380,11 +381,11 @@ impl State {
     /// Reads a state from JSON text.
     ///
     /// # Errors
-    /// [`StateError`]: the text is too large, declares a schema version other than 1 and 2 (checked first, so that a
+    /// [`StateError`]: the text is too large, declares a schema version other than 1, 2 and 3 (checked first, so that a
     /// state of a newer version is refused as such and not as malformed), is not a valid state, or has clashing teams,
     /// tasks or rounds.
     ///
-    /// A state of version 1 is migrated as it is read: it comes out as the state of version 2 that stands for it, and
+    /// A state of version 1 is migrated as it is read: it comes out as the state of version 3 that stands for it, and
     /// the same text always gives the same state.
     pub fn from_json(text: &str) -> Result<Self, StateError> {
         if text.len() > MAX_STATE_BYTES {
@@ -396,6 +397,9 @@ impl State {
         let probe: SchemaProbe = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
         if probe.schema_version == u64::from(migrate::LEGACY_VERSION) {
             return migrate::from_v1(text);
+        }
+        if probe.schema_version == 2 {
+            return migrate::from_v2(text);
         }
         if probe.schema_version != u64::from(SCHEMA_VERSION) {
             return Err(UnsupportedSchema {
@@ -639,13 +643,13 @@ mod tests {
 
     #[test]
     fn the_schema_version_is_one() {
-        assert_eq!(SCHEMA_VERSION, 2);
-        assert_eq!(serde_json::to_value(SchemaVersion).unwrap(), json!(2));
+        assert_eq!(SCHEMA_VERSION, 3);
+        assert_eq!(serde_json::to_value(SchemaVersion).unwrap(), json!(3));
     }
 
     #[test]
     fn only_the_schema_version_of_this_build_is_read() {
-        serde_json::from_value::<SchemaVersion>(json!(2)).unwrap();
+        serde_json::from_value::<SchemaVersion>(json!(3)).unwrap();
         for bad in [
             json!(0),
             json!(1),
@@ -681,7 +685,7 @@ mod tests {
     fn an_empty_state_is_written_with_its_schema_version_first() {
         let text = State::new().to_json().unwrap();
 
-        assert_eq!(text, "{\n  \"schema_version\": 2,\n  \"teams\": []\n}\n");
+        assert_eq!(text, "{\n  \"schema_version\": 3,\n  \"teams\": []\n}\n");
         assert_eq!(State::from_json(&text).unwrap(), State::new());
     }
 
@@ -689,14 +693,14 @@ mod tests {
     fn a_state_is_written_indented_and_ends_with_a_newline_and_the_schema_version_comes_first() {
         let text = two_teams().to_json().unwrap();
 
-        assert!(text.starts_with("{\n  \"schema_version\": 2,\n  \"teams\": [\n    {\n      \"id\": \"team-"));
+        assert!(text.starts_with("{\n  \"schema_version\": 3,\n  \"teams\": [\n    {\n      \"id\": \"team-"));
         assert!(text.ends_with("}\n"));
         assert!(!text.ends_with("\n\n"));
     }
 
     #[test]
     fn a_state_of_another_schema_version_is_refused_with_that_version() {
-        for found in [0_u64, 3, 99, u64::MAX] {
+        for found in [0_u64, 4, 99, u64::MAX] {
             let text = format!("{{\"schema_version\": {found}, \"teams\": []}}");
 
             let err = State::from_json(&text).unwrap_err();
@@ -711,9 +715,9 @@ mod tests {
     #[test]
     fn the_version_is_checked_before_the_rest_so_a_newer_state_is_not_called_malformed() {
         for text in [
-            "{\"schema_version\": 3, \"teams\": {\"by_id\": 5}}",
+            "{\"schema_version\": 4, \"teams\": {\"by_id\": 5}}",
             "{\"teams\": [], \"schema_version\": 4, \"future\": true}",
-            "{\"schema_version\": 3}",
+            "{\"schema_version\": 4}",
         ] {
             let err = State::from_json(text).unwrap_err();
 
@@ -808,7 +812,7 @@ mod tests {
     #[test]
     fn serde_reads_a_state_through_the_same_checks() {
         let good = State::new().to_json().unwrap();
-        let other_version = "{\"schema_version\": 3, \"teams\": []}";
+        let other_version = "{\"schema_version\": 4, \"teams\": []}";
         let one = serde_json::to_value(team_of(1, 1)).unwrap();
         let duplicate = json!({"schema_version": 1, "teams": [one, one]}).to_string();
 

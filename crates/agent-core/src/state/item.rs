@@ -5,6 +5,7 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
+use super::Findings;
 use super::checked::CheckedMut;
 use super::gate::GateResult;
 use super::strict::{checked, strict_enum};
@@ -421,6 +422,9 @@ pub struct ItemProgress {
     /// The last gate result for this item, if the gate has run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<GateResult>,
+    /// The numbered protocol, absent for rounds opened by an earlier daemon.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    findings: Option<Findings>,
 }
 
 /// How an [`ItemProgress`] is read; see [`checked!`].
@@ -437,6 +441,9 @@ struct ItemProgressWire {
     /// See [`ItemProgress`]; absent until the gate has run.
     #[serde(default)]
     gate: Option<GateResult>,
+    /// See [`ItemProgress`]; old rounds keep the verdict-only protocol.
+    #[serde(default)]
+    findings: Option<Findings>,
 }
 
 checked!(ItemProgress, ItemProgressWire, check_item_progress);
@@ -497,6 +504,16 @@ impl CheckedMut<'_, ItemProgress> {
     /// [`ReplaceReviewError`], as for [`ItemProgress::replace_review`].
     pub fn replace_review(&mut self, gone: &TaskId, with: Review) -> Result<(), ReplaceReviewError> {
         self.value.replace_review(gone, with)
+    }
+
+    /// Enables numbered findings for a newly opened pull request.
+    pub fn start_findings(&mut self) {
+        self.value.findings = Some(Findings::default());
+    }
+
+    /// Changes the ledger of a pull request using the numbered protocol.
+    pub fn findings_mut(&mut self) -> Option<&mut Findings> {
+        self.value.findings.as_mut()
     }
 
     /// Records the last gate result for the item, replacing the one before.
@@ -786,6 +803,7 @@ impl ItemProgress {
             phase,
             fix_passes: Vec::new(),
             gate: None,
+            findings: None,
         }
     }
 
@@ -796,6 +814,8 @@ impl ItemProgress {
     getter!("The item status the phase shows.", pub const fn status(&self) -> ItemStatus = self.phase.kind().status());
 
     getter!("The fix passes so far, oldest first.", pub fn fix_passes(&self) -> &[FixPass] = &self.fix_passes);
+
+    getter!("The findings ledger, or none for a legacy round.", pub fn findings(&self) -> Option<&Findings> = self.findings.as_ref());
 
     /// Moves the item to `next`. Leaving `in_review` for `fixing` records the review pass's reviews as a fix pass.
     ///
@@ -1049,6 +1069,7 @@ mod tests {
                 phase: wire.phase,
                 fix_passes: wire.fix_passes,
                 gate: wire.gate,
+                ..Self::new(wire.id, ItemMark::Open)
             };
             check_has_fix_pass(&progress)?;
             Ok(progress)

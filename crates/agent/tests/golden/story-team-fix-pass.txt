@@ -175,16 +175,17 @@ Two investigators from outside the team review this pull request. Their reports 
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-11>/runs/<run-13>/mcp.json --max-turns 300 --settings <home>/tasks/<task-11>/runs/<run-13>/claude-settings.json --session-id <uuid> --scenario 'late:VERDICT: REQUEST_CHANGES\nBLOCKERS\n1. [TDD-2] src/lib.rs:7 — the case is untested,late:VERDICT: APPROVE\nSUMMARY: fixed' --as inv-r1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-11>/runs/<run-13>/mcp.json --max-turns 300 --settings <home>/tasks/<task-11>/runs/<run-13>/claude-settings.json --session-id <uuid> --scenario 'late-verify:VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\n   CHECK: read src/lib.rs:7,late-verify:VERDICT: APPROVE\nSUMMARY: fixed' --as inv-r1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-11>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model
       2. <time> info: result: success
     ended: reported DONE
-    ----- final message (95 bytes) -----
+    ----- final message (146 bytes) -----
 VERDICT: REQUEST_CHANGES
-BLOCKERS
-1. [TDD-2] src/lib.rs:7 — the case is untested
+FINDINGS
+1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage
+   CHECK: read src/lib.rs:7
 STATUS: DONE
     ----- end of final message -----
     changes: head <commit-2> → <commit-2>
@@ -198,7 +199,7 @@ STATUS: DONE
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-12>/runs/<run-14>/mcp.json --max-turns 300 --settings <home>/tasks/<task-12>/runs/<run-14>/claude-settings.json --session-id <uuid> --scenario 'done:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-12>/runs/<run-14>/mcp.json --max-turns 300 --settings <home>/tasks/<task-12>/runs/<run-14>/claude-settings.json --session-id <uuid> --scenario 'verify:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-12>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -216,33 +217,37 @@ VERDICT: APPROVE
 SUMMARY: fine
   ----- end of review report -----
 <time>  review pass 1 of #1 by inv-r1: REQUEST_CHANGES
-  ----- review report (82 bytes) -----
+  ----- review report (133 bytes) -----
 VERDICT: REQUEST_CHANGES
-BLOCKERS
-1. [TDD-2] src/lib.rs:7 — the case is untested
+FINDINGS
+1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage
+   CHECK: read src/lib.rs:7
   ----- end of review report -----
 <time>  fix pass 1 of 5 on #1 started
-  ----- findings sent to the team (991 bytes) -----
+  ----- findings sent to the team (979 bytes) -----
 # THE REVIEWERS ASKED FOR CHANGES (pull request #1, fix pass 1 of 5)
 
 Both reviews of your pull request are in, and at least one asks for changes. The reports, each with its verdict:
 
+1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage
+   CHECK: read src/lib.rs:7
+
+
 ### Review by inv-r1
 
 VERDICT: REQUEST_CHANGES
-BLOCKERS
-1. [TDD-2] src/lib.rs:7 — the case is untested
+FINDINGS
+1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage
+   CHECK: read src/lib.rs:7
 
 ### Review by inv-r2
 
 VERDICT: APPROVE
 SUMMARY: fine
 
-Fix every blocker of every report, on your branch `agents/inv-lead/<task-4>` (switch to it first when your worktree has another one
-out): do it yourself or give it to a member, as you see fit. A report that approves may still name things worth
-fixing now. A finding you think is wrong
-gets a reason in your commit message, not silence. Then get the repository's gate green with `agent gate` and end your
-turn with `STATUS: DONE`.
+Fix every open [BLOCKER] and [MAJOR] by its number in the code, on your branch `agents/inv-lead/<task-4>` (switch to it first).
+These severities block approval; [MINOR] never does. Then get the repository's gate green with `agent gate` and end
+with `STATUS: DONE`.
 
 Do not push, and do not open or update the pull request: the harness pushes your branch when the gate has passed at its
 head, and asks the same reviewers again. Do not answer the reviewers on GitHub.
@@ -284,14 +289,15 @@ STATUS: DONE
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-11>/runs/<run-16>/mcp.json --max-turns 300 --settings <home>/tasks/<task-11>/runs/<run-16>/claude-settings.json --resume <uuid> --scenario 'late:VERDICT: REQUEST_CHANGES\nBLOCKERS\n1. [TDD-2] src/lib.rs:7 — the case is untested,late:VERDICT: APPROVE\nSUMMARY: fixed' --as inv-r1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-11>/runs/<run-16>/mcp.json --max-turns 300 --settings <home>/tasks/<task-11>/runs/<run-16>/claude-settings.json --resume <uuid> --scenario 'late-verify:VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\n   CHECK: read src/lib.rs:7,late-verify:VERDICT: APPROVE\nSUMMARY: fixed' --as inv-r1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-11>, at commit <commit-3>
     steps (2):
       1. <time> info: session started, model fake-model
       2. <time> info: result: success
     ended: reported DONE
-    ----- final message (44 bytes) -----
+    ----- final message (64 bytes) -----
 VERDICT: APPROVE
+FINDING 1: RESOLVED
 SUMMARY: fixed
 STATUS: DONE
     ----- end of final message -----
@@ -306,26 +312,29 @@ STATUS: DONE
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-12>/runs/<run-17>/mcp.json --max-turns 300 --settings <home>/tasks/<task-12>/runs/<run-17>/claude-settings.json --resume <uuid> --scenario 'done:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-12>/runs/<run-17>/mcp.json --max-turns 300 --settings <home>/tasks/<task-12>/runs/<run-17>/claude-settings.json --resume <uuid> --scenario 'verify:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-12>, at commit <commit-3>
     steps (2):
       1. <time> info: session started, model fake-model
       2. <time> info: result: success
     ended: reported DONE
-    ----- final message (43 bytes) -----
+    ----- final message (63 bytes) -----
 VERDICT: APPROVE
+FINDING 1: RESOLVED
 SUMMARY: fine
 STATUS: DONE
     ----- end of final message -----
     changes: head <commit-3> → <commit-3>
 <time>  review pass 2 of #1 by inv-r2: APPROVE
-  ----- review report (30 bytes) -----
+  ----- review report (50 bytes) -----
 VERDICT: APPROVE
+FINDING 1: RESOLVED
 SUMMARY: fine
   ----- end of review report -----
 <time>  review pass 2 of #1 by inv-r1: APPROVE
-  ----- review report (31 bytes) -----
+  ----- review report (51 bytes) -----
 VERDICT: APPROVE
+FINDING 1: RESOLVED
 SUMMARY: fixed
   ----- end of review report -----
 <time>  pull request #1 approved by both reviews

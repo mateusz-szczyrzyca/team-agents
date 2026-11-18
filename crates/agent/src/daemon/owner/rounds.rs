@@ -9,6 +9,7 @@
 mod asleep;
 mod checks;
 mod cleanup;
+mod findings;
 mod human;
 mod merges;
 mod prompts;
@@ -248,6 +249,9 @@ pub(super) enum Announcement {
 /// Why a branch could not be published: what the human is told, and what is logged.
 #[derive(Debug, thiserror::Error)]
 enum PublishError {
+    /// A findings text cannot be rendered.
+    #[error("cannot render findings")]
+    Findings(#[from] findings::TextError),
     /// A path of the home is not a path git can be run in.
     #[error("the worktree {path:?} cannot be used")]
     Path {
@@ -737,3 +741,7 @@ mod notice_mapping_tests;
 #[cfg(test)]
 #[path = "rounds/tests/cleanup.rs"]
 mod cleanup_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/publication_findings.rs"]
+mod publication_findings_tests;

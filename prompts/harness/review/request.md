@@ -11,16 +11,21 @@ request against it, and check that nothing the item does not ask for is in it.
 - Your final message is the report in the format of the review rules. Its **first line** is `VERDICT: APPROVE` or
   `VERDICT: REQUEST_CHANGES`, one of the two, and its last line is `STATUS: DONE`:
 
-```
+```text
 VERDICT: REQUEST_CHANGES
 SUMMARY: ...
 SIZE: ...
 GATE: ...
 
-BLOCKERS
-1. [ID] file:line — problem → fix
+FINDINGS
+1. [MAJOR] ERR-3 crates/x/src/y.rs:42 — problem → fix
+   CHECK: the command or lines that show whether the problem remains
 
 STATUS: DONE
 ```
 
 If you cannot review the pull request, say why and end with `STATUS: FAILED`.
+
+The bracket contains only the severity: [BLOCKER], [MAJOR] or [MINOR]; put the rule ID after it.
+BLOCKER means broken logic, build or gate. MAJOR means an unexplained specification deviation. MINOR is advice.
+APPROVE requires no open BLOCKER or MAJOR. REQUEST_CHANGES requires at least one.

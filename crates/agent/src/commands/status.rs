@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use agent_core::history::HistoryHealth;
 use agent_core::ids::{RoundId, TaskId};
 use agent_core::protocol::{Client, Command, Reply, RoundDetail, ShowRequest, StatusRequest, Target, TeamSummary};
+use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState};
 use agent_core::status::TaskStatus;
 use agent_runtime::process::error_chain;
@@ -292,6 +293,23 @@ pub(crate) fn render_round(detail: &RoundDetail) -> String {
     }
     if let Some(pr) = &detail.pr {
         lines.push(format!("  pull request #{} on {}", pr.number, pr.branch));
+    }
+    if !detail.findings.is_empty() {
+        let count = |severity| {
+            detail
+                .findings
+                .iter()
+                .filter(|entry| {
+                    entry.status == agent_core::state::FindingStatus::Open && entry.finding.severity == severity
+                })
+                .count()
+        };
+        lines.push(format!(
+            "  open findings: {} BLOCKER, {} MAJOR, {} MINOR",
+            count(Severity::Blocker),
+            count(Severity::Major),
+            count(Severity::Minor)
+        ));
     }
     for (index, pass) in detail.review_passes.iter().enumerate() {
         let reviews: Vec<String> = pass

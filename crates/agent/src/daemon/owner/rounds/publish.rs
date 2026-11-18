@@ -614,6 +614,14 @@ impl Owner {
         look: &mut Look,
     ) -> Result<bool, OwnerError> {
         let confirmed = self.confirmed(team_id, publication, published);
+        // A joining item shares the PR ledger, including the legacy protocol and existing comment ID.
+        let findings = match &publication.publish {
+            Publish::Open { .. } => Some(agent_core::state::Findings::default()),
+            Publish::Update { fixing, .. } => fixing
+                .first()
+                .and_then(|id| self.parts.state.team(team_id)?.item(*id)?.findings())
+                .cloned(),
+        };
         let in_review = !confirmed.is_empty();
         for id in confirmed {
             let mut team_mut = self
@@ -636,6 +644,12 @@ impl Owner {
             })?;
             // An item that was being fixed has its pull request already; the others have it opened for them now.
             let opened = !matches!(&publication.publish, Publish::Update { fixing, .. } if fixing.contains(&id));
+            if opened && let Some(findings) = &findings {
+                item.start_findings();
+                if let Some(ledger) = item.findings_mut() {
+                    ledger.clone_from(findings);
+                }
+            }
             let round = self.round_of_item(team_id, id)?;
             if opened {
                 look.events.push(EventKind::PullRequestOpened {

@@ -43,7 +43,10 @@ mod state_v2 {
     fn a_state_of_schema_version_2_is_written_back_as_it_was_read() {
         let state = State::from_json(V2).unwrap();
 
-        assert_eq!(state.to_json().unwrap(), V2);
+        assert_eq!(
+            state.to_json().unwrap(),
+            V2.replacen("\"schema_version\": 2", "\"schema_version\": 3", 1)
+        );
     }
 
     #[test]
@@ -83,16 +86,16 @@ mod state_v2 {
     }
 
     #[test]
-    fn a_state_of_schema_version_3_is_refused_as_an_unsupported_version_whatever_else_it_holds() {
+    fn a_state_of_schema_version_4_is_refused_as_an_unsupported_version_whatever_else_it_holds() {
         for text in [
-            V2.replacen("\"schema_version\": 2", "\"schema_version\": 3", 1),
-            "{\"schema_version\": 3, \"teams\": {\"by_id\": 5}}".to_owned(),
-            "{\"teams\": [], \"schema_version\": 3, \"future\": true}".to_owned(),
+            V2.replacen("\"schema_version\": 2", "\"schema_version\": 4", 1),
+            "{\"schema_version\": 4, \"teams\": {\"by_id\": 5}}".to_owned(),
+            "{\"teams\": [], \"schema_version\": 4, \"future\": true}".to_owned(),
         ] {
             let err = State::from_json(&text).unwrap_err();
 
             assert!(
-                matches!(err, StateError::UnsupportedSchema(UnsupportedSchema { found: 3 })),
+                matches!(err, StateError::UnsupportedSchema(UnsupportedSchema { found: 4 })),
                 "{err:?}"
             );
         }
@@ -120,7 +123,10 @@ mod state_v2 {
     fn a_state_of_version_1_loads_as_exactly_the_state_of_version_2_it_stands_for() {
         let state = State::from_json(V1).unwrap();
 
-        assert_eq!(state.to_json().unwrap(), V1_AS_V2);
+        assert_eq!(
+            state.to_json().unwrap(),
+            V1_AS_V2.replacen("\"schema_version\": 2", "\"schema_version\": 3", 1)
+        );
         assert_eq!(State::from_json(V1_AS_V2).unwrap(), state);
     }
 
@@ -139,7 +145,7 @@ mod state_v2 {
 
         let saved = state.to_json().unwrap();
 
-        assert!(saved.starts_with("{\n  \"schema_version\": 2,\n"));
+        assert!(saved.starts_with("{\n  \"schema_version\": 3,\n"));
         assert_eq!(State::from_json(&saved).unwrap(), state);
     }
 
