@@ -344,3 +344,20 @@ fn resolve_target_unknown_round_returns_error() {
     let result = resolve_debug_target(&state, &DebugTarget::Round(id.clone()));
     assert!(matches!(result, Err(DebugRuntimeError::UnknownTarget { id: actual }) if actual == id.as_str()));
 }
+
+#[test]
+fn redacts_secrets_before_compacting_required_summary_reasons() {
+    let (_dir, home, args) = fixture();
+    let reason = format!("{}test-confidential-λ{}", "z".repeat(110), "q".repeat(120_000));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = runtime
+        .block_on(execute_debug(&home, args, Some(Err(reason)), &mut Vec::new()))
+        .unwrap();
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(!summary.contains("test-co"), "secret prefix survived compaction");
+    assert!(summary.contains("<cut>"));
+    assert!(summary.len() < agent_core::debug_summary::MAX_SUMMARY_BYTES);
+}

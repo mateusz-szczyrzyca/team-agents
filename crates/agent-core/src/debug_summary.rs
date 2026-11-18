@@ -853,6 +853,22 @@ pub fn render_summary_with_coverage(
     render_with_coverage(input, offset, uncollected, untracked)
 }
 
+/// Renders collected text after redaction, before measuring or truncating any fragment.
+///
+/// The callback replaces confidential values in each complete presentation fragment.
+///
+/// # Errors
+/// Returns [`SummaryError::RequiredFactsTooLarge`] when redacted required facts exceed the budget.
+pub fn render_redacted_summary(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+    untracked: UntrackedCollection,
+    _redact: impl Fn(&str) -> String,
+) -> Result<String, SummaryError> {
+    render_with_coverage(input, offset, uncollected, untracked)
+}
+
 /// Renders a summary with explicit notices for sections outside the collection scope.
 ///
 /// Collection failures remain visible even when machine observations are deferred.

@@ -696,3 +696,16 @@ fn deferred_untracked_metadata_does_not_claim_zero_files() {
     assert!(!summary.contains("Untracked files (newest 0)"));
     assert!(summary.contains("Commits over base"));
 }
+
+#[test]
+fn redacts_optional_text_before_truncation_and_byte_budgeting() {
+    let mut input = sample_input();
+    input.history_tail = Some("xy".repeat(100_000));
+    let mut expected = input.clone();
+    expected.history_tail = Some("<cut>".repeat(100_000));
+    assert_eq!(
+        render_redacted_summary(&input, UtcOffset::UTC, &[], UntrackedCollection::Collected, |text| text
+            .replace("xy", "<cut>")),
+        render_summary(&expected, UtcOffset::UTC)
+    );
+}
