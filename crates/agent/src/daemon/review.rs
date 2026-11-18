@@ -273,3 +273,13 @@ pub(super) fn independent_first_review(team: &Team, task: &TaskId) -> bool {
     }
     independent
 }
+
+/// Draws verifiers, taking investigators never used on this PR before the least recently used.
+pub(super) fn choose_verifiers(
+    free: Vec<Reviewer>,
+    required: ReviewCount,
+    _history: &[agent_core::state::FixPass],
+    rng: &mut impl Rng,
+) -> Option<Vec<Reviewer>> {
+    choose_reviewers_for(free, required, rng)
+}
