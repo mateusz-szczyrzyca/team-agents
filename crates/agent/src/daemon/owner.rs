@@ -24,7 +24,10 @@ use std::time::Duration;
 
 use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, InvalidValue};
-use agent_core::decide::outcome::{AfterHang, AfterTurnLimit, after_hang, after_turn_limit, consecutive_turn_limits};
+use agent_core::decide::outcome::{
+    AfterHang, AfterNoStatus, AfterTurnLimit, after_hang, after_no_status, after_turn_limit, consecutive_no_status,
+    consecutive_turn_limits,
+};
 use agent_core::history::{HistoryEvent, RunWhy};
 use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
@@ -928,6 +931,10 @@ impl Owner {
                 self.hangs.remove(task);
                 (status, None)
             }
+            Settled::Failed(Notice::NoStatus { exit }) => {
+                self.hangs.remove(task);
+                self.no_status(task, located.role, exit)?
+            }
             Settled::Failed(notice) => {
                 self.hangs.remove(task);
                 (TaskStatus::Failed, Some(notice))
@@ -978,6 +985,31 @@ impl Owner {
                 }),
             ),
             AfterTurnLimit::NoSession => (TaskStatus::Failed, Some(Notice::TurnLimitNoSession)),
+        };
+        Ok(next)
+    }
+
+    /// What follows a run that ended without a STATUS: line: it is resumed up to twice in a row,
+    /// or fails after retries are exhausted.
+    fn no_status(
+        &mut self,
+        task: &TaskId,
+        role: Role,
+        exit: Option<i32>,
+    ) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+        let found = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let count = consecutive_no_status(found.member.runs());
+        let session = found.member.runs().last().and_then(|run| run.session());
+        let next = match after_no_status(role, count, session) {
+            AfterNoStatus::Resume => {
+                self.reasons.insert(task.clone(), Why::NoStatus);
+                (TaskStatus::Queued, None)
+            }
+            AfterNoStatus::Fail => (TaskStatus::Failed, Some(Notice::NoStatus { exit })),
         };
         Ok(next)
     }
