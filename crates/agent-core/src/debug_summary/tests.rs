@@ -654,51 +654,85 @@ fn summary_budget_at_limit_returns_exact_required_bytes_with_short_and_long_tail
 }
 
 #[test]
-fn deferred_sections_say_not_collected_instead_of_reporting_empty_observations() {
-    let input = sample_input();
-    let sections = [
-        SummarySection::DaemonAndVersions,
-        SummarySection::DaemonLog,
-        SummarySection::Bus,
-        SummarySection::Notifications,
-        SummarySection::Machine,
-    ];
-    let rendered = render_summary_with_uncollected(&input, UtcOffset::UTC, &sections).unwrap();
-    for section in sections {
-        let body = rendered
-            .split(section.heading())
-            .nth(1)
-            .unwrap()
-            .split("\n## ")
-            .next()
-            .unwrap();
-        assert_eq!(body.trim(), "Not collected in this version.");
-    }
-    assert!(rendered.contains("Summary renderer"));
-    assert!(rendered.contains("none of the known ones"));
+fn machine_section_renders_all_metrics_without_not_collected() {
+    let mut input = sample_input();
+    input.machine.load_avg = Some((0.10, 0.20, 0.30));
+    input.machine.memory_total_bytes = Some(16_000_000_000);
+    input.machine.memory_available_bytes = Some(8_000_000_000);
+    input.machine.home_fs = Some(crate::debug_summary::FsUsageSummary {
+        space_percent: 50,
+        inode_percent: 25,
+    });
+    input.machine.temp_fs = Some(crate::debug_summary::FsUsageSummary {
+        space_percent: 10,
+        inode_percent: 5,
+    });
+    input.machine.daemon_descendant_pids = vec![101, 102];
+    input.machine.tasks_dir_bytes = Some(1024);
+    input.machine.worktrees_dir_bytes = Some(2048);
+
+    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    let machine_section = rendered
+        .split("## Machine and Resources")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+
+    assert!(
+        machine_section.contains("- Load average: 0.10, 0.20, 0.30"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("- Memory: 8000000000 / 16000000000 bytes available"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("- Home filesystem: 50% space, 25% inodes"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("- Temp filesystem: 10% space, 5% inodes"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("- Daemon descendant PIDs: 101, 102"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("- Tasks directory size: 1024 bytes"),
+        "{machine_section}"
+    );
+    assert!(
+        machine_section.contains("- Worktrees directory size: 2048 bytes"),
+        "{machine_section}"
+    );
+    assert!(!rendered.contains("Not collected in this version."), "{rendered}");
 }
 
 #[test]
-fn deferred_machine_section_keeps_collection_failures_visible() {
+fn machine_section_preserves_collection_failures_without_deferred_notice() {
     let mut input = sample_input();
+    input.machine.load_avg = None;
     input.unreadable_parts.push(UnreadablePartSummary {
         section: crate::debug_summary::SummarySection::Machine,
-        name: "worktree".into(),
-        reason: "removed".into(),
+        name: "loadavg".into(),
+        reason: "permission denied".into(),
     });
-    let rendered = render_summary_with_uncollected(&input, UtcOffset::UTC, &[SummarySection::Machine]).unwrap();
-    assert!(rendered.contains("Not collected in this version."));
-    assert!(rendered.contains("### Unreadable Parts\n\n- `worktree`: removed"));
-    assert!(!rendered.contains("Load average"));
+    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(!rendered.contains("Not collected in this version."));
+    assert!(rendered.contains("### Unreadable Parts\n\n- `loadavg`: permission denied"));
+    assert!(rendered.contains("- Load average: unknown"));
 }
 
 #[test]
-fn deferred_untracked_metadata_does_not_claim_zero_files() {
+fn untracked_files_metadata_renders_counts_and_entries() {
     let mut input = sample_input();
     input.git[0].newest_untracked.clear();
-    let summary = render_summary_with_coverage(&input, UtcOffset::UTC, &[], UntrackedCollection::Deferred).unwrap();
-    assert!(summary.contains("Untracked file metadata: Not collected in this version."));
-    assert!(!summary.contains("Untracked files (newest 0)"));
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(!summary.contains("Untracked file metadata: Not collected in this version."));
+    assert!(summary.contains("- Untracked files (newest 0):"));
     assert!(summary.contains("Commits over base"));
 }
 

@@ -63,7 +63,7 @@ fn collects_offline_team_without_mutating_state_and_redacts_raw_bytes() {
     );
     let summary = std::fs::read_to_string(result.summary_path).unwrap();
     assert!(summary.contains("daemon does not answer"), "{summary}");
-    assert!(summary.contains("Not collected in this version."), "{summary}");
+    assert!(!summary.contains("Not collected in this version."), "{summary}");
 }
 
 #[test]
@@ -545,17 +545,6 @@ async fn summary_renders_bounded_configuration_content_with_settings_and_values(
         .next()
         .unwrap();
     assert!(daemon_section.contains("gate = \"make gate\""));
-}
-
-#[tokio::test]
-async fn not_collected_names_only_machine_metrics_and_untracked_files() {
-    let (_dir, home, args) = fixture();
-    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
-    let content = std::fs::read_to_string(result.bundle_dir.join("NOT_COLLECTED.txt")).unwrap();
-    assert_eq!(
-        content,
-        "Not collected in this version: machine metrics; newest untracked file metadata.\n"
-    );
 }
 
 #[tokio::test]
