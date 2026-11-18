@@ -178,3 +178,130 @@ fn git_failure_presentation_escapes_bytes_as_readable_text() {
         r#"read-only git command exited Exited { code: 128 }: "fatal: missing \xFF\n""#
     );
 }
+
+#[test]
+fn last_run_endings_are_diagnostic_prose() {
+    use agent_core::state::RunEnd;
+    use agent_core::status::RunOutcome;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&dir.path().to_str().unwrap().parse().unwrap());
+    let team = team();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let cases = [
+        (
+            RunEnd::Reported {
+                outcome: RunOutcome::Done,
+            },
+            "reported DONE",
+        ),
+        (
+            RunEnd::NoStatus { exit_code: Some(128) },
+            "without a status, exited with 128",
+        ),
+        (
+            RunEnd::NoStatus { exit_code: None },
+            "without a status, terminated by signal",
+        ),
+        (RunEnd::QuotaExhausted { resets_at: None }, "quota exhausted"),
+        (
+            RunEnd::QuotaExhausted {
+                resets_at: Some("2026-11-18T12:00:00Z".parse().unwrap()),
+            },
+            "resets at 2026-11-18",
+        ),
+        (RunEnd::RateLimited, "rate limited"),
+        (RunEnd::Hung, "stopped by the watchdog"),
+        (RunEnd::TurnLimit, "turn limit reached"),
+        (RunEnd::Stopped, "stopped by the human"),
+    ];
+    for (end, expected) in cases {
+        let mut member = team.crew().roster()[0].1.clone();
+        member
+            .begin_run(
+                "run-20261117-120001-a1b2".parse().unwrap(),
+                "2026-11-17T12:00:01Z".parse().unwrap(),
+                None,
+            )
+            .unwrap();
+        member.end_run("2026-11-17T12:00:02Z".parse().unwrap(), end).unwrap();
+        std::fs::create_dir_all(home.task_dir(member.task())).unwrap();
+        let mut collection =
+            Collection::new(&team, "2026-11-17T12:01:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+        runtime.block_on(collection.task(&home, &member, Role::Solo)).unwrap();
+        let detail = collection.summary.tasks[0].last_run_end_detail.as_ref().unwrap();
+        assert!(detail.contains(expected), "expected {expected}: {detail}");
+        assert!(detail.contains("ended"));
+        assert!(!detail.contains("Timestamp("));
+    }
+}
+
+#[test]
+fn questions_are_numeric_and_gate_tails_name_source_and_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&dir.path().to_str().unwrap().parse().unwrap());
+    let team = team();
+    let member = team.crew().roster()[0].1;
+    let task_dir = home.task_dir(member.task());
+    std::fs::create_dir_all(&task_dir).unwrap();
+    let question = "# Questions\n\n## 1. Proceed?\na) yes\n\n**Recommended:** a)\n\n**Verdict:**\n";
+    for n in [10, 1, 2] {
+        std::fs::write(task_dir.join(format!("questions-{n}.md")), question).unwrap();
+        std::fs::write(task_dir.join(format!("gate-{n}.log")), format!("output {n}\n")).unwrap();
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    runtime.block_on(collection.task(&home, member, Role::Solo)).unwrap();
+    let questions = &collection.summary.tasks[0].questions.as_ref().unwrap().content;
+    assert!(questions.find("questions-1.md").unwrap() < questions.find("questions-2.md").unwrap());
+    assert!(questions.find("questions-2.md").unwrap() < questions.find("questions-10.md").unwrap());
+    let tails = &collection.summary.gate[0].recent_output_tails;
+    assert!(tails[0].contains("gate-10.log"), "{tails:?}");
+    assert!(
+        tails
+            .iter()
+            .all(|tail| tail.contains("modified:") && tail.contains("UTC")),
+        "{tails:?}"
+    );
+}
+
+#[test]
+fn git_read_failures_are_prose_with_the_first_error_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&dir.path().to_str().unwrap().parse().unwrap());
+    let team = team();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    collection.summary.tasks.push(TaskSummaryFacts {
+        id: team.crew().roster()[0].1.task().clone(),
+        agent: "codex-1".parse().unwrap(),
+        role: Role::Solo,
+        status: team.crew().roster()[0].1.status(),
+        run_count: 0,
+        last_run_started: None,
+        last_run_ended: None,
+        last_activity: None,
+        last_run_end_detail: None,
+        questions: None,
+    });
+    runtime.block_on(collection.git(&home, &team));
+    let failure = collection
+        .assessment
+        .unreadable
+        .iter()
+        .find(|part| part.part.starts_with("worktree"))
+        .unwrap();
+    assert!(failure.reason.contains("exited with 128: fatal:"), "{}", failure.reason);
+    assert!(!failure.reason.contains("Exited {"));
+    assert!(!failure.part.contains('"'));
+}
