@@ -92,11 +92,11 @@ fn a_failure_without_a_message_has_an_empty_one() {
 }
 
 #[test]
-fn an_end_without_a_status_fails_the_task_with_its_exit_code() {
+fn an_end_without_a_status_is_settled_for_no_status_with_its_exit_code() {
     for exit in [Some(3), None] {
         assert_eq!(
             settle(Role::Member, &RunEnd::NoStatus { exit_code: exit }, None, None),
-            Settled::Failed(Notice::NoStatus { exit })
+            Settled::NoStatus { exit_code: exit }
         );
     }
 }
