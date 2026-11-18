@@ -110,7 +110,7 @@ pub fn parse_report(
     verdict: ReviewVerdict,
     open: &[(NonZeroU32, Severity)],
 ) -> Result<Report, ReportError> {
-    let lines: Vec<String> = text.lines().map(plain).collect();
+    let lines: Vec<&str> = text.lines().collect();
     let mut report = Report::default();
     let mut in_findings = false;
     for (index, line) in lines.iter().enumerate() {
@@ -120,7 +120,7 @@ pub fn parse_report(
             kind,
         };
         let trimmed = line.trim().trim_start_matches('#').trim();
-        if trimmed == "FINDINGS" {
+        if trimmed.trim_matches(['*', '`']) == "FINDINGS" {
             in_findings = true;
             continue;
         }
@@ -188,11 +188,6 @@ pub fn parse_report(
     Ok(report)
 }
 
-/// Removes only the Markdown emphasis and code delimiters allowed around protocol words.
-fn plain(line: &str) -> String {
-    line.chars().filter(|c| !matches!(c, '*' | '`')).collect()
-}
-
 /// Whether a line starts with a report-local numbered entry, including malformed zero entries.
 fn numbered(line: &str) -> bool {
     line.split_once('.')
@@ -205,14 +200,18 @@ fn read_finding(line: &str) -> Option<Finding> {
     if number.is_empty() || !number.chars().all(|c| c.is_ascii_digit()) || number.chars().all(|c| c == '0') {
         return None;
     }
-    let (severity, rest) = value.trim().strip_prefix('[')?.split_once(']')?;
+    let (severity, rest) = value
+        .trim()
+        .trim_start_matches(['*', '`'])
+        .strip_prefix('[')?
+        .split_once(']')?;
     let severity = match severity {
         "BLOCKER" => Severity::Blocker,
         "MAJOR" => Severity::Major,
         "MINOR" => Severity::Minor,
         _ => return None,
     };
-    let (location, text) = rest.trim().split_once(" — ")?;
+    let (location, text) = rest.trim_start_matches(['*', '`']).trim().split_once(" — ")?;
     let (rule, place) = location.split_once(char::is_whitespace)?;
     let (problem, fix) = text.split_once(" → ")?;
     if rule.is_empty() || place.trim().is_empty() || problem.trim().is_empty() || fix.trim().is_empty() {
