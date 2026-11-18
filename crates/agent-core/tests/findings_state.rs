@@ -1,6 +1,7 @@
 //! Schema migration keeps old rounds on their original protocol; new ledgers survive a restart.
 use agent_core::review_findings::{Finding, Severity};
-use agent_core::state::{FindingStatus, Findings, RecordedFinding, SCHEMA_VERSION, State, StateError};
+use agent_core::state::{FindingStatus, Findings, RecordedFinding, StateError};
+use agent_core::state::{SCHEMA_VERSION, State};
 use std::num::NonZeroU32;
 
 /// A state written by the schema immediately before findings were introduced.
