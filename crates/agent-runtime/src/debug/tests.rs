@@ -390,3 +390,21 @@ fn command_summary_uses_supplied_machine_offset() {
             .contains("+05:30")
     );
 }
+
+#[tokio::test]
+async fn observes_no_lock_owner_instead_of_deferring_daemon_collection() {
+    let (_dir, home, args) = fixture();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    let summary = std::fs::read_to_string(&result.summary_path).unwrap();
+    let daemon = summary
+        .split("## Daemon and versions")
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    assert!(!daemon.contains("Not collected"), "{daemon}");
+    let facts = std::fs::read_to_string(result.bundle_dir.join("facts.txt")).unwrap();
+    assert!(facts.contains("Absent"), "{facts}");
+    assert!(!home.lock_file().exists());
+}
