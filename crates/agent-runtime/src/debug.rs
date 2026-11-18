@@ -35,6 +35,8 @@ const DEFERRED: &[SummarySection] = &[SummarySection::Machine];
 const MAX_STATE_BYTES: usize = 16 * 1024 * 1024;
 /// Default inactivity threshold in minutes.
 const STALE_MINUTES: u64 = 120;
+/// Maximum configuration content rendered in summary in bytes.
+const MAX_CONFIG_SUMMARY_BYTES: usize = 2048;
 
 /// A round, team or task whose whole team is collected.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -462,9 +464,10 @@ async fn observe_config(collection: &mut collect::Collection, home: &Home, secre
         Ok(text) => {
             collection.add("agents.toml", text.clone().into_bytes());
             let redacted = collection.cut.redact_text(&text);
-            const MAX_CONFIG_SUMMARY_BYTES: usize = 2048;
             let presentation = if redacted.len() > MAX_CONFIG_SUMMARY_BYTES {
-                format!("{}…", &redacted[..MAX_CONFIG_SUMMARY_BYTES])
+                let limit = redacted.floor_char_boundary(MAX_CONFIG_SUMMARY_BYTES);
+                let (prefix, _) = redacted.split_at(limit);
+                format!("{prefix}…")
             } else {
                 redacted
             };
