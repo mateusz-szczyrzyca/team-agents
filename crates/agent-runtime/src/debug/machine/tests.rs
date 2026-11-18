@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::num::NonZeroU64;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use agent_core::config::{AbsolutePath, Secrets};
@@ -986,5 +987,278 @@ async fn error_chain_preserves_concrete_os_cause_in_unreadable_and_artifact() {
     assert!(
         artifact.contains("Permission denied"),
         "artifact must contain concrete OS cause: {artifact}"
+    );
+}
+
+#[tokio::test]
+async fn home_failure_preserves_same_device_temp_filesystem_and_anomaly() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    let params = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: None,
+        cut: &cut,
+        collected_at: test_now(),
+        clock_ticks: NonZeroU64::new(100),
+    };
+
+    let home_path = home.root().to_path_buf();
+    let obs = observe_with_statvfs(params, move |path| {
+        if path == home_path {
+            Err(rustix::io::Errno::IO)
+        } else {
+            Ok(StatvfsStats {
+                fragment_size: 4096,
+                block_size: 4096,
+                total_blocks: 100,
+                available_blocks: 10,
+                total_inodes: 100,
+                available_inodes: 80,
+            })
+        }
+    })
+    .await;
+
+    assert_eq!(
+        obs.filesystems.len(),
+        1,
+        "failed home on same device must preserve successful temp filesystem"
+    );
+    assert_eq!(obs.filesystems[0].path, temp_dir);
+
+    let assessment = Assessment {
+        now: "2026-11-18T12:00:00Z".parse::<Timestamp>().unwrap(),
+        stale_after: std::time::Duration::from_secs(3600),
+        daemon: None,
+        command_version: None,
+        lead: "task-20261118-120000-lead".parse().unwrap(),
+        tasks: vec![],
+        items: vec![],
+        lead_git: None,
+        branches: vec![],
+        filesystems: obs.filesystems,
+        unanswered: vec![],
+        unreadable: vec![],
+    };
+    let anomalies = assess(&assessment);
+    assert!(
+        anomalies.contains(&Anomaly::FullFilesystem(temp_dir)),
+        "temp filesystem >= 90% full must trigger anomaly even when home fails: {anomalies:?}"
+    );
+}
+
+#[tokio::test]
+async fn directory_size_bounded_reports_too_many_entries() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(dir.path().join("file1"), b"hello").expect("write file1");
+    fs::write(dir.path().join("file2"), b"world").expect("write file2");
+
+    let result = directory_size_bounded(dir.path(), 1).await;
+    match result {
+        Err(MachineError::TooManyEntries { path, limit }) => {
+            assert_eq!(path, dir.path());
+            assert_eq!(limit, 1);
+        }
+        other => panic!("expected TooManyEntries, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn clock_ticks_helper_command_failure_reports_helper_error() {
+    let result = query_clock_ticks_from(Path::new("/nonexistent/getconf-test-helper"), "CLK_TCK").await;
+    assert!(
+        matches!(result, Err(MachineError::Helper(_))),
+        "nonexistent helper must report MachineError::Helper: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn clock_ticks_helper_exit_failure_reports_helper_exit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let script = dir.path().join("fake-getconf");
+    fs::write(&script, b"#!/bin/sh\nexit 1\n").expect("write script");
+    fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+    let result = query_clock_ticks_from(&script, "CLK_TCK").await;
+    assert!(
+        matches!(result, Err(MachineError::HelperExit { .. })),
+        "non-zero exit must report MachineError::HelperExit: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn clock_ticks_query_failure_records_ticks_err() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    let daemon_pid = 100_u32;
+    write_proc_stat(&procfs, 100, 1);
+    write_proc_cmdline(&procfs, 100, &["daemon"]);
+    write_proc_stat(&procfs, 200, 100);
+    write_proc_cmdline(&procfs, 200, &["worker"]);
+
+    let stat_content = "btime 1700000000\n";
+    fs::write(procfs.join("stat"), stat_content).expect("write stat");
+
+    let params = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: Some(daemon_pid),
+        cut: &cut,
+        collected_at: test_now(),
+        clock_ticks: None,
+    };
+
+    let fake_helper = PathBuf::from("/nonexistent/getconf-helper-failure");
+    let obs = observe_with_statvfs_and_ticks_program(
+        params,
+        |_| {
+            Ok(StatvfsStats {
+                fragment_size: 4096,
+                block_size: 4096,
+                total_blocks: 100,
+                available_blocks: 50,
+                total_inodes: 100,
+                available_inodes: 50,
+            })
+        },
+        fake_helper,
+    )
+    .await;
+
+    let failure = obs
+        .unreadable
+        .iter()
+        .find(|f| f.section == SummarySection::Machine && f.part == "process age")
+        .expect("must report read failure for process age when clock ticks query fails");
+
+    assert!(
+        failure.reason.contains("clock ticks per second unavailable"),
+        "reason must report clock ticks unavailable: {}",
+        failure.reason
+    );
+}
+
+#[test]
+fn process_age_pre_epoch_timestamp_reports_timestamp_before_epoch() {
+    let pre_epoch = Timestamp::from_utc(time::UtcDateTime::from_unix_timestamp(-10).unwrap()).unwrap();
+    let result = compute_process_age(Some(1000), NonZeroU64::new(100), 500, pre_epoch);
+    assert!(
+        matches!(result, Err(ProcessAgeError::TimestampBeforeEpoch { timestamp: -10 })),
+        "timestamp before epoch must report TimestampBeforeEpoch: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn descendant_age_overflow_with_available_btime_and_ticks_records_unreadable() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    let daemon_pid = 100_u32;
+    write_proc_stat(&procfs, 100, 1);
+    write_proc_cmdline(&procfs, 100, &["daemon"]);
+    write_proc_stat(&procfs, 200, 100);
+    write_proc_cmdline(&procfs, 200, &["worker"]);
+
+    // btime = u64::MAX causes boot.checked_add to overflow
+    let stat_content = format!("btime {}\n", u64::MAX);
+    fs::write(procfs.join("stat"), stat_content).expect("write stat");
+
+    let params = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: Some(daemon_pid),
+        cut: &cut,
+        collected_at: test_now(),
+        clock_ticks: NonZeroU64::new(100),
+    };
+
+    let obs = observe_with_statvfs(params, |_| {
+        Ok(StatvfsStats {
+            fragment_size: 4096,
+            block_size: 4096,
+            total_blocks: 100,
+            available_blocks: 50,
+            total_inodes: 100,
+            available_inodes: 50,
+        })
+    })
+    .await;
+
+    let failure = obs
+        .unreadable
+        .iter()
+        .find(|f| f.section == SummarySection::Machine && f.part == "process 200 age")
+        .expect("must record per-process age failure when btime and ticks are available but age calculation overflows");
+
+    assert!(
+        failure.reason.contains("numeric overflow"),
+        "reason must report numeric overflow: {}",
+        failure.reason
+    );
+}
+
+#[tokio::test]
+async fn filesystem_metadata_failure_records_unreadable() {
+    let (dir, _home, cut) = fixture();
+    let blocked_dir = dir.path().join("blocked");
+    fs::create_dir_all(&blocked_dir).expect("create blocked dir");
+    fs::set_permissions(&blocked_dir, std::fs::Permissions::from_mode(0o000)).expect("chmod 000");
+
+    let blocked_home = Home::new(
+        &agent_core::config::AbsolutePath::try_from(blocked_dir.join("home").to_str().unwrap().to_owned()).unwrap(),
+    );
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    let params = MachineParams {
+        home: &blocked_home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: None,
+        cut: &cut,
+        collected_at: test_now(),
+        clock_ticks: NonZeroU64::new(100),
+    };
+
+    let obs = observe_with_statvfs(params, |_| {
+        Ok(StatvfsStats {
+            fragment_size: 4096,
+            block_size: 4096,
+            total_blocks: 100,
+            available_blocks: 50,
+            total_inodes: 100,
+            available_inodes: 50,
+        })
+    })
+    .await;
+
+    drop(fs::set_permissions(
+        &blocked_dir,
+        std::fs::Permissions::from_mode(0o755),
+    ));
+
+    assert!(
+        obs.unreadable
+            .iter()
+            .any(|f| f.section == SummarySection::Machine && f.part == "home filesystem metadata"),
+        "inaccessible home parent must record home filesystem metadata failure: {:?}",
+        obs.unreadable
     );
 }

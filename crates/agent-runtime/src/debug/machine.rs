@@ -97,6 +97,14 @@ pub(super) enum MachineError {
         /// Maximum allowed bytes.
         limit: u64,
     },
+    /// A directory traversal exceeded the maximum allowed entry count.
+    #[error("directory {} exceeds limit of {limit} entries", path.display())]
+    TooManyEntries {
+        /// Path observed.
+        path: PathBuf,
+        /// Maximum allowed entries.
+        limit: usize,
+    },
     /// A helper command failed.
     #[error("helper command failed")]
     Helper(#[source] crate::process::CaptureError),
@@ -329,6 +337,20 @@ pub(super) async fn observe(
     observe_with_provider(params, std::sync::Arc::new(DefaultStatvfs)).await
 }
 
+/// Provider of clock ticks query command path.
+pub(crate) trait ClockTicksProvider: Send + Sync {
+    /// Helper program path to query clock ticks.
+    fn program(&self) -> &Path;
+}
+
+struct DefaultClockTicks;
+
+impl ClockTicksProvider for DefaultClockTicks {
+    fn program(&self) -> &Path {
+        Path::new("getconf")
+    }
+}
+
 /// Collects machine metrics using an injected statvfs provider (for tests).
 #[cfg(test)]
 pub(super) async fn observe_with_statvfs<F>(params: MachineParams<'_>, statvfs: F) -> MachineObservation
@@ -338,10 +360,39 @@ where
     observe_with_provider(params, std::sync::Arc::new(statvfs)).await
 }
 
+/// Collects machine metrics using an injected statvfs provider and clock ticks program (for tests).
+#[cfg(test)]
+pub(super) async fn observe_with_statvfs_and_ticks_program<F>(
+    params: MachineParams<'_>,
+    statvfs: F,
+    ticks_program: PathBuf,
+) -> MachineObservation
+where
+    F: Fn(&Path) -> Result<StatvfsStats, rustix::io::Errno> + Send + Sync + 'static,
+{
+    struct InjectedClockTicks(PathBuf);
+    impl ClockTicksProvider for InjectedClockTicks {
+        fn program(&self) -> &Path {
+            &self.0
+        }
+    }
+    observe_with_providers(
+        params,
+        std::sync::Arc::new(statvfs),
+        std::sync::Arc::new(InjectedClockTicks(ticks_program)),
+    )
+    .await
+}
+
 /// Queries actual system clock ticks per second using getconf helper.
 async fn query_clock_ticks() -> Result<NonZeroU64, MachineError> {
-    let mut command = tokio::process::Command::new("getconf");
-    command.arg("CLK_TCK");
+    query_clock_ticks_from(Path::new("getconf"), "CLK_TCK").await
+}
+
+/// Queries system clock ticks per second using a specified helper program.
+pub(super) async fn query_clock_ticks_from(program: &Path, argument: &str) -> Result<NonZeroU64, MachineError> {
+    let mut command = tokio::process::Command::new(program);
+    command.arg(argument);
     let limits = crate::process::CaptureLimits {
         timeout: std::time::Duration::from_secs(2),
         max_bytes: 1024,
@@ -353,15 +404,15 @@ async fn query_clock_ticks() -> Result<NonZeroU64, MachineError> {
         return Err(MachineError::HelperExit { exit: captured.exit });
     }
     let text = String::from_utf8(captured.stdout.bytes).map_err(|source| MachineError::Utf8 {
-        path: PathBuf::from("getconf CLK_TCK"),
+        path: program.to_path_buf(),
         source,
     })?;
     let ticks: u64 = text.trim().parse().map_err(|source| MachineError::Number {
-        path: PathBuf::from("getconf CLK_TCK"),
+        path: program.to_path_buf(),
         source,
     })?;
     NonZeroU64::new(ticks).ok_or_else(|| MachineError::InvalidFormat {
-        path: PathBuf::from("getconf CLK_TCK"),
+        path: program.to_path_buf(),
         message: "zero clock ticks per second".to_owned(),
     })
 }
@@ -370,6 +421,15 @@ async fn query_clock_ticks() -> Result<NonZeroU64, MachineError> {
 async fn observe_with_provider(
     params: MachineParams<'_>,
     statvfs_provider: std::sync::Arc<dyn StatvfsProvider>,
+) -> MachineObservation {
+    observe_with_providers(params, statvfs_provider, std::sync::Arc::new(DefaultClockTicks)).await
+}
+
+/// Core machine observation pipeline parametrized by statvfs and clock ticks providers.
+async fn observe_with_providers(
+    params: MachineParams<'_>,
+    statvfs_provider: std::sync::Arc<dyn StatvfsProvider>,
+    clock_ticks_provider: std::sync::Arc<dyn ClockTicksProvider>,
 ) -> MachineObservation {
     let mut unreadable = Vec::new();
 
@@ -416,6 +476,7 @@ async fn observe_with_provider(
         params.cut,
         params.collected_at,
         params.clock_ticks,
+        clock_ticks_provider.program(),
         &mut unreadable,
     )
     .await
@@ -848,7 +909,7 @@ pub(super) enum ProcessAgeError {
 }
 
 /// Computes process age in seconds from boot time and start ticks.
-fn compute_process_age(
+pub(super) fn compute_process_age(
     btime: Option<u64>,
     ticks: Option<NonZeroU64>,
     start_ticks: u64,
@@ -961,6 +1022,7 @@ async fn observe_descendants(
     cut: &SecretsCut,
     collected_at: Timestamp,
     clock_ticks: Option<NonZeroU64>,
+    clock_ticks_program: &Path,
     unreadable: &mut Vec<ReadFailure>,
 ) -> Result<Vec<DescendantProcess>, MachineError> {
     let Some(target_daemon_pid) = daemon_pid else {
@@ -969,7 +1031,7 @@ async fn observe_descendants(
 
     let (ticks, ticks_err) = match clock_ticks {
         Some(t) => (Some(t), None),
-        None => match query_clock_ticks().await {
+        None => match query_clock_ticks_from(clock_ticks_program, "CLK_TCK").await {
             Ok(t) => (Some(t), None),
             Err(err) => (None, Some(err)),
         },
