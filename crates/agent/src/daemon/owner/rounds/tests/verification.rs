@@ -77,3 +77,41 @@ async fn fixes_are_verified_by_three_distinct_pairs_with_incremental_context_and
     }
     assert_eq!(passes, [2, 2, 2]);
 }
+
+#[tokio::test]
+async fn verification_diff_uses_the_reviewed_head_or_explains_rewritten_history() {
+    use agent_core::config::{AbsolutePath, Language};
+    use agent_runtime::autopilot_prompts::AutopilotPrompts;
+    use agent_runtime::git::{CommitIdentity, Git};
+    use std::path::Path;
+
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), &["init", "-b", "main"]);
+    git(dir.path(), &["config", "user.name", "Test Agent"]);
+    git(dir.path(), &["config", "user.email", "agent@example.com"]);
+    git(dir.path(), &["commit", "--allow-empty", "-m", "Reviewed head"]);
+    let previous = git(dir.path(), &["rev-parse", "HEAD"]).parse().unwrap();
+    let repository = Git::new(
+        dir.path().to_str().unwrap().parse::<AbsolutePath>().unwrap(),
+        CommitIdentity::new("Test Agent".into(), "agent@example.com".into(), None),
+    );
+    let texts = AutopilotPrompts::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &Language::default(),
+    )
+    .await
+    .unwrap();
+    let changes = super::prompts::verification_changes(&repository, &texts, Some(&previous), "main")
+        .await
+        .unwrap();
+    assert!(changes.contains(&format!("git diff {previous}..HEAD")), "{changes}");
+
+    git(dir.path(), &["checkout", "--orphan", "rewritten"]);
+    git(dir.path(), &["commit", "--allow-empty", "-m", "Rewritten history"]);
+    let changes = super::prompts::verification_changes(&repository, &texts, Some(&previous), "main")
+        .await
+        .unwrap();
+    assert!(changes.contains("git diff main...HEAD"), "{changes}");
+    assert!(changes.contains("no longer an ancestor"), "{changes}");
+    assert!(changes.contains("rewrote"), "{changes}");
+}
