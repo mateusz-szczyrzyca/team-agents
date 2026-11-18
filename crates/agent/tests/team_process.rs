@@ -7,6 +7,7 @@
 #[cfg(test)]
 mod team_process {
     use std::fmt::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
     use std::process::{Child, Command, Output, Stdio};
     use std::sync::OnceLock;
@@ -346,5 +347,57 @@ mod team_process {
         let status = world.status_where("every task to wait", |status| status.matches("waiting").count() == 3);
 
         assert!(status.contains("  coordinator  inv-opus  waiting"), "{status}");
+    }
+
+    #[test]
+    fn debug_e2e_collects_team_with_fake_cli_messages_and_notifications() {
+        let mut world = World::new(&agents_with(&[("claude-1", "agent", "ask")]));
+        let secrets = world.home.join("secrets.toml");
+        std::fs::write(&secrets, "[agent_env]\nAPI_KEY = \"FAKE_KEY\"\n").unwrap();
+        std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o600)).unwrap();
+        world.start();
+
+        let output = world.agent(&["run", "claude-1", "Fix the typo in the README."]);
+        assert!(output.status.success(), "{}", stderr(&output));
+        let text = stdout(&output);
+        let team = text
+            .lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .to_owned();
+
+        world.status_where("the questions to be asked", |status| status.contains("questions"));
+
+        eventually("the notification to be written", || {
+            world
+                .home
+                .join("notifications")
+                .read_dir()
+                .map_or(false, |mut entries| entries.next().is_some())
+        });
+
+        let diag_parent = world.home.join("diag");
+        let debug_output = world.agent(&["debug", "--team", &team, "--out", diag_parent.to_str().unwrap()]);
+        assert!(debug_output.status.success(), "{}", stderr(&debug_output));
+        let debug_text = stdout(&debug_output);
+        assert!(debug_text.contains("Debug summary:"), "{debug_text}");
+
+        let bundle_entry = std::fs::read_dir(&diag_parent).unwrap().next().unwrap().unwrap();
+        let bundle_path = bundle_entry.path();
+
+        assert!(bundle_path.join("SUMMARY.md").is_file());
+        assert!(bundle_path.join("bus.txt").is_file());
+        assert!(bundle_path.join("notifications.txt").is_file());
+        assert!(bundle_path.join("agents.toml").is_file());
+
+        let summary = std::fs::read_to_string(bundle_path.join("SUMMARY.md")).unwrap();
+        assert!(summary.contains("## Bus Messages"), "{summary}");
+        assert!(summary.contains("## Notifications"), "{summary}");
+        assert!(summary.contains("questions-1.md"), "{summary}");
+        assert!(summary.contains("## Daemon and Versions"), "{summary}");
+        assert!(summary.contains("- Configuration:"), "{summary}");
     }
 }
