@@ -234,6 +234,7 @@ pub async fn execute_debug_at(
     observe_bus(&mut collection, home, team).await;
     observe_notifications(&mut collection, home, team).await;
     observe_config(&mut collection, home, &secrets).await;
+    observe_machine(&mut collection, home).await;
     let findings = assess(&collection.assessment);
     collection.summary.anomalies = findings
         .iter()
@@ -484,6 +485,26 @@ async fn observe_config(collection: &mut collect::Collection, home: &Home, secre
                 });
         }
     }
+}
+
+/// Records machine and resource observations, or records read failures.
+async fn observe_machine(collection: &mut collect::Collection, home: &Home) {
+    let procfs = std::path::Path::new("/proc");
+    let temp_dir = std::env::temp_dir();
+    let daemon_pid = collection.summary.daemon.as_ref().map(|d| d.pid);
+    let obs = machine::observe(
+        home,
+        procfs,
+        &temp_dir,
+        daemon_pid,
+        &collection.cut,
+        collection.assessment.now,
+    )
+    .await;
+    collection.summary.machine = obs.summary;
+    collection.assessment.filesystems.extend(obs.filesystems);
+    collection.assessment.unreadable.extend(obs.unreadable);
+    collection.add("machine.txt", obs.artifact_bytes);
 }
 
 /// Machine presentation context captured by the CLI before it starts async workers.
