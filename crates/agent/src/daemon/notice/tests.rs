@@ -706,6 +706,10 @@ async fn actual_autopilot_review_notices_render_expected_notes_and_statuses() {
                 .with("pr", "1")
                 .unwrap()
                 .with("passes", "3")
+                .unwrap()
+                .with("additional_passes", "5")
+                .unwrap()
+                .with("findings", "")
                 .unwrap(),
             "Note: Pull request 1 of team-1 needs your decision",
         ),
