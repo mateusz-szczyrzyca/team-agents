@@ -62,3 +62,37 @@ async fn rejects_invalid_text_instead_of_losing_bytes() {
     std::fs::write(home.root().join("daemon.log"), [0xff]).unwrap();
     assert!(matches!(collect(&home, None, &team()).await, Err(LogError::Utf8(_))));
 }
+
+#[tokio::test]
+async fn review_daemon_keeps_team_lines_before_the_recent_warning_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let team_line = "team-20261117-120000-a1b2 started";
+    let text = format!("{team_line}\nWARN old\n{}WARN recent\n", "unrelated\n".repeat(500));
+    std::fs::write(home.root().join("daemon.log"), text).unwrap();
+
+    assert_eq!(
+        collect(&home, None, &team()).await.unwrap(),
+        Some(vec![team_line.to_owned(), "WARN recent".to_owned()])
+    );
+}
+
+#[tokio::test]
+async fn review_daemon_reads_only_the_snapshot_window_when_the_log_grows() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("daemon.log");
+    let body = "x\n".repeat(2 * 1024 * 1024 + 1);
+    std::fs::write(&path, &body).unwrap();
+    let len = std::fs::metadata(&path).unwrap().len();
+    let mut writer = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    writer.write_all(b"grown\n").unwrap();
+    let file = tokio::fs::File::open(&path).await.unwrap();
+
+    let bytes = read_tail(file, len, &path).await.unwrap();
+
+    assert_eq!(
+        (bytes.len(), bytes.chunks_exact(2).all(|pair| pair == b"x\n")),
+        (4 * 1024 * 1024, true)
+    );
+}
