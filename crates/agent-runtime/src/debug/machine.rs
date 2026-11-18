@@ -14,6 +14,7 @@ use agent_core::state::Timestamp;
 use tokio::io::AsyncReadExt;
 
 use crate::debug_redaction::SecretsCut;
+use crate::process::error_chain;
 use crate::store::Home;
 
 /// Maximum procfs file or helper output size, in bytes.
@@ -378,7 +379,7 @@ async fn observe_with_provider(
             unreadable.push(ReadFailure {
                 section: SummarySection::Machine,
                 part: "load average".to_owned(),
-                reason: err.to_string(),
+                reason: error_chain(&err),
             });
             None
         }
@@ -399,7 +400,7 @@ async fn observe_with_provider(
             unreadable.push(ReadFailure {
                 section: SummarySection::Machine,
                 part: "memory".to_owned(),
-                reason: err.to_string(),
+                reason: error_chain(&err),
             });
             MemoryFacts::default()
         }
@@ -424,7 +425,7 @@ async fn observe_with_provider(
             unreadable.push(ReadFailure {
                 section: SummarySection::Machine,
                 part: "daemon descendants".to_owned(),
-                reason: err.to_string(),
+                reason: error_chain(&err),
             });
             Vec::new()
         }
@@ -507,7 +508,7 @@ async fn observe_single_fs(
                 unreadable.push(ReadFailure {
                     section: SummarySection::Machine,
                     part: format!("filesystem {}", path.display()),
-                    reason: err.to_string(),
+                    reason: error_chain(&err),
                 });
                 None
             }
@@ -516,7 +517,7 @@ async fn observe_single_fs(
             unreadable.push(ReadFailure {
                 section: SummarySection::Machine,
                 part: format!("filesystem {}", path.display()),
-                reason: err.to_string(),
+                reason: error_chain(&err),
             });
             None
         }
@@ -548,7 +549,7 @@ async fn observe_filesystems_async(
         unreadable.push(ReadFailure {
             section: SummarySection::Machine,
             part: "home filesystem metadata".to_owned(),
-            reason: err.to_string(),
+            reason: error_chain(err),
         });
     }
 
@@ -558,7 +559,7 @@ async fn observe_filesystems_async(
         unreadable.push(ReadFailure {
             section: SummarySection::Machine,
             part: "temp filesystem metadata".to_owned(),
-            reason: err.to_string(),
+            reason: error_chain(err),
         });
     }
 
@@ -686,7 +687,7 @@ async fn observe_dir_sizes(home_path: &Path, unreadable: &mut Vec<ReadFailure>) 
             unreadable.push(ReadFailure {
                 section: SummarySection::Machine,
                 part: "tasks directory".to_owned(),
-                reason: err.to_string(),
+                reason: error_chain(&err),
             });
             None
         }
@@ -699,7 +700,7 @@ async fn observe_dir_sizes(home_path: &Path, unreadable: &mut Vec<ReadFailure>) 
             unreadable.push(ReadFailure {
                 section: SummarySection::Machine,
                 part: "worktrees directory".to_owned(),
-                reason: err.to_string(),
+                reason: error_chain(&err),
             });
             None
         }
@@ -864,12 +865,8 @@ fn compute_process_age(
     Ok(now_u64.saturating_sub(start_sec))
 }
 
-/// Traverses descendant processes starting from daemon PID using BFS.
-fn traverse_descendants(
-    daemon_pid: u32,
-    all_procs: &HashMap<u32, DescendantProcess>,
-    children_map: &HashMap<u32, Vec<u32>>,
-) -> Vec<DescendantProcess> {
+/// Traverses descendant PIDs starting from daemon PID using BFS.
+fn find_descendant_pids(daemon_pid: u32, children_map: &HashMap<u32, Vec<u32>>) -> Vec<u32> {
     let mut descendants = Vec::new();
     let mut queue = VecDeque::new();
     let mut visited = HashSet::new();
@@ -884,9 +881,7 @@ fn traverse_descendants(
     }
 
     while let Some(current_pid) = queue.pop_front() {
-        if let Some(proc) = all_procs.get(&current_pid) {
-            descendants.push(proc.clone());
-        }
+        descendants.push(current_pid);
         if let Some(children) = children_map.get(&current_pid) {
             for &child in children {
                 if visited.insert(child) {
@@ -896,11 +891,10 @@ fn traverse_descendants(
         }
     }
 
-    descendants.sort_by_key(|p| p.pid);
     descendants
 }
 
-struct ProcessReadContext<'a> {
+struct DescendantReadContext<'a> {
     procfs: &'a Path,
     btime: Option<u64>,
     ticks: Option<NonZeroU64>,
@@ -908,35 +902,13 @@ struct ProcessReadContext<'a> {
     collected_at: Timestamp,
 }
 
-async fn read_single_process(
-    ctx: &ProcessReadContext<'_>,
-    pid_str: &str,
+async fn read_descendant_process(
+    ctx: &DescendantReadContext<'_>,
     pid: u32,
+    start_ticks: u64,
     unreadable: &mut Vec<ReadFailure>,
-) -> Option<(u32, DescendantProcess)> {
-    let pid_dir = ctx.procfs.join(pid_str);
-    let stat_content = match read_proc_string_bounded(&pid_dir.join("stat"), 65536).await {
-        Ok(s) => s,
-        Err(MachineError::ProcessDisappeared { .. }) => return None,
-        Err(err) => {
-            unreadable.push(ReadFailure {
-                section: SummarySection::Machine,
-                part: format!("process {pid} stat"),
-                reason: err.to_string(),
-            });
-            return None;
-        }
-    };
-
-    let Some((parent_pid, start_ticks)) = parse_ppid_and_start_ticks(&stat_content) else {
-        unreadable.push(ReadFailure {
-            section: SummarySection::Machine,
-            part: format!("process {pid} stat"),
-            reason: "cannot parse parent PID and start ticks from stat".to_owned(),
-        });
-        return None;
-    };
-
+) -> Option<DescendantProcess> {
+    let pid_dir = ctx.procfs.join(pid.to_string());
     let cmdline = match read_proc_bounded(&pid_dir.join("cmdline"), PROC_FILE_LIMIT).await {
         Ok(bytes) => parse_and_redact_cmdline(&bytes, ctx.cut),
         Err(MachineError::ProcessDisappeared { .. }) => return None,
@@ -944,7 +916,7 @@ async fn read_single_process(
             unreadable.push(ReadFailure {
                 section: SummarySection::Machine,
                 part: format!("process {pid} cmdline"),
-                reason: err.to_string(),
+                reason: error_chain(&err),
             });
             Vec::new()
         }
@@ -957,21 +929,18 @@ async fn read_single_process(
                 unreadable.push(ReadFailure {
                     section: SummarySection::Machine,
                     part: format!("process {pid} age"),
-                    reason: err.to_string(),
+                    reason: error_chain(&err),
                 });
             }
             None
         }
     };
 
-    Some((
-        parent_pid,
-        DescendantProcess {
-            pid,
-            age_seconds,
-            cmdline,
-        },
-    ))
+    Some(DescendantProcess {
+        pid,
+        age_seconds,
+        cmdline,
+    })
 }
 
 async fn observe_descendants(
@@ -997,7 +966,7 @@ async fn observe_descendants(
         unreadable.push(ReadFailure {
             section: SummarySection::Machine,
             part: "process age".to_owned(),
-            reason: format!("clock ticks per second unavailable: {err}"),
+            reason: format!("clock ticks per second unavailable: {}", error_chain(&err)),
         });
     }
 
@@ -1007,7 +976,7 @@ async fn observe_descendants(
             unreadable.push(ReadFailure {
                 section: SummarySection::Machine,
                 part: "process age".to_owned(),
-                reason: format!("cannot read boot time: {err}"),
+                reason: format!("cannot read boot time: {}", error_chain(&err)),
             });
             None
         }
@@ -1018,15 +987,8 @@ async fn observe_descendants(
         source,
     })?;
 
-    let mut all_procs = HashMap::new();
     let mut children_map: HashMap<u32, Vec<u32>> = HashMap::new();
-    let ctx = ProcessReadContext {
-        procfs,
-        btime,
-        ticks,
-        cut,
-        collected_at,
-    };
+    let mut start_ticks_map: HashMap<u32, u64> = HashMap::new();
 
     while let Some(entry) = read_dir.next_entry().await.map_err(|source| MachineError::Io {
         path: procfs.to_path_buf(),
@@ -1041,13 +1003,51 @@ async fn observe_descendants(
             continue;
         };
 
-        if let Some((parent_pid, proc)) = read_single_process(&ctx, &name_str, pid, unreadable).await {
-            all_procs.insert(pid, proc);
-            children_map.entry(parent_pid).or_default().push(pid);
+        let pid_dir = procfs.join(&*name_str);
+        let stat_content = match read_proc_string_bounded(&pid_dir.join("stat"), 65536).await {
+            Ok(s) => s,
+            Err(MachineError::ProcessDisappeared { .. }) => continue,
+            Err(err) => {
+                unreadable.push(ReadFailure {
+                    section: SummarySection::Machine,
+                    part: format!("process {pid} stat"),
+                    reason: error_chain(&err),
+                });
+                continue;
+            }
+        };
+
+        let Some((parent_pid, start_ticks)) = parse_ppid_and_start_ticks(&stat_content) else {
+            unreadable.push(ReadFailure {
+                section: SummarySection::Machine,
+                part: format!("process {pid} stat"),
+                reason: "cannot parse parent PID and start ticks from stat".to_owned(),
+            });
+            continue;
+        };
+
+        children_map.entry(parent_pid).or_default().push(pid);
+        start_ticks_map.insert(pid, start_ticks);
+    }
+
+    let descendant_pids = find_descendant_pids(target_daemon_pid, &children_map);
+    let ctx = DescendantReadContext {
+        procfs,
+        btime,
+        ticks,
+        cut,
+        collected_at,
+    };
+    let mut descendants = Vec::new();
+    for pid in descendant_pids {
+        let start_ticks = start_ticks_map.get(&pid).copied().unwrap_or(0);
+        if let Some(proc) = read_descendant_process(&ctx, pid, start_ticks, unreadable).await {
+            descendants.push(proc);
         }
     }
 
-    Ok(traverse_descendants(target_daemon_pid, &all_procs, &children_map))
+    descendants.sort_by_key(|p| p.pid);
+    Ok(descendants)
 }
 
 async fn read_btime(procfs: &Path) -> Result<u64, MachineError> {

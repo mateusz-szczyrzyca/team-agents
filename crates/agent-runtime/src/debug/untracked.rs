@@ -9,6 +9,8 @@ use agent_core::debug_summary::{SummarySection, UntrackedFileSummaryFacts};
 use agent_core::diagnostic_assessment::ReadFailure;
 use agent_core::state::Timestamp;
 
+use crate::process::error_chain;
+
 /// Collected untracked files metadata for a single worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct UntrackedCollection {
@@ -33,7 +35,7 @@ pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> Unt
                 unreadable.push(ReadFailure {
                     section: SummarySection::GitWorktrees,
                     part: format!("untracked file {}", rel_path.display()),
-                    reason: source.to_string(),
+                    reason: error_chain(&source),
                 });
                 continue;
             }
@@ -51,7 +53,7 @@ pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> Unt
                     unreadable.push(ReadFailure {
                         section: SummarySection::GitWorktrees,
                         part: format!("untracked file {}", rel_path.display()),
-                        reason: source.to_string(),
+                        reason: error_chain(&source),
                     });
                     None
                 }
@@ -60,7 +62,7 @@ pub(super) async fn collect(worktree: &Path, untracked_paths: &[PathBuf]) -> Unt
                 unreadable.push(ReadFailure {
                     section: SummarySection::GitWorktrees,
                     part: format!("untracked file {}", rel_path.display()),
-                    reason: source.to_string(),
+                    reason: error_chain(&source),
                 });
                 None
             }

@@ -954,6 +954,10 @@ async fn bounded_bytes(path: &Path) -> Result<Vec<u8>, ObservationError> {
 pub(super) static TEST_GIT_COMMANDS: std::sync::Mutex<Vec<(PathBuf, Vec<String>)>> = std::sync::Mutex::new(Vec::new());
 
 async fn git_capture(path: &Path, args: &[&str]) -> Result<crate::process::Captured, ObservationError> {
+    #[cfg(test)]
+    if let Ok(mut log) = TEST_GIT_COMMANDS.lock() {
+        log.push((path.to_path_buf(), args.iter().map(|s| (*s).to_owned()).collect()));
+    }
     let mut command = tokio::process::Command::new("git");
     command
         .arg("--no-optional-locks")
