@@ -397,7 +397,7 @@ async fn observes_no_lock_owner_instead_of_deferring_daemon_collection() {
     let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
     let summary = std::fs::read_to_string(&result.summary_path).unwrap();
     let daemon = summary
-        .split("## Daemon and versions")
+        .split(SummarySection::DaemonAndVersions.heading())
         .nth(1)
         .unwrap()
         .split("\n## ")
