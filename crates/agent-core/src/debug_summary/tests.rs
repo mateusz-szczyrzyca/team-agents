@@ -1093,3 +1093,21 @@ fn machine_descendants_are_unknown_when_their_collection_failed() {
     assert_eq!(descendant_line, Some("- Daemon descendants: unknown"));
     assert!(rendered.contains("procfs permission denied"), "{rendered}");
 }
+
+#[test]
+fn machine_preserves_observed_descendants_when_another_process_cannot_be_read() {
+    let mut input = sample_input();
+    input.machine.daemon_descendants.push(DescendantProcessSummary {
+        pid: 101,
+        age_seconds: Some(42),
+        cmdline: vec!["agent".to_owned()],
+    });
+    input.unreadable_parts.push(UnreadablePartSummary {
+        section: SummarySection::Machine,
+        name: "daemon descendant 102".to_owned(),
+        reason: "procfs permission denied".to_owned(),
+    });
+    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(rendered.contains("  - PID 101: age 42s, cmdline: agent"), "{rendered}");
+    assert!(rendered.contains("procfs permission denied"), "{rendered}");
+}
