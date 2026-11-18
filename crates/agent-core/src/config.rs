@@ -5,8 +5,11 @@
 //! refused (`deny_unknown_fields`), every value is parsed into its type (the newtypes of this module), and the lists of agents are
 //! checked against each other. The type does no I/O; whoever reads the file passes its text in.
 
+mod review_count;
 mod secrets;
 mod values;
+
+pub use review_count::{ReviewCount, ReviewCountError};
 
 use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU32;
@@ -283,6 +286,8 @@ impl Default for Limits {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Review {
+    /// Explicit pass size; absent settings retain the legacy default and validation at team creation.
+    min_first_full_reviews: Option<ReviewCount>,
     /// How many times "changes requested" goes back to the team before the human is asked; 0 asks at once.
     pub fix_passes: u32,
     /// How many times the checks before a review send the round back to the team before the human is asked; 0 asks
@@ -295,10 +300,19 @@ pub struct Review {
 impl Default for Review {
     fn default() -> Self {
         Self {
+            min_first_full_reviews: None,
             fix_passes: DEFAULT_FIX_PASSES,
             check_passes: DEFAULT_CHECK_PASSES,
             replace_after_minutes: Minutes::literal(DEFAULT_REPLACE_AFTER_MINUTES),
         }
+    }
+}
+
+impl Review {
+    /// The number of full reviews requested for each pass of a newly opened pull request.
+    #[must_use]
+    pub fn min_first_full_reviews(&self) -> ReviewCount {
+        self.min_first_full_reviews.unwrap_or_default()
     }
 }
 
