@@ -12,6 +12,7 @@ use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::state::{ItemPhase, Member, RunEnd, RunState, Timestamp};
 use agent_core::status::TaskStatus;
+use agent_runtime::notify::{MAX_BODY_BYTES, MAX_TITLE_BYTES};
 
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
@@ -22,7 +23,7 @@ use crate::daemon::team::Why;
 pub(super) const ASLEEP_WAKES: u32 = 2;
 
 /// Maximum saved notification size: the notifier's bounded title and body plus their separator.
-const SAVED_NOTICE_BYTES: u64 = 65_737;
+const SAVED_NOTICE_BYTES: usize = MAX_TITLE_BYTES + MAX_BODY_BYTES + 1;
 
 /// Why previously delivered standing-item notices could not be inspected.
 #[derive(Debug, thiserror::Error)]
@@ -30,7 +31,7 @@ const SAVED_NOTICE_BYTES: u64 = 65_737;
 struct SavedNoticeError {
     /// Directory or file that could not be inspected.
     path: PathBuf,
-    /// Filesystem failure, preserved for diagnostics.
+    /// Read or limit-conversion failure, preserved for diagnostics.
     source: std::io::Error,
 }
 
@@ -50,6 +51,10 @@ async fn standing_was_announced(
             });
         }
     };
+    let read_limit = u64::try_from(SAVED_NOTICE_BYTES).map_err(|source| SavedNoticeError {
+        path: directory.to_owned(),
+        source: std::io::Error::other(source),
+    })?;
     let item = format!(
         "Team {team} waits with item {} behind failed member {}",
         standing.item, standing.member
@@ -67,7 +72,7 @@ async fn standing_was_announced(
             source,
         })?;
         let mut text = String::new();
-        file.take(SAVED_NOTICE_BYTES)
+        file.take(read_limit)
             .read_to_string(&mut text)
             .await
             .map_err(|source| SavedNoticeError { path, source })?;
