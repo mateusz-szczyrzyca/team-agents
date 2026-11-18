@@ -807,9 +807,6 @@ fn debug_rejects_deferred_daemon_log_without_writing_a_bundle() {
     );
     assert_eq!(code, ExitCode::from(1), "{err}");
     assert_eq!(out, "");
-    assert_eq!(
-        err,
-        "agent debug: daemon log collection is not available in this version\n"
-    );
+    assert_eq!(err, "agent: daemon log collection is not available in this version\n");
     assert!(!parent.exists());
 }
