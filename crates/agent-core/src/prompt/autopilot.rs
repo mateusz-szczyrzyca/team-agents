@@ -86,6 +86,8 @@ pub enum AutopilotPrompt {
     NoticeNoVerdict,
     /// The notification that the reviewers still ask for changes and the human has to decide.
     NoticeDecision,
+    /// Startup warning when disjoint verifier groups cannot be guaranteed.
+    NoticeReviewRotation,
     /// The notification that a pull request was merged.
     NoticeMerged,
 }
@@ -130,6 +132,7 @@ impl AutopilotPrompt {
         Self::ReviewFindingsInvalid,
         Self::NoticeNoVerdict,
         Self::NoticeDecision,
+        Self::NoticeReviewRotation,
         Self::NoticeMerged,
     ];
 
@@ -147,6 +150,7 @@ impl AutopilotPrompt {
                 | Self::NoticeClosed
                 | Self::NoticeNoVerdict
                 | Self::NoticeDecision
+                | Self::NoticeReviewRotation
                 | Self::NoticeMerged
         ) {
             Audience::Human
@@ -252,6 +256,7 @@ impl AutopilotPrompt {
                 "harness/review/notice-no-verdict.md",
                 &["reviewer", "pr", "task", "why"],
             ),
+            Self::NoticeReviewRotation => ("harness/review/notice-rotation.md", &["reviews"]),
             Self::NoticeDecision => ("harness/review/notice-decision.md", &["team", "pr", "passes"]),
         }
     }

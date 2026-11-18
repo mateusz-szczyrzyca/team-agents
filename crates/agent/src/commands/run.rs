@@ -8,8 +8,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
+use agent_core::config::{AbsolutePath, Config, ConfigError, InvalidValue, MAX_CONFIG_BYTES, RepoName};
 use agent_core::ids::{AgentName, InvalidName};
+use agent_core::prompt::{AutopilotPrompt, PromptError, Variables, VariablesError};
 use agent_core::protocol::{AgentList, AgentListError, Client, Command, Reply, RunRequest, ShowRequest, Target};
 use agent_core::state::{ItemPhase, MergeMode, TaskListText, Team};
 use agent_core::task_list::{MAX_TASK_LIST_BYTES, TaskListError};
@@ -58,6 +59,28 @@ pub(crate) enum WordsError {
 /// Why `agent run` failed.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RunError {
+    /// The local roster cannot be read for the advisory.
+    #[error("cannot read reviewer configuration {path:?}")]
+    ReadConfig {
+        /// Local configuration path.
+        path: PathBuf,
+        /// Read failure.
+        source: TextFileError,
+    },
+    /// The local roster is invalid.
+    #[error("invalid reviewer configuration {path:?}")]
+    Config {
+        /// Local configuration path.
+        path: PathBuf,
+        /// Configuration failure.
+        source: ConfigError,
+    },
+    /// The warning template could not be rendered.
+    #[error("cannot render reviewer rotation warning")]
+    Warning(#[from] PromptError),
+    /// The warning variables could not be set.
+    #[error("cannot set reviewer rotation warning variables")]
+    WarningVariables(#[from] VariablesError),
     /// The words of the command line do not make a task.
     #[error(transparent)]
     Words(#[from] WordsError),
@@ -303,8 +326,31 @@ pub(crate) async fn start(
 ///
 /// # Errors
 /// [`RunError`] when the local configuration or warning cannot be read or rendered.
-async fn rotation_warning(_home: &Home, _agents: &AgentList) -> Result<Option<String>, RunError> {
-    Ok(None)
+async fn rotation_warning(home: &Home, agents: &AgentList) -> Result<Option<String>, RunError> {
+    let path = home.config_file();
+    let file = read_text_file(&path, MAX_CONFIG_BYTES)
+        .await
+        .map_err(|source| RunError::ReadConfig {
+            path: path.clone(),
+            source,
+        })?;
+    // A client-only home may use a daemon with its own configuration: only that daemon validates the roster.
+    let Some(file) = file else {
+        return Ok(None);
+    };
+    let config = Config::from_toml_str(&file.text).map_err(|source| RunError::Config { path, source })?;
+    if !agent_core::decide::team::needs_review_rotation_warning(&config, agents) {
+        return Ok(None);
+    }
+    let values = Variables::new().with("reviews", config.review().min_first_full_reviews().get().to_string())?;
+    let text = AutopilotPrompt::NoticeReviewRotation.spec().render(
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../prompts/harness/review/notice-rotation.md"
+        )),
+        &values,
+    )?;
+    Ok(Some(text))
 }
 
 /// The text of the task list file at `path`.
