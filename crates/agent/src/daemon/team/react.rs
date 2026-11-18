@@ -163,18 +163,35 @@ pub(in crate::daemon) fn notice_for(
         }
         RunEnd::Reported {
             outcome: RunOutcome::Failed,
-        } => BusNotice::MemberFailed {
-            member: who,
-            message: end_of(message.unwrap_or_default()),
+        } => match worked_on(team, member) {
+            Some((item, branch)) => BusNotice::MemberFailedItem {
+                member: who,
+                message: end_of(message.unwrap_or_default()),
+                item,
+                branch,
+            },
+            None => BusNotice::MemberFailed {
+                member: who,
+                message: end_of(message.unwrap_or_default()),
+            },
         },
-        RunEnd::NoStatus { .. } => BusNotice::MemberNoStatus { member: who },
-        RunEnd::TurnLimit if member.status() == TaskStatus::Failed => BusNotice::MemberNoStatus { member: who },
+        RunEnd::NoStatus { .. } | RunEnd::TurnLimit if member.status() == TaskStatus::Failed => {
+            match worked_on(team, member) {
+                Some((item, branch)) => BusNotice::MemberNoStatusItem {
+                    member: who,
+                    item,
+                    branch,
+                },
+                None => BusNotice::MemberNoStatus { member: who },
+            }
+        }
         RunEnd::Reported { .. }
         | RunEnd::QuotaExhausted { .. }
         | RunEnd::RateLimited
         | RunEnd::TurnLimit
         | RunEnd::Hung
-        | RunEnd::Stopped => return Ok(None),
+        | RunEnd::Stopped
+        | RunEnd::NoStatus { .. } => return Ok(None),
     };
     Ok(Some(Told { to, notice }))
 }

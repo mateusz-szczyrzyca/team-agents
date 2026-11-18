@@ -67,7 +67,27 @@ pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) 
                     .with("message", message)?,
             )?,
         ),
-        BusNotice::MemberFailedItem { .. } => (NoticeKind::MemberFailed, Vec::new(), String::new()),
+        BusNotice::MemberFailedItem {
+            member,
+            message,
+            item,
+            branch,
+        } => (
+            NoticeKind::MemberFailed,
+            vec![
+                ("branch", branch.to_string()),
+                ("item", item.to_string()),
+                ("member", member.to_string()),
+            ],
+            texts.render(
+                TeamPrompt::MemberFailedItem,
+                &Variables::new()
+                    .with("member", member.as_str())?
+                    .with("item", item.to_string())?
+                    .with("branch", branch.as_str())?
+                    .with("message", message)?,
+            )?,
+        ),
         BusNotice::MemberNoStatus { member } => (
             NoticeKind::MemberNoStatus,
             vec![("member", member.to_string())],
@@ -76,7 +96,21 @@ pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) 
                 &Variables::new().with("member", member.as_str())?,
             )?,
         ),
-        BusNotice::MemberNoStatusItem { .. } => (NoticeKind::MemberNoStatus, Vec::new(), String::new()),
+        BusNotice::MemberNoStatusItem { member, item, branch } => (
+            NoticeKind::MemberNoStatus,
+            vec![
+                ("branch", branch.to_string()),
+                ("item", item.to_string()),
+                ("member", member.to_string()),
+            ],
+            texts.render(
+                TeamPrompt::MemberNoStatusItem,
+                &Variables::new()
+                    .with("member", member.as_str())?
+                    .with("item", item.to_string())?
+                    .with("branch", branch.as_str())?,
+            )?,
+        ),
         BusNotice::HelperResult {
             request,
             worker,
