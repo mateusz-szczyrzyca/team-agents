@@ -1007,6 +1007,36 @@ fn parse_status(bytes: &[u8]) -> Result<Vec<PathBuf>, ObservationError> {
     Ok(paths)
 }
 
+fn parse_untracked(bytes: &[u8]) -> Result<Vec<PathBuf>, ObservationError> {
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let body = bytes.strip_suffix(&[0]).ok_or(ObservationError::StatusFields)?;
+    let mut records = body.split(|byte| *byte == 0);
+    let mut paths = Vec::new();
+    while let Some(record) = records.next() {
+        let [index, worktree, b' ', path @ ..] = record else {
+            return Err(ObservationError::StatusFields);
+        };
+        if path.is_empty() {
+            return Err(ObservationError::StatusFields);
+        }
+        if [index, worktree]
+            .iter()
+            .any(|status| **status == b'R' || **status == b'C')
+        {
+            records
+                .next()
+                .filter(|source| !source.is_empty())
+                .ok_or(ObservationError::StatusFields)?;
+        }
+        if (*index, *worktree) == (b'?', b'?') {
+            paths.push(PathBuf::from(OsString::from_vec(path.to_vec())));
+        }
+    }
+    Ok(paths)
+}
+
 /// Worktree facts plus dirtiness including files that git does not track.
 #[derive(Debug)]
 struct GitObservation {
@@ -1054,6 +1084,9 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
         ],
     )
     .await?;
+    let uncommitted_files = parse_status(&status)?;
+    let untracked_paths = parse_untracked(&status)?;
+    let newest_untracked = super::untracked::collect(path, &untracked_paths).await.summary_facts;
     Ok(GitObservation {
         dirty: !status.is_empty(),
         facts: GitWorktreeSummary {
@@ -1062,7 +1095,7 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
             tip,
             origin_tip,
             commits_over_base: vec![],
-            uncommitted_files: parse_status(&status)?,
+            uncommitted_files,
             harness_refs: harness
                 .lines()
                 .filter(|line| {
@@ -1072,7 +1105,7 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
                 .map(str::to_owned)
                 .collect(),
             lead_contains_tip: None,
-            newest_untracked: vec![],
+            newest_untracked,
         },
     })
 }
