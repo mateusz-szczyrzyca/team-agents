@@ -328,10 +328,10 @@ pub struct MachineSummary {
 /// Filesystem space and inode usage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FsUsageSummary {
-    /// Percentage of space used (0-100).
-    pub space_percent: u8,
-    /// Percentage of inodes used (0-100).
-    pub inode_percent: u8,
+    /// Percentage of space used (0-100), or None if unavailable.
+    pub space_percent: Option<u8>,
+    /// Percentage of inodes used (0-100), or None if unavailable.
+    pub inode_percent: Option<u8>,
 }
 
 /// An unreadable collection part.
@@ -857,24 +857,28 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
         write_line(out, "- Swap: unknown");
     }
     if let Some(home) = machine.home_fs {
-        write_line(
-            out,
-            &format!(
-                "- Home filesystem: {}% space, {}% inodes",
-                home.space_percent, home.inode_percent
-            ),
-        );
+        let space_str = match home.space_percent {
+            Some(p) => format!("{p}% space"),
+            None => "unknown space".to_owned(),
+        };
+        let inode_str = match home.inode_percent {
+            Some(p) => format!("{p}% inodes"),
+            None => "unknown inodes".to_owned(),
+        };
+        write_line(out, &format!("- Home filesystem: {space_str}, {inode_str}"));
     } else {
         write_line(out, "- Home filesystem: unknown");
     }
     if let Some(temp) = machine.temp_fs {
-        write_line(
-            out,
-            &format!(
-                "- Temp filesystem: {}% space, {}% inodes",
-                temp.space_percent, temp.inode_percent
-            ),
-        );
+        let space_str = match temp.space_percent {
+            Some(p) => format!("{p}% space"),
+            None => "unknown space".to_owned(),
+        };
+        let inode_str = match temp.inode_percent {
+            Some(p) => format!("{p}% inodes"),
+            None => "unknown inodes".to_owned(),
+        };
+        write_line(out, &format!("- Temp filesystem: {space_str}, {inode_str}"));
     } else {
         write_line(out, "- Temp filesystem: unknown");
     }

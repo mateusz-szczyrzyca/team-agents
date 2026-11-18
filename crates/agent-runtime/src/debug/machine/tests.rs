@@ -702,3 +702,182 @@ async fn descendant_collection_failure_does_not_print_none_in_artifact() {
         "must explain that descendants could not be read: {artifact}"
     );
 }
+
+#[tokio::test]
+async fn filesystem_zero_total_blocks_or_inodes_records_unreadable_and_preserves_available_metric() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    // Case 1: total_blocks = 0, total_inodes = 100
+    let statvfs_mock = move |_path: &Path| -> Result<StatvfsStats, rustix::io::Errno> {
+        Ok(StatvfsStats {
+            fragment_size: 4096,
+            block_size: 4096,
+            total_blocks: 0,
+            available_blocks: 0,
+            total_inodes: 100,
+            available_inodes: 20,
+        })
+    };
+
+    let params = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: None,
+        cut: &cut,
+        collected_at: test_now(),
+        clock_ticks: NonZeroU64::new(100),
+    };
+
+    let obs = observe_with_statvfs(params, statvfs_mock).await;
+    let home_fs = obs.summary.home_fs.expect("home_fs summary");
+    assert_eq!(home_fs.space_percent, None, "zero total space must be None");
+    assert_eq!(home_fs.inode_percent, Some(80), "available inodes must be preserved");
+    assert!(
+        obs.unreadable.iter().any(|f| f.section == SummarySection::Machine
+            && f.part.contains("home filesystem space")
+            && f.reason.contains("zero")),
+        "must record unreadable failure for zero total space: {:?}",
+        obs.unreadable
+    );
+
+    // Case 2: total_blocks = 100, total_inodes = 0
+    let statvfs_mock_inodes_zero = move |_path: &Path| -> Result<StatvfsStats, rustix::io::Errno> {
+        Ok(StatvfsStats {
+            fragment_size: 4096,
+            block_size: 4096,
+            total_blocks: 100,
+            available_blocks: 10,
+            total_inodes: 0,
+            available_inodes: 0,
+        })
+    };
+
+    let params2 = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: None,
+        cut: &cut,
+        collected_at: test_now(),
+        clock_ticks: NonZeroU64::new(100),
+    };
+
+    let obs2 = observe_with_statvfs(params2, statvfs_mock_inodes_zero).await;
+    let home_fs2 = obs2.summary.home_fs.expect("home_fs summary");
+    assert_eq!(home_fs2.space_percent, Some(90), "available space must be preserved");
+    assert_eq!(home_fs2.inode_percent, None, "zero total inodes must be None");
+    assert!(
+        obs2.unreadable.iter().any(|f| f.section == SummarySection::Machine
+            && f.part.contains("home filesystem inodes")
+            && f.reason.contains("zero")),
+        "must record unreadable failure for zero total inodes: {:?}",
+        obs2.unreadable
+    );
+}
+
+#[tokio::test]
+async fn filesystem_available_greater_than_total_rejects_with_invalid_format() {
+    let (dir, home, cut) = fixture();
+    let procfs = dir.path().join("proc");
+    fs::create_dir_all(&procfs).expect("create proc");
+    let temp_dir = dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).expect("create tmp");
+
+    let statvfs_mock = move |_path: &Path| -> Result<StatvfsStats, rustix::io::Errno> {
+        Ok(StatvfsStats {
+            fragment_size: 4096,
+            block_size: 4096,
+            total_blocks: 100,
+            available_blocks: 150, // available > total
+            total_inodes: 100,
+            available_inodes: 50,
+        })
+    };
+
+    let params = MachineParams {
+        home: &home,
+        procfs: &procfs,
+        temp_dir: &temp_dir,
+        daemon_pid: None,
+        cut: &cut,
+        collected_at: test_now(),
+        clock_ticks: NonZeroU64::new(100),
+    };
+
+    let obs = observe_with_statvfs(params, statvfs_mock).await;
+    assert_eq!(obs.summary.home_fs, None, "invalid filesystem must not produce summary");
+    assert!(
+        obs.unreadable
+            .iter()
+            .any(|f| f.section == SummarySection::Machine
+                && f.reason.contains("available space blocks exceed total blocks")),
+        "must record unreadable failure when available blocks > total: {:?}",
+        obs.unreadable
+    );
+}
+
+#[tokio::test]
+async fn read_proc_string_bounded_preserves_utf8_error_source() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let invalid_utf8_path = dir.path().join("invalid_utf8");
+    fs::write(&invalid_utf8_path, [0xff, 0xfe, 0xfd]).expect("write bytes");
+
+    let err = read_proc_string_bounded(&invalid_utf8_path, 1024).await.unwrap_err();
+    match err {
+        MachineError::Utf8 { path, source } => {
+            assert_eq!(path, invalid_utf8_path);
+            assert_eq!(source.utf8_error().valid_up_to(), 0);
+        }
+        other => panic!("expected MachineError::Utf8, got {other:?}"),
+    }
+}
+
+#[test]
+fn compute_process_age_preserves_concrete_reasons() {
+    let now = Timestamp::from_utc(time::UtcDateTime::from_unix_timestamp(1_700_000_100).unwrap()).unwrap();
+    let ticks = NonZeroU64::new(100);
+
+    // Boot time unavailable
+    let err_boot = super::compute_process_age(None, ticks, 1000, now).unwrap_err();
+    assert!(matches!(err_boot, super::ProcessAgeError::BootTimeUnavailable));
+
+    // Clock ticks unavailable
+    let err_ticks = super::compute_process_age(Some(1_700_000_000), None, 1000, now).unwrap_err();
+    assert!(matches!(err_ticks, super::ProcessAgeError::ClockTicksUnavailable));
+
+    // Overflow calculating start seconds
+    let err_overflow = super::compute_process_age(Some(u64::MAX), ticks, 1000, now).unwrap_err();
+    assert!(matches!(err_overflow, super::ProcessAgeError::StartSecOverflow));
+
+    // Success calculation
+    let age = super::compute_process_age(Some(1_700_000_000), ticks, 2000, now).unwrap();
+    assert_eq!(age, 80);
+}
+
+#[tokio::test]
+async fn directory_size_bounded_detects_exceeded_limit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let base = dir.path();
+    for i in 0..5 {
+        fs::write(base.join(format!("file_{i}.txt")), "data").expect("write file");
+    }
+
+    // Bound of 3 should trigger TooLarge error
+    let err = super::directory_size_bounded(base, 3).await.unwrap_err();
+    match err {
+        MachineError::TooLarge { path, limit } => {
+            assert_eq!(path, base);
+            assert_eq!(limit, 3);
+        }
+        other => panic!("expected TooLarge error, got {other:?}"),
+    }
+
+    // Bound of 10 should succeed and calculate total size (5 files * 4 bytes = 20)
+    let size = super::directory_size_bounded(base, 10).await.unwrap();
+    assert_eq!(size, 20);
+}
