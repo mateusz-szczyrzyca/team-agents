@@ -1000,10 +1000,11 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
 
 /// Decodes the name and object ID fields of a retained reference record.
 fn ref_fields(line: &str) -> Result<(&str, &str), ObservationError> {
-    if line.is_empty() {
+    let (name, hash) = line.split_once(' ').ok_or(ObservationError::RefFields)?;
+    if name.is_empty() || hash.is_empty() {
         return Err(ObservationError::RefFields);
     }
-    Ok(line.split_once(' ').unwrap_or((line, line)))
+    Ok((name, hash))
 }
 
 async fn read_git_from_checkout(
