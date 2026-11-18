@@ -1294,7 +1294,7 @@ fn format_artifact(ctx: &MachineArtifactContext<'_>) -> String {
         append(&format!("  Space: {space_str}; Inodes: {inode_str}"));
     }
     append(&format!("- Temporary directory: {}", ctx.temp_dir.display()));
-    if ctx.same_fs {
+    if ctx.same_fs && ctx.home_fs.is_some() {
         append("  (shares filesystem with home directory)");
     } else if let Some(t) = ctx.temp_fs {
         let space_str = match t.summary.space_percent {
