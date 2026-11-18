@@ -1067,8 +1067,7 @@ An unpublished member branch is expected; the coordinator's origin ref is still 
 
 The summary uses the pure anomaly assessment and stays below 100,000 bytes; full collected details are separate
 artifacts. Summary redaction precedes truncation and byte budgeting, including daemon logs and process command lines.
-The next diagnostics slice adds bus messages, notifications, full configuration and secret key names,
-machine metrics and the fifty newest untracked files; those remaining sections are explicitly marked as deferred. See the
+The next diagnostics slice adds machine metrics and the fifty newest untracked files; those remaining sections are explicitly marked as deferred. See the
 [diagnostics design](docs/architecture.md#debug-diagnostics-commands-and-pure-decisions).
 
 The daemon records teams, rounds, runs and their steps and changes in `history.db`, together with gates, checks,

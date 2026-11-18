@@ -7,6 +7,7 @@
 #[cfg(test)]
 mod team_process {
     use std::fmt::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
     use std::process::{Child, Command, Output, Stdio};
     use std::sync::OnceLock;
@@ -20,6 +21,15 @@ mod team_process {
     /// A team of two features, one item each, for two members.
     const LIST: &str =
         "Build the things.\n\n1. First\n[ ] 1.1 One\n    Do one.\n\n2. Second\n[ ] 2.1 Two\n    Do two.\n";
+
+    /// The stand-in script of the member that posts to its team: it sends one chat message to the team's bus, with the
+    /// team read from the prompt of its first run (`.fake-prompt-1`). `AGENTBUS` and `HOME_DIR` are replaced by the test.
+    const POST_SCRIPT: &str = "#!/usr/bin/env bash
+set -eu
+export AGENTS_HOME='HOME_DIR'
+team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 | head -n 1)
+'AGENTBUS' send --dir 'HOME_DIR/bus' --from claude-1 --to \"team:$team\" 'Item 1.1 is started by claude-1.'
+";
 
     fn agent() -> Command {
         Command::new(env!("CARGO_BIN_EXE_agent"))
@@ -346,5 +356,74 @@ mod team_process {
         let status = world.status_where("every task to wait", |status| status.matches("waiting").count() == 3);
 
         assert!(status.contains("  coordinator  inv-opus  waiting"), "{status}");
+    }
+
+    #[test]
+    fn debug_e2e_collects_team_with_fake_cli_messages_and_notifications() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "script:post"),
+            ("claude-2", "agent", "ask"),
+        ]));
+        let secrets = world.home.join("secrets.toml");
+        std::fs::write(&secrets, "[agent_env]\nAPI_KEY = \"FAKE_KEY\"\n").unwrap();
+        std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let scripts = world.home.join("fake-scripts");
+        std::fs::create_dir(&scripts).unwrap();
+        let post = POST_SCRIPT
+            .replace("AGENTBUS", &agentbus_binary().display().to_string())
+            .replace("HOME_DIR", &world.home.display().to_string());
+        std::fs::write(scripts.join("post.sh"), post).unwrap();
+        world.start();
+
+        let output = world.agent(&["run", "inv-opus", "claude-1", "claude-2", "Do it all."]);
+        assert!(output.status.success(), "{}", stderr(&output));
+        let text = stdout(&output);
+        let team = text
+            .lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .to_owned();
+
+        world.status_where("the questions to be asked", |status| status.contains("questions"));
+
+        eventually("the notification to be written", || {
+            world
+                .home
+                .join("notifications")
+                .read_dir()
+                .is_ok_and(|mut entries| entries.next().is_some())
+        });
+
+        let diag_parent = world.home.join("diag");
+        let debug_output = world.agent(&["debug", "--team", &team, "--out", diag_parent.to_str().unwrap()]);
+        assert!(debug_output.status.success(), "{}", stderr(&debug_output));
+        let debug_text = stdout(&debug_output);
+        assert!(debug_text.contains("Debug summary:"), "{debug_text}");
+
+        let bundle_entry = std::fs::read_dir(&diag_parent).unwrap().next().unwrap().unwrap();
+        let bundle_path = bundle_entry.path();
+
+        assert!(bundle_path.join("SUMMARY.md").is_file());
+        assert!(bundle_path.join("bus.txt").is_file());
+        assert!(bundle_path.join("notifications.txt").is_file());
+        assert!(bundle_path.join("agents.toml").is_file());
+
+        let summary = std::fs::read_to_string(bundle_path.join("SUMMARY.md")).unwrap();
+        assert!(summary.contains("## Bus Messages"), "{summary}");
+        assert!(summary.contains("## Notifications"), "{summary}");
+        assert!(summary.contains("questions-1.md"), "{summary}");
+        assert!(summary.contains("## Daemon and Versions"), "{summary}");
+        assert!(summary.contains("- Configuration:"), "{summary}");
+        assert!(summary.contains("Item 1.1 is started by claude-1."), "{summary}");
+
+        let bus = std::fs::read_to_string(bundle_path.join("bus.txt")).unwrap();
+        assert!(bus.contains("claude-1 → team"), "{bus}");
+        assert!(bus.contains("Item 1.1 is started by claude-1."), "{bus}");
+
+        let notifications = std::fs::read_to_string(bundle_path.join("notifications.txt")).unwrap();
+        assert!(notifications.contains("questions-1.md"), "{notifications}");
     }
 }

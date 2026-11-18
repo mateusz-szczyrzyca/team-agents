@@ -93,6 +93,7 @@ fn sample_input() -> SummaryInput {
             disk_newer_than_process: false,
             version: "0.1.0".to_owned(),
         }),
+        command_version: "agent 0.1.0".to_owned(),
         team: sample_team(),
         tasks: vec![sample_task()],
         git: vec![sample_git()],
@@ -115,6 +116,8 @@ fn sample_input() -> SummaryInput {
         daemon_log_lines: Some(vec!["2026-11-17 19:00:00 [info] round started".to_owned()]),
         bus_messages: vec!["[#1] agentbus: team created".to_owned()],
         notifications: vec!["Notification: round active".to_owned()],
+        configuration: None,
+        secret_keys: vec![],
         machine: MachineSummary {
             load_avg: Some((0.5, 0.4, 0.3)),
             memory_total_bytes: Some(16_000_000_000),
@@ -832,4 +835,182 @@ fn partial_section_failure_preserves_collected_machine_facts() {
     let facts = baseline.split("## Machine and Resources\n\n").nth(1).unwrap();
     assert!(summary.contains(facts.trim()), "{summary}");
     assert!(summary.contains("Could not read swap: permission denied"));
+}
+
+#[test]
+fn summary_shows_command_version_beside_daemon_version() {
+    let mut input = sample_input();
+    input.command_version = "agent 0.2.0".to_owned();
+    if let Some(d) = input.daemon.as_mut() {
+        d.version = "agent 0.1.0".to_owned();
+    }
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(summary.contains("- Command version: agent 0.2.0"), "{summary}");
+    assert!(summary.contains("- Daemon version: agent 0.1.0"), "{summary}");
+}
+
+#[test]
+fn summary_shows_single_command_version_when_daemon_unreachable() {
+    let mut input = sample_input();
+    input.daemon = None;
+    input.command_version = "agent 0.2.0".to_owned();
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    assert!(summary.contains("- Command version: agent 0.2.0"), "{summary}");
+    assert!(!summary.contains("- Daemon version:"), "{summary}");
+}
+
+#[test]
+fn daemon_section_renders_configuration_and_secret_keys() {
+    let mut input = sample_input();
+    input.configuration = Some("agents.toml".into());
+    input.secret_keys = vec!["github_token".into(), "agent_env.API_KEY".into()];
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let daemon_section = summary
+        .split("## Daemon and Versions")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(daemon_section.contains("- Configuration: agents.toml"));
+    assert!(daemon_section.contains("- Secret keys: github_token, agent_env.API_KEY"));
+}
+
+#[test]
+fn unreadable_configuration_preserves_daemon_facts_in_daemon_section() {
+    let mut input = sample_input();
+    input.unreadable_parts.push(UnreadablePartSummary {
+        section: SummarySection::DaemonAndVersions,
+        name: "configuration".into(),
+        reason: "file missing".into(),
+    });
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let daemon_section = summary
+        .split("## Daemon and Versions")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(daemon_section.contains("Could not read configuration: file missing"));
+    assert!(daemon_section.contains("- PID: 12345"));
+    assert!(daemon_section.contains("- Command version: agent 0.1.0"));
+}
+
+#[test]
+fn daemon_section_renders_configuration_content_with_settings_and_values() {
+    let mut input = sample_input();
+    input.configuration = Some("[agents.codex-1]\ncli = \"codex\"\nmodel = \"medium\"".into());
+    input.secret_keys = vec!["github_token".into()];
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let daemon_section = summary
+        .split("## Daemon and Versions")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(daemon_section.contains("- Configuration:"));
+    assert!(daemon_section.contains("cli = \"codex\""));
+    assert!(daemon_section.contains("model = \"medium\""));
+}
+
+#[test]
+fn unreadable_daemon_process_suppresses_unreachable_notice_while_retaining_other_facts() {
+    let mut input = sample_input();
+    input.daemon = None;
+    input.unreadable_parts.push(UnreadablePartSummary {
+        section: SummarySection::DaemonAndVersions,
+        name: "daemon process".into(),
+        reason: "permission denied".into(),
+    });
+    input.command_version = "agent 0.2.0".into();
+    input.configuration = Some("[tiers]\nnormal = [\"codex-1\"]".into());
+    input.secret_keys = vec!["API_KEY".into()];
+
+    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let daemon_section = summary
+        .split("## Daemon and Versions")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+
+    assert!(
+        daemon_section.contains("Could not read daemon process: permission denied"),
+        "{daemon_section}"
+    );
+    assert!(
+        !daemon_section.contains("The daemon does not answer (unreachable)."),
+        "{daemon_section}"
+    );
+    assert!(
+        daemon_section.contains("- Command version: agent 0.2.0"),
+        "{daemon_section}"
+    );
+    assert!(daemon_section.contains("- Configuration:"), "{daemon_section}");
+    assert!(daemon_section.contains("normal = [\"codex-1\"]"), "{daemon_section}");
+    assert!(daemon_section.contains("- Secret keys: API_KEY"), "{daemon_section}");
+}
+
+#[test]
+fn bus_and_notifications_sections_coalesce_into_single_tail_preserving_newest_metadata() {
+    let mut input = sample_input();
+    input.bus_messages = (0..6000)
+        .map(|i| format!("[2026-11-18 10:00:00] agent-1 → all (chat): message {i}"))
+        .collect();
+    input.notifications = (0..6000).map(|i| format!("Notification {i}: task active")).collect();
+
+    let summary = render_summary(&input, UtcOffset::UTC)
+        .expect("large bus and notification lists must fit within document tail budget without failing");
+
+    let bus_section = summary
+        .split("## Bus Messages")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(bus_section.contains(CUT_MARKER.trim()), "{bus_section}");
+    assert!(
+        bus_section.contains("- [2026-11-18 10:00:00] agent-1 → all (chat): message 5999"),
+        "{bus_section}"
+    );
+
+    let notif_section = summary
+        .split("## Notifications")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(notif_section.contains(CUT_MARKER.trim()), "{notif_section}");
+    assert!(
+        notif_section.contains("- Notification 5999: task active"),
+        "{notif_section}"
+    );
+}
+
+#[test]
+fn oversized_configuration_is_bounded_by_tail_budget_with_cut_marker() {
+    let mut input = sample_input();
+    let large_config = format!("[settings]\n{}", "key = \"value\"\n".repeat(6000));
+    input.configuration = Some(large_config);
+    input.secret_keys = vec!["API_KEY".into()];
+
+    let summary = render_summary(&input, UtcOffset::UTC)
+        .expect("oversized configuration must be bounded through tail budget without error");
+    let daemon_section = summary
+        .split("## Daemon and Versions")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+
+    assert!(daemon_section.contains("- Configuration:"), "{daemon_section}");
+    assert!(daemon_section.contains(CUT_MARKER.trim()), "{daemon_section}");
+    assert!(daemon_section.contains("key = \"value\""), "{daemon_section}");
+    assert!(daemon_section.contains("- Secret keys: API_KEY"), "{daemon_section}");
 }

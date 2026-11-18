@@ -104,6 +104,7 @@ impl Collection {
                 now,
                 stale_after,
                 daemon: None,
+                command_version: Some(format!("agent {}", env!("CARGO_PKG_VERSION"))),
                 lead,
                 tasks: vec![],
                 items: team.items().iter().map(|item| item.phase().clone()).collect(),
@@ -117,6 +118,7 @@ impl Collection {
                 collected_at: now,
                 anomalies: vec![],
                 daemon: None,
+                command_version: format!("agent {}", env!("CARGO_PKG_VERSION")),
                 team: TeamSummaryFacts {
                     id: team.id().clone(),
                     repo: team.repo().clone(),
@@ -139,6 +141,8 @@ impl Collection {
                 daemon_log_lines: None,
                 bus_messages: vec![],
                 notifications: vec![],
+                configuration: None,
+                secret_keys: vec![],
                 machine: MachineSummary {
                     load_avg: None,
                     memory_total_bytes: None,

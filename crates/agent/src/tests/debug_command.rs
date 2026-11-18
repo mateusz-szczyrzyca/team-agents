@@ -909,3 +909,95 @@ fn debug_collects_live_history_from_active_wal_without_modifying_home() {
     assert!(summary.contains("Active WAL live step"), "{summary}");
     assert!(summary.contains("Active WAL live final message"), "{summary}");
 }
+
+fn assert_no_secret_in_directory(dir: &Path, secret: &str) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_dir() {
+            assert_no_secret_in_directory(&path, secret);
+        } else if path.is_file() {
+            let bytes = std::fs::read(&path).unwrap();
+            let secret_bytes = secret.as_bytes();
+            assert!(
+                !bytes.windows(secret_bytes.len()).any(|w| w == secret_bytes),
+                "secret value {secret} leaked in {path:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn debug_command_e2e_collects_bus_notifications_config_and_scans_secrets() {
+    let (_dir, home, _state, team, lead_task, _member_task, _round) = setup_test_home();
+
+    let secret_val = "SECRET_BOUNDARY_VALUE_12345";
+    // 1. Write secrets.toml and agents.toml
+    let secrets_toml = format!("[agent_env]\nMY_API_KEY = \"{secret_val}\"\n");
+    std::fs::write(home.secrets_file(), secrets_toml).unwrap();
+
+    let agents_toml = "[tiers]\nnormal = [\"codex-1\"]\n[agents.codex-1]\ncli = \"codex\"\n";
+    std::fs::write(home.config_file(), agents_toml).unwrap();
+
+    // 2. Write bus message with secret crossing 100-char boundary
+    let bus_dir = home.root().join("bus");
+    std::fs::create_dir_all(&bus_dir).unwrap();
+    let prefix = "X".repeat(95);
+    let suffix = "Y".repeat(40);
+    let long_text = format!("{prefix}{secret_val}{suffix}");
+    let bus_line = format!(
+        r#"{{"id":1,"ts":"2026-11-17 12:05:00","from":"codex-1","to":"all","kind":"chat","text":"{long_text}"}}"#
+    );
+    std::fs::write(bus_dir.join("messages.jsonl"), bus_line + "\n").unwrap();
+
+    // 3. Write notification
+    let notif_dir = home.notifications_dir();
+    std::fs::create_dir_all(&notif_dir).unwrap();
+    let notif_content =
+        format!("E2E Notification\nTask: {lead_task}\nTeam: {team}\n\nNotice with secret: {secret_val}\n");
+    std::fs::write(notif_dir.join("notification-20261117-120000-1.md"), notif_content).unwrap();
+
+    // 3b. Write a daemon log line of the team that carries the same secret
+    let daemon_line = format!("WARN team {team} task {lead_task} daemon line before the secret {secret_val}\n");
+    std::fs::write(home.root().join("daemon.log"), daemon_line).unwrap();
+
+    // 4. Run `agent debug`
+    let out_dir = tempfile::tempdir().unwrap();
+    let parent = out_dir.path().join("diag");
+    let (code, out, err) = agent(
+        &environment(home.root()),
+        &["debug", "--team", team.as_str(), "--out", parent.to_str().unwrap()],
+    );
+    assert_eq!(code, ExitCode::from(0), "{err}");
+    assert!(out.contains("Debug summary:"), "{out}");
+
+    let bundle_entry = parent.read_dir().unwrap().next().unwrap().unwrap();
+    let bundle_path = bundle_entry.path();
+
+    // 5. Verify expected files exist in bundle
+    assert!(bundle_path.join("SUMMARY.md").is_file());
+    assert!(bundle_path.join("bus.txt").is_file());
+    assert!(bundle_path.join("notifications.txt").is_file());
+    assert!(bundle_path.join("agents.toml").is_file());
+    assert!(bundle_path.join("secrets.toml").is_file());
+
+    // 6. Verify summary renders required sections and facts
+    let summary = std::fs::read_to_string(bundle_path.join("SUMMARY.md")).unwrap();
+    assert!(summary.contains("## Bus Messages"), "{summary}");
+    assert!(summary.contains("codex-1 → all (chat):"), "{summary}");
+    assert!(summary.contains("## Notifications"), "{summary}");
+    assert!(summary.contains("E2E Notification"), "{summary}");
+    assert!(summary.contains("## Daemon and Versions"), "{summary}");
+    assert!(summary.contains("- Command version: agent"), "{summary}");
+    assert!(summary.contains("- Configuration:"), "{summary}");
+    assert!(summary.contains("normal = [\"codex-1\"]"), "{summary}");
+    assert!(summary.contains("- Secret keys: agent_env.MY_API_KEY"), "{summary}");
+    assert!(summary.contains("daemon line before the secret"), "{summary}");
+
+    // 7. Verify bus.txt retained the full message text
+    let bus_artifact = std::fs::read_to_string(bundle_path.join("bus.txt")).unwrap();
+    assert!(bus_artifact.contains(&suffix), "{bus_artifact}");
+
+    // 8. All-artifacts secret scan: NO file in bundle_path contains secret_val
+    assert_no_secret_in_directory(&bundle_path, secret_val);
+}

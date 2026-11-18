@@ -2,9 +2,12 @@
 
 #[cfg(test)]
 mod activity_tests;
+mod bus;
 mod collect;
+mod config;
 mod daemon_log;
 pub(crate) mod history;
+mod notifications;
 mod process_facts;
 #[cfg(test)]
 mod tests;
@@ -27,11 +30,7 @@ use crate::store::Home;
 use crate::text_file::{TextFileError, read_text_file};
 
 /// Observations deferred to the third diagnostic task, never interpreted as empty observations.
-const DEFERRED: &[SummarySection] = &[
-    SummarySection::Bus,
-    SummarySection::Notifications,
-    SummarySection::Machine,
-];
+const DEFERRED: &[SummarySection] = &[SummarySection::Machine];
 /// Maximum state file size in bytes.
 const MAX_STATE_BYTES: usize = 16 * 1024 * 1024;
 /// Default inactivity threshold in minutes.
@@ -231,6 +230,9 @@ pub async fn execute_debug_at(
     collection.local_offset = location.local_offset;
     collection.observe(home, team, status).await?;
     observe_daemon(&mut collection, home, args.daemon_log.as_deref(), team).await;
+    observe_bus(&mut collection, home, team).await;
+    observe_notifications(&mut collection, home, team).await;
+    observe_config(&mut collection, home, &secrets).await;
     let findings = assess(&collection.assessment);
     collection.summary.anomalies = findings
         .iter()
@@ -263,7 +265,10 @@ pub async fn execute_debug_at(
         },
     )
     .map_err(DebugRuntimeError::Summary)?;
-    collection.add("NOT_COLLECTED.txt", b"Not collected in this version: bus; notifications; configuration and secret key names; machine metrics; newest untracked file metadata.\n".to_vec());
+    collection.add(
+        "NOT_COLLECTED.txt",
+        b"Not collected in this version: machine metrics; newest untracked file metadata.\n".to_vec(),
+    );
     let parent = args.out.unwrap_or_else(|| home.root().join("debug"));
     collect::persist(
         collection,
@@ -341,6 +346,7 @@ async fn observe_daemon(
         Ok(Some(daemon)) => {
             collection.assessment.daemon = Some(agent_core::diagnostic_assessment::Daemon::Present {
                 executable_newer: Some(daemon.disk_newer_than_process),
+                version: Some(daemon.version.clone()),
             });
             collection.add_daemon(daemon);
         }
@@ -380,6 +386,102 @@ async fn observe_daemon(
                 part: "daemon log".to_owned(),
                 reason: crate::process::error_chain(&error),
             }),
+    }
+}
+
+/// Records readable bus messages or records an unreadable failure.
+async fn observe_bus(collection: &mut collect::Collection, home: &Home, team: &agent_core::state::Team) {
+    match bus::collect(home, team, &collection.cut).await {
+        Ok(bus) => {
+            let text = if bus.artifact_messages.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", bus.artifact_messages.join("\n"))
+            };
+            collection.add("bus.txt", text.into_bytes());
+            collection.summary.bus_messages = bus.summary_messages;
+        }
+        Err(error) => collection
+            .assessment
+            .unreadable
+            .push(agent_core::diagnostic_assessment::ReadFailure {
+                section: SummarySection::Bus,
+                part: "bus messages".to_owned(),
+                reason: crate::process::error_chain(&error),
+            }),
+    }
+}
+
+/// Records readable notifications or records an unreadable failure.
+async fn observe_notifications(collection: &mut collect::Collection, home: &Home, team: &agent_core::state::Team) {
+    let directory = match config::notification_directory(home).await {
+        Ok(directory) => directory,
+        Err(error) => {
+            collection
+                .assessment
+                .unreadable
+                .push(agent_core::diagnostic_assessment::ReadFailure {
+                    section: SummarySection::Notifications,
+                    part: "notifications configuration".to_owned(),
+                    reason: crate::process::error_chain(&error),
+                });
+            return;
+        }
+    };
+    match notifications::collect(&directory, team).await {
+        Ok(notifs) => {
+            let text = if notifs.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", notifs.join("\n\n"))
+            };
+            collection.add("notifications.txt", text.into_bytes());
+            collection.summary.notifications = notifs;
+        }
+        Err(error) => collection
+            .assessment
+            .unreadable
+            .push(agent_core::diagnostic_assessment::ReadFailure {
+                section: SummarySection::Notifications,
+                part: "notifications".to_owned(),
+                reason: crate::process::error_chain(&error),
+            }),
+    }
+}
+
+/// Records readable configuration and redacted secrets, or records an unreadable failure.
+async fn observe_config(collection: &mut collect::Collection, home: &Home, secrets: &agent_core::config::Secrets) {
+    let secret_names = config::format_secret_names(secrets);
+    collection.add("secrets.toml", secret_names.into_bytes());
+
+    let mut secret_keys = Vec::new();
+    if secrets.github_token().is_some() {
+        secret_keys.push("github_token".to_owned());
+    }
+    for key in secrets.agent_env().keys() {
+        secret_keys.push(format!("agent_env.{key}"));
+    }
+    for key in secrets.notification_env().keys() {
+        secret_keys.push(format!("notification_env.{key}"));
+    }
+    collection.summary.secret_keys = secret_keys;
+
+    match config::collect_config(home).await {
+        Ok(text) => {
+            collection.add("agents.toml", text.clone().into_bytes());
+            let redacted = collection.cut.redact_text(&text);
+            collection.summary.configuration = Some(redacted);
+        }
+        Err(error) => {
+            collection
+                .assessment
+                .unreadable
+                .push(agent_core::diagnostic_assessment::ReadFailure {
+                    section: SummarySection::DaemonAndVersions,
+                    part: "configuration".to_owned(),
+                    reason: crate::process::error_chain(&error),
+                });
+        }
     }
 }
 

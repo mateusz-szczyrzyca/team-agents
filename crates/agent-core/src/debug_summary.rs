@@ -100,6 +100,8 @@ pub struct SummaryInput {
     pub anomalies: Vec<SummaryAnomaly>,
     /// Information about the running daemon, or `None` if the daemon does not answer.
     pub daemon: Option<DaemonSummary>,
+    /// Version of the command running the summary, as `agent --version` prints it.
+    pub command_version: String,
     /// Information about the team, its items, and its rounds.
     pub team: TeamSummaryFacts,
     /// Per-task status rows and details.
@@ -116,6 +118,10 @@ pub struct SummaryInput {
     pub bus_messages: Vec<String>,
     /// Notifications written for team and tasks.
     pub notifications: Vec<String>,
+    /// Configuration status or loaded facts.
+    pub configuration: Option<String>,
+    /// Secret table and key names configured in `secrets.toml`.
+    pub secret_keys: Vec<String>,
     /// Machine health and resources.
     pub machine: MachineSummary,
     /// Names and error reasons for any collection parts that could not be read.
@@ -523,23 +529,49 @@ fn write_process_line(out: &mut SummaryWriter, label: &str, value: &str) {
     write_line(out, "");
 }
 
-fn render_daemon(daemon: Option<&DaemonSummary>, offset: UtcOffset, out: &mut SummaryWriter) {
-    let Some(d) = daemon else {
-        write_line(out, "The daemon does not answer (unreachable).");
-        write_line(out, "");
-        return;
-    };
-    write_line(out, &format!("- PID: {}", d.pid));
-    if let Some(started) = d.started_at {
-        write_line(out, &format!("- Started: {}", format_time(started, offset)));
+fn render_daemon(input: &SummaryInput, offset: UtcOffset, out: &mut SummaryWriter) {
+    let command_version = &input.command_version;
+    if let Some(d) = &input.daemon {
+        write_line(out, &format!("- PID: {}", d.pid));
+        if let Some(started) = d.started_at {
+            write_line(out, &format!("- Started: {}", format_time(started, offset)));
+        }
+        write_process_line(out, "- Command version: ", command_version);
+        write_process_line(out, "- Daemon version: ", &d.version);
+        write_process_line(out, "- Executable: ", &d.exe_path);
+        if d.disk_newer_than_process {
+            write_line(out, "  (Warning: binary on disk is newer than running process)");
+        }
+        write_process_line(out, "- Command line: ", &d.cmdline.join(" "));
+        write_process_line(out, "- Environment variables: ", &d.env_var_names.join(", "));
+    } else {
+        if !input
+            .unreadable_parts
+            .iter()
+            .any(|part| part.section == SummarySection::DaemonAndVersions && part.name == "daemon process")
+        {
+            write_line(out, "The daemon does not answer (unreachable).");
+        }
+        write_process_line(out, "- Command version: ", command_version);
     }
-    write_process_line(out, "- Version: ", &d.version);
-    write_process_line(out, "- Executable: ", &d.exe_path);
-    if d.disk_newer_than_process {
-        write_line(out, "  (Warning: binary on disk is newer than running process)");
+
+    if let Some(conf) = &input.configuration {
+        if conf.contains('\n') {
+            write_line(out, "- Configuration:");
+            let mut text = String::new();
+            for line in conf.lines() {
+                text.push_str("    ");
+                text.push_str(line);
+                text.push('\n');
+            }
+            out.tail(&text);
+        } else {
+            write_process_line(out, "- Configuration: ", conf);
+        }
     }
-    write_process_line(out, "- Command line: ", &d.cmdline.join(" "));
-    write_process_line(out, "- Environment variables: ", &d.env_var_names.join(", "));
+    if !input.secret_keys.is_empty() {
+        write_process_line(out, "- Secret keys: ", &input.secret_keys.join(", "));
+    }
     write_line(out, "");
 }
 
@@ -772,11 +804,13 @@ fn render_bus(messages: &[String], out: &mut SummaryWriter) {
     if messages.is_empty() {
         write_line(out, "No bus messages.");
     } else {
+        let mut text = String::new();
         for msg in messages {
-            out.push_str("- ");
-            out.tail(msg);
-            write_line(out, "");
+            text.push_str("- ");
+            text.push_str(msg);
+            text.push('\n');
         }
+        out.tail(&text);
     }
     write_line(out, "");
 }
@@ -785,11 +819,13 @@ fn render_notifications(notifications: &[String], out: &mut SummaryWriter) {
     if notifications.is_empty() {
         write_line(out, "No notifications.");
     } else {
+        let mut text = String::new();
         for n in notifications {
-            out.push_str("- ");
-            out.tail(n);
-            write_line(out, "");
+            text.push_str("- ");
+            text.push_str(n);
+            text.push('\n');
         }
+        out.tail(&text);
     }
     write_line(out, "");
 }
@@ -1001,14 +1037,19 @@ fn render_with_redaction(
             write_line(&mut out, "");
             if matches!(
                 section,
-                SummarySection::HistoryTail | SummarySection::DaemonAndVersions | SummarySection::DaemonLog
+                SummarySection::HistoryTail
+                    | SummarySection::DaemonLog
+                    | SummarySection::Bus
+                    | SummarySection::Notifications
             ) {
                 continue;
             }
         }
         match section {
             SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
-            SummarySection::DaemonAndVersions => render_daemon(input.daemon.as_ref(), offset, &mut out),
+            SummarySection::DaemonAndVersions => {
+                render_daemon(input, offset, &mut out);
+            }
             SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut out),
             SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut out),
             SummarySection::TaskDetails => render_task_details(&input.tasks, &mut out),

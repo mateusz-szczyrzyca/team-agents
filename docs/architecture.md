@@ -508,8 +508,7 @@ are expected, with retained branch tips and commits over the base read from the 
 is expected; coordinator origin differences remain assessable. Empty history and unreadable history have
 different section text.
 
-The next diagnostics slice covers bus messages, notifications, configuration with secret key
-names, machine metrics and the fifty newest untracked files. These remaining sections are explicitly deferred;
+The next diagnostics slice covers machine metrics and the fifty newest untracked files. These remaining sections are explicitly deferred;
 that is not an observation of absence or an anomaly.
 
 The pure layer receives observed facts, the collection time and a UTC offset from its caller. The CLI passes the

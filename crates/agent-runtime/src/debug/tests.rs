@@ -73,6 +73,7 @@ fn retries_oversized_required_presentation_without_losing_full_facts() {
         collected_at: "2026-11-17T12:00:00Z".parse::<Timestamp>().unwrap(),
         anomalies: vec![],
         daemon: None,
+        command_version: String::new(),
         team: TeamSummaryFacts {
             id: "team-20261117-120000-a1b2".parse().unwrap(),
             repo: "example".parse().unwrap(),
@@ -86,6 +87,8 @@ fn retries_oversized_required_presentation_without_losing_full_facts() {
         daemon_log_lines: None,
         bus_messages: vec![],
         notifications: vec![],
+        configuration: None,
+        secret_keys: vec![],
         machine: MachineSummary {
             load_avg: None,
             memory_total_bytes: None,
@@ -428,4 +431,214 @@ async fn collects_redacted_team_daemon_log_with_warning_tail() {
     let summary = std::fs::read_to_string(result.summary_path).unwrap();
     assert!(summary.contains("team-20261117-120000-a1b2 <cut>"), "{summary}");
     assert!(!summary.contains("test-confidential-λ"), "{summary}");
+}
+
+#[tokio::test]
+async fn collects_redacted_bus_messages_in_bundle_and_summary() {
+    let (_dir, home, args) = fixture();
+    let bus_dir = home.root().join("bus");
+    std::fs::create_dir_all(&bus_dir).unwrap();
+    std::fs::write(
+        bus_dir.join("messages.jsonl"),
+        r#"{"id":1,"ts":"2026-11-17 12:00:00","from":"codex-1","to":"all","kind":"chat","text":"token test-confidential-λ in bus"}"#
+            .to_string()
+            + "\n",
+    )
+    .unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    assert!(result.bundle_dir.join("bus.txt").is_file(), "bus.txt must be collected");
+    let bus_text = std::fs::read_to_string(result.bundle_dir.join("bus.txt")).unwrap();
+    assert!(bus_text.contains("<cut>"), "{bus_text}");
+    assert!(!bus_text.contains("test-confidential-λ"), "{bus_text}");
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    let bus_section = summary
+        .split(SummarySection::Bus.heading())
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    assert!(!bus_section.contains("Not collected in this version."), "{bus_section}");
+    assert!(bus_section.contains("<cut>"), "{bus_section}");
+    assert!(!bus_section.contains("test-confidential-λ"), "{bus_section}");
+}
+
+#[tokio::test]
+async fn collects_redacted_notifications_in_bundle_and_summary() {
+    let (_dir, home, args) = fixture();
+    let notif_dir = home.notifications_dir();
+    std::fs::create_dir_all(&notif_dir).unwrap();
+    std::fs::write(
+        notif_dir.join("notification-20261117-120000.md"),
+        "Notice\nTeam: team-20261117-120000-a1b2\n\nsecret test-confidential-λ reported\n",
+    )
+    .unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    assert!(
+        result.bundle_dir.join("notifications.txt").is_file(),
+        "notifications.txt must be collected"
+    );
+    let notif_text = std::fs::read_to_string(result.bundle_dir.join("notifications.txt")).unwrap();
+    assert!(notif_text.contains("<cut>"), "{notif_text}");
+    assert!(!notif_text.contains("test-confidential-λ"), "{notif_text}");
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    let notif_section = summary
+        .split(SummarySection::Notifications.heading())
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    assert!(
+        !notif_section.contains("Not collected in this version."),
+        "{notif_section}"
+    );
+    assert!(notif_section.contains("<cut>"), "{notif_section}");
+    assert!(!notif_section.contains("test-confidential-λ"), "{notif_section}");
+}
+
+#[tokio::test]
+async fn collects_configuration_and_secret_names_in_bundle() {
+    let (_dir, home, args) = fixture();
+    std::fs::write(home.config_file(), "[repos.example]\ngate = \"make gate\"\n").unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+
+    assert!(result.bundle_dir.join("agents.toml").is_file());
+    assert_eq!(
+        std::fs::read_to_string(result.bundle_dir.join("agents.toml")).unwrap(),
+        "[repos.example]\ngate = \"make gate\"\n"
+    );
+
+    assert!(result.bundle_dir.join("secrets.toml").is_file());
+    let secrets_text = std::fs::read_to_string(result.bundle_dir.join("secrets.toml")).unwrap();
+    assert!(secrets_text.contains("github_token"));
+    assert!(!secrets_text.contains("test-confidential-λ"));
+}
+
+#[tokio::test]
+async fn reports_unreadable_configuration_when_agents_toml_is_missing() {
+    let (_dir, home, args) = fixture();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    let daemon_section = summary
+        .split("## Daemon and Versions")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(daemon_section.contains("Could not read configuration"));
+    assert!(daemon_section.contains("Command version"));
+}
+
+#[tokio::test]
+async fn summary_renders_bounded_configuration_content_with_settings_and_values() {
+    let (_dir, home, args) = fixture();
+    std::fs::write(home.config_file(), "[repos.example]\ngate = \"make gate\"\n").unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    let daemon_section = summary
+        .split("## Daemon and Versions")
+        .nth(1)
+        .unwrap()
+        .split("##")
+        .next()
+        .unwrap();
+    assert!(daemon_section.contains("gate = \"make gate\""));
+}
+
+#[tokio::test]
+async fn not_collected_names_only_machine_metrics_and_untracked_files() {
+    let (_dir, home, args) = fixture();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    let content = std::fs::read_to_string(result.bundle_dir.join("NOT_COLLECTED.txt")).unwrap();
+    assert_eq!(
+        content,
+        "Not collected in this version: machine metrics; newest untracked file metadata.\n"
+    );
+}
+
+#[tokio::test]
+async fn summary_retains_configuration_across_multibyte_byte_2048_boundary() {
+    let (_dir, home, args) = fixture();
+    let text = format!("#{}λ\n[notifications]\n", "x".repeat(2046));
+    assert_eq!(text.find('λ'), Some(2047));
+    std::fs::write(home.config_file(), &text).unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(
+        summary.contains(text.lines().next().unwrap()),
+        "configuration was truncated before summary budgeting"
+    );
+    assert!(summary.contains("[notifications]"));
+    assert_eq!(
+        std::fs::read_to_string(result.bundle_dir.join("agents.toml")).unwrap(),
+        text
+    );
+}
+#[tokio::test]
+async fn collects_notifications_from_configured_directory() {
+    let (dir, home, args) = fixture();
+    let configured = dir.path().join("custom-notices");
+    std::fs::create_dir_all(&configured).unwrap();
+    let note = "Configured notice\nTeam: team-20261117-120000-a1b2\n\nconfigured-directory-content\n";
+    std::fs::write(configured.join("notification-20261117100000-1.md"), note).unwrap();
+    std::fs::write(
+        home.config_file(),
+        format!("[notifications]\ndirectory = {:?}\n", configured.to_str().unwrap()),
+    )
+    .unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(result.bundle_dir.join("notifications.txt")).unwrap(),
+        format!("{note}\n")
+    );
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(summary.contains("configured-directory-content"), "{summary}");
+}
+
+#[tokio::test]
+async fn unreadable_bus_and_notifications_report_reasons_without_empty_messages() {
+    let (_dir, home, args) = fixture();
+    std::fs::create_dir_all(home.root().join("bus/messages.jsonl")).unwrap();
+    std::fs::write(home.notifications_dir(), b"not a directory").unwrap();
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    for (heading, part, empty) in [
+        (SummarySection::Bus.heading(), "bus messages", "No bus messages."),
+        (
+            SummarySection::Notifications.heading(),
+            "notifications",
+            "No notifications.",
+        ),
+    ] {
+        let section = summary.split(heading).nth(1).unwrap().split("\n## ").next().unwrap();
+        assert!(section.contains(&format!("Could not read {part}:")), "{section}");
+        assert!(section.contains("cannot read"), "missing underlying reason: {section}");
+        assert!(!section.contains(empty), "{section}");
+    }
+}
+
+#[tokio::test]
+async fn unreadable_notification_configuration_reports_reason_in_notifications_section() {
+    for invalid_text in [Some("invalid TOML ["), None] {
+        let (_dir, home, args) = fixture();
+        if let Some(text) = invalid_text {
+            std::fs::write(home.config_file(), text).unwrap();
+        } else {
+            std::fs::create_dir(home.config_file()).unwrap();
+        }
+        let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+        let summary = std::fs::read_to_string(result.summary_path).unwrap();
+        let section = summary
+            .split(SummarySection::Notifications.heading())
+            .nth(1)
+            .unwrap()
+            .split("\n## ")
+            .next()
+            .unwrap();
+        assert!(section.contains("Could not read notifications"), "{section}");
+        assert!(section.contains("configuration"), "{section}");
+        assert!(!section.contains("No notifications."), "{section}");
+    }
 }

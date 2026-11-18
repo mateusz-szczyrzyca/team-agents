@@ -29,7 +29,9 @@ fn healthy() -> Assessment {
         stale_after: Duration::from_secs(600),
         daemon: Some(Daemon::Present {
             executable_newer: Some(false),
+            version: None,
         }),
+        command_version: None,
         lead: task_id(),
         tasks: vec![Task {
             id: task_id(),
@@ -88,6 +90,7 @@ fn every_known_anomaly_is_reported_exactly_with_its_context() {
                 let mut f = healthy();
                 f.daemon = Some(Daemon::Present {
                     executable_newer: Some(true),
+                    version: None,
                 });
                 f
             },
@@ -599,6 +602,7 @@ mod retained_anomalies {
         let mut facts = healthy();
         facts.daemon = Some(Daemon::Present {
             executable_newer: Some(true),
+            version: None,
         });
 
         assert_eq!(assess(&facts), vec![Anomaly::NewerExecutable]);
@@ -705,4 +709,44 @@ fn only_fixing_has_an_assigned_branch_among_review_phases() {
         facts.branches = vec![member];
         assert_eq!(assess(&facts), expected);
     }
+}
+
+#[test]
+fn assess_finds_version_mismatch_anomaly_when_daemon_and_command_versions_differ() {
+    let mut facts = healthy();
+    facts.command_version = Some("agent 0.2.0".to_owned());
+    facts.daemon = Some(Daemon::Present {
+        executable_newer: Some(false),
+        version: Some("agent 0.1.0".to_owned()),
+    });
+    let anomalies = assess(&facts);
+    assert_eq!(
+        anomalies,
+        vec![Anomaly::VersionMismatch {
+            command: "agent 0.2.0".to_owned(),
+            daemon: "agent 0.1.0".to_owned(),
+        }]
+    );
+    assert_eq!(
+        anomalies[0].sentence(),
+        "The daemon was started from another build (agent 0.1.0) than the command (agent 0.2.0); restart the daemon or run the command from the daemon's build."
+    );
+}
+
+#[test]
+fn assess_no_version_mismatch_when_daemon_absent_or_versions_match() {
+    let mut facts = healthy();
+    facts.command_version = Some("agent 0.2.0".to_owned());
+    facts.daemon = Some(Daemon::Absent);
+    let anomalies = assess(&facts);
+    assert!(!anomalies.iter().any(|a| matches!(a, Anomaly::VersionMismatch { .. })));
+
+    let mut facts2 = healthy();
+    facts2.command_version = Some("agent 0.2.0".to_owned());
+    facts2.daemon = Some(Daemon::Present {
+        executable_newer: Some(false),
+        version: Some("agent 0.2.0".to_owned()),
+    });
+    let anomalies2 = assess(&facts2);
+    assert!(!anomalies2.iter().any(|a| matches!(a, Anomaly::VersionMismatch { .. })));
 }

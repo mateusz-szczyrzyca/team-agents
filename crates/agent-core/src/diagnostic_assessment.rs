@@ -18,6 +18,8 @@ pub struct Assessment {
     pub stale_after: Duration,
     /// Whether a daemon holds the home, when known.
     pub daemon: Option<Daemon>,
+    /// Version of the command running the assessment, if known.
+    pub command_version: Option<String>,
     /// Coordinator task of this team.
     pub lead: TaskId,
     /// All known tasks of the team.
@@ -37,7 +39,7 @@ pub struct Assessment {
 }
 
 /// Observed daemon ownership of the home.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Daemon {
     /// No process holds the home.
     Absent,
@@ -45,6 +47,8 @@ pub enum Daemon {
     Present {
         /// The executable file on disk is newer than that process, if known.
         executable_newer: Option<bool>,
+        /// The version of the running daemon executable, if known.
+        version: Option<String>,
     },
 }
 
@@ -160,6 +164,13 @@ pub enum Anomaly {
     FullFilesystem(#[doc = "Path on the full filesystem."] PathBuf),
     /// A part of the diagnostics could not be collected.
     Unreadable(#[doc = "Unavailable part and the reason collection failed."] ReadFailure),
+    /// The daemon process was started from another build than the command.
+    VersionMismatch {
+        /// Version string of the command.
+        command: String,
+        /// Version string of the running daemon.
+        daemon: String,
+    },
 }
 
 impl Anomaly {
@@ -197,6 +208,11 @@ impl Anomaly {
                 path.as_os_str()
             ),
             Self::Unreadable(failure) => format!("Could not collect {}: {}.", failure.part, failure.reason),
+            Self::VersionMismatch { command, daemon } => {
+                format!(
+                    "The daemon was started from another build ({daemon}) than the command ({command}); restart the daemon or run the command from the daemon's build."
+                )
+            }
         }
     }
 
@@ -219,7 +235,8 @@ impl Anomaly {
             | Self::UnmergedBranch(_)
             | Self::OriginDiffers(_)
             | Self::FullFilesystem(_)
-            | Self::Unreadable(_) => None,
+            | Self::Unreadable(_)
+            | Self::VersionMismatch { .. } => None,
         }
     }
 }
@@ -232,11 +249,27 @@ pub fn assess(facts: &Assessment) -> Vec<Anomaly> {
         Some(Daemon::Absent) => anomalies.push(Anomaly::NoDaemon),
         Some(Daemon::Present {
             executable_newer: Some(true),
+            ..
         }) => anomalies.push(Anomaly::NewerExecutable),
         Some(Daemon::Present {
             executable_newer: Some(false) | None,
+            ..
         })
         | None => {}
+    }
+    if let (
+        Some(Daemon::Present {
+            version: Some(daemon_version),
+            ..
+        }),
+        Some(command_version),
+    ) = (&facts.daemon, &facts.command_version)
+        && daemon_version != command_version
+    {
+        anomalies.push(Anomaly::VersionMismatch {
+            command: command_version.clone(),
+            daemon: daemon_version.clone(),
+        });
     }
     for task in &facts.tasks {
         match task.status {
