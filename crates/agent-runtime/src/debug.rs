@@ -414,7 +414,21 @@ async fn observe_bus(collection: &mut collect::Collection, home: &Home, team: &a
 
 /// Records readable notifications or records an unreadable failure.
 async fn observe_notifications(collection: &mut collect::Collection, home: &Home, team: &agent_core::state::Team) {
-    match notifications::collect(&home.notifications_dir(), team).await {
+    let directory = match config::notification_directory(home).await {
+        Ok(directory) => directory,
+        Err(error) => {
+            collection
+                .assessment
+                .unreadable
+                .push(agent_core::diagnostic_assessment::ReadFailure {
+                    section: SummarySection::Notifications,
+                    part: "notifications configuration".to_owned(),
+                    reason: crate::process::error_chain(&error),
+                });
+            return;
+        }
+    };
+    match notifications::collect(&directory, team).await {
         Ok(notifs) => {
             let text = if notifs.is_empty() {
                 String::new()
