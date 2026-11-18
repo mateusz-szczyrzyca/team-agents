@@ -629,3 +629,46 @@ fn run_detail_formats_prose_with_local_offset() {
         "ended, reported DONE, at 2026-11-17 12:00:00 UTC (2026-11-17 13:00:00 +01:00)"
     );
 }
+
+#[tokio::test]
+async fn removed_worktree_does_not_substitute_another_tasks_member_branch() {
+    use agent_core::config::AbsolutePath;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let team = setup_merged_team();
+    let checkout = tempfile::tempdir().unwrap();
+    git(checkout.path(), &["init", "--initial-branch=base"]);
+    git(checkout.path(), &["commit", "--allow-empty", "-m", "Base"]);
+    git(
+        checkout.path(),
+        &["branch", "agents/claude-1/task-20261117-120000-zzzz-item"],
+    );
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    collection.checkout = Some(checkout.path().to_path_buf());
+    collection.observe(&home, &team, None).await.unwrap();
+    assert_eq!(collection.summary.git, vec![]);
+}
+
+#[tokio::test]
+async fn worktree_metadata_failure_is_recorded_before_running_git() {
+    use agent_core::config::AbsolutePath;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let team = team();
+    let task = team.crew().roster()[0].1.task();
+    let path = home.worktree_dir(team.repo(), task);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&path, &path).unwrap();
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    collection.observe(&home, &team, None).await.unwrap();
+    let failures: Vec<_> = collection
+        .assessment
+        .unreadable
+        .iter()
+        .filter(|part| part.part.starts_with("worktree metadata "))
+        .collect();
+    assert_eq!(failures.len(), 1);
+    assert!(failures[0].reason.contains("Too many levels of symbolic links"));
+}
