@@ -114,3 +114,38 @@ fn turn_limit_run_why_yields_to_an_explicit_team_reason() {
     assert_eq!(run_why(&state, &task(2), None), RunWhy::TurnLimit);
     assert_eq!(run_why(&state, &task(2), Some(&Why::Woken)), RunWhy::WakeUp);
 }
+
+#[test]
+fn no_status_run_why_is_continuation() {
+    use crate::fixtures::{task, team_state};
+
+    let state = team_state();
+    assert_eq!(run_why(&state, &task(2), Some(&Why::NoStatus)), RunWhy::Continuation);
+}
+
+#[test]
+fn prompt_kind_resumes_no_status_up_to_retries() {
+    use crate::fixtures::{at, run, task, team_id, team_state};
+    use agent_core::config::Config;
+    use agent_core::status::TaskStatus;
+
+    let mut state = team_state();
+    let session: agent_core::state::SessionId = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+    let config = Config::default();
+
+    {
+        let mut team = state.team_mut(&team_id(0)).unwrap();
+        let (_, mut member) = team.find_mut(&task(2)).unwrap();
+        // 1st no status
+        member.begin_run(run(1), at(1), Some(session.clone())).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.end_run(at(2), RunEnd::NoStatus { exit_code: Some(0) }).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    let found = state.find_task(&task(2)).unwrap();
+    let cli_session = SessionId::from_str(session.as_str()).unwrap();
+    assert_eq!(
+        prompt_kind(found.member, Some(&cli_session), &config),
+        PromptKind::Resume(ResumeReason::NoStatus)
+    );
+}

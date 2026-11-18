@@ -642,6 +642,7 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
         Some(Why::AskHuman) => RunWhy::AskHuman,
         // The gate is one of the checks a round passes before its review: the history has one reason for both.
         Some(Why::Checks | Why::Gate(_)) => RunWhy::Checks,
+        Some(Why::NoStatus) => RunWhy::WakeUp,
         None if matches!(
             member.runs().last().map(Run::state),
             Some(RunState::Ended {

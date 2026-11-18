@@ -32,6 +32,8 @@ pub(in crate::daemon) enum Why {
     Gate(String),
     /// Every task of the team sleeps and an item is unfinished: the lead is woken with this text.
     Asleep(String),
+    /// A run ended without a STATUS: line and is asked again.
+    NoStatus,
 }
 
 /// What a run is shaped from.
@@ -107,7 +109,8 @@ pub(in crate::daemon) fn shape(
             | Why::VerdictMissing
             | Why::Checks
             | Why::Gate(_)
-            | Why::Asleep(_),
+            | Why::Asleep(_)
+            | Why::NoStatus,
         ) => Vec::new(),
         Some(Why::Woken) => vec![wake(texts, run)?],
         // The prompt of a session that starts names the item its member has; only a resumed one is told of a new item.
