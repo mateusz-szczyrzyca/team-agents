@@ -7,7 +7,7 @@
 mod tests;
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use time::UtcOffset;
 
 use crate::config::RepoName;
@@ -377,14 +377,40 @@ enum SummaryPart {
     Tail(String),
 }
 
+/// Selects the legacy escaped API or the command's readable paths.
+#[derive(Debug, Default)]
+enum PathPresentation {
+    /// Preserve the original renderer's escaping contract.
+    #[default]
+    Escaped,
+    /// Preserve Unicode text without Rust string delimiters.
+    Plain,
+}
+
 /// Defers text budgets until every mandatory fact has been rendered.
 #[derive(Debug, Default)]
 struct SummaryWriter {
     /// Ordered fragments, including all structural delimiters.
     parts: Vec<SummaryPart>,
+    /// Path spelling for this presentation API.
+    paths: PathPresentation,
 }
 
 impl SummaryWriter {
+    #[expect(
+        clippy::unnecessary_debug_formatting,
+        reason = "the legacy renderer promises Rust path escaping"
+    )]
+    fn path(&self, path: &Path) -> String {
+        match self.paths {
+            PathPresentation::Escaped => format!("{:?}", path.as_os_str()),
+            PathPresentation::Plain => match path.to_str() {
+                Some(text) => text.to_owned(),
+                None => path.as_os_str().as_encoded_bytes().escape_ascii().to_string(),
+            },
+        }
+    }
+
     fn push_str(&mut self, text: &str) {
         self.parts.push(SummaryPart::Required(text.to_owned()));
     }
@@ -584,10 +610,6 @@ fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
     }
 }
 
-#[expect(
-    clippy::unnecessary_debug_formatting,
-    reason = "debug escapes paths losslessly, including non-UTF-8 bytes; display can replace bytes"
-)]
 fn render_git(
     worktrees: &[GitWorktreeSummary],
     offset: UtcOffset,
@@ -607,7 +629,7 @@ fn render_git(
         let files = w
             .uncommitted_files
             .iter()
-            .map(|p| format!("{:?}", p.as_os_str()))
+            .map(|p| out.path(p))
             .collect::<Vec<_>>()
             .join(", ");
         write_line(
@@ -642,8 +664,8 @@ fn render_git(
             write_line(
                 out,
                 &format!(
-                    "  * {:?} ({} bytes, modified: {})",
-                    u.path.as_os_str(),
+                    "  * {} ({} bytes, modified: {})",
+                    out.path(&u.path),
                     u.size_bytes,
                     mod_str
                 ),
@@ -653,10 +675,6 @@ fn render_git(
     }
 }
 
-#[expect(
-    clippy::unnecessary_debug_formatting,
-    reason = "debug escapes quotes and path bytes consistently with worktree paths"
-)]
 fn render_gate(gates: &[TaskGateSummary], offset: UtcOffset, out: &mut SummaryWriter) {
     for g in gates {
         write_line(out, &format!("### Gate for Task `{}`", g.task_id));
@@ -682,7 +700,7 @@ fn render_gate(gates: &[TaskGateSummary], offset: UtcOffset, out: &mut SummaryWr
                 out,
                 &format!("  Finished: {}", format_time(rec.result.finished_at, offset)),
             );
-            write_line(out, &format!("  Log: `{:?}`", rec.result.log.as_path()));
+            write_line(out, &format!("  Log: `{}`", out.path(rec.result.log.as_path())));
         } else {
             write_line(out, "- Record: none");
         }
@@ -871,7 +889,7 @@ pub fn render_redacted_summary(
     untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(input, offset, uncollected, untracked, redact)
+    render_with_redaction(input, offset, uncollected, untracked, redact, PathPresentation::Escaped)
 }
 
 /// Renders a summary with explicit notices for sections outside the collection scope.
@@ -894,7 +912,14 @@ fn render_with_coverage(
     uncollected: &[SummarySection],
     untracked: UntrackedCollection,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(input, offset, uncollected, untracked, str::to_owned)
+    render_with_redaction(
+        input,
+        offset,
+        uncollected,
+        untracked,
+        str::to_owned,
+        PathPresentation::Escaped,
+    )
 }
 
 fn render_with_redaction(
@@ -903,9 +928,13 @@ fn render_with_redaction(
     uncollected: &[SummarySection],
     untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
+    paths: PathPresentation,
 ) -> Result<String, SummaryError> {
     let now = input.collected_at;
-    let mut out = SummaryWriter::default();
+    let mut out = SummaryWriter {
+        paths,
+        ..SummaryWriter::default()
+    };
 
     write_line(&mut out, &format!("# Debug Summary — Team `{}`", input.team.id));
     write_line(&mut out, "");
@@ -928,6 +957,23 @@ fn render_with_redaction(
             continue;
         }
 
+        let unread = input
+            .unreadable_parts
+            .iter()
+            .filter(|part| match section {
+                SummarySection::HistoryTail => part.name == "team history",
+                SummarySection::DaemonLog => part.name == "daemon log",
+                SummarySection::DaemonAndVersions => part.name == "daemon process",
+                _ => false,
+            })
+            .collect::<Vec<_>>();
+        if !unread.is_empty() {
+            for part in unread {
+                write_line(&mut out, &format!("Could not read {}: {}", part.name, part.reason));
+            }
+            write_line(&mut out, "");
+            continue;
+        }
         match section {
             SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
             SummarySection::DaemonAndVersions => render_daemon(input.daemon.as_ref(), offset, &mut out),
@@ -972,5 +1018,5 @@ pub fn render_command_summary(
     untracked: UntrackedCollection,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_redacted_summary(input, offset, uncollected, untracked, redact)
+    render_with_redaction(input, offset, uncollected, untracked, redact, PathPresentation::Plain)
 }
