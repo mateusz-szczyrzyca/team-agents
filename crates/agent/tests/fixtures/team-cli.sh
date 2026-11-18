@@ -182,6 +182,31 @@ case $action in
     head=$(git rev-parse HEAD)
     result "VERDICT: ${action#*:}\nSUMMARY: commit \`$head\`\nSTATUS: DONE"
     ;;
+  verify:*|late-verify:*)
+    # Structured reports answer the supplied permanent numbers before any new findings.
+    if [[ $action == late-verify:* ]]; then
+      wait_for_peer_review
+    fi
+    report=${action#*:}
+    answers=''
+    verifying=false
+    while IFS= read -r line; do
+      if [[ $line == '# OPEN FINDINGS TO VERIFY' ]]; then verifying=true; fi
+      if [[ $verifying == true && $line =~ ^([0-9]+)\.\ \[ ]]; then
+        if [[ $report == *REQUEST_CHANGES* ]]; then
+          answers+="FINDING ${BASH_REMATCH[1]}: OPEN — still untested\n"
+        else
+          answers+="FINDING ${BASH_REMATCH[1]}: RESOLVED\n"
+        fi
+      fi
+    done <<< "$prompt"
+    if [[ -n $answers ]]; then
+      first=${report%%\\n*}
+      rest=${report#*\\n}
+      report="$first\n$answers$rest"
+    fi
+    result "$report"'\nSTATUS: DONE'
+    ;;
   done:*) result "${action#done:}"'\nSTATUS: DONE' ;;
   sleep) result 'Nothing to do now.\nSTATUS: SLEEPING' ;;
   fail) result 'I could not do it.\nSTATUS: FAILED' ;;
