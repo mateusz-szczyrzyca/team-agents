@@ -882,9 +882,10 @@ fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary]
     } else {
         write_line(out, "- Temp filesystem: unknown");
     }
-    if unreadable
-        .iter()
-        .any(|part| part.section == SummarySection::Machine && part.name.contains("descendant"))
+    if machine.daemon_descendants.is_empty()
+        && unreadable
+            .iter()
+            .any(|part| part.section == SummarySection::Machine && part.name.contains("descendant"))
     {
         write_line(out, "- Daemon descendants: unknown");
     } else if machine.daemon_descendants.is_empty() {
