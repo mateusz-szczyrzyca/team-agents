@@ -709,3 +709,38 @@ fn redacts_optional_text_before_truncation_and_byte_budgeting() {
         render_summary(&expected, UtcOffset::UTC)
     );
 }
+
+#[test]
+fn redacted_diagnostic_paths_are_plain_and_unread_history_is_named_in_its_section() {
+    let mut input = sample_input();
+    input.git[0].uncommitted_files = vec![PathBuf::from("café file.txt")];
+    input.gate[0].record.as_mut().unwrap().result.log = "/tmp/gate.log".parse().unwrap();
+    input.history_tail = None;
+    input.unreadable_parts.push(UnreadablePartSummary {
+        name: "team history".into(),
+        reason: "database unavailable".into(),
+    });
+    let summary = render_redacted_summary(
+        &input,
+        UtcOffset::from_hms(2, 0, 0).unwrap(),
+        &[],
+        UntrackedCollection::Collected,
+        str::to_owned,
+    )
+    .unwrap();
+    assert!(summary.contains("Uncommitted files (1): café file.txt"), "{summary}");
+    assert!(summary.contains("Log: `/tmp/gate.log`"), "{summary}");
+    let history = summary
+        .split("## Team History")
+        .nth(1)
+        .unwrap()
+        .split("## Daemon Log")
+        .next()
+        .unwrap();
+    assert!(
+        history.contains("Could not read team history: database unavailable"),
+        "{history}"
+    );
+    assert!(!history.contains("No history recorded"));
+    assert!(summary.contains("+02:00"));
+}
