@@ -142,8 +142,8 @@ async fn observe_with_ticks(
     let Some(meta) = lock_metadata(home).await? else {
         return Ok(None);
     };
-    let locks = bytes(&procfs.join("locks")).await?;
-    let Some(pid) = lock_owner(std::str::from_utf8(&locks).map_err(ProcessError::Utf8)?, &meta)? else {
+    let locks_path = procfs.join("locks");
+    let Some(pid) = observed_lock_owner(&meta, async || bytes(&locks_path).await).await? else {
         return Ok(None);
     };
     let process = procfs.join(pid.to_string());
@@ -206,6 +206,15 @@ async fn observe_with_ticks(
         disk_newer_than_process: time::UtcDateTime::from(modified) > started_at.as_utc(),
         version: helper(&process.join("exe"), "--version").await?,
     }))
+}
+
+/// Reads the lock table through its I/O boundary before identifying the owner.
+async fn observed_lock_owner(
+    meta: &std::fs::Metadata,
+    mut read: impl AsyncFnMut() -> Result<Vec<u8>, ProcessError>,
+) -> Result<Option<u32>, ProcessError> {
+    let locks = read().await?;
+    lock_owner(std::str::from_utf8(&locks).map_err(ProcessError::Utf8)?, meta)
 }
 
 fn lock_owner(text: &str, meta: &std::fs::Metadata) -> Result<Option<u32>, ProcessError> {

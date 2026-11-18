@@ -175,3 +175,47 @@ fn ignores_lock_with_the_same_inode_on_another_device() {
         assert_eq!(lock_owner(&text, &metadata).unwrap(), Some(42));
     }
 }
+
+#[tokio::test]
+async fn retries_a_lock_table_that_temporarily_omits_the_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("daemon.lock");
+    std::fs::write(&path, "").unwrap();
+    let metadata = std::fs::metadata(path).unwrap();
+    let matching = format!(
+        "1: FLOCK ADVISORY WRITE 42 {:x}:{:x}:{} 0 EOF\n",
+        rustix::fs::major(metadata.dev()),
+        rustix::fs::minor(metadata.dev()),
+        metadata.ino()
+    );
+    let mut reads = 0;
+    let observed = observed_lock_owner(&metadata, async || {
+        reads += 1;
+        Ok(if reads == 1 {
+            Vec::new()
+        } else {
+            matching.as_bytes().to_vec()
+        })
+    })
+    .await
+    .unwrap();
+    assert_eq!(observed, Some(42));
+    assert_eq!(reads, 2);
+}
+
+#[tokio::test]
+async fn stops_after_three_lock_tables_without_a_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("daemon.lock");
+    std::fs::write(&path, "").unwrap();
+    let metadata = std::fs::metadata(path).unwrap();
+    let mut reads = 0;
+    let observed = observed_lock_owner(&metadata, async || {
+        reads += 1;
+        Ok(Vec::new())
+    })
+    .await
+    .unwrap();
+    assert_eq!(observed, None);
+    assert_eq!(reads, 3);
+}
