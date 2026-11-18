@@ -166,3 +166,15 @@ fn porcelain_paths_are_lossless_and_rename_sources_are_not_changes() {
         assert_eq!(parse_status(bytes).unwrap(), expected);
     }
 }
+
+#[test]
+fn git_failure_presentation_escapes_bytes_as_readable_text() {
+    let error = ObservationError::Git {
+        exit: ExitReport::Exited { code: 128 },
+        stderr: b"fatal: missing \xff\n".to_vec(),
+    };
+    assert_eq!(
+        error.to_string(),
+        r#"read-only git command exited Exited { code: 128 }: "fatal: missing \xFF\n""#
+    );
+}
