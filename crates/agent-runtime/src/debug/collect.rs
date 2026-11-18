@@ -430,7 +430,7 @@ impl Collection {
                 .and_then(|metadata| metadata.modified())
             {
                 Ok(at) => match Timestamp::from_utc(time::UtcDateTime::from(at)) {
-                    Ok(at) => at.to_string(),
+                    Ok(at) => agent_core::debug_summary::format_time(at, self.local_offset),
                     Err(error) => {
                         self.failed(format!("gate time {}", escaped_path(&source)), error_chain(&error));
                         "unreadable".to_owned()
@@ -456,7 +456,7 @@ impl Collection {
                     "gate output is not UTF-8; raw bytes are retained".to_owned()
                 }
             };
-            tails.push(format!("{} (modified: {modified} UTC)\n{text}", escaped_path(&source)));
+            tails.push(format!("{} (modified: {modified})\n{text}", escaped_path(&source)));
         }
         self.summary.gate.push(TaskGateSummary {
             task_id: task.clone(),
@@ -518,13 +518,31 @@ impl Collection {
                 continue;
             };
             let run_id = last_run.id();
-            let run_records: Vec<_> = records
+            let mut run_records: Vec<_> = records
                 .iter()
                 .filter(|seq| super::history::record_run_id(&seq.record) == Some(run_id))
                 .cloned()
                 .collect();
             if run_records.is_empty() {
                 continue;
+            }
+            // The message has its own budget so its tail cannot evict the run's reason and steps.
+            for record in &mut run_records {
+                if let agent_core::history::Record::RunEnd(end) = &mut record.record
+                    && let Some(message) = &mut end.final_message
+                {
+                    /// Maximum final-message tail in the summary; complete text stays in history artifacts.
+                    const FINAL_MESSAGE_BYTES: usize = 4096;
+                    if message.len() > FINAL_MESSAGE_BYTES {
+                        let first = message.len().saturating_sub(FINAL_MESSAGE_BYTES);
+                        let tail: String = message
+                            .char_indices()
+                            .skip_while(|(index, _)| *index < first)
+                            .map(|(_, ch)| ch)
+                            .collect();
+                        *message = format!("{}{tail}", agent_core::debug_summary::CUT_MARKER);
+                    }
+                }
             }
             let story_text = agent_core::story::render(
                 &run_records,
@@ -549,15 +567,6 @@ impl Collection {
     }
 
     async fn git(&mut self, home: &Home, team: &Team) {
-        let last_round_merged = team.rounds().last().is_some_and(|round| {
-            matches!(
-                round.life(),
-                RoundLife::Closed {
-                    how: RoundEnd::Merged,
-                    ..
-                }
-            )
-        });
         let mut has_removed_merged_worktrees = false;
 
         let tasks: Vec<_> = self
@@ -567,6 +576,16 @@ impl Collection {
             .map(|task| (task.id.clone(), task.agent.clone()))
             .collect();
         for (task, agent) in tasks {
+            let (latest_round, recorded) = task_round(team, &task, &agent);
+            let round_merged = latest_round.is_some_and(|round| {
+                matches!(
+                    round.life(),
+                    RoundLife::Closed {
+                        how: RoundEnd::Merged,
+                        ..
+                    }
+                )
+            });
             let path = home.worktree_dir(team.repo(), &task);
             let worktree_missing = match worktree_is_missing(&path).await {
                 Ok(missing) => missing,
@@ -579,9 +598,9 @@ impl Collection {
                 }
             };
 
-            let observation = if last_round_merged && worktree_missing {
+            let observation = if round_merged && worktree_missing {
                 if let Some(ref checkout) = self.checkout {
-                    match read_git_from_checkout(checkout, &task, &agent).await {
+                    match read_git_from_checkout(checkout, &task, &agent, recorded).await {
                         Ok(obs) => {
                             has_removed_merged_worktrees = true;
                             Ok(obs)
@@ -1003,6 +1022,52 @@ async fn read_git(path: &Path, task: &TaskId) -> Result<GitObservation, Observat
     })
 }
 
+/// Resolves a task's last round and its recorded merged branch, including older states without run-round links.
+fn task_round<'a>(
+    team: &'a Team,
+    task: &TaskId,
+    agent: &AgentName,
+) -> (Option<&'a agent_core::state::Round>, Option<&'a BranchName>) {
+    let prefix = format!("agents/{agent}/{task}-");
+    let member = team
+        .crew()
+        .roster()
+        .into_iter()
+        .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)))
+        .find(|(_, member)| member.task() == task)
+        .map(|(_, member)| member);
+    let run_round = member
+        .and_then(|member| member.runs().last())
+        .and_then(|run| run.rounds().last())
+        .and_then(|id| team.rounds().iter().find(|round| round.id() == id));
+    let recorded = team.items().iter().rev().find_map(|item| match item.phase() {
+        ItemPhase::Done {
+            completion: agent_core::state::Completion::Merged { pr, .. },
+        } => (pr.branch.as_str().starts_with(&prefix) && run_round.is_none_or(|round| round.item() == Some(item.id())))
+            .then_some((item.id(), &pr.branch)),
+        ItemPhase::Done {
+            completion: agent_core::state::Completion::Listed,
+        }
+        | ItemPhase::Pending
+        | ItemPhase::InProgress { .. }
+        | ItemPhase::InReview { .. }
+        | ItemPhase::Fixing { .. }
+        | ItemPhase::Approved { .. } => None,
+    });
+    let latest_round = run_round
+        .or_else(|| recorded.and_then(|(item, _)| team.rounds().iter().find(|round| round.item() == Some(item))))
+        .or_else(|| {
+            (team
+                .crew()
+                .roster()
+                .first()
+                .is_some_and(|(_, member)| member.task() == task))
+            .then(|| team.rounds().last())
+            .flatten()
+        });
+    (latest_round, recorded.map(|(_, branch)| branch))
+}
+
 /// Decodes the name and object ID fields of a retained reference record.
 fn ref_fields(line: &str) -> Result<(&str, &str), ObservationError> {
     let (name, hash) = line.split_once(' ').ok_or(ObservationError::RefFields)?;
@@ -1016,6 +1081,7 @@ async fn read_git_from_checkout(
     checkout: &Path,
     task: &TaskId,
     agent: &AgentName,
+    recorded: Option<&BranchName>,
 ) -> Result<GitObservation, ObservationError> {
     let branches_output = git_text(
         checkout,
@@ -1031,7 +1097,10 @@ async fn read_git_from_checkout(
     for line in branches_output.lines() {
         let (ref_name, hash) = ref_fields(line)?;
 
-        let is_match = ref_name == exact || ref_name.starts_with(&prefix);
+        let is_match = match recorded {
+            Some(branch) => ref_name == branch.as_str(),
+            None => ref_name == exact || ref_name.starts_with(&prefix),
+        };
 
         if is_match {
             let branch: BranchName = ref_name.parse().map_err(ObservationError::Branch)?;
@@ -1194,8 +1263,10 @@ fn numbered_order(left: &Path, right: &Path) -> std::cmp::Ordering {
         Some((path.parent()?, prefix, digits.len(), digits))
     }
     match (key(left), key(right)) {
-        (Some(left), Some(right)) => left.cmp(&right),
-        _ => left.cmp(right),
+        (Some(left_key), Some(right_key)) => left_key.cmp(&right_key).then_with(|| left.cmp(right)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => left.cmp(right),
     }
 }
 
@@ -1217,7 +1288,7 @@ fn diagnostic_error(error: &ObservationError) -> String {
 }
 
 /// Describes a run end as the diagnosis a reader can act on.
-fn run_detail(state: &RunState) -> String {
+fn run_detail_at(state: &RunState, offset: time::UtcOffset) -> String {
     let RunState::Ended { at, end } = state else {
         return "running".to_owned();
     };
@@ -1225,27 +1296,20 @@ fn run_detail(state: &RunState) -> String {
         RunEnd::Reported { outcome } => format!("reported {}", outcome.to_string().to_uppercase()),
         RunEnd::NoStatus { exit_code: Some(code) } => format!("without a status, exited with {code}"),
         RunEnd::NoStatus { exit_code: None } => "without a status, terminated by signal".to_owned(),
-        RunEnd::QuotaExhausted { resets_at: Some(at) } => format!("quota exhausted, resets at {at}"),
+        RunEnd::QuotaExhausted { resets_at: Some(at) } => {
+            format!(
+                "quota exhausted, resets at {}",
+                agent_core::debug_summary::format_time(*at, offset)
+            )
+        }
         RunEnd::QuotaExhausted { resets_at: None } => "quota exhausted".to_owned(),
         RunEnd::RateLimited => "rate limited".to_owned(),
         RunEnd::Hung => "stopped by the watchdog".to_owned(),
         RunEnd::TurnLimit => "turn limit reached".to_owned(),
         RunEnd::Stopped => "stopped by the human".to_owned(),
     };
-    format!("ended, {how}, at {at}")
-}
-
-/// Presents a run end in the caller offset.
-fn run_detail_at(state: &RunState, offset: time::UtcOffset) -> String {
-    let mut detail = run_detail(state);
-    if let RunState::Ended { at, end } = state {
-        detail = detail.replace(&at.to_string(), &agent_core::debug_summary::format_time(*at, offset));
-        if let RunEnd::QuotaExhausted { resets_at: Some(reset) } = end {
-            detail = detail.replace(
-                &reset.to_string(),
-                &agent_core::debug_summary::format_time(*reset, offset),
-            );
-        }
-    }
-    detail
+    format!(
+        "ended, {how}, at {}",
+        agent_core::debug_summary::format_time(*at, offset)
+    )
 }
