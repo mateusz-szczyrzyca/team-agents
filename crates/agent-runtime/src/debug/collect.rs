@@ -1181,6 +1181,16 @@ fn run_detail(state: &RunState) -> String {
 }
 
 /// Presents a run end in the caller offset.
-fn run_detail_at(state: &RunState, _offset: time::UtcOffset) -> String {
-    run_detail(state)
+fn run_detail_at(state: &RunState, offset: time::UtcOffset) -> String {
+    let mut detail = run_detail(state);
+    if let RunState::Ended { at, end } = state {
+        detail = detail.replace(&at.to_string(), &agent_core::debug_summary::format_time(*at, offset));
+        if let RunEnd::QuotaExhausted { resets_at: Some(reset) } = end {
+            detail = detail.replace(
+                &reset.to_string(),
+                &agent_core::debug_summary::format_time(*reset, offset),
+            );
+        }
+    }
+    detail
 }
