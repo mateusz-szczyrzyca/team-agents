@@ -38,6 +38,10 @@ pub(super) struct Collection {
     pub(super) assessment: Assessment,
     /// Presentation of the same observations.
     pub(super) summary: SummaryInput,
+    /// Root of the repository clone, if available for removed worktree fallbacks.
+    pub(super) checkout: Option<PathBuf>,
+    /// Local timezone offset for presentation; defaults to UTC.
+    pub(super) local_offset: time::UtcOffset,
     /// Relative artifact paths and their unredacted bytes; never logged.
     artifacts: Vec<(PathBuf, Vec<u8>)>,
     /// Total copied task bytes, bounded independently of file count.
@@ -141,6 +145,8 @@ impl Collection {
                 },
                 unreadable_parts: vec![],
             },
+            checkout: None,
+            local_offset: time::UtcOffset::UTC,
             artifacts: vec![],
             copied_bytes: 0,
         })

@@ -305,3 +305,265 @@ fn git_read_failures_are_prose_with_the_first_error_line() {
     assert!(!failure.reason.contains("Exited {"));
     assert!(!failure.part.contains('"'));
 }
+
+#[test]
+fn member_unpublished_origin_ref_does_not_trigger_origin_differs_anomaly() {
+    use agent_core::config::AbsolutePath;
+    use agent_core::diagnostic_assessment::{Anomaly, assess};
+    use agent_core::state::TeamMembers;
+
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+
+    let team = Team::new(
+        "team-20261117-120000-a1b2".parse().unwrap(),
+        "example".parse().unwrap(),
+        "2026-11-17T12:00:00Z".parse().unwrap(),
+        MergeMode::Autopilot,
+        TaskListText::new("Build.\n\n1. Feature\n[ ] 1.1 Diagnose café\n".to_owned()).unwrap(),
+        Crew::team(TeamMembers {
+            coordinator: Member::new(
+                "task-20261117-120000-lea1".parse().unwrap(),
+                Participant::Normal("codex-1".parse().unwrap()),
+            ),
+            members: vec![Member::new(
+                "task-20261117-120000-mem1".parse().unwrap(),
+                Participant::Normal("claude-1".parse().unwrap()),
+            )],
+            workers: vec![],
+        })
+        .unwrap(),
+    );
+
+    let lead_task = team.crew().roster()[0].1.task().clone();
+    let member_task = team.crew().roster()[1].1.task().clone();
+
+    let lead_wt = home.worktree_dir(team.repo(), &lead_task);
+    std::fs::create_dir_all(&lead_wt).unwrap();
+    git(&lead_wt, &["init", "--initial-branch=main"]);
+    git(&lead_wt, &["commit", "--allow-empty", "-m", "Base"]);
+
+    let member_wt = home.worktree_dir(team.repo(), &member_task);
+    std::fs::create_dir_all(&member_wt).unwrap();
+    git(&member_wt, &["init", "--initial-branch=feature/member"]);
+    git(&member_wt, &["commit", "--allow-empty", "-m", "Member work"]);
+
+    std::fs::write(
+        home.config_file(),
+        "[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    runtime.block_on(collection.observe(&home, &team, None)).unwrap();
+
+    let lead_branch = collection
+        .assessment
+        .branches
+        .iter()
+        .find(|b| b.task == lead_task)
+        .unwrap();
+    assert!(matches!(lead_branch.origin, Some(Origin::Missing)));
+
+    let member_branch = collection
+        .assessment
+        .branches
+        .iter()
+        .find(|b| b.task == member_task)
+        .unwrap();
+    assert!(member_branch.origin.is_none());
+
+    let anomalies = assess(&collection.assessment);
+    assert!(
+        anomalies
+            .iter()
+            .any(|a| matches!(a, Anomaly::OriginDiffers(name) if name.as_str() == "main"))
+    );
+    assert!(
+        !anomalies
+            .iter()
+            .any(|a| matches!(a, Anomaly::OriginDiffers(name) if name.as_str() == "feature/member"))
+    );
+}
+
+#[test]
+fn merged_removed_worktree_falls_back_to_checkout() {
+    use agent_core::config::AbsolutePath;
+    use agent_core::state::{PullRequest, TeamMembers};
+
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+
+    let checkout_dir = tempfile::tempdir().unwrap();
+    let checkout = checkout_dir.path();
+    git(checkout, &["init", "--initial-branch=main"]);
+    std::fs::write(checkout.join("file.txt"), "base content\n").unwrap();
+    git(checkout, &["add", "file.txt"]);
+    git(checkout, &["commit", "-m", "Base commit"]);
+
+    git(checkout, &["branch", "agents/claude-1/task-20261117-120000-mem1-1.1"]);
+    git(checkout, &["switch", "agents/claude-1/task-20261117-120000-mem1-1.1"]);
+    std::fs::write(checkout.join("file.txt"), "member change\n").unwrap();
+    git(checkout, &["add", "file.txt"]);
+    git(checkout, &["commit", "-m", "Member commit"]);
+    git(checkout, &["switch", "main"]);
+
+    let team = Team::new(
+        "team-20261117-120000-a1b2".parse().unwrap(),
+        "example".parse().unwrap(),
+        "2026-11-17T12:00:00Z".parse().unwrap(),
+        MergeMode::Autopilot,
+        TaskListText::new("Build.\n\n1. Feature\n[ ] 1.1 Diagnose café\n".to_owned()).unwrap(),
+        Crew::team(TeamMembers {
+            coordinator: Member::new(
+                "task-20261117-120000-lea1".parse().unwrap(),
+                Participant::Normal("codex-1".parse().unwrap()),
+            ),
+            members: vec![Member::new(
+                "task-20261117-120000-mem1".parse().unwrap(),
+                Participant::Normal("claude-1".parse().unwrap()),
+            )],
+            workers: vec![],
+        })
+        .unwrap(),
+    );
+
+    let round_id: agent_core::ids::RoundId = "round-20261117-120000-r111".parse().unwrap();
+    let pr = PullRequest {
+        number: agent_core::state::PrNumber::new(std::num::NonZeroU32::new(1).unwrap()),
+        branch: "agents/claude-1/task-20261117-120000-mem1-1.1".parse().unwrap(),
+        opened_at: "2026-11-17T12:02:00Z".parse().unwrap(),
+    };
+    let mut team_val = serde_json::to_value(&team).unwrap();
+    team_val["items"][0]["phase"] = serde_json::json!({
+        "phase": "done",
+        "completion": {
+            "how": "merged",
+            "pr": pr,
+            "at": "2026-11-17T12:05:00Z"
+        }
+    });
+    team_val["rounds"] = serde_json::json!([
+        {
+            "id": round_id,
+            "item": "1.1",
+            "opened_at": "2026-11-17T12:01:00Z",
+            "state": {
+                "status": "closed",
+                "at": "2026-11-17T12:05:00Z",
+                "how": "merged"
+            }
+        }
+    ]);
+    let team: Team = serde_json::from_value(team_val).unwrap();
+
+    let lead_task = team.crew().roster()[0].1.task().clone();
+    let member_task = team.crew().roster()[1].1.task().clone();
+
+    let lead_wt = home.worktree_dir(team.repo(), &lead_task);
+    std::fs::create_dir_all(&lead_wt).unwrap();
+    git(&lead_wt, &["init", "--initial-branch=main"]);
+    git(&lead_wt, &["commit", "--allow-empty", "-m", "Base"]);
+
+    std::fs::write(
+        home.config_file(),
+        "[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    collection.checkout = Some(checkout.to_path_buf());
+    runtime.block_on(collection.observe(&home, &team, None)).unwrap();
+
+    let member_git = collection
+        .summary
+        .git
+        .iter()
+        .find(|g| g.task_id == member_task)
+        .unwrap();
+    assert_eq!(
+        member_git.branch.as_str(),
+        "agents/claude-1/task-20261117-120000-mem1-1.1"
+    );
+    assert_eq!(member_git.commits_over_base.len(), 1);
+    assert_eq!(member_git.commits_over_base[0].subject, "Member commit");
+    assert!(member_git.uncommitted_files.is_empty());
+
+    assert!(
+        !collection
+            .assessment
+            .unreadable
+            .iter()
+            .any(|f| f.part.contains("task-20261117-120000-mem1"))
+    );
+
+    let note = collection
+        .artifacts
+        .iter()
+        .find(|(path, _)| path == &PathBuf::from("git").join("removed-worktrees.txt"));
+    assert!(note.is_some());
+}
+
+#[test]
+fn empty_team_history_records_history_artifacts_without_read_failure() {
+    use agent_core::config::AbsolutePath;
+
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let team = team();
+    let task = team.crew().roster()[0].1.task().clone();
+    let worktree = home.worktree_dir(team.repo(), &task);
+    std::fs::create_dir_all(&worktree).unwrap();
+    git(&worktree, &["init", "--initial-branch=main"]);
+    git(&worktree, &["commit", "--allow-empty", "-m", "Base"]);
+    std::fs::write(
+        home.config_file(),
+        "[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    runtime.block_on(collection.observe(&home, &team, None)).unwrap();
+
+    assert_eq!(
+        collection.summary.history_tail.as_deref(),
+        Some("No history recorded for this team.")
+    );
+    assert!(
+        !collection
+            .assessment
+            .unreadable
+            .iter()
+            .any(|f| f.part == "team history")
+    );
+    assert!(
+        collection
+            .artifacts
+            .iter()
+            .any(|(p, _)| p == &PathBuf::from("history.txt"))
+    );
+    assert!(
+        collection
+            .artifacts
+            .iter()
+            .any(|(p, _)| p == &PathBuf::from("history.jsonl"))
+    );
+}
