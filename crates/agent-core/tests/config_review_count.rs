@@ -31,3 +31,23 @@ fn a_review_count_below_two_is_refused_by_its_type() {
         assert_eq!(ReviewCount::try_from(value), Err(ReviewCountError { value }));
     }
 }
+
+#[test]
+fn explicit_counts_cannot_exceed_the_configured_investigators() {
+    use agent_core::config::ConfigError;
+    let error = Config::from_toml_str(&format!("{INVESTIGATORS}\n[review]\nmin_first_full_reviews = 4\n")).unwrap_err();
+    assert!(matches!(
+        error,
+        ConfigError::ReviewersUnavailable {
+            required: 4,
+            configured: 3
+        }
+    ));
+    for count in [0, 1] {
+        let error = Config::from_toml_str(&format!(
+            "{INVESTIGATORS}\n[review]\nmin_first_full_reviews = {count}\n"
+        ))
+        .unwrap_err();
+        assert!(matches!(error, ConfigError::Parse(_)));
+    }
+}

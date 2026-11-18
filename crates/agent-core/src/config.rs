@@ -71,6 +71,14 @@ const DEFAULT_GATE_TIMEOUT_MINUTES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 /// Why an `agents.toml` text is not a valid [`Config`].
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    /// An explicit review count exceeds the configured investigator roster.
+    #[error("min_first_full_reviews requires {required} investigators, but only {configured} are configured")]
+    ReviewersUnavailable {
+        /// Number of independent reviewers requested.
+        required: usize,
+        /// Size of the configured investigator roster.
+        configured: usize,
+    },
     /// The text is longer than [`MAX_CONFIG_BYTES`].
     #[error("the configuration is {len} bytes: the limit is {max}")]
     TooLarge {
