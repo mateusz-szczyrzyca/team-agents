@@ -470,9 +470,16 @@ async fn a_team_whose_lead_is_done_and_item_stands_behind_failed_member_tells_hu
         )),
         "{notice}"
     );
-    let say_pos = notice.find(&format!("agent say {} ", tasks[1])).expect("say member task");
-    let resume_pos = notice.find(&format!("agent resume {}", tasks[1])).expect("resume member task");
-    assert!(say_pos < resume_pos, "agent say must come before agent resume in {notice}");
+    let say_pos = notice
+        .find(&format!("agent say {} ", tasks[1]))
+        .expect("say member task");
+    let resume_pos = notice
+        .find(&format!("agent resume {}", tasks[1]))
+        .expect("resume member task");
+    assert!(
+        say_pos < resume_pos,
+        "agent say must come before agent resume in {notice}"
+    );
     assert!(notice.contains(&format!("agent stop {team}")), "{notice}");
 
     let told: Vec<_> = rig
