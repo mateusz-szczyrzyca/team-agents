@@ -718,6 +718,37 @@ async fn refailure_reset_notifies_again_after_resume_and_second_failure() {
     rig.stop().await.unwrap();
 }
 
+// Rule: when lead.done is false and a failed member owns an unfinished item, ordinary sleeping-team handling wakes twice then tells human team asleep.
+#[tokio::test]
+async fn sleeping_team_with_failed_member_and_undone_lead_notifies_team_asleep() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,sleep,sleep"),
+            normal("claude-1", "fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+
+    let (_team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.wait_for("inv-lead runs 3", || rig.runs(&tasks[0]) >= 3).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+
+    let notice = rig.notification_with("sleeps with item 1.1 unfinished").await;
+    assert!(notice.contains("sleeps with item 1.1 unfinished"), "{notice}");
+
+    rig.stop().await.unwrap();
+}
+
 // ---- reviews and the merge -----------------------------------------------------------------------------------
 
 use agent_core::state::Completion;

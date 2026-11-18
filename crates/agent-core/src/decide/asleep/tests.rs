@@ -195,3 +195,35 @@ fn pure_c_table_standing_item_decisions() {
         }
     }
 }
+
+// Rule: blocked_item_step returns TellHuman iff lead_done is true, lead_status is Waiting, and assignee_status is Failed.
+#[test]
+fn pure_blocked_item_step_table() {
+    let all_statuses = [
+        TaskStatus::Waiting,
+        TaskStatus::Running,
+        TaskStatus::Queued,
+        TaskStatus::Questions,
+        TaskStatus::Paused,
+        TaskStatus::Done,
+        TaskStatus::Failed,
+        TaskStatus::Stopped,
+    ];
+
+    for lead_status in all_statuses {
+        for lead_done in [false, true] {
+            for assignee_status in all_statuses {
+                let step = blocked_item_step(lead_done, lead_status, assignee_status);
+                let expected = if lead_done && lead_status == TaskStatus::Waiting && assignee_status == TaskStatus::Failed {
+                    BlockedItemStep::TellHuman
+                } else {
+                    BlockedItemStep::Nothing
+                };
+                assert_eq!(
+                    step, expected,
+                    "lead_status={lead_status:?}, lead_done={lead_done}, assignee_status={assignee_status:?}"
+                );
+            }
+        }
+    }
+}

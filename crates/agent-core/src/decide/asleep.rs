@@ -49,6 +49,25 @@ pub enum AsleepStep {
     TellHuman,
 }
 
+/// What the harness does about an item in progress or being fixed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockedItemStep {
+    /// Nothing: the lead is not waiting having reported DONE, or the assignee has not failed.
+    Nothing,
+    /// The item is blocked behind a failed member while the lead waits having reported DONE: tell the human immediately.
+    TellHuman,
+}
+
+/// Decides what the harness does about an item in progress or being fixed.
+#[must_use]
+pub fn blocked_item_step(
+    _lead_done: bool,
+    _lead_status: TaskStatus,
+    _assignee_status: TaskStatus,
+) -> BlockedItemStep {
+    BlockedItemStep::Nothing
+}
+
 /// What the harness does about `team`.
 #[must_use]
 pub fn asleep_step(team: &Team<'_>) -> AsleepStep {
