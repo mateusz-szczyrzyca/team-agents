@@ -8,6 +8,7 @@ fn asleep(tasks: &[TaskStatus]) -> Team<'_> {
         unfinished: true,
         tasks,
         lead_done: false,
+        standing_item: false,
         quiet_for: Duration::from_secs(301),
         may_sleep: MAY_SLEEP,
         woken: 0,
@@ -123,4 +124,18 @@ fn after_the_lead_was_woken_as_often_as_it_is_the_human_is_told() {
             AsleepStep::TellHuman
         ]
     );
+}
+
+// Rule: a lead that is done with a standing item tells the human immediately, without waiting for may_sleep.
+#[test]
+fn a_team_whose_lead_is_done_and_has_a_standing_item_tells_the_human_immediately() {
+    let tasks = [TaskStatus::Waiting, TaskStatus::Failed];
+    let team = Team {
+        lead_done: true,
+        standing_item: true,
+        quiet_for: Duration::ZERO,
+        ..asleep(&tasks)
+    };
+
+    assert_eq!(asleep_step(&team), AsleepStep::TellHuman);
 }

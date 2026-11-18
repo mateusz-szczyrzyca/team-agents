@@ -25,6 +25,8 @@ pub struct Team<'a> {
     pub tasks: &'a [TaskStatus],
     /// Whether the lead's last run ended with `STATUS: DONE`.
     pub lead_done: bool,
+    /// Whether an item is in progress whose assignee is failed.
+    pub standing_item: bool,
     /// How long ago the last run of the crew ended.
     pub quiet_for: Duration,
     /// How long every task of a team may sleep before the lead is woken.

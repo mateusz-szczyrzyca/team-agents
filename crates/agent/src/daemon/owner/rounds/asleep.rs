@@ -113,6 +113,7 @@ impl Owner {
             unfinished: !found.unfinished.is_empty(),
             tasks: &found.statuses,
             lead_done: lead.done,
+            standing_item: false,
             quiet_for,
             may_sleep: self.parts.settings.config.watchdog().asleep_minutes.as_duration(),
             woken,
