@@ -165,6 +165,9 @@ pub struct TeamSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoundDetail {
+    /// Permanent findings of the pull request, omitted for legacy rounds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<crate::state::RecordedFinding>,
     /// The team the round is of.
     pub team: TeamId,
     /// The round: its ID, its item, when it was opened and whether it is closed.
@@ -347,6 +350,7 @@ impl RoundDetail {
             tasks,
             pr,
             review_passes,
+            findings: Vec::new(),
         }
     }
 }
