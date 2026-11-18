@@ -769,6 +769,15 @@ async fn refailure_reset_notifies_again_after_resume_and_second_failure() {
     rig.status_is(&tasks[0], TaskStatus::Waiting).await;
     looked_again(&rig).await;
 
+    rig.wait_for("the second failure's standing-item notice to be delivered", || {
+        rig.notifications()
+            .iter()
+            .filter(|text| text.contains("behind failed member"))
+            .count()
+            == 2
+    })
+    .await;
+
     let told: Vec<_> = rig
         .notifications()
         .into_iter()
