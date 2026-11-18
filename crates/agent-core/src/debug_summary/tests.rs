@@ -697,7 +697,7 @@ fn machine_section_renders_all_metrics_without_not_collected() {
         "{machine_section}"
     );
     assert!(
-        machine_section.contains("- Daemon descendant PIDs: 101, 102"),
+        machine_section.contains("PID 101: age 42s, cmdline: agent worker"),
         "{machine_section}"
     );
     assert!(
