@@ -136,3 +136,39 @@ async fn reports_error_when_bus_message_is_malformed() {
         "malformed line 2 must trigger parse error: {result:?}"
     );
 }
+
+#[tokio::test]
+async fn retains_full_messages_in_artifact_and_redacts_before_summary_cut() {
+    let (_dir, home, team) = fixture();
+    let bus_dir = home.root().join("bus");
+    std::fs::create_dir_all(&bus_dir).unwrap();
+
+    let prefix = "A".repeat(95);
+    let secret = "SUPERSECRETTOKEN";
+    let suffix = "B".repeat(50);
+    let message_text = format!("{prefix}{secret}{suffix}");
+
+    let line = format!(
+        r#"{{"id":1,"ts":"2026-11-17 10:00:00","from":"codex-1","to":"all","kind":"chat","text":"{message_text}"}}"#
+    );
+    std::fs::write(bus_dir.join("messages.jsonl"), line + "\n").unwrap();
+
+    let cut = SecretsCut::new(
+        &agent_core::config::Secrets::default(),
+        [(std::ffi::OsString::from("MY_TOKEN"), std::ffi::OsString::from(secret))],
+    );
+
+    let collected = collect(&home, &team, &cut).await.unwrap().expect("bus messages");
+
+    let artifact_msg = &collected.artifact_messages[0];
+    assert!(
+        artifact_msg.contains(&suffix),
+        "artifact message must retain full text beyond 100 chars, got: {artifact_msg}"
+    );
+
+    let summary_msg = &collected.summary_messages[0];
+    assert!(
+        !summary_msg.contains("SUPER"),
+        "summary must not leak partial secret prefix, got: {summary_msg}"
+    );
+}
