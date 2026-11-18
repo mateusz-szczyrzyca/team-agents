@@ -107,7 +107,11 @@ pub(super) async fn collect(home: &Home, team: &Team) -> Result<Option<Vec<Strin
     })? {
         entries_count = entries_count.saturating_add(1);
         if entries_count > MAX_DIR_ENTRIES {
-            break;
+            return Err(NotificationError::TooManyEntries {
+                path: dir,
+                count: entries_count,
+                limit: MAX_DIR_ENTRIES,
+            });
         }
         let file_name = entry.file_name();
         let Some(name_str) = file_name.to_str() else {
@@ -138,7 +142,7 @@ pub(super) async fn collect(home: &Home, team: &Team) -> Result<Option<Vec<Strin
     let team_id = team.id().to_string();
 
     let mut kept = Vec::new();
-    let mut total_bytes: usize = 0;
+    let mut total_scanned_bytes: usize = 0;
     for file in files {
         if let Some(text_file) = read_text_file(&file, LIMIT)
             .await
@@ -147,14 +151,16 @@ pub(super) async fn collect(home: &Home, team: &Team) -> Result<Option<Vec<Strin
                 source,
             })?
         {
-            let text = text_file.text;
-            if matches_team_headers(&text, &team_id, &tasks) {
-                let len = text.len();
-                if total_bytes.saturating_add(len) > MAX_TOTAL_BYTES {
-                    break;
-                }
-                total_bytes = total_bytes.saturating_add(len);
-                kept.push(text);
+            let len = text_file.text.len();
+            total_scanned_bytes = total_scanned_bytes.saturating_add(len);
+            if total_scanned_bytes > MAX_TOTAL_BYTES {
+                return Err(NotificationError::TotalBytesExceeded {
+                    bytes: total_scanned_bytes,
+                    limit: MAX_TOTAL_BYTES,
+                });
+            }
+            if matches_team_headers(&text_file.text, &team_id, &tasks) {
+                kept.push(text_file.text);
             }
         }
     }
