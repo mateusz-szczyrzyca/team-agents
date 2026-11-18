@@ -1082,3 +1082,53 @@ async fn daemon_artifact_redacts_fields_before_debug_encoding() {
     assert_eq!(artifact.matches("<cut>").count(), 4, "{artifact}");
     assert!(!artifact.contains("secret"), "{artifact}");
 }
+
+#[tokio::test]
+async fn retained_member_branch_uses_run_round_when_pr_belongs_to_coordinator() {
+    use agent_core::config::AbsolutePath;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let checkout = tempfile::tempdir().unwrap();
+    git(checkout.path(), &["init", "--initial-branch=base"]);
+    git(checkout.path(), &["commit", "--allow-empty", "-m", "Base"]);
+    let recorded = "agents/claude-1/task-20261117-120000-mem1-1.10";
+    for branch in [recorded, "agents/claude-1/task-20261117-120000-mem1-1.9"] {
+        git(checkout.path(), &["branch", branch]);
+    }
+    let mut value = serde_json::to_value(setup_merged_team()).unwrap();
+    value["items"][0]["phase"]["completion"]["pr"]["branch"] =
+        serde_json::json!("agents/codex-1/task-20261117-120000-lea1");
+    value["task_list"] = serde_json::json!("Build.\n\n1. Feature\n[ ] 1.10 Diagnose café\n");
+    value["items"][0]["id"] = serde_json::json!("1.10");
+    value["rounds"][0]["item"] = serde_json::json!("1.10");
+    let mut team: Team = serde_json::from_value(value).unwrap();
+    let task = team.crew().roster()[1].1.task().clone();
+    team.begin_run(
+        &task,
+        agent_core::state::NewRun {
+            id: "run-20261117-120001-a1b2".parse().unwrap(),
+            at: "2026-11-17T12:01:00Z".parse().unwrap(),
+            session: None,
+            rounds: vec!["round-20261117-120000-r111".parse().unwrap()],
+        },
+    )
+    .unwrap();
+    let mut collection =
+        Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+    collection.checkout = Some(checkout.path().to_owned());
+    for (role, member) in team.crew().roster() {
+        collection.task(&home, member, role).await.unwrap();
+    }
+    collection.git(&home, &team).await;
+    assert_eq!(
+        collection
+            .summary
+            .git
+            .iter()
+            .find(|facts| facts.task_id == *team.crew().roster()[1].1.task())
+            .unwrap()
+            .branch
+            .as_str(),
+        recorded
+    );
+}
