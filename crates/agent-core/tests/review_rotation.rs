@@ -1,5 +1,6 @@
 //! Rotation capacity is a warning, separate from the minimum that permits a team to start.
 use agent_core::{config::Config, decide::team::needs_review_rotation_warning, protocol::AgentList};
+use std::fmt::Write as _;
 
 #[test]
 fn rotation_warning_counts_only_investigators_outside_the_requested_team() {
@@ -15,7 +16,7 @@ fn rotation_warning_counts_only_investigators_outside_the_requested_team() {
             "[tiers]\nnormal=['lead']\n[agents.lead]\ncli='claude'\n[review]\nmin_first_full_reviews={required}\n"
         );
         for n in 0..count {
-            text.push_str(&format!("[investigators.inv-{n}]\ncli='codex'\n"));
+            write!(text, "[investigators.inv-{n}]\ncli='codex'\n").unwrap();
         }
         let config = Config::from_toml_str(&text).unwrap();
         let mut agents = vec!["lead".parse().unwrap()];
