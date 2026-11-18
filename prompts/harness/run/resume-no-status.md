@@ -1,0 +1,1 @@
+Your previous run ended without a STATUS: line. Continue in this session from where you stopped, preserving the work already done. Check where you are and end your final message with its STATUS: line.
