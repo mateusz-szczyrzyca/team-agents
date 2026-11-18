@@ -650,3 +650,32 @@ async fn unreadable_notification_configuration_reports_reason_in_notifications_s
         assert!(!section.contains("No notifications."), "{section}");
     }
 }
+
+fn assert_no_secret_in_directory(dir: &std::path::Path, secret: &str) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_dir() {
+            assert_no_secret_in_directory(&path, secret);
+        } else if path.is_file() {
+            let bytes = std::fs::read(&path).unwrap();
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(
+                !text.contains(secret),
+                "file {} must not contain secret value",
+                path.display()
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn secret_in_process_command_line_is_in_no_file_of_bundle() {
+    let (_dir, home, args) = fixture();
+    let secret = "test-confidential-λ";
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+
+    assert_no_secret_in_directory(&result.bundle_dir, secret);
+    let summary = std::fs::read_to_string(&result.summary_path).unwrap();
+    assert!(!summary.contains(secret), "summary must not contain secret value");
+}
