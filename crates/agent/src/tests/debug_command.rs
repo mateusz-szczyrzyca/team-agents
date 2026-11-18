@@ -789,10 +789,11 @@ async fn debug_status_preserves_the_daemons_history_health_line() {
 }
 
 #[test]
-fn debug_rejects_deferred_daemon_log_without_writing_a_bundle() {
+fn debug_reports_unreadable_explicit_daemon_log_in_its_bundle() {
     let (_dir, home, _state, team, _lead, _member, _round) = setup_test_home();
     let output = tempfile::tempdir().unwrap();
     let parent = output.path().join("diagnostics");
+    let missing = output.path().join("missing-daemon.log");
     let (code, out, err) = agent(
         &environment(home.root()),
         &[
@@ -800,15 +801,25 @@ fn debug_rejects_deferred_daemon_log_without_writing_a_bundle() {
             "--team",
             team.as_str(),
             "--daemon-log",
-            "daemon.log",
+            missing.to_str().unwrap(),
             "--out",
             parent.to_str().unwrap(),
         ],
     );
-    assert_eq!(code, ExitCode::from(1), "{err}");
-    assert_eq!(out, "");
-    assert_eq!(err, "agent: daemon log collection is not available in this version\n");
-    assert!(!parent.exists());
+    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    assert_eq!(err, "");
+    assert!(out.contains("Debug summary:"), "{out}");
+    let summary = std::fs::read_to_string(find_summary(&parent).unwrap().unwrap()).unwrap();
+    let log = summary
+        .split(agent_core::debug_summary::SummarySection::DaemonLog.heading())
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    assert!(log.contains("Could not collect daemon log:"), "{log}");
+    assert!(log.contains(missing.to_str().unwrap()), "{log}");
+    assert!(!log.contains("not found."), "{log}");
 }
 
 #[test]
