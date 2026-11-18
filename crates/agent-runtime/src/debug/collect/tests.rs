@@ -338,15 +338,15 @@ fn member_unpublished_origin_ref_does_not_trigger_origin_differs_anomaly() {
     let lead_task = team.crew().roster()[0].1.task().clone();
     let member_task = team.crew().roster()[1].1.task().clone();
 
-    let lead_wt = home.worktree_dir(team.repo(), &lead_task);
-    std::fs::create_dir_all(&lead_wt).unwrap();
-    git(&lead_wt, &["init", "--initial-branch=main"]);
-    git(&lead_wt, &["commit", "--allow-empty", "-m", "Base"]);
-
     let member_wt = home.worktree_dir(team.repo(), &member_task);
     std::fs::create_dir_all(&member_wt).unwrap();
     git(&member_wt, &["init", "--initial-branch=feature/member"]);
     git(&member_wt, &["commit", "--allow-empty", "-m", "Member work"]);
+
+    let lead_wt = home.worktree_dir(team.repo(), &lead_task);
+    std::fs::create_dir_all(&lead_wt).unwrap();
+    git(&lead_wt, &["init", "--initial-branch=main"]);
+    git(&lead_wt, &["commit", "--allow-empty", "-m", "Base"]);
 
     std::fs::write(
         home.config_file(),
@@ -392,27 +392,8 @@ fn member_unpublished_origin_ref_does_not_trigger_origin_differs_anomaly() {
     );
 }
 
-#[test]
-fn merged_removed_worktree_falls_back_to_checkout() {
-    use agent_core::config::AbsolutePath;
+fn setup_merged_team() -> Team {
     use agent_core::state::{PullRequest, TeamMembers};
-
-    let dir = tempfile::tempdir().unwrap();
-    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
-
-    let checkout_dir = tempfile::tempdir().unwrap();
-    let checkout = checkout_dir.path();
-    git(checkout, &["init", "--initial-branch=main"]);
-    std::fs::write(checkout.join("file.txt"), "base content\n").unwrap();
-    git(checkout, &["add", "file.txt"]);
-    git(checkout, &["commit", "-m", "Base commit"]);
-
-    git(checkout, &["branch", "agents/claude-1/task-20261117-120000-mem1-1.1"]);
-    git(checkout, &["switch", "agents/claude-1/task-20261117-120000-mem1-1.1"]);
-    std::fs::write(checkout.join("file.txt"), "member change\n").unwrap();
-    git(checkout, &["add", "file.txt"]);
-    git(checkout, &["commit", "-m", "Member commit"]);
-    git(checkout, &["switch", "main"]);
 
     let team = Team::new(
         "team-20261117-120000-a1b2".parse().unwrap(),
@@ -461,19 +442,61 @@ fn merged_removed_worktree_falls_back_to_checkout() {
             }
         }
     ]);
-    let team: Team = serde_json::from_value(team_val).unwrap();
+    serde_json::from_value(team_val).unwrap()
+}
 
+#[test]
+fn merged_removed_worktree_falls_back_to_checkout() {
+    use agent_core::config::AbsolutePath;
+
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+
+    let checkout_dir = tempfile::tempdir().unwrap();
+    let checkout = checkout_dir.path();
+    git(checkout, &["init", "--initial-branch=base"]);
+    std::fs::write(checkout.join("file.txt"), "base content\n").unwrap();
+    git(checkout, &["add", "file.txt"]);
+    git(checkout, &["commit", "-m", "Base commit"]);
+
+    git(checkout, &["branch", "agents/claude-1/task-20261117-120000-mem1-1.1"]);
+    git(checkout, &["switch", "agents/claude-1/task-20261117-120000-mem1-1.1"]);
+    std::fs::write(checkout.join("file.txt"), "member change\n").unwrap();
+    git(checkout, &["add", "file.txt"]);
+    git(checkout, &["commit", "-m", "Member commit"]);
+    git(checkout, &["switch", "base"]);
+
+    let team = setup_merged_team();
     let lead_task = team.crew().roster()[0].1.task().clone();
     let member_task = team.crew().roster()[1].1.task().clone();
 
     let lead_wt = home.worktree_dir(team.repo(), &lead_task);
-    std::fs::create_dir_all(&lead_wt).unwrap();
-    git(&lead_wt, &["init", "--initial-branch=main"]);
-    git(&lead_wt, &["commit", "--allow-empty", "-m", "Base"]);
+    std::fs::create_dir_all(lead_wt.parent().unwrap()).unwrap();
+    git(
+        checkout,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "agents/codex-1/task-20261117-120000-lea1",
+            lead_wt.to_str().unwrap(),
+            "base",
+        ],
+    );
+    git(
+        &lead_wt,
+        &[
+            "merge",
+            "--no-ff",
+            "agents/claude-1/task-20261117-120000-mem1-1.1",
+            "-m",
+            "Merge member",
+        ],
+    );
 
     std::fs::write(
         home.config_file(),
-        "[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+        "[repos.example]\nbase_branch = \"base\"\ngate = [\"true\"]\n",
     )
     .unwrap();
 
@@ -485,6 +508,7 @@ fn merged_removed_worktree_falls_back_to_checkout() {
     let mut collection =
         Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
     collection.checkout = Some(checkout.to_path_buf());
+    collection.local_offset = time::UtcOffset::UTC;
     runtime.block_on(collection.observe(&home, &team, None)).unwrap();
 
     let member_git = collection
@@ -499,14 +523,16 @@ fn merged_removed_worktree_falls_back_to_checkout() {
     );
     assert_eq!(member_git.commits_over_base.len(), 1);
     assert_eq!(member_git.commits_over_base[0].subject, "Member commit");
-    assert!(member_git.uncommitted_files.is_empty());
+    assert_eq!(member_git.uncommitted_files, Vec::<PathBuf>::new());
 
     assert!(
         !collection
             .assessment
             .unreadable
             .iter()
-            .any(|f| f.part.contains("task-20261117-120000-mem1"))
+            .any(|f| f.part.contains("task-20261117-120000-mem1")),
+        "{:?}",
+        collection.assessment.unreadable
     );
 
     let note = collection
