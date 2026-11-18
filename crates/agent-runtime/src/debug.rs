@@ -226,6 +226,7 @@ pub async fn execute_debug_at(
         now,
         Duration::from_secs(args.stale_minutes.unwrap_or(STALE_MINUTES).saturating_mul(60)),
     )?;
+    collection.cut = cut.clone();
     collection.checkout = location.checkout;
     collection.local_offset = location.local_offset;
     collection.observe(home, team, status).await?;

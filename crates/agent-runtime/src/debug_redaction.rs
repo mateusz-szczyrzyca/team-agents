@@ -7,6 +7,7 @@ use std::os::unix::ffi::OsStringExt;
 use agent_core::config::Secrets;
 
 /// Secret values that may not appear in diagnostic artifacts.
+#[derive(Clone)]
 pub(crate) struct SecretsCut {
     /// Nonempty byte patterns, longest first so nested values cannot leave a secret suffix.
     values: Vec<Vec<u8>>,

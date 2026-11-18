@@ -561,6 +561,7 @@ impl Collection {
                 {
                     /// Maximum final-message tail in the summary; complete text stays in history artifacts.
                     const FINAL_MESSAGE_BYTES: usize = 4096;
+                    *message = self.cut.redact_text(message);
                     if message.len() > FINAL_MESSAGE_BYTES {
                         let first = message.len().saturating_sub(FINAL_MESSAGE_BYTES);
                         let tail: String = message
