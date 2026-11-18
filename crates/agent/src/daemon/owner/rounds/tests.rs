@@ -2640,7 +2640,7 @@ async fn the_humans_answer_renews_the_entire_configured_fix_budget() {
 }
 
 #[tokio::test]
-async fn answering_with_zero_fix_allowance_does_not_wake_the_lead_for_a_fix() {
+async fn answering_with_zero_fix_allowance_resumes_answers_without_granting_a_fix() {
     let mut rig = Rig::new(
         &[
             normal("claude-1", "work,ask,done"),
@@ -2660,6 +2660,6 @@ async fn answering_with_zero_fix_allowance_does_not_wake_the_lead_for_a_fix() {
     let state = rig.state();
     let team = state.team(&team).unwrap();
     let lead = team.find(&tasks[0]).unwrap().1;
-    assert_eq!(lead.runs().len(), 2);
+    assert_eq!(lead.runs().len(), 3);
     assert_eq!(team.item("1.1".parse().unwrap()).unwrap().fix_passes().len(), 0);
 }
