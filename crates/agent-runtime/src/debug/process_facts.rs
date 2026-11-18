@@ -1,6 +1,7 @@
 //! Read-only Linux daemon observations, selected by ownership of the home's lock.
 
 use std::num::{NonZeroU64, ParseIntError};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -161,6 +162,13 @@ async fn observe_with_ticks(
             path: process.join("exe"),
             source,
         })?;
+    let running = tokio::fs::metadata(process.join("exe"))
+        .await
+        .map_err(|source| ProcessError::Io {
+            path: process.join("exe"),
+            source,
+        })?;
+    let exe = disk_path(&exe, running.nlink())?;
     let modified = tokio::fs::metadata(&exe)
         .await
         .and_then(|meta| meta.modified())
@@ -257,8 +265,16 @@ fn start_time(stat: &str, boot: &str, ticks: NonZeroU64) -> Result<Timestamp, Pr
 }
 
 /// Resolves the on-disk executable after a running inode has been replaced.
-fn disk_path(link: &Path, _links: u64) -> Result<PathBuf, ProcessError> {
-    Ok(link.to_path_buf())
+fn disk_path(link: &Path, links: u64) -> Result<PathBuf, ProcessError> {
+    if links != 0 {
+        return Ok(link.to_path_buf());
+    }
+    let name = link
+        .as_os_str()
+        .as_bytes()
+        .strip_suffix(b" (deleted)")
+        .ok_or(ProcessError::Format("deleted executable link lacks suffix"))?;
+    Ok(PathBuf::from(std::ffi::OsString::from_vec(name.to_vec())))
 }
 
 #[cfg(test)]
