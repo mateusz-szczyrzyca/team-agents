@@ -612,6 +612,15 @@ impl RawConfig {
         check_list(Tier::Normal, &normal, &agents)?;
         check_list(Tier::Worker, &workers, &agents)?;
         check_tiers(&normal, &workers, &agents, &investigators)?;
+        // Files predating this key keep loading; team creation still checks their default against its roster.
+        if let Some(required) = review.min_first_full_reviews
+            && required.get() > investigators.len()
+        {
+            return Err(ConfigError::ReviewersUnavailable {
+                required: required.get(),
+                configured: investigators.len(),
+            });
+        }
         Ok(Config {
             language,
             agents,
