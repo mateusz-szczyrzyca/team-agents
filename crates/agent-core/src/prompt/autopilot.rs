@@ -46,6 +46,12 @@ pub enum AutopilotPrompt {
     ReviewRequest,
     /// Independence instructions for first-pass reviewers without a bus.
     ReviewIndependent,
+    /// A later pass checks findings and the changes since the preceding review.
+    ReviewVerification,
+    /// The diff command for an ancestor reviewed commit.
+    ReviewVerificationChanges,
+    /// The fallback diff when the lead rewrote the reviewed history.
+    ReviewVerificationRewritten,
     /// The review the harness posts on the pull request for a reviewer's report.
     ReviewComment,
     /// The verdict line of an approved review.
@@ -104,6 +110,9 @@ impl AutopilotPrompt {
         Self::NoticeClosed,
         Self::ReviewRequest,
         Self::ReviewIndependent,
+        Self::ReviewVerification,
+        Self::ReviewVerificationChanges,
+        Self::ReviewVerificationRewritten,
         Self::ReviewComment,
         Self::ReviewVerdictApprove,
         Self::ReviewVerdictRequestChanges,
@@ -185,6 +194,21 @@ impl AutopilotPrompt {
                 "harness/review/request.md",
                 &["team", "pr", "branch", "base", "head", "pass"],
             ),
+            Self::ReviewVerification => (
+                "harness/review/verification.md",
+                &[
+                    "team",
+                    "pr",
+                    "branch",
+                    "base",
+                    "head",
+                    "pass",
+                    "changes",
+                    "lead_message",
+                ],
+            ),
+            Self::ReviewVerificationChanges => ("harness/review/verification-changes.md", &["previous"]),
+            Self::ReviewVerificationRewritten => ("harness/review/verification-rewritten.md", &["base"]),
             Self::ReviewIndependent => ("harness/review/independent.md", &[]),
             Self::ReviewComment => (
                 "harness/review/comment.md",

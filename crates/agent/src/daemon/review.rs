@@ -275,10 +275,6 @@ pub(super) fn independent_first_review(team: &Team, task: &TaskId) -> bool {
 }
 
 /// Draws verifiers, taking investigators never used on this PR before the least recently used.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired after persisted verification protocol is introduced")
-)]
 pub(super) fn choose_verifiers(
     free: Vec<Reviewer>,
     required: ReviewCount,

@@ -356,7 +356,25 @@ pub(super) async fn review_request(
         .with("base", base.as_str())?
         .with("head", head.as_str())?
         .with("pass", verification.pass.to_string())?;
-    let mut sections = vec![texts.render(AutopilotPrompt::ReviewRequest, &values)?];
+    let context = verification
+        .findings
+        .and_then(|ledger| ledger.verification())
+        .filter(|_| verification.pass > 1);
+    let mut sections = if let Some(context) = context {
+        let changes = verification_changes(
+            &git_of(ctx, found, working)?,
+            texts,
+            context.reviewed_head.as_ref(),
+            base.as_str(),
+        )
+        .await?;
+        let values = values
+            .with("changes", changes)?
+            .with("lead_message", context.lead_message.as_deref().unwrap_or_default())?;
+        vec![texts.render(AutopilotPrompt::ReviewVerification, &values)?]
+    } else {
+        vec![texts.render(AutopilotPrompt::ReviewRequest, &values)?]
+    };
     if crate::daemon::review::independent_first_review(team, task) {
         sections.push(texts.render(AutopilotPrompt::ReviewIndependent, &Variables::new())?);
     }
@@ -384,6 +402,11 @@ pub(super) async fn review_request(
 
 /// The commit the worktree of the task `found` has out, which is the one a reviewer reviews.
 async fn head_of(ctx: &Context<'_>, found: &TaskRef<'_>, working: &std::path::Path) -> Result<CommitId, SectionError> {
+    Ok(git_of(ctx, found, working)?.rev_parse(&Revision::Head).await?)
+}
+
+/// Opens git in the reviewer's worktree with its configured identity.
+fn git_of(ctx: &Context<'_>, found: &TaskRef<'_>, working: &std::path::Path) -> Result<Git, SectionError> {
     let text = working.to_str().ok_or_else(|| SectionError::Path {
         path: working.to_path_buf(),
         source: None,
@@ -392,9 +415,32 @@ async fn head_of(ctx: &Context<'_>, found: &TaskRef<'_>, working: &std::path::Pa
         path: working.to_path_buf(),
         source: Some(source),
     })?;
-    let git = Git::new(
+    Ok(Git::new(
         worktree,
         CommitIdentity::for_agent(ctx.settings.config.git(), &found.member.agent().name().parse()?),
-    );
-    Ok(git.rev_parse(&Revision::Head).await?)
+    ))
+}
+
+/// Uses the reviewed commit when it remains an ancestor, otherwise explains the base diff.
+pub(super) async fn verification_changes(
+    git: &Git,
+    texts: &AutopilotPrompts,
+    previous: Option<&CommitId>,
+    base: &str,
+) -> Result<String, SectionError> {
+    if let Some(previous) = previous {
+        if git
+            .is_ancestor(&Revision::Commit(previous.clone()), &Revision::Head)
+            .await?
+        {
+            return Ok(texts.render(
+                AutopilotPrompt::ReviewVerificationChanges,
+                &Variables::new().with("previous", previous.as_str())?,
+            )?);
+        }
+    }
+    Ok(texts.render(
+        AutopilotPrompt::ReviewVerificationRewritten,
+        &Variables::new().with("base", base)?,
+    )?)
 }

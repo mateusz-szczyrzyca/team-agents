@@ -115,6 +115,9 @@ struct RunTaskFailed(#[source] JoinError);
 /// Why the owner stopped with an error: something it cannot go on without.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum OwnerError {
+    /// The reviewed commit cannot be retained for the next verification.
+    #[error(transparent)]
+    ReviewedHead(#[from] rounds::ReviewedHeadError),
     /// A structured report contradicts the review protocol.
     #[error("cannot accept review findings")]
     Findings(#[from] agent_core::review_findings::ReportError),
@@ -838,6 +841,25 @@ impl Owner {
         let mut events = Vec::new();
         let settle_span = self.settle_span_of(task, &located.team);
         self.attach_session(task, run.session.clone())?;
+        if matches!(located.role, Role::Solo | Role::Coordinator) {
+            if let Some(message) = run.final_message.as_deref() {
+                if let Some(mut team) = self.parts.state.team_mut(&located.team) {
+                    let ids: Vec<_> = team.items().iter().map(agent_core::state::ItemProgress::id).collect();
+                    for id in ids {
+                        let mut item = team.item_mut(id).ok_or_else(|| OwnerError::LostItem {
+                            team: located.team.clone(),
+                            item: id,
+                        })?;
+                        if matches!(item.phase(), agent_core::state::ItemPhase::Fixing { .. }) {
+                            if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
+                                context.lead_message =
+                                    Some(message.chars().take(crate::daemon::review::MAX_REPORT_CHARS).collect());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let settled = settle(
             located.role,
             &run.classified.end,

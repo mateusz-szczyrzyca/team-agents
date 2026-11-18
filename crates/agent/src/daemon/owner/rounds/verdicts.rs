@@ -192,6 +192,35 @@ impl Owner {
         let mut look = Look::default();
         self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
         let completed = self.record_findings(team_id, task, asked, verdict, message)?;
+        if completed {
+            let agent: AgentName = asked.reviewer.as_str().parse()?;
+            let head = self
+                .worktree_git(&lead.repo, task, &agent)
+                .map_err(|source| super::ReviewedHeadError {
+                    task: task.clone(),
+                    source,
+                })?
+                .rev_parse(&Revision::Head)
+                .await
+                .map_err(|source| super::ReviewedHeadError {
+                    task: task.clone(),
+                    source: PublishError::from(source),
+                })?;
+            let mut team = self
+                .parts
+                .state
+                .team_mut(team_id)
+                .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+            for id in &asked.items {
+                let mut item = team.item_mut(*id).ok_or_else(|| OwnerError::LostItem {
+                    team: team_id.clone(),
+                    item: *id,
+                })?;
+                if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
+                    context.reviewed_head = Some(head.clone());
+                }
+            }
+        }
         self.record_event_at(
             now,
             team_id,

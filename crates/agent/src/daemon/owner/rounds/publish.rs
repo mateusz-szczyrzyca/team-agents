@@ -616,7 +616,7 @@ impl Owner {
         let confirmed = self.confirmed(team_id, publication, published);
         // A joining item shares the PR ledger, including the legacy protocol and existing comment ID.
         let findings = match &publication.publish {
-            Publish::Open { .. } => Some(agent_core::state::Findings::independent(
+            Publish::Open { .. } => Some(agent_core::state::Findings::verifying(
                 self.parts.settings.config.review().min_first_full_reviews(),
             )),
             Publish::Update { fixing, .. } => fixing
