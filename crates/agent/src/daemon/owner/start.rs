@@ -426,8 +426,11 @@ pub(super) fn next_number(member: &Member) -> Option<NonZeroU32> {
 
 /// Selects the resume prompt for the role that owns the task.
 fn prompt_kind_for_role(role: Role, member: &Member, session: Option<&SessionId>, config: &Config) -> PromptKind {
-    let _role = role;
-    prompt_kind(member, session, config)
+    let kind = prompt_kind(member, session, config);
+    if matches!(role, Role::Worker | Role::Reviewer) && kind == PromptKind::Resume(ResumeReason::NoStatus) {
+        return PromptKind::First;
+    }
+    kind
 }
 
 /// What the prompt of the next run tells: the whole task, or what interrupted the session it resumes.
