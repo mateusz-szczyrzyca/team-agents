@@ -165,7 +165,15 @@ impl Collection {
     }
 
     /// Adds the daemon artifact and its structured summary facts.
-    pub(super) fn add_daemon(&mut self, daemon: agent_core::debug_summary::DaemonSummary) {
+    pub(super) fn add_daemon(&mut self, mut daemon: agent_core::debug_summary::DaemonSummary) {
+        for field in daemon
+            .cmdline
+            .iter_mut()
+            .chain(&mut daemon.env_var_names)
+            .chain([&mut daemon.exe_path, &mut daemon.version])
+        {
+            *field = self.cut.redact_text(field);
+        }
         self.add("daemon-process.txt", format!("{daemon:#?}").into_bytes());
         self.summary.daemon = Some(daemon);
     }
