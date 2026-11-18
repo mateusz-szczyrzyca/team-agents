@@ -318,7 +318,8 @@ pub struct UnreadablePartSummary {
 }
 
 /// Formats a timestamp into human-readable UTC and local time representation.
-fn format_time(ts: Timestamp, offset: UtcOffset) -> String {
+#[must_use]
+pub fn format_time(ts: Timestamp, offset: UtcOffset) -> String {
     let utc = ts.as_utc();
     let (hours, mins, secs) = offset.as_hms();
     let sign = if hours < 0 || mins < 0 || secs < 0 { '-' } else { '+' };
