@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod activity_tests;
 mod collect;
+mod daemon;
 #[cfg(test)]
 mod tests;
 
