@@ -80,7 +80,16 @@ impl Owner {
         if !self.watch.announced.insert(announcement) {
             return Ok(());
         }
-        let _blocking = match super::findings::blocking_text(&pulls.texts, None) {
+        let ledger = waits
+            .items
+            .first()
+            .and_then(|id| self.parts.state.team(team_id)?.item(*id)?.findings());
+        let additional = if ledger.is_some_and(|ledger| ledger.verification().is_some()) {
+            self.parts.settings.config.review().fix_passes
+        } else {
+            1
+        };
+        let blocking = match super::findings::blocking_text(&pulls.texts, ledger) {
             Ok(text) => text,
             Err(error) => {
                 // Notifications are best effort; failed rendering must not stop the round.
@@ -93,7 +102,9 @@ impl Owner {
         let values = Variables::new()
             .with("team", team_id.as_str())
             .and_then(|values| values.with("pr", waits.pr.number.to_string()))
-            .and_then(|values| values.with("passes", waits.passes.to_string()));
+            .and_then(|values| values.with("passes", waits.passes.to_string()))
+            .and_then(|values| values.with("additional_passes", additional.to_string()))
+            .and_then(|values| values.with("findings", blocking));
         self.tell_human(pulls, AutopilotNotice::Decision, values, lead, now);
         Ok(())
     }

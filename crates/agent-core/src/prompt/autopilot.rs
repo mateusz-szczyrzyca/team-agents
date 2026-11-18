@@ -257,7 +257,10 @@ impl AutopilotPrompt {
                 &["reviewer", "pr", "task", "why"],
             ),
             Self::NoticeReviewRotation => ("harness/review/notice-rotation.md", &["reviews"]),
-            Self::NoticeDecision => ("harness/review/notice-decision.md", &["team", "pr", "passes"]),
+            Self::NoticeDecision => (
+                "harness/review/notice-decision.md",
+                &["team", "pr", "passes", "additional_passes", "findings"],
+            ),
         }
     }
 }

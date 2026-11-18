@@ -25,12 +25,21 @@ pub(in crate::daemon::owner) enum TextError {
 
 /// The open findings, with permanent numbers and verification checks.
 pub(super) fn open_text(texts: &AutopilotPrompts, ledger: Option<&Findings>) -> Result<String, TextError> {
+    selected_text(texts, ledger, |_| true)
+}
+
+/// Renders the selected open entries with their verification checks.
+fn selected_text(
+    texts: &AutopilotPrompts,
+    ledger: Option<&Findings>,
+    selected: impl Fn(&agent_core::state::RecordedFinding) -> bool,
+) -> Result<String, TextError> {
     let mut lines = Vec::new();
     if let Some(ledger) = ledger {
         for entry in ledger
             .entries()
             .iter()
-            .filter(|entry| entry.status == FindingStatus::Open)
+            .filter(|entry| entry.status == FindingStatus::Open && selected(entry))
         {
             let values = Variables::new()
                 .with("number", entry.number.to_string())?
@@ -46,8 +55,8 @@ pub(super) fn open_text(texts: &AutopilotPrompts, ledger: Option<&Findings>) -> 
 }
 
 /// Open blocking findings for a human deciding whether to renew the fix budget.
-pub(super) fn blocking_text(_texts: &AutopilotPrompts, _ledger: Option<&Findings>) -> Result<String, TextError> {
-    Ok(String::new())
+pub(super) fn blocking_text(texts: &AutopilotPrompts, ledger: Option<&Findings>) -> Result<String, TextError> {
+    selected_text(texts, ledger, |entry| entry.finding.severity.blocks())
 }
 
 /// Escapes report data as one Markdown table cell without interpreting its markup.
