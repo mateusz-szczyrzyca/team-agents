@@ -957,3 +957,92 @@ async fn artifact_failures_use_the_sections_of_the_observed_parts() {
         SummarySection::GitWorktrees
     );
 }
+
+#[tokio::test]
+async fn redacts_complete_final_message_before_taking_its_tail() {
+    use agent_core::config::AbsolutePath;
+    use agent_core::history::{AgentIdentity, Cut, Record, RunEndRecord, RunStart, RunWhy, SequencedRecord, Step};
+    use agent_core::kinds::{CliKind, Tier};
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let mut team = team();
+    let task = team.crew().roster()[0].1.task().clone();
+    let at: Timestamp = "2026-11-17T12:00:00Z".parse().unwrap();
+    let run: agent_core::ids::RunId = "run-20261117-120001-a1b2".parse().unwrap();
+    team.begin_run(
+        &task,
+        agent_core::state::NewRun {
+            id: run.clone(),
+            at,
+            session: None,
+            rounds: vec![],
+        },
+    )
+    .unwrap();
+    let records = [
+        Record::Run(Box::new(RunStart {
+            run: run.clone(),
+            team: team.id().clone(),
+            task,
+            at,
+            agent: AgentIdentity {
+                name: "codex-1".to_owned(),
+                tier: Tier::Normal,
+                cli: CliKind::Codex,
+                model: None,
+            },
+            role: Role::Solo,
+            rounds: vec![],
+            why: RunWhy::WakeUp,
+            prompt: "Please continue".to_owned(),
+            worktree: AbsolutePath::try_from("/tmp/example".to_owned()).unwrap(),
+            branch: "feature".parse().unwrap(),
+            session: None,
+        })),
+        Record::Step(Box::new(Step {
+            run: run.clone(),
+            number: std::num::NonZeroU32::MIN,
+            at,
+            event: agent_core::cli::ActivityEvent::Text("Recorded café step".to_owned()),
+        })),
+        Record::RunEnd(Box::new(RunEndRecord {
+            run,
+            at,
+            end: RunEnd::Stopped,
+            final_message: Some(format!("prefix {}{}", "boundary-secret-suffix", "x".repeat(4080))),
+        })),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, record)| SequencedRecord {
+        sequence: u64::try_from(index).unwrap() + 1,
+        at,
+        team: team.id().clone(),
+        rounds: vec![],
+        record,
+        cut: Cut::default(),
+    })
+    .collect::<Vec<_>>();
+    let mut collection = Collection::new(&team, at, Duration::from_secs(120)).unwrap();
+    collection
+        .task(&home, team.crew().roster()[0].1, Role::Solo)
+        .await
+        .unwrap();
+    collection.cut = SecretsCut::new(
+        &agent_core::config::Secrets::parse("github_token = \"boundary-secret-suffix\"", 0o600).unwrap(),
+        [],
+    );
+    collection.enrich_last_run_details(&records, &team);
+    let summary = agent_core::debug_summary::render_command_summary(
+        &collection.summary,
+        time::UtcOffset::UTC,
+        &[],
+        agent_core::debug_summary::UntrackedCollection::Deferred,
+        str::to_owned,
+    )
+    .unwrap();
+    assert!(
+        !summary.contains("suffix"),
+        "a secret suffix must not survive truncation"
+    );
+}

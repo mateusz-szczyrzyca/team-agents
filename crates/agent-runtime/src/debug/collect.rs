@@ -48,6 +48,8 @@ pub(super) struct Collection {
     pub(super) local_offset: time::UtcOffset,
     /// Relative artifact paths and their unredacted bytes; never logged.
     artifacts: Vec<(PathBuf, Vec<u8>)>,
+    /// Secret patterns applied before truncating or encoding structured observations.
+    pub(super) cut: SecretsCut,
     /// Total copied task bytes, bounded independently of file count.
     copied_bytes: usize,
 }
@@ -154,6 +156,7 @@ impl Collection {
             local_offset: time::UtcOffset::UTC,
             artifacts: vec![],
             copied_bytes: 0,
+            cut: SecretsCut::new(&agent_core::config::Secrets::default(), []),
         })
     }
 
