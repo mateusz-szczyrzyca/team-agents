@@ -12,6 +12,7 @@ mod notifications;
 mod process_facts;
 #[cfg(test)]
 mod tests;
+mod untracked;
 
 use std::io::Write;
 use std::path::PathBuf;
