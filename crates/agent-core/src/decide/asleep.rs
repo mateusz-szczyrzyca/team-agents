@@ -60,12 +60,12 @@ pub enum BlockedItemStep {
 
 /// Decides what the harness does about an item in progress or being fixed.
 #[must_use]
-pub fn blocked_item_step(
-    _lead_done: bool,
-    _lead_status: TaskStatus,
-    _assignee_status: TaskStatus,
-) -> BlockedItemStep {
-    BlockedItemStep::Nothing
+pub fn blocked_item_step(lead_done: bool, lead_status: TaskStatus, assignee_status: TaskStatus) -> BlockedItemStep {
+    if lead_done && lead_status == TaskStatus::Waiting && assignee_status == TaskStatus::Failed {
+        BlockedItemStep::TellHuman
+    } else {
+        BlockedItemStep::Nothing
+    }
 }
 
 /// What the harness does about `team`.

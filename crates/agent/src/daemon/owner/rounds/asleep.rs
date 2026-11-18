@@ -1,7 +1,7 @@
 //! A team that sleeps with its work unfinished: its lead is woken and told that nobody works, and when that does not
 //! help the human is told.
 
-use agent_core::decide::asleep::{AsleepStep, Team, asleep_step};
+use agent_core::decide::asleep::{AsleepStep, BlockedItemStep, Team, asleep_step, blocked_item_step};
 use agent_core::ids::TeamId;
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
@@ -42,6 +42,8 @@ struct Standing {
     task: agent_core::ids::TaskId,
     /// The member status and last run detail line.
     line: String,
+    /// The current status of the assignee task.
+    assignee_status: TaskStatus,
 }
 
 /// How the task of `member` ended, in a line for the lead and the human.
@@ -109,6 +111,7 @@ impl Owner {
                         member: assignee.to_string(),
                         task: member.task().clone(),
                         line: line(*role, member),
+                        assignee_status: member.status(),
                     })
                 } else {
                     None
@@ -145,11 +148,9 @@ impl Owner {
         }
 
         let lead_status = found.statuses.first().copied().unwrap_or(TaskStatus::Waiting);
-        let lead_waiting = lead_status == TaskStatus::Waiting;
-
-        if lead.done && lead_waiting && !found.standings.is_empty() {
-            let now = Timestamp::now(&self.parts.clock)?;
-            for standing in &found.standings {
+        let now = Timestamp::now(&self.parts.clock)?;
+        for standing in &found.standings {
+            if blocked_item_step(lead.done, lead_status, standing.assignee_status) == BlockedItemStep::TellHuman {
                 let announcement = Announcement::ItemBlocked {
                     team: team_id.clone(),
                     item: standing.item.clone(),
@@ -244,7 +245,7 @@ impl Owner {
                 self.release(&lead.task, Why::Asleep(text.trim_end().to_owned()), look)
             }
             AsleepStep::TellHuman => {
-                if !found.standings.is_empty() {
+                if lead.done {
                     return Ok(());
                 }
                 let announcement = Announcement::TeamAsleep {
