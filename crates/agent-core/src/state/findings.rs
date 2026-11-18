@@ -47,8 +47,14 @@ pub struct Findings {
 
 /// The pull request exhausted the representable finding numbers.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("the pull request has exhausted its finding numbers")]
-pub struct FindingNumbersExhausted;
+pub enum FindingNumbersExhausted {
+    /// The total cannot be represented by a finding number.
+    #[error("the pull request has too many findings")]
+    Capacity(#[from] std::num::TryFromIntError),
+    /// Adding a number would overflow.
+    #[error("the pull request has exhausted its finding numbers")]
+    Exhausted,
+}
 
 impl Findings {
     /// Open findings and their severities, for validating verification answers.
@@ -70,7 +76,48 @@ impl Findings {
     ///
     /// # Errors
     /// [`FindingNumbersExhausted`] if a new finding has no representable number.
-    pub fn finish(&mut self, _reviews: &[Review], _pass: NonZeroU32) -> Result<(), FindingNumbersExhausted> {
+    pub fn finish(&mut self, reviews: &[Review], pass: NonZeroU32) -> Result<(), FindingNumbersExhausted> {
+        // Validate capacity before changing any entry, including resolution status.
+        let added = reviews
+            .iter()
+            .filter_map(|review| self.pending.get(&review.task))
+            .map(|report| report.findings.len())
+            .try_fold(self.entries.len(), usize::checked_add)
+            .ok_or(FindingNumbersExhausted::Exhausted)?;
+        u32::try_from(added).map_err(FindingNumbersExhausted::Capacity)?;
+        for entry in &mut self.entries {
+            if !reviews.is_empty()
+                && reviews.iter().all(|review| {
+                    self.pending.get(&review.task).is_some_and(|report| {
+                        report
+                            .answers
+                            .iter()
+                            .any(|(n, answer)| *n == entry.number && *answer == Answer::Resolved)
+                    })
+                })
+            {
+                entry.status = FindingStatus::Resolved;
+            }
+        }
+        for review in reviews {
+            if let Some(report) = self.pending.remove(&review.task) {
+                for finding in report.findings {
+                    let number = u32::try_from(self.entries.len())
+                        .map_err(FindingNumbersExhausted::from)?
+                        .checked_add(1)
+                        .and_then(NonZeroU32::new)
+                        .ok_or(FindingNumbersExhausted::Exhausted)?;
+                    self.entries.push(RecordedFinding {
+                        number,
+                        finding,
+                        reporter: review.reviewer.clone(),
+                        pass,
+                        status: FindingStatus::Open,
+                    });
+                }
+            }
+        }
+        self.pending.clear();
         Ok(())
     }
 }

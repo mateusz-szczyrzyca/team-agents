@@ -131,11 +131,11 @@ pub fn parse_report(
             let Some((id, value)) = answer.split_once(':') else {
                 return Err(fail(ReportProblem::Answer));
             };
-            let id = id
-                .trim()
-                .parse::<NonZeroU32>()
-                .map_err(|_| fail(ReportProblem::Answer))?;
-            if !open.iter().any(|(n, _)| *n == id) || report.answers.iter().any(|(n, _)| *n == id) {
+            let Some((id, _)) = open.iter().find(|(number, _)| number.to_string() == id.trim()) else {
+                return Err(fail(ReportProblem::Answer));
+            };
+            let id = *id;
+            if report.answers.iter().any(|(n, _)| *n == id) {
                 return Err(fail(ReportProblem::Answer));
             }
             let answer = match value.trim() {
@@ -202,7 +202,9 @@ fn numbered(line: &str) -> bool {
 /// Parses the finding header; the following line supplies its check.
 fn read_finding(line: &str) -> Option<Finding> {
     let (number, value) = line.split_once('.')?;
-    number.parse::<NonZeroU32>().ok()?;
+    if number.is_empty() || !number.chars().all(|c| c.is_ascii_digit()) || number.chars().all(|c| c == '0') {
+        return None;
+    }
     let (severity, rest) = value.trim().strip_prefix('[')?.split_once(']')?;
     let severity = match severity {
         "BLOCKER" => Severity::Blocker,
