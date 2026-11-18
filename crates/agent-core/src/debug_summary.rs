@@ -393,7 +393,12 @@ impl SummaryWriter {
         self.parts.push(SummaryPart::Tail(text.to_owned()));
     }
 
-    fn finish(self) -> Result<String, SummaryError> {
+    fn finish(mut self, redact: impl Fn(&str) -> String) -> Result<String, SummaryError> {
+        for part in &mut self.parts {
+            match part {
+                SummaryPart::Required(text) | SummaryPart::Tail(text) => *text = redact(text),
+            }
+        }
         let mut required = 0_usize;
         let mut lengths = Vec::new();
         for part in &self.parts {
@@ -864,9 +869,9 @@ pub fn render_redacted_summary(
     offset: UtcOffset,
     uncollected: &[SummarySection],
     untracked: UntrackedCollection,
-    _redact: impl Fn(&str) -> String,
+    redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_with_coverage(input, offset, uncollected, untracked)
+    render_with_redaction(input, offset, uncollected, untracked, redact)
 }
 
 /// Renders a summary with explicit notices for sections outside the collection scope.
@@ -888,6 +893,16 @@ fn render_with_coverage(
     offset: UtcOffset,
     uncollected: &[SummarySection],
     untracked: UntrackedCollection,
+) -> Result<String, SummaryError> {
+    render_with_redaction(input, offset, uncollected, untracked, str::to_owned)
+}
+
+fn render_with_redaction(
+    input: &SummaryInput,
+    offset: UtcOffset,
+    uncollected: &[SummarySection],
+    untracked: UntrackedCollection,
+    redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
     let now = input.collected_at;
     let mut out = SummaryWriter::default();
@@ -931,7 +946,7 @@ fn render_with_coverage(
         write_line(&mut out, "");
     }
 
-    out.finish()
+    out.finish(redact)
 }
 
 /// Mandatory summary facts exceed the pasteable document budget.

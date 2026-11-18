@@ -43,6 +43,30 @@ impl SecretsCut {
         Self { values }
     }
 
+    /// Replaces secret values that can occur in a UTF-8 presentation string.
+    pub(crate) fn redact_text(&self, text: &str) -> String {
+        let mut remaining = text;
+        let mut redacted = String::with_capacity(text.len());
+        loop {
+            let mut chars = remaining.chars();
+            let Some(first) = chars.next() else { break };
+            if let Some(rest) = self.values.iter().find_map(|value| {
+                match std::str::from_utf8(value) {
+                    Ok(value) => remaining.strip_prefix(value),
+                    // A non-UTF-8 environment value cannot occur inside UTF-8 text.
+                    Err(_) => None,
+                }
+            }) {
+                redacted.push_str("<cut>");
+                remaining = rest;
+            } else {
+                redacted.push(first);
+                remaining = chars.as_str();
+            }
+        }
+        redacted
+    }
+
     /// Replaces exact occurrences, preserving unrelated bytes including non-UTF-8 output.
     pub(crate) fn redact(&self, bytes: &[u8]) -> Vec<u8> {
         let mut remaining = bytes;

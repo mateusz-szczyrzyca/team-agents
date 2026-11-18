@@ -826,11 +826,12 @@ pub(super) async fn persist(
     cut: SecretsCut,
     parent: PathBuf,
     prefix: String,
+    summary: String,
 ) -> Result<DebugResult, DebugRuntimeError> {
     tokio::task::spawn_blocking(move || {
         use std::io::Write;
         use std::os::unix::fs::DirBuilderExt;
-        let artifacts: Vec<_> = collection
+        let mut artifacts: Vec<_> = collection
             .artifacts
             .into_iter()
             .map(|(path, bytes)| {
@@ -840,6 +841,8 @@ pub(super) async fn persist(
                 )
             })
             .collect();
+        // The summary was redacted before budgeting and must not expand after its size was checked.
+        artifacts.push((PathBuf::from("SUMMARY.md"), summary.into_bytes()));
         std::fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)

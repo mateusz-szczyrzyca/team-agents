@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use agent_core::config::{MAX_SECRETS_BYTES, Secrets, SecretsError};
 use agent_core::debug_summary::{
-    SummaryError, SummaryInput, SummarySection, UntrackedCollection, render_summary_with_coverage,
+    SummaryError, SummaryInput, SummarySection, UntrackedCollection, render_redacted_summary,
 };
 use agent_core::diagnostic_assessment::assess;
 use agent_core::ids::{RoundId, TaskId, TeamId};
@@ -223,8 +223,11 @@ pub async fn execute_debug(
         "facts.txt",
         format!("{:#?}\n{findings:#?}", collection.assessment).into_bytes(),
     );
-    let summary = compact_summary(&collection.summary).map_err(DebugRuntimeError::Summary)?;
-    collection.add("SUMMARY.md", summary.into_bytes());
+    let summary = compact_summary_with(&collection.summary, |text| {
+        // Replacing valid UTF-8 patterns with ASCII preserves valid UTF-8.
+        cut.redact_text(text)
+    })
+    .map_err(DebugRuntimeError::Summary)?;
     collection.add("NOT_COLLECTED.txt", b"Not collected in this version: daemon process and log; bus; notifications; configuration and secret key names; machine metrics; newest untracked file metadata.\n".to_vec());
     let parent = args.out.unwrap_or_else(|| home.root().join("debug"));
     collect::persist(
@@ -232,6 +235,7 @@ pub async fn execute_debug(
         cut,
         parent,
         format!("debug-{id}-{}", now.as_utc().unix_timestamp()),
+        summary,
     )
     .await
 }
@@ -246,22 +250,39 @@ fn short(text: &str, limit: usize) -> String {
     }
 }
 
+#[cfg(test)]
 fn compact_summary(input: &SummaryInput) -> Result<String, SummaryError> {
-    match render_summary_with_coverage(input, time::UtcOffset::UTC, DEFERRED, UntrackedCollection::Deferred) {
+    compact_summary_with(input, str::to_owned)
+}
+
+fn compact_summary_with(input: &SummaryInput, redact: impl Fn(&str) -> String) -> Result<String, SummaryError> {
+    match render_redacted_summary(
+        input,
+        time::UtcOffset::UTC,
+        DEFERRED,
+        UntrackedCollection::Deferred,
+        &redact,
+    ) {
         Ok(text) => Ok(text),
         Err(SummaryError::RequiredFactsTooLarge { .. }) => {
             let mut compact = input.clone();
             for part in &mut compact.unreadable_parts {
-                part.reason = short(&part.reason, 120);
+                part.reason = short(&redact(&part.reason), 120);
             }
             for anomaly in &mut compact.anomalies {
-                anomaly.message = short(&anomaly.message, 240);
+                anomaly.message = short(&redact(&anomaly.message), 240);
             }
             for git in &mut compact.git {
                 git.commits_over_base.clear();
                 git.newest_untracked.clear();
             }
-            render_summary_with_coverage(&compact, time::UtcOffset::UTC, DEFERRED, UntrackedCollection::Deferred)
+            render_redacted_summary(
+                &compact,
+                time::UtcOffset::UTC,
+                DEFERRED,
+                UntrackedCollection::Deferred,
+                &redact,
+            )
         }
         Err(error) => Err(error),
     }
