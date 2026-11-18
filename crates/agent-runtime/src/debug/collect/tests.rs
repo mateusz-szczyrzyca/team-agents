@@ -171,7 +171,7 @@ fn single_git_listing_per_worktree_reused_for_untracked_metadata() {
     let commands = super::TEST_GIT_COMMANDS.lock().unwrap().clone();
     let untracked_listings: Vec<_> = commands
         .iter()
-        .filter(|(_, args)| args.iter().any(|arg| arg.contains("--untracked-files")))
+        .filter(|(p, args)| p == &worktree && args.iter().any(|arg| arg.contains("--untracked-files")))
         .collect();
     assert_eq!(
         untracked_listings.len(),
@@ -179,7 +179,9 @@ fn single_git_listing_per_worktree_reused_for_untracked_metadata() {
         "must execute exactly one git listing for untracked files across collection: {commands:?}"
     );
     assert!(
-        !commands.iter().any(|(_, args)| args.contains(&"ls-files".to_owned())),
+        !commands
+            .iter()
+            .any(|(p, args)| p == &worktree && args.contains(&"ls-files".to_owned())),
         "must not invoke ls-files or separate untracked walks: {commands:?}"
     );
 

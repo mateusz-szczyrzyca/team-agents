@@ -892,7 +892,7 @@ async fn unrelated_proc_with_unreadable_cmdline_is_ignored_by_descendants() {
     // Unrelated PID 999 (parent 1, not under daemon)
     let unrelated_dir = procfs.join("999");
     fs::create_dir_all(&unrelated_dir).expect("create unrelated proc dir");
-    fs::write(unrelated_dir.join("stat"), "999 (unrelated) S 1 0 0 0\n").expect("write stat");
+    write_proc_stat(&procfs, 999, 1);
     // Unreadable cmdline: create as a directory instead of a file so open/read fails with EISDIR
     fs::create_dir(unrelated_dir.join("cmdline")).expect("create dir as cmdline");
 
@@ -932,6 +932,8 @@ async fn unrelated_proc_with_unreadable_cmdline_is_ignored_by_descendants() {
 
 #[tokio::test]
 async fn error_chain_preserves_concrete_os_cause_in_unreadable_and_artifact() {
+    use std::os::unix::fs::PermissionsExt;
+
     let (dir, home, cut) = fixture();
     let procfs = dir.path().join("proc");
     fs::create_dir_all(&procfs).expect("create proc");
@@ -941,7 +943,6 @@ async fn error_chain_preserves_concrete_os_cause_in_unreadable_and_artifact() {
     // Create a tasks directory that fails on read_dir with PermissionDenied
     let tasks_dir = home.root().join("tasks");
     fs::create_dir_all(&tasks_dir).expect("create tasks");
-    use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&tasks_dir, std::fs::Permissions::from_mode(0o000)).expect("chmod 000");
 
     let params = MachineParams {
