@@ -350,7 +350,10 @@ impl RoundDetail {
             tasks,
             pr,
             review_passes,
-            findings: Vec::new(),
+            findings: progress
+                .and_then(ItemProgress::findings)
+                .map(|ledger| ledger.entries.clone())
+                .unwrap_or_default(),
         }
     }
 }

@@ -293,6 +293,24 @@ pub(crate) fn render_round(detail: &RoundDetail) -> String {
     if let Some(pr) = &detail.pr {
         lines.push(format!("  pull request #{} on {}", pr.number, pr.branch));
     }
+    if !detail.findings.is_empty() {
+        let count = |severity| {
+            detail
+                .findings
+                .iter()
+                .filter(|entry| {
+                    entry.status == agent_core::state::FindingStatus::Open && entry.finding.severity == severity
+                })
+                .count()
+        };
+        use agent_core::review_findings::Severity;
+        lines.push(format!(
+            "  open findings: {} BLOCKER, {} MAJOR, {} MINOR",
+            count(Severity::Blocker),
+            count(Severity::Major),
+            count(Severity::Minor)
+        ));
+    }
     for (index, pass) in detail.review_passes.iter().enumerate() {
         let reviews: Vec<String> = pass
             .reviews
