@@ -12,6 +12,7 @@ use serde_json::Value;
 use super::team::{LegacyError, TeamV1};
 use super::{InvalidState, SchemaVersion, State, StateError, StateWire, Team};
 use crate::ids::RoundId;
+use crate::task_list::{AllowLines, TaskList};
 
 /// The schema version this module reads.
 pub(super) const LEGACY_VERSION: u32 = 1;
@@ -52,17 +53,22 @@ pub(super) fn from_v1(text: &str) -> Result<State, StateError> {
     })?)
 }
 
-/// Keeps a line `Allow:` that a task list of an earlier version starts with in its brief: those versions did not read
-/// it as a permission, so it must neither refuse the state nor grant anything now.
+/// Marks a task list of an earlier version that starts with a line `Allow:` as one whose lines are brief: those
+/// versions did not read the line as a permission, so it must neither refuse the state nor grant anything now, and
+/// its text stays as it was.
 fn keep_allow_lines_in_briefs(value: &mut Value) {
     let Some(teams) = value.get_mut("teams").and_then(Value::as_array_mut) else {
         return;
     };
     for team in teams {
-        if let Some(list) = team.get_mut("task_list")
-            && let Some(text) = list.as_str()
-        {
-            *list = Value::from(crate::task_list::keep_allow_line_in_brief(text));
+        let Some(list) = team.get_mut("task_list") else {
+            continue;
+        };
+        let Some(text) = list.as_str() else {
+            continue;
+        };
+        if TaskList::has_allow_lines(text) {
+            *list = serde_json::json!({ "text": text, "allow_lines": AllowLines::Brief });
         }
     }
 }

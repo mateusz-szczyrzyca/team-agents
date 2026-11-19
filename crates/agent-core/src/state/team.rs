@@ -13,7 +13,7 @@ use super::values::Timestamp;
 use crate::config::RepoName;
 use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::{Keyword, Role, Tier, UnknownKeyword};
-use crate::task_list::{ItemMark, TaskList, TaskListError};
+use crate::task_list::{AllowLines, ItemMark, TaskList, TaskListError};
 
 mod legacy;
 mod rounds;
@@ -73,14 +73,33 @@ impl MergeMode {
 
 /// A task list as it was given: its text, which the state stores, and what the text parses into.
 ///
-/// Made only by [`TaskListText::new`], so the parsed list always is the parse of the stored text.
+/// Made only by [`TaskListText::new`] and [`TaskListText::with_allow_lines`], so the parsed list always is the parse of
+/// the stored text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
+#[serde(try_from = "TaskListWire", into = "TaskListWire")]
 pub struct TaskListText {
     /// The text, as given.
     text: String,
     /// The cached parse is boxed to keep run requests small as task headers grow.
     list: Box<TaskList>,
+    /// How the `Allow:` lines before the brief were read.
+    allow_lines: AllowLines,
+}
+
+/// How a [`TaskListText`] is written in the state: the text alone, and with how its `Allow:` lines are read only when
+/// they are not permissions.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum TaskListWire {
+    /// The text of a task list whose `Allow:` lines are permissions.
+    Text(String),
+    /// The text of a task list that an earlier version stored, whose `Allow:` lines are brief.
+    Marked {
+        /// The text, as stored.
+        text: String,
+        /// How its `Allow:` lines are read.
+        allow_lines: AllowLines,
+    },
 }
 
 impl TaskListText {
@@ -89,16 +108,48 @@ impl TaskListText {
     /// # Errors
     /// The [`TaskListError`] of the parse.
     pub fn new(text: String) -> Result<Self, TaskListError> {
-        let list = TaskList::parse(&text)?;
+        Self::with_allow_lines(text, AllowLines::Permissions)
+    }
+
+    /// Parses `text` as a task list whose `Allow:` lines are read as `allow_lines` says, and keeps both.
+    ///
+    /// # Errors
+    /// The [`TaskListError`] of the parse.
+    pub fn with_allow_lines(text: String, allow_lines: AllowLines) -> Result<Self, TaskListError> {
+        let list = TaskList::parse_with(&text, allow_lines)?;
         Ok(Self {
             text,
             list: Box::new(list),
+            allow_lines,
         })
     }
 
     getter!("The text, as given.", pub fn text(&self) -> &str = &self.text);
 
     getter!("The parsed list.", pub const fn list(&self) -> &TaskList = &self.list);
+}
+
+impl TryFrom<TaskListWire> for TaskListText {
+    type Error = TaskListError;
+
+    fn try_from(wire: TaskListWire) -> Result<Self, Self::Error> {
+        match wire {
+            TaskListWire::Text(text) => Self::new(text),
+            TaskListWire::Marked { text, allow_lines } => Self::with_allow_lines(text, allow_lines),
+        }
+    }
+}
+
+impl From<TaskListText> for TaskListWire {
+    fn from(value: TaskListText) -> Self {
+        match value.allow_lines {
+            AllowLines::Permissions => Self::Text(value.text),
+            AllowLines::Brief => Self::Marked {
+                text: value.text,
+                allow_lines: AllowLines::Brief,
+            },
+        }
+    }
 }
 
 impl TryFrom<String> for TaskListText {

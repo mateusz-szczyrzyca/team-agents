@@ -45,35 +45,16 @@ const DEPENDS_ON_PREFIX: &str = "Depends on:";
 /// What `Depends on:` says for a feature that waits for none; any case.
 const NO_DEPENDENCIES: &str = "none";
 
-/// `text`, a task list that an earlier version stored, with its first header line `Allow:` made part of the brief, as it
-/// was then: the line gets a leading space. Versions that did not read the line kept it in the brief, so it neither
-/// has to be a valid pattern nor grants anything.
-pub(crate) fn keep_allow_line_in_brief(text: &str) -> String {
-    let rest = text.strip_prefix(BYTE_ORDER_MARK);
-    let mut kept = String::with_capacity(text.len().saturating_add(1));
-    if rest.is_some() {
-        kept.push(BYTE_ORDER_MARK);
-    }
-    let rest = rest.unwrap_or(text);
-    let mut in_header = true;
-    let mut seen_text = false;
-    for line in rest.split_inclusive('\n') {
-        let content = line.trim_end_matches(['\r', '\n']);
-        if in_header {
-            if content.trim().is_empty() {
-                // Blank lines do not end the header.
-            } else if !seen_text && content.starts_with(COORDINATOR_PREFIX) {
-                seen_text = true;
-            } else {
-                in_header = false;
-                if content.starts_with(ALLOW_PREFIX) {
-                    kept.push(' ');
-                }
-            }
-        }
-        kept.push_str(line);
-    }
-    kept
+/// How the `Allow:` lines before the brief of a task list are read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AllowLines {
+    /// Each line is a permission, as a task list of this version means it.
+    #[default]
+    Permissions,
+    /// The lines are text of the brief, as every version before the lines existed read them: a state of such a version
+    /// may hold a brief that starts with one, and it neither has to be a valid pattern nor grants anything.
+    Brief,
 }
 
 /// Whether an item is marked as done in the text: `[ ]` or `[x]`.
@@ -360,6 +341,14 @@ impl TaskList {
     /// A [`TaskListError`]: the text is empty or over [`MAX_TASK_LIST_BYTES`], or a line is not valid where it is;
     /// all but those two carry the line.
     pub fn parse(text: &str) -> Result<Self, TaskListError> {
+        Self::parse_with(text, AllowLines::Permissions)
+    }
+
+    /// Parses a task list whose `Allow:` lines before the brief are read as `allow_lines` says.
+    ///
+    /// # Errors
+    /// The [`TaskListError`] of [`TaskList::parse`].
+    pub fn parse_with(text: &str, allow_lines: AllowLines) -> Result<Self, TaskListError> {
         if text.len() > MAX_TASK_LIST_BYTES {
             return Err(TaskListError::TooLarge {
                 len: text.len(),
@@ -367,11 +356,24 @@ impl TaskList {
             });
         }
         let text = text.strip_prefix(BYTE_ORDER_MARK).unwrap_or(text);
-        let mut parser = Parser::default();
+        let mut parser = Parser {
+            allow_lines,
+            ..Parser::default()
+        };
         for (index, line) in text.lines().enumerate() {
             parser.accept(NonZeroUsize::MIN.saturating_add(index), line)?;
         }
         parser.finish()
+    }
+
+    /// Whether `text` has a line `Allow:` before its brief, valid or not: an earlier version read such a line as brief.
+    #[must_use]
+    pub fn has_allow_lines(text: &str) -> bool {
+        match Self::parse(text) {
+            Ok(list) => !list.allowances.is_empty(),
+            Err(TaskListError::InvalidAllowance { .. }) => true,
+            Err(_) => false,
+        }
     }
 
     /// The name from the `Coordinator:` line, if the list starts with one. It may name a normal agent or an
@@ -662,6 +664,8 @@ struct Parser<'a> {
     started: bool,
     /// The coordinator named by the first line.
     coordinator: Option<AgentName>,
+    /// How a line `Allow:` before the brief is read.
+    allow_lines: AllowLines,
     /// Root-relative permissions given in the header.
     allowances: Vec<crate::task_allowance::TaskAllowance>,
     /// The lines before the first feature.
@@ -692,7 +696,8 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
         }
-        if self.features.is_empty()
+        if self.allow_lines == AllowLines::Permissions
+            && self.features.is_empty()
             && self.brief.iter().all(|line| line.trim().is_empty())
             && let Some(pattern) = text.strip_prefix(ALLOW_PREFIX)
         {
