@@ -48,7 +48,7 @@ and when (8.7); tokens (11.1).
 | `wake_up` | a message or a board item woke the task | |
 | `request` | a worker serves a request | `why_asked_by`: the run that asked (its task's latest run when the request was served) |
 | `fix_pass` | the reviewers asked for changes and the lead fixes | `why_pass`: the number of the fix pass of the item, from 1 |
-| `second_opinion` | an investigator checks one disputed blocker (prepared for later activation) | `why_pr`; `why_pass`: the fix pass requesting the opinion |
+| `second_opinion` | an investigator checks one disputed blocker | `why_pr`; `why_pass`: the fix pass requesting the opinion |
 | `review` | a reviewer reviews a pull request — also again after a fix pass | `why_pr`; `why_pass`: how many fix passes the item had when the review was asked, `0` for the first |
 | `ask_human` | the fix passes are used up and the lead puts the question to the human | |
 | `verdict_missing` | a reviewer's report had no verdict and is asked for again | |
@@ -394,7 +394,7 @@ linked to every round of its team; a team-wide control or loss note when no roun
 | `pull_ready` | the pull request was marked ready | `pr` | `pr N` |
 | `review_asked` | a reviewer was asked | `pr`, `pass` (`0` is the first review), `head`, `reviewer`, `task`, optional `among` (the draw candidates) | `pr N pass P reviewer R` |
 | `review_submitted` | a reviewer submitted | `pr`, `pass`, `reviewer`, `task`, `verdict`, `report` whole | `pr N pass P reviewer R` |
-| `second_opinion_asked`, `finding_confirmed`, `finding_not_confirmed` | a requested second opinion or its outcome (prepared for later activation) | `pr`, `number`, `pass`, `by`, `why` | finding number, investigator and reason/evidence |
+| `second_opinion_asked`, `finding_confirmed`, `finding_not_confirmed` | a requested second opinion, unsuccessful assignment or its outcome | `pr`, `number`, `pass`, `by`, `why` | finding number, investigator and reason/evidence |
 | `finding_explained`, `finding_accepted`, `finding_rejected`, `finding_raised` | a lead explanation or verifier decision | `pr`, `number`, `pass`, `by`, `why` | finding number, actor and evidence |
 | `fix_pass_started` | the reviews asked for changes | `pr`, `pass` (from 1), `of`, `findings` whole | `pr N fix pass P` |
 | `pull_approved` | both reviews approved | `pr` | `pr N` |
@@ -705,3 +705,12 @@ History schema 9 admits run reason `second_opinion` and events `second_opinion_a
 `finding_not_confirmed`. Migration 009 rebuilds the run and event keyword constraints, preserving existing
 records, round links and indexed search. The schema-8 fixture is loaded, populated with old-format records,
 and migrated by the compatibility test. No daemon emits these records until the lifecycle is activated.
+
+
+Bounded second-opinion recovery reuses schema 9. `second_opinion_asked` records the original request's lead
+and reason; an unsuccessful assignment records its investigator and the catalogued task/end cause using
+the same event. Its existing per-investigator identity retains each failed attempt without duplicate rows.
+Each replacement's ordinary `second_opinion` run names the selected investigator and pass. Confirmed and
+not-confirmed events retain the accepted investigator and evidence. The round story prints these in words,
+previews the first evidence line, and preserves the complete evidence below it. No database migration or
+new keyword is necessary for these records; databases from before bounded recovery remain readable.
