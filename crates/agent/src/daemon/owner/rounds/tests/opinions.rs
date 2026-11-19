@@ -391,7 +391,7 @@ async fn opinion_history_records_the_request_outcome_and_run_reason() {
                 pr: agent_core::state::PrNumber::new(std::num::NonZeroU32::MIN),
                 number: *number,
                 pass: 1,
-                by: "claude-1".parse().unwrap(),
+                by: investigator.as_str().parse().unwrap(),
                 why: opinion.request.reason.as_str().to_owned(),
             };
             let by = investigator.as_str().parse().unwrap();
@@ -864,6 +864,15 @@ async fn replacement_history_keeps_each_failed_investigator_and_its_reason() {
     let events = opinion_events(&reader, &team);
     let ledger = state.team(&team).unwrap().items()[0].findings().unwrap();
     for number in ledger.opinions().keys() {
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(&event.event,
+            HistoryEvent::SecondOpinionAsked { number: found, why, .. }
+            if found == number && why == ledger.opinions()[number].request.reason.as_str()))
+                .count(),
+            3
+        );
         for attempt in ledger.opinion_attempts(*number) {
             assert!(
                 events.iter().any(
