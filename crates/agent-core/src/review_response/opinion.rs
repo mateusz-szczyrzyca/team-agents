@@ -159,8 +159,14 @@ pub fn parse_lead(
         }
         normalized.push('\n');
     }
+    for (&number, &(line, _)) in &requests {
+        if let Some(reason) = refusal(open, number, permission) {
+            return Err(OpinionError::Forbidden { number, line, reason });
+        }
+    }
     let legacy: Vec<_> = open
         .iter()
+        .filter(|entry| entry.severity.blocks())
         .map(|entry| (entry.number, entry.severity, entry.explained))
         .collect();
     super::parse_lead(&normalized, &legacy)?
