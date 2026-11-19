@@ -566,6 +566,7 @@ fn opinion_events(
                 if matches!(
                     event.event,
                     HistoryEvent::SecondOpinionAsked { .. }
+                        | HistoryEvent::SecondOpinionEnded { .. }
                         | HistoryEvent::FindingConfirmed { .. }
                         | HistoryEvent::FindingNotConfirmed { .. }
                 ) =>
@@ -876,7 +877,7 @@ async fn replacement_history_keeps_each_failed_investigator_and_its_reason() {
         for attempt in ledger.opinion_attempts(*number) {
             assert!(
                 events.iter().any(
-                    |event| matches!(&event.event, HistoryEvent::SecondOpinionAsked { number: found, why, .. }
+                    |event| matches!(&event.event, HistoryEvent::SecondOpinionEnded { number: found, why, .. }
                 if found == number && why.contains(attempt.investigator.as_str()) && why.contains("run failed"))
                 ),
                 "missing failure of {:?}: {events:?}",
