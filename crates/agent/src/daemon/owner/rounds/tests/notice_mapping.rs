@@ -207,6 +207,11 @@ async fn unanswered_opinion_has_its_own_notice_kind_and_requests_a_human_decisio
             .with("number", "5")
             .unwrap()
             .with("task", "task-2")
+            .unwrap()
+            .with(
+                "attempts",
+                "inv-first: failed; inv-second: silent; inv-third: no report",
+            )
             .unwrap(),
         "Note: Second opinion needs attention",
     )])
