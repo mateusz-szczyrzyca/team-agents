@@ -142,7 +142,7 @@ STATUS: SLEEPING
 <time>  gate for task <task-4>: passed at <commit-2> (took <duration>); output <home>/tasks/<task-4>/gate-1.log
 <time>  pull request #1 opened: branch agents/inv-lead/<task-4> at <commit-2>
   title: Item 1.1: The first item
-  ----- pull request body (525 bytes) -----
+  ----- pull request body (969 bytes) -----
 Work of the team `<team-2>` on `example`, opened by the harness after the repository's gate passed on this branch
 (passed at [`<commit-2>`](https://github.com/octo/example/commit/<commit-2>)).
 
@@ -161,6 +161,19 @@ Do the first thing in the repository.
 ## Reviews
 
 The configured number of investigators from outside the team review this pull request. Their reports are posted here as reviews.
+
+The lead supplied no description.
+
+## Size
+
+1 changed lines outside tests (PR-1).
+
+## Gate
+
+Commit: [`<commit-2>`](https://github.com/octo/example/commit/<commit-2>).
+Finished: <time>.
+Result: passed at [`<commit-2>`](https://github.com/octo/example/commit/<commit-2>).
+Log: `<home>/tasks/<task-4>/gate-1.log`.
   ----- end of pull request body -----
 <time>  pull request #1 marked ready for review
 <time>  review pass 1 of #1 asked of inv-r1 (task <task-11>) at <commit-2>
@@ -224,7 +237,7 @@ FINDINGS
    CHECK: read src/lib.rs:7
   ----- end of review report -----
 <time>  fix pass 1 of 5 on #1 started
-  ----- findings sent to the team (1595 bytes) -----
+  ----- findings sent to the team (2261 bytes) -----
 # THE REVIEWERS ASKED FOR CHANGES (pull request #1, fix pass 1 of 5)
 
 All reviews of your pull request are in, and at least one asks for changes. The reports, each with its verdict:
@@ -259,6 +272,14 @@ with `STATUS: DONE`.
 
 Do not push, and do not open or update the pull request: the harness pushes your branch when the gate has passed at its
 head, and asks available investigators to verify the fixes, preferring a different group. Do not answer the reviewers on GitHub.
+
+# YOUR PART OF THE PULL REQUEST DESCRIPTION
+
+Write and update `<home>/tasks/<task-4>/description.md`, outside the repository. Include what and why, tests and their results,
+deviations, out of scope, skipped tests and lint suppressions with their paths and reasons. The harness publishes it
+when the pull request opens and refreshes it after file-only changes too. Do not edit the pull request on GitHub.
+The harness writes Size and Gate from the published commit: omit those sections from your file. If the file is missing
+or empty, publication continues and says that you supplied no description. If writing fails, report the error.
   ----- end of findings sent to the team -----
 <time>  run <run-15>: inv-lead (investigator, claude) as coordinator, because fix pass 1 of the item
     task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/inv-lead/<task-4>

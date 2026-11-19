@@ -271,6 +271,14 @@ enum PublishError {
         /// What is wrong with it, if the text was refused.
         source: Option<InvalidValue>,
     },
+    /// The lead contribution cannot be read.
+    #[error("cannot read lead description {path:?}")]
+    Description {
+        /// The contribution file.
+        path: std::path::PathBuf,
+        /// The read failure.
+        source: agent_runtime::text_file::TextFileError,
+    },
     /// Git refused.
     #[error("git failed")]
     Git(#[from] GitError),
@@ -437,6 +445,9 @@ impl Owner {
         let Some(pulls) = self.pulls.clone() else {
             return Ok(());
         };
+        self.refresh_descriptions(&pulls, team)
+            .await
+            .map_err(OpinionDaemonError::from)?;
         self.merge_approved(&pulls, team, look).await?;
         self.read_fix_responses(&pulls, team, look).await?;
         self.replace_silent_opinions(&pulls, team, Timestamp::now(&self.parts.clock)?)

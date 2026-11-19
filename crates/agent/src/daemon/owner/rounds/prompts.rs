@@ -97,6 +97,33 @@ pub(in crate::daemon::owner) async fn sections_for(
     working: &std::path::Path,
     why: Option<&Why>,
 ) -> Result<Option<Addition>, SectionError> {
+    let addition = round_sections_for(ctx, texts, found, working, why).await?;
+    if !matches!(found.role, Role::Solo | Role::Coordinator) {
+        return Ok(addition);
+    }
+    let file = ctx
+        .home
+        .task_dir(found.member.task())
+        .join(crate::daemon::pr::description::LEAD_DESCRIPTION_FILE);
+    let instruction = texts.render(
+        AutopilotPrompt::PrLeadInstructions,
+        &Variables::new().with("description_file", file.display().to_string())?,
+    )?;
+    Ok(Some(match addition {
+        Some(Addition::Replace(text)) => Addition::Replace([text.trim_end(), instruction.trim_end()].join("\n\n")),
+        Some(Addition::Append(text)) => Addition::Append([text.trim_end(), instruction.trim_end()].join("\n\n")),
+        None => Addition::Append(instruction.trim_end().to_owned()),
+    }))
+}
+
+/// Renders the pending operation before the shared lead instructions.
+async fn round_sections_for(
+    ctx: &Context<'_>,
+    texts: &AutopilotPrompts,
+    found: &TaskRef<'_>,
+    working: &std::path::Path,
+    why: Option<&Why>,
+) -> Result<Option<Addition>, SectionError> {
     if let Some((id, number, opinion)) = crate::daemon::review::pending_opinion(found.team, found.member.task()) {
         if matches!(why, Some(Why::VerdictMissing)) {
             return Ok(Some(Addition::Replace(
@@ -402,6 +429,11 @@ pub(super) async fn review_request(
             repo: team.repo().clone(),
         })?;
     let head = head_of(ctx, found, working).await?;
+    let record = if let Some((_, lead)) = team.crew().roster().first() {
+        agent_runtime::store::read_gate_record(&ctx.home.gate_record_file(lead.task())).await?
+    } else {
+        None
+    };
     let verification = verification_of(&items);
     let values = Variables::new()
         .with("team", team.id().as_str())?
@@ -429,6 +461,7 @@ pub(super) async fn review_request(
     } else {
         vec![texts.render(AutopilotPrompt::ReviewRequest, &values)?]
     };
+    sections.push(review_gate(texts, &head, record.as_ref())?);
     if crate::daemon::review::independent_first_review(team, task) {
         sections.push(texts.render(AutopilotPrompt::ReviewIndependent, &Variables::new())?);
     }
@@ -504,3 +537,27 @@ pub(super) async fn verification_changes(
         &Variables::new().with("base", base)?,
     )?)
 }
+
+/// Supplies only a gate recorded at the reviewed head; otherwise requests the normal gate.
+fn review_gate(
+    texts: &AutopilotPrompts,
+    head: &CommitId,
+    record: Option<&agent_core::state::GateRecord>,
+) -> Result<String, SectionError> {
+    let values = Variables::new().with("head", head.as_str())?;
+    let (prompt, values) = if let Some(record) = record.filter(|record| record.result.head == *head) {
+        (
+            AutopilotPrompt::ReviewGate,
+            values
+                .with("finished", record.result.finished_at.to_string())?
+                .with("result", record.summary())?
+                .with("log", record.result.log.as_path().display().to_string())?,
+        )
+    } else {
+        (AutopilotPrompt::ReviewGateMissing, values)
+    };
+    Ok(texts.render(prompt, &values)?.trim_end().to_owned())
+}
+
+#[cfg(test)]
+mod tests;

@@ -1023,3 +1023,25 @@ async fn a_mixed_allow_and_refuse_answer_records_the_issues_the_human_allowed() 
         .collect();
     assert_eq!(allowed_issues, [vec!["`tests/existing.txt`".to_owned()]]);
 }
+
+#[tokio::test]
+async fn a_lint_suppression_named_in_the_lead_contribution_is_disclosed_before_review() {
+    let mut rig = checking_rig("script:description-lint,done", 2, SILENT, SILENT).await;
+    script(
+        &rig,
+        "description-lint",
+        &format!(
+            "printf '#[allow(dead_code)]\\nfn a() {{}}\\n' > src/lib.rs\necho case > tests/new.txt\ngit add src/lib.rs tests/new.txt\ncommit -m 'Add a function and its test'\nprintf '## Suppressions\\n\\n- src/lib.rs: the function is wired by a later item.\\n' > '{}/tasks/'\"$(basename \"$PWD\")\"'/description.md'\n",
+            rig.home.root().display()
+        ),
+    );
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], NAMES_A_FILE, MergeMode::Autopilot, None).await;
+    rig.wait_for("the checks to decide", || {
+        !rig.github.calls("POST", "/graphql").is_empty() || rig.runs(&tasks[0]) > 1
+    })
+    .await;
+    rig.stop().await.unwrap();
+    assert_eq!(rig.github.calls("POST", "/graphql").len(), 1);
+    assert_eq!(record(&rig, &tasks[0]).await.passes_of(&["1.1".parse().unwrap()]), 0);
+}

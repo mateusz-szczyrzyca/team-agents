@@ -69,13 +69,17 @@ mod gate_files {
 
         assert_eq!(after_first, first);
         assert_eq!(after_second, second);
-        let names: Vec<String> = std::fs::read_dir(home.task_dir(&task()))
+        let mut names: Vec<String> = std::fs::read_dir(home.task_dir(&task()))
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
+        let previous: GateRecord =
+            serde_json::from_slice(&std::fs::read(home.task_dir(&task()).join("gate-previous.json")).unwrap()).unwrap();
+        assert_eq!(previous, first);
+        names.sort();
         assert_eq!(
             names,
-            ["gate.json"],
+            ["gate-previous.json", "gate.json"],
             "a temporary file was left in the task's directory"
         );
     }
