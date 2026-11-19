@@ -80,23 +80,31 @@ pub(super) struct Look {
 impl Owner {
     // ---- starting a team ------------------------------------------------------------------------------------
 
-    /// Forms and starts the team `request` asks for; the answer is the refusal when it cannot be started.
-    ///
-    /// # Errors
-    /// [`OwnerError`] when the state cannot be saved.
-    pub(super) async fn run_request(&mut self, request: RunRequest) -> Result<Result<Reply, Failure>, OwnerError> {
+    /// Refuses starting a team if free disk space is below minimum threshold.
+    async fn check_disk_for_run(&mut self) -> Result<(), Failure> {
         let free_bytes = self.check_free_space().await;
         let min_limit_gb = self.parts.settings.config.disk().min_free_gb;
         let min_limit_bytes = min_limit_gb.saturating_mul(1024 * 1024 * 1024);
         if free_bytes < min_limit_bytes {
             let free_gb = free_bytes / (1024 * 1024 * 1024);
-            return Ok(Err(Failure {
+            return Err(Failure {
                 kind: FailureKind::Refused,
                 message: format!(
                     "not enough free disk space: {free_gb} GB free, minimum is {min_limit_gb} GB; remove build directories or unused worktrees in {}",
                     self.parts.store.home().worktrees_dir().display()
                 ),
-            }));
+            });
+        }
+        Ok(())
+    }
+
+    /// Forms and starts the team `request` asks for; the answer is the refusal when it cannot be started.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the state cannot be saved.
+    pub(super) async fn run_request(&mut self, request: RunRequest) -> Result<Result<Reply, Failure>, OwnerError> {
+        if let Err(refusal) = self.check_disk_for_run().await {
+            return Ok(Err(refusal));
         }
         let formed = match form(
             &request,
