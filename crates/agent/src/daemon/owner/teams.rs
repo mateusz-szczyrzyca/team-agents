@@ -23,6 +23,7 @@ use agent_core::status::{ItemStatus, TaskStatus};
 use agent_runtime::agentbus::{
     AgentBusError, DelegationStatus, DelegationUpdate, FailureClass, MemberState, Recipient, RequestId, Woken,
 };
+use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::git::{CommitIdentity, DeleteMode, Git, GitError, RemoveMode, Revision, WorktreeBranch};
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
@@ -81,11 +82,40 @@ pub(super) struct Look {
 impl Owner {
     // ---- starting a team ------------------------------------------------------------------------------------
 
+    /// Refuses starting a team if free disk space is below minimum threshold.
+    fn check_disk_for_run(&mut self) -> Result<(), Failure> {
+        let Some(free_bytes) = self.check_free_space() else {
+            return Err(Failure {
+                kind: FailureKind::Refused,
+                message: format!(
+                    "cannot measure the free disk space of {}: no run starts until it can be measured; see the daemon log",
+                    self.parts.store.home().root().display()
+                ),
+            });
+        };
+        let min_limit_gb = self.parts.settings.config.disk().min_free_gb;
+        let min_limit_bytes = min_limit_gb.saturating_mul(GIBIBYTE);
+        if free_bytes < min_limit_bytes {
+            let free_gb = free_bytes / GIBIBYTE;
+            return Err(Failure {
+                kind: FailureKind::Refused,
+                message: format!(
+                    "not enough free disk space: {free_gb} GB free, minimum is {min_limit_gb} GB; remove build directories or unused worktrees in {}",
+                    self.parts.store.home().worktrees_dir().display()
+                ),
+            });
+        }
+        Ok(())
+    }
+
     /// Forms and starts the team `request` asks for; the answer is the refusal when it cannot be started.
     ///
     /// # Errors
     /// [`OwnerError`] when the state cannot be saved.
     pub(super) async fn run_request(&mut self, request: RunRequest) -> Result<Result<Reply, Failure>, OwnerError> {
+        if let Err(refusal) = self.check_disk_for_run() {
+            return Ok(Err(refusal));
+        }
         let formed = match form(
             &request,
             &self.parts.settings.config,
@@ -170,12 +200,23 @@ impl Owner {
         self.parts.state = next;
         log_initial_lifecycle(&formed);
         self.record_team_start(&request, &id);
+        self.publish_team_started(&id, &tasks, started)?;
+        Ok(Ok(Reply::Started { team: id, tasks }))
+    }
+
+    /// Publishes the initial events and logs when a team starts.
+    fn publish_team_started(
+        &mut self,
+        id: &TeamId,
+        tasks: &[TaskId],
+        started: Vec<EventKind>,
+    ) -> Result<(), OwnerError> {
         let now = Timestamp::now(&self.parts.clock)?;
         self.publish(now, EventKind::TeamStarted { team: id.clone() });
         for event in started {
             self.publish(now, event);
         }
-        self.publish_summary(now, &id);
+        self.publish_summary(now, id);
         tracing::info!(
             event = LogEvent::TeamChanged.as_str(),
             team = %id,
@@ -183,8 +224,8 @@ impl Owner {
             tasks = tasks.len(),
             "a team is started"
         );
-        self.look_at(&id);
-        Ok(Ok(Reply::Started { team: id, tasks }))
+        self.look_at(id);
+        Ok(())
     }
 
     /// Makes the worktree of every task of `formed`, from the checkout of the request; when one cannot be made, those

@@ -306,6 +306,31 @@ impl Default for Limits {
     }
 }
 
+/// `[disk]`: free space thresholds for releasing build directories and preventing new runs.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Disk {
+    /// Free space in gigabytes below which reviewer target/ is cleaned up and a warning is issued.
+    pub low_free_gb: u64,
+    /// Free space in gigabytes below which new runs are not started.
+    pub min_free_gb: u64,
+}
+
+/// Default free space threshold in gigabytes for low-space warnings and reviewer target cleanup.
+const DEFAULT_LOW_FREE_GB: u64 = 100;
+
+/// Default free space threshold in gigabytes for refusing new runs.
+const DEFAULT_MIN_FREE_GB: u64 = 20;
+
+impl Default for Disk {
+    fn default() -> Self {
+        Self {
+            low_free_gb: DEFAULT_LOW_FREE_GB,
+            min_free_gb: DEFAULT_MIN_FREE_GB,
+        }
+    }
+}
+
 /// `[review]`: what happens to a round that the checks or the reviewers send back.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -532,6 +557,8 @@ pub struct Config {
     watchdog: Watchdog,
     /// The limit pauses.
     limits: Limits,
+    /// The free space thresholds.
+    disk: Disk,
     /// The review fix passes.
     review: Review,
     /// The identity of the agents' commits.
@@ -591,6 +618,9 @@ struct RawConfig {
     /// See [`Config::limits`].
     #[serde(default)]
     limits: Limits,
+    /// See [`Config::disk`].
+    #[serde(default)]
+    disk: Disk,
     /// See [`Config::review`].
     #[serde(default)]
     review: Review,
@@ -634,6 +664,7 @@ impl RawConfig {
             build,
             watchdog,
             limits,
+            disk,
             review,
             git,
             github,
@@ -666,6 +697,7 @@ impl RawConfig {
             build,
             watchdog,
             limits,
+            disk,
             review,
             git,
             github,
@@ -821,6 +853,12 @@ impl Config {
     #[must_use]
     pub fn limits(&self) -> &Limits {
         &self.limits
+    }
+
+    /// Free space thresholds for releasing build directories and preventing new runs.
+    #[must_use]
+    pub fn disk(&self) -> &Disk {
+        &self.disk
     }
 
     /// The review fix passes.
@@ -1385,6 +1423,22 @@ workers = ["qwen", "qwen"]"#,
     fn non_ascii_text_in_values_and_comments_is_read() {
         let config = config("# zażółć gęślą jaźń\n[git]\nname = \"{agent} ✓\"\n");
         assert_eq!(config.git().name.render(&agent("a")), "a ✓");
+    }
+
+    #[test]
+    fn configuration_without_disk_reads_default_thresholds() {
+        let text = "[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n";
+        let config = Config::from_toml_str(text).unwrap();
+        assert_eq!(config.disk().low_free_gb, 100);
+        assert_eq!(config.disk().min_free_gb, 20);
+    }
+
+    #[test]
+    fn configuration_with_disk_reads_custom_thresholds() {
+        let text = "[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n\n[disk]\nlow_free_gb = 50\nmin_free_gb = 10\n";
+        let config = Config::from_toml_str(text).unwrap();
+        assert_eq!(config.disk().low_free_gb, 50);
+        assert_eq!(config.disk().min_free_gb, 10);
     }
 
     #[test]

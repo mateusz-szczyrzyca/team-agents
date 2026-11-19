@@ -217,7 +217,7 @@ pub(crate) fn resolve_agent_binary_dir_from(
 }
 
 /// Where the daemon looks for what belongs to the user it runs as, read from the environment once at its start.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) struct Surroundings {
     /// The home directory of the user, where the VS Code servers keep their directories; `None` when it is not known.
     pub(crate) user_home: Option<PathBuf>,
@@ -225,6 +225,8 @@ pub(crate) struct Surroundings {
     pub(crate) runtime_dir: PathBuf,
     /// Another directory that may hold sockets of windows.
     pub(crate) fallback_dir: PathBuf,
+    /// The measure of free disk space of the file system of the home; the system measure in a running daemon.
+    pub(crate) free_space: agent_runtime::disk::SharedFreeSpace,
 }
 
 impl Surroundings {
@@ -238,6 +240,7 @@ impl Surroundings {
             user_home: std::env::var_os("HOME").map(PathBuf::from),
             runtime_dir,
             fallback_dir: PathBuf::from("/tmp"),
+            free_space: agent_runtime::disk::SharedFreeSpace::system(),
         }
     }
 }
@@ -248,7 +251,13 @@ impl Surroundings {
 /// [`DaemonError`].
 #[cfg(test)]
 pub(crate) async fn run(setup: DaemonSetup, shutdown: CancellationToken) -> Result<(), DaemonError> {
-    run_in(setup, Surroundings::from_process(), shutdown).await
+    // Tests never measure the disk of the machine they run on: the fake space is far above both limits.
+    let free_space = agent_runtime::disk::FakeFreeSpace::new(200 * agent_runtime::disk::GIBIBYTE);
+    let surroundings = Surroundings {
+        free_space: agent_runtime::disk::SharedFreeSpace::new(free_space),
+        ..Surroundings::from_process()
+    };
+    run_in(setup, surroundings, shutdown).await
 }
 
 /// Runs the daemon with the explicitly installed process logging layer.
@@ -381,6 +390,7 @@ async fn run_with_rng_and_log_layer(
     // The side tasks are scoped, not only polled with the subscriber: one that is still going when the daemon ends is
     // dropped with it, and its spans close in the registry that made them.
     sides.spawn(Scoped::new(server::serve(listener, inbox, serving), dispatch.clone()));
+    let emergency_notifier = notifier.clone();
     sides.spawn(Scoped::new(
         notifier::run(deliveries, notifier, opened.history.clone()),
         dispatch.clone(),
@@ -416,6 +426,8 @@ async fn run_with_rng_and_log_layer(
             events,
             local_offset: setup.local_offset,
             tick: timings.tick,
+            notifier: emergency_notifier,
+            free_space: surroundings.free_space.clone(),
         },
         shutdown.clone(),
     )

@@ -1065,6 +1065,9 @@ member and resume it (`agent say <task>`, `agent resume <task>`). Resuming a tas
 for items assigned to that task. Existing notification files identify the item and the failed run, preserving suppression
 across daemon restarts; a later failed run can notify again.
 
+Build directories (`target/`) are released when a round closes, and when a reviewer finishes while free disk space is below `disk.low_free_gb` (default `100`), logging `build_directory_removed`. Only `target/` within harness worktrees is ever removed. Free disk space is continuously tracked: below `disk.low_free_gb`, a notification lists the five largest worktrees and `agent status` reports the free space; below `disk.min_free_gb` (default `20`), `agent run` is refused with cleanup guidance, open rounds wait with a single notification, and waiting rounds resume automatically once free space is restored.
+`agent status` reads the last measured free space from `AGENTS_HOME/.free_space`, a plain number of bytes that the daemon writes at each measurement; the line is absent until the daemon has measured, and shows the reason when the file or `config.toml` cannot be read. When a state file cannot be saved, the daemon first runs the notification command once with the reason as its only argument and no file is written; a failure of that try is logged and the daemon stops as before.
+
 `bin/agent` is being rewritten in Rust (the Cargo workspace in `crates/`; the plan and the layout are in
 [`docs/architecture.md`](docs/architecture.md)). The new `agent` is **not installed** by `install.sh` and is not what
 `agent` means in the rest of this README: it runs only against a separate `AGENTS_HOME` and never touches the home of the
@@ -1244,8 +1247,12 @@ finding has no or another severity or no check, or whose verdict contradicts its
 `[MAJOR]`, `REQUEST_CHANGES` with neither), goes back to its reviewer. The findings of a pull request keep their numbers over
 all review passes; a reviewer of a later pass answers for every open one (`FINDING 3: RESOLVED` or `FINDING 3: OPEN — why`).
 After RESOLVED, an optional nonempty reason may use ` — reason`, ` - reason`, or `: reason`; the saved report retains it.
-The harness keeps one comment on the pull request with the table of all findings, edited after every pass, and the fix-pass
-text names the findings that block by number. `agent status <round>` counts the open ones of each severity. Pull requests
+The harness keeps one comment on the pull request with all findings, edited after every pass, and the fix-pass
+text names the findings that block by number. The comment is a list, not a table: a header line counts the open findings
+of each severity (`open — 0 BLOCKER, 1 MAJOR, 0 MINOR; closed — 2`), then each open finding has an entry: a first line with
+its number, severity, rule, state (`open`, `resolved`, `not confirmed`), reporter and place, and below it the text cut to
+160 characters at a word boundary (`…` when cut). An explanation or a second opinion is a third line of its entry.
+Closed findings (resolved, not confirmed, or explained and accepted) are folded in one `<details>` block, `Closed (N)`. `agent status <round>` counts the open ones of each severity. Pull requests
 opened before the relevant protocol update keep their original review rules until they end.
 
 For new pull requests, the lead's fix message answers every open blocking finding before `STATUS:`:

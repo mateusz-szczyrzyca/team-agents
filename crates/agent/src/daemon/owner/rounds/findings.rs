@@ -135,62 +135,152 @@ pub(super) fn blocking_text(texts: &AutopilotPrompts, ledger: Option<&Findings>)
     selected_text(texts, ledger, |entry| entry.finding.severity.blocks())
 }
 
-/// Escapes report data as one Markdown table cell without interpreting its markup.
-fn cell(text: &str) -> String {
-    text.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .replace('&', "&amp;")
+/// The longest finding text the comment shows, in characters; a longer text is cut at a word boundary.
+const COMMENT_TEXT_LIMIT: usize = 160;
+
+/// Collapses every run of whitespace to one space, so that a text stays on one Markdown line.
+fn collapse(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Escapes the characters of report data that would open markup or break a table bar in a comment line.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('|', "&#124;")
 }
 
-/// The complete findings table, including resolved and nonblocking entries.
-fn table(texts: &AutopilotPrompts, ledger: &Findings) -> Result<String, TextError> {
-    let mut rows = Vec::new();
+/// Cuts `text` to at most `limit` characters, at the last space before the limit when there is one, with `…` when cut.
+fn cut(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_owned();
+    }
+    let head: String = text.chars().take(limit).collect();
+    let kept = head.rsplit_once(' ').map_or(head.as_str(), |(kept, _)| kept);
+    format!("{kept}…")
+}
+
+/// The finding text as a comment line: a leading character that Markdown reads as a block start is written as a
+/// character reference, so the line stays a paragraph line of its entry.
+fn text_line(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_punctuation() || first.is_ascii_digit() => {
+            format!("&#{};{}", u32::from(first), escape(chars.as_str()))
+        }
+        _ => escape(text),
+    }
+}
+
+/// Whether the comment folds a finding among the closed ones: fixed, not confirmed, or explained and accepted.
+fn is_closed(entry: &agent_core::state::RecordedFinding, ledger: &Findings) -> bool {
+    use agent_core::state::ExplanationStatus;
+    entry.status != FindingStatus::Open
+        || ledger
+            .disputes()
+            .and_then(|disputes| disputes.explanations.get(&entry.number))
+            .is_some_and(|explanation| explanation.status == ExplanationStatus::Accepted)
+}
+
+/// One finding of the comment: its first line, its text and, when there is one, its explanation and second opinion
+/// on a third line.
+fn entry_text(
+    texts: &AutopilotPrompts,
+    ledger: &Findings,
+    entry: &agent_core::state::RecordedFinding,
+) -> Result<String, TextError> {
+    let severity = match entry.finding.severity {
+        Severity::Blocker => AutopilotPrompt::ReviewSeverityBlocker,
+        Severity::Major => AutopilotPrompt::ReviewSeverityMajor,
+        Severity::Minor => AutopilotPrompt::ReviewSeverityMinor,
+    };
+    let severity = texts.render(severity, &Variables::new())?;
+    let state = match entry.status {
+        FindingStatus::Open => "open",
+        FindingStatus::Resolved => "resolved",
+        FindingStatus::NotConfirmed => "not confirmed",
+    };
+    let mut notes = Vec::new();
+    for note in [
+        explanation_text(texts, ledger, entry.number)?,
+        opinion_text(texts, ledger, entry.number)?,
+    ] {
+        if !note.is_empty() {
+            notes.push(escape(&collapse(&note)));
+        }
+    }
+    let note = if notes.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", notes.join(" · "))
+    };
+    let values = Variables::new()
+        .with("number", entry.number.to_string())?
+        .with("severity", severity.trim())?
+        .with("rule", escape(&collapse(&entry.finding.rule)))?
+        .with("place", escape(&collapse(&entry.finding.place)))?
+        .with("state", state)?
+        .with("reporter", escape(&collapse(entry.reporter.as_str())))?
+        .with(
+            "text",
+            text_line(&cut(&collapse(&entry.finding.text), COMMENT_TEXT_LIMIT)),
+        )?
+        .with("note", note)?;
+    Ok(texts
+        .render(AutopilotPrompt::ReviewFindingEntry, &values)?
+        .trim_end()
+        .to_owned())
+}
+
+/// The findings comment: the open entries in number order, then the closed ones folded in one `<details>` block.
+fn comment(texts: &AutopilotPrompts, ledger: &Findings) -> Result<String, TextError> {
+    let mut open_entries = Vec::new();
+    let mut closed_entries = Vec::new();
+    let (mut blockers, mut majors, mut minors) = (0_usize, 0_usize, 0_usize);
     for entry in ledger.entries() {
-        let severity = match entry.finding.severity {
-            Severity::Blocker => AutopilotPrompt::ReviewSeverityBlocker,
-            Severity::Major => AutopilotPrompt::ReviewSeverityMajor,
-            Severity::Minor => AutopilotPrompt::ReviewSeverityMinor,
-        };
-        let severity = texts.render(severity, &Variables::new())?;
-        let status = match entry.status {
-            FindingStatus::Open => "open",
-            FindingStatus::Resolved => "resolved",
-            FindingStatus::NotConfirmed => "not confirmed",
-        };
-        let values = Variables::new()
-            .with("number", entry.number.to_string())?
-            .with("severity", severity.trim())?
-            .with("rule", cell(&entry.finding.rule))?
-            .with("place", cell(&entry.finding.place))?
-            .with(
-                "text",
-                cell(&format!(
-                    "{} {} {}",
-                    entry.finding.text,
-                    explanation_text(texts, ledger, entry.number)?,
-                    opinion_text(texts, ledger, entry.number)?
-                )),
-            )?
-            .with("status", status)?
-            .with("reporter", entry.reporter.as_str())?;
-        rows.push(texts.render(AutopilotPrompt::ReviewFindingsRow, &values)?);
+        let text = entry_text(texts, ledger, entry)?;
+        if is_closed(entry, ledger) {
+            closed_entries.push(text);
+            continue;
+        }
+        match entry.finding.severity {
+            Severity::Blocker => blockers = blockers.saturating_add(1),
+            Severity::Major => majors = majors.saturating_add(1),
+            Severity::Minor => minors = minors.saturating_add(1),
+        }
+        open_entries.push(text);
+    }
+    let mut sections = Vec::new();
+    if !open_entries.is_empty() {
+        sections.push(open_entries.join("\n\n"));
+    }
+    if !closed_entries.is_empty() {
+        let block = texts.render(
+            AutopilotPrompt::ReviewFindingsClosed,
+            &Variables::new()
+                .with("count", closed_entries.len().to_string())?
+                .with("entries", closed_entries.join("\n\n"))?,
+        )?;
+        sections.push(block.trim_end().to_owned());
     }
     Ok(texts.render(
-        AutopilotPrompt::ReviewFindingsTable,
-        &Variables::new().with("rows", rows.join("").trim_end())?,
+        AutopilotPrompt::ReviewFindingsList,
+        &Variables::new()
+            .with("blockers", blockers.to_string())?
+            .with("majors", majors.to_string())?
+            .with("minors", minors.to_string())?
+            .with("closed", closed_entries.len().to_string())?
+            .with("entries", sections.join("\n\n"))?,
     )?)
 }
 
 impl Owner {
-    /// A failed table publication is logged; reports and decisions remain authoritative.
+    /// A failed comment publication is logged; reports and decisions remain authoritative.
     pub(super) async fn post_findings(&mut self, pulls: &Pulls, lead: &Lead, team: &TeamId, asked: &Asked) {
         if let Err(error) = self.try_post_findings(pulls, lead, team, asked).await {
             tracing::warn!(event = LogEvent::GithubCallFailed.as_str(), pr = %asked.pr.number,
-                error = %error_chain(&error), "cannot publish findings table: the round continues");
+                error = %error_chain(&error), "cannot publish findings comment: the round continues");
         }
     }
 
@@ -213,7 +303,7 @@ impl Owner {
         if ledger.entries().is_empty() {
             return Ok(());
         }
-        let body = table(&pulls.texts, &ledger)?;
+        let body = comment(&pulls.texts, &ledger)?;
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let github = self.github_for(pulls, &lead.repo, &git).await?;
         let comment = match ledger.comment {

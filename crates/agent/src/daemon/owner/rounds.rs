@@ -821,6 +821,9 @@ mod opinion_tests;
 #[cfg(test)]
 #[path = "rounds/tests/answer_reasons.rs"]
 mod answer_reason_tests;
+#[cfg(test)]
+#[path = "rounds/tests/disk.rs"]
+mod disk_tests;
 
 #[cfg(test)]
 #[path = "rounds/tests/split_findings.rs"]

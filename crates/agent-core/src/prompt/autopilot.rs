@@ -176,10 +176,12 @@ pub enum AutopilotPrompt {
     ReviewSeverityMajor,
     /// Structured findings protocol and presentation.
     ReviewSeverityBlocker,
-    /// Structured findings protocol and presentation.
-    ReviewFindingsRow,
-    /// Structured findings protocol and presentation.
-    ReviewFindingsTable,
+    /// One open or closed finding as an entry of the findings comment.
+    ReviewFindingEntry,
+    /// The findings comment: its counters and its entries.
+    ReviewFindingsList,
+    /// The `<details>` block that folds the closed findings of the findings comment.
+    ReviewFindingsClosed,
     /// Structured findings protocol and presentation.
     ReviewOpenFinding,
     /// Structured findings protocol and presentation.
@@ -293,8 +295,9 @@ impl AutopilotPrompt {
         Self::ReviewSeverityMinor,
         Self::ReviewSeverityMajor,
         Self::ReviewSeverityBlocker,
-        Self::ReviewFindingsRow,
-        Self::ReviewFindingsTable,
+        Self::ReviewFindingEntry,
+        Self::ReviewFindingsList,
+        Self::ReviewFindingsClosed,
         Self::ReviewOpenFinding,
         Self::ReviewOpenFindings,
         Self::ReviewFindingsInvalid,
@@ -428,8 +431,9 @@ impl AutopilotPrompt {
             Self::ReviewFindingsInvalid => "harness/review/findings-invalid.md",
             Self::ReviewOpenFindings => "harness/review/open-findings.md",
             Self::ReviewOpenFinding => "harness/review/open-finding.md",
-            Self::ReviewFindingsTable => "harness/review/findings-table.md",
-            Self::ReviewFindingsRow => "harness/review/findings-row.md",
+            Self::ReviewFindingEntry => "harness/review/findings-entry.md",
+            Self::ReviewFindingsList => "harness/review/findings-list.md",
+            Self::ReviewFindingsClosed => "harness/review/findings-closed.md",
             Self::ReviewSeverityBlocker => "harness/review/severity-blocker.md",
             Self::ReviewSeverityMajor => "harness/review/severity-major.md",
             Self::ReviewSeverityMinor => "harness/review/severity-minor.md",
@@ -530,8 +534,11 @@ impl AutopilotPrompt {
             Self::ReviewAskHuman => ASK_HUMAN_VARIABLES,
             Self::ReviewFindingsInvalid => &["line", "reason"],
             Self::ReviewOpenFinding => &["number", "severity", "rule", "place", "text", "check"],
-            Self::ReviewFindingsTable => &["rows"],
-            Self::ReviewFindingsRow => &["number", "severity", "rule", "place", "text", "status", "reporter"],
+            Self::ReviewFindingEntry => &[
+                "number", "severity", "rule", "place", "state", "reporter", "text", "note",
+            ],
+            Self::ReviewFindingsList => &["blockers", "majors", "minors", "closed", "entries"],
+            Self::ReviewFindingsClosed => &["count", "entries"],
             Self::OpinionAttemptFailed
             | Self::OpinionAttemptNoStatus
             | Self::OpinionAttemptMissingReport
