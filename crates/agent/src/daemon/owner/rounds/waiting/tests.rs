@@ -219,3 +219,19 @@ async fn an_idle_round_with_a_done_lead_and_no_scheduled_work_is_unowned() {
 
     assert_eq!(found, None);
 }
+
+#[tokio::test]
+async fn insufficient_independent_investigators_record_an_explicit_round_wait() {
+    let (state, team, round) = idle_round(in_progress(), LEAD_DONE);
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let lead = owner.lead_of(&team).unwrap();
+    let item = state.team(&team).unwrap().round(&round).unwrap().item().unwrap();
+    assert!(
+        !owner
+            .try_ask(&team, &lead, &crate::fixtures::pr(7), &[item], at(20))
+            .await
+            .unwrap()
+    );
+    assert_eq!(owner.watch.waits.get(&round), Some(&Obligation::FreeInvestigator));
+}
