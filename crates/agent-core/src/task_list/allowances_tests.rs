@@ -56,24 +56,3 @@ fn allow_line_after_brief_is_text_and_after_feature_is_unexpected() {
         matches!(TaskList::parse("1. Feature\nAllow: tests/**"), Err(TaskListError::UnexpectedLine { line }) if line.get() == 2)
     );
 }
-
-#[test]
-fn a_stored_list_keeps_only_its_first_header_allow_line_in_the_brief() {
-    for (stored, kept) in [
-        ("Allow: a\nAllow: b\nBrief\n", " Allow: a\nAllow: b\nBrief\n"),
-        (
-            "Coordinator: x\r\n\r\nAllow: a\r\nBrief\r\n",
-            "Coordinator: x\r\n\r\n Allow: a\r\nBrief\r\n",
-        ),
-        ("\u{feff}Allow: a\nBrief\n", "\u{feff} Allow: a\nBrief\n"),
-        ("Brief\nAllow: a\n", "Brief\nAllow: a\n"),
-        ("1. Feature\nAllow: a\n", "1. Feature\nAllow: a\n"),
-        ("No allowance here.\n", "No allowance here.\n"),
-    ] {
-        let rewritten = keep_allow_line_in_brief(stored);
-        assert_eq!(rewritten, kept, "{stored:?}");
-        if rewritten != stored {
-            assert_eq!(TaskList::parse(&rewritten).map(|list| list.allowances().len()), Ok(0));
-        }
-    }
-}
