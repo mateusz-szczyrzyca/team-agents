@@ -1,2 +1,109 @@
--- Version 9: second-opinion keywords.
-SELECT 1;
+-- Rebuild the two closed keyword sets without changing shipped migrations.
+-- Defer references while the original table names are temporarily absent.
+PRAGMA defer_foreign_keys = ON;
+
+CREATE TEMP TABLE saved_runs AS SELECT * FROM runs;
+DROP TABLE runs;
+CREATE TABLE runs (
+    run TEXT NOT NULL PRIMARY KEY,
+    team TEXT NOT NULL,
+    task TEXT NOT NULL,
+    at TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    tier TEXT NOT NULL CHECK (tier IN ('normal', 'worker', 'investigator')),
+    cli TEXT NOT NULL CHECK (cli IN ('claude', 'codex', 'gemini', 'opencode')),
+    model TEXT,
+    role TEXT NOT NULL CHECK (role IN ('solo', 'coordinator', 'member', 'worker', 'reviewer')),
+    why TEXT NOT NULL CHECK (why IN (
+        'first_run', 'item', 'wake_up', 'request', 'fix_pass', 'review', 'ask_human', 'verdict_missing', 'checks',
+        'answers', 'resumed_by_human', 'continuation', 'turn_limit', 'second_opinion'
+    )),
+    why_item TEXT,
+    why_asked_by TEXT,
+    why_pass INTEGER,
+    why_pr INTEGER,
+    prompt TEXT NOT NULL,
+    worktree TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    session TEXT,
+    cut TEXT NOT NULL,
+    CHECK (
+        (why = 'item') = (why_item IS NOT NULL)
+        AND (why = 'request' OR why_asked_by IS NULL)
+        AND ((why IN ('fix_pass', 'review', 'second_opinion')) = (why_pass IS NOT NULL))
+        AND ((why IN ('review', 'second_opinion')) = (why_pr IS NOT NULL))
+        AND (why <> 'fix_pass' OR why_pass >= 1)
+        AND (why_pass IS NULL OR why_pass >= 0)
+        AND (why_pr IS NULL OR why_pr >= 1)
+    )
+) STRICT;
+INSERT INTO runs SELECT * FROM saved_runs;
+DROP TABLE saved_runs;
+
+CREATE INDEX runs_by_team ON runs (team, at);
+CREATE INDEX runs_by_task ON runs (task, at);
+CREATE INDEX runs_by_agent ON runs(agent,run);
+
+-- Version 9: preserve records and search while adding second-opinion events.
+PRAGMA defer_foreign_keys = ON;
+CREATE TEMP TABLE saved_finding_history AS SELECT * FROM history_records;
+DROP TABLE history_records;
+CREATE TABLE history_records (
+    sequence INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN (
+        'team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session',
+        'gate', 'checked', 'pull_opened', 'pull_pushed', 'pull_ready', 'review_asked', 'review_submitted',
+        'finding_explained', 'finding_accepted', 'finding_rejected', 'finding_raised',
+        'second_opinion_asked', 'finding_confirmed', 'finding_not_confirmed',
+        'fix_pass_started', 'pull_approved', 'pull_merged', 'pull_handed_over', 'pull_closed', 'question_asked',
+        'question_answered', 'controlled', 'notified', 'round_closed', 'team_ended', 'lost'
+    )),
+    key TEXT,
+    at TEXT NOT NULL,
+    team TEXT NOT NULL,
+    payload TEXT,
+    cut TEXT NOT NULL,
+    CHECK ((kind IN ('team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session')) = (payload IS NULL)),
+    CHECK (payload IS NULL OR (json_valid(payload) AND json_type(payload) = 'object' AND json_extract(payload, '$.event') = kind)),
+    CHECK (payload IS NOT NULL OR cut = ''),
+    CHECK (key IS NOT NULL OR payload IS NOT NULL)
+) STRICT;
+
+INSERT INTO history_records SELECT * FROM saved_finding_history;
+DROP TABLE saved_finding_history;
+CREATE UNIQUE INDEX history_records_by_key ON history_records (kind, team, key) WHERE key IS NOT NULL;
+
+CREATE INDEX history_records_by_team ON history_records (team, sequence);
+
+CREATE TRIGGER history_search_insert AFTER INSERT ON history_records BEGIN
+ INSERT INTO history_search(rowid,sequence,run,task,body) SELECT h.sequence,h.sequence,
+CASE WHEN h.kind IN ('run','launch','run_end','changes') THEN h.key
+     WHEN h.kind IN ('step','session') THEN substr(h.key,1,instr(h.key,'/')-1) END AS run,
+json_extract(h.payload,'$.task') AS task,
+coalesce(h.key,'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_tree(h.payload) WHERE type='text'),'') || ' ' || coalesce(CASE h.kind
+ WHEN 'run' THEN (SELECT prompt FROM runs WHERE run=h.key)
+ WHEN 'step' THEN (SELECT coalesce(text,'') || ' ' || coalesce(detail,'') || ' ' || coalesce(path,'') || ' ' || coalesce(tool,'') || ' ' || coalesce(action,'') || ' ' || coalesce(login,'') FROM steps WHERE run=substr(h.key,1,instr(h.key,'/')-1) AND n=CAST(substr(h.key,instr(h.key,'/')+1) AS INTEGER))
+ WHEN 'run_end' THEN (SELECT final_message FROM run_ends WHERE run=h.key)
+ WHEN 'team' THEN (SELECT task_list FROM teams WHERE team=h.key)
+ WHEN 'round' THEN (SELECT coalesce(brief,'') || ' ' || coalesce(title,'') || ' ' || coalesce(description,'') FROM rounds WHERE round=h.key)
+END,'') AS body
+FROM history_records h WHERE sequence=new.sequence;
+END;
+CREATE TRIGGER history_search_delete AFTER DELETE ON history_records BEGIN
+ DELETE FROM history_search WHERE rowid=old.sequence;
+END;
+CREATE TRIGGER history_search_update AFTER UPDATE ON history_records BEGIN
+ DELETE FROM history_search WHERE rowid=old.sequence;
+ INSERT INTO history_search(rowid,sequence,run,task,body) SELECT h.sequence,h.sequence,
+CASE WHEN h.kind IN ('run','launch','run_end','changes') THEN h.key
+     WHEN h.kind IN ('step','session') THEN substr(h.key,1,instr(h.key,'/')-1) END AS run,
+json_extract(h.payload,'$.task') AS task,
+coalesce(h.key,'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_tree(h.payload) WHERE type='text'),'') || ' ' || coalesce(CASE h.kind
+ WHEN 'run' THEN (SELECT prompt FROM runs WHERE run=h.key)
+ WHEN 'step' THEN (SELECT coalesce(text,'') || ' ' || coalesce(detail,'') || ' ' || coalesce(path,'') || ' ' || coalesce(tool,'') || ' ' || coalesce(action,'') || ' ' || coalesce(login,'') FROM steps WHERE run=substr(h.key,1,instr(h.key,'/')-1) AND n=CAST(substr(h.key,instr(h.key,'/')+1) AS INTEGER))
+ WHEN 'run_end' THEN (SELECT final_message FROM run_ends WHERE run=h.key)
+ WHEN 'team' THEN (SELECT task_list FROM teams WHERE team=h.key)
+ WHEN 'round' THEN (SELECT coalesce(brief,'') || ' ' || coalesce(title,'') || ' ' || coalesce(description,'') FROM rounds WHERE round=h.key)
+END,'') AS body
+FROM history_records h WHERE sequence=new.sequence;
+END;
