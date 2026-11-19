@@ -6,7 +6,7 @@ use crate::kinds::ActivityKind;
 use crate::state::{
     CheckedMut, ItemPhase, Member, OpinionFailure, Participant, ReviewOutcome, RunEnd, RunState, Timestamp,
 };
-use crate::status::TaskStatus;
+use crate::status::{RunOutcome, TaskStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -255,17 +255,20 @@ impl Team {
 
     /// Retains assignments and outcomes currently known by the team, without changing reviewer selection.
     pub fn record_activities(&mut self, at: Timestamp) {
-        let mut found = Vec::new();
+        let mut found: Vec<(Activity, u32)> = Vec::new();
         for (_, member) in self.crew.roster() {
             if let Participant::Investigator(investigator) = member.agent() {
-                found.push(Activity {
-                    investigator: investigator.clone(),
-                    task: member.task().clone(),
-                    rounds: self.rounds.iter().map(|round| round.id().clone()).collect(),
-                    request: ActivityRequest::TeamMember,
-                    asked_at: self.created_at,
-                    outcome: ActivityOutcome::Working,
-                });
+                found.push((
+                    Activity {
+                        investigator: investigator.clone(),
+                        task: member.task().clone(),
+                        rounds: self.rounds.iter().map(|round| round.id().clone()).collect(),
+                        request: ActivityRequest::TeamMember,
+                        asked_at: self.created_at,
+                        outcome: ActivityOutcome::Working,
+                    },
+                    0,
+                ));
             }
         }
         for item in &self.items {
@@ -275,13 +278,14 @@ impl Team {
                 .filter(|round| round.item() == Some(item.id()))
                 .map(|round| round.id().clone())
                 .collect();
+            let mut item_found = Vec::new();
             let mut pass: Option<NonZeroU32> = None;
             let mut reviews = |reviews: &[crate::state::Review]| {
                 let request = pass.map_or(ActivityRequest::FirstReview, |pass| ActivityRequest::Verification {
                     pass,
                 });
                 for review in reviews {
-                    found.push(Activity {
+                    item_found.push(Activity {
                         investigator: review.reviewer.clone(),
                         task: review.task.clone(),
                         rounds: rounds.clone(),
@@ -310,16 +314,15 @@ impl Team {
                 | ItemPhase::Fixing { .. }
                 | ItemPhase::Done { .. } => {}
             }
-            found.extend(self.opinion_activities(item, &rounds, at));
+            item_found.extend(self.opinion_activities(item, &rounds, at));
+            found.extend(number_repeats(item_found));
         }
-        let mut index: HashMap<ActivityKey, usize> = self
-            .activities
-            .iter()
-            .enumerate()
-            .map(|(position, known)| (known.key(), position))
-            .collect();
-        for candidate in found {
-            self.retain_activity(&mut index, candidate);
+        let mut index: HashMap<(ActivityKey, u32), usize> = HashMap::new();
+        for (position, (known, repeat)) in number_repeats(self.activities.iter().cloned()).enumerate() {
+            index.insert((known.key(), repeat), position);
+        }
+        for (candidate, repeat) in found {
+            self.retain_activity(&mut index, candidate, repeat);
         }
         let endings: Vec<_> = self
             .activities
@@ -338,9 +341,12 @@ impl Team {
 
     /// Combines copies of an assignment shared by several items without losing a completed report; `index` finds the
     /// retained assignments by identity and gains the new one.
-    fn retain_activity(&mut self, index: &mut HashMap<ActivityKey, usize>, candidate: Activity) {
-        let Some(known) = index.get(&candidate.key()).and_then(|at| self.activities.get_mut(*at)) else {
-            index.insert(candidate.key(), self.activities.len());
+    fn retain_activity(&mut self, index: &mut HashMap<(ActivityKey, u32), usize>, candidate: Activity, repeat: u32) {
+        let Some(known) = index
+            .get(&(candidate.key(), repeat))
+            .and_then(|at| self.activities.get_mut(*at))
+        else {
+            index.insert((candidate.key(), repeat), self.activities.len());
             self.activities.push(candidate);
             return;
         };
@@ -376,12 +382,39 @@ impl Team {
     }
 }
 
+/// Pairs each assignment with how many assignments of the same identity came before it in `found`: an item whose reviews
+/// of two passes were asked at the same time keeps both, while the copies of one review that several items hold are
+/// still combined, because each of them counts the same way.
+fn number_repeats(found: impl IntoIterator<Item = Activity>) -> impl Iterator<Item = (Activity, u32)> {
+    let mut seen: HashMap<ActivityKey, u32> = HashMap::new();
+    found.into_iter().map(move |activity| {
+        let before = seen.entry(activity.key()).or_insert(0);
+        let repeat = *before;
+        *before = before.saturating_add(1);
+        (activity, repeat)
+    })
+}
+
+/// Whether a run that ended like this can have failed its task by itself. The other ends leave the task alive (it slept,
+/// finished, waits for the quota or was stopped), so a task that is failed after one of them failed to start.
+const fn can_fail_task(end: &RunEnd) -> bool {
+    match end {
+        RunEnd::Reported { outcome } => match outcome {
+            RunOutcome::Failed | RunOutcome::Questions => true,
+            RunOutcome::Done | RunOutcome::Sleeping | RunOutcome::Excluded => false,
+        },
+        RunEnd::NoStatus { .. } | RunEnd::Hung | RunEnd::TurnLimit => true,
+        RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited | RunEnd::Stopped => false,
+    }
+}
+
 /// A terminal task closes only outstanding assignments; a later stop cannot overwrite an accepted report.
 ///
 /// The end of the last run since the assignment is the time of the ending only when that run caused the task's status:
-/// a failure or a completion is a run's end, a stop is one only when the run was stopped. A task stopped while it waited,
-/// or failed before any run could start, ends at `now`, when the daemon saw it; a start failure has the reason the daemon
-/// gives it, a run that ended without a status.
+/// a failure or a completion is a run's end, a stop is one only when the run was stopped, a failure only when the run
+/// ended in a way that can fail a task ([`can_fail_task`]). A task stopped while it waited, or failed without a run
+/// that could have failed it (it never started, or it slept and could not be resumed), ends at `now`, when the daemon saw
+/// it; a start failure has the reason the daemon gives it, a run that ended without a status.
 fn terminal(member: &Member, entry: &Activity, now: Timestamp) -> Option<ActivityOutcome> {
     if !matches!(entry.outcome, ActivityOutcome::Working) {
         return None;
@@ -394,13 +427,13 @@ fn terminal(member: &Member, entry: &Activity, now: Timestamp) -> Option<Activit
     let (at, end) = match (member.status(), last) {
         (TaskStatus::Stopped, Some((at, RunEnd::Stopped))) => (at, ActivityEnd::Stopped),
         (TaskStatus::Stopped, _) => (seen, ActivityEnd::Stopped),
-        (TaskStatus::Failed, Some((at, end))) => (
+        (TaskStatus::Failed, Some((at, end))) if can_fail_task(end) => (
             at,
             ActivityEnd::Failed {
                 reason: Some(end.clone()),
             },
         ),
-        (TaskStatus::Failed, None) => (
+        (TaskStatus::Failed, _) => (
             seen,
             ActivityEnd::Failed {
                 reason: Some(RunEnd::NoStatus { exit_code: None }),
