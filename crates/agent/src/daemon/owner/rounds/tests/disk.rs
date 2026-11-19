@@ -591,7 +591,7 @@ async fn a_queued_task_is_not_started_while_its_build_directory_is_being_removed
     let (release, held) = std::sync::mpsc::channel::<()>();
     let removed = member.clone();
     let removal = owner.disk_jobs.spawn_blocking(move || {
-        let _ = held.recv();
+        held.recv().expect("the test releases the removal");
         crate::daemon::owner::disk::DiskJob::Target {
             task: removed,
             outcome: crate::daemon::owner::disk::BuildDirOutcome::Released { bytes: 0 },
