@@ -41,6 +41,7 @@ impl Entry {
     }
 
     /// Whether this question names the subject in its versioned group.
+    #[cfg(test)]
     #[must_use]
     pub fn checks_contains(&self, subject: &Subject) -> bool {
         self.check_group()

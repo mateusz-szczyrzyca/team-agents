@@ -23,8 +23,11 @@
 //! own answer. `**ANSWERED**` on the last line says the human is done. The labels are fixed English words whatever
 //! language the questions are in; spaces inside the asterisks are tolerated.
 //!
-//! Nothing here reads a file or knows a wording: the text of the instructions and the words that tell the agent a
-//! recommendation was accepted come from templates under `prompts/harness/questions/` and are passed in.
+//! Nothing here reads a file at run time: the text of the instructions and the words that tell the agent a
+//! recommendation was accepted come from templates under `prompts/harness/questions/` and are passed in. The one
+//! exception is the correction shown for an invalid verdict of the checks: it is embedded at build time from
+//! `prompts/harness/checks/question-invalid-verdict.md`, a catalog entry (`ChecksPrompt::QuestionInvalidVerdict`),
+//! because the error that carries it is created where no template renderer is available.
 
 pub mod checks;
 
