@@ -211,7 +211,7 @@ case $action in
     result "$report"'\nSTATUS: DONE'
     ;;
   opinion-probe:*)
-    if [[ $prompt == *'# SECOND OPINION REQUEST'* ]]; then
+    if [[ $prompt == *'# SECOND OPINION REQUEST'* || $prompt == *'# CORRECT YOUR SECOND OPINION'* ]]; then
       outcome=${action#opinion-probe:}
       if [[ $outcome == BAD ]]; then
         if [[ ! -f .opinion-corrected ]]; then
