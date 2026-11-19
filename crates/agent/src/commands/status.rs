@@ -10,6 +10,7 @@ use agent_core::protocol::{Client, Command, Reply, RoundDetail, ShowRequest, Sta
 use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState};
 use agent_core::status::TaskStatus;
+use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::process::error_chain;
 use agent_runtime::run::activity::last_activity;
 use agent_runtime::store::Home;
@@ -58,6 +59,47 @@ impl Activity {
             Err(error) => Some(format!("last activity unknown ({})", error_chain(&error))),
         }
     }
+
+    /// The line about low free disk space when below threshold, or the reason the space or the limit cannot be read.
+    /// `None` before the daemon has measured the space, and when the space is above the limit.
+    pub(crate) fn disk_line(&self) -> Option<String> {
+        let content = match std::fs::read_to_string(self.home.free_space_file()) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(error) => return Some(format!("disk: cannot read the free space ({})\n", error_chain(&error))),
+        };
+        let free_bytes = match content.trim().parse::<u64>() {
+            Ok(bytes) => bytes,
+            Err(error) => return Some(format!("disk: cannot read the free space ({error})\n")),
+        };
+        let low_free_gb = match self.low_free_gb() {
+            Ok(gb) => gb,
+            Err(message) => return Some(message),
+        };
+        let free_gb = free_bytes / GIBIBYTE;
+        if free_gb < low_free_gb {
+            Some(format!("disk: {free_gb} GB free, limit {low_free_gb} GB\n"))
+        } else {
+            None
+        }
+    }
+
+    /// The `disk.low_free_gb` of the configuration: the default when the file is absent, the message to show when it
+    /// cannot be read or parsed.
+    fn low_free_gb(&self) -> Result<u64, String> {
+        match std::fs::read_to_string(self.home.config_file()) {
+            Ok(text) => agent_core::config::Config::from_toml_str(&text)
+                .map(|config| config.disk().low_free_gb)
+                .map_err(|error| format!("disk: cannot read the configuration ({})\n", error_chain(&error))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(agent_core::config::Disk::default().low_free_gb)
+            }
+            Err(error) => Err(format!(
+                "disk: cannot read the configuration ({})\n",
+                error_chain(&error)
+            )),
+        }
+    }
 }
 
 /// `at` as a time of day, `HH:MM:SS`, at `offset` from UTC.
@@ -83,7 +125,12 @@ pub(crate) async fn status_active(
     let (teams, history) = teams(connection, target).await?;
     let told = rounds::told(connection, activity, &teams).await?;
     let text = render_with(&teams, &|task| activity.of(task), &|round| told.of(round));
-    write(out, &format!("{text}{}", told.unread()), history.as_ref())
+    write(
+        out,
+        &format!("{text}{}", told.unread()),
+        history.as_ref(),
+        activity.disk_line().as_deref(),
+    )
 }
 
 /// [`status_active`] without the last activity of the tasks: what the tests of the status ask for.
@@ -97,7 +144,7 @@ pub(crate) async fn status(
         return show_round(connection, round, out).await;
     }
     let (teams, history) = teams(connection, target).await?;
-    write(out, &render(&teams), history.as_ref())
+    write(out, &render(&teams), history.as_ref(), None)
 }
 
 /// Asks the daemon for every team and writes to `out` those that have a round that goes on, with those rounds only:
@@ -119,7 +166,7 @@ pub(crate) async fn status_running(
         let text = render_with(&teams, &|task| activity.of(task), &|round| told.of(round));
         format!("{text}{}", told.unread())
     };
-    write(out, &text, history.as_ref())
+    write(out, &text, history.as_ref(), activity.disk_line().as_deref())
 }
 
 /// The teams of `teams` that have an open round, each with its open rounds only.
@@ -148,9 +195,17 @@ async fn teams(
     }
 }
 
-/// Writes `text`, then the line about the history when it is not whole.
-fn write(out: &mut impl Write, text: &str, history: Option<&HistoryHealth>) -> Result<(), StatusError> {
+/// Writes `text`, then the line about low disk space if any, then the line about the history when it is not whole.
+fn write(
+    out: &mut impl Write,
+    text: &str,
+    history: Option<&HistoryHealth>,
+    disk: Option<&str>,
+) -> Result<(), StatusError> {
     out.write_all(text.as_bytes()).map_err(StatusError::Output)?;
+    if let Some(disk) = disk {
+        out.write_all(disk.as_bytes()).map_err(StatusError::Output)?;
+    }
     out.write_all(render_history(history).as_bytes())
         .map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)

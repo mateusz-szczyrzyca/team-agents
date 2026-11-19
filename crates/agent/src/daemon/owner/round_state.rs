@@ -260,6 +260,7 @@ impl Owner {
             how,
         });
         look.changed = true;
+        self.cleanup_round_targets(team, round);
         let span = tracing::error_span!("round", team = %team, rounds = %round);
         let _entered = span.enter();
         tracing::info!(

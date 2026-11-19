@@ -217,7 +217,7 @@ findings, shared by the items of one pull request. Each entry has a `number` (gi
 pull request in the order the reviews were asked and then the order of the report; it never changes), the `severity`
 (`BLOCKER`, `MAJOR` or `MINOR`), the `rule` ID, the `place`, the `text`, the `check`, the `reporter` (the investigator),
 the review `pass` and the `status` (`open` or `resolved`). `comment` is the id of the harness's one comment on the pull
-request, with the table of the findings, which is edited in place; reports that wait for the rest of their pass are
+request, with the list of the findings, which is edited in place; reports that wait for the rest of their pass are
 kept there until the pass is complete. A finding is resolved when every reviewer of a later pass says so. The numbers are exactly 1, 2, … in order; a state whose ledger has a duplicate, a gap or another order is refused when read. An item
 without `findings` belongs to a round opened by an earlier daemon. The optional `review_count` is at least two:
 when present it freezes the number of reviews per pass and enables independent first-pass reviews. When absent the

@@ -227,6 +227,15 @@ only as a whole segment. A file that matches `test_paths` is a test even when `c
 inside a source file is not a test file (the reviewers look at those). How the rules use the lists is in
 [`architecture.md`](architecture.md#round-checks-before-the-review).
 
+### `[disk]`
+
+Thresholds for filesystem free space in `AGENTS_HOME`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `low_free_gb` | `100` | below this, a notification is sent once with largest worktrees, and `agent status` displays free space |
+| `min_free_gb` | `20` | below this, `agent run` is refused and open rounds wait for disk space |
+
 ## `secrets.toml`
 
 ```toml

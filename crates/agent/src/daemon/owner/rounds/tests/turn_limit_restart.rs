@@ -82,6 +82,12 @@ async fn stepped(rig: &Rig) -> Stepped {
         local_offset: time::UtcOffset::UTC,
         tick: Duration::from_millis(25),
         store,
+        notifier: agent_runtime::notify::Notifier::from_config(
+            settings.config.notifications(),
+            &rig.home,
+            &settings.secrets,
+        ),
+        free_space: agent_runtime::disk::SharedFreeSpace::system(),
         settings,
         texts,
     };

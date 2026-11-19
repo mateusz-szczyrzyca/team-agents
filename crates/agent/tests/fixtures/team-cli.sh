@@ -368,6 +368,11 @@ case $action in
     result "$report"'\nSTATUS: DONE'
     ;;
   done:*) result "${action#done:}"'\nSTATUS: DONE' ;;
+  target-done:*)
+    # Leaves the build directory a build would leave in the worktree, then finishes with the text after the colon.
+    mkdir -p target && printf 'build output\n' > target/output.bin
+    result "${action#target-done:}"'\nSTATUS: DONE'
+    ;;
   sleep) result 'Nothing to do now.\nSTATUS: SLEEPING' ;;
   fail) result 'I could not do it.\nSTATUS: FAILED' ;;
   nostatus) result 'I think that is all.' ;;
@@ -440,6 +445,14 @@ case $action in
     ;;
   answer:*) result 'FINDING '"${action#answer:}"': FIXED\nSTATUS: DONE' ;;
   work)
+    commit_work
+    record_gate
+    result 'Finished the item.\nSTATUS: DONE'
+    ;;
+  target-work)
+    # Like `work`, and leaves the build directory a build would leave, excluded from git so the tree stays clean.
+    printf 'target/\n' >> "$(git rev-parse --git-path info/exclude)"
+    mkdir -p target && printf 'build output\n' > target/output.bin
     commit_work
     record_gate
     result 'Finished the item.\nSTATUS: DONE'

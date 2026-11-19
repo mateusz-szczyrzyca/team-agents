@@ -70,6 +70,10 @@ pub enum HarnessPrompt {
     NoticeStartFailed,
     /// The notification that a run that started could not be carried out to its end.
     NoticeRunFailed,
+    /// The notification that free disk space is below `low_free_gb`.
+    NoticeLowDisk,
+    /// The notification that open rounds wait for disk space.
+    NoticeDiskWait,
 }
 
 impl HarnessPrompt {
@@ -105,6 +109,8 @@ impl HarnessPrompt {
         Self::NoticeNoStatusSignal,
         Self::NoticeStartFailed,
         Self::NoticeRunFailed,
+        Self::NoticeLowDisk,
+        Self::NoticeDiskWait,
     ];
 
     /// Where the text is, who reads it and which variables it uses.
@@ -197,6 +203,14 @@ impl HarnessPrompt {
                 Audience::Human,
                 &["agent", "task", "reason"],
             ),
+            Self::NoticeLowDisk => PromptSpec::new(
+                "harness/run/notice-low-disk.md",
+                Audience::Human,
+                &["free", "limit", "worktrees"],
+            ),
+            Self::NoticeDiskWait => {
+                PromptSpec::new("harness/run/notice-disk-wait.md", Audience::Human, &["free", "min"])
+            }
         }
     }
 }

@@ -223,6 +223,12 @@ impl Home {
     pub fn questions_file(&self, task: &TaskId, number: NonZeroU32) -> PathBuf {
         self.task_dir(task).join(format!("questions-{number}.md"))
     }
+
+    /// The file where measured free disk space in bytes is recorded.
+    #[must_use]
+    pub fn free_space_file(&self) -> PathBuf {
+        self.root().join(".free_space")
+    }
 }
 
 /// Why a store operation failed.
