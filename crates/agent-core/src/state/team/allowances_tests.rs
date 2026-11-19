@@ -13,7 +13,10 @@ fn team_allowances_survive_serialization_and_are_available_for_every_round() {
     let team: Team = serde_json::from_value(wire).unwrap();
     let expected = ["Cargo.toml", "tests/**/*.golden"];
     assert_eq!(
-        team.allowances().iter().map(|line| line.as_str()).collect::<Vec<_>>(),
+        team.allowances()
+            .iter()
+            .map(crate::task_allowance::TaskAllowance::as_str)
+            .collect::<Vec<_>>(),
         expected
     );
     let restored: Team = serde_json::from_str(&serde_json::to_string(&team).unwrap()).unwrap();
