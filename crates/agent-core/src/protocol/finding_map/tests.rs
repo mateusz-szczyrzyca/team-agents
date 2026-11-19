@@ -18,7 +18,7 @@ where
 }
 
 /// The finding numbers of a map read by [`deserialize_map`], in order.
-fn keys_of(map: BTreeMap<NonZeroU32, String>) -> Vec<u32> {
+fn keys_of(map: &BTreeMap<NonZeroU32, String>) -> Vec<u32> {
     map.keys().map(|key| key.get()).collect()
 }
 
@@ -36,15 +36,15 @@ fn assert_refused(result: Result<BTreeMap<NonZeroU32, String>, ValueError>, numb
 
 #[test]
 fn integer_keys_of_every_width_at_their_largest_are_finding_numbers() {
-    assert_eq!(keys_of(one_key_map(u8::MAX).unwrap()), vec![u32::from(u8::MAX)]);
-    assert_eq!(keys_of(one_key_map(u16::MAX).unwrap()), vec![u32::from(u16::MAX)]);
-    assert_eq!(keys_of(one_key_map(u32::MAX).unwrap()), vec![u32::MAX]);
-    assert_eq!(keys_of(one_key_map(u64::from(u32::MAX)).unwrap()), vec![u32::MAX]);
-    assert_eq!(keys_of(one_key_map(i8::MAX).unwrap()), vec![127]);
-    assert_eq!(keys_of(one_key_map(i16::MAX).unwrap()), vec![32_767]);
-    assert_eq!(keys_of(one_key_map(i32::MAX).unwrap()), vec![i32::MAX.unsigned_abs()]);
+    assert_eq!(keys_of(&one_key_map(u8::MAX).unwrap()), vec![u32::from(u8::MAX)]);
+    assert_eq!(keys_of(&one_key_map(u16::MAX).unwrap()), vec![u32::from(u16::MAX)]);
+    assert_eq!(keys_of(&one_key_map(u32::MAX).unwrap()), vec![u32::MAX]);
+    assert_eq!(keys_of(&one_key_map(u64::from(u32::MAX)).unwrap()), vec![u32::MAX]);
+    assert_eq!(keys_of(&one_key_map(i8::MAX).unwrap()), vec![127]);
+    assert_eq!(keys_of(&one_key_map(i16::MAX).unwrap()), vec![32_767]);
+    assert_eq!(keys_of(&one_key_map(i32::MAX).unwrap()), vec![i32::MAX.unsigned_abs()]);
     assert_eq!(
-        keys_of(one_key_map(i64::from(i32::MAX)).unwrap()),
+        keys_of(&one_key_map(i64::from(i32::MAX)).unwrap()),
         vec![i32::MAX.unsigned_abs()]
     );
 }
