@@ -196,3 +196,138 @@ async fn recording_refusal_is_bounced_even_when_the_caller_bypasses_validation()
     assert_eq!(owner.parts.state.team(&team_id(0)).unwrap().items(), before);
     assert_eq!(owner.watch.bounces.get(&task(3)), Some(&1));
 }
+
+/// Renders the actual prompt sent when the bounced reviewer is resumed.
+async fn correction(owner: &Owner, pulls: &Pulls) -> String {
+    let ctx = crate::daemon::owner::start::Context {
+        state: &owner.parts.state,
+        settings: &owner.parts.settings,
+        texts: &owner.parts.texts,
+        team_texts: &owner.parts.team_texts,
+        question_texts: &owner.parts.question_texts,
+        rules: &owner.parts.rules,
+        home: owner.parts.store.home(),
+        clock: &owner.parts.clock,
+        why: owner.reasons.get(&task(3)),
+        autopilot: Some(&pulls.texts),
+        checks: Some(&pulls.checks),
+    };
+    let found = owner.parts.state.find_task(&task(3)).unwrap();
+    let addition =
+        super::super::prompts::sections_for(&ctx, &pulls.texts, &found, owner.parts.store.home().root(), ctx.why)
+            .await
+            .unwrap()
+            .unwrap();
+    let super::super::prompts::Addition::Replace(text) = addition else {
+        panic!("a refused report must replace the resumed prompt");
+    };
+    text
+}
+
+#[tokio::test]
+async fn correction_quotes_the_refused_line_and_the_second_items_allowed_answers() {
+    let daemon = Daemon::new(&evidence_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let pulls = pulls(&owner).await;
+    owner.pulls = Some(pulls.clone());
+    let located = owner.locate(&task(3)).unwrap();
+    owner
+        .review_ended(&task(3), &located, Some(&evidence_report()))
+        .await
+        .unwrap();
+
+    let text = correction(&owner, &pulls).await;
+
+    assert!(text.contains("line 19"), "{text}");
+    assert!(
+        text.contains("FINDING 28: ACCEPTED — the helper change is required to compile"),
+        "{text}"
+    );
+    assert!(text.contains("FINDING 28: RESOLVED"), "{text}");
+    assert!(text.contains("FINDING 28: OPEN"), "{text}");
+    assert!(!text.contains("FINDING 28: ACCEPTED — why"), "{text}");
+}
+
+#[tokio::test]
+async fn exhausting_report_bounces_asks_the_human_once_without_changing_items() {
+    let state = evidence_state();
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.pulls = Some(pulls(&owner).await);
+    let (sender, mut notices) = tokio::sync::mpsc::channel(4);
+    owner.parts.notices = sender;
+    let located = owner.locate(&task(3)).unwrap();
+    let before = state.team(&team_id(0)).unwrap().items().to_vec();
+    for _ in 0..=MAX_VERDICT_BOUNCES {
+        owner
+            .review_ended(&task(3), &located, Some(&evidence_report()))
+            .await
+            .unwrap();
+    }
+    assert_eq!(owner.watch.bounces.get(&task(3)), Some(&3));
+    assert!(
+        owner
+            .watch
+            .announced
+            .contains(&Announcement::NoVerdict { task: task(3) })
+    );
+    assert_eq!(owner.parts.state.team(&team_id(0)).unwrap().items(), before);
+    let notice = notices.try_recv().unwrap();
+    assert!(
+        notice.notification.body().contains("FINDING 28: RESOLVED"),
+        "{:?}",
+        notice.notification
+    );
+    assert!(matches!(
+        notices.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+    owner
+        .review_ended(&task(3), &located, Some(&evidence_report()))
+        .await
+        .unwrap();
+    assert!(matches!(
+        notices.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+}
+
+#[tokio::test]
+async fn a_valid_multi_item_report_records_the_same_answers_in_both_items() {
+    let mut state = evidence_state();
+    let ledger = state.team(&team_id(0)).unwrap().items()[0].findings().unwrap().clone();
+    *state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .item_mut("1.2".parse().unwrap())
+        .unwrap()
+        .findings_mut()
+        .unwrap() = ledger.clone();
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.pulls = Some(pulls(&owner).await);
+    let located = owner.locate(&task(3)).unwrap();
+    let message = evidence_report();
+    let expected = ledger.parse_report(&message, ReviewVerdict::RequestChanges).unwrap();
+
+    owner.review_ended(&task(3), &located, Some(&message)).await.unwrap();
+
+    for item in owner.parts.state.team(&team_id(0)).unwrap().items() {
+        let ItemPhase::InReview { reviews, .. } = item.phase() else {
+            panic!("one reviewer remains");
+        };
+        assert!(matches!(
+            reviews[0].outcome,
+            ReviewOutcome::Submitted {
+                verdict: ReviewVerdict::RequestChanges,
+                ..
+            }
+        ));
+        let stored = serde_json::to_value(item.findings().unwrap()).unwrap();
+        assert_eq!(
+            stored["pending"][task(3).as_str()],
+            serde_json::to_value(&expected).unwrap()
+        );
+    }
+    assert_eq!(owner.watch.bounces.get(&task(3)), None);
+}
