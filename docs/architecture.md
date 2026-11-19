@@ -1023,6 +1023,9 @@ fails (a reviewer runs one, TDD-1), an `agentbus` socket API (it is called as a 
 
 ## The gate
 
+The workspace dev and test profiles keep line tables for backtraces with file and line; release builds are unchanged.
+Agent CLIs and gates receive `CARGO_INCREMENTAL=0` by default (`[build] incremental = true` sets `1`), while manual builds keep Cargo's incremental policy.
+
 ```sh
 make rust     # the workspace's checks, with their full output
 make gate     # the gate: the same checks with short output (GATE_STEPS, by default the rust step alone)

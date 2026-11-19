@@ -49,6 +49,11 @@ args = ["-c", "model_reasoning_effort=\"high\""]
 normal = ["claude-1", "codex-1", "gemini-1"]
 workers = []
 
+# Cargo builds launched by agents and gates avoid large per-worktree incremental caches.
+# Set true to opt back in; manual builds outside the harness keep Cargo's own policy.
+[build]
+incremental = false
+
 # --- Programs ------------------------------------------------------------------------------------------------------
 # A bare name is looked up on `agent_path`, the PATH the agents see (toolchains: cargo, go, ...); an absolute path
 # is used as it is. The directory of the daemon executable is automatically prepended first to PATH without duplicates.

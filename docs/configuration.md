@@ -40,6 +40,7 @@ Top-level key and tables:
 | `[agents.NAME]` | table | none | one normal agent or worker |
 | `[investigators.NAME]` | table | none | one investigator |
 | `[tiers]` | table | empty | which agents are normal and which are workers |
+| `[build]` | table | `incremental = false` | Cargo cache policy for managed agent CLIs and gates |
 | `[binaries]` | table | see below | programs and the agents' `PATH` |
 | `[watchdog]` | table | see below | when a silent run is hung |
 | `[limits]` | table | see below | pauses for quotas and rate limits |
@@ -90,6 +91,13 @@ so put the stronger ones first. The order of `normal` is kept as written. Rules,
 They are checked in this order, and the first fault found is the one reported: `normal`, then `workers`, name by name
 (an unknown or repeated name); then a name in both lists; then an agent in no list; then a name that is both an agent
 and an investigator.
+
+### `[build]`
+
+`incremental` is an optional boolean, default `false`, including in configurations without `[build]`.
+The daemon sets `CARGO_INCREMENTAL=0` for every agent CLI and gate to avoid large worktree caches;
+`true` sets `CARGO_INCREMENTAL=1`. This setting wins over inherited or secret environment values and does
+not affect builds started by hand. Copy [`agents.example.toml`](../config/agents.example.toml) for an example.
 
 ### `[binaries]`
 
