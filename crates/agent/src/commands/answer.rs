@@ -76,6 +76,14 @@ pub(crate) enum AnswerError {
         /// What is wrong with it, with its line.
         source: ParseError,
     },
+    /// The grouped checks file has an invalid or missing verdict.
+    #[error("invalid checks verdicts in {path:?}")]
+    InvalidChecks {
+        /// The questions file.
+        path: PathBuf,
+        /// Every question that needs correction.
+        source: agent_core::questions::AnswersError,
+    },
     /// The file has no answer to any question.
     #[error(
         "the file {path:?} has no answers yet: write yours after **Verdict:** (`ok` accepts the recommendation), then run `agent answer {task}` again"
@@ -336,3 +344,6 @@ async fn run_editor(editor: &CommandLine, file: &Path) -> Result<(), AnswerError
         Err(AnswerError::EditorFailed { program, status })
     }
 }
+
+#[cfg(test)]
+mod tests;
