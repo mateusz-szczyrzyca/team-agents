@@ -186,3 +186,24 @@ fn lead_diagnostics_retain_the_refused_number_line_and_mistake() {
         );
     }
 }
+
+#[test]
+fn six_line_reproduction_keeps_finding_twenty_on_source_line_fifteen() {
+    let open = [
+        (NonZeroU32::new(15).unwrap(), Severity::Blocker, false),
+        (NonZeroU32::new(16).unwrap(), Severity::Major, false),
+        (NonZeroU32::new(17).unwrap(), Severity::Major, false),
+        (NonZeroU32::new(18).unwrap(), Severity::Minor, false),
+        (NonZeroU32::new(19).unwrap(), Severity::Major, false),
+        (NonZeroU32::new(20).unwrap(), Severity::Minor, false),
+    ];
+    let text = format!(
+        "{}FINDING 15: FIXED\nFINDING 16: FIXED\nFINDING 17: FIXED\nFINDING 18: FIXED\nFINDING 19: FIXED\nFINDING 20: FIXED\nSTATUS: DONE",
+        "\n".repeat(9)
+    );
+    assert_eq!(text.lines().nth(14), Some("FINDING 20: FIXED"));
+    assert_eq!(
+        parse_lead(&text, &open),
+        Ok(open.iter().map(|(n, _, _)| (*n, Response::Fixed)).collect())
+    );
+}

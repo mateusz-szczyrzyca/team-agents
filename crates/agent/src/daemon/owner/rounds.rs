@@ -812,3 +812,7 @@ pub(crate) struct ReviewedHeadError {
 #[cfg(test)]
 #[path = "rounds/tests/opinions.rs"]
 mod opinion_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/answer_reasons.rs"]
+mod answer_reason_tests;
