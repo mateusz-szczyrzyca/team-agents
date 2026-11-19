@@ -10,7 +10,10 @@ fn schema_eight_active_fix_pass_migrates_without_inventing_opinion_attempts() {
     let ledger = state.teams()[0].items()[1].findings().unwrap();
     assert_eq!(ledger.opinion_attempts(NonZeroU32::MIN), []);
     assert_eq!(ledger.opinions().len(), 0);
-    assert_eq!(ledger.fixed_answers(NonZeroU32::MIN), Default::default());
+    assert_eq!(
+        ledger.fixed_answers(NonZeroU32::MIN),
+        std::collections::BTreeSet::default()
+    );
     assert_eq!(
         state.to_json().unwrap(),
         old.replacen("\"schema_version\": 8", "\"schema_version\": 9", 1)
