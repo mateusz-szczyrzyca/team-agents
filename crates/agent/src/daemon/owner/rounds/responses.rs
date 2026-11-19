@@ -311,14 +311,34 @@ fn fix_answer(
                 response_correction(pulls, &problem)?
             }
         }
-        Err(OpinionError::Forbidden { number, line, .. }) => response_correction(
-            pulls,
-            &agent_core::review_response::ResponseError {
-                number,
-                line,
-                correction: agent_core::review_response::Correction::FixedOnly,
-            },
-        )?,
+        Err(OpinionError::Forbidden { number, line, .. }) => {
+            let correction = match ledger
+                .entries()
+                .iter()
+                .find(|entry| entry.number == number)
+                .map(|entry| entry.finding.severity)
+            {
+                Some(agent_core::review_findings::Severity::Major)
+                    if !ledger.disputes().is_some_and(|d| d.explanations.contains_key(&number)) =>
+                {
+                    agent_core::review_response::Correction::FixedOrExplained
+                }
+                Some(agent_core::review_findings::Severity::Minor) | None => {
+                    agent_core::review_response::Correction::OnePerFinding
+                }
+                Some(agent_core::review_findings::Severity::Major | agent_core::review_findings::Severity::Blocker) => {
+                    agent_core::review_response::Correction::FixedOnly
+                }
+            };
+            response_correction(
+                pulls,
+                &agent_core::review_response::ResponseError {
+                    number,
+                    line,
+                    correction,
+                },
+            )?
+        }
         Err(OpinionError::MissingVerdict | OpinionError::MissingEvidence) => {
             opinion_correction(pulls, 1, std::num::NonZeroU32::MIN)?
         }
