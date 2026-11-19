@@ -103,7 +103,7 @@ impl Findings {
                 opinion_used: self.opinions.contains_key(&entry.number),
             })
             .collect::<Vec<_>>();
-        let answers = crate::review_response::opinion::parse_lead(text, &open, permission)?;
+        let answers = crate::review_response::opinion::parse_lead_located(text, &open, permission)?;
         for (number, answer) in &answers {
             match answer {
                 LeadAnswer::Fixed => {

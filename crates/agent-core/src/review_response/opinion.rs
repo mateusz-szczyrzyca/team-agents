@@ -136,6 +136,18 @@ pub fn parse_lead(
     open: &[OpenFinding],
     permission: Permission,
 ) -> Result<Vec<(NonZeroU32, LeadAnswer)>, OpinionError> {
+    match parse_lead_located(text, open, permission) {
+        Err(OpinionError::MissingReason { .. }) => Err(OpinionError::MissingEvidence),
+        result => result,
+    }
+}
+
+/// Reads a response with precise source locations for the daemon's correction.
+pub(crate) fn parse_lead_located(
+    text: &str,
+    open: &[OpenFinding],
+    permission: Permission,
+) -> Result<Vec<(NonZeroU32, LeadAnswer)>, OpinionError> {
     let mut requests = std::collections::BTreeMap::new();
     let mut normalized = String::new();
     let mut fence = None;
@@ -183,6 +195,9 @@ pub fn parse_lead(
             let answer = if let Some(&(line, reason)) = requests.get(&number) {
                 if let Some(reason) = refusal(open, number, permission) {
                     return Err(OpinionError::Forbidden { number, line, reason });
+                }
+                if reason.is_empty() {
+                    return Err(OpinionError::MissingReason { number, line });
                 }
                 LeadAnswer::SecondOpinion(reason.to_owned().try_into()?)
             } else {
