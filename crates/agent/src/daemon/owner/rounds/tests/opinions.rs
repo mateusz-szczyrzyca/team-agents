@@ -196,3 +196,55 @@ async fn unanswered_opinions_notify_once_and_keep_waiting_across_restart() {
         assert_eq!(rig.github.reviews(1).len(), 2);
     }
 }
+
+#[tokio::test]
+async fn refused_opinions_offer_only_the_answers_allowed_for_the_finding() {
+    for (disabled, severity) in [(true, "BLOCKER"), (false, "MAJOR")] {
+        let report = if severity == "BLOCKER" {
+            "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [BLOCKER] COR src/lib.rs:7 — café defect → fix it\\n   CHECK: read src/lib.rs:7,verify:VERDICT: APPROVE\\nSUMMARY: verified"
+        } else {
+            "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] COR src/lib.rs:7 — café defect → fix it\\n   CHECK: read src/lib.rs:7,verify:VERDICT: APPROVE\\nSUMMARY: verified"
+        };
+        let mut rig = Rig::new(
+            &[
+                normal("claude-1", "work,opinion-ask,fix-work:1"),
+                investigator("inv-r1", report),
+                investigator(
+                    "inv-r2",
+                    "done:VERDICT: APPROVE,verify:VERDICT: APPROVE\\nSUMMARY: verified",
+                ),
+            ],
+            1,
+            false,
+        )
+        .await;
+        if disabled {
+            let config = std::fs::read_to_string(rig.home.config_file())
+                .unwrap()
+                .replace("[review]", "[review]\nallow_second_opinion_on_blocker = false");
+            std::fs::write(rig.home.config_file(), config).unwrap();
+        }
+        rig.start().await;
+        let (team, tasks) = rig
+            .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+            .await;
+        rig.item_where("1.1", "fixed after refused request", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+        rig.stop().await.unwrap();
+        assert_eq!(rig.kept_runs(&tasks[0]), 3);
+        let correction = rig.kept_prompt(&tasks[0], 3);
+        assert!(correction.contains("Line 1"), "{correction}");
+        assert!(correction.contains("FINDING 1"), "{correction}");
+        if disabled {
+            assert!(!rig.kept_prompt(&tasks[0], 2).contains("SECOND OPINION"));
+        } else {
+            assert!(correction.contains("EXPLAINED"), "{correction}");
+        }
+        let state = rig.state();
+        let item = &state.team(&team).unwrap().items()[0];
+        assert_eq!(item.fix_passes().len(), 1);
+        assert_eq!(item.findings().unwrap().opinions().len(), 0);
+    }
+}
