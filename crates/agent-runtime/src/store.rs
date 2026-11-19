@@ -588,9 +588,11 @@ impl StateStore {
 
     /// Saves `record` as the last gate record of `task`, replacing the one before: written to a temporary file in the
     /// task's directory and renamed over [`Home::gate_record_file`], so that a reader sees a whole record or none.
+    /// The preceding record is retained in the optional sidecar before replacing the latest record.
     ///
     /// # Errors
-    /// [`StoreError::RenderGateRecord`], [`StoreError::CreateDir`], [`StoreError::WriteTemp`], [`StoreError::Replace`],
+    /// [`StoreError::ReadTaskFile`], [`StoreError::ParseGateRecord`], [`StoreError::RenderGateRecord`],
+    /// [`StoreError::CreateDir`], [`StoreError::WriteTemp`], [`StoreError::Replace`],
     /// [`StoreError::SyncDir`] and [`StoreError::Worker`].
     pub async fn save_gate_record(&self, task: &TaskId, record: &GateRecord) -> Result<(), StoreError> {
         if let Some(previous) = self.load_gate_record(task).await? {

@@ -745,10 +745,16 @@ impl Owner {
             .ok_or_else(|| PublishError::RepoGone { repo: repo.clone() })?;
         let (_, lead) = team.crew().roster().into_iter().next().ok_or(PublishError::Lost)?;
         let git = self.worktree_git(repo, lead.task(), &lead.agent().name().parse()?)?;
-        let path = self.parts.store.home().task_dir(lead.task()).join("description.md");
-        let contribution = agent_runtime::text_file::read_text_file(&path, 1 << 20)
-            .await
-            .map_err(|source| PublishError::Description { path, source })?;
+        let path = self
+            .parts
+            .store
+            .home()
+            .task_dir(lead.task())
+            .join(crate::daemon::pr::description::LEAD_DESCRIPTION_FILE);
+        let contribution =
+            agent_runtime::text_file::read_text_file(&path, crate::daemon::pr::description::MAX_DESCRIPTION_BYTES)
+                .await
+                .map_err(|source| PublishError::Description { path, source })?;
         let mut contribution =
             crate::daemon::pr::description::lead_sections(contribution.as_ref().map_or("", |file| file.text.as_str()));
         if contribution.is_empty() {

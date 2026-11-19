@@ -5,6 +5,12 @@ use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::state::GateRecord;
 use agent_runtime::autopilot_prompts::AutopilotPrompts;
 
+/// The lead contribution lives in the task directory, outside the worktree.
+pub(crate) const LEAD_DESCRIPTION_FILE: &str = "description.md";
+
+/// Maximum UTF-8 contribution size in bytes, bounding daemon reads.
+pub(crate) const MAX_DESCRIPTION_BYTES: usize = 1 << 20;
+
 /// Removes harness-owned sections from the lead's contribution.
 pub(crate) fn lead_sections(text: &str) -> String {
     let mut kept = Vec::new();

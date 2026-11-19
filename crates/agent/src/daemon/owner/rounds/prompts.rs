@@ -101,7 +101,10 @@ pub(in crate::daemon::owner) async fn sections_for(
     if !matches!(found.role, Role::Solo | Role::Coordinator) {
         return Ok(addition);
     }
-    let file = ctx.home.task_dir(found.member.task()).join("description.md");
+    let file = ctx
+        .home
+        .task_dir(found.member.task())
+        .join(crate::daemon::pr::description::LEAD_DESCRIPTION_FILE);
     let instruction = texts.render(
         AutopilotPrompt::PrLeadInstructions,
         &Variables::new().with("description_file", file.display().to_string())?,
