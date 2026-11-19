@@ -224,13 +224,16 @@ FINDINGS
    CHECK: read src/lib.rs:7
   ----- end of review report -----
 <time>  fix pass 1 of 5 on #1 started
-  ----- findings sent to the team (1439 bytes) -----
+  ----- findings sent to the team (1595 bytes) -----
 # THE REVIEWERS ASKED FOR CHANGES (pull request #1, fix pass 1 of 5)
 
 All reviews of your pull request are in, and at least one asks for changes. The reports, each with its verdict:
 
 1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage
    CHECK: read src/lib.rs:7
+
+
+For an open [BLOCKER] you believe false, request its one independent check with `FINDING 5: SECOND OPINION — why it is not so`. A confirmed blocker must then be fixed in code in this same fix pass.
 
 
 ### Review by inv-r1
