@@ -591,3 +591,20 @@ fn a_round_counts_only_open_findings_of_each_severity() {
     assert_eq!(round.findings.len(), 4);
     assert!(render_round(&round).contains("open findings: 1 BLOCKER, 1 MAJOR, 1 MINOR"));
 }
+
+#[test]
+fn disk_line_appears_below_limit_and_not_above() {
+    let dir = tempfile::tempdir().unwrap();
+    let abs = agent_core::config::AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap();
+    let home = Home::new(&abs);
+    let activity = Activity::new(home.clone(), time::UtcOffset::UTC);
+
+    std::fs::write(home.free_space_file(), (50 * 1024 * 1024 * 1024u64).to_string()).unwrap();
+    assert_eq!(
+        activity.disk_line(),
+        Some("disk: 50 GB free, limit 100 GB\n".to_owned())
+    );
+
+    std::fs::write(home.free_space_file(), (150 * 1024 * 1024 * 1024u64).to_string()).unwrap();
+    assert_eq!(activity.disk_line(), None);
+}

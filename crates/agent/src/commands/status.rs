@@ -58,6 +58,12 @@ impl Activity {
             Err(error) => Some(format!("last activity unknown ({})", error_chain(&error))),
         }
     }
+
+    /// The line about low free disk space when below threshold.
+    pub(crate) fn disk_line(&self) -> Option<String> {
+        // Stub for RED: return None
+        None
+    }
 }
 
 /// `at` as a time of day, `HH:MM:SS`, at `offset` from UTC.
