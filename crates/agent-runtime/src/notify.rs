@@ -278,6 +278,18 @@ impl Notifier {
         }
         text.trim().chars().take(MAX_DIAGNOSTIC_CHARS).collect()
     }
+
+    /// Runs the notification command once with `reason` as its argument when a file cannot be written.
+    ///
+    /// # Errors
+    /// [`NotifyError::Command`] and [`NotifyError::CommandFailed`] when running the command fails.
+    pub async fn notify_emergency(&self, _reason: &str) -> Result<(), NotifyError> {
+        // Stub for RED
+        Err(NotifyError::CreateDir {
+            path: PathBuf::new(),
+            source: io::Error::other("stub"),
+        })
+    }
 }
 
 /// Writes `bytes` to a new file `notification-<stamp>-<n>.md` in `dir`, with the first `n` that is free, through a
@@ -644,5 +656,21 @@ mod tests {
             ),
             "{result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn notify_emergency_runs_command_with_reason_and_writes_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("emergency.log");
+        let script = dir.path().join("notify.sh");
+        std::fs::write(&script, format!("#!/bin/sh\necho \"$1\" > \"{}\"\n", log.display())).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let n = notifier(dir.path(), Some(command(&[script.to_str().unwrap()])));
+        n.notify_emergency("out of disk space").await.unwrap();
+
+        assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "out of disk space");
+        let notes_dir = dir.path().join("notes");
+        assert!(!notes_dir.exists() || files_in(&notes_dir).is_empty());
     }
 }
