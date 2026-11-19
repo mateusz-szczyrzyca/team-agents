@@ -69,9 +69,7 @@ impl Activity {
         }?;
         let free_gb = free_bytes / (1024 * 1024 * 1024);
         let low_free_gb = if let Ok(text) = std::fs::read_to_string(self.home.config_file()) {
-            agent_core::config::Config::from_toml_str(&text)
-                .map(|c| c.disk().low_free_gb)
-                .unwrap_or(100)
+            agent_core::config::Config::from_toml_str(&text).map_or(100, |c| c.disk().low_free_gb)
         } else {
             100
         };

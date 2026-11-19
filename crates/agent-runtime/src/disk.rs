@@ -2,8 +2,27 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
+
+static REGISTRY: RwLock<Vec<(PathBuf, SharedFreeSpace)>> = RwLock::new(Vec::new());
+
+/// A system free space measurer that delegates to any registered path prefix before statvfs.
+#[derive(Debug, Default)]
+struct DelegatingFreeSpace;
+
+impl FreeSpace for DelegatingFreeSpace {
+    fn free_space_bytes(&self, path: &Path) -> Result<u64, FreeSpaceError> {
+        if let Ok(reg) = REGISTRY.read() {
+            for (prefix, measurer) in reg.iter() {
+                if path.starts_with(prefix) {
+                    return measurer.free_space_bytes(path);
+                }
+            }
+        }
+        SystemFreeSpace.free_space_bytes(path)
+    }
+}
 
 use crate::store::Home;
 
@@ -120,7 +139,22 @@ impl SharedFreeSpace {
     /// Creates a shared instance using the system measurer.
     #[must_use]
     pub fn system() -> Self {
-        Self::new(SystemFreeSpace)
+        Self::new(DelegatingFreeSpace)
+    }
+
+    /// Registers a free space measurer for paths prefixed with `prefix`.
+    pub fn register(prefix: PathBuf, measurer: Self) {
+        if let Ok(mut reg) = REGISTRY.write() {
+            reg.retain(|(p, _)| p != &prefix);
+            reg.push((prefix, measurer));
+        }
+    }
+
+    /// Unregisters the free space measurer for `prefix`.
+    pub fn unregister(prefix: &Path) {
+        if let Ok(mut reg) = REGISTRY.write() {
+            reg.retain(|(p, _)| p != prefix);
+        }
     }
 }
 
@@ -137,18 +171,18 @@ impl FreeSpace for SharedFreeSpace {
 }
 
 /// A configurable fake free space measurer for tests.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct FakeFreeSpace {
     /// The free space to return, in bytes.
-    bytes: AtomicU64,
+    bytes: Arc<AtomicU64>,
 }
 
 impl FakeFreeSpace {
     /// Creates a fake measurer returning `bytes`.
     #[must_use]
-    pub const fn new(bytes: u64) -> Self {
+    pub fn new(bytes: u64) -> Self {
         Self {
-            bytes: AtomicU64::new(bytes),
+            bytes: Arc::new(AtomicU64::new(bytes)),
         }
     }
 

@@ -38,7 +38,7 @@ impl Owner {
     }
 
     /// Removes the build directory of `worktree_dir` if present, logging the outcome.
-    fn remove_target(&self, task: &TaskId, worktree_dir: &Path) {
+    pub(in crate::daemon::owner) fn remove_target(&self, task: &TaskId, worktree_dir: &Path) {
         match remove_build_directory(self.parts.store.home(), worktree_dir) {
             Ok(bytes) => {
                 if bytes > 0 {

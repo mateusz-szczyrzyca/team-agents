@@ -42,8 +42,10 @@ use agent_core::state::{
 use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
+use agent_runtime::disk::FreeSpace;
 use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::history::{History, Scoped, log_decision};
+use agent_runtime::notify::Notification;
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunVerdict, WatchdogHold};
@@ -70,7 +72,6 @@ use super::questions::watch::{Report, Saves, Watcher};
 use super::recovery::{RecoveryError, interrupted_status, recover};
 use super::settle::{Settled, settle};
 use super::team::{AssignmentError, DoneNoticeError, NoticeRenderError, Why};
-use agent_runtime::notify::Notification;
 use agent_runtime::process::error_chain;
 use time::UtcOffset;
 
@@ -320,6 +321,10 @@ pub(super) struct OwnerParts {
     pub(super) local_offset: UtcOffset,
     /// How often paused tasks are looked at.
     pub(super) tick: Duration,
+    /// The notifier that delivers notifications.
+    pub(super) notifier: agent_runtime::notify::Notifier,
+    /// Measurer of free disk space.
+    pub(super) free_space: agent_runtime::disk::SharedFreeSpace,
 }
 
 /// What became of a run, for the owner to apply.
@@ -417,6 +422,10 @@ pub(super) struct Owner {
     history: History,
     /// Cancelled when the daemon is to stop: the runs it starts stop with it.
     shutdown: CancellationToken,
+    /// Whether free space was below low threshold on last check.
+    was_low_space: bool,
+    /// Whether free space was below min threshold on last check.
+    was_min_space: bool,
 }
 
 /// The next report of the watch on the questions files; never, when the files are not watched.
@@ -468,6 +477,8 @@ impl Owner {
             watch: rounds::PullWatch::default(),
             history: History::disabled(),
             shutdown,
+            was_low_space: false,
+            was_min_space: false,
         }
     }
 
@@ -574,6 +585,19 @@ impl Owner {
             })
             .filter(|task| !self.in_flight.contains(task))
             .collect();
+        if queued.is_empty() {
+            return Ok(());
+        }
+        let free_bytes = self.check_free_space().await;
+        let min_limit_gb = self.parts.settings.config.disk().min_free_gb;
+        let min_limit_bytes = min_limit_gb.saturating_mul(1024 * 1024 * 1024);
+        if free_bytes < min_limit_bytes {
+            if !self.was_min_space {
+                self.was_min_space = true;
+                self.notify_rounds_waiting(free_bytes, min_limit_gb).await;
+            }
+            return Ok(());
+        }
         for task in queued {
             if self.runs.len() >= MAX_RUNS.get() {
                 break;
@@ -585,6 +609,7 @@ impl Owner {
 
     /// Starts the run of `task`, or fails the task when it cannot be made ready.
     async fn start(&mut self, task: TaskId) -> Result<(), OwnerError> {
+        let _ = self.check_free_space().await;
         let why = self.reasons.remove(&task);
         let planned = {
             let context = Context {
@@ -767,13 +792,32 @@ impl Owner {
         self.in_flight.remove(&task);
         self.cancels.remove(&task);
         self.holds.remove(&task);
-        match outcome {
+        let result = match outcome {
             Outcome::Verdict(verdict) => match *verdict {
                 RunVerdict::Finished(run) => self.finished(&task, *run).await,
                 RunVerdict::Interrupted { session } => self.interrupted(&task, session).await,
             },
             Outcome::Failed(reason) => self.failed(&task, reason).await,
+        };
+        let free_bytes = self.check_free_space().await;
+        if let Ok(located) = self.locate(&task)
+            && located.role == Role::Reviewer
+        {
+            let low_limit_bytes = self
+                .parts
+                .settings
+                .config
+                .disk()
+                .low_free_gb
+                .saturating_mul(1024 * 1024 * 1024);
+            if free_bytes < low_limit_bytes
+                && let Some(team) = self.parts.state.team(&located.team)
+            {
+                let worktree_dir = self.parts.store.home().worktree_dir(team.repo(), &task);
+                self.remove_target(&task, &worktree_dir);
+            }
         }
+        result
     }
 
     /// A run that could not be carried out: its task fails.
@@ -1702,14 +1746,23 @@ impl Owner {
 
     /// Saves the state.
     async fn save(&self) -> Result<(), OwnerError> {
-        self.parts.store.save(&self.parts.state).await.map_err(|error| {
+        if let Err(error) = self.parts.store.save(&self.parts.state).await {
+            let chain = error_chain(&error);
             tracing::error!(
                 event = LogEvent::StateSaveFailed.as_str(),
-                error = %error_chain(&error),
+                error = %chain,
                 "state.json cannot be saved"
             );
-            OwnerError::Store(error)
-        })
+            if let Err(notify_err) = self.parts.notifier.notify_emergency(&chain).await {
+                tracing::warn!(
+                    event = LogEvent::NotificationFailed.as_str(),
+                    error = %error_chain(&notify_err),
+                    "emergency notification failed"
+                );
+            }
+            return Err(OwnerError::Store(error));
+        }
+        Ok(())
     }
 
     /// Sends an event to the subscribers.
@@ -1738,6 +1791,115 @@ impl Owner {
                 %error,
                 "a notification could not be queued"
             );
+        }
+    }
+
+    /// Measures free disk space in bytes, records it in `home.free_space_file()`, and triggers low-space notification
+    /// on crossing below `disk.low_free_gb`.
+    pub(super) async fn check_free_space(&mut self) -> u64 {
+        let root = self.parts.store.home().root();
+        let free_bytes = match self.parts.free_space.free_space_bytes(root) {
+            Ok(b) => b,
+            Err(error) => {
+                tracing::warn!("cannot measure free disk space: {error}");
+                return u64::MAX;
+            }
+        };
+        drop(std::fs::write(
+            self.parts.store.home().free_space_file(),
+            free_bytes.to_string(),
+        ));
+
+        let low_limit_gb = self.parts.settings.config.disk().low_free_gb;
+        let low_limit_bytes = low_limit_gb.saturating_mul(1024 * 1024 * 1024);
+        let is_low = free_bytes < low_limit_bytes;
+
+        if is_low && !self.was_low_space {
+            self.was_low_space = true;
+            let free_gb = free_bytes / (1024 * 1024 * 1024);
+            self.notify_low_disk(free_gb, low_limit_gb).await;
+        } else if !is_low && self.was_low_space {
+            self.was_low_space = false;
+        }
+
+        let min_limit_gb = self.parts.settings.config.disk().min_free_gb;
+        let min_limit_bytes = min_limit_gb.saturating_mul(1024 * 1024 * 1024);
+        if free_bytes >= min_limit_bytes && self.was_min_space {
+            self.was_min_space = false;
+        }
+
+        free_bytes
+    }
+
+    /// Notifies the human that free disk space is below threshold, listing the largest worktrees.
+    async fn notify_low_disk(&self, free_gb: u64, limit_gb: u64) {
+        let largest = agent_runtime::disk::largest_worktrees(self.parts.store.home(), 5).unwrap_or_default();
+        let mut lines = Vec::new();
+        for w in largest {
+            let gb = w.bytes / (1024 * 1024 * 1024);
+            let mb = (w.bytes % (1024 * 1024 * 1024)) / (1024 * 1024);
+            lines.push(format!("- {}: {gb}.{mb:02} GB", w.path.display()));
+        }
+        let worktrees = if lines.is_empty() {
+            "none".to_owned()
+        } else {
+            lines.join("\n")
+        };
+        let values = match agent_core::prompt::Variables::new()
+            .with("free", free_gb.to_string())
+            .and_then(|v| v.with("limit", limit_gb.to_string()))
+            .and_then(|v| v.with("worktrees", worktrees))
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("cannot build variables for low disk notice: {e}");
+                return;
+            }
+        };
+        if let Ok(rendered) = self
+            .parts
+            .texts
+            .render(agent_core::prompt::HarnessPrompt::NoticeLowDisk, &values)
+        {
+            let mut split = rendered.splitn(2, '\n');
+            let title = split.next().unwrap_or("Low free disk space").trim();
+            let body = split.next().unwrap_or_default().trim();
+            if let Ok(notification) = Notification::new(title, body)
+                && let Ok(now) = Timestamp::now(&self.parts.clock)
+                && let Err(e) = self.parts.notifier.notify(now, &notification).await
+            {
+                tracing::warn!(event = LogEvent::NotificationFailed.as_str(), error = %error_chain(&e), "cannot deliver low disk notification");
+            }
+        }
+    }
+
+    /// Notifies the human that open rounds wait for disk space.
+    pub(super) async fn notify_rounds_waiting(&mut self, free_bytes: u64, min_gb: u64) {
+        let free_gb = free_bytes / (1024 * 1024 * 1024);
+        let values = match agent_core::prompt::Variables::new()
+            .with("free", free_gb.to_string())
+            .and_then(|v| v.with("min", min_gb.to_string()))
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("cannot build variables for disk wait notice: {e}");
+                return;
+            }
+        };
+        if let Ok(rendered) = self
+            .parts
+            .texts
+            .render(agent_core::prompt::HarnessPrompt::NoticeDiskWait, &values)
+        {
+            let mut split = rendered.splitn(2, '\n');
+            let title = split.next().unwrap_or("Rounds waiting for free disk space").trim();
+            let body = split.next().unwrap_or_default().trim();
+            if let Ok(notification) = Notification::new(title, body)
+                && let Ok(now) = Timestamp::now(&self.parts.clock)
+                && let Err(e) = self.parts.notifier.notify(now, &notification).await
+            {
+                tracing::warn!(event = LogEvent::NotificationFailed.as_str(), error = %error_chain(&e), "cannot deliver disk wait notification");
+            }
         }
     }
 }

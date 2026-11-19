@@ -70,7 +70,7 @@ pub enum HarnessPrompt {
     NoticeStartFailed,
     /// The notification that a run that started could not be carried out to its end.
     NoticeRunFailed,
-    /// The notification that free disk space is below low_free_gb.
+    /// The notification that free disk space is below `low_free_gb`.
     NoticeLowDisk,
     /// The notification that open rounds wait for disk space.
     NoticeDiskWait,

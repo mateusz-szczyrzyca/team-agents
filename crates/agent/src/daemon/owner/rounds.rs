@@ -806,3 +806,7 @@ pub(crate) struct ReviewedHeadError {
 #[cfg(test)]
 #[path = "rounds/tests/opinions.rs"]
 mod opinion_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/disk.rs"]
+mod disk_tests;
