@@ -15,7 +15,6 @@ use agent_core::decide::checks::{Issue, Subject, TestChange};
 use agent_core::decide::round::AskReason;
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::prompt::{ChecksPrompt, Variables, VariablesError};
-use agent_core::questions::checks::ChecksVerdict;
 use agent_core::questions::{ComposeError, Entry, EntryError, QuestionsFile, Verdict};
 use agent_core::state::{CommitId, PrNumber};
 use agent_runtime::checks_prompts::{ChecksPrompts, RenderChecksTextError};
@@ -203,9 +202,10 @@ pub(super) fn questions(
 ) -> Result<Questions, ChecksTextError> {
     let mut grouped: Vec<Vec<&Issue>> = Vec::new();
     let mut subjects = Vec::new();
+    let mut seen = HashSet::new();
     for issue in issues {
         let subject = issue.subject();
-        if !subjects.contains(&subject) {
+        if seen.insert(subject.clone()) {
             subjects.push(subject);
         }
         match grouped.iter_mut().find(|group| {
@@ -329,31 +329,10 @@ pub(super) fn grouped_decisions(subjects: &[Subject], file: &QuestionsFile) -> R
     if !file.is_checks() {
         return Ok(decisions(subjects, file));
     }
-    file.answers()?;
+    let allowed = file.allowed_check_subjects(subjects)?;
     let mut decided = Decisions::default();
     for subject in subjects {
-        let mut found = false;
-        let mut allowed = true;
-        for entry in file.entries().iter().filter(|entry| entry.checks_contains(subject)) {
-            found = true;
-            let verdict = entry
-                .checks_verdict()
-                .map_err(|error| agent_core::questions::AnswersError {
-                    problems: vec![(
-                        entry.number(),
-                        agent_core::questions::AnswerProblem::ChecksVerdict(error),
-                    )],
-                })?;
-            allowed &= match verdict {
-                Some(ChecksVerdict::Allow) => true,
-                Some(ChecksVerdict::Refuse) | None => false,
-                Some(ChecksVerdict::Except(paths)) => match subject {
-                    Subject::Path(path) => !paths.iter().any(|refused| refused == path.as_str()),
-                    Subject::NoTests => true,
-                },
-            };
-        }
-        if found && allowed {
+        if allowed.contains(subject) {
             decided.allowed.push(subject.clone());
         } else {
             decided.refused.push(subject.clone());

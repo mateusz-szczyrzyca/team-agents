@@ -686,12 +686,13 @@ impl QuestionsFile {
     /// What the human answered, question by question.
     ///
     /// # Errors
-    /// [`AnswersError`] listing every question without a verdict and every `ok` without a recommendation.
+    /// [`AnswersError`] listing absent verdicts, `ok` without a recommendation, and invalid grouped checks verdicts.
     pub fn answers(&self) -> Result<Vec<Answer>, AnswersError> {
         let mut answers = Vec::with_capacity(self.entries.len());
         let mut problems = Vec::new();
+        let is_checks = self.is_checks();
         for entry in &self.entries {
-            if self.is_checks() && entry.checks_verdict() == Ok(None) {
+            if is_checks && entry.checks_verdict() == Ok(None) {
                 problems.push((entry.number, AnswerProblem::ChecksVerdict(checks::InvalidChecksVerdict)));
                 continue;
             }

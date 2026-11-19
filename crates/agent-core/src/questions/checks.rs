@@ -1,6 +1,8 @@
 //! The versioned checks-question metadata and its explicit verdict grammar.
 
-use super::{Entry, Part, QuestionsFile, Verdict};
+use std::collections::{HashMap, HashSet};
+
+use super::{AnswerProblem, AnswersError, Entry, Part, QuestionsFile, Verdict};
 use crate::decide::checks::Subject;
 
 /// A strict verdict for a group of findings.
@@ -99,6 +101,40 @@ impl Entry {
 }
 
 impl QuestionsFile {
+    /// Projects strict group verdicts onto the known subjects, allowing a subject only when every group agrees.
+    ///
+    /// # Errors
+    /// [`AnswersError`] if any grouped question has an invalid or absent verdict.
+    pub fn allowed_check_subjects(&self, subjects: &[Subject]) -> Result<HashSet<Subject>, AnswersError> {
+        self.answers()?;
+        let mut allowed = HashMap::new();
+        for entry in self.entries() {
+            let Some(group) = entry.check_group() else {
+                continue;
+            };
+            let verdict = entry.checks_verdict().map_err(|error| AnswersError {
+                problems: vec![(entry.number(), AnswerProblem::ChecksVerdict(error))],
+            })?;
+            let (grant, exceptions) = match verdict {
+                Some(ChecksVerdict::Allow) => (true, HashSet::new()),
+                Some(ChecksVerdict::Refuse) | None => (false, HashSet::new()),
+                Some(ChecksVerdict::Except(paths)) => (true, paths.iter().map(|path| path_key(path)).collect()),
+            };
+            for key in group.lines() {
+                let grant = grant && !exceptions.contains(key);
+                allowed
+                    .entry(key)
+                    .and_modify(|previous| *previous &= grant)
+                    .or_insert(grant);
+            }
+        }
+        Ok(subjects
+            .iter()
+            .filter(|subject| allowed.get(subject_key(subject).as_str()) == Some(&true))
+            .cloned()
+            .collect())
+    }
+
     /// Whether this file uses the grouped checks grammar instead of legacy own answers.
     #[must_use]
     pub fn is_checks(&self) -> bool {
@@ -113,9 +149,14 @@ const GROUP_LABEL: &str = "Checks version one";
 /// Delimiters preserve spaces in paths when a labelled part is trimmed by the Markdown parser.
 fn subject_key(subject: &Subject) -> String {
     match subject {
-        Subject::Path(path) => format!("p:{path}:"),
+        Subject::Path(path) => path_key(path.as_str()),
         Subject::NoTests => "n:".to_owned(),
     }
+}
+
+/// Encodes a path without losing spaces when the Markdown parser trims a labelled part.
+fn path_key(path: &str) -> String {
+    format!("p:{path}:")
 }
 
 #[cfg(test)]
