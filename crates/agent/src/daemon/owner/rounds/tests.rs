@@ -2758,3 +2758,48 @@ async fn a_major_explanation_is_verified_and_merges_without_another_code_commit(
     );
     assert_eq!(rig.github.reviews(1).len(), 4);
 }
+
+#[tokio::test]
+async fn rejected_explanation_is_not_retried_and_fix_response_correction_does_not_add_a_pass() {
+    use agent_core::history::{HistoryEvent, Record};
+    use agent_runtime::history::Reader;
+    let mut rig = Rig::new(&[
+        normal("claude-1", "work,done:FINDING 1: EXPLAINED — explicit units,done:FINDING 1: EXPLAINED — try again,done:FINDING 1: FIXED"),
+        investigator("inv-r1", "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 work-1.txt:1 — units → newtype\\n   CHECK: read signature,done:VERDICT: REQUEST_CHANGES\\nFINDING 1: REJECTED — parameters can be swapped,done:VERDICT: APPROVE\\nFINDING 1: RESOLVED"),
+        investigator("inv-r2", "done:VERDICT: APPROVE,done:VERDICT: APPROVE\\nFINDING 1: ACCEPTED — clear names,done:VERDICT: APPROVE\\nFINDING 1: RESOLVED"),
+    ], 5, false).await;
+    rig.start().await;
+    let (team_id, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let team = state.team(&team_id).unwrap();
+    let item = team.item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(item.fix_passes().len(), 2);
+    assert_eq!(team.find(&tasks[0]).unwrap().1.runs().len(), 4);
+    assert!(
+        rig.kept_prompt(&tasks[0], 4)
+            .contains("FIXED (explanation and second opinion are forbidden)")
+    );
+    assert!(rig.kept_prompt(&tasks[0], 3).contains("parameters can be swapped"));
+    let records = Reader::open(&rig.home.history_file())
+        .unwrap()
+        .team_records(&team_id)
+        .unwrap();
+    let decisions: Vec<_> = records
+        .into_iter()
+        .filter_map(|r| match r.record {
+            Record::Event(e) => match e.event {
+                HistoryEvent::FindingExplained { .. } => Some("explained"),
+                HistoryEvent::FindingAccepted { .. } => Some("accepted"),
+                HistoryEvent::FindingRejected { .. } => Some("rejected"),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    let mut decisions = decisions;
+    decisions.sort_unstable();
+    assert_eq!(decisions, ["accepted", "explained", "rejected"]);
+}
