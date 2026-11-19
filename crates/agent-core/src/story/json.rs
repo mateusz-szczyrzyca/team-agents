@@ -92,7 +92,9 @@ fn why_json(why: &RunWhy) -> Value {
         RunWhy::Item { item } => json!({"kind": kind, "item": item.to_string()}),
         RunWhy::Request { asked_by } => json!({"kind": kind, "asked_by": asked_by.as_ref().map(RunId::as_str)}),
         RunWhy::FixPass { number } => json!({"kind": kind, "number": number.get()}),
-        RunWhy::Review { pr, pass } => json!({"kind": kind, "pr": pr.get().get(), "pass": pass}),
+        RunWhy::Review { pr, pass } | RunWhy::SecondOpinion { pr, pass } => {
+            json!({"kind": kind, "pr": pr.get().get(), "pass": pass})
+        }
         RunWhy::FirstRun
         | RunWhy::WakeUp
         | RunWhy::AskHuman

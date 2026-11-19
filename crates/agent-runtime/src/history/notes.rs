@@ -181,6 +181,9 @@ impl<S: Store> Noting<S> {
                 | HistoryEvent::FindingAccepted { .. }
                 | HistoryEvent::FindingRejected { .. }
                 | HistoryEvent::FindingRaised { .. }
+                | HistoryEvent::SecondOpinionAsked { .. }
+                | HistoryEvent::FindingConfirmed { .. }
+                | HistoryEvent::FindingNotConfirmed { .. }
                 | HistoryEvent::FixPassStarted { .. }
                 | HistoryEvent::PullApproved { .. }
                 | HistoryEvent::PullMerged { .. }

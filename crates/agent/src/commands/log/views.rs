@@ -67,6 +67,9 @@ pub(super) fn print(
                         | HistoryEvent::FindingAccepted { .. }
                         | HistoryEvent::FindingRejected { .. }
                         | HistoryEvent::FindingRaised { .. }
+                        | HistoryEvent::SecondOpinionAsked { .. }
+                        | HistoryEvent::FindingConfirmed { .. }
+                        | HistoryEvent::FindingNotConfirmed { .. }
                 ),
                 _ => false,
             })

@@ -302,6 +302,9 @@ const fn is_pull_request(event: &HistoryEvent) -> bool {
             | HistoryEvent::FindingAccepted { .. }
             | HistoryEvent::FindingRejected { .. }
             | HistoryEvent::FindingRaised { .. }
+            | HistoryEvent::SecondOpinionAsked { .. }
+            | HistoryEvent::FindingConfirmed { .. }
+            | HistoryEvent::FindingNotConfirmed { .. }
             | HistoryEvent::FixPassStarted { .. }
             | HistoryEvent::PullApproved { .. }
             | HistoryEvent::PullMerged { .. }
@@ -440,6 +443,7 @@ fn why(why: &RunWhy) -> String {
         RunWhy::Request { asked_by: Some(run) } => format!("a worker serves a request of run {run}"),
         RunWhy::Request { asked_by: None } => "a worker serves a request".to_owned(),
         RunWhy::FixPass { number } => format!("fix pass {number} of the item"),
+        RunWhy::SecondOpinion { pr, pass } => format!("a second opinion on pull request #{pr}, fix pass {pass}"),
         RunWhy::Review { pr, pass } => format!("a review of pull request #{pr}, pass {}", pass.saturating_add(1)),
         RunWhy::AskHuman => "the fix passes are used up: the human is asked".to_owned(),
         RunWhy::VerdictMissing => "the report had no verdict: it is asked again".to_owned(),
@@ -779,6 +783,9 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         | HistoryEvent::FindingAccepted { .. }
         | HistoryEvent::FindingRejected { .. }
         | HistoryEvent::FindingRaised { .. }
+        | HistoryEvent::SecondOpinionAsked { .. }
+        | HistoryEvent::FindingConfirmed { .. }
+        | HistoryEvent::FindingNotConfirmed { .. }
         | HistoryEvent::FixPassStarted { .. }
         | HistoryEvent::PullApproved { .. }
         | HistoryEvent::PullMerged { .. }
@@ -876,6 +883,27 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             why,
         }
         | HistoryEvent::FindingRaised {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::SecondOpinionAsked {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingConfirmed {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingNotConfirmed {
             pr,
             number,
             pass,

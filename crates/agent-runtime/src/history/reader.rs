@@ -717,10 +717,10 @@ fn read_why(
     if kind != WhyKind::Request {
         here.absent("why_asked_by", asked_by.as_ref())?;
     }
-    if !matches!(kind, WhyKind::FixPass | WhyKind::Review) {
+    if !matches!(kind, WhyKind::FixPass | WhyKind::Review | WhyKind::SecondOpinion) {
         here.absent("why_pass", pass.as_ref())?;
     }
-    if kind != WhyKind::Review {
+    if !matches!(kind, WhyKind::Review | WhyKind::SecondOpinion) {
         here.absent("why_pr", pr.as_ref())?;
     }
     match kind {
@@ -738,17 +738,19 @@ fn read_why(
                 .ok_or_else(|| here.rule("why_pass", "a fix pass counts from 1"))?;
             Ok(RunWhy::FixPass { number })
         }
-        WhyKind::Review => {
+        WhyKind::Review | WhyKind::SecondOpinion => {
             let pass = pass_number.ok_or_else(|| here.rule("why_pass", "a review has a pass"))?;
             let pr = pr
                 .map(|value| count(here, "why_pr", value))
                 .transpose()?
                 .and_then(NonZeroU32::new)
                 .ok_or_else(|| here.rule("why_pr", "a review has a pull request"))?;
-            Ok(RunWhy::Review {
-                pr: PrNumber::new(pr),
-                pass,
-            })
+            let pr = PrNumber::new(pr);
+            if kind == WhyKind::SecondOpinion {
+                Ok(RunWhy::SecondOpinion { pr, pass })
+            } else {
+                Ok(RunWhy::Review { pr, pass })
+            }
         }
         WhyKind::FirstRun => Ok(RunWhy::FirstRun),
         WhyKind::WakeUp => Ok(RunWhy::WakeUp),

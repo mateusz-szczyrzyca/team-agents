@@ -208,7 +208,9 @@ fn why_columns(why: &RunWhy) -> (Option<String>, Option<String>, Option<u32>, Op
         RunWhy::Item { item } => (Some(item.to_string()), None, None, None),
         RunWhy::Request { asked_by } => (None, asked_by.as_ref().map(ToString::to_string), None, None),
         RunWhy::FixPass { number } => (None, None, Some(number.get()), None),
-        RunWhy::Review { pr, pass } => (None, None, Some(*pass), Some(pr.get().get())),
+        RunWhy::Review { pr, pass } | RunWhy::SecondOpinion { pr, pass } => {
+            (None, None, Some(*pass), Some(pr.get().get()))
+        }
         RunWhy::FirstRun
         | RunWhy::WakeUp
         | RunWhy::AskHuman

@@ -259,6 +259,7 @@ impl Owner {
             | RunWhy::WakeUp
             | RunWhy::Request { .. }
             | RunWhy::Review { .. }
+            | RunWhy::SecondOpinion { .. }
             | RunWhy::AskHuman
             | RunWhy::VerdictMissing
             | RunWhy::Checks
