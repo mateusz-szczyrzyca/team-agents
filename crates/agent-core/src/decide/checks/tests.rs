@@ -1209,3 +1209,31 @@ fn a_path_between_delimiters_of_prose_and_markdown_names_the_file() {
         assert_eq!(found(&facts), [], "{description}");
     }
 }
+
+#[test]
+fn merge_edits_are_scoped_to_first_parent_and_the_round_diff() {
+    for (first, second, changed, expected) in [
+        (vec![], vec![modified("tests/a.rs", 0, 1)], true, vec![]),
+        (vec![modified("tests/a.rs", 0, 1)], vec![], false, vec![]),
+        (
+            vec![modified("tests/a.rs", 0, 1)],
+            vec![],
+            true,
+            vec![Issue::RedTestEdited {
+                path: path("tests/a.rs"),
+                red: id('1'),
+                edit: id('3'),
+            }],
+        ),
+    ] {
+        let mut facts = history(vec![
+            commit('1', "", "RED: test a", vec![added("tests/a.rs", 10)]),
+            commit('2', "", "Base work", vec![added("src/b.rs", 5)]),
+            merging(commit('3', "12", "Merge base", vec![]), vec![first, second]),
+        ]);
+        if changed {
+            facts.files = vec![added("tests/a.rs", 9)];
+        }
+        assert_eq!(found(&facts), expected);
+    }
+}
