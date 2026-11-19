@@ -233,12 +233,21 @@ pub struct TaskRef<'a> {
 impl State {
     /// The wake delivery budget of a task, including historical tasks no longer in the crew.
     #[must_use]
-    pub fn wake_delivery(&self, _task: &TaskId) -> Option<WakeDelivery> {
-        None
+    pub fn wake_delivery(&self, task: &TaskId) -> Option<WakeDelivery> {
+        self.wake_deliveries.get(task).copied()
     }
 
     /// Records a delivery budget, or forgets it when the task has read what woke it.
-    pub fn record_wake_delivery(&mut self, _task: TaskId, _delivery: Option<WakeDelivery>) {}
+    pub fn record_wake_delivery(&mut self, task: TaskId, delivery: Option<WakeDelivery>) {
+        match delivery {
+            Some(delivery) => {
+                self.wake_deliveries.insert(task, delivery);
+            }
+            None => {
+                self.wake_deliveries.remove(&task);
+            }
+        }
+    }
 
     /// A state without teams.
     #[must_use]
