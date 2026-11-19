@@ -552,6 +552,12 @@ pub enum ChecksStep {
         /// Why the human is asked.
         reason: AskReason,
     },
+    /// The round finds issues of both judges: the human is asked about what only they may allow, and the round goes
+    /// back to the team with what it can settle.
+    Both {
+        /// Which pass of the checks this is, counted from 1.
+        pass: NonZeroU32,
+    },
 }
 
 /// The checking phase of a round: after the gate is green at the head and before the reviews are asked, the first time

@@ -152,7 +152,7 @@ impl Owner {
         );
         match step {
             ChecksStep::StartReviews => Ok(None),
-            ChecksStep::BackToTeam { pass } => {
+            ChecksStep::Both { pass } | ChecksStep::BackToTeam { pass } => {
                 let text = team_message(
                     pulls.checks(),
                     reviewing.pr,

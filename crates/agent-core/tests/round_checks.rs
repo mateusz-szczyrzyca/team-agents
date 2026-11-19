@@ -163,6 +163,41 @@ mod round_checks {
     }
 
     #[test]
+    fn checking_conclude_table_over_findings_and_passes() {
+        let team_only = [for_the_team()];
+        let human_only = [for_the_human()];
+        let both = [for_the_human(), for_the_team()];
+        let refused = [Subject::Path(path("AGENTS.md"))];
+
+        // only team: back to team while passes remain
+        assert_eq!(Checking::after(0).conclude(&team_only, &[], TWICE), pass(1));
+        // only human: asked of human at once
+        assert_eq!(
+            Checking::after(0).conclude(&human_only, &[], TWICE),
+            ChecksStep::AskHuman {
+                reason: AskReason::OnlyTheHumanMayAllow,
+            }
+        );
+        // both: both at once while passes remain
+        assert_eq!(
+            Checking::after(0).conclude(&both, &[], TWICE),
+            ChecksStep::Both {
+                pass: NonZeroU32::new(1).unwrap(),
+            }
+        );
+        // both with passes used up: human asked because team used up passes
+        assert_eq!(
+            Checking::after(2).conclude(&both, &[], TWICE),
+            ChecksStep::AskHuman {
+                reason: AskReason::PassesUsed,
+            }
+        );
+        // both with a refused subject: goes back to team to settle
+        assert_eq!(Checking::after(0).conclude(&both, &refused, TWICE), pass(1));
+        assert_eq!(Checking::after(2).conclude(&both, &refused, TWICE), pass(3));
+    }
+
+    #[test]
     fn the_phase_says_how_often_the_round_was_sent_back() {
         assert_eq!(Checking::after(3).passes(), 3);
         assert_eq!(Checking::after(0).passes(), 0);
