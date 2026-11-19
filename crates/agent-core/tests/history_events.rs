@@ -74,9 +74,43 @@ mod history_events {
         }
     }
 
+    /// The four finding decisions, in keyword order.
+    fn finding_events() -> Vec<HistoryEvent> {
+        vec![
+            HistoryEvent::FindingExplained {
+                pr: pr(7),
+                number: NonZeroU32::MIN,
+                pass: 1,
+                by: "inv-codex".parse().unwrap(),
+                why: "evidence".into(),
+            },
+            HistoryEvent::FindingAccepted {
+                pr: pr(7),
+                number: NonZeroU32::MIN,
+                pass: 1,
+                by: "inv-codex".parse().unwrap(),
+                why: "evidence".into(),
+            },
+            HistoryEvent::FindingRejected {
+                pr: pr(7),
+                number: NonZeroU32::MIN,
+                pass: 1,
+                by: "inv-codex".parse().unwrap(),
+                why: "evidence".into(),
+            },
+            HistoryEvent::FindingRaised {
+                pr: pr(7),
+                number: NonZeroU32::MIN,
+                pass: 1,
+                by: "inv-codex".parse().unwrap(),
+                why: "evidence".into(),
+            },
+        ]
+    }
+
     /// One event of every kind, with texts that are not ASCII and a text of a thousand characters.
     fn every_event() -> Vec<HistoryEvent> {
-        vec![
+        let mut events = vec![
             gate(),
             HistoryEvent::Checked {
                 pr: Some(pr(7)),
@@ -114,34 +148,6 @@ mod history_events {
                 task: world::task(2),
                 verdict: ReviewVerdict::RequestChanges,
                 report: "Blocker: ❌ no test\nSTATUS: DONE".to_owned(),
-            },
-            HistoryEvent::FindingExplained {
-                pr: pr(7),
-                number: NonZeroU32::MIN,
-                pass: 1,
-                by: "inv-codex".parse().unwrap(),
-                why: "evidence".into(),
-            },
-            HistoryEvent::FindingAccepted {
-                pr: pr(7),
-                number: NonZeroU32::MIN,
-                pass: 1,
-                by: "inv-codex".parse().unwrap(),
-                why: "evidence".into(),
-            },
-            HistoryEvent::FindingRejected {
-                pr: pr(7),
-                number: NonZeroU32::MIN,
-                pass: 1,
-                by: "inv-codex".parse().unwrap(),
-                why: "evidence".into(),
-            },
-            HistoryEvent::FindingRaised {
-                pr: pr(7),
-                number: NonZeroU32::MIN,
-                pass: 1,
-                by: "inv-codex".parse().unwrap(),
-                why: "evidence".into(),
             },
             HistoryEvent::FixPassStarted {
                 pr: pr(7),
@@ -191,7 +197,9 @@ mod history_events {
                 cause: LostCause::WriteDiskFull,
                 detail: "the disk is full — zażółć".to_owned(),
             },
-        ]
+        ];
+        events.splice(7..7, finding_events());
+        events
     }
 
     #[test]

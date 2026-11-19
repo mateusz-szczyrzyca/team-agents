@@ -19,7 +19,7 @@ fn reads_the_previous_schema_without_enabling_new_rules_for_open_rounds() {
     );
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&state.to_json().unwrap()).unwrap()["schema_version"],
-        5
+        6
     );
 }
 #[test]
