@@ -196,7 +196,13 @@ impl Owner {
                 .and_then(|item| item.findings())
                 .is_some_and(|ledger| ledger.verification().is_some())
         });
-        let reviewed_head = if rotating {
+        let next = self.decide(team_id, asked, verdict);
+        let mut look = Look::default();
+        self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
+        let completed = self.record_findings(team_id, task, asked, verdict, message)?;
+        // Only a pull request that is verified by rotation keeps the reviewed head, so the protocols that started
+        // earlier never run the Git lookup.
+        if completed && rotating {
             let agent: AgentName = asked.reviewer.as_str().parse()?;
             let head = self
                 .worktree_git(&lead.repo, task, &agent)
@@ -210,15 +216,6 @@ impl Owner {
                     task: task.clone(),
                     source: PublishError::from(source),
                 })?;
-            Some(head)
-        } else {
-            None
-        };
-        let next = self.decide(team_id, asked, verdict);
-        let mut look = Look::default();
-        self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
-        let completed = self.record_findings(team_id, task, asked, verdict, message)?;
-        if let Some(head) = reviewed_head.filter(|_| completed) {
             let mut team = self
                 .parts
                 .state
