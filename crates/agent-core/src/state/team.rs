@@ -15,7 +15,9 @@ use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::{Keyword, Role, Tier, UnknownKeyword};
 use crate::task_list::{AllowLines, ItemMark, TaskList, TaskListError};
 
+mod activities;
 mod legacy;
+pub use activities::{Activity, ActivityEnd, ActivityOutcome, ActivityRequest};
 mod rounds;
 
 pub(super) use self::legacy::{LegacyError, TeamV1};

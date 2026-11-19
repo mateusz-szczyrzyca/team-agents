@@ -40,8 +40,9 @@ pub use question::{AnswerBeforeQuestion, AnsweredVia, Question, QuestionState};
 pub use round::{ClosedBeforeOpened, Round, RoundEnd, RoundLife};
 pub use run::{Run, RunEnd, RunError, RunState};
 pub use team::{
-    AdvanceItemError, BeginRunError, CloseRoundError, Crew, CrewError, CrewMut, MergeMode, NewRun, OpenRoundError,
-    ReviewerProblem, RoundsError, TaskListText, Team, TeamError, TeamMembers, TeamMut,
+    Activity, ActivityEnd, ActivityOutcome, ActivityRequest, AdvanceItemError, BeginRunError, CloseRoundError, Crew,
+    CrewError, CrewMut, MergeMode, NewRun, OpenRoundError, ReviewerProblem, RoundsError, TaskListText, Team, TeamError,
+    TeamMembers, TeamMut,
 };
 pub use values::{CommitId, InvalidCommitId, InvalidTimestamp, PrNumber, SessionId, Timestamp};
 pub use wake_delivery::WakeDelivery;
