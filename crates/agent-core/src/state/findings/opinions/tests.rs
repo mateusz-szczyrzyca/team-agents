@@ -478,3 +478,32 @@ fn replacement_assignment_rejects_a_repeated_investigator_or_task_atomically() {
         assert_eq!(findings, before);
     }
 }
+
+#[test]
+fn a_legacy_hold_notice_does_not_suppress_the_final_bounded_notice() {
+    let mut findings = ledger(Severity::Blocker);
+    let number = NonZeroU32::MIN;
+    findings.request_opinion(number, request()).unwrap();
+    let task: TaskId = "task-20261111-193001-k3x9".parse().unwrap();
+    findings
+        .assign_opinion(number, "inv-first".parse().unwrap(), task.clone())
+        .unwrap();
+    assert_eq!(findings.mark_opinion_notice(number), Ok(true));
+    findings
+        .fail_opinion(number, &task, OpinionFailure::Interrupted)
+        .unwrap();
+    for n in 2..=3 {
+        let task: TaskId = format!("task-20261111-19300{n}-k3x9").parse().unwrap();
+        findings
+            .assign_opinion_at(
+                number,
+                format!("inv-{n}").parse().unwrap(),
+                task.clone(),
+                "2026-11-11T19:50:00Z".parse().unwrap(),
+            )
+            .unwrap();
+        findings.fail_opinion(number, &task, OpinionFailure::Failed).unwrap();
+    }
+    assert_eq!(findings.mark_opinion_notice(number), Ok(true));
+    assert_eq!(findings.mark_opinion_notice(number), Ok(false));
+}
