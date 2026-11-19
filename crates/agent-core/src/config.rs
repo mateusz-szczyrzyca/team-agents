@@ -330,7 +330,11 @@ impl Review {
     /// Whether a blocker may receive one independent second opinion.
     #[must_use]
     pub fn second_opinion(&self) -> Permission {
-        Permission::Enabled
+        if self.allow_second_opinion_on_blocker {
+            Permission::Enabled
+        } else {
+            Permission::Disabled
+        }
     }
 }
 
