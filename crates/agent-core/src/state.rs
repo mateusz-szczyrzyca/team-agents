@@ -676,12 +676,12 @@ mod tests {
     #[test]
     fn the_schema_version_is_one() {
         assert_eq!(SCHEMA_VERSION, 10);
-        assert_eq!(serde_json::to_value(SchemaVersion).unwrap(), json!(9));
+        assert_eq!(serde_json::to_value(SchemaVersion).unwrap(), json!(10));
     }
 
     #[test]
     fn only_the_schema_version_of_this_build_is_read() {
-        serde_json::from_value::<SchemaVersion>(json!(9)).unwrap();
+        serde_json::from_value::<SchemaVersion>(json!(10)).unwrap();
         for bad in [
             json!(0),
             json!(1),
