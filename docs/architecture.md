@@ -519,6 +519,21 @@ else pushed after the reviews is merged as well. A review that cannot be posted 
 fails or is stopped is not replaced: the human resumes it. A solo agent that takes the next item while its first is in review
 switches to its fix pass's branch by what the prompt says, not by the daemon. The reports are cut at 20,000 characters.
 
+A completed fix handover at the reviewed tip is decided by the pure `decide::fix::fix_step` table. A claimed
+FIXED answer or a legacy unanswered blocker returns the lead with `harness/review/fix-no-commit.md`; all blockers
+explained or closed by independent opinions permit verification at the same tip. Handover corrections share the
+publication correction counter (three returns), including a stale gate after the harness has no gate left to run.
+Exhaustion sends `harness/pr/notice-handover-held.md` once for the held tip, naming the round and the lead's
+`agent say` command. Publication clears the counter. The counter and notification deduplication remain transient,
+like the existing publication corrections; a daemon restart may issue a fresh correction.
+
+The owner's `rounds/waiting.rs` projects task activity, pending opinions, durable response corrections and its
+queued gates/publication actions into `decide::wait::round_wait`. This pure decision returns no wait for active
+or closed rounds and an owned obligation or a defect for idle open rounds. `RoundDetail.waiting` carries its
+catalog text to both status views. After scheduling each team's work, an unowned idle round logs one error using
+`daemon_task_failed` with `operation=round_wait` and its round ID. Deduplication lasts for the daemon's lifetime.
+No wait label or publication correction counter is added to `state.json`.
+
 ### The history
 
 The state file says what is; the history says what happened. It is one SQLite database, `history.db` in the home, written

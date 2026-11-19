@@ -1203,6 +1203,17 @@ For new pull requests, the lead's fix message answers every open blocking findin
 `FINDING 3: FIXED`, or, once for a MAJOR, `FINDING 3: EXPLAINED — why the deviation is right`.
 A confirmed BLOCKER requires a code fix. Missing or forbidden answers receive at most two corrections without consuming
 another fix pass; after that the human is notified and verification stays held.
+A fix pass that claims `FIXED` must hand over a new commit. If its tip is still the reviewed commit,
+the harness returns it to the lead to commit the fix and run `agent gate`. The same correction budget covers a
+gate record that still belongs to another commit after the harness has finished its own gate. Three automatic
+handover corrections are allowed; exhaustion sends one notice naming the round and `agent say <task> <instructions>`.
+An unchanged tip can still enter verification when every blocker is explained or closed by a second opinion.
+Legacy unanswered blockers require a committed fix too.
+
+An idle open round's line in `agent status` and `agent status <round>` names what it waits for: a harness gate,
+a review, a second opinion, the human's answer, or the lead's correction. `nothing: this is a defect` means the
+harness has lost its next action; it logs one `daemon_task_failed` error for that round with `operation=round_wait`.
+
 Verifiers answer a pending explanation with `FINDING 3: ACCEPTED — why` or `FINDING 3: REJECTED — why`.
 Every verifier must accept before the finding becomes MINOR; one rejection requires a code fix and bars another
 explanation. The table retains the explanation and every verifier's evidence. A verifier may raise severity using
