@@ -755,7 +755,7 @@ mod tests {
     fn saved() -> String {
         include_str!("../../agent-core/tests/fixtures/state-v1-as-v3.json").replacen(
             "\"schema_version\": 3",
-            "\"schema_version\": 9",
+            "\"schema_version\": 10",
             1,
         )
     }
@@ -979,14 +979,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = home_in(&dir);
         let store = StateStore::open(home.clone()).await.unwrap();
-        std::fs::write(home.state_file(), "{\"schema_version\": 10, \"teams\": 7}").unwrap();
+        std::fs::write(home.state_file(), "{\"schema_version\": 11, \"teams\": 7}").unwrap();
 
         let result = store.load().await;
 
         assert!(
             matches!(
                 &result,
-                Err(StoreError::Invalid { path, source: StateError::UnsupportedSchema(UnsupportedSchema { found: 10 }) })
+                Err(StoreError::Invalid { path, source: StateError::UnsupportedSchema(UnsupportedSchema { found: 11 }) })
                     if *path == home.state_file()
             ),
             "{result:?}"

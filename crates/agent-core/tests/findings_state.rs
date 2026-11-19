@@ -9,7 +9,7 @@ const OLD: &str = include_str!("fixtures/state-before-findings.json");
 #[test]
 fn reads_the_previous_schema_without_enabling_new_rules_for_open_rounds() {
     let state = State::from_json(OLD).unwrap();
-    assert_eq!(SCHEMA_VERSION, 9);
+    assert_eq!(SCHEMA_VERSION, 10);
     assert!(
         state
             .teams()
