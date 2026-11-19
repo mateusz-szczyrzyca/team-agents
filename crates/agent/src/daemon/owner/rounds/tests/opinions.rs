@@ -702,6 +702,9 @@ async fn restart_resumes_the_same_unanswered_opinions_once_and_keeps_answers() {
             (investigator.clone(), task.clone())
         })
         .collect();
+    for (_, task) in &assignments {
+        assert!(rig.prompt(task, 1).await.contains("# SECOND OPINION REQUEST"));
+    }
     rig.stop().await.unwrap();
     std::fs::write(rig.home.root().join("opinion-release"), "ready").unwrap();
     rig.start().await;
