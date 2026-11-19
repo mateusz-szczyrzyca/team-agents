@@ -75,25 +75,79 @@ impl Findings {
         Vec<(NonZeroU32, crate::review_response::opinion::LeadAnswer)>,
         crate::review_response::opinion::OpinionError,
     > {
+        use crate::review_response::opinion::{LeadAnswer, OpenFinding};
+        let fixed = self.fixed_answers(pass);
         let open = self
             .entries
             .iter()
-            .map(|entry| crate::review_response::opinion::OpenFinding {
+            .filter(|entry| {
+                entry.status == FindingStatus::Open
+                    && !fixed.contains(&entry.number)
+                    && !self.opinions.get(&entry.number).is_some_and(|opinion| {
+                        matches!(opinion.stage, OpinionStage::Waiting | OpinionStage::Assigned { .. })
+                    })
+                    && !self.disputes.as_ref().is_some_and(|disputes| {
+                        disputes
+                            .explanations
+                            .get(&entry.number)
+                            .is_some_and(|explanation| explanation.status == super::ExplanationStatus::Pending)
+                    })
+            })
+            .map(|entry| OpenFinding {
                 number: entry.number,
                 severity: entry.finding.severity,
-                explained: false,
-                opinion_used: false,
+                explained: self
+                    .disputes
+                    .as_ref()
+                    .is_some_and(|disputes| disputes.explanations.contains_key(&entry.number)),
+                opinion_used: self.opinions.contains_key(&entry.number),
             })
             .collect::<Vec<_>>();
-        let _inputs = (pass, head);
-        crate::review_response::opinion::parse_lead(text, &open, permission)
+        let answers = crate::review_response::opinion::parse_lead(text, &open, permission)?;
+        for (number, answer) in &answers {
+            match answer {
+                LeadAnswer::Fixed => {
+                    self.fixed.entry(pass).or_default().insert(*number);
+                }
+                LeadAnswer::Explained(why) => {
+                    if let Some(disputes) = &mut self.disputes {
+                        disputes.explanations.insert(
+                            *number,
+                            super::Explanation {
+                                why: why.clone(),
+                                status: super::ExplanationStatus::Pending,
+                                votes: Default::default(),
+                            },
+                        );
+                    }
+                }
+                LeadAnswer::SecondOpinion(reason) => {
+                    self.opinions.insert(
+                        *number,
+                        SecondOpinion {
+                            request: OpinionRequest {
+                                pass,
+                                head: head.clone(),
+                                reason: reason.clone(),
+                            },
+                            stage: OpinionStage::Waiting,
+                        },
+                    );
+                }
+            }
+        }
+        if let Some(disputes) = &mut self.disputes {
+            disputes.answered_pass = pass.get();
+            disputes.bounces = 0;
+            disputes.correction = None;
+        }
+        Ok(answers)
     }
 
     /// Accepted code fixes for a particular fix pass, retained across restarts.
     #[must_use]
     pub fn fixed_answers(&self, pass: NonZeroU32) -> std::collections::BTreeSet<NonZeroU32> {
-        let _pass = pass;
-        std::collections::BTreeSet::new()
+        self.fixed.get(&pass).cloned().unwrap_or_default()
     }
 
     /// Checks cross-record invariants once at the deserialization boundary.

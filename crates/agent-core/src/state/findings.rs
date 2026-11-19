@@ -62,6 +62,9 @@ pub struct Findings {
     /// One-shot opinions; an absent map means no opinion has been requested.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     opinions: BTreeMap<NonZeroU32, SecondOpinion>,
+    /// Code fixes accepted in each pass, including before an opinion completes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    fixed: BTreeMap<NonZeroU32, std::collections::BTreeSet<NonZeroU32>>,
     /// Reports received during the current pass; numbering waits for request order to be known in full.
     pending: BTreeMap<TaskId, Report>,
     /// The harness comment, updated instead of posting another table.
@@ -83,6 +86,9 @@ struct FindingsWire {
     /// Missing on every state written before schema 7.
     #[serde(default)]
     opinions: BTreeMap<NonZeroU32, SecondOpinion>,
+    /// Missing before schema 8: no lead fixes have been retained.
+    #[serde(default)]
+    fixed: BTreeMap<NonZeroU32, std::collections::BTreeSet<NonZeroU32>>,
     /// See [`Findings::verification`]; missing retains the previous protocol.
     #[serde(default)]
     verification: Option<Verification>,
@@ -121,6 +127,7 @@ impl TryFrom<FindingsWire> for Findings {
     fn try_from(wire: FindingsWire) -> Result<Self, Self::Error> {
         let mut ledger = Self::new(wire.entries)?;
         ledger.opinions = wire.opinions;
+        ledger.fixed = wire.fixed;
         ledger.disputes = wire.disputes;
         ledger.pending = wire.pending;
         ledger.comment = wire.comment;
@@ -211,6 +218,7 @@ impl Findings {
             verification: None,
             entries,
             opinions: BTreeMap::new(),
+            fixed: BTreeMap::new(),
             pending: BTreeMap::new(),
             comment: None,
         })
