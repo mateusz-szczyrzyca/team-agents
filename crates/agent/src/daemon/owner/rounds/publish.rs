@@ -468,7 +468,7 @@ impl Owner {
             .reviewed_tip(&pr.branch)
             .await?
             .unwrap_or_else(|| before.head.clone());
-        let answered = fixing.iter().any(|id| {
+        let explained = fixing.iter().any(|id| {
             self.parts
                 .state
                 .team(team)
@@ -476,10 +476,15 @@ impl Owner {
                 .is_some_and(|item| {
                     item.findings()
                         .and_then(agent_core::state::Findings::disputes)
-                        .is_some_and(|d| d.answered_pass == crate::daemon::merge::count(item.fix_passes().len()))
+                        .is_some_and(|d| {
+                            d.answered_pass == count(item.fix_passes().len())
+                                && d.explanations
+                                    .values()
+                                    .any(|e| e.status == agent_core::state::ExplanationStatus::Pending)
+                        })
                 })
         });
-        if reviewed == ready.tip && joined.is_empty() && !answered {
+        if reviewed == ready.tip && joined.is_empty() && !explained {
             return Ok(Attempt::Nothing);
         }
         let mut ids = fixing.to_vec();
