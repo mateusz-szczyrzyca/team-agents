@@ -31,6 +31,8 @@ pub(super) struct WakeCount {
     count: u32,
     /// Whether the stop was told in the log already.
     stopped: bool,
+    /// Whether the failure to read the log of the bus was told already; a read that works clears it.
+    unreadable_told: bool,
 }
 
 /// What the log says of the run a wake-up starts.
@@ -83,29 +85,47 @@ impl Owner {
             .agent()
             .name()
             .parse()?;
-        let message = match self.parts.bus.latest_message_for(&agent, team_id).await {
-            Ok(message) => message,
+        let known = self.wake_counts.remove(task);
+        let (message, mut woken) = match self.parts.bus.latest_message_for(&agent, team_id).await {
+            Ok(message) => {
+                let id = message.as_ref().map(|note| note.id);
+                let woken = match known {
+                    Some(known) if known.message == id => WakeCount {
+                        unreadable_told: false,
+                        ..known
+                    },
+                    Some(_) | None => WakeCount {
+                        message: id,
+                        count: 0,
+                        stopped: false,
+                        unreadable_told: false,
+                    },
+                };
+                (message, woken)
+            }
             Err(error) => {
-                tracing::warn!(
-                    event = LogEvent::BusDown.as_str(),
-                    team = %team_id,
-                    task = %task,
-                    error = %error_chain(&error),
-                    "the message that wakes a member cannot be read from the bus: the wake-up goes ahead without it"
-                );
-                None
+                // Without the log the message is not known: the count of the last known one goes on, so that a log that
+                // cannot be read does not stretch the wake-ups, and the failure is told once.
+                let mut woken = known.unwrap_or(WakeCount {
+                    message: None,
+                    count: 0,
+                    stopped: false,
+                    unreadable_told: false,
+                });
+                if !woken.unreadable_told {
+                    woken.unreadable_told = true;
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        team = %team_id,
+                        task = %task,
+                        error = %error_chain(&error),
+                        "the message that wakes a member cannot be read from the bus: the wake-up goes ahead without it"
+                    );
+                }
+                (None, woken)
             }
         };
-        let id = message.as_ref().map(|note| note.id);
         let limit = self.parts.settings.config.limits().wake_ups_per_message;
-        let mut woken = match self.wake_counts.remove(task) {
-            Some(known) if known.message == id => known,
-            Some(_) | None => WakeCount {
-                message: id,
-                count: 0,
-                stopped: false,
-            },
-        };
         if woken.count >= limit {
             if !woken.stopped {
                 woken.stopped = true;
