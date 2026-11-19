@@ -79,3 +79,50 @@ async fn human_decision_lists_only_unresolved_blocking_findings() {
     );
     assert_eq!(blocking_text(&texts, None).unwrap(), "");
 }
+
+#[tokio::test]
+async fn explanations_and_verifier_evidence_are_in_the_table_and_request() {
+    use agent_core::review_findings::Answer;
+    use agent_core::state::{Explanation, ExplanationStatus};
+    let texts = AutopilotPrompts::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &Language::default(),
+    )
+    .await
+    .unwrap();
+    let mut ledger = Findings::verifying(agent_core::config::ReviewCount::TWO);
+    let wire = serde_json::json!({"entries":[{
+        "number":1,"finding":{"severity":"MINOR","rule":"TYP-3","place":"src/lib.rs:1","text":"units → newtype","check":"read signature"},
+        "reporter":"inv-codex","pass":1,"status":"open"
+    }]});
+    let entries: Findings = serde_json::from_value(wire).unwrap();
+    // Keep the new protocol marker while installing a recorded finding.
+    let mut json = serde_json::to_value(&ledger).unwrap();
+    json["entries"] = serde_json::to_value(entries.entries()).unwrap();
+    ledger = serde_json::from_value(json).unwrap();
+    ledger.disputes_mut().unwrap().explanations.insert(
+        NonZeroU32::MIN,
+        Explanation {
+            why: "explicit café units".into(),
+            status: ExplanationStatus::Accepted,
+            votes: [(
+                "inv-opus".parse().unwrap(),
+                Answer::Accepted {
+                    why: "contract is clear".into(),
+                },
+            )]
+            .into(),
+        },
+    );
+    assert_eq!(table(&texts, &ledger).unwrap(), include_str!("explanation-table.md"));
+    assert!(
+        open_text(&texts, Some(&ledger))
+            .unwrap()
+            .contains("explicit café units")
+    );
+    assert!(
+        open_text(&texts, Some(&ledger))
+            .unwrap()
+            .contains("inv-opus: ACCEPTED — contract is clear")
+    );
+}
