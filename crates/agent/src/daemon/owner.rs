@@ -562,6 +562,7 @@ impl Owner {
             );
         }
         if !repaired.is_empty() {
+            self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
             self.save().await?;
         }
         self.ask_unanswered_reviews().await?;
@@ -574,6 +575,7 @@ impl Owner {
                 tasks = recovery.interrupted.len(),
                 "runs that a restart interrupted have been reconciled"
             );
+            self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
             self.save().await?;
         }
         Ok(())
@@ -1706,6 +1708,7 @@ impl Owner {
         events: Vec<EventKind>,
         notice: Option<Notice>,
     ) -> Result<(), OwnerError> {
+        self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
         self.save().await?;
         for kind in events {
             self.publish(at, kind);

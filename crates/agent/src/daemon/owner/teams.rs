@@ -345,6 +345,7 @@ impl Owner {
             self.close_if_finished(team, &mut look)?;
             self.observe_round_waits(team);
             if look.changed {
+                self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
                 self.save().await?;
                 let now = Timestamp::now(&self.parts.clock)?;
                 for event in look.events {

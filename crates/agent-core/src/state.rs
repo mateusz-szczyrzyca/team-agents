@@ -262,6 +262,13 @@ impl State {
         }
     }
 
+    /// Retains investigator assignments and terminal outcomes before a daemon transition is saved.
+    pub fn record_activities(&mut self, at: Timestamp) {
+        for team in &mut self.teams {
+            team.record_activities(at);
+        }
+    }
+
     /// The teams, oldest first.
     #[must_use]
     pub fn teams(&self) -> &[Team] {

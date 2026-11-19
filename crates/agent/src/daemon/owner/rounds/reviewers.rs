@@ -247,6 +247,9 @@ impl Owner {
             let mut item = team_mut.item_mut(*id).ok_or(PublishError::Lost)?;
             item.ask_reviews(prepared.reviews.clone())?;
         }
+        for review in &prepared.reviews {
+            next.record_activities(review.requested_at);
+        }
         self.parts.state = next;
         Ok(())
     }

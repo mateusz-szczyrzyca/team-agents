@@ -71,6 +71,7 @@ opinion_error!(super::findings::TextError);
 impl Owner {
     /// Copies one PR's authoritative ledger to all its items.
     fn keep_opinions(&mut self, team: &TeamId, items: &[ItemId], ledger: &Findings) -> Result<(), OwnerError> {
+        let now = Timestamp::now(&self.parts.clock)?;
         let mut found = self
             .parts
             .state
@@ -85,6 +86,7 @@ impl Owner {
                 *saved = ledger.clone();
             }
         }
+        found.record_activities(now);
         Ok(())
     }
 

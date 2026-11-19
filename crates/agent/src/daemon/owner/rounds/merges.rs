@@ -378,6 +378,7 @@ impl Owner {
         }
         // A restart uses the saved Done phases to deduplicate this notice. Never make
         // delivery visible while a failed save can still leave the items approved.
+        self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
         self.save().await?;
         let announcement = Announcement::Merged {
             team: site.team.clone(),
