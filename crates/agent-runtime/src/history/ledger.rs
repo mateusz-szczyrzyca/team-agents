@@ -243,6 +243,10 @@ fn event_entry(tx: &Transaction<'_>, record: &EventRecord, limit: MaxTextBytes) 
         | HistoryEvent::PullReady { .. }
         | HistoryEvent::ReviewAsked { .. }
         | HistoryEvent::ReviewSubmitted { .. }
+        | HistoryEvent::FindingExplained { .. }
+        | HistoryEvent::FindingAccepted { .. }
+        | HistoryEvent::FindingRejected { .. }
+        | HistoryEvent::FindingRaised { .. }
         | HistoryEvent::FixPassStarted { .. }
         | HistoryEvent::PullApproved { .. }
         | HistoryEvent::PullMerged { .. }

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray, VariantNames};
 
 use crate::decide::round::AskReason;
-use crate::ids::{BranchName, InvestigatorName, RoundId, TaskId, TeamId};
+use crate::ids::{AgentName, BranchName, InvestigatorName, RoundId, TaskId, TeamId};
 use crate::kinds::{Keyword, UnknownKeyword};
 use crate::protocol::{Client, ControlAction, Target};
 use crate::state::{AnsweredVia, CommitId, GateRecord, PrNumber, RoundEnd, Timestamp};
@@ -97,6 +97,10 @@ impl FromStr for LostKind {
             | EventKind::PullReady
             | EventKind::ReviewAsked
             | EventKind::ReviewSubmitted
+            | EventKind::FindingExplained
+            | EventKind::FindingAccepted
+            | EventKind::FindingRejected
+            | EventKind::FindingRaised
             | EventKind::FixPassStarted
             | EventKind::PullApproved
             | EventKind::PullMerged
@@ -206,6 +210,14 @@ pub enum EventKind {
     ReviewAsked,
     /// [`HistoryEvent::ReviewSubmitted`].
     ReviewSubmitted,
+    /// A finding decision recorded with its evidence.
+    FindingExplained,
+    /// A finding decision recorded with its evidence.
+    FindingAccepted,
+    /// A finding decision recorded with its evidence.
+    FindingRejected,
+    /// A finding decision recorded with its evidence.
+    FindingRaised,
     /// [`HistoryEvent::FixPassStarted`].
     FixPassStarted,
     /// [`HistoryEvent::PullApproved`].
@@ -338,6 +350,58 @@ pub enum HistoryEvent {
         /// The report, whole.
         report: String,
     },
+    /// A finding decision and its evidence.
+    FindingExplained {
+        /// The pull request.
+        pr: PrNumber,
+        /// The permanent finding number.
+        number: NonZeroU32,
+        /// The review or fix pass.
+        pass: u32,
+        /// The lead or verifier.
+        by: AgentName,
+        /// The reason, including the target severity when raised.
+        why: String,
+    },
+    /// A finding decision and its evidence.
+    FindingAccepted {
+        /// The pull request.
+        pr: PrNumber,
+        /// The permanent finding number.
+        number: NonZeroU32,
+        /// The review or fix pass.
+        pass: u32,
+        /// The lead or verifier.
+        by: AgentName,
+        /// The reason, including the target severity when raised.
+        why: String,
+    },
+    /// A finding decision and its evidence.
+    FindingRejected {
+        /// The pull request.
+        pr: PrNumber,
+        /// The permanent finding number.
+        number: NonZeroU32,
+        /// The review or fix pass.
+        pass: u32,
+        /// The lead or verifier.
+        by: AgentName,
+        /// The reason, including the target severity when raised.
+        why: String,
+    },
+    /// A finding decision and its evidence.
+    FindingRaised {
+        /// The pull request.
+        pr: PrNumber,
+        /// The permanent finding number.
+        number: NonZeroU32,
+        /// The review or fix pass.
+        pass: u32,
+        /// The lead or verifier.
+        by: AgentName,
+        /// The reason, including the target severity when raised.
+        why: String,
+    },
     /// A fix pass started: the reviews asked for changes and the team gets their findings.
     FixPassStarted {
         /// The pull request.
@@ -459,6 +523,10 @@ impl HistoryEvent {
             Self::PullReady { .. } => EventKind::PullReady,
             Self::ReviewAsked { .. } => EventKind::ReviewAsked,
             Self::ReviewSubmitted { .. } => EventKind::ReviewSubmitted,
+            Self::FindingExplained { .. } => EventKind::FindingExplained,
+            Self::FindingAccepted { .. } => EventKind::FindingAccepted,
+            Self::FindingRejected { .. } => EventKind::FindingRejected,
+            Self::FindingRaised { .. } => EventKind::FindingRaised,
             Self::FixPassStarted { .. } => EventKind::FixPassStarted,
             Self::PullApproved { .. } => EventKind::PullApproved,
             Self::PullMerged { .. } => EventKind::PullMerged,
@@ -495,6 +563,18 @@ impl HistoryEvent {
             Self::ReviewAsked { pr, pass, reviewer, .. } | Self::ReviewSubmitted { pr, pass, reviewer, .. } => {
                 Some(format!("pr {pr} pass {pass} reviewer {}", reviewer.as_str()))
             }
+            Self::FindingExplained {
+                pr, number, pass, by, ..
+            }
+            | Self::FindingAccepted {
+                pr, number, pass, by, ..
+            }
+            | Self::FindingRejected {
+                pr, number, pass, by, ..
+            }
+            | Self::FindingRaised {
+                pr, number, pass, by, ..
+            } => Some(format!("pr {pr} finding {number} pass {pass} by {by}")),
             Self::FixPassStarted { pr, pass, .. } => Some(format!("pr {pr} fix pass {pass}")),
             Self::QuestionAsked { task, number, .. } | Self::QuestionAnswered { task, number, .. } => {
                 Some(format!("task {} questions {number}", task.as_str()))
@@ -515,6 +595,10 @@ impl HistoryEvent {
                 vec![("title", title), ("body", body)]
             }
             Self::ReviewSubmitted { report, .. } => vec![("report", report)],
+            Self::FindingExplained { why, .. }
+            | Self::FindingAccepted { why, .. }
+            | Self::FindingRejected { why, .. }
+            | Self::FindingRaised { why, .. } => vec![("why", why)],
             Self::Lost { detail, .. } => vec![("detail", detail)],
             Self::FixPassStarted { findings, .. } => vec![("findings", findings)],
             Self::QuestionAsked { text, .. } | Self::QuestionAnswered { text, .. } => vec![("text", text)],
@@ -556,6 +640,10 @@ impl HistoryEvent {
                 found
             }
             Self::ReviewSubmitted { reviewer, task, .. } => vec![reviewer.as_str(), task.as_str()],
+            Self::FindingExplained { by, .. }
+            | Self::FindingAccepted { by, .. }
+            | Self::FindingRejected { by, .. }
+            | Self::FindingRaised { by, .. } => vec![by.as_str()],
             Self::PullMerged { commit, .. } => commit.iter().map(CommitId::as_str).collect(),
             Self::QuestionAsked { task, .. } | Self::QuestionAnswered { task, .. } => vec![task.as_str()],
             Self::Controlled { target, by, tasks, .. } => {

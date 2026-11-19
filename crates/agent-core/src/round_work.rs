@@ -63,6 +63,10 @@ pub fn draft_pull<'a>(events: impl IntoIterator<Item = &'a HistoryEvent>) -> Dra
         | HistoryEvent::PullPushed { .. }
         | HistoryEvent::ReviewAsked { .. }
         | HistoryEvent::ReviewSubmitted { .. }
+        | HistoryEvent::FindingExplained { .. }
+        | HistoryEvent::FindingAccepted { .. }
+        | HistoryEvent::FindingRejected { .. }
+        | HistoryEvent::FindingRaised { .. }
         | HistoryEvent::FixPassStarted { .. }
         | HistoryEvent::QuestionAsked { .. }
         | HistoryEvent::QuestionAnswered { .. }

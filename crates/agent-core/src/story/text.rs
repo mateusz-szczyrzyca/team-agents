@@ -298,6 +298,10 @@ const fn is_pull_request(event: &HistoryEvent) -> bool {
             | HistoryEvent::PullReady { .. }
             | HistoryEvent::ReviewAsked { .. }
             | HistoryEvent::ReviewSubmitted { .. }
+            | HistoryEvent::FindingExplained { .. }
+            | HistoryEvent::FindingAccepted { .. }
+            | HistoryEvent::FindingRejected { .. }
+            | HistoryEvent::FindingRaised { .. }
             | HistoryEvent::FixPassStarted { .. }
             | HistoryEvent::PullApproved { .. }
             | HistoryEvent::PullMerged { .. }
@@ -771,6 +775,10 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         | HistoryEvent::PullReady { .. }
         | HistoryEvent::ReviewAsked { .. }
         | HistoryEvent::ReviewSubmitted { .. }
+        | HistoryEvent::FindingExplained { .. }
+        | HistoryEvent::FindingAccepted { .. }
+        | HistoryEvent::FindingRejected { .. }
+        | HistoryEvent::FindingRaised { .. }
         | HistoryEvent::FixPassStarted { .. }
         | HistoryEvent::PullApproved { .. }
         | HistoryEvent::PullMerged { .. }
@@ -848,6 +856,44 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             let (p, r) = (pass.saturating_add(1), reviewer.as_str());
             entry(page, at, &format!("review pass {p} of #{pr} by {r}: {verdict}"));
             page.raw(2, "review report", report);
+        }
+        HistoryEvent::FindingExplained {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingAccepted {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingRejected {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingRaised {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        } => {
+            entry(
+                page,
+                at,
+                &format!(
+                    "{}: pull request #{pr} finding {number}, pass {pass}, by {by}",
+                    event.kind()
+                ),
+            );
+            page.raw(2, "evidence", why);
         }
         HistoryEvent::FixPassStarted { pr, pass, of, findings } => {
             entry(page, at, &format!("fix pass {pass} of {of} on #{pr} started"));
