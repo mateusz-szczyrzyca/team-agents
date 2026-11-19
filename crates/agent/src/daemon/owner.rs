@@ -741,6 +741,10 @@ impl Owner {
         self.move_to(task, &located.team, TaskStatus::Failed, &mut events)?;
         self.commit(task, &located, now, events, Some(Notice::StartFailed { reason }))
             .await?;
+        if let Some(pulls) = self.pulls.clone() {
+            self.retry_opinion(&pulls, &located.team, task, agent_core::state::OpinionFailure::Failed)
+                .await?;
+        }
         self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)
     }
 
@@ -774,7 +778,7 @@ impl Owner {
 
     /// A run that could not be carried out: its task fails.
     async fn failed(&mut self, task: &TaskId, reason: String) -> Result<(), OwnerError> {
-        // The run is over without the human's word being carried out: the task failed, and is the human's to resume.
+        // Ordinary tasks remain failed; an unanswered opinion retains its bounded replacement request.
         self.halts.remove(task);
         let located = self.locate(task)?;
         {
@@ -801,6 +805,10 @@ impl Owner {
         self.hangs.remove(task);
         self.commit(task, &located, now, events, Some(Notice::RunFailed { reason }))
             .await?;
+        if let Some(pulls) = self.pulls.clone() {
+            self.retry_opinion(&pulls, &located.team, task, agent_core::state::OpinionFailure::Failed)
+                .await?;
+        }
         self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)
     }
 
@@ -951,6 +959,17 @@ impl Owner {
         {
             self.review_ended(task, &located, run.final_message.as_deref()).await?;
         }
+        self.retry_unanswered_opinion(task, &located, &end).await?;
+        self.after_run(task, &located, &end, run.final_message.as_deref())
+    }
+
+    /// Replaces a failed opinion while preserving ordinary task settlement.
+    async fn retry_unanswered_opinion(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        end: &RunEnd,
+    ) -> Result<(), OwnerError> {
         if !matches!(
             end,
             RunEnd::Reported {
@@ -958,9 +977,18 @@ impl Owner {
             }
         ) && let Some(pulls) = self.pulls.clone()
         {
-            self.hold_opinion(&pulls, &located.team, task).await?;
+            let failure = match end {
+                RunEnd::NoStatus { .. } => agent_core::state::OpinionFailure::NoStatus,
+                RunEnd::Hung => agent_core::state::OpinionFailure::Silent,
+                RunEnd::Reported { .. }
+                | RunEnd::QuotaExhausted { .. }
+                | RunEnd::RateLimited
+                | RunEnd::TurnLimit
+                | RunEnd::Stopped => agent_core::state::OpinionFailure::Failed,
+            };
+            self.retry_opinion(&pulls, &located.team, task, failure).await?;
         }
-        self.after_run(task, &located, &end, run.final_message.as_deref())
+        Ok(())
     }
 
     /// Builds the `tracing::Span` for settling the current run of `task` in `team`.

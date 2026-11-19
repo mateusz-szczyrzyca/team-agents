@@ -393,4 +393,5 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
         sql: include_str!("008-finding-decisions.sql"),
     },
     Migration { version: 9, sql: include_str!("009-second-opinions.sql") },
+    Migration { version: 10, sql: include_str!("010-opinion-ends.sql") },
 ];

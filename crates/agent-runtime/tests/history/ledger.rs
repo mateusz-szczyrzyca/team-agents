@@ -818,6 +818,14 @@ fn opinion_event_kinds(text: &str) -> Vec<HistoryEvent> {
             by: "inv-a".parse().unwrap(),
             why: text.to_owned(),
         },
+        HistoryEvent::SecondOpinionEnded {
+            pr: pr(7),
+            number: NonZeroU32::MIN,
+            pass: 1,
+            by: "inv-a".parse().unwrap(),
+            why: text.to_owned(),
+            attempt: NonZeroU32::MIN,
+        },
         HistoryEvent::FindingConfirmed {
             pr: pr(7),
             number: NonZeroU32::MIN,

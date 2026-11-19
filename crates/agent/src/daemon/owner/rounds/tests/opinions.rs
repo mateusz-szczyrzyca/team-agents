@@ -108,6 +108,10 @@ async fn unanswered_opinions_notify_once_and_keep_waiting_across_restart() {
                 investigator("inv-r2", probe),
                 investigator("inv-r3", probe),
                 investigator("inv-r4", probe),
+                investigator("inv-r5", probe),
+                investigator("inv-r6", probe),
+                investigator("inv-r7", probe),
+                investigator("inv-r8", probe),
             ],
             1,
             false,
@@ -149,6 +153,14 @@ async fn unanswered_opinions_notify_once_and_keep_waiting_across_restart() {
             .await;
         }
         rig.stop().await.unwrap();
+        if probe.ends_with("HOLD") {
+            let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+            std::fs::write(
+                rig.home.config_file(),
+                config.replace("opinion-failure:HOLD", "opinion-failure:FAILED"),
+            )
+            .unwrap();
+        }
         rig.start().await;
         rig.wait_for("restart notices", || {
             rig.notifications()
@@ -170,21 +182,7 @@ async fn unanswered_opinions_notify_once_and_keep_waiting_across_restart() {
             "waiting for a second opinion"
         );
         assert!(matches!(item.phase(), ItemPhase::Fixing { .. }));
-        for (number, opinion) in item.findings().unwrap().opinions() {
-            let OpinionStage::Assigned { task, .. } = &opinion.stage else {
-                panic!("must remain pending")
-            };
-            assert_eq!(
-                rig.notifications()
-                    .iter()
-                    .filter(|n| n.contains("Second opinion needs attention")
-                        && n.contains(round.id().as_str())
-                        && n.contains(task.as_str())
-                        && n.contains(&format!("FINDING {number}")))
-                    .count(),
-                1
-            );
-        }
+        assert_exhausted_opinions(&rig, team);
         rig.stop().await.unwrap();
         assert_eq!(
             rig.notifications()
@@ -393,7 +391,7 @@ async fn opinion_history_records_the_request_outcome_and_run_reason() {
                 pr: agent_core::state::PrNumber::new(std::num::NonZeroU32::MIN),
                 number: *number,
                 pass: 1,
-                by: "claude-1".parse().unwrap(),
+                by: investigator.as_str().parse().unwrap(),
                 why: opinion.request.reason.as_str().to_owned(),
             };
             let by = investigator.as_str().parse().unwrap();
@@ -568,6 +566,7 @@ fn opinion_events(
                 if matches!(
                     event.event,
                     HistoryEvent::SecondOpinionAsked { .. }
+                        | HistoryEvent::SecondOpinionEnded { .. }
                         | HistoryEvent::FindingConfirmed { .. }
                         | HistoryEvent::FindingNotConfirmed { .. }
                 ) =>
@@ -577,4 +576,431 @@ fn opinion_events(
             _ => None,
         })
         .collect()
+}
+
+#[tokio::test]
+async fn failed_silent_reports_and_exhausted_corrections_are_given_to_another_investigator() {
+    for probe in ["opinion-retry:FAILED", "opinion-retry:EMPTY", "opinion-retry:INVALID"] {
+        let mut rig = Rig::new(
+            &[
+                normal("claude-1", "work,opinion-ask"),
+                investigator("inv-r1", probe),
+                investigator("inv-r2", probe),
+                investigator("inv-r3", probe),
+                investigator("inv-r4", probe),
+                investigator("inv-r5", probe),
+                investigator("inv-r6", probe),
+            ],
+            1,
+            false,
+        )
+        .await;
+        rig.start().await;
+        let (team, tasks) = rig
+            .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+            .await;
+        rig.state_where("opinion outcome or exhausted hold", |state| {
+            let ledger = state.team(&team).unwrap().items()[0].findings();
+            ledger.is_some_and(|ledger| {
+                ledger.opinions().len() == 2
+                    && ledger
+                        .opinions()
+                        .values()
+                        .all(|opinion| matches!(opinion.stage, OpinionStage::Reported { .. }))
+            }) || rig
+                .notifications()
+                .iter()
+                .any(|n| n.contains("Second opinion needs attention"))
+        })
+        .await;
+        let state = rig.state();
+        let ledger = state.team(&team).unwrap().items()[0].findings().unwrap();
+        assert!(
+            ledger
+                .opinions()
+                .keys()
+                .all(|number| ledger.opinion_attempts(*number).len() >= 2)
+        );
+        rig.item_where("1.1", "replacement opinions counted", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+        rig.stop().await.unwrap();
+        let state = rig.state();
+        let item = &state.team(&team).unwrap().items()[0];
+        let ledger = item.findings().unwrap();
+        for number in ledger.opinions().keys() {
+            let attempts = ledger.opinion_attempts(*number);
+            assert_eq!(attempts.len(), 2);
+            assert_ne!(attempts[0].investigator, attempts[1].investigator);
+            assert!(attempts[0].failure.is_some());
+            assert_eq!(attempts[1].failure, None);
+            assert!(
+                !item.fix_passes()[0]
+                    .requested_by
+                    .iter()
+                    .any(|review| attempts.iter().any(|attempt| attempt.investigator == review.reviewer))
+            );
+            for attempt in attempts {
+                assert!(
+                    rig.kept_prompt(&attempt.task, 1)
+                        .contains(ledger.opinions()[number].request.head.as_str())
+                );
+            }
+        }
+        assert_eq!(item.fix_passes().len(), 1);
+        assert_eq!(rig.kept_runs(&tasks[0]), 2);
+        assert_eq!(
+            rig.notifications()
+                .iter()
+                .filter(|n| n.contains("Second opinion needs attention"))
+                .count(),
+            0
+        );
+    }
+}
+
+#[tokio::test]
+async fn restart_resumes_the_same_unanswered_opinions_once_and_keeps_answers() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-release"),
+            investigator("inv-r2", "opinion-release"),
+            investigator("inv-r3", "opinion-release"),
+            investigator("inv-r4", "opinion-release"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+        .await;
+    let before = rig
+        .state_where("opinion processes running", |state| {
+            let team = state.team(&team).unwrap();
+            team.items()[0].findings().is_some_and(|ledger| {
+                ledger.opinions().len() == 2
+                    && ledger.opinions().values().all(|opinion| {
+                        let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+                            return false;
+                        };
+                        team.find(task).unwrap().1.current_run().is_some()
+                    })
+            })
+        })
+        .await;
+    let ledger = before.team(&team).unwrap().items()[0].findings().unwrap();
+    let assignments: Vec<_> = ledger
+        .opinions()
+        .values()
+        .map(|opinion| {
+            let OpinionStage::Assigned { investigator, task } = &opinion.stage else {
+                panic!("assigned")
+            };
+            (investigator.clone(), task.clone())
+        })
+        .collect();
+    for (_, task) in &assignments {
+        assert!(rig.prompt(task, 1).await.contains("# SECOND OPINION REQUEST"));
+    }
+    rig.stop().await.unwrap();
+    std::fs::write(rig.home.root().join("opinion-release"), "ready").unwrap();
+    rig.start().await;
+    rig.state_where("recovered answers or erroneous hold", |state| {
+        state.team(&team).unwrap().items()[0]
+            .findings()
+            .unwrap()
+            .opinions()
+            .values()
+            .all(|opinion| matches!(opinion.stage, OpinionStage::Reported { .. }))
+            || rig
+                .notifications()
+                .iter()
+                .any(|n| n.contains("Second opinion needs attention"))
+    })
+    .await;
+    let state = rig.state();
+    let ledger = state.team(&team).unwrap().items()[0].findings().unwrap();
+    for (opinion, (who, original)) in ledger.opinions().values().zip(&assignments) {
+        assert!(
+            matches!(&opinion.stage, OpinionStage::Reported { investigator, task, .. } if investigator == who && task == original)
+        );
+    }
+    rig.item_where("1.1", "done after recovered opinions", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+    rig.stop().await.unwrap();
+    rig.start().await;
+    rig.stop().await.unwrap();
+    for (_, task) in assignments {
+        assert_eq!(rig.kept_runs(&task), 2);
+    }
+    assert_eq!(rig.state().team(&team).unwrap().items()[0].fix_passes().len(), 1);
+    assert_eq!(
+        rig.notifications()
+            .iter()
+            .filter(|n| n.contains("Second opinion needs attention"))
+            .count(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn restart_replaces_opinions_whose_worktrees_have_gone() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-release"),
+            investigator("inv-r2", "opinion-release"),
+            investigator("inv-r3", "opinion-release"),
+            investigator("inv-r4", "opinion-release"),
+            investigator("inv-r5", "opinion-release"),
+            investigator("inv-r6", "opinion-release"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+        .await;
+    let before = rig
+        .state_where("assigned opinion processes", |state| {
+            let team = state.team(&team).unwrap();
+            team.items()[0].findings().is_some_and(|ledger| {
+                ledger.opinions().len() == 2
+                    && ledger.opinions().values().all(|opinion| {
+                        let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+                            return false;
+                        };
+                        team.find(task).unwrap().1.current_run().is_some()
+                    })
+            })
+        })
+        .await;
+    let tasks: Vec<_> = before.team(&team).unwrap().items()[0]
+        .findings()
+        .unwrap()
+        .opinions()
+        .values()
+        .map(|opinion| {
+            let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+                panic!("assigned")
+            };
+            task.clone()
+        })
+        .collect();
+    rig.stop().await.unwrap();
+    for task in &tasks {
+        std::fs::remove_dir_all(rig.worktree(task)).unwrap();
+    }
+    std::fs::write(rig.home.root().join("opinion-release"), "ready").unwrap();
+    rig.start().await;
+    let state = rig
+        .state_where("redrawn assignments or failed missing worktree", |state| {
+            let team = state.team(&team).unwrap();
+            let ledger = team.items()[0].findings().unwrap();
+            ledger.opinions().keys().all(|n| ledger.opinion_attempts(*n).len() == 2)
+                || tasks
+                    .iter()
+                    .any(|task| team.find(task).unwrap().1.status() == agent_core::status::TaskStatus::Failed)
+        })
+        .await;
+    let ledger = state.team(&team).unwrap().items()[0].findings().unwrap();
+    for number in ledger.opinions().keys() {
+        assert_eq!(ledger.opinion_attempts(*number).len(), 2);
+        assert_eq!(
+            ledger.opinion_attempts(*number)[0].failure,
+            Some(agent_core::state::OpinionFailure::Interrupted)
+        );
+        assert!(!tasks.contains(&ledger.opinion_attempts(*number)[1].task));
+    }
+    rig.item_where("1.1", "done after redrawing missing tasks", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn replacement_history_keeps_each_failed_investigator_and_its_reason() {
+    use agent_core::history::HistoryEvent;
+    use agent_runtime::history::Reader;
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-failure:FAILED"),
+            investigator("inv-r2", "opinion-failure:FAILED"),
+            investigator("inv-r3", "opinion-failure:FAILED"),
+            investigator("inv-r4", "opinion-failure:FAILED"),
+            investigator("inv-r5", "opinion-failure:FAILED"),
+            investigator("inv-r6", "opinion-failure:FAILED"),
+            investigator("inv-r7", "opinion-failure:FAILED"),
+            investigator("inv-r8", "opinion-failure:FAILED"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+        .await;
+    rig.wait_for("both exhausted notices", || {
+        rig.notifications()
+            .iter()
+            .filter(|n| n.contains("Second opinion needs attention"))
+            .count()
+            == 2
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let events = opinion_events(&reader, &team);
+    let ledger = state.team(&team).unwrap().items()[0].findings().unwrap();
+    for number in ledger.opinions().keys() {
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(&event.event,
+            HistoryEvent::SecondOpinionAsked { number: found, why, .. }
+            if found == number && why == ledger.opinions()[number].request.reason.as_str()))
+                .count(),
+            3
+        );
+        for attempt in ledger.opinion_attempts(*number) {
+            assert!(
+                events.iter().any(
+                    |event| matches!(&event.event, HistoryEvent::SecondOpinionEnded { number: found, why, .. }
+                if found == number && why.contains(attempt.investigator.as_str()) && why.contains("run failed"))
+                ),
+                "missing failure of {:?}: {events:?}",
+                attempt.investigator
+            );
+        }
+    }
+}
+
+/// Keeps all terminal ownership and notice assertions together.
+fn assert_exhausted_opinions(rig: &Rig, team: &agent_core::state::Team) {
+    let item = &team.items()[0];
+    let round = &team.rounds()[0];
+    for (number, opinion) in item.findings().unwrap().opinions() {
+        let attempts = item.findings().unwrap().opinion_attempts(*number);
+        assert_eq!(attempts.len(), 3);
+        assert!(attempts.iter().all(|attempt| attempt.failure.is_some()));
+        let notice = rig
+            .notifications()
+            .into_iter()
+            .find(|n| n.contains("Second opinion needs attention") && n.contains(&format!("FINDING {number}")))
+            .unwrap();
+        for attempt in attempts {
+            assert!(notice.contains(attempt.investigator.as_str()), "{notice}");
+        }
+        let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+            panic!("must remain pending")
+        };
+        assert_eq!(
+            rig.notifications()
+                .iter()
+                .filter(|n| n.contains("Second opinion needs attention")
+                    && n.contains(round.id().as_str())
+                    && n.contains(task.as_str())
+                    && n.contains(&format!("FINDING {number}")))
+                .count(),
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn rate_limited_opinions_are_replaced_and_their_tasks_are_stopped() {
+    for probe in ["opinion-retry:RATE"] {
+        let mut rig = Rig::new(
+            &[
+                normal("claude-1", "work,opinion-ask"),
+                investigator("inv-r1", probe),
+                investigator("inv-r2", probe),
+                investigator("inv-r3", probe),
+                investigator("inv-r4", probe),
+                investigator("inv-r5", probe),
+                investigator("inv-r6", probe),
+            ],
+            1,
+            false,
+        )
+        .await;
+        rig.start().await;
+        let (team, tasks) = rig
+            .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+            .await;
+        rig.state_where("opinion outcome or exhausted hold", |state| {
+            let ledger = state.team(&team).unwrap().items()[0].findings();
+            ledger.is_some_and(|ledger| {
+                ledger.opinions().len() == 2
+                    && ledger
+                        .opinions()
+                        .values()
+                        .all(|opinion| matches!(opinion.stage, OpinionStage::Reported { .. }))
+            }) || rig
+                .notifications()
+                .iter()
+                .any(|n| n.contains("Second opinion needs attention"))
+        })
+        .await;
+        let state = rig.state();
+        let ledger = state.team(&team).unwrap().items()[0].findings().unwrap();
+        assert!(
+            ledger
+                .opinions()
+                .keys()
+                .all(|number| ledger.opinion_attempts(*number).len() >= 2)
+        );
+        rig.item_where("1.1", "replacement opinions counted", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+        rig.stop().await.unwrap();
+        let state = rig.state();
+        let item = &state.team(&team).unwrap().items()[0];
+        let ledger = item.findings().unwrap();
+        for number in ledger.opinions().keys() {
+            let attempts = ledger.opinion_attempts(*number);
+            assert_eq!(attempts.len(), 2);
+            assert_ne!(attempts[0].investigator, attempts[1].investigator);
+            assert!(attempts[0].failure.is_some());
+            assert_eq!(attempts[1].failure, None);
+            assert_eq!(
+                state.team(&team).unwrap().find(&attempts[0].task).unwrap().1.status(),
+                agent_core::status::TaskStatus::Stopped
+            );
+            assert!(
+                !item.fix_passes()[0]
+                    .requested_by
+                    .iter()
+                    .any(|review| attempts.iter().any(|attempt| attempt.investigator == review.reviewer))
+            );
+            for attempt in attempts {
+                assert!(
+                    rig.kept_prompt(&attempt.task, 1)
+                        .contains(ledger.opinions()[number].request.head.as_str())
+                );
+            }
+        }
+        assert_eq!(item.fix_passes().len(), 1);
+        assert_eq!(rig.kept_runs(&tasks[0]), 2);
+        assert_eq!(
+            rig.notifications()
+                .iter()
+                .filter(|n| n.contains("Second opinion needs attention"))
+                .count(),
+            0
+        );
+    }
 }

@@ -210,6 +210,35 @@ case $action in
     fi
     result "$report"'\nSTATUS: DONE'
     ;;
+  opinion-retry:*)
+    if [[ $prompt == *'# SECOND OPINION REQUEST'* || $prompt == *'# CORRECT YOUR SECOND OPINION'* ]]; then
+      if [[ $prompt == *'# SECOND OPINION REQUEST'* ]]; then
+        number=$(awk '/^[0-9]+\. \[/{sub(/\./, "", $1); print $1; exit}' <<< "$prompt")
+        printf '%s' "$number" > .opinion-number
+      else
+        number=$(cat .opinion-number)
+      fi
+      marker="$home/opinion-first-$number"
+      if mkdir "$marker"; then printf '%s' "$PWD" > "$marker/owner"; fi
+      owner=$(cat "$marker/owner")
+      if [[ $owner == "$PWD" ]]; then
+        case ${action#opinion-retry:} in
+          RATE)
+            printf '%s\n' 'Rate limit reached for requests' >&2
+            printf '{"type":"result","subtype":"error","is_error":true,"session_id":"%s"}\n' "$session"
+            exit 1
+            ;;
+          FAILED) result 'Cannot inspect commit.\nSTATUS: FAILED' ;;
+          EMPTY) result 'Cannot inspect commit.' ;;
+          INVALID) result 'No opinion line.\nSTATUS: DONE' ;;
+        esac
+      else
+        result 'OPINION: NOT CONFIRMED\nRead café path; replacement established it is unreachable.\nSTATUS: DONE'
+      fi
+    else
+      result 'VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [BLOCKER] COR src/lib.rs:7 — café defect → fix it\n   CHECK: read src/lib.rs:7\nSTATUS: DONE'
+    fi
+    ;;
   opinion-failure:*)
     if [[ $prompt == *'# SECOND OPINION REQUEST'* || $prompt == *'# CORRECT YOUR SECOND OPINION'* ]]; then
       case ${action#opinion-failure:} in

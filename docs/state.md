@@ -29,7 +29,7 @@ The state is one JSON document, written indented with a newline at the end, the 
 
 ```json
 {
-  "schema_version": 7,
+  "schema_version": 9,
   "teams": [ { "id": "team-20261111-193000-a1b2", "...": "..." } ]
 }
 ```
@@ -59,8 +59,12 @@ text and bounce count. These fields preserve decisions and bounded corrections a
 Version 6, before second opinions, is preserved in
 [`state-before-second-opinions.json`](../crates/agent-core/tests/fixtures/state-before-second-opinions.json).
 Migration to version 7 preserves the active round and its previous protocol markers; an absent `opinions`
-map means no finding has used an opinion. This release provides persistence and pure decisions only.
-A later task activates the daemon lifecycle, including fix passes already running at upgrade.
+map means no finding has used an opinion.
+Version 8 retains accepted FIXED answers by pass and one-time human-notice claims alongside opinions.
+Version 8 before bounded assignments is preserved in
+[`state-before-opinion-retries.json`](../crates/agent-core/tests/fixtures/state-before-opinion-retries.json).
+Migration to version 9 retains active fix passes, their protocol markers, FIXED answers and completed opinions.
+The migrated round uses the current opinion protocol without incrementing its fix-pass count.
 
 The findings ledger's optional `opinions` map uses permanent finding numbers as keys. Each value retains
 `request` (`pass`, exact `head`, nonempty `reason`) and a tagged `stage`: `waiting`, `assigned`
@@ -71,9 +75,21 @@ its number. The loader rejects unknown/non-blocker opinion owners and inconsiste
 finding can later become `resolved`; a not-confirmed finding retains its report and stays closed.
 
 
+The optional `opinion_attempts` map uses the same finding numbers as `opinions`. Each value is a nonempty
+list of at most three assignments, oldest first, with `investigator`, `task`, `asked_at` (RFC 3339 or null for
+an assignment migrated from version 8), and `failure` (null while active or after a successful report).
+Failure values are `failed`, `no_status`, `missing_report`, `silent`, `interrupted`. Investigators and tasks
+are distinct within a request; every earlier assignment has failed. A waiting request has fewer than three
+failed attempts; an assigned request owns the last attempt; a reported request's last attempt succeeded.
+After the third failure the assigned stage remains for the human notice and rejects late reports.
+Absent attempt history means no retained assignments, not a fabricated count: a legacy assigned task is
+recorded as its first attempt if it fails. Only its owning task may end an assignment; stale reports cannot
+close a replacement. Notice claims persist to avoid duplicate notifications after restart.
+
+
 [`state-v1.json`](../crates/agent-core/tests/fixtures/state-v1.json) is a state of version 1, which had no rounds. It
 **must keep loading**: it is read through the migration (below) as exactly
-[`state-v1-as-v3.json`](../crates/agent-core/tests/fixtures/state-v1-as-v3.json), with only the schema version advanced to 7, every time.
+[`state-v1-as-v3.json`](../crates/agent-core/tests/fixtures/state-v1-as-v3.json), with only the schema version advanced to 9, every time.
 
 ### Reading and its rules
 

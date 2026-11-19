@@ -1227,14 +1227,28 @@ Every opinion must be accepted and every confirmed blocker answered FIXED before
 If all blocking findings close as not confirmed and the tip is unchanged, the pass is approved without another
 review and follows the round's usual merge or approval policy.
 
-This release holds an opinion that fails, exhausts its corrections or is unanswered after a daemon restart.
-One human notice names the round, finding and task; `agent status <round>` says `waiting for a second opinion`.
-Inspect the named task before continuing. Automatic re-request, investigator replacement and restart recovery
-follow in part 2b; an accepted opinion is retained and is never requested twice.
-State schema 8 migrates schema 7, including running fix passes, with no retained FIXED answers or notices.
-Findings without opinion fields have had no second opinion. History schema 9 already admits run reason
-`second_opinion` and events `second_opinion_asked`, `finding_confirmed`, `finding_not_confirmed`;
-this release records them without adding database keywords. Existing records, links and search remain readable.
+A failed run, a run without a final status, or a report still missing its opinion after the allowed corrections
+is assigned to another independent investigator. An investigator silent for `[review] replace_after_minutes`
+is replaced too. Replaced queued, waiting or quota-paused tasks are stopped and their scheduled wake is removed,
+so their investigators become available for other requests. Previous investigators are excluded from subsequent draws. A request has at most three
+assignments (the original and two replacements); when nobody eligible is free it waits until one is available.
+After the third unsuccessful assignment, one human notice lists the round, finding, all three investigators,
+their tasks and how each assignment ended. Inspect those tasks and arrange an independent opinion before
+continuing the round; no fourth investigator is asked automatically.
+
+On daemon restart, an unanswered assignment resumes its existing task when that task can resume and its
+worktree survives, or waits for another investigator when the task ended, awaits human answers, or its
+task/worktree is gone.
+Accepted opinions and FIXED answers survive;
+recovery and replacements do not consume another fix pass. `agent status <round>` names each waiting finding,
+its investigator and assignment time, or says it waits for a free independent investigator. `agent log <round>`
+tells the requests, unsuccessful assignments and decisions, including the first evidence line and the full evidence.
+
+State schema 9 migrates schema 8, including running fix passes, preserving FIXED answers and completed opinions.
+The optional attempt history defaults to empty; findings without opinion fields have had no second opinion.
+History schema 10 adds `second_opinion_ended` for replacement and exhaustion, alongside the existing
+`second_opinion_asked`, `finding_confirmed`, and `finding_not_confirmed` events and `second_opinion` run reason.
+Each request names its selected investigator. Existing records, links and search migrate automatically.
 
 Before the review the daemon checks the round's own diff and commits through git, with no model, if the repository has a
 `[repos.NAME.checks]` table in `agents.toml` ([`docs/configuration.md`](docs/configuration.md)): the lists of path patterns that

@@ -320,3 +320,190 @@ fn a_missing_opinion_reason_identifies_the_actual_response_line_atomically() {
     );
     assert_eq!(ledger, before);
 }
+
+#[test]
+fn failed_assignments_are_bounded_durable_and_reject_late_reports() {
+    let mut ledger = ledger(Severity::Blocker);
+    let number = NonZeroU32::MIN;
+    ledger.request_opinion(number, request()).unwrap();
+    let tasks: Vec<TaskId> = [
+        "task-20261111-193007-k3x9",
+        "task-20261111-193008-k3x9",
+        "task-20261111-193009-k3x9",
+    ]
+    .into_iter()
+    .map(|s| s.parse().unwrap())
+    .collect();
+    for (index, task) in tasks.iter().enumerate() {
+        let name: InvestigatorName = format!("inv-r{index}").parse().unwrap();
+        assert_eq!(
+            ledger.assign_opinion_at(
+                number,
+                name.clone(),
+                task.clone(),
+                "2026-11-19T06:00:00Z".parse().unwrap()
+            ),
+            Ok(())
+        );
+        assert_eq!(ledger.opinion_attempts(number).len(), index + 1);
+        assert_eq!(ledger.opinion_attempts(number).last().unwrap().investigator, name);
+        if index > 0 {
+            assert_eq!(
+                ledger.fail_opinion(number, &tasks[index - 1], OpinionFailure::Failed),
+                Err(OpinionStateError { number })
+            );
+            assert_eq!(
+                ledger.record_opinion(
+                    number,
+                    &tasks[index - 1],
+                    OpinionReport {
+                        outcome: Outcome::Confirmed,
+                        evidence: "late café report".to_owned().try_into().unwrap()
+                    }
+                ),
+                Err(OpinionStateError { number })
+            );
+        }
+        ledger.fail_opinion(number, task, OpinionFailure::Failed).unwrap();
+        assert_eq!(
+            ledger.fail_opinion(number, task, OpinionFailure::Failed),
+            Err(OpinionStateError { number })
+        );
+        assert_eq!(
+            serde_json::from_str::<Findings>(&serde_json::to_string(&ledger).unwrap()).unwrap(),
+            ledger
+        );
+        assert_eq!(
+            matches!(ledger.opinions()[&number].stage, OpinionStage::Waiting),
+            index < 2
+        );
+    }
+    assert_eq!(
+        ledger.assign_opinion_at(
+            number,
+            "inv-fourth".parse().unwrap(),
+            tasks[0].clone(),
+            "2026-11-19T06:00:00Z".parse().unwrap()
+        ),
+        Err(OpinionStateError { number })
+    );
+    assert_eq!(ledger.mark_opinion_notice(number), Ok(true));
+    assert_eq!(ledger.mark_opinion_notice(number), Ok(false));
+}
+
+#[test]
+fn exhausted_assignments_reject_late_reports_and_invalid_persisted_attempts() {
+    let mut findings = ledger(Severity::Blocker);
+    let number = NonZeroU32::MIN;
+    findings.request_opinion(number, request()).unwrap();
+    for n in 1..=3 {
+        let task: TaskId = format!("task-20261111-19300{n}-k3x9").parse().unwrap();
+        findings
+            .assign_opinion_at(
+                number,
+                format!("inv-{n}").parse().unwrap(),
+                task.clone(),
+                "2026-11-11T19:50:00Z".parse().unwrap(),
+            )
+            .unwrap();
+        findings.fail_opinion(number, &task, OpinionFailure::Failed).unwrap();
+    }
+    let before = findings.clone();
+    assert_eq!(
+        findings.record_opinion(
+            number,
+            &"task-20261111-193003-k3x9".parse().unwrap(),
+            OpinionReport {
+                outcome: Outcome::Confirmed,
+                evidence: "late café report".to_owned().try_into().unwrap()
+            }
+        ),
+        Err(OpinionStateError { number })
+    );
+    assert_eq!(findings, before);
+    let valid = serde_json::to_value(&findings).unwrap();
+    let mut too_many = valid.clone();
+    too_many["opinion_attempts"]["1"]
+        .as_array_mut()
+        .unwrap()
+        .push(valid["opinion_attempts"]["1"][0].clone());
+    let mut unknown = valid.clone();
+    unknown["opinion_attempts"]["2"] = unknown["opinion_attempts"]["1"].clone();
+    let mut repeated = valid.clone();
+    repeated["opinion_attempts"]["1"][1] = repeated["opinion_attempts"]["1"][0].clone();
+    let mut active_before_last = valid.clone();
+    active_before_last["opinion_attempts"]["1"][0]["failure"] = serde_json::Value::Null;
+    let mut wrong_owner = valid.clone();
+    wrong_owner["opinion_attempts"]["1"][2]["task"] = serde_json::json!("task-20261111-193009-k3x9");
+    let mut premature_hold = valid;
+    premature_hold["opinion_attempts"]["1"]
+        .as_array_mut()
+        .unwrap()
+        .remove(0);
+    for invalid in [
+        too_many,
+        unknown,
+        repeated,
+        active_before_last,
+        wrong_owner,
+        premature_hold,
+    ] {
+        assert_eq!(
+            serde_json::from_value::<Findings>(invalid).unwrap_err().classify(),
+            serde_json::error::Category::Data
+        );
+    }
+}
+
+#[test]
+fn replacement_assignment_rejects_a_repeated_investigator_or_task_atomically() {
+    let mut findings = ledger(Severity::Blocker);
+    let number = NonZeroU32::MIN;
+    findings.request_opinion(number, request()).unwrap();
+    let at = "2026-11-11T19:50:00Z".parse().unwrap();
+    let task: TaskId = "task-20261111-193001-k3x9".parse().unwrap();
+    findings
+        .assign_opinion_at(number, "inv-first".parse().unwrap(), task.clone(), at)
+        .unwrap();
+    findings.fail_opinion(number, &task, OpinionFailure::Failed).unwrap();
+    let before = findings.clone();
+    for (investigator, task) in [
+        ("inv-first", "task-20261111-193002-k3x9"),
+        ("inv-second", "task-20261111-193001-k3x9"),
+    ] {
+        assert_eq!(
+            findings.assign_opinion_at(number, investigator.parse().unwrap(), task.parse().unwrap(), at),
+            Err(OpinionStateError { number })
+        );
+        assert_eq!(findings, before);
+    }
+}
+
+#[test]
+fn a_legacy_hold_notice_does_not_suppress_the_final_bounded_notice() {
+    let mut findings = ledger(Severity::Blocker);
+    let number = NonZeroU32::MIN;
+    findings.request_opinion(number, request()).unwrap();
+    let task: TaskId = "task-20261111-193001-k3x9".parse().unwrap();
+    findings
+        .assign_opinion(number, "inv-first".parse().unwrap(), task.clone())
+        .unwrap();
+    assert_eq!(findings.mark_opinion_notice(number), Ok(true));
+    findings
+        .fail_opinion(number, &task, OpinionFailure::Interrupted)
+        .unwrap();
+    for n in 2..=3 {
+        let task: TaskId = format!("task-20261111-19300{n}-k3x9").parse().unwrap();
+        findings
+            .assign_opinion_at(
+                number,
+                format!("inv-{n}").parse().unwrap(),
+                task.clone(),
+                "2026-11-11T19:50:00Z".parse().unwrap(),
+            )
+            .unwrap();
+        findings.fail_opinion(number, &task, OpinionFailure::Failed).unwrap();
+    }
+    assert_eq!(findings.mark_opinion_notice(number), Ok(true));
+    assert_eq!(findings.mark_opinion_notice(number), Ok(false));
+}

@@ -131,6 +131,8 @@ pub(super) struct PullWatch {
     announced: HashSet<Announcement>,
     /// How many times each reviewer's report was sent back for lacking a verdict.
     bounces: HashMap<TaskId, u32>,
+    /// Last observed run, output byte count and progress time for each pending opinion.
+    opinion_activity: HashMap<TaskId, (agent_core::ids::RunId, u64, Timestamp)>,
     /// When each approved pull request was last looked at, so that one that waits is not asked about at every look.
     polled: HashMap<(TeamId, PrNumber), Timestamp>,
     /// The gates the harness runs or ran by itself for the leads that were done without one.
@@ -429,6 +431,8 @@ impl Owner {
         };
         self.merge_approved(&pulls, team, look).await?;
         self.read_fix_responses(&pulls, team, look).await?;
+        self.replace_silent_opinions(&pulls, team, Timestamp::now(&self.parts.clock)?)
+            .await?;
         self.ask_opinions(&pulls, team, look).await?;
         self.continue_opinions(&pulls, team, look)?;
         self.publish_branches(&pulls, team, look).await?;

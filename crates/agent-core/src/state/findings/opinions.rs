@@ -1,8 +1,10 @@
 //! Durable one-shot opinions, independent of daemon scheduling.
+mod attempts;
 use super::{FindingStatus, Findings, Severity};
 use crate::ids::{InvestigatorName, TaskId};
 use crate::review_response::opinion::{Evidence, OpinionReport, Outcome};
 use crate::state::CommitId;
+pub use attempts::{OpinionAttempt, OpinionFailure};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 
@@ -169,6 +171,7 @@ impl Findings {
                 return Err(OpinionStateError { number: *number });
             }
         }
+        self.check_attempts()?;
         for entry in &self.entries {
             if entry.status == FindingStatus::NotConfirmed && !self.opinions.contains_key(&entry.number) {
                 return Err(OpinionStateError { number: entry.number });
@@ -225,13 +228,16 @@ impl Findings {
     /// Assigns or replaces a pending opinion task; completed reports cannot be replaced.
     ///
     /// # Errors
-    /// [`OpinionStateError`] if the opinion was not requested or already completed.
+    /// [`OpinionStateError`] if not requested, already completed, or managed by the retained-attempt API.
     pub fn assign_opinion(
         &mut self,
         number: NonZeroU32,
         investigator: InvestigatorName,
         task: TaskId,
     ) -> Result<(), OpinionStateError> {
+        if !self.opinion_attempts(number).is_empty() {
+            return Err(OpinionStateError { number });
+        }
         let opinion = self.opinions.get_mut(&number).ok_or(OpinionStateError { number })?;
         match opinion.stage {
             OpinionStage::Waiting | OpinionStage::Assigned { .. } => {
@@ -252,6 +258,13 @@ impl Findings {
         task: &TaskId,
         report: OpinionReport,
     ) -> Result<(), OpinionStateError> {
+        if self
+            .opinion_attempts(number)
+            .last()
+            .is_some_and(|attempt| attempt.failure.is_some())
+        {
+            return Err(OpinionStateError { number });
+        }
         let opinion = self.opinions.get_mut(&number).ok_or(OpinionStateError { number })?;
         let OpinionStage::Assigned {
             investigator,

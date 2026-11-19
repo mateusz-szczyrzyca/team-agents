@@ -182,6 +182,7 @@ impl<S: Store> Noting<S> {
                 | HistoryEvent::FindingRejected { .. }
                 | HistoryEvent::FindingRaised { .. }
                 | HistoryEvent::SecondOpinionAsked { .. }
+                | HistoryEvent::SecondOpinionEnded { .. }
                 | HistoryEvent::FindingConfirmed { .. }
                 | HistoryEvent::FindingNotConfirmed { .. }
                 | HistoryEvent::FixPassStarted { .. }

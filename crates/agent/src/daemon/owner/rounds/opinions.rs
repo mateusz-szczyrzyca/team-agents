@@ -11,13 +11,22 @@ use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::review_response::opinion::{Outcome, parse_report};
-use agent_core::state::{Findings, ItemPhase, OpinionStage, Timestamp};
+use agent_core::state::{Findings, ItemPhase, OpinionFailure, OpinionStage, Timestamp};
+use agent_core::status::TaskStatus;
 use std::collections::HashSet;
 use std::num::NonZeroU32;
 
 /// Failure to schedule, render or persist a second opinion.
 #[derive(Debug, thiserror::Error)]
-enum OpinionCause {
+pub(super) enum OpinionCause {
+    /// A surviving assignment could not be inspected.
+    #[error("cannot inspect second opinion worktree {path:?}")]
+    Inspect {
+        /// The assigned worktree.
+        path: std::path::PathBuf,
+        /// The filesystem failure.
+        source: std::io::Error,
+    },
     /// A worktree could not be prepared.
     #[error("cannot prepare second opinion")]
     Prepare(#[from] PublishError),
@@ -41,7 +50,7 @@ enum OpinionCause {
 /// Context and cause of a second-opinion lifecycle failure.
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-pub(crate) struct OpinionDaemonError(#[from] OpinionCause);
+pub(crate) struct OpinionDaemonError(#[from] pub(super) OpinionCause);
 
 macro_rules! opinion_error {
     ($source:ty) => {
@@ -124,6 +133,12 @@ impl Owner {
                 if let Some(entry) = ledger.entries().iter().find(|entry| entry.number == number) {
                     excluded.insert(entry.reporter.clone());
                 }
+                excluded.extend(
+                    ledger
+                        .opinion_attempts(number)
+                        .iter()
+                        .map(|attempt| attempt.investigator.clone()),
+                );
                 let free = free_reviewers(&self.parts.state, &self.parts.settings.config, team_id);
                 let Some(reviewer) = choose_opinion(free, &excluded, &mut self.parts.rng) else {
                     continue;
@@ -152,7 +167,7 @@ impl Owner {
                         .map_err(OpinionDaemonError::from)?;
                 }
                 ledger
-                    .assign_opinion(number, review.reviewer.clone(), review.task.clone())
+                    .assign_opinion_at(number, review.reviewer.clone(), review.task.clone(), now)
                     .map_err(OpinionDaemonError::from)?;
                 self.parts.state = next;
                 self.keep_opinions(team_id, &ids, &ledger)?;
@@ -164,7 +179,12 @@ impl Owner {
                         pr: pr.number,
                         number,
                         pass: request.pass.get(),
-                        by: lead.agent.clone(),
+                        by: review
+                            .reviewer
+                            .as_str()
+                            .parse()
+                            .map_err(PublishError::from)
+                            .map_err(OpinionDaemonError::from)?,
                         why: request.reason.as_str().to_owned(),
                     },
                 );
@@ -192,6 +212,18 @@ impl Owner {
         else {
             return Ok(false);
         };
+        if self
+            .parts
+            .state
+            .team(&located.team)
+            .and_then(|team| team.item(id))
+            .and_then(|item| item.findings())
+            .and_then(|ledger| ledger.opinion_attempts(number).last())
+            .is_some_and(|attempt| attempt.failure.is_some())
+        {
+            // A cancelled terminal assignment can finish while its notice is being delivered.
+            return Ok(true);
+        }
         let mut look = Look::default();
         let report = match message.map(parse_report) {
             Some(Ok(report)) => report,
@@ -202,12 +234,14 @@ impl Owner {
                     self.release(task, Why::VerdictMissing, &mut look)?;
                     self.finish_look(&located.team, look).await?;
                 } else {
-                    self.hold_opinion(pulls, &located.team, task).await?;
+                    self.retry_opinion(pulls, &located.team, task, OpinionFailure::MissingReport)
+                        .await?;
                 }
                 return Ok(true);
             }
             None => {
-                self.hold_opinion(pulls, &located.team, task).await?;
+                self.retry_opinion(pulls, &located.team, task, OpinionFailure::MissingReport)
+                    .await?;
                 return Ok(true);
             }
         };
@@ -266,6 +300,131 @@ impl Owner {
         Ok(true)
     }
 
+    /// Retains the unsuccessful owner before returning its request to the independent draw.
+    pub(in crate::daemon::owner) async fn retry_opinion(
+        &mut self,
+        pulls: &Pulls,
+        team_id: &TeamId,
+        task: &TaskId,
+        failure: OpinionFailure,
+    ) -> Result<(), OwnerError> {
+        let Some((id, number, _)) = self
+            .parts
+            .state
+            .team(team_id)
+            .and_then(|team| pending_opinion(team, task))
+        else {
+            return Ok(());
+        };
+        let team = self
+            .parts
+            .state
+            .team(team_id)
+            .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+        let item = team.item(id).ok_or_else(|| OwnerError::LostItem {
+            team: team_id.clone(),
+            item: id,
+        })?;
+        let ItemPhase::Fixing { pr, .. } = item.phase() else {
+            return Ok(());
+        };
+        let ids = crate::daemon::merge::items_of(team, pr.number);
+        let mut ledger = item
+            .findings()
+            .cloned()
+            .ok_or(PublishError::Lost)
+            .map_err(OpinionDaemonError::from)?;
+        if ledger
+            .opinion_attempts(number)
+            .last()
+            .is_some_and(|attempt| attempt.failure.is_some())
+        {
+            return Ok(());
+        }
+        ledger
+            .fail_opinion(number, task, failure)
+            .map_err(OpinionDaemonError::from)?;
+        let held = matches!(
+            ledger.opinions().get(&number).map(|opinion| &opinion.stage),
+            Some(OpinionStage::Assigned { .. })
+        );
+        let pr_number = pr.number;
+        let opinion = ledger
+            .opinions()
+            .get(&number)
+            .ok_or(PublishError::Lost)
+            .map_err(OpinionDaemonError::from)?;
+        let pass = opinion.request.pass.get();
+        let attempt = ledger
+            .opinion_attempts(number)
+            .last()
+            .ok_or(PublishError::Lost)
+            .map_err(OpinionDaemonError::from)?;
+        let why = Self::opinion_attempt_text(pulls, attempt)?;
+        let by = attempt
+            .investigator
+            .as_str()
+            .parse()
+            .map_err(PublishError::from)
+            .map_err(OpinionDaemonError::from)?;
+        self.record_event_at(
+            Timestamp::now(&self.parts.clock)?,
+            team_id,
+            self.rounds_of_items(team_id, &ids),
+            HistoryEvent::SecondOpinionEnded {
+                attempt: ledger
+                    .opinion_attempts(number)
+                    .iter()
+                    .skip(1)
+                    .fold(NonZeroU32::MIN, |count, _| count.saturating_add(1)),
+                pr: pr_number,
+                number,
+                pass,
+                by,
+                why,
+            },
+        );
+        self.keep_opinions(team_id, &ids, &ledger)?;
+        let mut look = Look::default();
+        if self.parts.state.find_task(task).is_some_and(|found| {
+            matches!(
+                found.member.status(),
+                agent_core::status::TaskStatus::Queued
+                    | agent_core::status::TaskStatus::Waiting
+                    | agent_core::status::TaskStatus::Paused
+            )
+        }) {
+            self.move_to(task, team_id, agent_core::status::TaskStatus::Stopped, &mut look.events)?;
+        }
+        self.reasons.remove(task);
+        self.wakes.remove(task);
+        look.changed = true;
+        self.finish_look(team_id, look).await?;
+        if held {
+            self.hold_opinion(pulls, team_id, task).await?;
+        }
+        Ok(())
+    }
+
+    /// Renders the same retained failure in the history and the final human notice.
+    fn opinion_attempt_text(
+        pulls: &Pulls,
+        attempt: &agent_core::state::OpinionAttempt,
+    ) -> Result<String, OpinionDaemonError> {
+        let failure = attempt.failure.ok_or(PublishError::Lost)?;
+        let template = match failure {
+            OpinionFailure::Failed => AutopilotPrompt::OpinionAttemptFailed,
+            OpinionFailure::NoStatus => AutopilotPrompt::OpinionAttemptNoStatus,
+            OpinionFailure::MissingReport => AutopilotPrompt::OpinionAttemptMissingReport,
+            OpinionFailure::Silent => AutopilotPrompt::OpinionAttemptSilent,
+            OpinionFailure::Interrupted => AutopilotPrompt::OpinionAttemptInterrupted,
+        };
+        let variables = Variables::new()
+            .with("investigator", attempt.investigator.as_str())?
+            .with("task", attempt.task.as_str())?;
+        Ok(pulls.texts.render(template, &variables)?)
+    }
+
     /// Holds an unanswered task and sends its human notice once, including across restarts.
     pub(in crate::daemon::owner) async fn hold_opinion(
         &mut self,
@@ -318,8 +477,13 @@ impl Owner {
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(", ");
+            let mut attempts = Vec::new();
+            for attempt in ledger.opinion_attempts(number) {
+                attempts.push(Self::opinion_attempt_text(pulls, attempt)?);
+            }
             let values = Variables::new()
-                .with("round", rounds)
+                .with("attempts", attempts.join("\n"))
+                .and_then(|v| v.with("round", rounds))
                 .and_then(|v| v.with("number", number.to_string()))
                 .and_then(|v| v.with("task", task.as_str()));
             self.tell_human(
@@ -334,7 +498,7 @@ impl Owner {
         self.finish_look(team_id, look).await
     }
 
-    /// Identifies unanswered opinions after startup without attempting part 2b recovery.
+    /// Resumes surviving assignments and retains the terminal notice after the retry budget is exhausted.
     pub(in crate::daemon::owner) async fn hold_restarted_opinions(&mut self) -> Result<(), OwnerError> {
         let Some(pulls) = self.pulls.clone() else {
             return Ok(());
@@ -355,8 +519,48 @@ impl Owner {
                     })
             })
             .collect();
+        let mut seen = HashSet::new();
         for (team, task) in pending {
-            self.hold_opinion(&pulls, &team, &task).await?;
+            if !seen.insert(task.clone()) {
+                continue;
+            }
+            let exhausted = self
+                .parts
+                .state
+                .team(&team)
+                .and_then(|team| pending_opinion(team, &task))
+                .and_then(|(id, number, _)| {
+                    self.parts
+                        .state
+                        .team(&team)?
+                        .item(id)?
+                        .findings()?
+                        .opinion_attempts(number)
+                        .last()
+                })
+                .is_some_and(|attempt| attempt.failure.is_some());
+            if exhausted {
+                self.hold_opinion(&pulls, &team, &task).await?;
+            } else {
+                let repo = self.lead_of(&team)?.repo;
+                let path = self.parts.store.home().worktree_dir(&repo, &task);
+                let exists = tokio::fs::try_exists(&path)
+                    .await
+                    .map_err(|source| OpinionDaemonError(OpinionCause::Inspect { path, source }))?;
+                let resumable = self
+                    .parts
+                    .state
+                    .find_task(&task)
+                    .is_some_and(|found| matches!(found.member.status(), TaskStatus::Waiting | TaskStatus::Queued));
+                if !resumable || !exists {
+                    self.retry_opinion(&pulls, &team, &task, OpinionFailure::Interrupted)
+                        .await?;
+                } else {
+                    let mut look = Look::default();
+                    self.release(&task, Why::Review, &mut look)?;
+                    self.finish_look(&team, look).await?;
+                }
+            }
         }
         Ok(())
     }

@@ -415,7 +415,7 @@ links and the search index while admitting the four finding-decision event kinds
 **Second-opinion foundation (part 1).** `Review::allow_second_opinion_on_blocker` defaults to true.
 `review_response::opinion::{parse_lead, parse_report}` validates whole lead messages and investigator evidence
 without changing state. `Evidence` prevents empty reasons; `Permission`, `OpenFinding`, `LeadAnswer`,
-`OpinionReport` and `Outcome` carry the checked protocol. The existing daemon still calls the legacy parser.
+`OpinionReport` and `Outcome` carry the checked protocol. The daemon applies the checked opinion protocol to active fix passes.
 `Findings::{request_opinion, assign_opinion, record_opinion, opinions}` persists waiting, task ownership,
 replacement and completed outcomes through `OpinionRequest`, `SecondOpinion` and `OpinionStage`.
 State schema 7 migrates schema 6 with an empty opinion map. History migration 009 adds the run reason and
@@ -425,8 +425,27 @@ three outcome events while retaining earlier records and search.
 to the lead in the same fix pass until answered FIXED; then verify the changed tip. If every blocking finding
 was not confirmed and the code did not change, `Next::DecideUnchanged` lets the later integration decide the
 pass without a new tip or redundant reviews. Otherwise an unchanged tip waits. Decisions filter by fix-pass
-number and never increment the pass count. The separate activation task must connect these APIs to investigator
-selection, scheduling, correction/replacement/restart handling, publication, prompts and status.
+number and never increment the pass count. The owner assigns a free investigator outside the team, excluding the reporter, the reviewers of the answered
+pass and all earlier investigators for this request. Its task runs at the requested head without a bus.
+
+**Second-opinion recovery.** Failed runs, missing final statuses and exhausted report corrections record their
+cause with the assignment and return the request to waiting. The same free-investigator draw supplies at most
+two replacements. A lack of candidates leaves the request waiting rather than dropping it or notifying the
+human prematurely. Opinion inactivity uses the review replacement interval and resets when output changes;
+a silent run is cancelled before its request is reassigned. Replacement stops the old queued, waiting or
+quota-paused task and removes its scheduled wake, including during startup recovery. The third failure retains the assigned stage and
+sends the catalogued human notice once, listing all assignments and causes. Late reports from replaced or
+exhausted assignments are rejected.
+
+At startup the owner resumes an unanswered task queued for release with a surviving worktree.
+A task that cannot be queued, including one awaiting human answers, or a missing task/worktree records an
+interrupted assignment and triggers the bounded draw. Accepted opinions
+are skipped. Recovery never changes the pass count or the FIXED answers. State schema 9 migrates schema 8 with
+empty attempt history, keeping legacy assignments and their accepted answers readable. `agent status` exposes
+the finding, owner and assignment time, or the wait for a free investigator. Each `second_opinion_asked`
+event names the selected investigator. History schema 10 adds `second_opinion_ended`, recording each failed
+investigator, assignment number and cause. The story renders replacements and exhaustion with evidence
+previews; the migration preserves existing records, round links and search.
 
 Every posted review starts with the investigator's name and its configured CLI and model
 (the model is omitted when none is configured), a verdict heading, and the review pass and commit. The approval

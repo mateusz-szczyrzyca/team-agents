@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use crate::cli::ActivityEvent;
 use crate::decide::checks::{Change, FileChange, Lines};
+use crate::decide::opinion::MAX_OPINION_ATTEMPTS;
 use crate::decide::round::AskReason;
 use crate::history::{
     CheckOutcome, EventRecord, HistoryEvent, HowChosen, Launch, LostCause, LostKind, Record, RecordKind, RoundOpening,
@@ -303,6 +304,7 @@ const fn is_pull_request(event: &HistoryEvent) -> bool {
             | HistoryEvent::FindingRejected { .. }
             | HistoryEvent::FindingRaised { .. }
             | HistoryEvent::SecondOpinionAsked { .. }
+            | HistoryEvent::SecondOpinionEnded { .. }
             | HistoryEvent::FindingConfirmed { .. }
             | HistoryEvent::FindingNotConfirmed { .. }
             | HistoryEvent::FixPassStarted { .. }
@@ -784,6 +786,7 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         | HistoryEvent::FindingRejected { .. }
         | HistoryEvent::FindingRaised { .. }
         | HistoryEvent::SecondOpinionAsked { .. }
+        | HistoryEvent::SecondOpinionEnded { .. }
         | HistoryEvent::FindingConfirmed { .. }
         | HistoryEvent::FindingNotConfirmed { .. }
         | HistoryEvent::FixPassStarted { .. }
@@ -848,8 +851,25 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             pass,
             by,
             why,
+        } => {
+            finding_evidence(page, at, event.kind(), (*pr, *number, *pass, by), why);
         }
-        | HistoryEvent::SecondOpinionAsked {
+        HistoryEvent::SecondOpinionEnded {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+            attempt,
+        } => {
+            let action = if attempt.get() < u32::from(MAX_OPINION_ATTEMPTS) {
+                "second opinion replaced"
+            } else {
+                "second opinion exhausted"
+            };
+            opinion_evidence(page, at, (action, event.kind()), (*pr, *number, *pass, by), why);
+        }
+        HistoryEvent::SecondOpinionAsked {
             pr,
             number,
             pass,
@@ -870,7 +890,14 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             by,
             why,
         } => {
-            finding_evidence(page, at, event.kind(), (*pr, *number, *pass, by), why);
+            let action = if matches!(event, HistoryEvent::SecondOpinionAsked { .. }) {
+                "second opinion requested"
+            } else if matches!(event, HistoryEvent::FindingConfirmed { .. }) {
+                "finding confirmed"
+            } else {
+                "finding not confirmed"
+            };
+            opinion_evidence(page, at, (action, event.kind()), (*pr, *number, *pass, by), why);
         }
         HistoryEvent::PullOpened { .. }
         | HistoryEvent::PullPushed { .. }
@@ -959,6 +986,7 @@ fn pull_lifecycle_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
         | HistoryEvent::FindingRejected { .. }
         | HistoryEvent::FindingRaised { .. }
         | HistoryEvent::SecondOpinionAsked { .. }
+        | HistoryEvent::SecondOpinionEnded { .. }
         | HistoryEvent::FindingConfirmed { .. }
         | HistoryEvent::FindingNotConfirmed { .. }
         | HistoryEvent::Gate { .. }
@@ -985,6 +1013,23 @@ fn opened_pull(
     entry(page, at, &format!("pull request #{number} opened: branch {b} at {h}"));
     page.line(2, &format!("title: {title}"));
     page.raw(2, "pull request body", body);
+}
+
+/// An opinion step with its cause or evidence visible before the retained full text.
+fn opinion_evidence(
+    page: &mut Page,
+    at: Timestamp,
+    (action, kind): (&str, crate::history::EventKind),
+    (pr, number, pass, by): (crate::state::PrNumber, std::num::NonZeroU32, u32, &AgentName),
+    why: &str,
+) {
+    let first = why.lines().next().map_or("", str::trim);
+    entry(
+        page,
+        at,
+        &format!("{action}: pull request #{pr} finding {number}, pass {pass}, by {by}; {first} ({kind})"),
+    );
+    page.raw(2, "evidence", why);
 }
 
 /// A finding decision with its reviewer and retained evidence.
@@ -1046,3 +1091,6 @@ fn target_text(target: &Target) -> String {
         Target::Round(round) => format!("round {round}"),
     }
 }
+
+#[cfg(test)]
+mod tests;

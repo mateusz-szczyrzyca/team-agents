@@ -48,7 +48,7 @@ fn migrates_schema_eight_with_records_links_and_search() {
     assert_eq!(
         raw.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
             .unwrap(),
-        9
+        10
     );
     assert_eq!(
         raw.query_row::<i64, _, _>("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))
@@ -158,4 +158,92 @@ fn roundtrips_opinion_keywords_and_renders_their_evidence() {
         assert_eq!(record.event.identities(), vec!["inv-opus"]);
         assert!(record.event.key().unwrap().contains("finding"));
     }
+}
+
+#[test]
+fn migrates_schema_nine_preserving_existing_opinion_requests_and_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let old: Vec<_> = agent_runtime::history::schema::MIGRATIONS
+        .iter()
+        .copied()
+        .filter(|migration| migration.version <= 9)
+        .collect();
+    let world = complete(23);
+    let mut db = HistoryDb::open_with(&path, &old, roomy()).unwrap();
+    db.write(&world.records()).unwrap();
+    let request = Record::Event(Box::new(EventRecord {
+        at: world.team.at,
+        team: world.team.team.clone(),
+        rounds: vec![world.rounds[0].round.clone()],
+        event: HistoryEvent::SecondOpinionAsked {
+            pr: PrNumber::new(NonZeroU32::MIN),
+            number: NonZeroU32::MIN,
+            pass: 1,
+            by: "claude-1".parse().unwrap(),
+            why: "café legacy reason".into(),
+        },
+    }));
+    db.write(std::slice::from_ref(&request)).unwrap();
+    drop(db);
+    let before = Reader::open(&path)
+        .unwrap()
+        .round_records(&world.rounds[0].round)
+        .unwrap();
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        raw.pragma_query_value::<u32, _>(None, "user_version", |row| row.get(0))
+            .unwrap(),
+        9
+    );
+    let search_before: i64 = raw
+        .query_row("SELECT count(*) FROM history_search", [], |row| row.get(0))
+        .unwrap();
+    drop(raw);
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        raw.pragma_query_value::<u32, _>(None, "user_version", |row| row.get(0))
+            .unwrap(),
+        10
+    );
+    assert_eq!(
+        Reader::open(&path)
+            .unwrap()
+            .round_records(&world.rounds[0].round)
+            .unwrap(),
+        before
+    );
+    assert_eq!(
+        raw.query_row::<i64, _, _>("SELECT count(*) FROM history_search", [], |row| row.get(0))
+            .unwrap(),
+        search_before
+    );
+    assert_eq!(
+        raw.query_row::<i64, _, _>("SELECT count(*) FROM pragma_foreign_key_check", [], |row| row.get(0))
+            .unwrap(),
+        0
+    );
+    let event = serde_json::from_value(serde_json::json!({
+        "event": "second_opinion_ended", "pr": 1, "number": 1, "pass": 1,
+        "by": "inv-first", "why": "the run failed", "attempt": 1
+    }))
+    .unwrap();
+    let ended = Record::Event(Box::new(EventRecord {
+        at: world.team.at,
+        team: world.team.team.clone(),
+        rounds: vec![world.rounds[0].round.clone()],
+        event,
+    }));
+    db.write(std::slice::from_ref(&ended)).unwrap();
+    assert_eq!(
+        Reader::open(&path)
+            .unwrap()
+            .round_records(&world.rounds[0].round)
+            .unwrap()
+            .last()
+            .unwrap()
+            .record,
+        ended
+    );
 }

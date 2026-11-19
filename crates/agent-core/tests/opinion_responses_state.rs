@@ -11,10 +11,10 @@ fn schema_seven_active_fix_pass_migrates_without_inventing_answers() {
         std::collections::BTreeSet::default()
     );
     assert_eq!(ledger.opinions().len(), 0);
-    assert_eq!(SCHEMA_VERSION, 8);
+    assert_eq!(SCHEMA_VERSION, 9);
     assert_eq!(
         state.to_json().unwrap(),
-        old.replacen("\"schema_version\": 7", "\"schema_version\": 8", 1)
+        old.replacen("\"schema_version\": 7", "\"schema_version\": 9", 1)
     );
     assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
 }

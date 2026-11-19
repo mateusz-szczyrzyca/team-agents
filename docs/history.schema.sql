@@ -1,4 +1,4 @@
-PRAGMA user_version = 9;
+PRAGMA user_version = 10;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -307,7 +307,7 @@ CREATE TABLE history_records (
         'team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session',
         'gate', 'checked', 'pull_opened', 'pull_pushed', 'pull_ready', 'review_asked', 'review_submitted',
         'finding_explained', 'finding_accepted', 'finding_rejected', 'finding_raised',
-        'second_opinion_asked', 'finding_confirmed', 'finding_not_confirmed',
+        'second_opinion_asked', 'second_opinion_ended', 'finding_confirmed', 'finding_not_confirmed',
         'fix_pass_started', 'pull_approved', 'pull_merged', 'pull_handed_over', 'pull_closed', 'question_asked',
         'question_answered', 'controlled', 'notified', 'round_closed', 'team_ended', 'lost'
     )),

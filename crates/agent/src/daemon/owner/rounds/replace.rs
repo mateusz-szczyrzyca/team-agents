@@ -10,6 +10,7 @@ use agent_core::status::TaskStatus;
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 use rand::RngExt;
+use std::collections::HashSet;
 
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
@@ -35,6 +36,68 @@ struct Gone {
 }
 
 impl Owner {
+    /// Replaces opinion owners after the configured interval without output.
+    pub(super) async fn replace_silent_opinions(
+        &mut self,
+        pulls: &Pulls,
+        team: &TeamId,
+        now: Timestamp,
+    ) -> Result<(), OwnerError> {
+        use super::opinions::{OpinionCause, OpinionDaemonError};
+        use agent_core::state::{OpinionFailure, OpinionStage};
+        let patience = self.parts.settings.config.review().replace_after_minutes.as_duration();
+        let tasks: HashSet<_> = self
+            .parts
+            .state
+            .team(team)
+            .into_iter()
+            .flat_map(agent_core::state::Team::items)
+            .filter_map(|item| item.findings())
+            .flat_map(|ledger| ledger.opinions().values())
+            .filter_map(|opinion| match &opinion.stage {
+                OpinionStage::Assigned { task, .. } => Some(task.clone()),
+                OpinionStage::Waiting | OpinionStage::Reported { .. } => None,
+            })
+            .collect();
+        for task in tasks {
+            let Some(run) = self
+                .parts
+                .state
+                .find_task(&task)
+                .and_then(|found| found.member.current_run())
+            else {
+                continue;
+            };
+            let run_id = run.id().clone();
+            let path = self.parts.store.home().run_dir(&task, &run_id).join("out.jsonl");
+            let bytes = match tokio::fs::metadata(&path).await {
+                Ok(metadata) => metadata.len(),
+                // Before the engine creates output, the empty stream is still inactive.
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => 0,
+                Err(source) => return Err(OpinionDaemonError(OpinionCause::Inspect { path, source }).into()),
+            };
+            let activity = self
+                .watch
+                .opinion_activity
+                .entry(task.clone())
+                .or_insert((run_id.clone(), bytes, now));
+            if activity.0 != run_id || activity.1 != bytes {
+                *activity = (run_id, bytes, now);
+            }
+            let quiet = now.as_utc() - activity.2.as_utc();
+            if i128::from(quiet.whole_seconds()) < i128::from(patience.as_secs()) {
+                continue;
+            }
+            if let Some(cancel) = self.cancels.get(&task) {
+                self.halts.insert(task.clone(), crate::daemon::control::Halt::Stop);
+                cancel.cancel();
+            }
+            self.retry_opinion(pulls, team, &task, OpinionFailure::Silent).await?;
+            self.watch.opinion_activity.remove(&task);
+        }
+        Ok(())
+    }
+
     /// The reviews of the team `team_id` that are still to come and whose reviewers cannot work, at `now`.
     fn reviews_that_do_not_come(&self, team_id: &TeamId, now: Timestamp) -> Vec<Gone> {
         let mut found: Vec<Gone> = Vec::new();

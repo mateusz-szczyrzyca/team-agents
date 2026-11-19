@@ -3,7 +3,7 @@
 mod disputes;
 mod opinions;
 pub use disputes::{Disputes, Explanation, ExplanationStatus, RaisedFinding};
-pub use opinions::{OpinionRequest, OpinionStage, OpinionStateError, SecondOpinion};
+pub use opinions::{OpinionAttempt, OpinionFailure, OpinionRequest, OpinionStage, OpinionStateError, SecondOpinion};
 
 use super::Review;
 use crate::ids::{InvestigatorName, TaskId};
@@ -62,6 +62,9 @@ pub struct Findings {
     /// One-shot opinions; an absent map means no opinion has been requested.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     opinions: BTreeMap<NonZeroU32, SecondOpinion>,
+    /// Assignments retained across process failure and daemon restarts.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    opinion_attempts: BTreeMap<NonZeroU32, Vec<OpinionAttempt>>,
     /// Findings whose unanswered-opinion notice was already sent.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     opinion_notices: std::collections::BTreeSet<NonZeroU32>,
@@ -89,6 +92,9 @@ struct FindingsWire {
     /// Missing on every state written before schema 7.
     #[serde(default)]
     opinions: BTreeMap<NonZeroU32, SecondOpinion>,
+    /// Missing before schema 9: legacy assignments have no attempt history.
+    #[serde(default)]
+    opinion_attempts: BTreeMap<NonZeroU32, Vec<OpinionAttempt>>,
     /// Missing before schema 8: no unanswered-opinion notice was sent.
     #[serde(default)]
     opinion_notices: std::collections::BTreeSet<NonZeroU32>,
@@ -133,6 +139,7 @@ impl TryFrom<FindingsWire> for Findings {
     fn try_from(wire: FindingsWire) -> Result<Self, Self::Error> {
         let mut ledger = Self::new(wire.entries)?;
         ledger.opinions = wire.opinions;
+        ledger.opinion_attempts = wire.opinion_attempts;
         ledger.fixed = wire.fixed;
         ledger.opinion_notices = wire.opinion_notices;
         ledger.disputes = wire.disputes;
@@ -225,6 +232,7 @@ impl Findings {
             verification: None,
             entries,
             opinions: BTreeMap::new(),
+            opinion_attempts: BTreeMap::new(),
             fixed: BTreeMap::new(),
             opinion_notices: std::collections::BTreeSet::new(),
             pending: BTreeMap::new(),
