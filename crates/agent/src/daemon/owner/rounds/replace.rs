@@ -51,7 +51,7 @@ impl Owner {
             .state
             .team(team)
             .into_iter()
-            .flat_map(|team| team.items())
+            .flat_map(agent_core::state::Team::items)
             .filter_map(|item| item.findings())
             .flat_map(|ledger| ledger.opinions().values())
             .filter_map(|opinion| match &opinion.stage {

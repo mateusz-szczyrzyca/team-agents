@@ -224,10 +224,7 @@ impl AutopilotPrompt {
     /// The path, audience and variables of this text.
     const fn definition(self) -> (&'static str, &'static [&'static str]) {
         match self {
-            Self::ReviewOpinionRequest => (
-                "harness/review/opinion-request.md",
-                &["number", "severity", "rule", "place", "text", "check", "reason", "head"],
-            ),
+            Self::ReviewOpinionRequest => ("harness/review/opinion-request.md", OPINION_REQUEST_VARIABLES),
             Self::ReviewOpinionCorrection => ("harness/review/opinion-correction.md", &[]),
             Self::ReviewOpinionOffer => ("harness/review/opinion-offer.md", &[]),
             Self::ReviewOpinionResult => ("harness/review/opinion-result.md", &["reviewer", "outcome", "evidence"]),
@@ -235,18 +232,12 @@ impl AutopilotPrompt {
             Self::ReviewResponseOpinion => ("harness/review/response-opinion.md", &[]),
             Self::PrTitle => ("harness/pr/title.md", &["item_ids", "item_titles"]),
             Self::PrBody => ("harness/pr/body.md", &["team", "repo", "gate", "items"]),
-            Self::PrBodyItem => (
-                "harness/pr/body-item.md",
-                &["item_id", "item_title", "item_description"],
-            ),
+            Self::PrBodyItem => ("harness/pr/body-item.md", PR_ITEM_VARIABLES),
             Self::PrBodyExpected => ("harness/pr/body-expected.md", &["expected"]),
             Self::PrBodyChecks => ("harness/pr/body-checks.md", &["checks"]),
             Self::PrUpdate => ("harness/pr/update.md", &["head", "pass", "gate"]),
             Self::GateNotPassed => ("harness/pr/gate-not-passed.md", &["branch", "reason", "sent", "limit"]),
-            Self::BranchNotJoined => (
-                "harness/pr/branch-not-joined.md",
-                &["branch", "missing", "sent", "limit"],
-            ),
+            Self::BranchNotJoined => ("harness/pr/branch-not-joined.md", BRANCH_VARIABLES),
             Self::TeamAsleep => (
                 "harness/pr/team-asleep.md",
                 &["team", "items", "minutes", "tasks", "woken", "limit"],
@@ -278,14 +269,8 @@ impl AutopilotPrompt {
             ),
             Self::ReviewVerdictApprove => ("harness/review/verdict-approve.md", &["icon"]),
             Self::ReviewVerdictRequestChanges => ("harness/review/verdict-request-changes.md", &["icon"]),
-            Self::ReviewFixPass => (
-                "harness/review/fix-pass.md",
-                &["pr", "pass", "passes", "branch", "findings"],
-            ),
-            Self::ReviewFixResponse => (
-                "harness/review/fix-response.md",
-                &["pr", "pass", "passes", "branch", "findings"],
-            ),
+            Self::ReviewFixPass => ("harness/review/fix-pass.md", FIX_PASS_VARIABLES),
+            Self::ReviewFixResponse => ("harness/review/fix-response.md", FIX_PASS_VARIABLES),
             Self::ReviewResponseNumbers => ("harness/review/response-numbers.md", &[]),
             Self::ReviewResponseExplain => ("harness/review/response-explain.md", &[]),
             Self::ReviewResponseFixed => ("harness/review/response-fixed.md", &[]),
@@ -310,21 +295,18 @@ impl AutopilotPrompt {
             Self::ReviewSeverityMajor => ("harness/review/severity-major.md", &[]),
             Self::ReviewSeverityMinor => ("harness/review/severity-minor.md", &[]),
             Self::ReviewVerdictMissing => ("harness/review/verdict-missing.md", &[]),
-            Self::OpinionAttemptFailed => ("harness/review/opinion-attempt-failed.md", &["investigator", "task"]),
-            Self::OpinionAttemptNoStatus => ("harness/review/opinion-attempt-nostatus.md", &["investigator", "task"]),
+            Self::OpinionAttemptFailed => ("harness/review/opinion-attempt-failed.md", OPINION_ATTEMPT_VARIABLES),
+            Self::OpinionAttemptNoStatus => ("harness/review/opinion-attempt-nostatus.md", OPINION_ATTEMPT_VARIABLES),
             Self::OpinionAttemptMissingReport => (
                 "harness/review/opinion-attempt-missingreport.md",
-                &["investigator", "task"],
+                OPINION_ATTEMPT_VARIABLES,
             ),
-            Self::OpinionAttemptSilent => ("harness/review/opinion-attempt-silent.md", &["investigator", "task"]),
+            Self::OpinionAttemptSilent => ("harness/review/opinion-attempt-silent.md", OPINION_ATTEMPT_VARIABLES),
             Self::OpinionAttemptInterrupted => (
                 "harness/review/opinion-attempt-interrupted.md",
-                &["investigator", "task"],
+                OPINION_ATTEMPT_VARIABLES,
             ),
-            Self::NoticeOpinion => (
-                "harness/review/notice-opinion.md",
-                &["round", "number", "task", "attempts"],
-            ),
+            Self::NoticeOpinion => ("harness/review/notice-opinion.md", OPINION_NOTICE_VARIABLES),
             Self::NoticeNoVerdict => (
                 "harness/review/notice-no-verdict.md",
                 &["reviewer", "pr", "task", "why"],
@@ -359,3 +341,19 @@ const ASK_HUMAN_VARIABLES: &[&str] = &[
     "number",
     "task",
 ];
+
+/// Context identifying an unsuccessful opinion assignment.
+const OPINION_ATTEMPT_VARIABLES: &[&str] = &["investigator", "task"];
+/// Context explaining the exhausted opinion request to the human.
+const OPINION_NOTICE_VARIABLES: &[&str] = &["round", "number", "task", "attempts"];
+/// Finding and reviewed head supplied to an independent investigator.
+const OPINION_REQUEST_VARIABLES: &[&str] = &["number", "severity", "rule", "place", "text", "check", "reason", "head"];
+
+/// Required context of this catalog entry.
+const PR_ITEM_VARIABLES: &[&str] = &["item_id", "item_title", "item_description"];
+
+/// Required context of this catalog entry.
+const BRANCH_VARIABLES: &[&str] = &["branch", "missing", "sent", "limit"];
+
+/// Required context of this catalog entry.
+const FIX_PASS_VARIABLES: &[&str] = &["pr", "pass", "passes", "branch", "findings"];

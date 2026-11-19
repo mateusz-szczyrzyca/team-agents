@@ -951,6 +951,17 @@ impl Owner {
         {
             self.review_ended(task, &located, run.final_message.as_deref()).await?;
         }
+        self.retry_unanswered_opinion(task, &located, &end).await?;
+        self.after_run(task, &located, &end, run.final_message.as_deref())
+    }
+
+    /// Replaces a failed opinion while preserving ordinary task settlement.
+    async fn retry_unanswered_opinion(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        end: &RunEnd,
+    ) -> Result<(), OwnerError> {
         if !matches!(
             end,
             RunEnd::Reported {
@@ -969,7 +980,7 @@ impl Owner {
             };
             self.retry_opinion(&pulls, &located.team, task, failure).await?;
         }
-        self.after_run(task, &located, &end, run.final_message.as_deref())
+        Ok(())
     }
 
     /// Builds the `tracing::Span` for settling the current run of `task` in `team`.

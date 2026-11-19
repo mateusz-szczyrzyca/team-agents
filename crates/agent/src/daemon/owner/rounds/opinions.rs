@@ -342,7 +342,7 @@ impl Owner {
             .last()
             .ok_or(PublishError::Lost)
             .map_err(OpinionDaemonError::from)?;
-        let why = self.opinion_attempt_text(pulls, attempt)?;
+        let why = Self::opinion_attempt_text(pulls, attempt)?;
         let by = attempt
             .investigator
             .as_str()
@@ -383,7 +383,6 @@ impl Owner {
 
     /// Renders the same retained failure in the history and the final human notice.
     fn opinion_attempt_text(
-        &self,
         pulls: &Pulls,
         attempt: &agent_core::state::OpinionAttempt,
     ) -> Result<String, OpinionDaemonError> {
@@ -455,7 +454,7 @@ impl Owner {
                 .join(", ");
             let mut attempts = Vec::new();
             for attempt in ledger.opinion_attempts(number) {
-                attempts.push(self.opinion_attempt_text(pulls, attempt)?);
+                attempts.push(Self::opinion_attempt_text(pulls, attempt)?);
             }
             let values = Variables::new()
                 .with("attempts", attempts.join("\n"))
