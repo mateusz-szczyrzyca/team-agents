@@ -199,9 +199,24 @@ fn text_line(comment: &str, number: u32) -> &str {
 async fn comment_lists_open_findings_and_folds_closed_ones_in_details() {
     let texts = load_texts().await;
     let ledger = Findings::new(vec![
-        recorded(1, Severity::Blocker, FindingStatus::Resolved, "problem | <tag>\n→ fix café & more"),
-        recorded(2, Severity::Major, FindingStatus::Open, "problem | <tag>\n→ fix café & more"),
-        recorded(3, Severity::Minor, FindingStatus::Open, "problem | <tag>\n→ fix café & more"),
+        recorded(
+            1,
+            Severity::Blocker,
+            FindingStatus::Resolved,
+            "problem | <tag>\n→ fix café & more",
+        ),
+        recorded(
+            2,
+            Severity::Major,
+            FindingStatus::Open,
+            "problem | <tag>\n→ fix café & more",
+        ),
+        recorded(
+            3,
+            Severity::Minor,
+            FindingStatus::Open,
+            "problem | <tag>\n→ fix café & more",
+        ),
     ])
     .unwrap();
     assert_eq!(comment(&texts, &ledger).unwrap(), include_str!("comment.md"));
@@ -213,7 +228,7 @@ async fn comment_without_open_findings_counts_zero_and_folds_everything() {
     let ledger = Findings::new(vec![recorded(1, Severity::Major, FindingStatus::Resolved, "fix café")]).unwrap();
     assert_eq!(
         comment(&texts, &ledger).unwrap(),
-        r#"<!-- agent-findings -->
+        r"<!-- agent-findings -->
 ## Review findings
 
 open — 0 BLOCKER, 0 MAJOR, 0 MINOR; closed — 1
@@ -225,7 +240,7 @@ open — 0 BLOCKER, 0 MAJOR, 0 MINOR; closed — 1
 fix café
 
 </details>
-"#
+"
     );
 }
 
@@ -235,14 +250,14 @@ async fn comment_without_closed_findings_has_no_details_block() {
     let ledger = Findings::new(vec![recorded(1, Severity::Minor, FindingStatus::Open, "fix café")]).unwrap();
     assert_eq!(
         comment(&texts, &ledger).unwrap(),
-        r#"<!-- agent-findings -->
+        r"<!-- agent-findings -->
 ## Review findings
 
 open — 0 BLOCKER, 0 MAJOR, 1 MINOR; closed — 0
 
 **1** **$\color{orange}{\textsf{[MINOR]}}$** ERR-3 · open · inv-codex — src/lib.rs:42
 fix café
-"#
+"
     );
 }
 
@@ -261,7 +276,10 @@ async fn text_of_160_characters_is_not_cut() {
 #[tokio::test]
 async fn text_of_400_characters_without_a_space_is_cut_at_160_with_an_ellipsis() {
     let text = "x".repeat(400);
-    assert_eq!(text_line(&comment_with_text(&text).await, 1), format!("{}…", "x".repeat(160)));
+    assert_eq!(
+        text_line(&comment_with_text(&text).await, 1),
+        format!("{}…", "x".repeat(160))
+    );
 }
 
 #[tokio::test]
@@ -320,7 +338,7 @@ async fn explained_finding_is_closed_and_its_explanation_is_the_third_line() {
 
 #[tokio::test]
 async fn second_opinion_is_the_third_line_of_its_finding() {
-    use agent_core::review_response::opinion::{Outcome, OpinionReport};
+    use agent_core::review_response::opinion::{OpinionReport, Outcome};
     use agent_core::state::OpinionRequest;
     let texts = load_texts().await;
     let mut ledger = Findings::new(vec![recorded(1, Severity::Blocker, FindingStatus::Open, "fix café")]).unwrap();
