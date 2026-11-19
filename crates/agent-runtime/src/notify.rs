@@ -283,11 +283,30 @@ impl Notifier {
     ///
     /// # Errors
     /// [`NotifyError::Command`] and [`NotifyError::CommandFailed`] when running the command fails.
-    pub async fn notify_emergency(&self, _reason: &str) -> Result<(), NotifyError> {
-        // Stub for RED
-        Err(NotifyError::CreateDir {
-            path: PathBuf::new(),
-            source: io::Error::other("stub"),
+    pub async fn notify_emergency(&self, reason: &str) -> Result<(), NotifyError> {
+        let Some(line) = &self.command else {
+            return Ok(());
+        };
+        let mut command = Command::new(line.program().as_path());
+        command.args(line.args().as_slice()).arg(reason);
+        for (name, secret) in &self.env {
+            command.env(name.as_str(), secret.expose());
+        }
+        let limits = CaptureLimits {
+            timeout: self.command_timeout,
+            max_bytes: MAX_COMMAND_OUTPUT_BYTES,
+        };
+        let captured = capture(command, limits).await.map_err(|source| NotifyError::Command {
+            file: PathBuf::new(),
+            source,
+        })?;
+        if captured.exit.succeeded() {
+            return Ok(());
+        }
+        Err(NotifyError::CommandFailed {
+            file: PathBuf::new(),
+            exit: captured.exit,
+            stderr: self.diagnostic(&captured.stderr.bytes),
         })
     }
 }
