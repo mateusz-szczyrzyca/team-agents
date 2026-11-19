@@ -281,3 +281,19 @@ fn second_opinions_retain_replacements_reports_and_each_failure_reason() {
         );
     }
 }
+
+#[test]
+fn activity_input_refuses_an_end_before_assignment_and_repeated_rounds() {
+    let base = serde_json::json!({
+        "investigator": "inv-opus", "task": task(1), "rounds": [round_id(1)],
+        "request": { "kind": "first_review" }, "asked_at": at(20),
+        "outcome": { "status": "finished", "at": at(19), "end": { "kind": "reported" } }
+    });
+    let error = serde_json::from_value::<super::Activity>(base.clone()).unwrap_err();
+    assert_eq!(error.classify(), serde_json::error::Category::Data);
+    let mut duplicate = base;
+    duplicate["outcome"] = serde_json::json!({"status": "working"});
+    duplicate["rounds"] = serde_json::json!([round_id(1), round_id(1)]);
+    let error = serde_json::from_value::<super::Activity>(duplicate).unwrap_err();
+    assert_eq!(error.classify(), serde_json::error::Category::Data);
+}
