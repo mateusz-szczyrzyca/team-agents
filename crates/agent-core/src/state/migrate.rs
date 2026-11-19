@@ -46,6 +46,7 @@ pub(super) fn from_v1(text: &str) -> Result<State, StateError> {
     for team in old.teams {
         teams.push(Team::from_v1(team, &mut used).map_err(StateError::from)?);
     }
+    rebuild_activities(&mut teams);
     Ok(State::try_from(StateWire {
         schema_version: SchemaVersion,
         teams,
@@ -152,6 +153,27 @@ pub(super) fn from_v2(text: &str) -> Result<State, StateError> {
     if let Some(version) = value.get_mut("schema_version") {
         *version = Value::from(super::SCHEMA_VERSION);
     }
-    let wire: StateWire = serde_json::from_value(value).map_err(|source| StateError::Malformed { source })?;
+    let mut wire: StateWire = serde_json::from_value(value).map_err(|source| StateError::Malformed { source })?;
+    rebuild_activities(&mut wire.teams);
     Ok(State::try_from(wire)?)
+}
+
+/// Uses the latest retained run evidence when old records lack an ending timestamp.
+fn rebuild_activities(teams: &mut [Team]) {
+    for team in teams {
+        let at = team
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member)
+            .chain(team.reviewers())
+            .flat_map(|member| member.runs())
+            .map(|run| match run.state() {
+                super::RunState::Running => run.started_at(),
+                super::RunState::Ended { at, .. } => *at,
+            })
+            .max()
+            .unwrap_or(team.created_at());
+        team.record_activities(at);
+    }
 }

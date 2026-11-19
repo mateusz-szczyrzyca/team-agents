@@ -142,7 +142,6 @@ impl Team {
                 .filter(|round| round.item() == Some(item.id()))
                 .map(|round| round.id().clone())
                 .collect();
-            found.extend(self.opinion_activities(item, &rounds, at));
             let mut pass: Option<NonZeroU32> = None;
             let mut reviews = |reviews: &[crate::state::Review]| {
                 let request = pass.map_or(ActivityRequest::FirstReview, |pass| ActivityRequest::Verification {
@@ -178,6 +177,7 @@ impl Team {
                 | ItemPhase::Fixing { .. }
                 | ItemPhase::Done { .. } => {}
             }
+            found.extend(self.opinion_activities(item, &rounds, at));
         }
         for candidate in found {
             self.retain_activity(candidate);
