@@ -310,6 +310,13 @@ pub(super) fn choose_opinion(
     excluded: &HashSet<InvestigatorName>,
     rng: &mut impl Rng,
 ) -> Option<Reviewer> {
-    let _inputs = (excluded, rng);
-    free.into_iter().next()
+    let mut eligible: Vec<_> = free
+        .into_iter()
+        .filter(|reviewer| !excluded.contains(&reviewer.name))
+        .collect();
+    if eligible.is_empty() {
+        return None;
+    }
+    let index = rng.random_range(0..eligible.len());
+    Some(eligible.swap_remove(index))
 }
