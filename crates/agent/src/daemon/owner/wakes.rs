@@ -85,7 +85,22 @@ impl Owner {
             .agent()
             .name()
             .parse()?;
-        let known = self.wake_counts.remove(task);
+        let known = self.wake_counts.remove(task).or_else(|| {
+            self.parts.state.wake_delivery(task).map(|delivery| match delivery {
+                WakeDelivery::Pending { message, count } => WakeCount {
+                    message,
+                    count,
+                    stopped: false,
+                    unreadable_told: false,
+                },
+                WakeDelivery::Delivered { message, count } => WakeCount {
+                    message,
+                    count,
+                    stopped: true,
+                    unreadable_told: false,
+                },
+            })
+        });
         let (message, mut woken) = match self.parts.bus.latest_message_for(&agent, team_id).await {
             Ok(message) => {
                 let id = message.as_ref().map(|note| note.id);
@@ -173,8 +188,12 @@ impl Owner {
     }
 
     /// Forgets the wake-ups of `task`: it went to sleep with nothing waiting for it, so what woke it was read.
-    pub(super) fn wake_settled(&mut self, task: &TaskId) {
+    pub(super) fn wake_settled(&mut self, task: &TaskId, look: &mut Look) {
         self.wake_counts.remove(task);
+        if self.parts.state.wake_delivery(task).is_some() {
+            self.parts.state.record_wake_delivery(task.clone(), None);
+            look.changed = true;
+        }
     }
 }
 

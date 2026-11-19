@@ -468,7 +468,7 @@ impl Owner {
                 // A member that went to sleep with nothing waiting read what woke it.
                 Ok(Woken::No) if state == MemberState::Sleeping => {
                     if let Some(task) = self.task_of(team_id, &member) {
-                        self.wake_settled(&task);
+                        self.wake_settled(&task, look);
                     }
                 }
                 Ok(Woken::Message | Woken::Board | Woken::No) => {}
