@@ -759,11 +759,7 @@ mod tests {
 
     /// What the state of `FIXTURE` is saved as, migrated to schema version 9.
     fn saved() -> String {
-        include_str!("../../agent-core/tests/fixtures/state-v1-as-v3.json").replacen(
-            "\"schema_version\": 3",
-            "\"schema_version\": 10",
-            1,
-        )
+        include_str!("../../agent-core/tests/fixtures/state-v1-activities.json").to_owned()
     }
 
     /// The longest state file the core reads.
@@ -985,14 +981,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = home_in(&dir);
         let store = StateStore::open(home.clone()).await.unwrap();
-        std::fs::write(home.state_file(), "{\"schema_version\": 11, \"teams\": 7}").unwrap();
+        std::fs::write(home.state_file(), "{\"schema_version\": 12, \"teams\": 7}").unwrap();
 
         let result = store.load().await;
 
         assert!(
             matches!(
                 &result,
-                Err(StoreError::Invalid { path, source: StateError::UnsupportedSchema(UnsupportedSchema { found: 11 }) })
+                Err(StoreError::Invalid { path, source: StateError::UnsupportedSchema(UnsupportedSchema { found: 12 }) })
                     if *path == home.state_file()
             ),
             "{result:?}"

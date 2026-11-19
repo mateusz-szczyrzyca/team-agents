@@ -360,7 +360,10 @@ mod protocol_findings_maps {
         let fixture_text = include_str!("fixtures/state-v0-11-second-opinions.json");
         let state = State::from_json(fixture_text).unwrap();
         let serialized = format!("{}\n", state.to_json().unwrap());
-        assert_eq!(serialized, fixture_text);
+        assert_eq!(
+            serialized,
+            include_str!("fixtures/state-v0-11-second-opinions-activities.json")
+        );
 
         let item = &state.teams()[0].items()[1];
         let ledger = item.findings().unwrap();
