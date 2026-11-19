@@ -463,7 +463,17 @@ async fn a_daemon_stopped_in_the_middle_of_a_round_goes_on_with_the_same_round_i
 
 #[tokio::test]
 async fn agent_run_prints_the_round_of_each_item_and_agent_status_of_a_round_shows_its_item_tasks_and_pull_request() {
-    let mut rig = team_rig().await;
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,integrate"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+        ],
+        5,
+        true,
+    )
+    .await;
     rig.start().await;
     let request = agent_core::protocol::RunRequest {
         repo: "example".parse().unwrap(),
