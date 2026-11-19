@@ -392,7 +392,8 @@ impl AutopilotNotice {
     pub(super) const fn kind(self) -> NoticeKind {
         match self {
             Self::Decision => NoticeKind::Decision,
-            Self::NoVerdict | Self::Opinion => NoticeKind::NoVerdict,
+            Self::NoVerdict => NoticeKind::NoVerdict,
+            Self::Opinion => NoticeKind::Opinion,
             Self::PublishFailed => NoticeKind::PublishFailed,
             Self::TeamAsleep | Self::StandingItem => NoticeKind::TeamAsleep,
             Self::Closed => NoticeKind::Closed,
