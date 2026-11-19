@@ -1046,3 +1046,6 @@ fn target_text(target: &Target) -> String {
         Target::Round(round) => format!("round {round}"),
     }
 }
+
+#[cfg(test)]
+mod tests;
