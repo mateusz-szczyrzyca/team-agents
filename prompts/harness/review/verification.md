@@ -14,7 +14,7 @@ You may consult other verifiers through the bus.
 {{lead_message}}
 
 Start your final report with `VERDICT: APPROVE` or `VERDICT: REQUEST_CHANGES`. Before new findings, answer for every open
-finding: `FINDING 3: RESOLVED` or `FINDING 3: OPEN — why`. APPROVE requires no open BLOCKER or MAJOR, old or new;
+finding: `FINDING 3: RESOLVED` or `FINDING 3: OPEN — why`. After RESOLVED, optionally add ` — reason`, ` - reason`, or `: reason`. APPROVE requires no open BLOCKER or MAJOR, old or new;
 REQUEST_CHANGES requires at least one. MINOR never blocks approval. Use this format for new findings; the harness assigns
 permanent numbers:
 

@@ -389,6 +389,19 @@ case $action in
   questions) result 'I have to ask.\nSTATUS: QUESTIONS' ;;
   slowdone) sleep 1; result 'Finished the work.\nSTATUS: DONE' ;;
   slowfail) sleep 1; result 'I could not do it.\nSTATUS: FAILED' ;;
+  review-reasons)
+    if [[ $prompt == *'# OPEN FINDINGS TO VERIFY'* ]]; then
+      answers=$(awk '/^# OPEN FINDINGS TO VERIFY/ {open=1} open && /^[0-9]+\. \[/{sub(/\./, "", $1); printf "FINDING %s: RESOLVED — café regression checked\\n", $1}' <<< "$prompt")
+      result "VERDICT: APPROVE\n$answers\nSTATUS: DONE"
+    else
+      result 'VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — café regression missing → add it\n   CHECK: read src/lib.rs:7\n2. [MINOR] DOC-1 src/lib.rs:8 — wording → clarify it\n   CHECK: read src/lib.rs:8\nSTATUS: DONE'
+    fi
+    ;;
+  fix-reasons-minor)
+    commit_work
+    record_gate
+    result 'FINDING 1: FIXED — café regression added\nFINDING 2: FIXED - wording clarified\nFINDING 3: FIXED: café regression added\nFINDING 4: FIXED\nSTATUS: DONE'
+    ;;
   fix-work|fix-work:*|fix-work-pushed|fix-commit|fix-done|fix-gated|fix-script:*)
     # New fix actions preserve the original actions and answer the ledger before the attached reports.
     case $action in

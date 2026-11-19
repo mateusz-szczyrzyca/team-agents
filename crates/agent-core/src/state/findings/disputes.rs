@@ -148,6 +148,14 @@ impl Findings {
                             .position(|line| line.trim().starts_with(&prefix))
                             .map_or(1, |i| i.saturating_add(1)),
                         kind: crate::review_findings::ReportProblem::UnchangedExplanation,
+                        detail: crate::review_findings::AnswerDiagnostic {
+                            source_line: text
+                                .lines()
+                                .find(|line| line.trim().starts_with(&prefix))
+                                .map(str::to_owned),
+                            number: Some(*number),
+                            mistake: crate::review_findings::AnswerMistake::NotAllowed,
+                        },
                     });
                 }
             }
@@ -167,7 +175,7 @@ impl Findings {
         let blocking: Vec<_> = self
             .entries
             .iter()
-            .filter(|e| e.status == FindingStatus::Open && e.finding.severity.blocks())
+            .filter(|e| e.status == FindingStatus::Open)
             .map(|e| {
                 (
                     e.number,

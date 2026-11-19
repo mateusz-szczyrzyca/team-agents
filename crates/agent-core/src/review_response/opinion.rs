@@ -163,6 +163,9 @@ pub(crate) fn parse_lead_located(
                 .and_then(|value| value.split_once(':'))
                 .and_then(|(number, value)| {
                     let finding = open.iter().find(|entry| entry.number.to_string() == number.trim())?;
+                    if finding.severity == Severity::Minor {
+                        return None;
+                    }
                     let reason = value.trim().strip_prefix("SECOND OPINION —")?;
                     Some((finding.number, reason.trim()))
                 })
@@ -186,10 +189,14 @@ pub(crate) fn parse_lead_located(
     }
     let legacy: Vec<_> = open
         .iter()
-        .filter(|entry| entry.severity.blocks())
         .map(|entry| (entry.number, entry.severity, entry.explained))
         .collect();
-    super::parse_lead(&normalized, &legacy)?
+    super::parse_lead(&normalized, &legacy)
+        .map_err(|mut error| {
+            // Normalization must never replace the source evidence shown to the lead.
+            error.detail.source_line = text.lines().nth(error.line.saturating_sub(1)).map(str::to_owned);
+            error
+        })?
         .into_iter()
         .map(|(number, answer)| {
             let answer = if let Some(&(line, reason)) = requests.get(&number) {

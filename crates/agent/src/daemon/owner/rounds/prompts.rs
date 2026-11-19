@@ -27,6 +27,9 @@ use crate::daemon::merge::count;
 /// Why what the autopilot adds to a prompt cannot be made.
 #[derive(Debug, thiserror::Error)]
 pub(in crate::daemon::owner) enum SectionError {
+    /// A refused answer cannot be described.
+    #[error("cannot render refused answer diagnostics")]
+    Response(#[from] super::responses::ResponseTextError),
     /// A findings text cannot be rendered.
     #[error("cannot render findings")]
     Findings(#[from] super::findings::TextError),
@@ -155,9 +158,28 @@ async fn round_sections_for(
             let values = Variables::new()
                 .with("line", problem.line.to_string())?
                 .with("reason", problem.kind.to_string())?;
-            Ok(Some(Addition::Replace(
-                texts.render(AutopilotPrompt::ReviewFindingsInvalid, &values)?,
-            )))
+            let mut correction = texts.render(AutopilotPrompt::ReviewFindingsInvalid, &values)?;
+            let ledger = found
+                .team
+                .items()
+                .iter()
+                .find(|item| match item.phase() {
+                    ItemPhase::InReview { reviews, .. } => {
+                        reviews.iter().any(|review| &review.task == found.member.task())
+                    }
+                    ItemPhase::Pending
+                    | ItemPhase::InProgress { .. }
+                    | ItemPhase::Fixing { .. }
+                    | ItemPhase::Approved { .. }
+                    | ItemPhase::Done { .. } => false,
+                })
+                .and_then(|item| item.findings());
+            let forms = match ledger {
+                Some(ledger) => super::responses::verifier_forms(texts, ledger)?,
+                None => String::new(),
+            };
+            correction.push_str(&super::responses::answer_diagnostic(texts, &problem.detail, &forms)?);
+            Ok(Some(Addition::Replace(correction)))
         }
         (Role::Reviewer, Some(Why::VerdictMissing)) => {
             let text = texts.render(AutopilotPrompt::ReviewVerdictMissing, &Variables::new())?;

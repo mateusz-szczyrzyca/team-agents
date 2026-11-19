@@ -237,7 +237,7 @@ FINDINGS
    CHECK: read src/lib.rs:7
   ----- end of review report -----
 <time>  fix pass 1 of 5 on #1 started
-  ----- findings sent to the team (2261 bytes) -----
+  ----- findings sent to the team (2423 bytes) -----
 # THE REVIEWERS ASKED FOR CHANGES (pull request #1, fix pass 1 of 5)
 
 All reviews of your pull request are in, and at least one asks for changes. The reports, each with its verdict:
@@ -263,11 +263,11 @@ SUMMARY: fine
 
 Switch to your branch `agents/inv-lead/<task-4>`. Fix every [BLOCKER] in code. Fix a [MAJOR] in code or explain its deviation once.
 Before STATUS, answer every open blocking number exactly once:
-`FINDING 3: FIXED` or `FINDING 4: EXPLAINED — why the deviation is right`.
+`FINDING 3: FIXED` or `FINDING 4: EXPLAINED — why the deviation is right`. After FIXED, optionally add ` — reason`, ` - reason`, or `: reason`.
 A finding with any retained explanation cannot be explained again. All verifiers must accept an explanation;
 otherwise fix it in code. Never explain a BLOCKER.
 Correct a rejected message without starting another fix pass.
-These severities block approval; [MINOR] never does. Then get the repository's gate green with `agent gate` and end
+These severities block approval; [MINOR] never does. You may answer an open MINOR with FIXED; other answers to open MINOR findings are ignored. Then get the repository's gate green with `agent gate` and end
 with `STATUS: DONE`.
 
 Do not push, and do not open or update the pull request: the harness pushes your branch when the gate has passed at its

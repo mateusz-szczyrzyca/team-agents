@@ -217,3 +217,33 @@ async fn unanswered_opinion_has_its_own_notice_kind_and_requests_a_human_decisio
     )])
     .await;
 }
+
+#[tokio::test]
+async fn refused_responses_have_dedicated_notification_titles() {
+    let texts = texts().await;
+    for (notice, title) in [
+        (AutopilotNotice::ResponseRefused, "The lead's fix response was refused"),
+        (AutopilotNotice::ReportRefused, "The reviewer's report was refused"),
+    ] {
+        let values = Variables::new()
+            .with("team", "team-1")
+            .unwrap()
+            .with("items", "1.1")
+            .unwrap()
+            .with("reason", "FINDING 99: unknown number")
+            .unwrap()
+            .with("bounces", "3")
+            .unwrap()
+            .with("task", "task-1")
+            .unwrap()
+            .with("reviewer", "inv-r1")
+            .unwrap()
+            .with("pr", "1")
+            .unwrap();
+        let rendered = texts.render(notice.prompt(), &values).unwrap();
+        assert_eq!(rendered.lines().next(), Some(title));
+        assert!(rendered.contains("FINDING 99: unknown number"));
+        assert!(rendered.contains('3'));
+        assert!(rendered.contains("agent resume task-1"));
+    }
+}

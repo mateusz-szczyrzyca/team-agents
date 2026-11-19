@@ -176,3 +176,19 @@ fn an_accepted_explanation_cannot_be_raised_until_its_file_changes() {
         Err(ReportError { line: 1, .. })
     ));
 }
+
+#[test]
+fn lead_state_accepts_open_minor_numbers_with_blockers() {
+    let (mut ledger, _) = ledger();
+    let mut minor = ledger.entries()[0].clone();
+    minor.number = NonZeroU32::new(2).unwrap();
+    minor.finding.severity = Severity::Minor;
+    ledger.entries.push(minor);
+    assert_eq!(
+        ledger.answer_lead("FINDING 1: FIXED — tested\nFINDING 2: FIXED\nSTATUS: DONE", 1),
+        Ok(vec![
+            (NonZeroU32::MIN, Response::Fixed),
+            (NonZeroU32::new(2).unwrap(), Response::Fixed)
+        ])
+    );
+}
