@@ -352,6 +352,42 @@ async fn a_reviewer_that_failed_with_no_investigator_free_is_told_to_the_human_o
     assert_eq!(told.len(), 1, "{told:?}");
 }
 
+// Rule: a round whose reviewer failed and has no free investigator to replace it says what it waits for.
+#[tokio::test]
+async fn a_round_whose_failed_reviewer_has_nobody_to_replace_it_waits_for_a_free_investigator() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", ONE_FAILS),
+            investigator("inv-r2", ONE_FAILS),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.notification_with("gave no verdict on pull request 1").await;
+    looked_again(&rig).await;
+    let state = rig.state();
+    let round = state.teams()[0].rounds()[0].id().clone();
+    let mut shown = Vec::new();
+    crate::commands::status::status(
+        &mut crate::client::Connection::connect(&rig.home.socket_file())
+            .await
+            .unwrap(),
+        Some(agent_core::protocol::Target::Round(round)),
+        &mut shown,
+    )
+    .await
+    .unwrap();
+    rig.stop().await.unwrap();
+
+    let shown = String::from_utf8(shown).unwrap();
+    assert!(shown.contains(", waits for a free independent investigator"), "{shown}");
+}
+
 // ---- a team that sleeps ------------------------------------------------------------------------------------------
 
 // Rule: a lead that sleeps on an unfinished item with nobody at work is woken and told so; after two wake-ups that
