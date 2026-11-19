@@ -105,13 +105,16 @@ async fn activity_history_records_a_queued_review_and_its_human_stop() {
     let RunState::Ended { at, .. } = member.runs().last().unwrap().state() else {
         panic!("stopped run")
     };
-    assert_eq!(
-        team.activities().iter().find(|a| a.task() == &task).unwrap().outcome(),
-        &ActivityOutcome::Finished {
-            at: *at,
-            end: ActivityEnd::Stopped
-        }
-    );
+    // The reviewer's last run ended by itself (it sleeps), before the human stopped the task: the stop ends the
+    // assignment when it happened, not when the earlier run ended.
+    let ActivityOutcome::Finished {
+        at: stopped_at,
+        end: ActivityEnd::Stopped,
+    } = team.activities().iter().find(|a| a.task() == &task).unwrap().outcome()
+    else {
+        panic!("the assignment ended with the stop")
+    };
+    assert!(stopped_at > at, "{stopped_at:?} is not after the run end {at:?}");
     rig.stop().await.unwrap();
 }
 
