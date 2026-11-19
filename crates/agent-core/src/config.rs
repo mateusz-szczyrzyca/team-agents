@@ -310,7 +310,7 @@ pub struct Review {
 impl Default for Review {
     fn default() -> Self {
         Self {
-            allow_second_opinion_on_blocker: false,
+            allow_second_opinion_on_blocker: true,
             min_first_full_reviews: None,
             fix_passes: DEFAULT_FIX_PASSES,
             check_passes: DEFAULT_CHECK_PASSES,
