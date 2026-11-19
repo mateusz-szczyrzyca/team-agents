@@ -105,13 +105,18 @@ mod round_checks {
         }
     }
 
-    // Rule: with both kinds the team goes first: what it can fix is fixed before the human is bothered, and the human is
-    // asked about everything when the passes are used.
+    // Rule: with both kinds the human is asked for what only they may allow and the team goes back with what it can
+    // fix, and the human is asked about everything when the passes are used.
     #[test]
-    fn with_both_kinds_the_team_goes_first_and_the_human_is_asked_when_passes_are_used() {
+    fn with_both_kinds_both_at_once_and_the_human_is_asked_when_passes_are_used() {
         let issues = [for_the_human(), for_the_team()];
 
-        assert_eq!(Checking::after(0).conclude(&issues, &[], TWICE), pass(1));
+        assert_eq!(
+            Checking::after(0).conclude(&issues, &[], TWICE),
+            ChecksStep::Both {
+                pass: NonZeroU32::new(1).unwrap(),
+            }
+        );
         assert_eq!(
             Checking::after(2).conclude(&issues, &[], TWICE),
             ChecksStep::AskHuman {
