@@ -172,6 +172,12 @@ stops them in order: the server stops accepting, the owner has its runs stopped 
 is queued, the socket is removed; every task is joined. A state that cannot be saved ends the daemon with an error —
 models must not work on with a state that is not kept — and `Restart=on-failure` of the unit starts it again.
 
+**Agent text.** A reviewer's malformed report is a protocol refusal, not a failure of the state owner. Before recording
+anything, the owner parses it against every item whose ledger will receive it; recording consumes those parsed reports
+without parsing the text again. A refusal returns the report to the reviewer with its source line, finding number and
+the rejecting item's allowed answers, or asks the human after two corrections. It cannot stop the daemon or record
+only part of the review. Failures of the storage and other infrastructure needed to keep state can still stop the owner.
+
 **Start.** `agent daemon` needs `AGENTS_HOME` (no default before the cutover, so a trial cannot touch the live home),
 `agents.toml` there and the prompt files (`prompts/` in the home, or `--prompts-dir DIR`); the files of both catalogs are
 checked at start, every problem reported at once. It takes the lock of the home (a second daemon exits with "already

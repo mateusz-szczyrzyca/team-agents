@@ -1244,6 +1244,11 @@ A confirmed BLOCKER requires a code fix. Missing or forbidden answers receive at
 another fix pass; after that a “lead’s fix response was refused” notice gives the reason, bounce count and recovery
 commands, and verification stays held. A reviewer’s report with a verdict but an invalid finding answer receives a
 “reviewer’s report was refused” notice with the refused line instead of a missing-verdict notice.
+A report is checked against every item it reviews before any verdict or finding is recorded. If one item refuses it,
+the whole report goes back to its reviewer, quoting the line and finding number and listing the answers allowed
+by that item's findings. The reviewer has two corrections; exhaustion sends one notice to the human. A refused
+report changes none of the reviewed items and does not stop the daemon, including when older items on the same
+pull request retain different explanation states.
 A fix pass that claims `FIXED` must hand over a new commit. If its tip is still the reviewed commit,
 the harness returns it to the lead to commit the fix and run `agent gate`. The same correction budget covers a
 gate record that still belongs to another commit after the harness has finished its own gate. Three automatic

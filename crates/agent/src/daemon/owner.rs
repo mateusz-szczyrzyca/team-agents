@@ -125,9 +125,6 @@ pub(crate) enum OwnerError {
     /// The reviewed commit cannot be retained for the next verification.
     #[error(transparent)]
     ReviewedHead(#[from] rounds::ReviewedHeadError),
-    /// A structured report contradicts the review protocol.
-    #[error("cannot accept review findings")]
-    Findings(#[from] agent_core::review_findings::ReportError),
     /// The permanent finding numbers have been used up.
     #[error("cannot number review findings")]
     FindingNumbers(#[from] agent_core::state::FindingNumbersExhausted),

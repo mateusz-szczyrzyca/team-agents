@@ -291,21 +291,23 @@ model and the rules every item of the plan "Rewrite `bin/agent` in Rust" follows
 - **Say what the new version brings.** A PR that raises the version adds its entry at the top of
   [`WhatsNew.md`](WhatsNew.md), in the commit that raises the version: a heading with the version, the date and the
   PR, then its lines under `### New features`, `### Bug fixes` and `### Enhancements` — only the headings that have
-  something under them. Write simply and briefly, for the human who restarts the daemon and wants to know what is
-  different now: what the daemon or the CLI does that it did not do before, in plain words — no rule IDs, no names
-  of functions or files, no account of how it was built; one line per change, and where it helps one example of a
-  command, a line of output or a configuration key. A new feature is something the human can now do or see; a bug
-  fix says what went wrong before; an enhancement makes something that existed better. A change the human must act
-  on (a new key, a changed command, a migration) starts with **Action:**. The example to follow:
+  something under them. Every line starts with the tags of the crates or modules whose code the change is in, so
+  that the reader knows where to look: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]` —
+  one tag per crate, in this order, no other tags (a change of the prompts or of the workspace's `Cargo.toml` alone
+  carries the tag of the crate whose behaviour it changes). Write simply and briefly, for the human who restarts
+  the daemon and wants to know what is different now: what the daemon or the CLI does that it did not do before, in
+  plain words — no rule IDs, no names of functions or files, no account of how it was built; one line per change,
+  and where it helps one example of a command, a line of output or a configuration key. A new feature is something
+  the human can now do or see; a bug fix says what went wrong before; an enhancement makes something that existed
+  better. A change the human must act on (a new key, a changed command, a migration) starts with **Action:** after
+  its tags. The example to follow:
 
   ```markdown
-  ## 0.18.0 — 19.11.2026 — PR #133
+  ## 0.17.0 — 19.11.2026 — PR #131
 
-  ### New features
-  - `[build] incremental = true` in the configuration turns incremental compilation back on for agents and the gate.
-
-  ### Enhancements
-  - The build directory of a task's worktree is about three times smaller (13 GB → 4 GB after one gate).
+  ### Bug fixes
+  - [agent] A message sent to a lead during a fix pass no longer loses the lead's fix response.
+  - [agent] [agent-core] A lead is woken at most twice for the same message, also after a restart of the daemon.
   ```
 
 ## Rounds
