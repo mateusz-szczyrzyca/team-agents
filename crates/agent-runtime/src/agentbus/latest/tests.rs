@@ -20,11 +20,11 @@ async fn latest(lines: &[String]) -> Result<Option<MessageNote>, LatestMessageEr
     latest_message_for(dir.path(), &agent("claude-1"), &team()).await
 }
 
-fn note(id: u64, from: &str) -> Option<MessageNote> {
-    Some(MessageNote {
+fn note(id: u64, from: &str) -> MessageNote {
+    MessageNote {
         id: NonZeroU64::new(id).unwrap(),
         from: from.to_owned(),
-    })
+    }
 }
 
 #[tokio::test]
@@ -46,7 +46,7 @@ async fn the_newest_message_sent_to_the_agent_is_the_one_found() {
         line(3, "claude-2", "claude-3", ""),
     ];
 
-    assert_eq!(latest(&lines).await.unwrap(), note(2, "claude-2"));
+    assert_eq!(latest(&lines).await.unwrap(), Some(note(2, "claude-2")));
 }
 
 #[tokio::test]
@@ -58,19 +58,19 @@ async fn messages_to_the_team_and_to_everybody_count_and_other_teams_do_not() {
         latest(&[line(1, "human", "claude-1", ""), line(2, "human", &to_team, "")])
             .await
             .unwrap(),
-        note(2, "human")
+        Some(note(2, "human"))
     );
     assert_eq!(
         latest(&[line(1, "human", "claude-1", ""), line(2, "agentbus", "all", "")])
             .await
             .unwrap(),
-        note(2, "agentbus")
+        Some(note(2, "agentbus"))
     );
     assert_eq!(
         latest(&[line(1, "human", "claude-1", ""), line(2, "human", to_other, "")])
             .await
             .unwrap(),
-        note(1, "human")
+        Some(note(1, "human"))
     );
 }
 
@@ -82,7 +82,7 @@ async fn what_the_agent_sent_and_what_was_sent_quietly_wakes_nobody() {
         line(3, "claude-2", "claude-1", r#","quiet":true"#),
     ];
 
-    assert_eq!(latest(&lines).await.unwrap(), note(1, "human"));
+    assert_eq!(latest(&lines).await.unwrap(), Some(note(1, "human")));
 }
 
 #[tokio::test]
@@ -116,7 +116,7 @@ async fn a_log_longer_than_the_window_is_read_from_its_end_without_its_cut_line(
         .await
         .unwrap();
 
-    assert_eq!(found, note(9, "human"));
+    assert_eq!(found, Some(note(9, "human")));
 }
 
 #[tokio::test]
