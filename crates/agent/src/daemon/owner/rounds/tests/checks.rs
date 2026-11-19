@@ -110,6 +110,11 @@ fn scripts(rig: &Rig) {
         "protected",
         "echo 'exit 0' >> ci/gate.sh\ngit add ci/gate.sh\ncommit -m 'Change the gate'\n",
     );
+    script(
+        rig,
+        "edit-test-and-code",
+        "sed -i 2d tests/existing.txt\necho 'fn a() {}' > src/a.txt\ngit add tests/existing.txt src/a.txt\ncommit -m 'Edit test and add code'\n",
+    );
 }
 
 /// Answers questions number `number` of `task` with the verdict `text`.
@@ -905,6 +910,49 @@ async fn a_head_pushed_to_an_existing_draft_after_the_checks_sent_it_back_is_rec
         })
         .collect();
     assert_eq!(pushed_heads, [(1, reviewed_head)], "{events:?}");
+}
+
+// ---- findings of both judges -----------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn with_both_kinds_the_human_is_asked_in_the_first_check_and_the_team_fixes_its_part_at_the_same_time() {
+    let mut rig = checking_rig("script:edit-test-and-code,script:add-test,done", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    // Check 1: both findings found. Team message sent to lead; human question written.
+    let back = rig.prompt(&tasks[0], 2).await;
+    assert!(
+        back.contains("The other findings wait for the human and are not the team's to touch"),
+        "{back}"
+    );
+    assert!(back.contains("production code"), "{back}");
+    assert!(!back.contains("tests/existing.txt"), "{back}");
+
+    let file = questions_of(&rig, &tasks[0], 1);
+    assert_eq!(file.entries().len(), 1);
+    assert!(
+        file.entries()[0].title().contains("`tests/existing.txt`"),
+        "{}",
+        file.entries()[0].title()
+    );
+    assert!(
+        !file.entries()[0].title().contains("production code"),
+        "{}",
+        file.entries()[0].title()
+    );
+
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    let kept = record(&rig, &tasks[0]).await;
+    assert_eq!(
+        kept.allowed_of(&["1.1".parse().unwrap()]),
+        [Subject::Path("tests/existing.txt".parse().unwrap())]
+    );
 }
 
 // ---- the story of a round the checks held back --------------------------------------------------------------------------
