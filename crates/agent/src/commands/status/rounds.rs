@@ -36,6 +36,8 @@ mod tests;
 pub(super) struct Told {
     /// Where the work of each round that goes on is.
     works: HashMap<RoundId, RoundWork>,
+    /// The findings waiting for independent investigators.
+    opinions: HashMap<RoundId, String>,
     /// The machine's offset from UTC: the times are local.
     offset: UtcOffset,
     /// Why the history could not say whether a draft is open, when it could not.
@@ -45,7 +47,11 @@ pub(super) struct Told {
 impl Told {
     /// What follows the line of `round`.
     pub(super) fn of(&self, round: &Round) -> String {
-        suffix(round, self.works.get(round.id()).copied(), self.offset)
+        let suffix = suffix(round, self.works.get(round.id()).copied(), self.offset);
+        match self.opinions.get(round.id()) {
+            Some(opinions) => format!("{suffix}{opinions}"),
+            None => suffix,
+        }
     }
 
     /// The line that says why a draft cannot be told from local work, or nothing when the history was read.
@@ -106,6 +112,7 @@ pub(super) async fn told(
 ) -> Result<Told, StatusError> {
     let mut told = Told {
         works: HashMap::new(),
+        opinions: HashMap::new(),
         offset: activity.offset,
         unread: None,
     };
@@ -125,7 +132,8 @@ pub(super) async fn told(
             });
         if let Some(work) = round_work(&detail, draft) {
             told.works.insert(round.id().clone(), work);
-            let _description = opinion_waits(&detail, activity.offset);
+            told.opinions
+                .insert(round.id().clone(), opinion_waits(&detail, activity.offset));
         }
     }
     Ok(told)
@@ -174,6 +182,38 @@ fn took(seconds: u64) -> String {
 }
 
 /// Describes each unanswered opinion independently of the round's general work label.
-fn opinion_waits(_detail: &agent_core::protocol::RoundDetail, _offset: UtcOffset) -> String {
-    String::new()
+fn opinion_waits(detail: &agent_core::protocol::RoundDetail, offset: UtcOffset) -> String {
+    use agent_core::state::OpinionStage;
+    let mut text = String::new();
+    for (number, opinion) in &detail.opinions {
+        let description = match &opinion.stage {
+            OpinionStage::Waiting => format!("finding {number} waits for a free independent investigator"),
+            OpinionStage::Assigned { investigator, .. } => {
+                let since = detail
+                    .opinion_attempts
+                    .get(number)
+                    .and_then(|attempts| attempts.last())
+                    .and_then(|attempt| attempt.asked_at);
+                let time = match since {
+                    Some(at) => {
+                        let at = at.as_utc().to_offset(offset);
+                        format!(
+                            "since {:02}-{:02}-{:04} {:02}:{:02}",
+                            at.day(),
+                            u8::from(at.month()),
+                            at.year(),
+                            at.hour(),
+                            at.minute()
+                        )
+                    }
+                    None => "(assignment time unavailable)".to_owned(),
+                };
+                format!("finding {number} waits for {investigator}’s second opinion {time}")
+            }
+            OpinionStage::Reported { .. } => continue,
+        };
+        text.push_str("; ");
+        text.push_str(&description);
+    }
+    text
 }

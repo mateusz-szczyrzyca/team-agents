@@ -356,7 +356,23 @@ impl RoundDetail {
             tasks,
             pr,
             review_passes,
-            opinion_attempts: Default::default(),
+            opinion_attempts: progress
+                .and_then(ItemProgress::findings)
+                .map(|ledger| {
+                    ledger
+                        .opinions()
+                        .keys()
+                        .filter_map(|number| {
+                            let attempts = ledger.opinion_attempts(*number);
+                            if attempts.is_empty() {
+                                None
+                            } else {
+                                Some((*number, attempts.to_vec()))
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
             opinions: progress
                 .and_then(ItemProgress::findings)
                 .map(|ledger| ledger.opinions().clone())
