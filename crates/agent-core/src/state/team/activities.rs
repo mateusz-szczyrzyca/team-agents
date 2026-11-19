@@ -88,7 +88,7 @@ pub enum ActivityOutcome {
 
 /// One investigator's assignment for a team, shared across items of the same pull request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "ActivityWire")]
 pub struct Activity {
     /// The configured investigator.
     investigator: InvestigatorName,
@@ -102,6 +102,70 @@ pub struct Activity {
     asked_at: Timestamp,
     /// The durable outcome of the assignment.
     outcome: ActivityOutcome,
+}
+
+/// Untrusted activity fields, checked before they become a retained assignment.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActivityWire {
+    /// The investigator named by the record.
+    investigator: InvestigatorName,
+    /// The task assigned to it.
+    task: TaskId,
+    /// Rounds served, without duplicates.
+    rounds: Vec<RoundId>,
+    /// The assignment's classification and subject.
+    request: ActivityRequest,
+    /// Earliest permitted ending time.
+    asked_at: Timestamp,
+    /// The recorded progress or terminal outcome.
+    outcome: ActivityOutcome,
+}
+
+/// Inconsistent timestamps or round references in a persisted activity.
+#[derive(Debug, thiserror::Error)]
+enum ActivityInputError {
+    /// Ending before assignment would make chronological status misleading.
+    #[error("activity for task {task} ends before it was assigned")]
+    EndsBeforeAssignment {
+        /// The inconsistent task.
+        task: TaskId,
+    },
+    /// One assignment serves any given round at most once.
+    #[error("activity for task {task} repeats round {round}")]
+    RepeatedRound {
+        /// The inconsistent task.
+        task: TaskId,
+        /// The duplicate reference.
+        round: RoundId,
+    },
+}
+
+impl TryFrom<ActivityWire> for Activity {
+    type Error = ActivityInputError;
+
+    fn try_from(wire: ActivityWire) -> Result<Self, Self::Error> {
+        if matches!(wire.outcome, ActivityOutcome::Finished { at, .. } if at < wire.asked_at) {
+            return Err(ActivityInputError::EndsBeforeAssignment { task: wire.task });
+        }
+        let mut seen = std::collections::HashSet::new();
+        for round in &wire.rounds {
+            if !seen.insert(round) {
+                return Err(ActivityInputError::RepeatedRound {
+                    task: wire.task,
+                    round: round.clone(),
+                });
+            }
+        }
+        Ok(Self {
+            investigator: wire.investigator,
+            task: wire.task,
+            rounds: wire.rounds,
+            request: wire.request,
+            asked_at: wire.asked_at,
+            outcome: wire.outcome,
+        })
+    }
 }
 
 impl Activity {
