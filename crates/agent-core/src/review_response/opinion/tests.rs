@@ -30,11 +30,9 @@ fn only_unused_blockers_with_permission_accept_opinions() {
                         )])
                     );
                 } else {
-                    assert_eq!(
-                        result,
-                        Err(OpinionError::Forbidden {
-                            number: NonZeroU32::MIN
-                        })
+                    assert!(
+                        matches!(result, Err(OpinionError::Forbidden { number, .. }) if number == NonZeroU32::MIN),
+                        "{result:?}"
                     );
                 }
             }
