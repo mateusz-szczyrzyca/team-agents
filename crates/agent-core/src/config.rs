@@ -40,17 +40,11 @@ const DEFAULT_HANG_MINUTES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 const DEFAULT_HANG_STRIKES: NonZeroU32 = NonZeroU32::new(3).unwrap();
 
 /// `[build]`: Cargo cache policy for agent CLIs and repository gates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Build {
     /// Whether managed builds keep incremental compilation artifacts.
     pub incremental: bool,
-}
-
-impl Default for Build {
-    fn default() -> Self {
-        Self { incremental: true }
-    }
 }
 
 /// `[watchdog] asleep_minutes` when the file does not give it.
