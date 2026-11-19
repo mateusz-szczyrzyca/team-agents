@@ -611,13 +611,10 @@ impl Checking {
             (true, true, true) => ChecksStep::Both {
                 pass: NonZeroU32::MIN.saturating_add(self.passes),
             },
-            (true, true, false) => ChecksStep::AskHuman {
+            (true, _, false) => ChecksStep::AskHuman {
                 reason: AskReason::PassesUsed,
             },
             (true, false, true) => back,
-            (true, false, false) => ChecksStep::AskHuman {
-                reason: AskReason::PassesUsed,
-            },
             (false, true, _) => ChecksStep::AskHuman {
                 reason: AskReason::OnlyTheHumanMayAllow,
             },
