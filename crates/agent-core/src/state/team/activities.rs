@@ -3,7 +3,10 @@
 use super::Team;
 use crate::ids::{InvestigatorName, RoundId, TaskId};
 use crate::kinds::ActivityKind;
-use crate::state::{CheckedMut, OpinionFailure, RunEnd, Timestamp};
+use crate::state::{
+    CheckedMut, ItemPhase, Member, OpinionFailure, Participant, ReviewOutcome, RunEnd, RunState, Timestamp,
+};
+use crate::status::TaskStatus;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 
@@ -37,7 +40,12 @@ impl ActivityRequest {
     /// The classification of this request, independent of the participant's task role.
     #[must_use]
     pub const fn kind(&self) -> ActivityKind {
-        ActivityKind::TeamMember
+        match self {
+            Self::TeamMember => ActivityKind::TeamMember,
+            Self::FirstReview | Self::Verification { .. } | Self::SecondOpinion { .. } => ActivityKind::Reviewer,
+            Self::Investigation => ActivityKind::Investigator,
+            Self::TaskAllocation => ActivityKind::TaskAllocator,
+        }
     }
 }
 
@@ -107,11 +115,137 @@ impl Team {
     /// All investigator assignments, retained after their item progresses or closes.
     #[must_use]
     pub fn activities(&self) -> &[Activity] {
-        &[]
+        &self.activities
     }
 
     /// Retains assignments and outcomes currently known by the team, without changing reviewer selection.
-    pub fn record_activities(&mut self, _at: Timestamp) {}
+    pub fn record_activities(&mut self, at: Timestamp) {
+        let mut found = Vec::new();
+        for (_, member) in self.crew.roster() {
+            if let Participant::Investigator(investigator) = member.agent() {
+                found.push(Activity {
+                    investigator: investigator.clone(),
+                    task: member.task().clone(),
+                    rounds: self.rounds.iter().map(|round| round.id().clone()).collect(),
+                    request: ActivityRequest::TeamMember,
+                    asked_at: self.created_at,
+                    outcome: ActivityOutcome::Working,
+                });
+            }
+        }
+        for item in &self.items {
+            let rounds: Vec<_> = self
+                .rounds
+                .iter()
+                .filter(|round| round.item() == Some(item.id()))
+                .map(|round| round.id().clone())
+                .collect();
+            let mut pass: Option<NonZeroU32> = None;
+            let mut reviews = |reviews: &[crate::state::Review]| {
+                let request = pass.map_or(ActivityRequest::FirstReview, |pass| ActivityRequest::Verification {
+                    pass,
+                });
+                for review in reviews {
+                    found.push(Activity {
+                        investigator: review.reviewer.clone(),
+                        task: review.task.clone(),
+                        rounds: rounds.clone(),
+                        request: request.clone(),
+                        asked_at: review.requested_at,
+                        outcome: match review.outcome {
+                            ReviewOutcome::Pending => ActivityOutcome::Working,
+                            ReviewOutcome::Submitted { at, .. } => ActivityOutcome::Finished {
+                                at,
+                                end: ActivityEnd::Reported,
+                            },
+                        },
+                    });
+                }
+                pass = Some(pass.map_or(NonZeroU32::MIN, |n| n.saturating_add(1)));
+            };
+            for fixed in item.fix_passes() {
+                reviews(&fixed.requested_by);
+            }
+            match item.phase() {
+                ItemPhase::InReview { reviews: current, .. } | ItemPhase::Approved { reviews: current, .. } => {
+                    reviews(current)
+                }
+                ItemPhase::Pending
+                | ItemPhase::InProgress { .. }
+                | ItemPhase::Fixing { .. }
+                | ItemPhase::Done { .. } => {}
+            }
+        }
+        for candidate in found {
+            self.retain_activity(candidate);
+        }
+        let endings: Vec<_> = self
+            .activities
+            .iter()
+            .map(|entry| {
+                self.find(&entry.task)
+                    .and_then(|(_, member)| terminal(member, entry, at))
+            })
+            .collect();
+        for (entry, ending) in self.activities.iter_mut().zip(endings) {
+            if let Some(ending) = ending {
+                entry.outcome = ending;
+            }
+        }
+    }
+
+    /// Combines copies of an assignment shared by several items without losing a completed report.
+    fn retain_activity(&mut self, candidate: Activity) {
+        if let Some(known) = self.activities.iter_mut().find(|known| {
+            known.investigator == candidate.investigator
+                && known.task == candidate.task
+                && known.request == candidate.request
+                && known.asked_at == candidate.asked_at
+        }) {
+            for round in candidate.rounds {
+                if !known.rounds.contains(&round) {
+                    known.rounds.push(round);
+                }
+            }
+            if matches!(
+                candidate.outcome,
+                ActivityOutcome::Finished {
+                    end: ActivityEnd::Reported,
+                    ..
+                }
+            ) {
+                known.outcome = candidate.outcome;
+            }
+        } else {
+            self.activities.push(candidate);
+        }
+    }
+}
+
+/// A terminal task closes only outstanding assignments; a later stop cannot overwrite an accepted report.
+fn terminal(member: &Member, entry: &Activity, now: Timestamp) -> Option<ActivityOutcome> {
+    if !matches!(entry.outcome, ActivityOutcome::Working) {
+        return None;
+    }
+    let last = member.runs().last().and_then(|run| match run.state() {
+        RunState::Ended { at, end } if *at >= entry.asked_at => Some((*at, end.clone())),
+        RunState::Ended { .. } | RunState::Running => None,
+    });
+    let at = last.as_ref().map_or(now.max(entry.asked_at), |(at, _)| *at);
+    let end = match member.status() {
+        TaskStatus::Stopped => ActivityEnd::Stopped,
+        TaskStatus::Failed => ActivityEnd::Failed {
+            reason: last.map(|(_, end)| end),
+        },
+        TaskStatus::Done if entry.request == ActivityRequest::TeamMember => ActivityEnd::Reported,
+        TaskStatus::Done
+        | TaskStatus::Queued
+        | TaskStatus::Running
+        | TaskStatus::Waiting
+        | TaskStatus::Questions
+        | TaskStatus::Paused => return None,
+    };
+    Some(ActivityOutcome::Finished { at, end })
 }
 
 impl CheckedMut<'_, Team> {

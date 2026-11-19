@@ -406,6 +406,9 @@ pub struct Team {
     crew: Crew,
     /// The investigators that review the team's pull requests, with their tasks.
     reviewers: Vec<Member>,
+    /// Durable assignments of investigators, including completed and replaced work.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    activities: Vec<Activity>,
 }
 
 /// How a [`Team`] is read; see [`checked!`].
@@ -432,6 +435,9 @@ struct TeamWire {
     /// See [`Team`]; a team written without reviewers has none.
     #[serde(default)]
     reviewers: Vec<Member>,
+    /// See [`Team`]; older states are rebuilt by the schema migration.
+    #[serde(default)]
+    activities: Vec<Activity>,
 }
 
 checked!(Team, TeamWire, check_team);
@@ -525,7 +531,7 @@ impl Team {
         task_list: TaskListText,
         crew: Crew,
     ) -> Self {
-        Self {
+        let mut team = Self {
             id,
             repo,
             created_at,
@@ -535,7 +541,10 @@ impl Team {
             task_list,
             crew,
             reviewers: Vec::new(),
-        }
+            activities: Vec::new(),
+        };
+        team.record_activities(created_at);
+        team
     }
 
     getter!("The team's ID.", pub const fn id(&self) -> &TeamId = &self.id);
