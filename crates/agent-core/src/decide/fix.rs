@@ -57,8 +57,17 @@ pub enum Step {
 
 /// Decides whether the handover can proceed within its correction budget.
 #[must_use]
-pub fn fix_step(_progress: Progress, _budget: Budget) -> Step {
-    Step::Verify
+pub fn fix_step(progress: Progress, budget: Budget) -> Step {
+    let hold = match progress {
+        Progress::Committed | Progress::Unchanged(Answers::Accounted) => return Step::Verify,
+        Progress::Gating => return Step::WaitGate,
+        Progress::StaleGate => Hold::StaleGate,
+        Progress::Unchanged(Answers::Fixed | Answers::Missing) => Hold::NoCommit,
+    };
+    match budget {
+        Budget::Available => Step::Correct(hold),
+        Budget::Exhausted => Step::AskHuman(hold),
+    }
 }
 
 #[cfg(test)]
