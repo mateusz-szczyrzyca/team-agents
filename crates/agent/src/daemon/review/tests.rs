@@ -436,7 +436,10 @@ gate = ["true"]
 
     #[test]
     fn questions_and_pauses_without_a_run_do_not_reserve_an_investigator() {
-        for statuses in [] {
+        for statuses in [
+            vec![TaskStatus::Running, TaskStatus::Questions],
+            vec![TaskStatus::Paused],
+        ] {
             let mut state = state();
             state.insert_team(led_by("inv-b", 1)).unwrap();
             go(&mut state, 11, &statuses);
