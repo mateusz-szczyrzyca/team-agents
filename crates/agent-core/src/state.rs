@@ -51,7 +51,7 @@ use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
 
 /// The schema version this build writes. It also reads version 6 (without second opinions), version 5 (verification without disputes), version 4 (independent full reviews), version 3 (dependent reviews), version 2 (without findings) and version 1 (without rounds).
-pub const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 8;
 
 /// Largest state text accepted, in bytes: a bound on untrusted input, far above any real state.
 pub const MAX_STATE_BYTES: usize = 64 << 20;
@@ -67,7 +67,7 @@ version_type!(SchemaVersion, SCHEMA_VERSION, UnsupportedSchema);
 
 /// A state of a schema version this build does not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("the state has schema version {found}; this build reads versions 1, 2, 3, 4, 5, 6 and {SCHEMA_VERSION}")]
+#[error("the state has schema version {found}; this build reads versions 1, 2, 3, 4, 5, 6, 7 and {SCHEMA_VERSION}")]
 pub struct UnsupportedSchema {
     /// The version the state declares.
     pub found: u64,
@@ -401,7 +401,7 @@ impl State {
         if probe.schema_version == u64::from(migrate::LEGACY_VERSION) {
             return migrate::from_v1(text);
         }
-        if matches!(probe.schema_version, 2..=6) {
+        if matches!(probe.schema_version, 2..=7) {
             return migrate::from_v2(text);
         }
         if probe.schema_version != u64::from(SCHEMA_VERSION) {
