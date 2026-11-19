@@ -3,9 +3,8 @@
 //! A member that is woken and does not read what woke it is woken again when its run ends, and so on. Three rules keep
 //! that from going on for ever, and from costing a round its publication:
 //!
-//! - the lead that waits while a pull request is being fixed is not woken yet: the fix pass, its response or the
-//!   publication of its branch starts a run of it soon enough, and a lead that is queued is not waiting, while only a
-//!   lead that waits has its branch published;
+//! - the lead whose fix response was taken is not woken until its branch is published: a lead that is queued is not
+//!   waiting, and only a lead that waits has its branch published;
 //! - a member is woken for the same message at most `limits.wake_ups_per_message` times; the message stays unread on the
 //!   bus for the member's next run, and a newer message wakes it again;
 //! - every wake-up is told in the log line of the run it starts, with the message and who sent it.
@@ -14,7 +13,7 @@ use std::num::NonZeroU64;
 
 use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::log::LogEvent;
-use agent_core::state::ItemPhase;
+use agent_core::state::{Findings, ItemPhase, Team};
 use agent_runtime::agentbus::MessageNote;
 use agent_runtime::process::error_chain;
 
@@ -53,7 +52,7 @@ pub(super) enum Wake {
 }
 
 impl Owner {
-    /// Wakes `task`, a member of `team_id` that the bus woke, unless it leads a team whose pull request is being fixed or it was woken
+    /// Wakes `task`, a member of `team_id` that the bus woke, unless it leads a team whose fix response waits to be published or it was woken
     /// for this message as often as the configuration allows.
     ///
     /// # Errors
@@ -72,11 +71,7 @@ impl Owner {
             .roster()
             .first()
             .is_some_and(|(_, lead)| lead.task() == task);
-        let fixing = team
-            .items()
-            .iter()
-            .any(|item| matches!(item.phase(), ItemPhase::Fixing { .. }));
-        if leads && fixing {
+        if leads && fix_response_taken(team) {
             return Ok(Wake::Held);
         }
         let agent: AgentName = self
@@ -145,4 +140,20 @@ impl Owner {
     pub(super) fn wake_settled(&mut self, task: &TaskId) {
         self.wake_counts.remove(task);
     }
+}
+
+/// Whether every pull request of `team` that is being fixed has its fix response taken, so that only the publication of
+/// the branch is left to be done; false when none is being fixed.
+fn fix_response_taken(team: &Team) -> bool {
+    let mut fixing = team
+        .items()
+        .iter()
+        .filter(|item| matches!(item.phase(), ItemPhase::Fixing { .. }))
+        .peekable();
+    fixing.peek().is_some()
+        && fixing.all(|item| {
+            item.findings()
+                .and_then(Findings::disputes)
+                .is_some_and(|disputes| disputes.answered_pass == crate::daemon::merge::count(item.fix_passes().len()))
+        })
 }
