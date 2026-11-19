@@ -848,29 +848,53 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             pass,
             by,
             why,
+        } => {
+            finding_evidence(page, at, event.kind(), (*pr, *number, *pass, by), why);
         }
-        | HistoryEvent::SecondOpinionAsked {
-            pr,
-            number,
-            pass,
-            by,
-            why,
-        }
-        | HistoryEvent::FindingConfirmed {
-            pr,
-            number,
-            pass,
-            by,
-            why,
-        }
-        | HistoryEvent::FindingNotConfirmed {
+        HistoryEvent::SecondOpinionAsked {
             pr,
             number,
             pass,
             by,
             why,
         } => {
-            finding_evidence(page, at, event.kind(), (*pr, *number, *pass, by), why);
+            opinion_evidence(
+                page,
+                at,
+                ("second opinion requested", event.kind()),
+                (*pr, *number, *pass, by),
+                why,
+            );
+        }
+        HistoryEvent::FindingConfirmed {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        } => {
+            opinion_evidence(
+                page,
+                at,
+                ("finding confirmed", event.kind()),
+                (*pr, *number, *pass, by),
+                why,
+            );
+        }
+        HistoryEvent::FindingNotConfirmed {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        } => {
+            opinion_evidence(
+                page,
+                at,
+                ("finding not confirmed", event.kind()),
+                (*pr, *number, *pass, by),
+                why,
+            );
         }
         HistoryEvent::PullOpened { .. }
         | HistoryEvent::PullPushed { .. }
@@ -985,6 +1009,23 @@ fn opened_pull(
     entry(page, at, &format!("pull request #{number} opened: branch {b} at {h}"));
     page.line(2, &format!("title: {title}"));
     page.raw(2, "pull request body", body);
+}
+
+/// An opinion step with its cause or evidence visible before the retained full text.
+fn opinion_evidence(
+    page: &mut Page,
+    at: Timestamp,
+    (action, kind): (&str, crate::history::EventKind),
+    (pr, number, pass, by): (crate::state::PrNumber, std::num::NonZeroU32, u32, &AgentName),
+    why: &str,
+) {
+    let first = why.lines().next().map_or("", str::trim);
+    entry(
+        page,
+        at,
+        &format!("{action}: pull request #{pr} finding {number}, pass {pass}, by {by}; {first} ({kind})"),
+    );
+    page.raw(2, "evidence", why);
 }
 
 /// A finding decision with its reviewer and retained evidence.
