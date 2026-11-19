@@ -158,6 +158,15 @@ level = "info"
 # Rows belonging to no round; scoped rows follow history.keep_days.
 keep_days = 0
 
+# --- Disk space ----------------------------------------------------------------------------------------------------
+# Thresholds for filesystem free space in AGENTS_HOME.
+#   low_free_gb   below this, a notification is sent once and `agent status` displays free space (default: 100)
+#   min_free_gb   below this, `agent run` is refused and open rounds wait for disk space (default: 20)
+
+[disk]
+low_free_gb = 100
+min_free_gb = 20
+
 # --- Dashboard -----------------------------------------------------------------------------------------------------
 # It listens on a loopback address only; remote access goes through `tailscale serve`, and only the Tailscale
 # logins listed here get in.
