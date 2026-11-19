@@ -136,7 +136,9 @@ pub fn parse_lead(
         };
         if let Some((number, reason)) = request {
             requests.insert(number, reason);
-            normalized.push_str(&format!("FINDING {number}: FIXED"));
+            normalized.push_str("FINDING ");
+            normalized.push_str(&number.to_string());
+            normalized.push_str(": FIXED");
         } else {
             normalized.push_str(line);
         }

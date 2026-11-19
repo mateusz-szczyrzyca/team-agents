@@ -59,18 +59,7 @@ pub(super) fn print(
             .into_iter()
             .filter(|r| match (&r.record, view) {
                 (Record::Run(_), LogView::Runs | LogView::Prompts) | (Record::Changes(_), LogView::Changes) => true,
-                (Record::Event(e), LogView::Reviews) => matches!(
-                    e.event,
-                    HistoryEvent::ReviewAsked { .. }
-                        | HistoryEvent::ReviewSubmitted { .. }
-                        | HistoryEvent::FindingExplained { .. }
-                        | HistoryEvent::FindingAccepted { .. }
-                        | HistoryEvent::FindingRejected { .. }
-                        | HistoryEvent::FindingRaised { .. }
-                        | HistoryEvent::SecondOpinionAsked { .. }
-                        | HistoryEvent::FindingConfirmed { .. }
-                        | HistoryEvent::FindingNotConfirmed { .. }
-                ),
+                (Record::Event(e), LogView::Reviews) => is_review_event(&e.event),
                 _ => false,
             })
             .collect();
@@ -121,6 +110,22 @@ pub(super) fn print(
         print_latest(&runs, &records, view, format, out)?;
     }
     out.flush().map_err(LogError::Output)
+}
+
+/// Finding evidence and review reports belong to the review projection.
+fn is_review_event(event: &HistoryEvent) -> bool {
+    matches!(
+        event,
+        HistoryEvent::ReviewAsked { .. }
+            | HistoryEvent::ReviewSubmitted { .. }
+            | HistoryEvent::FindingExplained { .. }
+            | HistoryEvent::FindingAccepted { .. }
+            | HistoryEvent::FindingRejected { .. }
+            | HistoryEvent::FindingRaised { .. }
+            | HistoryEvent::SecondOpinionAsked { .. }
+            | HistoryEvent::FindingConfirmed { .. }
+            | HistoryEvent::FindingNotConfirmed { .. }
+    )
 }
 
 /// Writes a projection row without mixing diagnostics into stdout.

@@ -818,49 +818,9 @@ fn controlled(page: &mut Page, at: Timestamp, action: ControlAction, target: &Ta
     entry(page, at, &format!("the human {v} {t} ({w}); reached {reached}"));
 }
 
-/// An event of a pull request, from its opening to its end; any other event is not told here.
+/// Renders finding evidence separately from the pull request lifecycle.
 fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
     match event {
-        HistoryEvent::PullOpened {
-            number,
-            branch,
-            head,
-            title,
-            body,
-        } => {
-            opened_pull(page, at, *number, (branch, head), (title, body));
-        }
-        HistoryEvent::PullPushed { pr, head } => {
-            entry(page, at, &format!("pull request #{pr}: pushed {}", short(head)));
-        }
-        HistoryEvent::PullReady { pr } => entry(page, at, &format!("pull request #{pr} marked ready for review")),
-        HistoryEvent::ReviewAsked {
-            pr,
-            pass,
-            head,
-            reviewer,
-            task,
-            ..
-        } => {
-            let (p, r, h) = (pass.saturating_add(1), reviewer.as_str(), short(head));
-            entry(
-                page,
-                at,
-                &format!("review pass {p} of #{pr} asked of {r} (task {task}) at {h}"),
-            );
-        }
-        HistoryEvent::ReviewSubmitted {
-            pr,
-            pass,
-            reviewer,
-            verdict,
-            report,
-            ..
-        } => {
-            let (p, r) = (pass.saturating_add(1), reviewer.as_str());
-            entry(page, at, &format!("review pass {p} of #{pr} by {r}: {verdict}"));
-            page.raw(2, "review report", report);
-        }
         HistoryEvent::FindingExplained {
             pr,
             number,
@@ -912,6 +872,71 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
         } => {
             finding_evidence(page, at, event.kind(), (*pr, *number, *pass, by), why);
         }
+        HistoryEvent::PullOpened { .. }
+        | HistoryEvent::PullPushed { .. }
+        | HistoryEvent::PullReady { .. }
+        | HistoryEvent::ReviewAsked { .. }
+        | HistoryEvent::ReviewSubmitted { .. }
+        | HistoryEvent::FixPassStarted { .. }
+        | HistoryEvent::PullApproved { .. }
+        | HistoryEvent::PullMerged { .. }
+        | HistoryEvent::PullHandedOver { .. }
+        | HistoryEvent::PullClosed { .. }
+        | HistoryEvent::Gate { .. }
+        | HistoryEvent::Checked { .. }
+        | HistoryEvent::QuestionAsked { .. }
+        | HistoryEvent::QuestionAnswered { .. }
+        | HistoryEvent::Controlled { .. }
+        | HistoryEvent::Notified { .. }
+        | HistoryEvent::RoundClosed { .. }
+        | HistoryEvent::Lost { .. }
+        | HistoryEvent::TeamEnded {} => pull_lifecycle_event(page, at, event),
+    }
+}
+
+/// An event of a pull request, from its opening to its end; any other event is not told here.
+fn pull_lifecycle_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
+    match event {
+        HistoryEvent::PullOpened {
+            number,
+            branch,
+            head,
+            title,
+            body,
+        } => {
+            opened_pull(page, at, *number, (branch, head), (title, body));
+        }
+        HistoryEvent::PullPushed { pr, head } => {
+            entry(page, at, &format!("pull request #{pr}: pushed {}", short(head)));
+        }
+        HistoryEvent::PullReady { pr } => entry(page, at, &format!("pull request #{pr} marked ready for review")),
+        HistoryEvent::ReviewAsked {
+            pr,
+            pass,
+            head,
+            reviewer,
+            task,
+            ..
+        } => {
+            let (p, r, h) = (pass.saturating_add(1), reviewer.as_str(), short(head));
+            entry(
+                page,
+                at,
+                &format!("review pass {p} of #{pr} asked of {r} (task {task}) at {h}"),
+            );
+        }
+        HistoryEvent::ReviewSubmitted {
+            pr,
+            pass,
+            reviewer,
+            verdict,
+            report,
+            ..
+        } => {
+            let (p, r) = (pass.saturating_add(1), reviewer.as_str());
+            entry(page, at, &format!("review pass {p} of #{pr} by {r}: {verdict}"));
+            page.raw(2, "review report", report);
+        }
         HistoryEvent::FixPassStarted { pr, pass, of, findings } => {
             entry(page, at, &format!("fix pass {pass} of {of} on #{pr} started"));
             page.raw(2, "findings sent to the team", findings);
@@ -929,7 +954,14 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             entry(page, at, &msg);
         }
         HistoryEvent::PullClosed { pr } => entry(page, at, &format!("pull request #{pr} closed without a merge")),
-        HistoryEvent::Gate { .. }
+        HistoryEvent::FindingExplained { .. }
+        | HistoryEvent::FindingAccepted { .. }
+        | HistoryEvent::FindingRejected { .. }
+        | HistoryEvent::FindingRaised { .. }
+        | HistoryEvent::SecondOpinionAsked { .. }
+        | HistoryEvent::FindingConfirmed { .. }
+        | HistoryEvent::FindingNotConfirmed { .. }
+        | HistoryEvent::Gate { .. }
         | HistoryEvent::Checked { .. }
         | HistoryEvent::QuestionAsked { .. }
         | HistoryEvent::QuestionAnswered { .. }
