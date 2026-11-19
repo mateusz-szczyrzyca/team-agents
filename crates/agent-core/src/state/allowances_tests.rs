@@ -78,3 +78,42 @@ fn a_schema_ten_task_list_keeps_its_allow_lines_as_permissions() {
     assert_eq!(team.allowances().len(), 1);
     assert_eq!(team.allowances().first().unwrap().as_str(), "docs/*.txt");
 }
+
+#[test]
+fn a_legacy_brief_with_header_allow_lines_is_kept_byte_for_byte_through_the_new_schema() {
+    for (line, grants) in [("Allow: /absolute", 0), ("Allow: docs/*.txt", 0)] {
+        let state = State::from_json(&schema_nine_with_brief_line(line)).unwrap();
+        let team = state.teams().first().unwrap();
+        assert_eq!(
+            team.task_list().text().lines().take(2).collect::<Vec<_>>(),
+            [line, "Build the thing."]
+        );
+        assert_eq!(team.task_list().list().brief().lines().next(), Some(line));
+        assert_eq!(team.allowances().len(), grants);
+        let again = State::from_json(&state.to_json().unwrap()).unwrap();
+        assert_eq!(again, state);
+        let team = again.teams().first().unwrap();
+        assert_eq!(team.task_list().text().lines().next(), Some(line));
+        assert_eq!(team.allowances().len(), grants);
+    }
+}
+
+#[test]
+fn a_schema_one_brief_with_an_allow_line_is_kept_byte_for_byte() {
+    let old = include_str!("../../tests/fixtures/state-v1.json");
+    let marker = "Coordinator: inv-opus\\n\\nBuild the thing.";
+    let text = old.replacen(
+        marker,
+        "Coordinator: inv-opus\\nAllow: src/*.rs\\n\\nBuild the thing.",
+        1,
+    );
+    let state = State::from_json(&text).unwrap();
+    let team = state.teams().first().unwrap();
+    assert!(
+        team.task_list()
+            .text()
+            .starts_with("Coordinator: inv-opus\nAllow: src/*.rs\n\nBuild the thing.")
+    );
+    assert_eq!(team.allowances(), []);
+    assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
+}
