@@ -228,13 +228,16 @@ impl Findings {
     /// Assigns or replaces a pending opinion task; completed reports cannot be replaced.
     ///
     /// # Errors
-    /// [`OpinionStateError`] if the opinion was not requested or already completed.
+    /// [`OpinionStateError`] if not requested, already completed, or managed by the retained-attempt API.
     pub fn assign_opinion(
         &mut self,
         number: NonZeroU32,
         investigator: InvestigatorName,
         task: TaskId,
     ) -> Result<(), OpinionStateError> {
+        if !self.opinion_attempts(number).is_empty() {
+            return Err(OpinionStateError { number });
+        }
         let opinion = self.opinions.get_mut(&number).ok_or(OpinionStateError { number })?;
         match opinion.stage {
             OpinionStage::Waiting | OpinionStage::Assigned { .. } => {

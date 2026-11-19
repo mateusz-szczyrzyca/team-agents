@@ -102,7 +102,11 @@ impl Findings {
         {
             return Err(OpinionStateError { number });
         }
-        self.assign_opinion(number, investigator.clone(), task.clone())?;
+        let opinion = self.opinions.get_mut(&number).ok_or(OpinionStateError { number })?;
+        opinion.stage = OpinionStage::Assigned {
+            investigator: investigator.clone(),
+            task: task.clone(),
+        };
         self.opinion_attempts.entry(number).or_default().push(OpinionAttempt {
             investigator,
             task,
