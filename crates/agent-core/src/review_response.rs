@@ -12,6 +12,17 @@ pub enum Response {
     Explained(String),
 }
 
+/// The protocol rule a lead response must satisfy; instruction text belongs to the harness catalog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Correction {
+    /// An unknown number must be replaced by the supplied blocking findings.
+    OnePerFinding,
+    /// An unexplained major accepts a fix or one explanation.
+    FixedOrExplained,
+    /// A blocker or previously explained major requires a code fix.
+    FixedOnly,
+}
+
 /// A response that needs correction before verification can start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid lead response at line {line}: finding {number} requires {allowed}")]
@@ -20,6 +31,8 @@ pub struct ResponseError {
     pub line: usize,
     /// The affected permanent finding number.
     pub number: NonZeroU32,
+    /// The typed correction the harness must render.
+    pub correction: Correction,
     /// The allowed response syntax for this finding.
     pub allowed: &'static str,
 }
@@ -64,6 +77,7 @@ pub fn parse_lead(
             return Err(ResponseError {
                 line: index.saturating_add(1),
                 number: open.first().map_or(NonZeroU32::MIN, |entry| entry.0),
+                correction: Correction::FixedOnly,
                 allowed: "one answer for each supplied blocking number",
             });
         };
@@ -75,6 +89,7 @@ pub fn parse_lead(
         let error = || ResponseError {
             line: index.saturating_add(1),
             number: *number,
+            correction: Correction::FixedOnly,
             allowed,
         };
         if ended || answers.iter().any(|(id, _)| id == number) {
@@ -98,6 +113,7 @@ pub fn parse_lead(
             return Err(ResponseError {
                 line: text.lines().count().saturating_add(1),
                 number: *number,
+                correction: Correction::FixedOnly,
                 allowed: if *severity == Severity::Major && !used {
                     "FIXED or EXPLAINED — why"
                 } else {

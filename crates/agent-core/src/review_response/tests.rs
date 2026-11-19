@@ -79,3 +79,28 @@ fn inline_backticks_do_not_hide_the_real_lead_answer() {
         vec![(NonZeroU32::MIN, Response::Fixed)]
     );
 }
+
+#[test]
+fn correction_reasons_identify_the_allowed_protocol_without_agent_instructions() {
+    for (message, severity, used, expected) in [
+        ("FINDING 7: FIXED", Severity::Major, false, Correction::OnePerFinding),
+        ("FINDING 1: WRONG", Severity::Major, false, Correction::FixedOrExplained),
+        ("STATUS: DONE", Severity::Major, false, Correction::FixedOrExplained),
+        (
+            "FINDING 1: EXPLAINED — why",
+            Severity::Major,
+            true,
+            Correction::FixedOnly,
+        ),
+        (
+            "FINDING 1: EXPLAINED — why",
+            Severity::Blocker,
+            false,
+            Correction::FixedOnly,
+        ),
+        ("STATUS: DONE", Severity::Blocker, false, Correction::FixedOnly),
+    ] {
+        let error = parse_lead(message, &[(NonZeroU32::MIN, severity, used)]).unwrap_err();
+        assert_eq!(error.correction, expected, "{message}");
+    }
+}
