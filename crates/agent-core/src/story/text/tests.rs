@@ -15,7 +15,8 @@ fn opinions_are_told_in_words_with_the_first_line_of_the_evidence() {
             by: "claude-1".parse().unwrap(),
             why: "café path is unreachable\nCheck the boundary.".into(),
         },
-        HistoryEvent::SecondOpinionAsked {
+        HistoryEvent::SecondOpinionEnded {
+            attempt: std::num::NonZeroU32::MIN,
             pr,
             number,
             pass: 1,

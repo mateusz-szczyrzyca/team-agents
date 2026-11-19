@@ -112,6 +112,14 @@ mod history_events {
                 by: "inv-codex".parse().unwrap(),
                 why: "evidence".into(),
             },
+            HistoryEvent::SecondOpinionEnded {
+                pr: pr(7),
+                number: NonZeroU32::MIN,
+                pass: 1,
+                by: "inv-codex".parse().unwrap(),
+                why: "evidence".into(),
+                attempt: NonZeroU32::MIN,
+            },
             HistoryEvent::FindingConfirmed {
                 pr: pr(7),
                 number: NonZeroU32::MIN,
@@ -238,6 +246,7 @@ mod history_events {
             "finding_rejected",
             "finding_raised",
             "second_opinion_asked",
+            "second_opinion_ended",
             "finding_confirmed",
             "finding_not_confirmed",
             "fix_pass_started",
