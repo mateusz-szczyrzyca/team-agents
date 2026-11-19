@@ -774,7 +774,7 @@ impl Owner {
 
     /// A run that could not be carried out: its task fails.
     async fn failed(&mut self, task: &TaskId, reason: String) -> Result<(), OwnerError> {
-        // The run is over without the human's word being carried out: the task failed, and is the human's to resume.
+        // Ordinary tasks remain failed; an unanswered opinion retains its bounded replacement request.
         self.halts.remove(task);
         let located = self.locate(task)?;
         {
@@ -801,6 +801,10 @@ impl Owner {
         self.hangs.remove(task);
         self.commit(task, &located, now, events, Some(Notice::RunFailed { reason }))
             .await?;
+        if let Some(pulls) = self.pulls.clone() {
+            self.retry_opinion(&pulls, &located.team, task, agent_core::state::OpinionFailure::Failed)
+                .await?;
+        }
         self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)
     }
 
