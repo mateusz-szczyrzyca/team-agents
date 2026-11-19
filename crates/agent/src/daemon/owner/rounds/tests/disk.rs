@@ -1,9 +1,11 @@
 //! Integration tests for disk space monitoring, target cleanup and run refusals.
 
 use std::collections::BTreeSet;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use agent_core::config::AbsolutePath;
@@ -13,12 +15,14 @@ use agent_core::log::{LogEntry, LogEvent, LogLevel};
 use agent_core::protocol::{AgentList, Client, Command, FailureKind, RunRequest};
 use agent_core::state::{ItemPhase, MergeMode, ReviewOutcome, TaskListText};
 use agent_runtime::clock::SharedClock;
+use agent_runtime::disk::{FreeSpace, FreeSpaceError, GIBIBYTE, SharedFreeSpace};
 use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, HistoryLayer, Problem, Reader, Reporter, Setup};
 use tracing::instrument::WithSubscriber;
 use tracing_subscriber::layer::SubscriberExt;
 
 use super::rig::{CHAIN, ONE, Rig, investigator, normal};
 use crate::client::{ClientError, Connection};
+use crate::daemon::owner::Owner;
 use crate::daemon::owner::fixture::Daemon;
 use crate::fixtures::{repo, solo_state, task};
 use agent_core::ids::TaskId;
@@ -490,4 +494,122 @@ async fn agent_status_running_names_the_free_space_below_the_limit() {
     let text = String::from_utf8(out).unwrap();
     assert!(text.contains("disk: 50 GB free, limit 100 GB"), "{text}");
     rig.stop().await.unwrap();
+}
+
+/// Free space readings in the order the owner asks for them: each call takes the next reading, the last one stays.
+#[derive(Debug)]
+struct Readings(Mutex<VecDeque<u64>>);
+
+impl FreeSpace for Readings {
+    fn free_space_bytes(&self, _path: &Path) -> Result<u64, FreeSpaceError> {
+        let mut values = self.0.lock().unwrap();
+        if values.len() > 1 {
+            Ok(values.pop_front().unwrap())
+        } else {
+            Ok(*values.front().unwrap())
+        }
+    }
+}
+
+/// A bare owner whose free space is read from `gibibytes`, and whose notifications are written to its home.
+async fn owner_reading(gibibytes: &[u64]) -> (Daemon, Owner) {
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let readings = Readings(Mutex::new(gibibytes.iter().map(|gb| gb * GIBIBYTE).collect()));
+    owner.parts.free_space = SharedFreeSpace::new(readings);
+    (daemon, owner)
+}
+
+/// Waits for every disk job to end and handles its outcome, as the owner's loop does.
+async fn finish_disk_jobs(owner: &mut Owner) {
+    while let Some(joined) = owner.disk_jobs.join_next_with_id().await {
+        owner.disk_job_done(joined).await;
+    }
+}
+
+/// How many notifications of the low-space notice the home holds.
+fn low_space_notices(daemon: &Daemon) -> usize {
+    let Ok(entries) = std::fs::read_dir(daemon.home.notifications_dir()) else {
+        return 0;
+    };
+    entries
+        .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+        .filter(|text| text.contains("Low free disk space"))
+        .count()
+}
+
+#[tokio::test]
+async fn low_space_is_notified_once_per_crossing_and_again_after_recovery() {
+    // Below the low limit, still below it, above it again, and below it once more.
+    let (daemon, mut owner) = owner_reading(&[50, 50, 150, 50]).await;
+
+    owner.check_free_space();
+    finish_disk_jobs(&mut owner).await;
+    assert_eq!(low_space_notices(&daemon), 1, "the first crossing is notified");
+
+    owner.check_free_space();
+    finish_disk_jobs(&mut owner).await;
+    assert_eq!(
+        low_space_notices(&daemon),
+        1,
+        "staying below the limit is not notified again"
+    );
+
+    owner.check_free_space();
+    finish_disk_jobs(&mut owner).await;
+    assert_eq!(
+        low_space_notices(&daemon),
+        1,
+        "recovering above the limit is not notified"
+    );
+
+    owner.check_free_space();
+    finish_disk_jobs(&mut owner).await;
+    assert_eq!(
+        low_space_notices(&daemon),
+        2,
+        "a new crossing after recovery is notified"
+    );
+}
+
+#[tokio::test]
+async fn a_run_is_refused_when_the_space_falls_below_the_minimum_between_two_launches() {
+    // The first reading (200 GB) lets the queued task start; the reading before its launch (10 GB) refuses it.
+    let (_daemon, mut owner) = owner_reading(&[200, 10]).await;
+
+    owner.start_queued().await.unwrap();
+
+    assert_eq!(owner.runs.len(), 0, "no run started below the minimum");
+    let member = &owner.parts.state.teams()[0].crew().roster()[0].1;
+    assert_eq!(member.status(), agent_core::status::TaskStatus::Queued);
+}
+
+#[tokio::test]
+async fn a_queued_task_is_not_started_while_its_build_directory_is_being_removed() {
+    let (_daemon, mut owner) = owner_reading(&[200]).await;
+    let member = owner.parts.state.teams()[0].crew().roster()[0].1.task().clone();
+    // A removal of the task's directory that does not end until the test releases it.
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let removed = member.clone();
+    let removal = owner.disk_jobs.spawn_blocking(move || {
+        let _ = held.recv();
+        crate::daemon::owner::disk::DiskJob::Target {
+            task: removed,
+            outcome: crate::daemon::owner::disk::BuildDirOutcome::Released { bytes: 0 },
+        }
+    });
+    owner.pending_removals.start(removal.id(), &member);
+
+    owner.start_queued().await.unwrap();
+
+    assert_eq!(owner.runs.len(), 0, "the task waits for its removal");
+    let status = owner.parts.state.teams()[0].crew().roster()[0].1.status();
+    assert_eq!(
+        status,
+        agent_core::status::TaskStatus::Queued,
+        "a launch would have failed the task"
+    );
+    release.send(()).unwrap();
+    finish_disk_jobs(&mut owner).await;
+    assert!(!owner.pending_removals.contains(&member));
 }
