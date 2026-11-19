@@ -255,7 +255,10 @@ fn accepts_atomic_opinion_answers_and_keeps_fixed_answers_after_reload() {
         ledger.fixed_answers(pass),
         [NonZeroU32::MIN, NonZeroU32::new(2).unwrap()].into()
     );
-    assert_eq!(ledger.fixed_answers(NonZeroU32::new(2).unwrap()), Default::default());
+    assert_eq!(
+        ledger.fixed_answers(NonZeroU32::new(2).unwrap()),
+        std::collections::BTreeSet::default()
+    );
 }
 
 #[test]

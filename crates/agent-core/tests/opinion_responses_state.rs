@@ -6,7 +6,10 @@ fn schema_seven_active_fix_pass_migrates_without_inventing_answers() {
     let old = include_str!("fixtures/state-before-opinion-responses.json");
     let state = State::from_json(old).unwrap();
     let ledger = state.teams()[0].items()[1].findings().unwrap();
-    assert_eq!(ledger.fixed_answers(NonZeroU32::MIN), Default::default());
+    assert_eq!(
+        ledger.fixed_answers(NonZeroU32::MIN),
+        std::collections::BTreeSet::default()
+    );
     assert_eq!(ledger.opinions().len(), 0);
     assert_eq!(SCHEMA_VERSION, 8);
     assert_eq!(
