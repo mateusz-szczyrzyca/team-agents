@@ -535,12 +535,11 @@ impl Owner {
                 let exists = tokio::fs::try_exists(&path)
                     .await
                     .map_err(|source| OpinionDaemonError(OpinionCause::Inspect { path, source }))?;
-                let resumable = self.parts.state.find_task(&task).is_some_and(|found| {
-                    !matches!(
-                        found.member.status(),
-                        TaskStatus::Failed | TaskStatus::Stopped | TaskStatus::Done
-                    )
-                });
+                let resumable = self
+                    .parts
+                    .state
+                    .find_task(&task)
+                    .is_some_and(|found| matches!(found.member.status(), TaskStatus::Waiting | TaskStatus::Queued));
                 if !resumable || !exists {
                     self.retry_opinion(&pulls, &team, &task, OpinionFailure::Interrupted)
                         .await?;
