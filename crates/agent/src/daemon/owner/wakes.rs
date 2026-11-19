@@ -220,6 +220,6 @@ fn fix_response_taken(team: &Team) -> bool {
         && fixing.all(|item| {
             item.findings()
                 .and_then(Findings::disputes)
-                .is_some_and(|disputes| disputes.answered_pass == crate::daemon::merge::count(item.fix_passes().len()))
+                .is_some_and(|disputes| disputes.answered_pass == crate::daemon::merge::pull_passes(team, item))
         })
 }

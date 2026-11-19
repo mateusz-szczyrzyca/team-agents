@@ -8,7 +8,7 @@ use serde_json::json;
 fn wake_delivery_counts_and_delivered_markers_survive_state_round_trips() {
     for status in ["pending", "delivered"] {
         let value = json!({
-            "schema_version": 9,
+            "schema_version": 10,
             "teams": [],
             "wake_deliveries": {
                 "task-20261111-153001-k3x9": {"state": status, "message": 42, "count": 2}

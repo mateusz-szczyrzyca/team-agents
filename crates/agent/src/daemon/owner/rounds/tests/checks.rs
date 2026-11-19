@@ -1168,3 +1168,116 @@ async fn refusing_a_protected_path_sends_it_back_until_the_team_restores_it() {
     );
     assert_eq!(record(&rig, &tasks[0]).await.allowed_of(&["1.1".parse().unwrap()]), []);
 }
+
+#[tokio::test]
+async fn task_allowances_reach_review_without_questions_and_survive_daemon_restart() {
+    let mut rig = checking_rig("script:edit-test,questions", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+    let list = format!("Allow: tests/existing.txt\nAllow: ci/gate.sh\n{ONE}");
+    let (team, tasks) = rig.run(&["claude-1"], &list, MergeMode::Autopilot, None).await;
+    let questions = rig.home.questions_file(&tasks[0], NonZeroU32::MIN);
+    rig.wait_for("review or checks question", || {
+        questions.exists() || matches!(phase(&rig), ItemPhase::InReview { .. })
+    })
+    .await;
+    assert!(
+        !questions.exists(),
+        "task-covered tests should reach review without a question"
+    );
+    reviews_asked(&rig).await;
+    let expected = rig.state().team(&team).unwrap().allowances().to_vec();
+    rig.stop().await.unwrap();
+    rig.start().await;
+    assert_eq!(rig.state().team(&team).unwrap().allowances(), expected);
+    assert_eq!(record(&rig, &tasks[0]).await.allowed_of(&["1.1".parse().unwrap()]), []);
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn preallowed_paths_do_not_disclose_markers_or_cover_other_changed_tests() {
+    let mut rig = checking_rig("script:allowed-marker,questions", 0, SILENT, SILENT).await;
+    for name in ["tests/allowed.rs", "tests/other.rs", "tests/third.rs"] {
+        std::fs::write(rig.repo.join(name), "fn original() {}\n").unwrap();
+    }
+    git(&rig.repo, &["add", "tests"]);
+    git(&rig.repo, &["commit", "-qm", "Seed test files"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    script(
+        &rig,
+        "allowed-marker",
+        "printf '#[ignore]\\nfn changed() {}\\n' > tests/allowed.rs\nprintf 'fn changed() {}\\n' > tests/other.rs\nprintf 'fn changed() {}\\n' > tests/third.rs\ngit add tests\ncommit -m 'Change tests and add a marker'\n",
+    );
+    rig.start().await;
+    let list = format!("Allow: tests/allowed.rs\n{ONE}");
+    let (_, tasks) = rig.run(&["claude-1"], &list, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let file = questions_of(&rig, &tasks[0], 1);
+    assert_eq!(file.entries().len(), 2, "one edited-test group and one marker group");
+    let record = record(&rig, &tasks[0]).await;
+    let asked = record.asked.unwrap();
+    assert_eq!(
+        asked.subjects,
+        vec![
+            Subject::Path("tests/other.rs".parse().unwrap()),
+            Subject::Path("tests/third.rs".parse().unwrap()),
+            Subject::Path("tests/allowed.rs".parse().unwrap())
+        ]
+    );
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn task_allowances_cover_version_and_golden_changes_in_successive_rounds() {
+    let mut rig = checking_rig("script:preallow-round", 2, APPROVE, APPROVE).await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace(
+            "protected_paths = [\"ci/\"]",
+            "protected_paths = [\"ci/\", \"Cargo.toml\"]",
+        ),
+    )
+    .unwrap();
+    std::fs::write(rig.repo.join("Cargo.toml"), "version = \"0.1.0\"\n").unwrap();
+    std::fs::write(rig.repo.join("tests/prompt.golden"), "original\n").unwrap();
+    git(&rig.repo, &["add", "Cargo.toml", "tests/prompt.golden"]);
+    git(&rig.repo, &["commit", "-qm", "Seed version and prompt golden"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    script(
+        &rig,
+        "preallow-round",
+        "if grep -q '0.1.0' Cargo.toml; then version=0.2.0; else version=0.3.0; fi\nprintf 'version = \"%s\"\\n' \"$version\" > Cargo.toml\ncat Cargo.toml > tests/prompt.golden\ngit add Cargo.toml tests/prompt.golden\ncommit -m 'Raise version and replace golden'\n",
+    );
+    rig.start().await;
+    let list = format!("Allow: Cargo.toml\nAllow: tests/*.golden\n{}", super::rig::CHAIN);
+    let (team, tasks) = rig.run(&["claude-1"], &list, MergeMode::Autopilot, None).await;
+    rig.item_where("1.2", "second round merged", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let pulls = rig.github.pulls();
+    assert_eq!(pulls.len(), 2);
+    for pull in pulls {
+        assert!(pull.body.contains("## Allowed beforehand"), "{}", pull.body);
+        assert!(
+            pull.body
+                .contains("[`Cargo.toml`](https://github.com/octo/example/blob/")
+                && pull.body.contains("/Cargo.toml) — `Allow: Cargo.toml`"),
+            "{}",
+            pull.body
+        );
+        assert!(
+            pull.body
+                .contains("[`tests/prompt.golden`](https://github.com/octo/example/blob/")
+                && pull.body.contains("/tests/prompt.golden) — `Allow: tests/*.golden`"),
+            "{}",
+            pull.body
+        );
+    }
+    assert_eq!(rig.state().team(&team).unwrap().allowances().len(), 2);
+    for task in tasks {
+        assert!(!rig.home.questions_file(&task, NonZeroU32::MIN).exists());
+    }
+}

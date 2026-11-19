@@ -8,6 +8,7 @@ use agent_core::ids::{AgentName, ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::EventKind;
+use agent_core::review_findings::Report;
 use agent_core::state::{ItemPhase, PullRequest, ReviewOutcome, RoundEnd, Team, Timestamp};
 use agent_core::status::ReviewVerdict;
 use agent_runtime::git::Revision;
@@ -17,7 +18,7 @@ use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
 use crate::daemon::merge::{Next, VerdictError, after_verdict, count};
-use crate::daemon::review::{VerdictProblem, parse_verdict, report_text, report_without_verdict};
+use crate::daemon::review::{ReportRefusal, VerdictProblem, parse_verdict, report_text, report_without_verdict};
 use crate::daemon::team::Why;
 
 use super::super::{Located, Owner, OwnerError};
@@ -97,20 +98,7 @@ impl Owner {
             return Ok(());
         };
         match parse_verdict(message) {
-            Ok(verdict) => {
-                if let Some(ledger) = asked
-                    .items
-                    .first()
-                    .and_then(|id| self.parts.state.team(&located.team)?.item(*id)?.findings())
-                    && let Err(problem) = ledger.parse_report(message, verdict)
-                {
-                    return self
-                        .send_back(&pulls, task, located, &asked, &VerdictProblem::Findings(problem))
-                        .await;
-                }
-                self.watch.bounces.remove(task);
-                self.take_verdict(&pulls, task, located, &asked, verdict, message).await
-            }
+            Ok(verdict) => self.take_verdict(&pulls, task, located, &asked, verdict, message).await,
             Err(problem) => self.send_back(&pulls, task, located, &asked, &problem).await,
         }
     }
@@ -159,15 +147,17 @@ impl Owner {
         let now = Timestamp::now(&self.parts.clock)?;
         let lead = self.lead_of(&located.team)?;
         if let VerdictProblem::Findings(problem) = problem {
-            let forms = match asked
-                .items
-                .first()
-                .and_then(|id| self.parts.state.team(&located.team)?.item(*id)?.findings())
+            let forms = match self
+                .parts
+                .state
+                .team(&located.team)
+                .and_then(|team| team.item(problem.item))
+                .and_then(|item| item.findings())
             {
                 Some(ledger) => super::responses::verifier_forms(&pulls.texts, ledger)?,
                 None => String::new(),
             };
-            let reason = super::responses::answer_diagnostic(&pulls.texts, &problem.detail, &forms)?;
+            let reason = super::responses::answer_diagnostic(&pulls.texts, &problem.problem.detail, &forms)?;
             let values = Variables::new()
                 .with("team", located.team.as_str())
                 .and_then(|v| {
@@ -250,6 +240,17 @@ impl Owner {
         message: &str,
     ) -> Result<(), OwnerError> {
         let team_id = &located.team;
+        // Parse every target before any verdict, report file or ledger is changed. Recording consumes these exact
+        // reports, so there is no second interpretation that could refuse a partially recorded review.
+        let reports = match self.review_reports(team_id, asked, verdict, message) {
+            Ok(reports) => reports,
+            Err(problem) => {
+                return self
+                    .send_back(pulls, task, located, asked, &VerdictProblem::Findings(problem))
+                    .await;
+            }
+        };
+        self.watch.bounces.remove(task);
         let now = Timestamp::now(&self.parts.clock)?;
         let report = report_text(message);
         let passes = count(asked.passes);
@@ -274,16 +275,9 @@ impl Owner {
         let next = self.decide(team_id, asked, verdict);
         let mut look = Look::default();
         self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
-        let decisions = asked
-            .items
-            .first()
-            .and_then(|id| self.parts.state.team(team_id)?.item(*id)?.findings())
-            .filter(|ledger| ledger.disputes().is_some())
-            .map(|ledger| ledger.parse_report(message, verdict))
-            .transpose()?
-            .map_or_else(Vec::new, |report| report.answers);
+        let decisions = self.finding_decisions(team_id, &reports);
         self.record_finding_decisions(team_id, asked, decisions, now)?;
-        let completed = self.record_findings(team_id, task, asked, verdict, message)?;
+        let completed = self.record_findings(team_id, task, asked, reports)?;
         // Only a pull request that is verified by rotation keeps the reviewed head, so the protocols that started
         // earlier never run the Git lookup.
         if completed && rotating {
@@ -398,25 +392,69 @@ impl Owner {
         }
     }
 
+    /// Selects the pull request's verifier decisions once for its shared round history.
+    fn finding_decisions(
+        &self,
+        team_id: &TeamId,
+        reports: &[(ItemId, Report)],
+    ) -> Vec<(std::num::NonZeroU32, agent_core::review_findings::Answer)> {
+        reports
+            .first()
+            .filter(|(id, _)| {
+                self.parts
+                    .state
+                    .team(team_id)
+                    .and_then(|team| team.item(*id))
+                    .and_then(|item| item.findings())
+                    .is_some_and(|ledger| ledger.disputes().is_some())
+            })
+            .map_or_else(Vec::new, |(_, report)| report.answers.clone())
+    }
+
+    /// Checks each ledger that will receive the report, without mutating any of them.
+    fn review_reports(
+        &self,
+        team_id: &TeamId,
+        asked: &Asked,
+        verdict: ReviewVerdict,
+        message: &str,
+    ) -> Result<Vec<(ItemId, Report)>, ReportRefusal> {
+        let mut reports = Vec::new();
+        for id in &asked.items {
+            let Some(item) = self.parts.state.team(team_id).and_then(|team| team.item(*id)) else {
+                continue;
+            };
+            if !matches!(item.phase(), ItemPhase::InReview { .. }) {
+                continue;
+            }
+            if let Some(ledger) = item.findings() {
+                let report = ledger
+                    .parse_report(message, verdict)
+                    .map_err(|problem| ReportRefusal { item: *id, problem })?;
+                reports.push((*id, report));
+            }
+        }
+        Ok(reports)
+    }
+
     /// Stages a parsed report and finalizes numbers only after every requested report is in.
     fn record_findings(
         &mut self,
         team_id: &TeamId,
         task: &TaskId,
         asked: &Asked,
-        verdict: ReviewVerdict,
-        message: &str,
+        reports: Vec<(ItemId, Report)>,
     ) -> Result<bool, OwnerError> {
         let mut completed = false;
-        for id in &asked.items {
+        for (id, report) in reports {
             let mut team = self
                 .parts
                 .state
                 .team_mut(team_id)
                 .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
-            let mut item = team.item_mut(*id).ok_or_else(|| OwnerError::LostItem {
+            let mut item = team.item_mut(id).ok_or_else(|| OwnerError::LostItem {
                 team: team_id.clone(),
-                item: *id,
+                item: id,
             })?;
             let reviews = match item.phase() {
                 ItemPhase::InReview { reviews, .. } => reviews.clone(),
@@ -429,7 +467,6 @@ impl Owner {
             let Some(ledger) = item.findings_mut() else {
                 continue;
             };
-            let report = ledger.parse_report(message, verdict)?;
             ledger.record(task.clone(), report);
             if reviews
                 .iter()

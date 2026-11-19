@@ -172,6 +172,22 @@ stops them in order: the server stops accepting, the owner has its runs stopped 
 is queued, the socket is removed; every task is joined. A state that cannot be saved ends the daemon with an error —
 models must not work on with a state that is not kept — and `Restart=on-failure` of the unit starts it again.
 
+**Agent text.** A reviewer's malformed report is a protocol refusal, not a failure of the state owner. Before recording
+anything, the owner parses it against every item whose ledger will receive it; recording consumes those parsed reports
+without parsing the text again. A refusal returns the report to the reviewer with its source line, finding number and
+the rejecting item's allowed answers, or asks the human after two corrections. It cannot stop the daemon or record
+only part of the review. Failures of the storage and other infrastructure needed to keep state can still stop the owner.
+
+**Items of one pull request.** The items reviewed on one pull request share its findings ledger: each item keeps a
+copy, and every fix response, verification and finding is recorded in all of them, counted by the pull request's fix
+pass — the most fix passes of any of its items, since an item that joined a fix pass has none of its own for it. A
+verifier's brief and the reading of its report use one list of allowed answers per finding
+(`Findings::verifier_answers`). A state whose copies disagree (written before this rule held) is repaired when the
+daemon starts (`recovery::reconcile_findings`): for each finding every copy has, the most advanced record — a decided
+explanation over a pending one over none, a rejected over an accepted one, then a closed finding over an open one,
+then the higher severity — gives its explanation, status and severity to all copies, and each repaired finding is
+logged as `restart_corrected`. Reviewers that wait with a review pending which they already ran for are asked again.
+
 **Start.** `agent daemon` needs `AGENTS_HOME` (no default before the cutover, so a trial cannot touch the live home),
 `agents.toml` there and the prompt files (`prompts/` in the home, or `--prompts-dir DIR`); the files of both catalogs are
 checked at start, every problem reported at once. It takes the lock of the home (a second daemon exits with "already
@@ -715,6 +731,17 @@ pushed, so that a head the checks hold back is not pushed and the reviewers keep
 files, the commits and the added lines from the merge base with the fetched base branch to the tip (`agent_runtime::git`:
 `round_facts`), the authored parts of the current GitHub description, and the fresh lead contribution. The
 harness header is excluded from authored disclosures, so merely listing a path in the task does not authorize it.
+
+**Task-authored allowances.** `task_list::TaskList` parses `Allow:` headers into validated `TaskAllowance`s.
+Their matching is rooted, unlike configuration `PathPattern`s with bare names at any depth; unsafe patterns that
+reach rule files or workflows are rejected at parsing. `Team::allowances` exposes them from the team's persisted
+original `TaskListText`, so neither item changes nor recovery can lose them. State schema 10 migrates versions 1–9;
+a schema-9 team without allowances keeps none. The task-list string remains the wire and disk representation,
+including the existing `Reply::Team` response used by `agent run`; `Reply::Started` is unchanged.
+The checks filter covered path issues separately from per-path human answers; marker and missing-test issues
+cannot be allowed this way. `checks.json` keeps its schema. The harness writes `## Allowed beforehand` from the
+round's changed paths and covering directives, strips forged copies from lead contributions, and excludes this
+section from marker disclosures. The CLI prints the original directives and reviewers judge their actual changes.
 
 **The rules** (`agent_core::decide::checks`, each with the case that raises it and the nearest that does not):
 

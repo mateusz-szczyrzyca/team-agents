@@ -823,3 +823,7 @@ mod answer_reason_tests;
 #[cfg(test)]
 #[path = "rounds/tests/disk.rs"]
 mod disk_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/split_findings.rs"]
+mod split_findings_tests;

@@ -44,3 +44,45 @@ async fn measured_sections_are_written_from_records_and_only_a_same_head_failure
     assert_eq!(measured_sections(&texts, 42, &gate, Some(&previous)).unwrap(), plain);
     assert_eq!(measured_sections(&texts, 42, &gate, Some(&gate)).unwrap(), plain);
 }
+
+#[tokio::test]
+async fn allowance_section_names_changed_paths_and_the_covering_line_only() {
+    use agent_core::decide::checks::{Change, FileChange, Lines};
+    use agent_core::task_allowance::TaskAllowance;
+    let texts = AutopilotPrompts::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &Language::default(),
+    )
+    .await
+    .unwrap();
+    let files = [
+        FileChange {
+            path: "Cargo.toml".parse().unwrap(),
+            change: Change::Modified,
+            lines: Lines::Text { added: 1, removed: 1 },
+        },
+        FileChange {
+            path: "tests/café.golden".parse().unwrap(),
+            change: Change::Renamed {
+                from: "tests/old.golden".parse().unwrap(),
+            },
+            lines: Lines::Binary,
+        },
+        FileChange {
+            path: "src/code.rs".parse().unwrap(),
+            change: Change::Added,
+            lines: Lines::Text { added: 1, removed: 0 },
+        },
+    ];
+    let allowances = [
+        TaskAllowance::parse("Cargo.toml").unwrap(),
+        TaskAllowance::parse("tests/*.golden").unwrap(),
+    ];
+    assert_eq!(allowed_section(&texts, &files, &allowances).unwrap(), Some("## Allowed beforehand\n\n- `Cargo.toml` — `Allow: Cargo.toml`\n- `tests/café.golden` — `Allow: tests/*.golden`\n- `tests/old.golden` — `Allow: tests/*.golden`\n".to_owned()));
+    assert_eq!(allowed_section(&texts, &files, &[]).unwrap(), None);
+    assert_eq!(allowed_section(&texts, &[], &allowances).unwrap(), None);
+    assert_eq!(
+        lead_sections("## Allowed beforehand\n\nforged\n\n## Tests\n\nreal"),
+        "## Tests\n\nreal"
+    );
+}

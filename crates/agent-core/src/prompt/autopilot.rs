@@ -58,6 +58,8 @@ pub enum AutopilotPrompt {
     PrUpdate,
     /// Measured pull request size.
     PrSize,
+    /// Task-authored path allowances used by this round.
+    PrAllowedBeforehand,
     /// Gate provenance for a pull request.
     PrGate,
     /// A passing retry after a failed gate.
@@ -144,6 +146,8 @@ pub enum AutopilotPrompt {
     ReviewVerifierResolved,
     /// One numbered permitted answer.
     ReviewResponseForm,
+    /// The answers a verifier may give, beside an open finding of its brief.
+    ReviewVerifierAnswer,
     /// Source evidence and all available answers after a refused line.
     ReviewAnswerDiagnostic,
     /// The same for a refused line whose label is no finding number.
@@ -232,6 +236,7 @@ impl AutopilotPrompt {
         Self::PrBodyChecks,
         Self::PrUpdate,
         Self::PrSize,
+        Self::PrAllowedBeforehand,
         Self::PrGate,
         Self::PrGateRetry,
         Self::PrNoLead,
@@ -275,6 +280,7 @@ impl AutopilotPrompt {
         Self::ReviewVerifierPending,
         Self::ReviewVerifierResolved,
         Self::ReviewResponseForm,
+        Self::ReviewVerifierAnswer,
         Self::ReviewAnswerDiagnostic,
         Self::ReviewAnswerDiagnosticUnnumbered,
         Self::ReviewResponseUnnumbered,
@@ -366,6 +372,7 @@ impl AutopilotPrompt {
             Self::PrBodyChecks => "harness/pr/body-checks.md",
             Self::PrUpdate => "harness/pr/update.md",
             Self::PrSize => "harness/pr/size.md",
+            Self::PrAllowedBeforehand => "harness/pr/allowed-beforehand.md",
             Self::PrGate => "harness/pr/gate.md",
             Self::PrGateRetry => "harness/pr/gate-retry.md",
             Self::PrNoLead => "harness/pr/no-lead.md",
@@ -412,6 +419,7 @@ impl AutopilotPrompt {
             Self::ReviewVerifierPending => "harness/review/verifier-pending.md",
             Self::ReviewVerifierResolved => "harness/review/verifier-resolved.md",
             Self::ReviewResponseForm => "harness/review/response-form.md",
+            Self::ReviewVerifierAnswer => "harness/review/verifier-answer.md",
             Self::ReviewAnswerDiagnostic => "harness/review/answer-diagnostic.md",
             Self::ReviewAnswerDiagnosticUnnumbered => "harness/review/answer-diagnostic-unnumbered.md",
             Self::ReviewResponseUnnumbered => "harness/review/response-unnumbered.md",
@@ -490,6 +498,7 @@ impl AutopilotPrompt {
             Self::PrBodyChecks => &["checks"],
             Self::PrUpdate => &["head", "pass", "gate"],
             Self::PrSize => &["size"],
+            Self::PrAllowedBeforehand => &["paths"],
             Self::PrGate | Self::ReviewGate => &["head", "finished", "result", "log"],
             Self::PrLeadInstructions => &["description_file"],
             Self::ReviewGateMissing => &["head"],
@@ -515,7 +524,7 @@ impl AutopilotPrompt {
             Self::ReviewFixPass | Self::ReviewFixResponse => FIX_PASS_VARIABLES,
             Self::ReviewFixPassOpen => &["pr", "pass"],
             Self::ReviewResponseInvalid => &["line", "number", "allowed"],
-            Self::ReviewResponseForm => &["number", "allowed"],
+            Self::ReviewResponseForm | Self::ReviewVerifierAnswer => &["number", "allowed"],
             Self::ReviewAnswerDiagnostic => &["number", "source", "mistake", "forms"],
             Self::ReviewAnswerDiagnosticUnnumbered => &["source", "mistake", "forms"],
             Self::ReviewResponseUnnumbered => &["line"],

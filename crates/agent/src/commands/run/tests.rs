@@ -527,3 +527,19 @@ async fn rotation_advisory_is_present_only_when_the_local_roster_is_too_small() 
         }
     }
 }
+
+#[test]
+fn started_team_prints_each_task_allowance() {
+    let mut wire = serde_json::to_value(sample_team()).unwrap();
+    let list = wire["task_list"]
+        .as_str()
+        .unwrap()
+        .replace("Coordinator: inv-opus\n", "");
+    wire["task_list"] = serde_json::Value::String(format!("Allow: Cargo.toml\nAllow: tests/**/*.golden\n{list}"));
+    let team: Team = serde_json::from_value(wire).unwrap();
+    let text = render_started(&home(), &team);
+    assert!(
+        text.contains("  Allow: Cargo.toml\n  Allow: tests/**/*.golden\n"),
+        "{text}"
+    );
+}

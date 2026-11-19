@@ -371,3 +371,64 @@ async fn second_opinion_is_the_third_line_of_its_finding() {
         "<!-- agent-findings -->\n## Review findings\n\nopen — 1 BLOCKER, 0 MAJOR, 0 MINOR; closed — 0\n\n**1** **$\\color{#8B0000}{\\textsf{[BLOCKER]}}$** ERR-3 · open · inv-codex — src/lib.rs:42\nfix café\nSecond opinion by inv-opus: CONFIRMED — read café.rs: branch is live\n"
     );
 }
+
+/// The ledger of item 1.1 of the evidence: finding 28 with a pending explanation, finding 8 a plain open minor one.
+fn evidence_ledger() -> Findings {
+    let state = agent_core::state::State::from_json(include_str!(
+        "../../../../../../agent-core/tests/fixtures/state-split-explanations.json"
+    ))
+    .unwrap();
+    state.teams()[0]
+        .item("1.1".parse().unwrap())
+        .unwrap()
+        .findings()
+        .unwrap()
+        .clone()
+}
+
+/// The lines of finding `number` in a rendered list of open findings: from its own line to the next finding's.
+fn block_of(text: &str, number: u32) -> String {
+    let start = format!("{number}. [");
+    text.lines()
+        .skip_while(|line| !line.starts_with(&start))
+        .enumerate()
+        .take_while(|(index, line)| *index == 0 || !line.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .map(|(_, line)| line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[tokio::test]
+async fn the_brief_of_a_verifier_names_beside_each_open_finding_the_answers_it_may_get() {
+    let texts = AutopilotPrompts::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &Language::default(),
+    )
+    .await
+    .unwrap();
+    let ledger = evidence_ledger();
+
+    let text = verification_text(&texts, Some(&ledger)).unwrap();
+
+    let explained = block_of(&text, 28);
+    assert!(
+        explained.contains("FINDING 28: ACCEPTED — why or REJECTED — why or RAISED [BLOCKER] — why"),
+        "{explained}"
+    );
+    assert!(!explained.contains("RESOLVED"), "{explained}");
+    let plain = block_of(&text, 8);
+    assert!(
+        plain.contains("FINDING 8: RESOLVED or OPEN — why or RAISED [MAJOR] — why or RAISED [BLOCKER] — why"),
+        "{plain}"
+    );
+    let blocker = block_of(&text, 27);
+    assert!(blocker.contains("FINDING 27: RESOLVED or OPEN — why"), "{blocker}");
+    assert!(!blocker.contains("RAISED"), "{blocker}");
+    for number in [3, 8, 17, 18, 19, 20, 21, 25, 26, 27, 28] {
+        assert_eq!(
+            text.matches(&format!("FINDING {number}: ")).count(),
+            1,
+            "finding {number}: {text}"
+        );
+    }
+}

@@ -236,6 +236,11 @@ pub(crate) fn render_started(home: &Home, team: &Team) -> String {
         team.repo(),
         team.merge().as_str()
     )];
+    lines.extend(
+        team.allowances()
+            .iter()
+            .map(|allowance| format!("  Allow: {}\n", allowance.as_str())),
+    );
     for (role, member) in roster {
         let item = team.items().iter().find_map(|progress| match progress.phase() {
             ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }

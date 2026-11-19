@@ -128,9 +128,6 @@ pub(crate) enum OwnerError {
     /// The reviewed commit cannot be retained for the next verification.
     #[error(transparent)]
     ReviewedHead(#[from] rounds::ReviewedHeadError),
-    /// A structured report contradicts the review protocol.
-    #[error("cannot accept review findings")]
-    Findings(#[from] agent_core::review_findings::ReportError),
     /// The permanent finding numbers have been used up.
     #[error("cannot number review findings")]
     FindingNumbers(#[from] agent_core::state::FindingNumbersExhausted),
@@ -581,6 +578,23 @@ impl Owner {
                 .await?;
             self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)?;
         }
+        let repaired = super::recovery::reconcile_findings(&mut self.parts.state);
+        for repair in &repaired {
+            tracing::warn!(
+                event = LogEvent::RestartCorrected.as_str(),
+                team = %repair.team,
+                pr = %repair.pr,
+                items = ?repair.items,
+                finding = %repair.finding.number,
+                explanation = ?repair.finding.explanation,
+                status = ?repair.finding.status,
+                "the items of a pull request disagreed on a finding: the most advanced record now holds for all"
+            );
+        }
+        if !repaired.is_empty() {
+            self.save().await?;
+        }
+        self.ask_unanswered_reviews().await?;
         self.hold_restarted_opinions().await?;
         self.remember_closed_teams();
         self.look_at_every_team();

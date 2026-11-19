@@ -11,6 +11,9 @@ use agent_core::status::{InvalidTransition, TaskStatus};
 
 use super::settle::wake_time;
 
+mod findings;
+pub(super) use findings::reconcile_findings;
+
 /// What recovery found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Recovery {
