@@ -360,3 +360,17 @@ fn malformed_explanation_votes_receive_the_explanation_protocol_correction() {
         })
     );
 }
+
+#[test]
+fn resolved_accepts_optional_reason_separators() {
+    for suffix in ["", " — vérifié", " - vérifié", ": vérifié"] {
+        let text = format!("VERDICT: APPROVE\nFINDING 3: RESOLVED{suffix}\nSTATUS: DONE");
+        assert_eq!(
+            parse_verification(&text, ReviewVerdict::Approve, &[(number(3), Severity::Blocker)], &[]),
+            Ok(Report {
+                findings: vec![],
+                answers: vec![(number(3), Answer::Resolved)]
+            })
+        );
+    }
+}

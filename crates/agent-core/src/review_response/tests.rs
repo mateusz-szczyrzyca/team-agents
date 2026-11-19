@@ -104,3 +104,42 @@ fn correction_reasons_identify_the_allowed_protocol_without_agent_instructions()
         assert_eq!(error.correction, expected, "{message}");
     }
 }
+
+#[test]
+fn fixed_accepts_optional_reason_separators() {
+    for suffix in ["", " — vérifié", " - vérifié", ": vérifié"] {
+        assert_eq!(
+            parse_lead(
+                &format!("FINDING 1: FIXED{suffix}\nSTATUS: DONE"),
+                &[(NonZeroU32::MIN, Severity::Blocker, false)]
+            ),
+            Ok(vec![(NonZeroU32::MIN, Response::Fixed)])
+        );
+    }
+}
+
+#[test]
+fn six_answers_include_two_optional_minor_findings() {
+    let open: Vec<_> = (15..=20)
+        .map(|n| {
+            (
+                NonZeroU32::new(n).unwrap(),
+                if n >= 19 { Severity::Minor } else { Severity::Blocker },
+                false,
+            )
+        })
+        .collect();
+    let text = "FINDING 15: FIXED\nFINDING 16: FIXED\nFINDING 17: FIXED\nFINDING 18: FIXED\nFINDING 19: FIXED\nFINDING 20: FIXED\nSTATUS: DONE";
+    assert_eq!(
+        parse_lead(text, &open),
+        Ok(open.iter().map(|(n, _, _)| (*n, Response::Fixed)).collect())
+    );
+    assert_eq!(
+        parse_lead("FINDING 1: advisory only", &[(NonZeroU32::MIN, Severity::Minor, false)]),
+        Ok(vec![])
+    );
+    assert_eq!(
+        parse_lead("STATUS: DONE", &[(NonZeroU32::MIN, Severity::Minor, false)]),
+        Ok(vec![])
+    );
+}
