@@ -55,7 +55,7 @@ const DEFAULT_MAX_TURNS: NonZeroU32 = NonZeroU32::new(300).unwrap();
 const DEFAULT_TURN_LIMIT_RESUMES: u32 = 3;
 
 /// Wake-ups for one unread message after which the harness stops waking a task for it, by default.
-const DEFAULT_WAKE_UPS_PER_MESSAGE: u32 = 0;
+const DEFAULT_WAKE_UPS_PER_MESSAGE: u32 = 2;
 
 /// Lines of a run's error output read to recognise limits, by default.
 const DEFAULT_TAIL_LINES: NonZeroU32 = NonZeroU32::new(30).unwrap();
