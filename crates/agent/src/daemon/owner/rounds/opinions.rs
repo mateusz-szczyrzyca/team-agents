@@ -206,6 +206,18 @@ impl Owner {
         else {
             return Ok(false);
         };
+        if self
+            .parts
+            .state
+            .team(&located.team)
+            .and_then(|team| team.item(id))
+            .and_then(|item| item.findings())
+            .and_then(|ledger| ledger.opinion_attempts(number).last())
+            .is_some_and(|attempt| attempt.failure.is_some())
+        {
+            // A cancelled terminal assignment can finish while its notice is being delivered.
+            return Ok(true);
+        }
         let mut look = Look::default();
         let report = match message.map(parse_report) {
             Some(Ok(report)) => report,
