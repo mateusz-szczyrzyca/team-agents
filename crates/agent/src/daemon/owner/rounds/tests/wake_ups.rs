@@ -128,7 +128,7 @@ async fn a_lead_that_ignores_its_message_is_woken_the_configured_number_of_times
         .unwrap();
     assert_eq!(stop.fields().get("wake_ups"), Some(&serde_json::json!(2)));
     assert_eq!(stop.fields().get("from"), Some(&serde_json::json!("human")));
-    assert!(stop.fields().contains_key("message"), "{:?}", stop.fields());
+    assert!(stop.fields().contains_key("message_id"), "{:?}", stop.fields());
 }
 
 #[tokio::test]
@@ -164,6 +164,6 @@ async fn every_wake_up_is_logged_with_its_message_and_its_sender() {
     for row in &wake_ups {
         assert_eq!(row.fields().get("why"), Some(&serde_json::json!("wake_up")));
         assert_eq!(row.fields().get("from"), Some(&serde_json::json!("human")));
-        assert!(row.fields().contains_key("message"), "{:?}", row.fields());
+        assert!(row.fields().contains_key("message_id"), "{:?}", row.fields());
     }
 }
