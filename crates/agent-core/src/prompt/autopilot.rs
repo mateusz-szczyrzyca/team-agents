@@ -30,6 +30,8 @@ pub enum AutopilotPrompt {
     ReviewFixNoCommit,
     /// Explain why the unchanged fix pass cannot enter verification.
     ReviewFixNoCommitReason,
+    /// The missing outcome named in an exhausted handover notice.
+    ReviewFixNoCommitUndone,
     /// Ask the human to recover a handover after its corrections are exhausted.
     NoticeHandoverHeld,
     /// Return an opinion report that lacks a verdict or supporting evidence.
@@ -162,6 +164,7 @@ impl AutopilotPrompt {
         Self::WaitNothing,
         Self::ReviewFixNoCommit,
         Self::ReviewFixNoCommitReason,
+        Self::ReviewFixNoCommitUndone,
         Self::NoticeHandoverHeld,
         Self::ReviewOpinionCorrection,
         Self::ReviewOpinionOffer,
@@ -251,111 +254,152 @@ impl AutopilotPrompt {
 
     /// The path, audience and variables of this text.
     const fn definition(self) -> (&'static str, &'static [&'static str]) {
+        (self.path(), self.variables())
+    }
+
+    /// The catalog file of this text.
+    const fn path(self) -> &'static str {
         match self {
-            Self::WaitNothing => ("harness/pr/wait-nothing.md", &[]),
-            Self::WaitCorrection => ("harness/pr/wait-correction.md", &[]),
-            Self::WaitHuman => ("harness/pr/wait-human.md", &[]),
-            Self::WaitOpinion => ("harness/pr/wait-opinion.md", &[]),
-            Self::WaitReview => ("harness/pr/wait-review.md", &[]),
-            Self::WaitGate => ("harness/pr/wait-gate.md", &[]),
-            Self::ReviewFixNoCommit => ("harness/review/fix-no-commit.md", &["branch", "tip", "sent", "limit"]),
-            Self::ReviewFixNoCommitReason => ("harness/review/fix-no-commit-reason.md", &["tip"]),
-            Self::NoticeHandoverHeld => (
-                "harness/pr/notice-handover-held.md",
-                &["team", "items", "reason", "rounds", "task"],
-            ),
-            Self::ReviewOpinionRequest => ("harness/review/opinion-request.md", OPINION_REQUEST_VARIABLES),
-            Self::ReviewOpinionCorrection => ("harness/review/opinion-correction.md", &[]),
-            Self::ReviewOpinionOffer => ("harness/review/opinion-offer.md", &[]),
-            Self::ReviewOpinionResult => ("harness/review/opinion-result.md", &["reviewer", "outcome", "evidence"]),
-            Self::ReviewOpinionConfirmed => ("harness/review/opinion-confirmed.md", &["findings"]),
-            Self::ReviewResponseOpinion => ("harness/review/response-opinion.md", &[]),
-            Self::PrTitle => ("harness/pr/title.md", &["item_ids", "item_titles"]),
-            Self::PrBody => ("harness/pr/body.md", &["team", "repo", "gate", "items"]),
-            Self::PrBodyItem => ("harness/pr/body-item.md", PR_ITEM_VARIABLES),
-            Self::PrBodyExpected => ("harness/pr/body-expected.md", &["expected"]),
-            Self::PrBodyChecks => ("harness/pr/body-checks.md", &["checks"]),
-            Self::PrUpdate => ("harness/pr/update.md", &["head", "pass", "gate"]),
-            Self::GateNotPassed => ("harness/pr/gate-not-passed.md", &["branch", "reason", "sent", "limit"]),
-            Self::BranchNotJoined => ("harness/pr/branch-not-joined.md", BRANCH_VARIABLES),
-            Self::TeamAsleep => (
-                "harness/pr/team-asleep.md",
-                &["team", "items", "minutes", "tasks", "woken", "limit"],
-            ),
-            Self::NoticeTeamAsleep => (
-                "harness/pr/notice-team-asleep.md",
-                &["team", "items", "minutes", "tasks", "woken", "lead"],
-            ),
-            Self::NoticeStandingItem => (
-                "harness/pr/notice-standing-item.md",
-                &["team", "item", "member", "task", "line"],
-            ),
-            Self::NoticeApproved => ("harness/pr/notice-approved.md", &["team", "repo", "pr", "url"]),
-            Self::NoticePublishFailed => ("harness/pr/notice-publish-failed.md", &["team", "items", "reason"]),
-            Self::NoticeMergeFailed => ("harness/pr/notice-merge-failed.md", &["team", "pr", "url", "reason"]),
-            Self::NoticeClosed => ("harness/pr/notice-closed.md", &["team", "pr", "url"]),
-            Self::NoticeMerged => ("harness/pr/notice-merged.md", &["team", "pr", "url", "items"]),
-            Self::ReviewRequest => (
-                "harness/review/request.md",
-                &["team", "pr", "branch", "base", "head", "pass"],
-            ),
-            Self::ReviewVerification => ("harness/review/verification.md", VERIFICATION_VARIABLES),
-            Self::ReviewVerificationChanges => ("harness/review/verification-changes.md", &["previous"]),
-            Self::ReviewVerificationRewritten => ("harness/review/verification-rewritten.md", &["base"]),
-            Self::ReviewIndependent => ("harness/review/independent.md", &[]),
-            Self::ReviewComment => (
-                "harness/review/comment.md",
-                &["reviewer", "client", "verdict", "pass", "commit", "report"],
-            ),
-            Self::ReviewVerdictApprove => ("harness/review/verdict-approve.md", &["icon"]),
-            Self::ReviewVerdictRequestChanges => ("harness/review/verdict-request-changes.md", &["icon"]),
-            Self::ReviewFixPass => ("harness/review/fix-pass.md", FIX_PASS_VARIABLES),
-            Self::ReviewFixResponse => ("harness/review/fix-response.md", FIX_PASS_VARIABLES),
-            Self::ReviewResponseNumbers => ("harness/review/response-numbers.md", &[]),
-            Self::ReviewResponseExplain => ("harness/review/response-explain.md", &[]),
-            Self::ReviewResponseFixed => ("harness/review/response-fixed.md", &[]),
-            Self::ReviewResponseInvalid => ("harness/review/response-invalid.md", &["line", "number", "allowed"]),
-            Self::ReviewDisputes => ("harness/review/disputes.md", &["findings"]),
-            Self::ReviewExplanation => ("harness/review/explanation.md", &["status", "why", "votes"]),
-            Self::ReviewExplanationVote => ("harness/review/explanation-vote.md", &["reviewer", "status", "why"]),
-            Self::ReviewFinding => ("harness/review/finding.md", &["reviewer", "report"]),
-            Self::ReviewAskHuman => ("harness/review/ask-human.md", ASK_HUMAN_VARIABLES),
-            Self::ReviewFindingsInvalid => ("harness/review/findings-invalid.md", &["line", "reason"]),
-            Self::ReviewOpenFindings => ("harness/review/open-findings.md", &["findings"]),
-            Self::ReviewOpenFinding => (
-                "harness/review/open-finding.md",
-                &["number", "severity", "rule", "place", "text", "check"],
-            ),
-            Self::ReviewFindingsTable => ("harness/review/findings-table.md", &["rows"]),
-            Self::ReviewFindingsRow => (
-                "harness/review/findings-row.md",
-                &["number", "severity", "rule", "place", "text", "status", "reporter"],
-            ),
-            Self::ReviewSeverityBlocker => ("harness/review/severity-blocker.md", &[]),
-            Self::ReviewSeverityMajor => ("harness/review/severity-major.md", &[]),
-            Self::ReviewSeverityMinor => ("harness/review/severity-minor.md", &[]),
-            Self::ReviewVerdictMissing => ("harness/review/verdict-missing.md", &[]),
-            Self::OpinionAttemptFailed => ("harness/review/opinion-attempt-failed.md", OPINION_ATTEMPT_VARIABLES),
-            Self::OpinionAttemptNoStatus => ("harness/review/opinion-attempt-nostatus.md", OPINION_ATTEMPT_VARIABLES),
-            Self::OpinionAttemptMissingReport => (
-                "harness/review/opinion-attempt-missingreport.md",
-                OPINION_ATTEMPT_VARIABLES,
-            ),
-            Self::OpinionAttemptSilent => ("harness/review/opinion-attempt-silent.md", OPINION_ATTEMPT_VARIABLES),
-            Self::OpinionAttemptInterrupted => (
-                "harness/review/opinion-attempt-interrupted.md",
-                OPINION_ATTEMPT_VARIABLES,
-            ),
-            Self::NoticeOpinion => ("harness/review/notice-opinion.md", OPINION_NOTICE_VARIABLES),
-            Self::NoticeNoVerdict => (
-                "harness/review/notice-no-verdict.md",
-                &["reviewer", "pr", "task", "why"],
-            ),
-            Self::NoticeReviewRotation => ("harness/review/notice-rotation.md", &["reviews"]),
-            Self::NoticeDecision => (
-                "harness/review/notice-decision.md",
-                &["team", "pr", "passes", "additional_passes", "findings"],
-            ),
+            Self::WaitNothing => "harness/pr/wait-nothing.md",
+            Self::WaitCorrection => "harness/pr/wait-correction.md",
+            Self::WaitHuman => "harness/pr/wait-human.md",
+            Self::WaitOpinion => "harness/pr/wait-opinion.md",
+            Self::WaitReview => "harness/pr/wait-review.md",
+            Self::WaitGate => "harness/pr/wait-gate.md",
+            Self::ReviewFixNoCommit => "harness/review/fix-no-commit.md",
+            Self::ReviewFixNoCommitReason => "harness/review/fix-no-commit-reason.md",
+            Self::ReviewFixNoCommitUndone => "harness/review/fix-no-commit-undone.md",
+            Self::NoticeHandoverHeld => "harness/pr/notice-handover-held.md",
+            Self::ReviewOpinionRequest => "harness/review/opinion-request.md",
+            Self::ReviewOpinionCorrection => "harness/review/opinion-correction.md",
+            Self::ReviewOpinionOffer => "harness/review/opinion-offer.md",
+            Self::ReviewOpinionResult => "harness/review/opinion-result.md",
+            Self::ReviewOpinionConfirmed => "harness/review/opinion-confirmed.md",
+            Self::ReviewResponseOpinion => "harness/review/response-opinion.md",
+            Self::PrTitle => "harness/pr/title.md",
+            Self::PrBody => "harness/pr/body.md",
+            Self::PrBodyItem => "harness/pr/body-item.md",
+            Self::PrBodyExpected => "harness/pr/body-expected.md",
+            Self::PrBodyChecks => "harness/pr/body-checks.md",
+            Self::PrUpdate => "harness/pr/update.md",
+            Self::GateNotPassed => "harness/pr/gate-not-passed.md",
+            Self::BranchNotJoined => "harness/pr/branch-not-joined.md",
+            Self::TeamAsleep => "harness/pr/team-asleep.md",
+            Self::NoticeTeamAsleep => "harness/pr/notice-team-asleep.md",
+            Self::NoticeStandingItem => "harness/pr/notice-standing-item.md",
+            Self::NoticeApproved => "harness/pr/notice-approved.md",
+            Self::NoticePublishFailed => "harness/pr/notice-publish-failed.md",
+            Self::NoticeMergeFailed => "harness/pr/notice-merge-failed.md",
+            Self::NoticeClosed => "harness/pr/notice-closed.md",
+            Self::NoticeMerged => "harness/pr/notice-merged.md",
+            Self::ReviewRequest => "harness/review/request.md",
+            Self::ReviewVerification => "harness/review/verification.md",
+            Self::ReviewVerificationChanges => "harness/review/verification-changes.md",
+            Self::ReviewVerificationRewritten => "harness/review/verification-rewritten.md",
+            Self::ReviewIndependent => "harness/review/independent.md",
+            Self::ReviewComment => "harness/review/comment.md",
+            Self::ReviewVerdictApprove => "harness/review/verdict-approve.md",
+            Self::ReviewVerdictRequestChanges => "harness/review/verdict-request-changes.md",
+            Self::ReviewFixPass => "harness/review/fix-pass.md",
+            Self::ReviewFixResponse => "harness/review/fix-response.md",
+            Self::ReviewResponseNumbers => "harness/review/response-numbers.md",
+            Self::ReviewResponseExplain => "harness/review/response-explain.md",
+            Self::ReviewResponseFixed => "harness/review/response-fixed.md",
+            Self::ReviewResponseInvalid => "harness/review/response-invalid.md",
+            Self::ReviewDisputes => "harness/review/disputes.md",
+            Self::ReviewExplanation => "harness/review/explanation.md",
+            Self::ReviewExplanationVote => "harness/review/explanation-vote.md",
+            Self::ReviewFinding => "harness/review/finding.md",
+            Self::ReviewAskHuman => "harness/review/ask-human.md",
+            Self::ReviewFindingsInvalid => "harness/review/findings-invalid.md",
+            Self::ReviewOpenFindings => "harness/review/open-findings.md",
+            Self::ReviewOpenFinding => "harness/review/open-finding.md",
+            Self::ReviewFindingsTable => "harness/review/findings-table.md",
+            Self::ReviewFindingsRow => "harness/review/findings-row.md",
+            Self::ReviewSeverityBlocker => "harness/review/severity-blocker.md",
+            Self::ReviewSeverityMajor => "harness/review/severity-major.md",
+            Self::ReviewSeverityMinor => "harness/review/severity-minor.md",
+            Self::ReviewVerdictMissing => "harness/review/verdict-missing.md",
+            Self::OpinionAttemptFailed => "harness/review/opinion-attempt-failed.md",
+            Self::OpinionAttemptNoStatus => "harness/review/opinion-attempt-nostatus.md",
+            Self::OpinionAttemptMissingReport => "harness/review/opinion-attempt-missingreport.md",
+            Self::OpinionAttemptSilent => "harness/review/opinion-attempt-silent.md",
+            Self::OpinionAttemptInterrupted => "harness/review/opinion-attempt-interrupted.md",
+            Self::NoticeOpinion => "harness/review/notice-opinion.md",
+            Self::NoticeNoVerdict => "harness/review/notice-no-verdict.md",
+            Self::NoticeReviewRotation => "harness/review/notice-rotation.md",
+            Self::NoticeDecision => "harness/review/notice-decision.md",
+        }
+    }
+
+    /// The context required to render this text.
+    const fn variables(self) -> &'static [&'static str] {
+        match self {
+            Self::ReviewFixNoCommitUndone
+            | Self::WaitNothing
+            | Self::WaitCorrection
+            | Self::WaitHuman
+            | Self::WaitOpinion
+            | Self::WaitReview
+            | Self::WaitGate
+            | Self::ReviewOpinionCorrection
+            | Self::ReviewOpinionOffer
+            | Self::ReviewResponseOpinion
+            | Self::ReviewIndependent
+            | Self::ReviewResponseNumbers
+            | Self::ReviewResponseExplain
+            | Self::ReviewResponseFixed
+            | Self::ReviewSeverityBlocker
+            | Self::ReviewSeverityMajor
+            | Self::ReviewSeverityMinor
+            | Self::ReviewVerdictMissing => &[],
+            Self::ReviewFixNoCommit => &["branch", "tip", "sent", "limit"],
+            Self::ReviewFixNoCommitReason => &["tip"],
+            Self::NoticeHandoverHeld => &["team", "items", "reason", "rounds", "task"],
+            Self::ReviewOpinionRequest => OPINION_REQUEST_VARIABLES,
+            Self::ReviewOpinionResult => &["reviewer", "outcome", "evidence"],
+            Self::ReviewOpinionConfirmed | Self::ReviewDisputes | Self::ReviewOpenFindings => &["findings"],
+            Self::PrTitle => &["item_ids", "item_titles"],
+            Self::PrBody => &["team", "repo", "gate", "items"],
+            Self::PrBodyItem => PR_ITEM_VARIABLES,
+            Self::PrBodyExpected => &["expected"],
+            Self::PrBodyChecks => &["checks"],
+            Self::PrUpdate => &["head", "pass", "gate"],
+            Self::GateNotPassed => &["branch", "reason", "sent", "limit"],
+            Self::BranchNotJoined => BRANCH_VARIABLES,
+            Self::TeamAsleep => &["team", "items", "minutes", "tasks", "woken", "limit"],
+            Self::NoticeTeamAsleep => &["team", "items", "minutes", "tasks", "woken", "lead"],
+            Self::NoticeStandingItem => &["team", "item", "member", "task", "line"],
+            Self::NoticeApproved => &["team", "repo", "pr", "url"],
+            Self::NoticePublishFailed => &["team", "items", "reason"],
+            Self::NoticeMergeFailed => &["team", "pr", "url", "reason"],
+            Self::NoticeClosed => &["team", "pr", "url"],
+            Self::NoticeMerged => &["team", "pr", "url", "items"],
+            Self::ReviewRequest => &["team", "pr", "branch", "base", "head", "pass"],
+            Self::ReviewVerification => VERIFICATION_VARIABLES,
+            Self::ReviewVerificationChanges => &["previous"],
+            Self::ReviewVerificationRewritten => &["base"],
+            Self::ReviewComment => &["reviewer", "client", "verdict", "pass", "commit", "report"],
+            Self::ReviewVerdictApprove | Self::ReviewVerdictRequestChanges => &["icon"],
+            Self::ReviewFixPass | Self::ReviewFixResponse => FIX_PASS_VARIABLES,
+            Self::ReviewResponseInvalid => &["line", "number", "allowed"],
+            Self::ReviewExplanation => &["status", "why", "votes"],
+            Self::ReviewExplanationVote => &["reviewer", "status", "why"],
+            Self::ReviewFinding => &["reviewer", "report"],
+            Self::ReviewAskHuman => ASK_HUMAN_VARIABLES,
+            Self::ReviewFindingsInvalid => &["line", "reason"],
+            Self::ReviewOpenFinding => &["number", "severity", "rule", "place", "text", "check"],
+            Self::ReviewFindingsTable => &["rows"],
+            Self::ReviewFindingsRow => &["number", "severity", "rule", "place", "text", "status", "reporter"],
+            Self::OpinionAttemptFailed
+            | Self::OpinionAttemptNoStatus
+            | Self::OpinionAttemptMissingReport
+            | Self::OpinionAttemptSilent
+            | Self::OpinionAttemptInterrupted => OPINION_ATTEMPT_VARIABLES,
+            Self::NoticeOpinion => OPINION_NOTICE_VARIABLES,
+            Self::NoticeNoVerdict => &["reviewer", "pr", "task", "why"],
+            Self::NoticeReviewRotation => &["reviews"],
+            Self::NoticeDecision => &["team", "pr", "passes", "additional_passes", "findings"],
         }
     }
 }

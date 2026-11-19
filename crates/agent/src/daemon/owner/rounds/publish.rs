@@ -4,6 +4,7 @@ use agent_core::config::RepoName;
 use agent_core::decide::fix::{Answers, Budget, Progress, Step, fix_step};
 use agent_core::decide::publish::{GateHold, GateStep, HarnessGate, Waiting, gate_step};
 use agent_core::decide::round::{RoundEvent, RoundPolicy, RoundState, Stage};
+use agent_core::decide::wait::Obligation;
 use agent_core::history::HistoryEvent;
 use std::num::NonZeroU32;
 
@@ -274,38 +275,12 @@ impl Owner {
                 lead: &lead,
             };
             let items = items_of(&publication);
-            let rounds: Vec<_> = self
-                .parts
-                .state
-                .team(team_id)
-                .into_iter()
-                .flat_map(|team| team.rounds())
-                .filter(|round| round.item().is_some_and(|id| items.contains(&id.to_string())))
-                .map(|round| round.id().clone())
-                .collect();
+            let rounds = self.publication_rounds(team_id, &items);
             for round in &rounds {
                 self.watch.waits.remove(round);
             }
             let attempt = self.try_publish(site, &publication, now).await;
-            use agent_core::decide::wait::Obligation;
-            let obligation = match &attempt {
-                Ok(Attempt::Nothing | Attempt::Published(_)) => None,
-                Ok(Attempt::Held(super::checks::Held::Waiting | super::checks::Held::Notify)) => {
-                    Some(Obligation::Human)
-                }
-                Ok(
-                    Attempt::Held(super::checks::Held::WakeLead)
-                    | Attempt::SentBack { .. }
-                    | Attempt::Uncommitted { .. }
-                    | Attempt::NotJoined { .. },
-                ) => Some(Obligation::LeadCorrection),
-                Err(_) => Some(Obligation::Review),
-            };
-            if let Some(obligation) = obligation {
-                for round in rounds {
-                    self.watch.waits.insert(round, obligation);
-                }
-            }
+            self.remember_publication_wait(&rounds, &attempt);
             match attempt {
                 Ok(Attempt::Nothing) => {}
                 Ok(Attempt::Published(published)) => {
@@ -330,7 +305,7 @@ impl Owner {
                         variable: ("tip", tip.to_string()),
                         outcome: "fix_without_commit",
                         told: reason,
-                        undone: "a new commit",
+                        undone: include_str!("../../../../../../prompts/harness/review/fix-no-commit-undone.md"),
                     };
                     self.send_lead_back(site, &publication, &tip, &back, now, look)?;
                 }
@@ -341,6 +316,42 @@ impl Owner {
             }
         }
         Ok(())
+    }
+
+    /// Finds the rounds whose items this publication carries.
+    fn publication_rounds(&self, team: &TeamId, items: &[String]) -> Vec<agent_core::ids::RoundId> {
+        self.parts
+            .state
+            .team(team)
+            .into_iter()
+            .flat_map(agent_core::state::Team::rounds)
+            .filter(|round| round.item().is_some_and(|id| items.contains(&id.to_string())))
+            .map(|round| round.id().clone())
+            .collect()
+    }
+
+    /// Retains the pending operation when publication leaves an idle round open.
+    fn remember_publication_wait(
+        &mut self,
+        rounds: &[agent_core::ids::RoundId],
+        attempt: &Result<Attempt, PublishError>,
+    ) {
+        let obligation = match attempt {
+            Ok(Attempt::Nothing | Attempt::Published(_)) => None,
+            Ok(Attempt::Held(super::checks::Held::Waiting | super::checks::Held::Notify)) => Some(Obligation::Human),
+            Ok(
+                Attempt::Held(super::checks::Held::WakeLead)
+                | Attempt::SentBack { .. }
+                | Attempt::Uncommitted { .. }
+                | Attempt::NotJoined { .. },
+            ) => Some(Obligation::LeadCorrection),
+            Err(_) => Some(Obligation::Review),
+        };
+        if let Some(obligation) = obligation {
+            for round in rounds {
+                self.watch.waits.insert(round.clone(), obligation);
+            }
+        }
     }
 
     /// Pushes the branch of `publication` and opens or updates its pull request when the lead's gate passed at its tip and
@@ -510,6 +521,41 @@ impl Owner {
         }))
     }
 
+    /// Checks whether every blocking finding was answered without claiming a committed fix.
+    fn unchanged_answers(&self, team: &TeamId, fixing: &[ItemId]) -> Answers {
+        let accounted = fixing.iter().all(|id| {
+            self.parts
+                .state
+                .team(team)
+                .and_then(|t| t.item(*id))
+                .is_some_and(|item| {
+                    item.findings().is_some_and(|ledger| {
+                        NonZeroU32::new(count(item.fix_passes().len()))
+                            .is_none_or(|pass| ledger.fixed_answers(pass).is_empty())
+                            && ledger
+                                .entries()
+                                .iter()
+                                .filter(|entry| {
+                                    entry.status == agent_core::state::FindingStatus::Open
+                                        && entry.finding.severity.blocks()
+                                })
+                                .all(|entry| {
+                                    ledger.disputes().is_some_and(|disputes| {
+                                        disputes.explanations.get(&entry.number).is_some_and(|explanation| {
+                                            explanation.status == agent_core::state::ExplanationStatus::Pending
+                                        })
+                                    })
+                                })
+                    })
+                })
+        });
+        if accounted {
+            Answers::Accounted
+        } else {
+            Answers::Missing
+        }
+    }
+
     /// Updates the pull request `pr` whose items `fixing` were fixed: pushes the branch, tells the reviewers in a comment,
     /// and takes the finished `joining` items whose branches `ready.tip` contains in with it.
     async fn update_pull_request(
@@ -536,37 +582,7 @@ impl Owner {
             if !lead.done {
                 return Ok(Attempt::Nothing);
             }
-            let accounted = fixing.iter().all(|id| {
-                self.parts
-                    .state
-                    .team(team)
-                    .and_then(|t| t.item(*id))
-                    .is_some_and(|item| {
-                        item.findings().is_some_and(|ledger| {
-                            !NonZeroU32::new(count(item.fix_passes().len()))
-                                .is_some_and(|pass| !ledger.fixed_answers(pass).is_empty())
-                                && ledger
-                                    .entries()
-                                    .iter()
-                                    .filter(|entry| {
-                                        entry.status == agent_core::state::FindingStatus::Open
-                                            && entry.finding.severity.blocks()
-                                    })
-                                    .all(|entry| {
-                                        ledger.disputes().is_some_and(|disputes| {
-                                            disputes.explanations.get(&entry.number).is_some_and(|explanation| {
-                                                explanation.status == agent_core::state::ExplanationStatus::Pending
-                                            })
-                                        })
-                                    })
-                        })
-                    })
-            });
-            let answers = if accounted {
-                Answers::Accounted
-            } else {
-                Answers::Missing
-            };
+            let answers = self.unchanged_answers(team, fixing);
             let budget = if self.watch.gate_sent_back.get(&lead.task).copied().unwrap_or(0) < GATE_SEND_BACKS {
                 Budget::Available
             } else {
@@ -992,7 +1008,7 @@ impl Owner {
                     .state
                     .team(team)
                     .into_iter()
-                    .flat_map(|team| team.rounds())
+                    .flat_map(agent_core::state::Team::rounds)
                     .filter(|round| round.item().is_some_and(|item| items.contains(&item.to_string())))
                     .map(|round| round.id().to_string())
                     .collect::<Vec<_>>()

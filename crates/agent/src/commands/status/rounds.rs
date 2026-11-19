@@ -51,7 +51,8 @@ impl Told {
     pub(super) fn of(&self, round: &Round) -> String {
         let mut suffix = suffix(round, self.works.get(round.id()).copied(), self.offset);
         if let Some(waiting) = self.waiting.get(round.id()) {
-            suffix.push_str(&format!(", waits for {waiting}"));
+            suffix.push_str(", waits for ");
+            suffix.push_str(waiting);
         }
         match self.opinions.get(round.id()) {
             Some(opinions) => format!("{suffix}{opinions}"),
