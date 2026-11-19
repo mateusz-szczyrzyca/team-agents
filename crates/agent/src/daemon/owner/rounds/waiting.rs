@@ -14,9 +14,35 @@ impl Owner {
     /// Records an unowned idle round once, after all scheduling in a look has finished.
     pub(in crate::daemon::owner) fn observe_wait(
         &mut self,
-        _round: &agent_core::ids::RoundId,
-        _waiting: Option<Waiting>,
+        round: &agent_core::ids::RoundId,
+        waiting: Option<Waiting>,
     ) {
+        if waiting == Some(Waiting::Defect) && self.watch.unowned.insert(round.clone()) {
+            tracing::error!(
+                event = agent_core::log::LogEvent::DaemonTaskFailed.as_str(),
+                rounds = %round,
+                operation = "round_wait",
+                error = Waiting::Defect.text(),
+            );
+        }
+    }
+
+    /// Checks for a lost scheduling obligation after the owner has assigned all work.
+    pub(in crate::daemon::owner) fn observe_round_waits(&mut self, team: &agent_core::ids::TeamId) {
+        let waits: Vec<_> = self
+            .parts
+            .state
+            .team(team)
+            .into_iter()
+            .flat_map(|team| {
+                team.rounds()
+                    .iter()
+                    .map(|round| (round.id().clone(), self.waiting_for(team, round)))
+            })
+            .collect();
+        for (round, waiting) in waits {
+            self.observe_wait(&round, waiting);
+        }
     }
 
     /// The action that owns the next step of an idle round.

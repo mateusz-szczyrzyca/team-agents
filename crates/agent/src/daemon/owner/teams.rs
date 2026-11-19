@@ -342,6 +342,7 @@ impl Owner {
             self.assign_items(team, &mut look).await?;
             self.serve_requests(team, &mut look).await?;
             self.close_if_finished(team, &mut look)?;
+            self.observe_round_waits(team);
             if look.changed {
                 self.save().await?;
                 let now = Timestamp::now(&self.parts.clock)?;

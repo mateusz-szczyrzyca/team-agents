@@ -126,6 +126,8 @@ impl Pulls {
 /// been told.
 #[derive(Debug, Default)]
 pub(super) struct PullWatch {
+    /// Rounds whose missing scheduling obligation was already logged as an error.
+    unowned: HashSet<agent_core::ids::RoundId>,
     /// The next publication action owned by the harness, per round.
     waits: HashMap<agent_core::ids::RoundId, agent_core::decide::wait::Obligation>,
     /// The branches whose publication failed, and the time before which they are not tried again.
