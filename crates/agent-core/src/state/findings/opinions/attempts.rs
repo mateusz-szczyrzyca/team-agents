@@ -36,6 +36,43 @@ pub struct OpinionAttempt {
 }
 
 impl Findings {
+    /// Validates the new history without imposing new fields on legacy assignments.
+    pub(super) fn check_attempts(&self) -> Result<(), OpinionStateError> {
+        for (number, attempts) in &self.opinion_attempts {
+            let invalid = || OpinionStateError { number: *number };
+            let opinion = self.opinions.get(number).ok_or_else(invalid)?;
+            if attempts.is_empty() || attempts.len() > 3 {
+                return Err(invalid());
+            }
+            let mut investigators = std::collections::HashSet::new();
+            let mut tasks = std::collections::HashSet::new();
+            let (last, previous) = attempts.split_last().ok_or_else(invalid)?;
+            for attempt in attempts {
+                if !investigators.insert(&attempt.investigator) || !tasks.insert(&attempt.task) {
+                    return Err(invalid());
+                }
+            }
+            if previous.iter().any(|attempt| attempt.failure.is_none()) {
+                return Err(invalid());
+            }
+            let consistent = match &opinion.stage {
+                OpinionStage::Waiting => last.failure.is_some() && attempts.len() < 3,
+                OpinionStage::Assigned { investigator, task } => {
+                    last.investigator == *investigator
+                        && last.task == *task
+                        && (last.failure.is_none() || attempts.len() == 3)
+                }
+                OpinionStage::Reported { investigator, task, .. } => {
+                    last.investigator == *investigator && last.task == *task && last.failure.is_none()
+                }
+            };
+            if !consistent {
+                return Err(invalid());
+            }
+        }
+        Ok(())
+    }
+
     /// The attempts of a request, oldest first; old state has no retained attempts.
     #[must_use]
     pub fn opinion_attempts(&self, number: NonZeroU32) -> &[OpinionAttempt] {

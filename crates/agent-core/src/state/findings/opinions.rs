@@ -171,6 +171,7 @@ impl Findings {
                 return Err(OpinionStateError { number: *number });
             }
         }
+        self.check_attempts()?;
         for entry in &self.entries {
             if entry.status == FindingStatus::NotConfirmed && !self.opinions.contains_key(&entry.number) {
                 return Err(OpinionStateError { number: entry.number });
@@ -254,6 +255,13 @@ impl Findings {
         task: &TaskId,
         report: OpinionReport,
     ) -> Result<(), OpinionStateError> {
+        if self
+            .opinion_attempts(number)
+            .last()
+            .is_some_and(|attempt| attempt.failure.is_some())
+        {
+            return Err(OpinionStateError { number });
+        }
         let opinion = self.opinions.get_mut(&number).ok_or(OpinionStateError { number })?;
         let OpinionStage::Assigned {
             investigator,
