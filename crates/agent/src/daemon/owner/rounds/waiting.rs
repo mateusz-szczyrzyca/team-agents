@@ -7,7 +7,18 @@ use agent_core::status::TaskStatus;
 use super::super::Owner;
 use super::publish::{GATE_SEND_BACKS, OwnGate};
 
+#[cfg(test)]
+mod tests;
+
 impl Owner {
+    /// Records an unowned idle round once, after all scheduling in a look has finished.
+    pub(in crate::daemon::owner) fn observe_wait(
+        &mut self,
+        _round: &agent_core::ids::RoundId,
+        _waiting: Option<Waiting>,
+    ) {
+    }
+
     /// The action that owns the next step of an idle round.
     pub(in crate::daemon::owner) fn waiting_for(&self, team: &Team, round: &Round) -> Option<Waiting> {
         let members = team.members_in(round.id());
