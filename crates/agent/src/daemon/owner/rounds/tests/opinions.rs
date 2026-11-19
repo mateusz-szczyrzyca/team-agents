@@ -248,3 +248,56 @@ async fn refused_opinions_offer_only_the_answers_allowed_for_the_finding() {
         assert_eq!(item.findings().unwrap().opinions().len(), 0);
     }
 }
+
+#[tokio::test]
+async fn a_changed_tip_waits_for_all_opinions_and_opinion_runs_have_no_bus() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask-changed"),
+            investigator("inv-r1", "opinion-failure:HOLD"),
+            investigator("inv-r2", "opinion-failure:HOLD"),
+            investigator("inv-r3", "opinion-failure:HOLD"),
+            investigator("inv-r4", "opinion-failure:HOLD"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team_id, _) = rig
+        .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+        .await;
+    let state = rig
+        .state_where("all opinion runs started", |state| {
+            let team = state.team(&team_id).unwrap();
+            team.items()[0].findings().is_some_and(|ledger| {
+                ledger.opinions().len() == 2
+                    && ledger.opinions().values().all(|opinion| {
+                        let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+                            return false;
+                        };
+                        team.find(task).unwrap().1.current_run().is_some()
+                    })
+            })
+        })
+        .await;
+    let team = state.team(&team_id).unwrap();
+    let ledger = team.items()[0].findings().unwrap();
+    for opinion in ledger.opinions().values() {
+        let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+            panic!("unassigned");
+        };
+        let run = team.find(task).unwrap().1.current_run().unwrap();
+        let config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(rig.home.run_dir(task, run.id()).join("mcp.json")).unwrap()).unwrap();
+        assert_eq!(config["mcpServers"].get("agentbus"), None);
+    }
+    assert_eq!(rig.github.reviews(1).len(), 2);
+    assert!(matches!(team.items()[0].phase(), ItemPhase::Fixing { .. }));
+    assert_ne!(
+        ledger.opinions().values().next().unwrap().request.head,
+        ledger.verification().unwrap().reviewed_head.clone().unwrap()
+    );
+    rig.stop().await.unwrap();
+    assert_eq!(rig.github.reviews(1).len(), 2);
+}
