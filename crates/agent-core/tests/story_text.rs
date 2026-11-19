@@ -555,4 +555,28 @@ mod story_text {
         );
         assert_eq!(text.matches("capture_head: second run failed").count(), 1, "{text}");
     }
+
+    #[test]
+    fn reviewer_selection_is_described_without_claiming_a_random_draw() {
+        for omit_candidates in [false, true] {
+            let mut records = solo();
+            if omit_candidates {
+                for record in &mut records {
+                    if let agent_core::history::Record::Event(event) = &mut record.record
+                        && let HistoryEvent::ReviewAsked { among, .. } = &mut event.event
+                    {
+                        among.clear();
+                    }
+                }
+            }
+            let text = story(&records, PREVIEW);
+            let line = text.lines().find(|line| line.starts_with("3. inv-c — reviewer"));
+            let expected = if omit_candidates {
+                "3. inv-c — reviewer — selected"
+            } else {
+                "3. inv-c — reviewer — selected among inv-c, inv-d"
+            };
+            assert_eq!(line, Some(expected));
+        }
+    }
 }
