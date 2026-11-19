@@ -847,3 +847,54 @@ async fn restart_replaces_opinions_whose_worktrees_have_gone() {
     .await;
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn replacement_history_keeps_each_failed_investigator_and_its_reason() {
+    use agent_core::history::HistoryEvent;
+    use agent_runtime::history::Reader;
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-failure:FAILED"),
+            investigator("inv-r2", "opinion-failure:FAILED"),
+            investigator("inv-r3", "opinion-failure:FAILED"),
+            investigator("inv-r4", "opinion-failure:FAILED"),
+            investigator("inv-r5", "opinion-failure:FAILED"),
+            investigator("inv-r6", "opinion-failure:FAILED"),
+            investigator("inv-r7", "opinion-failure:FAILED"),
+            investigator("inv-r8", "opinion-failure:FAILED"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+        .await;
+    rig.wait_for("both exhausted notices", || {
+        rig.notifications()
+            .iter()
+            .filter(|n| n.contains("Second opinion needs attention"))
+            .count()
+            == 2
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let events = opinion_events(&reader, &team);
+    let ledger = state.team(&team).unwrap().items()[0].findings().unwrap();
+    for number in ledger.opinions().keys() {
+        for attempt in ledger.opinion_attempts(*number) {
+            assert!(
+                events.iter().any(
+                    |event| matches!(&event.event, HistoryEvent::SecondOpinionAsked { number: found, why, .. }
+                if found == number && why.contains(attempt.investigator.as_str()) && why.contains("run failed"))
+                ),
+                "missing failure of {:?}: {events:?}",
+                attempt.investigator
+            );
+        }
+    }
+}
