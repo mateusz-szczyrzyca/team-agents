@@ -167,7 +167,7 @@ impl Findings {
         let blocking: Vec<_> = self
             .entries
             .iter()
-            .filter(|e| e.status == FindingStatus::Open && e.finding.severity.blocks())
+            .filter(|e| e.status == FindingStatus::Open)
             .map(|e| {
                 (
                     e.number,

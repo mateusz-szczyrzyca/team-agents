@@ -163,6 +163,9 @@ pub(crate) fn parse_lead_located(
                 .and_then(|value| value.split_once(':'))
                 .and_then(|(number, value)| {
                     let finding = open.iter().find(|entry| entry.number.to_string() == number.trim())?;
+                    if finding.severity == Severity::Minor {
+                        return None;
+                    }
                     let reason = value.trim().strip_prefix("SECOND OPINION —")?;
                     Some((finding.number, reason.trim()))
                 })
@@ -186,7 +189,6 @@ pub(crate) fn parse_lead_located(
     }
     let legacy: Vec<_> = open
         .iter()
-        .filter(|entry| entry.severity.blocks())
         .map(|entry| (entry.number, entry.severity, entry.explained))
         .collect();
     super::parse_lead(&normalized, &legacy)?
