@@ -437,8 +437,7 @@ fn merging(mut commit: CommitFacts, against_each: Vec<Vec<FileChange>>) -> Commi
     commit
 }
 
-// Rule: a merge takes lines out of a test of a `RED:` commit when, against a parent that has the `RED:` commit, its file
-// lost lines — a resolution that drops what the `RED:` commit added, on either side of the merge.
+// Rule: a merge is judged against its first parent, on paths changed by the round.
 #[test]
 fn a_merge_that_takes_lines_out_of_a_red_test_against_a_parent_that_has_it_is_an_issue() {
     for (red_side, parents) in [("the first parent", "12"), ("the second parent", "21")] {
@@ -449,19 +448,24 @@ fn a_merge_that_takes_lines_out_of_a_red_test_against_a_parent_that_has_it_is_an
         } else {
             vec![against_other, against_red]
         };
-        let facts = history(vec![
+        let mut facts = history(vec![
             commit('1', "", "RED: test a", vec![added("tests/a.rs", 10)]),
             commit('2', "", "Member work", vec![added("src/b.rs", 5)]),
             merging(commit('3', parents, "Merge", vec![]), against_each),
         ]);
+        facts.files = vec![added("tests/a.rs", 9)];
 
         assert_eq!(
             found(&facts),
-            [Issue::RedTestEdited {
-                path: path("tests/a.rs"),
-                red: id('1'),
-                edit: id('3')
-            }],
+            if parents == "12" {
+                vec![Issue::RedTestEdited {
+                    path: path("tests/a.rs"),
+                    red: id('1'),
+                    edit: id('3'),
+                }]
+            } else {
+                vec![]
+            },
             "the RED commit on {red_side}"
         );
     }
