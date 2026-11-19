@@ -372,6 +372,9 @@ impl TaskList {
         match Self::parse(text) {
             Ok(list) => !list.allowances.is_empty(),
             Err(TaskListError::InvalidAllowance { .. }) => true,
+            // Nothing is left of the list once its `Allow:` lines are permissions: it is made of them if reading them
+            // as brief gives a list.
+            Err(TaskListError::Empty) => Self::parse_with(text, AllowLines::Brief).is_ok(),
             Err(_) => false,
         }
     }
