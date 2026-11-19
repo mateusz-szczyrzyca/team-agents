@@ -1168,3 +1168,28 @@ async fn refusing_a_protected_path_sends_it_back_until_the_team_restores_it() {
     );
     assert_eq!(record(&rig, &tasks[0]).await.allowed_of(&["1.1".parse().unwrap()]), []);
 }
+
+#[tokio::test]
+async fn task_allowances_reach_review_without_questions_and_survive_daemon_restart() {
+    let mut rig = checking_rig("script:edit-test,questions", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+    let list = format!("Allow: tests/existing.txt\nAllow: ci/gate.sh\n{ONE}");
+    let (team, tasks) = rig.run(&["claude-1"], &list, MergeMode::Autopilot, None).await;
+    let questions = rig.home.questions_file(&tasks[0], NonZeroU32::MIN);
+    rig.wait_for("review or checks question", || {
+        questions.exists() || matches!(phase(&rig), ItemPhase::InReview { .. })
+    })
+    .await;
+    assert!(
+        !questions.exists(),
+        "task-covered tests should reach review without a question"
+    );
+    reviews_asked(&rig).await;
+    let expected = rig.state().team(&team).unwrap().allowances().to_vec();
+    rig.stop().await.unwrap();
+    rig.start().await;
+    assert_eq!(rig.state().team(&team).unwrap().allowances(), expected);
+    assert_eq!(record(&rig, &tasks[0]).await.allowed_of(&["1.1".parse().unwrap()]), []);
+    rig.stop().await.unwrap();
+}
