@@ -301,11 +301,17 @@ pub struct Disk {
     pub min_free_gb: u64,
 }
 
+/// Default free space threshold in gigabytes for low-space warnings and reviewer target cleanup.
+const DEFAULT_LOW_FREE_GB: u64 = 100;
+
+/// Default free space threshold in gigabytes for refusing new runs.
+const DEFAULT_MIN_FREE_GB: u64 = 20;
+
 impl Default for Disk {
     fn default() -> Self {
         Self {
-            low_free_gb: 0,
-            min_free_gb: 0,
+            low_free_gb: DEFAULT_LOW_FREE_GB,
+            min_free_gb: DEFAULT_MIN_FREE_GB,
         }
     }
 }
