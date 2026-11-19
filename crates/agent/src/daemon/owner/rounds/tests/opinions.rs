@@ -108,6 +108,10 @@ async fn unanswered_opinions_notify_once_and_keep_waiting_across_restart() {
                 investigator("inv-r2", probe),
                 investigator("inv-r3", probe),
                 investigator("inv-r4", probe),
+                investigator("inv-r5", probe),
+                investigator("inv-r6", probe),
+                investigator("inv-r7", probe),
+                investigator("inv-r8", probe),
             ],
             1,
             false,
@@ -149,6 +153,14 @@ async fn unanswered_opinions_notify_once_and_keep_waiting_across_restart() {
             .await;
         }
         rig.stop().await.unwrap();
+        if probe.ends_with("HOLD") {
+            let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+            std::fs::write(
+                rig.home.config_file(),
+                config.replace("opinion-failure:HOLD", "opinion-failure:FAILED"),
+            )
+            .unwrap();
+        }
         rig.start().await;
         rig.wait_for("restart notices", || {
             rig.notifications()
@@ -171,6 +183,17 @@ async fn unanswered_opinions_notify_once_and_keep_waiting_across_restart() {
         );
         assert!(matches!(item.phase(), ItemPhase::Fixing { .. }));
         for (number, opinion) in item.findings().unwrap().opinions() {
+            let attempts = item.findings().unwrap().opinion_attempts(*number);
+            assert_eq!(attempts.len(), 3);
+            assert!(attempts.iter().all(|attempt| attempt.failure.is_some()));
+            let notice = rig
+                .notifications()
+                .into_iter()
+                .find(|n| n.contains("Second opinion needs attention") && n.contains(&format!("FINDING {number}")))
+                .unwrap();
+            for attempt in attempts {
+                assert!(notice.contains(attempt.investigator.as_str()), "{notice}");
+            }
             let OpinionStage::Assigned { task, .. } = &opinion.stage else {
                 panic!("must remain pending")
             };
