@@ -298,6 +298,10 @@ const fn is_pull_request(event: &HistoryEvent) -> bool {
             | HistoryEvent::PullReady { .. }
             | HistoryEvent::ReviewAsked { .. }
             | HistoryEvent::ReviewSubmitted { .. }
+            | HistoryEvent::FindingExplained { .. }
+            | HistoryEvent::FindingAccepted { .. }
+            | HistoryEvent::FindingRejected { .. }
+            | HistoryEvent::FindingRaised { .. }
             | HistoryEvent::FixPassStarted { .. }
             | HistoryEvent::PullApproved { .. }
             | HistoryEvent::PullMerged { .. }
@@ -771,6 +775,10 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         | HistoryEvent::PullReady { .. }
         | HistoryEvent::ReviewAsked { .. }
         | HistoryEvent::ReviewSubmitted { .. }
+        | HistoryEvent::FindingExplained { .. }
+        | HistoryEvent::FindingAccepted { .. }
+        | HistoryEvent::FindingRejected { .. }
+        | HistoryEvent::FindingRaised { .. }
         | HistoryEvent::FixPassStarted { .. }
         | HistoryEvent::PullApproved { .. }
         | HistoryEvent::PullMerged { .. }
@@ -813,10 +821,7 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             title,
             body,
         } => {
-            let (b, h) = (branch.as_str(), short(head));
-            entry(page, at, &format!("pull request #{number} opened: branch {b} at {h}"));
-            page.line(2, &format!("title: {title}"));
-            page.raw(2, "pull request body", body);
+            opened_pull(page, at, *number, (branch, head), (title, body));
         }
         HistoryEvent::PullPushed { pr, head } => {
             entry(page, at, &format!("pull request #{pr}: pushed {}", short(head)));
@@ -849,6 +854,36 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             entry(page, at, &format!("review pass {p} of #{pr} by {r}: {verdict}"));
             page.raw(2, "review report", report);
         }
+        HistoryEvent::FindingExplained {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingAccepted {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingRejected {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingRaised {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        } => {
+            finding_evidence(page, at, event.kind(), (*pr, *number, *pass, by), why);
+        }
         HistoryEvent::FixPassStarted { pr, pass, of, findings } => {
             entry(page, at, &format!("fix pass {pass} of {of} on #{pr} started"));
             page.raw(2, "findings sent to the team", findings);
@@ -876,6 +911,36 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
         | HistoryEvent::Lost { .. }
         | HistoryEvent::TeamEnded {} => {}
     }
+}
+
+/// The opening of a pull request and its original description.
+fn opened_pull(
+    page: &mut Page,
+    at: Timestamp,
+    number: crate::state::PrNumber,
+    (branch, head): (&crate::ids::BranchName, &CommitId),
+    (title, body): (&str, &str),
+) {
+    let (b, h) = (branch.as_str(), short(head));
+    entry(page, at, &format!("pull request #{number} opened: branch {b} at {h}"));
+    page.line(2, &format!("title: {title}"));
+    page.raw(2, "pull request body", body);
+}
+
+/// A finding decision with its reviewer and retained evidence.
+fn finding_evidence(
+    page: &mut Page,
+    at: Timestamp,
+    kind: crate::history::EventKind,
+    (pr, number, pass, by): (crate::state::PrNumber, std::num::NonZeroU32, u32, &AgentName),
+    why: &str,
+) {
+    entry(
+        page,
+        at,
+        &format!("{kind}: pull request #{pr} finding {number}, pass {pass}, by {by}"),
+    );
+    page.raw(2, "evidence", why);
 }
 
 /// What followed the checks, in words.

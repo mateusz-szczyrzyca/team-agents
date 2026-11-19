@@ -369,7 +369,7 @@ async fn a_coordinator_a_member_and_a_worker_on_a_two_item_list_open_and_close_t
 async fn a_fix_pass_stays_in_its_round() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],

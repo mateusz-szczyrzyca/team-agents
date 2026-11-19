@@ -99,7 +99,7 @@ impl Owner {
                     .items
                     .first()
                     .and_then(|id| self.parts.state.team(&located.team)?.item(*id)?.findings())
-                    && let Err(problem) = agent_core::review_findings::parse_report(message, verdict, &ledger.open())
+                    && let Err(problem) = ledger.parse_report(message, verdict)
                 {
                     return self
                         .send_back(&pulls, task, located, &asked, &VerdictProblem::Findings(problem))
@@ -164,6 +164,47 @@ impl Owner {
         Ok(())
     }
 
+    /// Retains verifier votes and severity changes in round history.
+    fn record_finding_decisions(
+        &mut self,
+        team_id: &TeamId,
+        asked: &Asked,
+        decisions: Vec<(std::num::NonZeroU32, agent_core::review_findings::Answer)>,
+        now: Timestamp,
+    ) -> Result<(), OwnerError> {
+        let passes = count(asked.passes);
+        let by: AgentName = asked.reviewer.as_str().parse()?;
+        for (number, answer) in decisions {
+            use agent_core::review_findings::Answer;
+            let event = match answer {
+                Answer::Accepted { why } => HistoryEvent::FindingAccepted {
+                    pr: asked.pr.number,
+                    number,
+                    pass: passes,
+                    by: by.clone(),
+                    why,
+                },
+                Answer::Rejected { why } => HistoryEvent::FindingRejected {
+                    pr: asked.pr.number,
+                    number,
+                    pass: passes,
+                    by: by.clone(),
+                    why,
+                },
+                Answer::Raised { severity, why } => HistoryEvent::FindingRaised {
+                    pr: asked.pr.number,
+                    number,
+                    pass: passes,
+                    by: by.clone(),
+                    why: format!("[{}] {why}", severity.word()),
+                },
+                Answer::Resolved | Answer::Open { .. } => continue,
+            };
+            self.record_event_at(now, team_id, self.rounds_of_items(team_id, &asked.items), event);
+        }
+        Ok(())
+    }
+
     /// Records the verdict `verdict` of the reviewer `task`, keeps and posts its report, and does what the round does next.
     pub(super) async fn take_verdict(
         &mut self,
@@ -199,6 +240,15 @@ impl Owner {
         let next = self.decide(team_id, asked, verdict);
         let mut look = Look::default();
         self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
+        let decisions = asked
+            .items
+            .first()
+            .and_then(|id| self.parts.state.team(team_id)?.item(*id)?.findings())
+            .filter(|ledger| ledger.disputes().is_some())
+            .map(|ledger| ledger.parse_report(message, verdict))
+            .transpose()?
+            .map_or_else(Vec::new, |report| report.answers);
+        self.record_finding_decisions(team_id, asked, decisions, now)?;
         let completed = self.record_findings(team_id, task, asked, verdict, message)?;
         // Only a pull request that is verified by rotation keeps the reviewed head, so the protocols that started
         // earlier never run the Git lookup.
@@ -226,8 +276,11 @@ impl Owner {
                     team: team_id.clone(),
                     item: *id,
                 })?;
-                if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
-                    context.reviewed_head = Some(head.clone());
+                if let Some(ledger) = item.findings_mut() {
+                    ledger.accepted_at(&head);
+                    if let Some(context) = ledger.verification_mut() {
+                        context.reviewed_head = Some(head.clone());
+                    }
                 }
             }
         }
@@ -342,7 +395,7 @@ impl Owner {
             let Some(ledger) = item.findings_mut() else {
                 continue;
             };
-            let report = agent_core::review_findings::parse_report(message, verdict, &ledger.open())?;
+            let report = ledger.parse_report(message, verdict)?;
             ledger.record(task.clone(), report);
             if reviews
                 .iter()

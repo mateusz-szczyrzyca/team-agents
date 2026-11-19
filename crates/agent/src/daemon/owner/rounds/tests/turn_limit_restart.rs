@@ -226,3 +226,159 @@ async fn turn_limit_without_a_session_fails_with_its_own_notice() {
     assert!(rendered.body().contains("no session ID to resume"));
     assert!(!rendered.body().contains("consecutive turn-limit endings"));
 }
+
+#[tokio::test]
+async fn one_explanation_event_links_every_item_round_of_the_pull_request() {
+    use crate::daemon::owner::rounds::Pulls;
+    use crate::daemon::owner::teams::Look;
+    use agent_core::history::{HistoryEvent, Record};
+    use agent_core::state::State;
+    use agent_runtime::autopilot_prompts::AutopilotPrompts;
+    use agent_runtime::checks_prompts::ChecksPrompts;
+
+    let mut rig = Rig::new(&[
+        normal("claude-1", "work,sleep"),
+        investigator("inv-r1", "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 work-1.txt:1 — units → document units\\n   CHECK: read work-1.txt"),
+        investigator("inv-r2", "done:VERDICT: APPROVE"),
+    ], 5, false).await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["claude-1"], super::rig::PARALLEL, MergeMode::Autopilot, None)
+        .await;
+    rig.prompt(&tasks[0], 2).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.stop().await.unwrap();
+    // Reproduce two items sharing a PR, as the coordinator's integration can produce.
+    let mut saved: serde_json::Value = serde_json::from_str(&rig.state().to_json().unwrap()).unwrap();
+    let found = &mut saved["teams"][0];
+    let mut joined = found["items"][0].clone();
+    joined["id"] = "2.1".into();
+    found["items"][1] = joined;
+    let second = found["rounds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|round| round["item"] == "2.1")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let member = &mut found["crew"]["member"];
+    member["status"] = "done".into();
+    member["runs"].as_array_mut().unwrap().last_mut().unwrap()["state"]["end"] =
+        serde_json::json!({"kind": "reported", "outcome": "DONE"});
+    let run = member["runs"].as_array_mut().unwrap().last_mut().unwrap();
+    run["started_at"] = run["state"]["at"].clone();
+    for item in found["items"].as_array_mut().unwrap() {
+        item["findings"]["verification"]["lead_message"] =
+            "FINDING 1: EXPLAINED — the units are explicit\nSTATUS: DONE".into();
+    }
+    let state = State::from_json(&saved.to_string()).unwrap();
+    let mut step = stepped(&rig).await;
+    step.owner.parts.state = state;
+    step.owner.record_round(&team, &second);
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+    let language = step.owner.parts.settings.config.language();
+    let pulls = Pulls::new(
+        Arc::new(AutopilotPrompts::load(&root, language).await.unwrap()),
+        Arc::new(ChecksPrompts::load(&root, language).await.unwrap()),
+        &step.owner.parts.settings,
+    )
+    .unwrap()
+    .unwrap();
+    step.owner
+        .check_fix_responses(&pulls, &team, &mut Look::default())
+        .unwrap();
+    let rounds = step
+        .owner
+        .rounds_of_items(&team, &["1.1".parse().unwrap(), "2.1".parse().unwrap()]);
+    drop(step.owner);
+    crate::daemon::history::close(step.writer).await;
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    for round in &rounds {
+        let explained: Vec<_> = reader
+            .round_records(round)
+            .unwrap()
+            .into_iter()
+            .filter_map(|row| match row.record {
+                Record::Event(event) if matches!(event.event, HistoryEvent::FindingExplained { .. }) => Some(event),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(explained.len(), 1, "round {round}");
+        assert_eq!(explained[0].rounds, rounds);
+    }
+}
+
+#[tokio::test]
+async fn verification_refreshes_accepted_explanations_from_the_actual_git_changes() {
+    use super::rig::{ONE, git};
+    use crate::daemon::owner::teams::Look;
+    use agent_core::review_findings::Severity;
+    use agent_core::state::{ItemPhase, State};
+    use agent_core::status::ReviewVerdict;
+
+    for (file, may_raise) in [("work-1.txt", true), ("unrelated.txt", false)] {
+        let mut rig = Rig::new(&[
+            normal("claude-1", "work,done:FINDING 1: EXPLAINED — units are explicit"),
+            investigator("inv-r1", "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 work-1.txt:1 — units → document units\\n   CHECK: read work-1.txt,done:VERDICT: APPROVE\\nFINDING 1: ACCEPTED — explicit units"),
+            investigator("inv-r2", "done:VERDICT: APPROVE,done:VERDICT: APPROVE\\nFINDING 1: ACCEPTED — explicit units"),
+        ], 5, false).await;
+        rig.start().await;
+        let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+        rig.item_where("1.1", "accepted explanation", |phase| {
+            matches!(phase, ItemPhase::Approved { .. })
+        })
+        .await;
+        rig.stop().await.unwrap();
+        let state = rig.state();
+        let item = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap();
+        let ItemPhase::Approved { pr, .. } = item.phase() else {
+            panic!("approved PR")
+        };
+        let pr = serde_json::to_value(pr).unwrap();
+        let ledger = item.findings().unwrap();
+        assert_eq!(ledger.entries()[0].finding.severity, Severity::Minor);
+        assert_eq!(ledger.disputes().unwrap().accepted_heads.len(), 1);
+        let worktree = rig.worktree(&tasks[0]);
+        std::fs::write(worktree.join(file), "changed unit contract\n").unwrap();
+        git(&worktree, &["add", file]);
+        git(&worktree, &["commit", "-m", "Update the next verification input"]);
+        let head = git(&worktree, &["rev-parse", "HEAD"]);
+        // Resume at the scheduling boundary after a later fix: the new head still needs verification.
+        let mut saved: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
+        saved["teams"][0]["items"][0]["phase"] = serde_json::json!({"phase":"in_review", "pr":pr, "reviews":[]});
+        saved["teams"][0]["rounds"][0]["state"] = serde_json::json!({"status":"open"});
+        let mut step = stepped(&rig).await;
+        step.owner.parts.state = State::from_json(&saved.to_string()).unwrap();
+        let mut look = Look::default();
+        step.owner.ask_for_reviews(&team, &mut look).await.unwrap();
+        assert!(look.changed, "verification must be scheduled");
+        let item = step
+            .owner
+            .parts
+            .state
+            .team(&team)
+            .unwrap()
+            .item("1.1".parse().unwrap())
+            .unwrap();
+        let ledger = item.findings().unwrap();
+        let ItemPhase::InReview { reviews, .. } = item.phase() else {
+            panic!("verification")
+        };
+        assert_eq!(reviews.len(), 2);
+        assert_eq!(ledger.entries()[0].finding.severity, Severity::Minor);
+        let raised = ledger.parse_report(
+            "FINDING 1: RAISED [MAJOR] — changed unit contract",
+            ReviewVerdict::RequestChanges,
+        );
+        match (may_raise, raised) {
+            (true, Ok(report)) => assert_eq!(report.answers.len(), 1),
+            (false, Err(error)) => assert_eq!(error.line, 1),
+            (expected, outcome) => panic!("{file}: may_raise={expected}, got {outcome:?} at {head}"),
+        }
+        drop(step.owner);
+        crate::daemon::history::close(step.writer).await;
+    }
+}

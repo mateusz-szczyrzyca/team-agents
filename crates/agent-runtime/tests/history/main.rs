@@ -49,3 +49,6 @@ mod activity;
 
 #[cfg(test)]
 mod turn_limit;
+
+#[cfg(test)]
+mod disputes;

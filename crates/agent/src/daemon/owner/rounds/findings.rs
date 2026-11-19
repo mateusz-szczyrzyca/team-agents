@@ -49,9 +49,57 @@ fn selected_text(
                 .with("text", &entry.finding.text)?
                 .with("check", &entry.finding.check)?;
             lines.push(texts.render(AutopilotPrompt::ReviewOpenFinding, &values)?);
+            let explanation = explanation_text(texts, ledger, entry.number)?;
+            if !explanation.is_empty() {
+                lines.push(explanation);
+            }
         }
     }
     Ok(lines.join("\n"))
+}
+
+/// The retained explanation and each verifier's evidence, rendered from catalog texts.
+fn explanation_text(
+    texts: &AutopilotPrompts,
+    ledger: &Findings,
+    number: std::num::NonZeroU32,
+) -> Result<String, TextError> {
+    use agent_core::review_findings::Answer;
+    use agent_core::state::ExplanationStatus;
+    let Some(explanation) = ledger.disputes().and_then(|d| d.explanations.get(&number)) else {
+        return Ok(String::new());
+    };
+    let status = match explanation.status {
+        ExplanationStatus::Pending => "pending",
+        ExplanationStatus::Accepted => "accepted",
+        ExplanationStatus::Rejected => "rejected",
+    };
+    let mut votes = Vec::new();
+    for (reviewer, answer) in &explanation.votes {
+        let (status, why) = match answer {
+            Answer::Accepted { why } => ("ACCEPTED", why.as_str()),
+            Answer::Rejected { why } => ("REJECTED", why.as_str()),
+            Answer::Raised { why, .. } => ("RAISED", why.as_str()),
+            Answer::Open { why } => ("OPEN", why.as_str()),
+            Answer::Resolved => ("RESOLVED", ""),
+        };
+        votes.push(
+            texts.render(
+                AutopilotPrompt::ReviewExplanationVote,
+                &Variables::new()
+                    .with("reviewer", reviewer.as_str())?
+                    .with("status", status)?
+                    .with("why", why)?,
+            )?,
+        );
+    }
+    Ok(texts.render(
+        AutopilotPrompt::ReviewExplanation,
+        &Variables::new()
+            .with("status", status)?
+            .with("why", &explanation.why)?
+            .with("votes", votes.join(""))?,
+    )?)
 }
 
 /// Open blocking findings for a human deciding whether to renew the fix budget.
@@ -89,7 +137,14 @@ fn table(texts: &AutopilotPrompts, ledger: &Findings) -> Result<String, TextErro
             .with("severity", severity.trim())?
             .with("rule", cell(&entry.finding.rule))?
             .with("place", cell(&entry.finding.place))?
-            .with("text", cell(&entry.finding.text))?
+            .with(
+                "text",
+                cell(&format!(
+                    "{} {}",
+                    entry.finding.text,
+                    explanation_text(texts, ledger, entry.number)?
+                )),
+            )?
             .with("status", status)?
             .with("reporter", entry.reporter.as_str())?;
         rows.push(texts.render(AutopilotPrompt::ReviewFindingsRow, &values)?);

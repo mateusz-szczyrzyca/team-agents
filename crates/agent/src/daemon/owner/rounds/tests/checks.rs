@@ -414,7 +414,7 @@ async fn the_same_change_as_a_test_fix_goes_to_review_and_the_harness_lists_it_i
 #[tokio::test]
 async fn the_checks_run_again_on_the_head_of_a_fix_pass_and_a_head_they_hold_back_is_not_pushed() {
     let mut rig = checking_rig(
-        "script:code-and-test,script:edit-test,questions",
+        "script:code-and-test,fix-script:edit-test,questions",
         2,
         CHANGES_ONCE,
         APPROVE,

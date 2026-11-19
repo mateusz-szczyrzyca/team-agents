@@ -77,7 +77,7 @@ so its ledger row starts with `runs.at` and takes `run_ends.at` once the end is 
 | `synchronous` | `NORMAL` | in WAL mode a crash may lose the last commits, never corrupt the file |
 | `foreign_keys` | `ON` (each connection of the writer) | the rows of one record hold together |
 | `busy_timeout` | 5 seconds | a person with `sqlite3` open does not make the writer lose a batch at once |
-| `user_version` | the version of the schema, `7` | forward-only migrations (below) |
+| `user_version` | the version of the schema, `8` | forward-only migrations (below) |
 
 Every ordinary table is `STRICT` (FTS5 manages its virtual and shadow tables): a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
 (a step of the kind `message` has a text and no path), so a row that something else wrote is refused by SQLite or, if
@@ -393,6 +393,7 @@ linked to every round of its team; a team-wide control or loss note when no roun
 | `pull_ready` | the pull request was marked ready | `pr` | `pr N` |
 | `review_asked` | a reviewer was asked | `pr`, `pass` (`0` is the first review), `head`, `reviewer`, `task`, optional `among` (the draw candidates) | `pr N pass P reviewer R` |
 | `review_submitted` | a reviewer submitted | `pr`, `pass`, `reviewer`, `task`, `verdict`, `report` whole | `pr N pass P reviewer R` |
+| `finding_explained`, `finding_accepted`, `finding_rejected`, `finding_raised` | a lead explanation or verifier decision | `pr`, `number`, `pass`, `by`, `why` | finding number, actor and evidence |
 | `fix_pass_started` | the reviews asked for changes | `pr`, `pass` (from 1), `of`, `findings` whole | `pr N fix pass P` |
 | `pull_approved` | both reviews approved | `pr` | `pr N` |
 | `pull_merged` | the pull request was merged | `pr`, `commit` (`null` when the remote did not say) | `pr N` |
@@ -694,3 +695,6 @@ unchanged and have a separate confidentiality contract. Disabling history conseq
 Schema `7` adds `turn_limit` to run endings and run-start reasons through a forward migration. Existing histories
 retain all run IDs, links, records and search entries. The reason has no associated fields; the ending has no
 outcome, exit code or reset timestamp. SQL constraints and the reading API both reject those extra fields.
+
+History schema 8 adds these four finding-decision keywords. Migration 008 rebuilds the record constraint while
+preserving records, linked facts and full-text search. A populated schema-7 fixture verifies that upgrade.

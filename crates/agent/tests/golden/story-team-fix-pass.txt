@@ -30,7 +30,7 @@ Story
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-3>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-3>/claude-settings.json --session-id <uuid> --scenario sleep,lead-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-3>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-3>/claude-settings.json --session-id <uuid> --scenario sleep,lead-gated,fix-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-4>, at commit <commit-1>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -105,7 +105,7 @@ STATUS: DONE
       included.
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-9>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-9>/claude-settings.json --resume <uuid> --scenario sleep,lead-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-9>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-9>/claude-settings.json --resume <uuid> --scenario sleep,lead-gated,fix-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-4>, at commit <commit-1>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -224,7 +224,7 @@ FINDINGS
    CHECK: read src/lib.rs:7
   ----- end of review report -----
 <time>  fix pass 1 of 5 on #1 started
-  ----- findings sent to the team (1027 bytes) -----
+  ----- findings sent to the team (1439 bytes) -----
 # THE REVIEWERS ASKED FOR CHANGES (pull request #1, fix pass 1 of 5)
 
 All reviews of your pull request are in, and at least one asks for changes. The reports, each with its verdict:
@@ -245,7 +245,12 @@ FINDINGS
 VERDICT: APPROVE
 SUMMARY: fine
 
-Fix every open [BLOCKER] and [MAJOR] by its number in the code, on your branch `agents/inv-lead/<task-4>` (switch to it first).
+Switch to your branch `agents/inv-lead/<task-4>`. Fix every [BLOCKER] in code. Fix a [MAJOR] in code or explain its deviation once.
+Before STATUS, answer every open blocking number exactly once:
+`FINDING 3: FIXED` or `FINDING 4: EXPLAINED — why the deviation is right`.
+A finding with any retained explanation cannot be explained again. All verifiers must accept an explanation;
+otherwise fix it in code. Never explain a BLOCKER. SECOND OPINION is unavailable and is refused.
+Correct a rejected message without starting another fix pass.
 These severities block approval; [MINOR] never does. Then get the repository's gate green with `agent gate` and end
 with `STATUS: DONE`.
 
@@ -262,14 +267,15 @@ head, and asks available investigators to verify the fixes, preferring a differe
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-15>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-15>/claude-settings.json --resume <uuid> --scenario sleep,lead-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-15>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-15>/claude-settings.json --resume <uuid> --scenario sleep,lead-gated,fix-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-4>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model
       2. <time> info: result: success
     ended: reported DONE
-    ----- final message (45 bytes) -----
-Led the round, and the gate ran.
+    ----- final message (48 bytes) -----
+Finished the item.
+FINDING 1: FIXED
 STATUS: DONE
     ----- end of final message -----
     changes: head <commit-2> → <commit-3>

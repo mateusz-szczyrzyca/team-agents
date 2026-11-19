@@ -63,6 +63,7 @@ pub mod protocol;
 pub mod questions;
 pub mod repo_path;
 pub mod review_findings;
+pub mod review_response;
 pub mod round_work;
 pub mod state;
 pub mod status;

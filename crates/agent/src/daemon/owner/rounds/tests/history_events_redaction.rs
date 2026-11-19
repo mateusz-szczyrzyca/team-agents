@@ -23,7 +23,7 @@ async fn a_secret_in_a_review_report_is_redacted_in_the_report_and_in_the_findin
     let marker = MARKER;
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", REVIEWER),
             investigator("inv-r2", "verify:VERDICT: APPROVE\\nSUMMARY: fine"),
         ],

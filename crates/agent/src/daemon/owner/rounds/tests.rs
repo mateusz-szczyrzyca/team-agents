@@ -496,7 +496,7 @@ async fn a_team_whose_lead_is_done_and_item_stands_behind_failed_member_tells_hu
 async fn member_nostatus_work_same_session_short_prompt_no_notices_then_pr() {
     let mut rig = Rig::new(
         &[
-            investigator("inv-lead", "sleep,integrate,work"),
+            investigator("inv-lead", "sleep,integrate,fix-work"),
             normal("claude-1", "nostatus,work"),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
@@ -1169,7 +1169,7 @@ const CHANGES: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] T
 async fn a_request_for_changes_sends_the_item_back_to_its_lead_for_a_fix_pass_that_records_the_reviews() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", CHANGES),
             investigator("inv-r2", APPROVING),
         ],
@@ -1218,7 +1218,7 @@ const CHANGES_ONCE: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJ
 async fn fixing_rig(fix_passes: u32) -> Rig {
     Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],
@@ -1258,7 +1258,7 @@ async fn a_request_for_changes_waits_for_the_other_review_and_the_lead_is_given_
     let slow = "late-verify:VERDICT: APPROVE\\nSUMMARY: looks fine to me,verify:VERDICT: APPROVE\\nSUMMARY: fine";
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", slow),
         ],
@@ -1338,7 +1338,7 @@ async fn a_fixed_branch_updates_the_pull_request_and_is_reviewed_again_until_it_
 async fn a_fix_that_is_on_origin_already_is_still_reviewed_again() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,work-pushed"),
+            normal("claude-1", "work,fix-work-pushed"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],
@@ -1365,7 +1365,7 @@ async fn a_fix_pass_whose_gate_has_not_passed_does_not_update_the_pull_request()
     let mut rig = Rig::new(
         &[
             // The second run, the fix pass, commits nothing and records no gate.
-            normal("claude-1", "work,done"),
+            normal("claude-1", "work,fix-done"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],
@@ -1432,7 +1432,7 @@ async fn exhausting_rig(solo: &'static str) -> Rig {
 
 #[tokio::test]
 async fn when_the_fix_passes_are_used_up_the_lead_is_asked_to_put_the_question_to_the_human() {
-    let mut rig = exhausting_rig("work,work,ask").await;
+    let mut rig = exhausting_rig("work,fix-work,ask").await;
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
@@ -1467,7 +1467,7 @@ async fn when_the_fix_passes_are_used_up_the_lead_is_asked_to_put_the_question_t
 
 #[tokio::test]
 async fn the_humans_answer_starts_one_more_fix_pass_with_the_findings_and_the_answer() {
-    let mut rig = exhausting_rig("work,work,ask,work").await;
+    let mut rig = exhausting_rig("work,fix-work,ask,fix-work").await;
     rig.start().await;
 
     let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
@@ -1500,7 +1500,7 @@ async fn the_humans_answer_starts_one_more_fix_pass_with_the_findings_and_the_an
 
 #[tokio::test]
 async fn a_lead_that_ends_without_the_question_leaves_the_human_told_directly_once() {
-    let mut rig = exhausting_rig("work,work,done").await;
+    let mut rig = exhausting_rig("work,fix-work,done").await;
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
@@ -1706,7 +1706,7 @@ async fn a_pull_request_the_human_closed_without_merging_is_told_once_and_the_it
 async fn team_rig(reviewer: &'static str) -> Rig {
     Rig::new(
         &[
-            investigator("inv-lead", "sleep,integrate,work"),
+            investigator("inv-lead", "sleep,integrate,fix-work"),
             normal("claude-1", "work"),
             investigator("inv-r1", reviewer),
             investigator("inv-r2", APPROVING),
@@ -2079,7 +2079,7 @@ async fn a_branch_that_moved_after_the_gate_passed_is_not_published_with_that_ga
     let mut rig = Rig::new(
         &[
             // The second run, the fix pass, commits and records no gate: the record is of the commit before.
-            normal("claude-1", "work,commit"),
+            normal("claude-1", "work,fix-commit"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],
@@ -2344,7 +2344,7 @@ async fn malformed_findings_are_returned_then_numbered_fixed_and_resolved() {
     let peer = "done:VERDICT: APPROVE,done:VERDICT: APPROVE\\nFINDING 1: RESOLVED";
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", bad_then_major),
             investigator("inv-r2", peer),
         ],
@@ -2554,7 +2554,7 @@ async fn independent_three_review_pass_holds_reports_and_has_no_bus() {
 async fn later_pass_reviewers_keep_the_bus_and_publish_without_waiting_for_peers() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", "held-review"),
             investigator("inv-r2", "held-review"),
         ],
@@ -2617,7 +2617,7 @@ async fn later_pass_reviewers_keep_the_bus_and_publish_without_waiting_for_peers
 async fn the_humans_answer_renews_the_entire_configured_fix_budget() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,work,work,ask,work,work,ask"),
+            normal("claude-1", "work,fix-work,fix-work,ask,fix-work,fix-work,ask"),
             investigator("inv-r1", CHANGES),
             investigator("inv-r2", APPROVING),
         ],
@@ -2701,4 +2701,131 @@ async fn a_zero_fix_allowance_does_not_restart_the_lead_again_after_its_answer_w
     let team = state.team(&team).unwrap();
     let lead = team.find(&tasks[0]).unwrap().1;
     assert_eq!(lead.runs().len(), 3);
+}
+
+#[tokio::test]
+async fn a_major_explanation_is_verified_and_merges_without_another_code_commit() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,done:FINDING 1: EXPLAINED — units are explicit"),
+            investigator("inv-r1", "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 work-1.txt:1 — units unclear → document units\\n   CHECK: read work-1.txt,done:VERDICT: APPROVE\\nFINDING 1: ACCEPTED — explicit contract"),
+            investigator("inv-r2", "done:VERDICT: APPROVE,done:VERDICT: APPROVE\\nFINDING 1: ACCEPTED — explicit contract"),
+        ], 5, false,
+    ).await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.prompt(&tasks[0], 2).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let recorded = rig
+        .state()
+        .team(&team)
+        .unwrap()
+        .item("1.1".parse().unwrap())
+        .unwrap()
+        .findings()
+        .unwrap()
+        .disputes()
+        .unwrap()
+        .explanations
+        .len();
+    assert_eq!(recorded, 1);
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let ledger = state
+        .team(&team)
+        .unwrap()
+        .item("1.1".parse().unwrap())
+        .unwrap()
+        .findings()
+        .unwrap();
+    assert_eq!(
+        ledger.entries()[0].finding.severity,
+        agent_core::review_findings::Severity::Minor
+    );
+    assert_eq!(
+        ledger
+            .disputes()
+            .unwrap()
+            .explanations
+            .values()
+            .next()
+            .unwrap()
+            .votes
+            .len(),
+        2
+    );
+    assert_eq!(rig.github.reviews(1).len(), 4);
+}
+
+#[tokio::test]
+async fn rejected_explanation_is_not_retried_and_fix_response_correction_does_not_add_a_pass() {
+    use agent_core::history::{HistoryEvent, Record};
+    use agent_runtime::history::Reader;
+    let mut rig = Rig::new(&[
+        normal("claude-1", "work,done:FINDING 1: EXPLAINED — explicit units,done:FINDING 1: EXPLAINED — try again,fix-work:1"),
+        investigator("inv-r1", "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 work-1.txt:1 — units → newtype\\n   CHECK: read signature,done:VERDICT: REQUEST_CHANGES\\nFINDING 1: REJECTED — parameters can be swapped,done:VERDICT: APPROVE\\nFINDING 1: RESOLVED"),
+        investigator("inv-r2", "done:VERDICT: APPROVE,done:VERDICT: APPROVE\\nFINDING 1: ACCEPTED — clear names,done:VERDICT: APPROVE\\nFINDING 1: RESOLVED"),
+    ], 5, false).await;
+    rig.start().await;
+    let (team_id, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let team = state.team(&team_id).unwrap();
+    let item = team.item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(item.fix_passes().len(), 2);
+    assert_eq!(team.find(&tasks[0]).unwrap().1.runs().len(), 4);
+    assert!(
+        rig.kept_prompt(&tasks[0], 4)
+            .contains("FIXED (explanation and second opinion are forbidden)")
+    );
+    assert!(rig.kept_prompt(&tasks[0], 3).contains("parameters can be swapped"));
+    let records = Reader::open(&rig.home.history_file())
+        .unwrap()
+        .team_records(&team_id)
+        .unwrap();
+    let decisions: Vec<_> = records
+        .into_iter()
+        .filter_map(|r| match r.record {
+            Record::Event(e) => match e.event {
+                HistoryEvent::FindingExplained { .. } => Some("explained"),
+                HistoryEvent::FindingAccepted { .. } => Some("accepted"),
+                HistoryEvent::FindingRejected { .. } => Some("rejected"),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    let mut decisions = decisions;
+    decisions.sort_unstable();
+    assert_eq!(decisions, ["accepted", "explained", "rejected"]);
+}
+
+#[tokio::test]
+async fn third_invalid_fix_response_notifies_human_and_holds_publication() {
+    let mut rig = Rig::new(&[
+        normal("claude-1", "work,done,done,done,sleep"),
+        investigator("inv-r1", "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 work-1.txt:1 — units unclear → name units\\n   CHECK: read work-1.txt"),
+        investigator("inv-r2", "done:VERDICT: APPROVE"),
+    ], 5, false).await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.wait_for("third correction decision", || {
+        !rig.notifications().is_empty() || rig.runs(&tasks[0]) >= 5
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let found = state.team(&team).unwrap();
+    assert_eq!(found.find(&tasks[0]).unwrap().1.runs().len(), 4);
+    let item = found.item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(item.findings().unwrap().disputes().unwrap().bounces, 3);
+    assert_eq!(item.fix_passes().len(), 1);
+    assert!(matches!(item.phase(), ItemPhase::Fixing { .. }));
+    assert_eq!(rig.github.reviews(1).len(), 2);
+    assert_eq!(rig.notifications().len(), 1);
+    assert!(rig.notifications()[0].contains("\nStatus: 📕 not published\n"));
 }

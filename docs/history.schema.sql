@@ -1,4 +1,4 @@
-PRAGMA user_version = 7;
+PRAGMA user_version = 8;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -132,29 +132,6 @@ CREATE TABLE run_sessions (
     PRIMARY KEY (run, n)
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE history_records (
-    sequence INTEGER PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN (
-        'team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session',
-        'gate', 'checked', 'pull_opened', 'pull_pushed', 'pull_ready', 'review_asked', 'review_submitted',
-        'fix_pass_started', 'pull_approved', 'pull_merged', 'pull_handed_over', 'pull_closed', 'question_asked',
-        'question_answered', 'controlled', 'notified', 'round_closed', 'team_ended', 'lost'
-    )),
-    key TEXT,
-    at TEXT NOT NULL,
-    team TEXT NOT NULL,
-    payload TEXT,
-    cut TEXT NOT NULL,
-    CHECK ((kind IN ('team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session')) = (payload IS NULL)),
-    CHECK (payload IS NULL OR (json_valid(payload) AND json_type(payload) = 'object' AND json_extract(payload, '$.event') = kind)),
-    CHECK (payload IS NOT NULL OR cut = ''),
-    CHECK (key IS NOT NULL OR payload IS NOT NULL)
-) STRICT;
-
-CREATE UNIQUE INDEX history_records_by_key ON history_records (kind, team, key) WHERE key IS NOT NULL;
-
-CREATE INDEX history_records_by_team ON history_records (team, sequence);
-
 CREATE TABLE history_record_rounds (
     sequence INTEGER NOT NULL REFERENCES history_records (sequence),
     position INTEGER NOT NULL CHECK (position >= 1),
@@ -244,41 +221,6 @@ CREATE TABLE 'history_search_docsize'(id INTEGER PRIMARY KEY, sz BLOB);
 
 CREATE TABLE 'history_search_config'(k PRIMARY KEY, v) WITHOUT ROWID;
 
-CREATE TRIGGER history_search_insert AFTER INSERT ON history_records BEGIN
- INSERT INTO history_search(rowid,sequence,run,task,body) SELECT h.sequence,h.sequence,
-CASE WHEN h.kind IN ('run','launch','run_end','changes') THEN h.key
-     WHEN h.kind IN ('step','session') THEN substr(h.key,1,instr(h.key,'/')-1) END AS run,
-json_extract(h.payload,'$.task') AS task,
-coalesce(h.key,'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_tree(h.payload) WHERE type='text'),'') || ' ' || coalesce(CASE h.kind
- WHEN 'run' THEN (SELECT prompt FROM runs WHERE run=h.key)
- WHEN 'step' THEN (SELECT coalesce(text,'') || ' ' || coalesce(detail,'') || ' ' || coalesce(path,'') || ' ' || coalesce(tool,'') || ' ' || coalesce(action,'') || ' ' || coalesce(login,'') FROM steps WHERE run=substr(h.key,1,instr(h.key,'/')-1) AND n=CAST(substr(h.key,instr(h.key,'/')+1) AS INTEGER))
- WHEN 'run_end' THEN (SELECT final_message FROM run_ends WHERE run=h.key)
- WHEN 'team' THEN (SELECT task_list FROM teams WHERE team=h.key)
- WHEN 'round' THEN (SELECT coalesce(brief,'') || ' ' || coalesce(title,'') || ' ' || coalesce(description,'') FROM rounds WHERE round=h.key)
-END,'') AS body
-FROM history_records h WHERE sequence=new.sequence;
-END;
-
-CREATE TRIGGER history_search_delete AFTER DELETE ON history_records BEGIN
- DELETE FROM history_search WHERE rowid=old.sequence;
-END;
-
-CREATE TRIGGER history_search_update AFTER UPDATE ON history_records BEGIN
- DELETE FROM history_search WHERE rowid=old.sequence;
- INSERT INTO history_search(rowid,sequence,run,task,body) SELECT h.sequence,h.sequence,
-CASE WHEN h.kind IN ('run','launch','run_end','changes') THEN h.key
-     WHEN h.kind IN ('step','session') THEN substr(h.key,1,instr(h.key,'/')-1) END AS run,
-json_extract(h.payload,'$.task') AS task,
-coalesce(h.key,'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_tree(h.payload) WHERE type='text'),'') || ' ' || coalesce(CASE h.kind
- WHEN 'run' THEN (SELECT prompt FROM runs WHERE run=h.key)
- WHEN 'step' THEN (SELECT coalesce(text,'') || ' ' || coalesce(detail,'') || ' ' || coalesce(path,'') || ' ' || coalesce(tool,'') || ' ' || coalesce(action,'') || ' ' || coalesce(login,'') FROM steps WHERE run=substr(h.key,1,instr(h.key,'/')-1) AND n=CAST(substr(h.key,instr(h.key,'/')+1) AS INTEGER))
- WHEN 'run_end' THEN (SELECT final_message FROM run_ends WHERE run=h.key)
- WHEN 'team' THEN (SELECT task_list FROM teams WHERE team=h.key)
- WHEN 'round' THEN (SELECT coalesce(brief,'') || ' ' || coalesce(title,'') || ' ' || coalesce(description,'') FROM rounds WHERE round=h.key)
-END,'') AS body
-FROM history_records h WHERE sequence=new.sequence;
-END;
-
 CREATE TRIGGER log_search_insert AFTER INSERT ON daemon_logs BEGIN
  INSERT INTO history_search(rowid,log,body) VALUES(-new.id,new.id,new.message);
 END;
@@ -358,4 +300,63 @@ CREATE INDEX runs_by_team ON runs (team, at);
 CREATE INDEX runs_by_task ON runs (task, at);
 
 CREATE INDEX runs_by_agent ON runs(agent,run);
+
+CREATE TABLE history_records (
+    sequence INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN (
+        'team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session',
+        'gate', 'checked', 'pull_opened', 'pull_pushed', 'pull_ready', 'review_asked', 'review_submitted',
+        'finding_explained', 'finding_accepted', 'finding_rejected', 'finding_raised',
+        'fix_pass_started', 'pull_approved', 'pull_merged', 'pull_handed_over', 'pull_closed', 'question_asked',
+        'question_answered', 'controlled', 'notified', 'round_closed', 'team_ended', 'lost'
+    )),
+    key TEXT,
+    at TEXT NOT NULL,
+    team TEXT NOT NULL,
+    payload TEXT,
+    cut TEXT NOT NULL,
+    CHECK ((kind IN ('team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session')) = (payload IS NULL)),
+    CHECK (payload IS NULL OR (json_valid(payload) AND json_type(payload) = 'object' AND json_extract(payload, '$.event') = kind)),
+    CHECK (payload IS NOT NULL OR cut = ''),
+    CHECK (key IS NOT NULL OR payload IS NOT NULL)
+) STRICT;
+
+CREATE UNIQUE INDEX history_records_by_key ON history_records (kind, team, key) WHERE key IS NOT NULL;
+
+CREATE INDEX history_records_by_team ON history_records (team, sequence);
+
+CREATE TRIGGER history_search_insert AFTER INSERT ON history_records BEGIN
+ INSERT INTO history_search(rowid,sequence,run,task,body) SELECT h.sequence,h.sequence,
+CASE WHEN h.kind IN ('run','launch','run_end','changes') THEN h.key
+     WHEN h.kind IN ('step','session') THEN substr(h.key,1,instr(h.key,'/')-1) END AS run,
+json_extract(h.payload,'$.task') AS task,
+coalesce(h.key,'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_tree(h.payload) WHERE type='text'),'') || ' ' || coalesce(CASE h.kind
+ WHEN 'run' THEN (SELECT prompt FROM runs WHERE run=h.key)
+ WHEN 'step' THEN (SELECT coalesce(text,'') || ' ' || coalesce(detail,'') || ' ' || coalesce(path,'') || ' ' || coalesce(tool,'') || ' ' || coalesce(action,'') || ' ' || coalesce(login,'') FROM steps WHERE run=substr(h.key,1,instr(h.key,'/')-1) AND n=CAST(substr(h.key,instr(h.key,'/')+1) AS INTEGER))
+ WHEN 'run_end' THEN (SELECT final_message FROM run_ends WHERE run=h.key)
+ WHEN 'team' THEN (SELECT task_list FROM teams WHERE team=h.key)
+ WHEN 'round' THEN (SELECT coalesce(brief,'') || ' ' || coalesce(title,'') || ' ' || coalesce(description,'') FROM rounds WHERE round=h.key)
+END,'') AS body
+FROM history_records h WHERE sequence=new.sequence;
+END;
+
+CREATE TRIGGER history_search_delete AFTER DELETE ON history_records BEGIN
+ DELETE FROM history_search WHERE rowid=old.sequence;
+END;
+
+CREATE TRIGGER history_search_update AFTER UPDATE ON history_records BEGIN
+ DELETE FROM history_search WHERE rowid=old.sequence;
+ INSERT INTO history_search(rowid,sequence,run,task,body) SELECT h.sequence,h.sequence,
+CASE WHEN h.kind IN ('run','launch','run_end','changes') THEN h.key
+     WHEN h.kind IN ('step','session') THEN substr(h.key,1,instr(h.key,'/')-1) END AS run,
+json_extract(h.payload,'$.task') AS task,
+coalesce(h.key,'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_tree(h.payload) WHERE type='text'),'') || ' ' || coalesce(CASE h.kind
+ WHEN 'run' THEN (SELECT prompt FROM runs WHERE run=h.key)
+ WHEN 'step' THEN (SELECT coalesce(text,'') || ' ' || coalesce(detail,'') || ' ' || coalesce(path,'') || ' ' || coalesce(tool,'') || ' ' || coalesce(action,'') || ' ' || coalesce(login,'') FROM steps WHERE run=substr(h.key,1,instr(h.key,'/')-1) AND n=CAST(substr(h.key,instr(h.key,'/')+1) AS INTEGER))
+ WHEN 'run_end' THEN (SELECT final_message FROM run_ends WHERE run=h.key)
+ WHEN 'team' THEN (SELECT task_list FROM teams WHERE team=h.key)
+ WHEN 'round' THEN (SELECT coalesce(brief,'') || ' ' || coalesce(title,'') || ' ' || coalesce(description,'') FROM rounds WHERE round=h.key)
+END,'') AS body
+FROM history_records h WHERE sequence=new.sequence;
+END;
 

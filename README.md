@@ -1026,7 +1026,7 @@ A Claude Code run that exhausts its turn budget now resumes in the same session.
 (default `300`) and `turn_limit_resumes` (default `3`); after that many consecutive resumes the task fails and
 notifies you with the count. Any other ending resets the count. `agent log` records `turn_limit` and the reason
 of its continuation. This build uses socket protocol `3` (upgrade clients and daemon together), reads existing
-state schema `2`, and migrates history to schema `7`. See [configuration](docs/configuration.md) and
+state schema `2`, and migrates history to schema `8`. See [configuration](docs/configuration.md) and
 [state compatibility](docs/state.md#turn-limit-compatibility-item-88).
 
 A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt
@@ -1197,7 +1197,20 @@ finding has no or another severity or no check, or whose verdict contradicts its
 all review passes; a reviewer of a later pass answers for every open one (`FINDING 3: RESOLVED` or `FINDING 3: OPEN — why`).
 The harness keeps one comment on the pull request with the table of all findings, edited after every pass, and the fix-pass
 text names the findings that block by number. `agent status <round>` counts the open ones of each severity. Pull requests
-opened before the daemon was updated keep the verdict-only review until they end.
+opened before the relevant protocol update keep their original review rules until they end.
+
+For new pull requests, the lead's fix message answers every open blocking finding before `STATUS:`:
+`FINDING 3: FIXED`, or, once for a MAJOR, `FINDING 3: EXPLAINED — why the deviation is right`.
+A BLOCKER requires a code fix. Missing or forbidden answers receive at most two corrections without consuming
+another fix pass; after that the human is notified and verification stays held. Second opinions are not available.
+Verifiers answer a pending explanation with `FINDING 3: ACCEPTED — why` or `FINDING 3: REJECTED — why`.
+Every verifier must accept before the finding becomes MINOR; one rejection requires a code fix and bars another
+explanation. The table retains the explanation and every verifier's evidence. A verifier may raise severity using
+`FINDING 3: RAISED [MAJOR] — why` (or `[BLOCKER]`), but cannot lower it independently. An accepted explanation
+can be raised again only after its affected file changes from the commit at which it was accepted.
+`agent log --round <round> --show reviews` includes explanations, acceptance, rejection and severity changes.
+State schema 6 migrates schema 5 without adding this protocol to active pull requests; history schema 8 adds
+these events while preserving existing records and search.
 
 Before the review the daemon checks the round's own diff and commits through git, with no model, if the repository has a
 `[repos.NAME.checks]` table in `agents.toml` ([`docs/configuration.md`](docs/configuration.md)): the lists of path patterns that

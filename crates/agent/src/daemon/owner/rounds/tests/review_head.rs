@@ -128,7 +128,7 @@ async fn tree_blobs_is_listed_once_for_many_paths() {
 async fn review_head_and_commit_links_in_reviews_pr_description_and_update_comment() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,work-pushed"),
+            normal("claude-1", "work,fix-work-pushed"),
             investigator("inv-r1", R1_SCENARIO),
             investigator("inv-r2", APPROVING),
         ],
@@ -230,7 +230,7 @@ async fn modeled_reviews_and_late_reviews_link_the_reported_commit_on_each_pass(
     ] {
         let mut rig = Rig::new(
             &[
-                normal("claude-1", "work"),
+                normal("claude-1", "work,fix-work"),
                 investigator("inv-r1", "structured-commit:REQUEST_CHANGES,structured-commit:APPROVE"),
                 investigator("inv-r2", late),
             ],
@@ -292,7 +292,7 @@ Build the thing.
 
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,work-pushed"),
+            normal("claude-1", "work,fix-work-pushed"),
             investigator("inv-r1", R1_SCENARIO_FILES),
             investigator("inv-r2", APPROVING_FILES),
         ],
@@ -440,7 +440,7 @@ async fn description_changing_fix_pass_refreshes_harness_file_links_to_new_head(
     const ITEMS: &str = "Build it.\n\n1. First\n[ ] 1.1 The first item\n    Check README.md:7.\n    Expected result:\n    - it works\n    Checks:\n    - run it\n";
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,script:disclose"),
+            normal("claude-1", "work,fix-script:disclose"),
             investigator("inv-r1", R1_SCENARIO),
             investigator("inv-r2", APPROVING),
         ],

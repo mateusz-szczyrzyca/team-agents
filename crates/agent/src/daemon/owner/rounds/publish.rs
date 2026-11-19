@@ -226,6 +226,22 @@ impl Owner {
         }
         let lead = self.lead_of(team_id)?;
         for publication in plan {
+            if let Publish::Update { fixing, .. } = &publication.publish
+                && fixing.iter().any(|id| {
+                    self.parts
+                        .state
+                        .team(team_id)
+                        .and_then(|t| t.item(*id))
+                        .is_some_and(|item| {
+                            item.findings()
+                                .and_then(|l| l.disputes())
+                                .is_some_and(|d| d.answered_pass != count(item.fix_passes().len()))
+                        })
+                })
+            {
+                continue;
+            }
+
             let now = Timestamp::now(&self.parts.clock)?;
             let key = (team_id.clone(), publication.head_branch.clone());
             if self.watch.retry_at.get(&key).is_some_and(|retry| *retry > now) {
@@ -452,7 +468,23 @@ impl Owner {
             .reviewed_tip(&pr.branch)
             .await?
             .unwrap_or_else(|| before.head.clone());
-        if reviewed == ready.tip && joined.is_empty() {
+        let explained = fixing.iter().any(|id| {
+            self.parts
+                .state
+                .team(team)
+                .and_then(|t| t.item(*id))
+                .is_some_and(|item| {
+                    item.findings()
+                        .and_then(agent_core::state::Findings::disputes)
+                        .is_some_and(|d| {
+                            d.answered_pass == count(item.fix_passes().len())
+                                && d.explanations
+                                    .values()
+                                    .any(|e| e.status == agent_core::state::ExplanationStatus::Pending)
+                        })
+                })
+        });
+        if reviewed == ready.tip && joined.is_empty() && !explained {
             return Ok(Attempt::Nothing);
         }
         let mut ids = fixing.to_vec();

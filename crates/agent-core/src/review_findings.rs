@@ -55,6 +55,23 @@ pub struct Finding {
 pub enum Answer {
     /// The check no longer fails.
     Resolved,
+    /// The verifier accepts the lead's explanation.
+    Accepted {
+        /// Evidence supporting acceptance.
+        why: String,
+    },
+    /// The verifier rejects the explanation; the defect must be fixed.
+    Rejected {
+        /// Evidence requiring a code fix.
+        why: String,
+    },
+    /// The finding warrants a higher severity.
+    Raised {
+        /// Its increased severity.
+        severity: Severity,
+        /// Why the increase is necessary.
+        why: String,
+    },
     /// The problem remains, for this reason.
     Open {
         /// Why the check still fails.
@@ -85,6 +102,16 @@ pub struct ReportError {
 /// The correction a report requires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ReportProblem {
+    /// A modern verifier needs the explanation and raising syntax in its correction.
+    #[error(
+        "answer each open FINDING N exactly once before new findings: pending explanations require ACCEPTED — why or REJECTED — why; others require RESOLVED or OPEN — why; RAISED [MAJOR|BLOCKER] — why may only increase severity"
+    )]
+    DisputeAnswer,
+    /// An accepted explanation is protected while its code is unchanged.
+    #[error(
+        "accepted explanation remains MINOR until its file changes; answer FINDING N: RESOLVED or FINDING N: OPEN — why"
+    )]
+    UnchangedExplanation,
     /// A finding does not have the specified syntax.
     #[error("expected N. [BLOCKER|MAJOR|MINOR] RULE file:line — problem → fix")]
     Finding,
@@ -109,6 +136,16 @@ pub fn parse_report(
     text: &str,
     verdict: ReviewVerdict,
     open: &[(NonZeroU32, Severity)],
+) -> Result<Report, ReportError> {
+    read_report(text, verdict, open, None)
+}
+
+/// The common syntax reader; `Some` enables the explanation protocol.
+fn read_report(
+    text: &str,
+    verdict: ReviewVerdict,
+    open: &[(NonZeroU32, Severity)],
+    explained: Option<&[NonZeroU32]>,
 ) -> Result<Report, ReportError> {
     let lines: Vec<&str> = text.lines().collect();
     let mut report = Report::default();
@@ -154,15 +191,13 @@ pub fn parse_report(
             if report.answers.iter().any(|(n, _)| *n == id) {
                 return Err(fail(ReportProblem::Answer));
             }
-            let answer = match value.trim() {
-                "RESOLVED" => Answer::Resolved,
-                value => match value.strip_prefix("OPEN — ").filter(|why| !why.trim().is_empty()) {
-                    Some(why) => Answer::Open {
-                        why: why.trim().to_owned(),
-                    },
-                    None => return Err(fail(ReportProblem::Answer)),
-                },
-            };
+            let severity = open
+                .iter()
+                .find(|(n, _)| *n == id)
+                .map(|(_, severity)| *severity)
+                .ok_or_else(|| fail(ReportProblem::Answer))?;
+            let answer = read_answer(value.trim(), severity, explained.map(|ids| ids.contains(&id)))
+                .ok_or_else(|| fail(ReportProblem::Answer))?;
             report.answers.push((id, answer));
         } else if in_findings && numbered(trimmed) {
             let mut finding = read_finding(trimmed).ok_or_else(|| fail(ReportProblem::Finding))?;
@@ -186,11 +221,14 @@ pub fn parse_report(
     }
     let blocking = report.findings.iter().any(|finding| finding.severity.blocks())
         || open.iter().any(|(id, severity)| {
-            severity.blocks()
-                && report
-                    .answers
-                    .iter()
-                    .any(|(n, answer)| n == id && matches!(answer, Answer::Open { .. }))
+            report.answers.iter().any(|(n, answer)| {
+                n == id
+                    && match answer {
+                        Answer::Raised { .. } => true,
+                        Answer::Open { .. } | Answer::Rejected { .. } => severity.blocks(),
+                        Answer::Resolved | Answer::Accepted { .. } => false,
+                    }
+            })
         });
     if blocking != (verdict == ReviewVerdict::RequestChanges) {
         return Err(ReportError {
@@ -204,9 +242,53 @@ pub fn parse_report(
     Ok(report)
 }
 
+/// Reads a verification with pending explanations, retaining the legacy parser for older pull requests.
+///
+/// # Errors
+/// [`ReportError`] when an answer or verdict contradicts the supplied findings or explanations.
+pub fn parse_verification(
+    text: &str,
+    verdict: ReviewVerdict,
+    open: &[(NonZeroU32, Severity)],
+    explained: &[NonZeroU32],
+) -> Result<Report, ReportError> {
+    read_report(text, verdict, open, Some(explained)).map_err(|mut error| {
+        if error.kind == ReportProblem::Answer {
+            error.kind = ReportProblem::DisputeAnswer;
+        }
+        error
+    })
+}
+
+/// Parses one permitted verifier answer, with a nonempty evidence string.
+fn read_answer(value: &str, severity: Severity, pending: Option<bool>) -> Option<Answer> {
+    if value == "RESOLVED" && pending != Some(true) {
+        return Some(Answer::Resolved);
+    }
+    let (kind, why) = value.split_once(" — ")?;
+    let why = why.trim();
+    if why.is_empty() {
+        return None;
+    }
+    match (kind, pending) {
+        ("OPEN", None | Some(false)) => Some(Answer::Open { why: why.to_owned() }),
+        ("ACCEPTED", Some(true)) => Some(Answer::Accepted { why: why.to_owned() }),
+        ("REJECTED", Some(true)) => Some(Answer::Rejected { why: why.to_owned() }),
+        ("RAISED [BLOCKER]", Some(_)) if severity != Severity::Blocker => Some(Answer::Raised {
+            severity: Severity::Blocker,
+            why: why.to_owned(),
+        }),
+        ("RAISED [MAJOR]", Some(_)) if severity == Severity::Minor => Some(Answer::Raised {
+            severity: Severity::Major,
+            why: why.to_owned(),
+        }),
+        _ => None,
+    }
+}
+
 /// A Markdown code fence line: its character (backtick or tilde) and how many of them it has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Fence {
+pub(crate) struct Fence {
     /// The fence character, `` ` `` or `~`.
     character: char,
     /// How many of the character open the line; at least three.
@@ -217,13 +299,13 @@ struct Fence {
 
 impl Fence {
     /// Whether this line closes `open`: the same character, at least as many, and nothing else on the line.
-    fn closes(self, open: Self) -> bool {
+    pub(crate) fn closes(self, open: Self) -> bool {
         self.bare && self.character == open.character && self.length >= open.length
     }
 }
 
 /// The fence a line is, if it starts with three or more backticks or tildes.
-fn fence_marker(line: &str) -> Option<Fence> {
+pub(crate) fn fence_marker(line: &str) -> Option<Fence> {
     let line = line.trim_start();
     let character = line.chars().next().filter(|c| matches!(c, '`' | '~'))?;
     let length = line.chars().take_while(|c| *c == character).count();

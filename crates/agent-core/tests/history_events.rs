@@ -74,9 +74,43 @@ mod history_events {
         }
     }
 
+    /// The four finding decisions, in keyword order.
+    fn finding_events() -> Vec<HistoryEvent> {
+        vec![
+            HistoryEvent::FindingExplained {
+                pr: pr(7),
+                number: NonZeroU32::MIN,
+                pass: 1,
+                by: "inv-codex".parse().unwrap(),
+                why: "evidence".into(),
+            },
+            HistoryEvent::FindingAccepted {
+                pr: pr(7),
+                number: NonZeroU32::MIN,
+                pass: 1,
+                by: "inv-codex".parse().unwrap(),
+                why: "evidence".into(),
+            },
+            HistoryEvent::FindingRejected {
+                pr: pr(7),
+                number: NonZeroU32::MIN,
+                pass: 1,
+                by: "inv-codex".parse().unwrap(),
+                why: "evidence".into(),
+            },
+            HistoryEvent::FindingRaised {
+                pr: pr(7),
+                number: NonZeroU32::MIN,
+                pass: 1,
+                by: "inv-codex".parse().unwrap(),
+                why: "evidence".into(),
+            },
+        ]
+    }
+
     /// One event of every kind, with texts that are not ASCII and a text of a thousand characters.
     fn every_event() -> Vec<HistoryEvent> {
-        vec![
+        let mut events = vec![
             gate(),
             HistoryEvent::Checked {
                 pr: Some(pr(7)),
@@ -163,7 +197,9 @@ mod history_events {
                 cause: LostCause::WriteDiskFull,
                 detail: "the disk is full — zażółć".to_owned(),
             },
-        ]
+        ];
+        events.splice(7..7, finding_events());
+        events
     }
 
     #[test]
@@ -176,6 +212,10 @@ mod history_events {
             "pull_ready",
             "review_asked",
             "review_submitted",
+            "finding_explained",
+            "finding_accepted",
+            "finding_rejected",
+            "finding_raised",
             "fix_pass_started",
             "pull_approved",
             "pull_merged",
@@ -286,6 +326,10 @@ mod history_events {
             ("pull_ready", vec![]),
             ("review_asked", vec![]),
             ("review_submitted", vec!["report"]),
+            ("finding_explained", vec!["why"]),
+            ("finding_accepted", vec!["why"]),
+            ("finding_rejected", vec!["why"]),
+            ("finding_raised", vec!["why"]),
             ("fix_pass_started", vec!["findings"]),
             ("pull_approved", vec![]),
             ("pull_merged", vec![]),
@@ -319,7 +363,7 @@ mod history_events {
             assert_eq!(json.matches("\"changed\"").count(), count, "{json}");
             total += count;
         }
-        assert_eq!(total, 11);
+        assert_eq!(total, 15);
     }
 
     #[test]

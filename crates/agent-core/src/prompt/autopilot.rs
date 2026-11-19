@@ -60,6 +60,22 @@ pub enum AutopilotPrompt {
     ReviewVerdictRequestChanges,
     /// What the lead of a team is told when the reviewers asked for changes.
     ReviewFixPass,
+    /// The one-time explanation protocol.
+    ReviewExplanationVote,
+    /// The one-time explanation protocol.
+    ReviewExplanation,
+    /// The one-time explanation protocol.
+    ReviewDisputes,
+    /// The one-time explanation protocol.
+    ReviewResponseInvalid,
+    /// Correction for an unknown blocking finding number.
+    ReviewResponseNumbers,
+    /// Correction allowing an unused major explanation.
+    ReviewResponseExplain,
+    /// Correction requiring a code fix.
+    ReviewResponseFixed,
+    /// The one-time explanation protocol.
+    ReviewFixResponse,
     /// One reviewer's report among the findings the lead is given.
     ReviewFinding,
     /// What the lead is told when the fix passes are used up: to ask the human.
@@ -119,6 +135,14 @@ impl AutopilotPrompt {
         Self::ReviewVerdictApprove,
         Self::ReviewVerdictRequestChanges,
         Self::ReviewFixPass,
+        Self::ReviewExplanationVote,
+        Self::ReviewExplanation,
+        Self::ReviewDisputes,
+        Self::ReviewResponseInvalid,
+        Self::ReviewResponseNumbers,
+        Self::ReviewResponseExplain,
+        Self::ReviewResponseFixed,
+        Self::ReviewFixResponse,
         Self::ReviewFinding,
         Self::ReviewAskHuman,
         Self::ReviewVerdictMissing,
@@ -198,19 +222,7 @@ impl AutopilotPrompt {
                 "harness/review/request.md",
                 &["team", "pr", "branch", "base", "head", "pass"],
             ),
-            Self::ReviewVerification => (
-                "harness/review/verification.md",
-                &[
-                    "team",
-                    "pr",
-                    "branch",
-                    "base",
-                    "head",
-                    "pass",
-                    "changes",
-                    "lead_message",
-                ],
-            ),
+            Self::ReviewVerification => ("harness/review/verification.md", VERIFICATION_VARIABLES),
             Self::ReviewVerificationChanges => ("harness/review/verification-changes.md", &["previous"]),
             Self::ReviewVerificationRewritten => ("harness/review/verification-rewritten.md", &["base"]),
             Self::ReviewIndependent => ("harness/review/independent.md", &[]),
@@ -224,19 +236,19 @@ impl AutopilotPrompt {
                 "harness/review/fix-pass.md",
                 &["pr", "pass", "passes", "branch", "findings"],
             ),
-            Self::ReviewFinding => ("harness/review/finding.md", &["reviewer", "report"]),
-            Self::ReviewAskHuman => (
-                "harness/review/ask-human.md",
-                &[
-                    "pr",
-                    "passes",
-                    "additional_passes",
-                    "findings",
-                    "questions_file",
-                    "number",
-                    "task",
-                ],
+            Self::ReviewFixResponse => (
+                "harness/review/fix-response.md",
+                &["pr", "pass", "passes", "branch", "findings"],
             ),
+            Self::ReviewResponseNumbers => ("harness/review/response-numbers.md", &[]),
+            Self::ReviewResponseExplain => ("harness/review/response-explain.md", &[]),
+            Self::ReviewResponseFixed => ("harness/review/response-fixed.md", &[]),
+            Self::ReviewResponseInvalid => ("harness/review/response-invalid.md", &["line", "number", "allowed"]),
+            Self::ReviewDisputes => ("harness/review/disputes.md", &["findings"]),
+            Self::ReviewExplanation => ("harness/review/explanation.md", &["status", "why", "votes"]),
+            Self::ReviewExplanationVote => ("harness/review/explanation-vote.md", &["reviewer", "status", "why"]),
+            Self::ReviewFinding => ("harness/review/finding.md", &["reviewer", "report"]),
+            Self::ReviewAskHuman => ("harness/review/ask-human.md", ASK_HUMAN_VARIABLES),
             Self::ReviewFindingsInvalid => ("harness/review/findings-invalid.md", &["line", "reason"]),
             Self::ReviewOpenFindings => ("harness/review/open-findings.md", &["findings"]),
             Self::ReviewOpenFinding => (
@@ -264,3 +276,25 @@ impl AutopilotPrompt {
         }
     }
 }
+
+/// Context supplied to an incremental verification request.
+const VERIFICATION_VARIABLES: &[&str] = &[
+    "team",
+    "pr",
+    "branch",
+    "base",
+    "head",
+    "pass",
+    "changes",
+    "lead_message",
+];
+/// Context supplied when the review budget needs a human decision.
+const ASK_HUMAN_VARIABLES: &[&str] = &[
+    "pr",
+    "passes",
+    "additional_passes",
+    "findings",
+    "questions_file",
+    "number",
+    "task",
+];

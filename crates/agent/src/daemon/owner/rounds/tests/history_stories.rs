@@ -487,7 +487,7 @@ async fn a_team_round_with_a_worker_one_fix_pass_and_a_second_review_pass_that_a
     let mut rig = patient(
         &[
             // The coordinator waits for its member, integrates, and then fixes: each of its two commits is gated by the daemon.
-            investigator("inv-lead", "sleep,lead-gated"),
+            investigator("inv-lead", "sleep,lead-gated,fix-gated"),
             normal("claude-1", "script:wait-for-worker,sleep"),
             investigator("inv-r1", LATE_CHANGES_ONCE),
             investigator("inv-r2", APPROVING),

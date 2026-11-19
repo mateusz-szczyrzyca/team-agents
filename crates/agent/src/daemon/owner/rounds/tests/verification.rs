@@ -8,7 +8,7 @@ use super::rig::{ONE, Rig, git, investigator, normal};
 async fn fixes_are_verified_by_three_distinct_pairs_with_incremental_context_and_new_findings() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,work-pushed,work-pushed"),
+            normal("claude-1", "work,fix-work-pushed,fix-work-pushed"),
             investigator("inv-r1", "rotating-verify"),
             investigator("inv-r2", "rotating-verify"),
             investigator("inv-r3", "rotating-verify"),

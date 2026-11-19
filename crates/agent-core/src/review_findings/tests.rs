@@ -269,3 +269,94 @@ FINDINGS\n1. [MAJOR] ERR-3 y.rs:4 — real → fix\n   CHECK: read y.rs\n";
     let report = parse_report(text, ReviewVerdict::RequestChanges, &[]).unwrap();
     assert_eq!(report.findings.len(), 1);
 }
+
+#[test]
+fn explanations_require_a_reasoned_vote_and_raising_never_lowers_severity() {
+    let id = number(3);
+    let open = [(id, Severity::Major)];
+    for (line, verdict, expected) in [
+        (
+            "ACCEPTED — justified",
+            ReviewVerdict::Approve,
+            Answer::Accepted {
+                why: "justified".into(),
+            },
+        ),
+        (
+            "REJECTED — breaks the task",
+            ReviewVerdict::RequestChanges,
+            Answer::Rejected {
+                why: "breaks the task".into(),
+            },
+        ),
+        (
+            "RAISED [BLOCKER] — broken",
+            ReviewVerdict::RequestChanges,
+            Answer::Raised {
+                severity: Severity::Blocker,
+                why: "broken".into(),
+            },
+        ),
+    ] {
+        let parsed = super::parse_verification(&format!("FINDING 3: {line}"), verdict, &open, &[id]);
+        assert_eq!(
+            parsed,
+            Ok(Report {
+                findings: vec![],
+                answers: vec![(id, expected)]
+            })
+        );
+    }
+    for (line, pending, verdict) in [
+        ("ACCEPTED — why", false, ReviewVerdict::Approve),
+        ("RESOLVED", true, ReviewVerdict::Approve),
+        ("OPEN — why", true, ReviewVerdict::RequestChanges),
+        ("ACCEPTED — ", true, ReviewVerdict::Approve),
+        ("REJECTED — why", true, ReviewVerdict::Approve),
+        ("RAISED [MINOR] — why", false, ReviewVerdict::Approve),
+        ("RAISED [MAJOR] — why", false, ReviewVerdict::RequestChanges),
+    ] {
+        let explained = if pending { vec![id] } else { vec![] };
+        assert!(
+            matches!(
+                super::parse_verification(&format!("FINDING 3: {line}"), verdict, &open, &explained),
+                Err(ReportError { .. })
+            ),
+            "{line}"
+        );
+    }
+    let minor = [(id, Severity::Minor)];
+    assert_eq!(
+        super::parse_verification(
+            "FINDING 3: RAISED [MAJOR] — changed code",
+            ReviewVerdict::RequestChanges,
+            &minor,
+            &[]
+        )
+        .unwrap()
+        .answers,
+        vec![(
+            id,
+            Answer::Raised {
+                severity: Severity::Major,
+                why: "changed code".into()
+            }
+        )]
+    );
+}
+
+#[test]
+fn malformed_explanation_votes_receive_the_explanation_protocol_correction() {
+    assert_eq!(
+        parse_verification(
+            "FINDING 3: RESOLVED",
+            ReviewVerdict::Approve,
+            &[(number(3), Severity::Major)],
+            &[number(3)]
+        ),
+        Err(ReportError {
+            line: 1,
+            kind: ReportProblem::DisputeAnswer
+        })
+    );
+}
