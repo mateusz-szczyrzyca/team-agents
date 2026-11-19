@@ -76,9 +76,9 @@ impl Owner {
     /// The pending operation, including gates which do not run a model task.
     fn round_obligation(&self, team: &Team, round: &Round) -> Option<Obligation> {
         let lead = team.crew().roster().into_iter().next().map(|(_, member)| member)?;
-        if self.gate_stops.contains_key(lead.task())
-            || matches!(self.watch.own_gates.get(lead.task()), Some(OwnGate::Running { .. }))
-        {
+        // Only the harness's own gate is tracked to its end. The token the owner keeps for a gate a lead asked for stays
+        // after the gate is over, and that gate is awaited by the lead's run, which is active, not idle.
+        if matches!(self.watch.own_gates.get(lead.task()), Some(OwnGate::Running { .. })) {
             return Some(Obligation::Gate);
         }
         let item = round.item().and_then(|id| team.item(id));
