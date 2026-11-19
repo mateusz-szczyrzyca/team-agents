@@ -133,12 +133,14 @@ async fn a_solo_round_with_a_fix_pass_is_recorded_from_its_pull_request_to_its_m
         panic!("not an opening")
     };
     assert_eq!(
-        (*opened, branch.as_str(), title, body),
-        (number, pull.head.as_str(), &pull.title, &pull.body)
+        (*opened, branch.as_str(), title),
+        (number, pull.head.as_str(), &pull.title)
     );
     let HistoryEvent::PullPushed { head: pushed, .. } = found(EventKind::PullPushed, 0) else {
         panic!("not a push")
     };
+    assert!(body.contains(opened_head.as_str()));
+    assert!(pull.body.contains(pushed.as_str()));
     assert_ne!(pushed, opened_head);
     assert_eq!(pushed.as_str(), rig.remote_tip(&pull.head));
     let HistoryEvent::PullMerged { pr, commit } = found(EventKind::PullMerged, 0) else {
