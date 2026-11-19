@@ -5,7 +5,7 @@ use crate::review_findings::ReportError;
 use crate::review_response::{Response, ResponseError};
 use crate::status::ReviewVerdict;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU32;
 
 /// How the verification pass decided an explanation.
@@ -49,6 +49,12 @@ pub struct RaisedFinding {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Disputes {
+    /// Commit at which each accepted explanation became minor.
+    #[serde(default)]
+    pub accepted_heads: BTreeMap<NonZeroU32, crate::state::CommitId>,
+    /// Accepted findings whose file differs at the current review head.
+    #[serde(default)]
+    pub changed_findings: BTreeSet<NonZeroU32>,
     /// Explanations, retained after acceptance, rejection and resolution.
     pub explanations: BTreeMap<NonZeroU32, Explanation>,
     /// Upward severity changes in verification order.
@@ -65,13 +71,43 @@ pub struct Disputes {
 
 impl Findings {
     /// Records the commit at which an explanation became accepted.
-    pub fn accepted_at(&mut self, _head: &crate::state::CommitId) {}
+    pub fn accepted_at(&mut self, head: &crate::state::CommitId) {
+        if let Some(disputes) = &mut self.disputes {
+            for (number, explanation) in &disputes.explanations {
+                if explanation.status == ExplanationStatus::Accepted {
+                    disputes.accepted_heads.entry(*number).or_insert_with(|| head.clone());
+                }
+            }
+        }
+    }
     /// Marks accepted findings whose file changed since acceptance as eligible for raising.
     pub fn changed_since_acceptance(
         &mut self,
-        _base: &crate::state::CommitId,
-        _files: &[crate::decide::checks::FileChange],
+        base: &crate::state::CommitId,
+        files: &[crate::decide::checks::FileChange],
     ) {
+        let Some(disputes) = &mut self.disputes else {
+            return;
+        };
+        for entry in &self.entries {
+            if disputes.accepted_heads.get(&entry.number) != Some(base) {
+                continue;
+            }
+            let path = entry
+                .finding
+                .place
+                .rsplit_once(':')
+                .map_or(entry.finding.place.as_str(), |(path, _)| path);
+            let changed = files.iter().any(|file| {
+                file.path.as_str() == path
+                    || matches!(&file.change, crate::decide::checks::Change::Renamed {from} if from.as_str() == path)
+            });
+            if changed {
+                disputes.changed_findings.insert(entry.number);
+            } else {
+                disputes.changed_findings.remove(&entry.number);
+            }
+        }
     }
 
     /// The dispute protocol, absent for migrated active pull requests.
@@ -95,7 +131,26 @@ impl Findings {
                 .filter(|(_, e)| e.status == ExplanationStatus::Pending)
                 .map(|(n, _)| *n)
                 .collect();
-            crate::review_findings::parse_verification(text, verdict, &self.open(), &pending)
+            let report = crate::review_findings::parse_verification(text, verdict, &self.open(), &pending)?;
+            for (number, answer) in &report.answers {
+                if matches!(answer, Answer::Raised { .. })
+                    && disputes
+                        .explanations
+                        .get(number)
+                        .is_some_and(|e| e.status == ExplanationStatus::Accepted)
+                    && !disputes.changed_findings.contains(number)
+                {
+                    let prefix = format!("FINDING {number}:");
+                    return Err(ReportError {
+                        line: text
+                            .lines()
+                            .position(|line| line.trim().starts_with(&prefix))
+                            .map_or(1, |i| i.saturating_add(1)),
+                        kind: crate::review_findings::ReportProblem::UnchangedExplanation,
+                    });
+                }
+            }
+            Ok(report)
         } else {
             crate::review_findings::parse_report(text, verdict, &self.open())
         }

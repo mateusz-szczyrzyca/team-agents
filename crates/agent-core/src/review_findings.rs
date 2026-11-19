@@ -102,6 +102,11 @@ pub struct ReportError {
 /// The correction a report requires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ReportProblem {
+    /// An accepted explanation is protected while its code is unchanged.
+    #[error(
+        "accepted explanation remains MINOR until its file changes; answer FINDING N: RESOLVED or FINDING N: OPEN — why"
+    )]
+    UnchangedExplanation,
     /// A finding does not have the specified syntax.
     #[error("expected N. [BLOCKER|MAJOR|MINOR] RULE file:line — problem → fix")]
     Finding,

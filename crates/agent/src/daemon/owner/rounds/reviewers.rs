@@ -127,6 +127,29 @@ impl Owner {
         let Some(head) = git.branch_tip(&pr.branch).await? else {
             return Ok(false);
         };
+        let mut ledgers = Vec::new();
+        for id in items {
+            let Some(mut ledger) = self
+                .parts
+                .state
+                .team(team_id)
+                .and_then(|t| t.item(*id))
+                .and_then(|i| i.findings())
+                .cloned()
+            else {
+                continue;
+            };
+            let bases: std::collections::BTreeSet<_> = ledger
+                .disputes()
+                .into_iter()
+                .flat_map(|d| d.accepted_heads.values().cloned())
+                .collect();
+            for base in bases {
+                let changes = git.range_changes(&base, &head).await?;
+                ledger.changed_since_acceptance(&base, &changes);
+            }
+            ledgers.push((*id, ledger));
+        }
         let mut prepared = Prepared::default();
         for reviewer in chosen {
             if let Err(error) = self
@@ -140,6 +163,11 @@ impl Owner {
         if let Err(error) = self.record_reviews(team_id, items, &prepared) {
             self.undo(&git, &prepared.made).await;
             return Err(error);
+        }
+        for (id, ledger) in ledgers {
+            let mut team = self.parts.state.team_mut(team_id).ok_or(PublishError::Lost)?;
+            let mut item = team.item_mut(id).ok_or(PublishError::Lost)?;
+            *item.findings_mut().ok_or(PublishError::Lost)? = ledger;
         }
         let pass = count(self.fix_passes_of(team_id, items));
         let rounds = self.rounds_of_items(team_id, items);

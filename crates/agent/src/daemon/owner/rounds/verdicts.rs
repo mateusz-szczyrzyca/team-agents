@@ -263,8 +263,11 @@ impl Owner {
                     team: team_id.clone(),
                     item: *id,
                 })?;
-                if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
-                    context.reviewed_head = Some(head.clone());
+                if let Some(ledger) = item.findings_mut() {
+                    ledger.accepted_at(&head);
+                    if let Some(context) = ledger.verification_mut() {
+                        context.reviewed_head = Some(head.clone());
+                    }
                 }
             }
         }
