@@ -6,7 +6,7 @@ use agent_runtime::history::{HistoryDb, Reader, Store};
 use std::num::NonZeroU32;
 
 #[test]
-fn migrates_schema_eight_with_records_links_and_search_and_roundtrips_opinion_keywords() {
+fn migrates_schema_eight_with_records_links_and_search() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("history.db");
     let raw = rusqlite::Connection::open(&path).unwrap();
@@ -18,7 +18,7 @@ fn migrates_schema_eight_with_records_links_and_search_and_roundtrips_opinion_ke
         .copied()
         .filter(|m| m.version <= 8)
         .collect();
-    let mut world = complete(23);
+    let world = complete(23);
     let mut db = HistoryDb::open_with(&path, &old, roomy()).unwrap();
     db.write(&world.records()).unwrap();
     drop(db);
@@ -31,7 +31,7 @@ fn migrates_schema_eight_with_records_links_and_search_and_roundtrips_opinion_ke
         .query_row("SELECT count(*) FROM history_search", [], |r| r.get(0))
         .unwrap();
     drop(raw);
-    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+    let db = HistoryDb::open(&path, roomy()).unwrap();
     assert_eq!(
         Reader::open(&path)
             .unwrap()
@@ -56,6 +56,16 @@ fn migrates_schema_eight_with_records_links_and_search_and_roundtrips_opinion_ke
         0
     );
     drop(raw);
+    drop(db);
+}
+
+#[test]
+fn roundtrips_opinion_keywords_and_renders_their_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let mut world = complete(23);
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+    db.write(&world.records()).unwrap();
     let pr = PrNumber::new(NonZeroU32::MIN);
     let by = "inv-opus".parse::<agent_core::ids::AgentName>().unwrap();
     let events = [
@@ -137,7 +147,9 @@ fn migrates_schema_eight_with_records_links_and_search_and_roundtrips_opinion_ke
     let json = agent_core::story::json_lines(&stored, &selection).join("\n");
     assert!(json.contains("second_opinion"));
     for event in records {
-        let Record::Event(record) = event else { unreachable!() };
+        let Record::Event(record) = event else {
+            panic!("expected an event")
+        };
         let keyword = record.event.kind().to_string();
         assert_eq!(
             keyword.parse::<agent_core::history::LostKind>().unwrap().as_str(),
