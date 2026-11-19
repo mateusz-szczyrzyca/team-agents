@@ -69,7 +69,7 @@ fn the_round(rig: &Rig) -> RoundId {
 async fn a_solo_round_with_a_fix_pass_is_recorded_from_its_pull_request_to_its_merge() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],
@@ -158,7 +158,7 @@ async fn a_solo_round_with_a_fix_pass_is_recorded_from_its_pull_request_to_its_m
 async fn every_review_is_recorded_asked_of_a_reviewer_with_its_pass_and_head_and_submitted_with_its_whole_report() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],
@@ -246,7 +246,7 @@ async fn every_review_is_recorded_asked_of_a_reviewer_with_its_pass_and_head_and
 async fn a_fix_pass_is_recorded_with_its_number_of_how_many_and_the_findings_the_team_was_sent() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],
@@ -927,7 +927,7 @@ async fn a_review_report_that_arrives_after_its_pass_was_decided_is_recorded_in_
     let late_approvals = "late-verify:VERDICT: APPROVE\\nSUMMARY: late first,verify:VERDICT: APPROVE\\nSUMMARY: fixed";
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", late_approvals),
         ],

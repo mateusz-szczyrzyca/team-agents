@@ -571,7 +571,7 @@ async fn the_changes_of_a_run_are_what_its_cli_did_a_file_added_deleted_modified
 async fn the_review_passes_and_the_fix_passes_of_a_pull_request_are_numbered() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],

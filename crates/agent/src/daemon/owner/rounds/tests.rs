@@ -496,7 +496,7 @@ async fn a_team_whose_lead_is_done_and_item_stands_behind_failed_member_tells_hu
 async fn member_nostatus_work_same_session_short_prompt_no_notices_then_pr() {
     let mut rig = Rig::new(
         &[
-            investigator("inv-lead", "sleep,integrate,work"),
+            investigator("inv-lead", "sleep,integrate,fix-work"),
             normal("claude-1", "nostatus,work"),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
@@ -1169,7 +1169,7 @@ const CHANGES: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] T
 async fn a_request_for_changes_sends_the_item_back_to_its_lead_for_a_fix_pass_that_records_the_reviews() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", CHANGES),
             investigator("inv-r2", APPROVING),
         ],
@@ -1218,7 +1218,7 @@ const CHANGES_ONCE: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJ
 async fn fixing_rig(fix_passes: u32) -> Rig {
     Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],
@@ -1258,7 +1258,7 @@ async fn a_request_for_changes_waits_for_the_other_review_and_the_lead_is_given_
     let slow = "late-verify:VERDICT: APPROVE\\nSUMMARY: looks fine to me,verify:VERDICT: APPROVE\\nSUMMARY: fine";
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", slow),
         ],
@@ -1338,7 +1338,7 @@ async fn a_fixed_branch_updates_the_pull_request_and_is_reviewed_again_until_it_
 async fn a_fix_that_is_on_origin_already_is_still_reviewed_again() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,work-pushed"),
+            normal("claude-1", "work,fix-work-pushed"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],
@@ -1365,7 +1365,7 @@ async fn a_fix_pass_whose_gate_has_not_passed_does_not_update_the_pull_request()
     let mut rig = Rig::new(
         &[
             // The second run, the fix pass, commits nothing and records no gate.
-            normal("claude-1", "work,done"),
+            normal("claude-1", "work,fix-done"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],
@@ -1432,7 +1432,7 @@ async fn exhausting_rig(solo: &'static str) -> Rig {
 
 #[tokio::test]
 async fn when_the_fix_passes_are_used_up_the_lead_is_asked_to_put_the_question_to_the_human() {
-    let mut rig = exhausting_rig("work,work,ask").await;
+    let mut rig = exhausting_rig("work,fix-work,ask").await;
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
@@ -1706,7 +1706,7 @@ async fn a_pull_request_the_human_closed_without_merging_is_told_once_and_the_it
 async fn team_rig(reviewer: &'static str) -> Rig {
     Rig::new(
         &[
-            investigator("inv-lead", "sleep,integrate,work"),
+            investigator("inv-lead", "sleep,integrate,fix-work"),
             normal("claude-1", "work"),
             investigator("inv-r1", reviewer),
             investigator("inv-r2", APPROVING),
@@ -2079,7 +2079,7 @@ async fn a_branch_that_moved_after_the_gate_passed_is_not_published_with_that_ga
     let mut rig = Rig::new(
         &[
             // The second run, the fix pass, commits and records no gate: the record is of the commit before.
-            normal("claude-1", "work,commit"),
+            normal("claude-1", "work,fix-commit"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", APPROVING),
         ],
@@ -2344,7 +2344,7 @@ async fn malformed_findings_are_returned_then_numbered_fixed_and_resolved() {
     let peer = "done:VERDICT: APPROVE,done:VERDICT: APPROVE\\nFINDING 1: RESOLVED";
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", bad_then_major),
             investigator("inv-r2", peer),
         ],
@@ -2617,7 +2617,7 @@ async fn later_pass_reviewers_keep_the_bus_and_publish_without_waiting_for_peers
 async fn the_humans_answer_renews_the_entire_configured_fix_budget() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,work,work,ask,work,work,ask"),
+            normal("claude-1", "work,fix-work,fix-work,ask,fix-work,fix-work,ask"),
             investigator("inv-r1", CHANGES),
             investigator("inv-r2", APPROVING),
         ],

@@ -274,6 +274,27 @@ case $action in
   questions) result 'I have to ask.\nSTATUS: QUESTIONS' ;;
   slowdone) sleep 1; result 'Finished the work.\nSTATUS: DONE' ;;
   slowfail) sleep 1; result 'I could not do it.\nSTATUS: FAILED' ;;
+  fix-work|fix-work-pushed|fix-commit|fix-done|fix-gated|fix-script:*)
+    # New fix actions preserve the original actions and answer the ledger before the attached reports.
+    case $action in
+      fix-done) ;;
+      fix-script:*) bash "$home/fake-scripts/${action#fix-script:}.sh"; record_gate ;;
+      *) commit_work
+         case $action in
+           fix-gated) wait_for_gate ;;
+           fix-commit) ;;
+           *) record_gate ;;
+         esac ;;
+    esac
+    if [[ $action == fix-work-pushed ]]; then
+      git "${GIT_FIXTURE[@]}" push -q origin HEAD
+      message='Finished the item and pushed it.'
+    else
+      message='Finished the item.'
+    fi
+    answers=$(awk '/^### Review by / {exit} /^[0-9]+\. \[(BLOCKER|MAJOR)\]/ {sub(/\./, "", $1); printf "FINDING %s: FIXED\\n", $1}' <<< "$prompt")
+    result "$message"'\n'"$answers"'STATUS: DONE'
+    ;;
   work)
     commit_work
     record_gate
