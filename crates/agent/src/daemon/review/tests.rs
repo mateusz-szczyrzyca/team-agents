@@ -813,10 +813,6 @@ fn select_pool(
         &excluded.iter().cloned().collect(),
         required,
     )?;
-    Some(
-        names
-            .iter()
-            .map(|name| free.iter().find(|r| &r.name == name).unwrap().clone())
-            .collect(),
-    )
+    let mut slots: std::collections::BTreeMap<_, _> = free.into_iter().map(|r| (r.name.clone(), r)).collect();
+    Some(names.iter().map(|name| slots.remove(name).unwrap()).collect())
 }
