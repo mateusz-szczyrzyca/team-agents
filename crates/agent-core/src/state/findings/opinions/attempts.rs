@@ -135,6 +135,8 @@ impl Findings {
         }
         let attempts = self.opinion_attempts.entry(number).or_default();
         if attempts.is_empty() {
+            // A schema-8 interim notice must not consume the final three-attempt notice.
+            self.opinion_notices.remove(&number);
             attempts.push(OpinionAttempt {
                 investigator: investigator.clone(),
                 task: task.clone(),
