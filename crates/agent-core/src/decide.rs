@@ -17,3 +17,5 @@ pub mod publish;
 pub mod reviewer;
 pub mod round;
 pub mod team;
+
+pub mod wait;
