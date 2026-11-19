@@ -339,6 +339,7 @@ fn fix_answer(
                 },
             )?
         }
+        Err(OpinionError::MissingReason { number, line }) => opinion_correction(pulls, line, number)?,
         Err(OpinionError::MissingVerdict | OpinionError::MissingEvidence) => {
             opinion_correction(pulls, 1, std::num::NonZeroU32::MIN)?
         }

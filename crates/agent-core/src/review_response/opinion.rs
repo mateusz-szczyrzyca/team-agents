@@ -60,6 +60,14 @@ pub enum OpinionError {
     /// Reasoning or evidence is required.
     #[error("opinion requires evidence")]
     MissingEvidence,
+    /// The lead omitted the reason for a particular opinion request.
+    #[error("finding {number} requires opinion evidence at line {line}")]
+    MissingReason {
+        /// Permanent finding number needing a reason.
+        number: NonZeroU32,
+        /// One-based response line needing correction.
+        line: usize,
+    },
     /// The lead's message violates the existing response protocol.
     #[error(transparent)]
     Response(#[from] super::ResponseError),

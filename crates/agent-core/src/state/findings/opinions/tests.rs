@@ -294,3 +294,29 @@ fn minor_findings_need_no_answer_but_cannot_request_an_opinion() {
         )])
     );
 }
+
+#[test]
+fn a_missing_opinion_reason_identifies_the_actual_response_line_atomically() {
+    use crate::review_response::opinion::Permission;
+    let mut ledger = ledger(Severity::Blocker);
+    let mut second = ledger.entries()[0].clone();
+    second.number = NonZeroU32::new(2).unwrap();
+    ledger.entries.push(second);
+    let before = ledger.clone();
+    let error = ledger
+        .answer_opinions(
+            "Summary café\nFINDING 1: FIXED\nFINDING 2: SECOND OPINION — ",
+            NonZeroU32::MIN,
+            &request().head,
+            Permission::Enabled,
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        crate::review_response::opinion::OpinionError::MissingReason {
+            number: NonZeroU32::new(2).unwrap(),
+            line: 3,
+        }
+    );
+    assert_eq!(ledger, before);
+}
