@@ -332,3 +332,188 @@ async fn an_unreadable_bus_log_is_told_once_and_does_not_stretch_the_wake_ups() 
     assert_eq!(unreadable.len(), 1, "{unreadable:?}");
     assert_eq!(unreadable[0].count().get(), 1);
 }
+
+#[tokio::test]
+async fn wake_delivery_is_saved_before_running_and_marked_delivered_at_the_limit() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,deaf-fix-held:1,deaf-sleep"),
+            normal("claude-1", "fix-held:1"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    start_logged(&mut rig).await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    say(&rig, &tasks[0], "keep this message until you can read it").await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("the first wake-up to start", || {
+        worktree.join(".fake-started-2").exists()
+    })
+    .await;
+    let pending = rig.state().wake_delivery(&tasks[0]);
+    std::fs::write(worktree.join(".fake-release-2"), "").unwrap();
+    rig.wait_for("the wake-up budget to be exhausted", || {
+        logged(&rig)
+            .iter()
+            .any(|row| row.event() == LogEvent::BusDown && row.fields().contains_key("wake_ups"))
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        matches!(
+            pending,
+            Some(agent_core::state::WakeDelivery::Pending {
+                message: Some(_),
+                count: 1
+            })
+        ),
+        "the first wake-up was not saved: {pending:?}"
+    );
+    let Some(agent_core::state::WakeDelivery::Pending { message, count: 1 }) = pending else {
+        panic!("the first wake-up was not saved: {pending:?}");
+    };
+    assert!(message.is_some(), "the saved delivery identifies its message");
+    assert_eq!(
+        rig.state().wake_delivery(&tasks[0]),
+        Some(agent_core::state::WakeDelivery::Delivered { message, count: 2 })
+    );
+}
+
+#[tokio::test]
+async fn reading_the_message_clears_its_saved_wake_budget() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,sleep"),
+            normal("claude-1", "fix-held:1"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    say(&rig, &tasks[0], "read this message").await;
+    rig.wait_for("the message wake-up", || rig.runs(&tasks[0]) == 2).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(rig.state().wake_delivery(&tasks[0]), None);
+}
+
+#[tokio::test]
+async fn restarting_keeps_the_exhausted_budget_and_a_new_message_gets_its_own_budget() {
+    let mut rig = deaf_lead().await;
+    start_logged(&mut rig).await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    say(&rig, &tasks[0], "first unread message").await;
+    rig.wait_for("the first exhausted budget", || {
+        logged(&rig)
+            .iter()
+            .any(|row| row.fields().contains_key("wake_ups") && row.event() == LogEvent::BusDown)
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    start_logged(&mut rig).await;
+    let worker = rig.worktree(&tasks[1]);
+    rig.wait_for("the worker to resume after restart", || {
+        worker.join(".fake-started-2").exists()
+    })
+    .await;
+    say(&rig, &tasks[0], "second unread message").await;
+    rig.wait_for("the second exhausted budget", || {
+        logged(&rig)
+            .iter()
+            .filter(|row| row.fields().contains_key("wake_ups") && row.event() == LogEvent::BusDown)
+            .count()
+            >= 2
+    })
+    .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(
+        rig.runs(&tasks[0]),
+        5,
+        "one initial run and two wake-ups per message across restart"
+    );
+    let stopped: Vec<_> = logged(&rig)
+        .into_iter()
+        .filter(|row| row.fields().contains_key("wake_ups") && row.event() == LogEvent::BusDown)
+        .collect();
+    assert_eq!(
+        stopped.len(),
+        2,
+        "each delivery stop is logged once, including across restart"
+    );
+    assert_ne!(
+        stopped[0].fields().get("message_id"),
+        stopped[1].fields().get("message_id")
+    );
+}
+
+#[tokio::test]
+async fn restarting_after_the_first_wake_up_allows_only_the_second_one() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,deaf-fix-held:1,deaf-sleep"),
+            normal("claude-1", "fix-held:1"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("\n[limits]\nwake_ups_per_message = 2\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
+    start_logged(&mut rig).await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    say(&rig, &tasks[0], "are you there?").await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("the first wake-up to start", || {
+        worktree.join(".fake-started-2").exists()
+    })
+    .await;
+    let pending = rig.state().wake_delivery(&tasks[0]);
+    rig.stop().await.unwrap();
+    assert!(
+        matches!(pending, Some(agent_core::state::WakeDelivery::Pending { count: 1, .. })),
+        "{pending:?}"
+    );
+
+    start_logged(&mut rig).await;
+    rig.wait_for("the wake-ups to stop", || {
+        logged(&rig)
+            .iter()
+            .any(|row| row.event() == LogEvent::BusDown && row.fields().contains_key("wake_ups"))
+    })
+    .await;
+    let runs = rig.runs(&tasks[0]);
+    rig.stop().await.unwrap();
+
+    assert_eq!(
+        runs, 4,
+        "the run of its own, the first wake-up cut by the restart, its resumption and the second wake-up"
+    );
+}

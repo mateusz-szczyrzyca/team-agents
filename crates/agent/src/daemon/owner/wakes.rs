@@ -13,7 +13,7 @@ use std::num::NonZeroU64;
 
 use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::log::LogEvent;
-use agent_core::state::{Findings, ItemPhase, Team};
+use agent_core::state::{Findings, ItemPhase, Team, WakeDelivery};
 use agent_runtime::agentbus::MessageNote;
 use agent_runtime::process::error_chain;
 
@@ -85,8 +85,79 @@ impl Owner {
             .agent()
             .name()
             .parse()?;
-        let known = self.wake_counts.remove(task);
-        let (message, mut woken) = match self.parts.bus.latest_message_for(&agent, team_id).await {
+        let known = self.wake_counts.remove(task).or_else(|| {
+            self.parts.state.wake_delivery(task).map(|delivery| match delivery {
+                WakeDelivery::Pending { message, count } => WakeCount {
+                    message,
+                    count,
+                    stopped: false,
+                    unreadable_told: false,
+                },
+                WakeDelivery::Delivered { message, count } => WakeCount {
+                    message,
+                    count,
+                    stopped: true,
+                    unreadable_told: false,
+                },
+            })
+        });
+        let (message, mut woken) = self.wake_message(&agent, team_id, task, known).await;
+        let limit = self.parts.settings.config.limits().wake_ups_per_message;
+        if woken.count >= limit {
+            if !woken.stopped {
+                woken.stopped = true;
+                self.parts.state.record_wake_delivery(
+                    task.clone(),
+                    Some(WakeDelivery::Delivered {
+                        message: woken.message,
+                        count: woken.count,
+                    }),
+                );
+                look.changed = true;
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    team = %team_id,
+                    task = %task,
+                    %agent,
+                    message_id = ?message.as_ref().map(|note| note.id),
+                    from = message.as_ref().map_or("", |note| note.from.as_str()),
+                    wake_ups = woken.count,
+                    "the member was woken for this message as often as limits.wake_ups_per_message allows and did not read it: it is not woken for it again"
+                );
+            }
+            self.wake_counts.insert(task.clone(), woken);
+            return Ok(Wake::Held);
+        }
+        woken.count = woken.count.saturating_add(1);
+        self.wake_notes.insert(
+            task.clone(),
+            WakeNote {
+                message,
+                wake_ups: woken.count,
+            },
+        );
+        self.parts.state.record_wake_delivery(
+            task.clone(),
+            Some(WakeDelivery::Pending {
+                message: woken.message,
+                count: woken.count,
+            }),
+        );
+        look.changed = true;
+        self.wake_counts.insert(task.clone(), woken);
+        self.release(task, Why::Woken, look)?;
+        Ok(Wake::Queued)
+    }
+
+    /// Reads the wake-up message, retaining its budget and reporting a bus failure once when lookup fails.
+    async fn wake_message(
+        &self,
+        agent: &AgentName,
+        team_id: &TeamId,
+        task: &TaskId,
+        known: Option<WakeCount>,
+    ) -> (Option<MessageNote>, WakeCount) {
+        match self.parts.bus.latest_message_for(agent, team_id).await {
             Ok(message) => {
                 let id = message.as_ref().map(|note| note.id);
                 let woken = match known {
@@ -124,41 +195,16 @@ impl Owner {
                 }
                 (None, woken)
             }
-        };
-        let limit = self.parts.settings.config.limits().wake_ups_per_message;
-        if woken.count >= limit {
-            if !woken.stopped {
-                woken.stopped = true;
-                tracing::warn!(
-                    event = LogEvent::BusDown.as_str(),
-                    team = %team_id,
-                    task = %task,
-                    %agent,
-                    message_id = ?message.as_ref().map(|note| note.id),
-                    from = message.as_ref().map_or("", |note| note.from.as_str()),
-                    wake_ups = woken.count,
-                    "the member was woken for this message as often as limits.wake_ups_per_message allows and did not read it: it is not woken for it again"
-                );
-            }
-            self.wake_counts.insert(task.clone(), woken);
-            return Ok(Wake::Held);
         }
-        woken.count = woken.count.saturating_add(1);
-        self.wake_notes.insert(
-            task.clone(),
-            WakeNote {
-                message,
-                wake_ups: woken.count,
-            },
-        );
-        self.wake_counts.insert(task.clone(), woken);
-        self.release(task, Why::Woken, look)?;
-        Ok(Wake::Queued)
     }
 
     /// Forgets the wake-ups of `task`: it went to sleep with nothing waiting for it, so what woke it was read.
-    pub(super) fn wake_settled(&mut self, task: &TaskId) {
+    pub(super) fn wake_settled(&mut self, task: &TaskId, look: &mut Look) {
         self.wake_counts.remove(task);
+        if self.parts.state.wake_delivery(task).is_some() {
+            self.parts.state.record_wake_delivery(task.clone(), None);
+            look.changed = true;
+        }
     }
 }
 
