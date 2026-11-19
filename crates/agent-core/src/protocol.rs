@@ -8,7 +8,7 @@
 //! The types here only describe lines and read and write them; the socket is the daemon's.
 
 mod event;
-pub mod finding_map;
+pub(crate) mod finding_map;
 mod reply;
 mod request;
 
