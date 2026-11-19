@@ -271,6 +271,7 @@ fn minor_findings_need_no_answer_and_their_opinion_requests_are_ignored() {
     ledger.entries.push(minor);
     let pass = NonZeroU32::MIN;
     let head = request().head;
+    let mut unanswered = ledger.clone();
     assert_eq!(
         ledger.answer_opinions(
             "FINDING 1: FIXED\nFINDING 2: SECOND OPINION — café",
@@ -282,7 +283,7 @@ fn minor_findings_need_no_answer_and_their_opinion_requests_are_ignored() {
     );
     assert_eq!(ledger.opinions().len(), 0);
     assert_eq!(
-        ledger.answer_opinions("FINDING 1: FIXED", pass, &head, Permission::Enabled),
+        unanswered.answer_opinions("FINDING 1: FIXED", pass, &head, Permission::Enabled),
         Ok(vec![(
             NonZeroU32::MIN,
             crate::review_response::opinion::LeadAnswer::Fixed
