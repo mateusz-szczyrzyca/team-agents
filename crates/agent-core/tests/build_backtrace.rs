@@ -4,9 +4,10 @@ use std::process::Command;
 
 #[test]
 fn panic_backtrace_retains_file_and_line() {
-    if std::env::var_os("AGENT_BACKTRACE_PROBE").is_some() {
-        panic!("intentional backtrace probe");
-    }
+    assert!(
+        std::env::var_os("AGENT_BACKTRACE_PROBE").is_none(),
+        "intentional backtrace probe"
+    );
     let output = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "panic_backtrace_retains_file_and_line", "--nocapture"])
         .env("AGENT_BACKTRACE_PROBE", "1")
