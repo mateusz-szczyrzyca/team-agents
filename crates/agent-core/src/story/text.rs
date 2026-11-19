@@ -874,44 +874,29 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             pass,
             by,
             why,
-        } => {
-            opinion_evidence(
-                page,
-                at,
-                ("second opinion requested", event.kind()),
-                (*pr, *number, *pass, by),
-                why,
-            );
         }
-        HistoryEvent::FindingConfirmed {
+        | HistoryEvent::FindingConfirmed {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingNotConfirmed {
             pr,
             number,
             pass,
             by,
             why,
         } => {
-            opinion_evidence(
-                page,
-                at,
-                ("finding confirmed", event.kind()),
-                (*pr, *number, *pass, by),
-                why,
-            );
-        }
-        HistoryEvent::FindingNotConfirmed {
-            pr,
-            number,
-            pass,
-            by,
-            why,
-        } => {
-            opinion_evidence(
-                page,
-                at,
-                ("finding not confirmed", event.kind()),
-                (*pr, *number, *pass, by),
-                why,
-            );
+            let action = if matches!(event, HistoryEvent::SecondOpinionAsked { .. }) {
+                "second opinion requested"
+            } else if matches!(event, HistoryEvent::FindingConfirmed { .. }) {
+                "finding confirmed"
+            } else {
+                "finding not confirmed"
+            };
+            opinion_evidence(page, at, (action, event.kind()), (*pr, *number, *pass, by), why);
         }
         HistoryEvent::PullOpened { .. }
         | HistoryEvent::PullPushed { .. }
