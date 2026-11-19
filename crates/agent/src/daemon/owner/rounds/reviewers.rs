@@ -1,4 +1,4 @@
-//! The reviewers: drawing the required free investigators for a pull request, giving them worktrees at its head, and asking them
+//! The reviewers: choosing the required free investigators for a pull request, giving them worktrees at its head, and asking them
 //! for their reviews.
 
 use std::str::FromStr;
@@ -108,9 +108,26 @@ impl Owner {
             required,
             &std::collections::HashSet::new(),
         );
+        let rounds: Vec<_> = self
+            .parts
+            .state
+            .team(team_id)
+            .into_iter()
+            .flat_map(agent_core::state::Team::rounds)
+            .filter(|round| round.item().is_some_and(|item| items.contains(&item)))
+            .map(|round| round.id().clone())
+            .collect();
         let Some(chosen) = chosen else {
+            for round in rounds {
+                self.watch
+                    .waits
+                    .insert(round, agent_core::decide::wait::Obligation::FreeInvestigator);
+            }
             return Ok(false);
         };
+        for round in rounds {
+            self.watch.waits.remove(&round);
+        }
         let chosen_names: Vec<_> = chosen.iter().map(|r| r.name.as_str()).collect();
         log_decision(
             "choose_reviewers",

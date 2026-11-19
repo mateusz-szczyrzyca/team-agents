@@ -22,6 +22,8 @@ pub enum AutopilotPrompt {
     WaitOpinion,
     /// Describe an idle round in status output.
     WaitReview,
+    /// Describe a review waiting for an available independent investigator.
+    WaitInvestigator,
     /// Describe an idle round in status output.
     WaitGate,
     /// Ask an independent investigator to check one finding at the handed-over commit.
@@ -216,6 +218,7 @@ impl AutopilotPrompt {
         Self::ReviewOpinionRequest,
         Self::WaitGate,
         Self::WaitReview,
+        Self::WaitInvestigator,
         Self::WaitOpinion,
         Self::WaitHuman,
         Self::WaitCorrection,
@@ -353,6 +356,7 @@ impl AutopilotPrompt {
             Self::WaitCorrection => "harness/pr/wait-correction.md",
             Self::WaitHuman => "harness/pr/wait-human.md",
             Self::WaitOpinion => "harness/pr/wait-opinion.md",
+            Self::WaitInvestigator => "harness/pr/wait-investigator.md",
             Self::WaitReview => "harness/pr/wait-review.md",
             Self::WaitGate => "harness/pr/wait-gate.md",
             Self::ReviewFixNoCommit => "harness/review/fix-no-commit.md",
@@ -460,6 +464,7 @@ impl AutopilotPrompt {
             | Self::WaitCorrection
             | Self::WaitHuman
             | Self::WaitOpinion
+            | Self::WaitInvestigator
             | Self::WaitReview
             | Self::WaitGate
             | Self::ReviewOpinionCorrection
