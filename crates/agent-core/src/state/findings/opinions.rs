@@ -72,8 +72,23 @@ impl Findings {
     /// # Errors
     /// [`OpinionStateError`] if missing, closed, non-blocking or already requested.
     pub fn request_opinion(&mut self, number: NonZeroU32, request: OpinionRequest) -> Result<(), OpinionStateError> {
-        let _request = request;
-        Err(OpinionStateError { number })
+        if self.opinions.contains_key(&number)
+            || !self.entries.iter().any(|entry| {
+                entry.number == number
+                    && entry.status == FindingStatus::Open
+                    && entry.finding.severity == Severity::Blocker
+            })
+        {
+            return Err(OpinionStateError { number });
+        }
+        self.opinions.insert(
+            number,
+            SecondOpinion {
+                request,
+                stage: OpinionStage::Waiting,
+            },
+        );
+        Ok(())
     }
 
     /// Assigns or replaces a pending opinion task; completed reports cannot be replaced.
@@ -86,8 +101,14 @@ impl Findings {
         investigator: InvestigatorName,
         task: TaskId,
     ) -> Result<(), OpinionStateError> {
-        let _inputs = (investigator, task);
-        Err(OpinionStateError { number })
+        let opinion = self.opinions.get_mut(&number).ok_or(OpinionStateError { number })?;
+        match opinion.stage {
+            OpinionStage::Waiting | OpinionStage::Assigned { .. } => {
+                opinion.stage = OpinionStage::Assigned { investigator, task }
+            }
+            OpinionStage::Reported { .. } => return Err(OpinionStateError { number }),
+        }
+        Ok(())
     }
 
     /// Accepts the assigned task's report once, closing only an unconfirmed finding.
@@ -100,8 +121,32 @@ impl Findings {
         task: &TaskId,
         report: OpinionReport,
     ) -> Result<(), OpinionStateError> {
-        let _inputs = (task, report);
-        Err(OpinionStateError { number })
+        let opinion = self.opinions.get_mut(&number).ok_or(OpinionStateError { number })?;
+        let OpinionStage::Assigned {
+            investigator,
+            task: owner,
+        } = &opinion.stage
+        else {
+            return Err(OpinionStateError { number });
+        };
+        if owner != task {
+            return Err(OpinionStateError { number });
+        }
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.number == number)
+            .ok_or(OpinionStateError { number })?;
+        entry.status = match report.outcome {
+            Outcome::Confirmed => FindingStatus::Open,
+            Outcome::NotConfirmed => FindingStatus::NotConfirmed,
+        };
+        opinion.stage = OpinionStage::Reported {
+            investigator: investigator.clone(),
+            task: owner.clone(),
+            report,
+        };
+        Ok(())
     }
 }
 
