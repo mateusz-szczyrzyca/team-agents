@@ -7,7 +7,6 @@ mod world;
 
 #[cfg(test)]
 mod protocol_findings_maps {
-    use std::collections::BTreeMap;
     use std::num::NonZeroU32;
 
     use agent_core::history::{HistoryHealth, HistoryState};
@@ -72,11 +71,10 @@ mod protocol_findings_maps {
             .unwrap();
             item.submit_review(&task(7), ReviewVerdict::RequestChanges, at(30))
                 .unwrap();
-            let opened = if let ItemPhase::InReview { pr: opened, .. } = item.phase() {
-                opened.clone()
-            } else {
-                pull.clone()
+            let ItemPhase::InReview { pr: opened, .. } = item.phase() else {
+                panic!("in review");
             };
+            let opened = opened.clone();
             item.advance(ItemPhase::Fixing {
                 assignee: "codex-1".parse().unwrap(),
                 branch: opened.branch.clone(),
@@ -354,37 +352,33 @@ mod protocol_findings_maps {
         assert_event_round_trips(events);
     }
 
+    /// The state of the fixture with `key` added to its `fixed` map of item 1.2, as JSON text.
+    fn state_with_fixed_key(key: &str) -> String {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/state-v0-11-second-opinions.json")).unwrap();
+        let fixed = &mut value["teams"][0]["items"][1]["findings"]["fixed"];
+        fixed.as_object_mut().unwrap().insert(key.to_owned(), json!([]));
+        serde_json::to_string(&value).unwrap()
+    }
+
     #[test]
     fn key_deserialization_accepts_positive_integers_and_refuses_invalid_keys() {
-        #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
-        struct Sample {
-            #[serde(deserialize_with = "agent_core::protocol::finding_map::deserialize_map")]
-            map: BTreeMap<NonZeroU32, String>,
-        }
-
-        // Positive numbers as string or number:
-        let valid_json = json!({
-            "map": {
-                "1": "one",
-                "2": "two"
-            }
-        });
-        let parsed: Sample = serde_json::from_value(valid_json).unwrap();
-        assert_eq!(parsed.map.len(), 2);
-        assert_eq!(parsed.map.get(&NonZeroU32::new(1).unwrap()), Some(&"one".to_string()));
-        assert_eq!(parsed.map.get(&NonZeroU32::new(2).unwrap()), Some(&"two".to_string()));
-
-        // Invalid keys must be refused and error message must name the key:
         for invalid in ["0", "-1", "x", ""] {
-            let bad_json = json!({
-                "map": {
-                    invalid: "val"
-                }
-            });
-            let err = serde_json::from_value::<Sample>(bad_json).unwrap_err().to_string();
+            let text = state_with_fixed_key(invalid);
+            let Err(err) = State::from_json(&text) else {
+                panic!("the key {invalid:?} is not a finding number and must be refused");
+            };
+            // The state's message does not repeat the key; the cause, which names it, is in the chain.
+            let mut chain = err.to_string();
+            let mut source = std::error::Error::source(&err);
+            while let Some(cause) = source {
+                chain.push_str(" / ");
+                chain.push_str(&cause.to_string());
+                source = cause.source();
+            }
             assert!(
-                err.contains(invalid),
-                "error should name invalid key {invalid:?}: {err}"
+                chain.contains(&format!("{invalid:?}")),
+                "error should name invalid key {invalid:?}: {chain}"
             );
         }
     }
