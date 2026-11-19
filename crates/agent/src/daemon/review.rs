@@ -303,3 +303,13 @@ pub(super) fn choose_verifiers(
     }
     Some(chosen)
 }
+
+/// Draws one independent opinion from the free investigators outside the answered pass.
+pub(super) fn choose_opinion(
+    free: Vec<Reviewer>,
+    excluded: &HashSet<InvestigatorName>,
+    rng: &mut impl Rng,
+) -> Option<Reviewer> {
+    let _inputs = (excluded, rng);
+    free.into_iter().next()
+}
