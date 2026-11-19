@@ -141,7 +141,7 @@ impl Owner {
                 .state
                 .team(team_id)
                 .into_iter()
-                .flat_map(|team| team.items())
+                .flat_map(agent_core::state::Team::items)
                 .filter(|item| matches!(item.phase(), ItemPhase::Fixing { pr: known, .. } if known.number == pr.number))
                 .map(agent_core::state::ItemProgress::id)
                 .collect();
