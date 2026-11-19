@@ -242,6 +242,9 @@ case $action in
       result 'VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [BLOCKER] COR src/lib.rs:7 — café defect → fix it\n   CHECK: read src/lib.rs:7\nSTATUS: DONE'
     fi
     ;;
+  opinion-mixed)
+    result 'FINDING 1: FIXED\nFINDING 2: SECOND OPINION — café path is unreachable\nSTATUS: DONE'
+    ;;
   opinion-ask|opinion-ask-changed)
     if [[ $action == opinion-ask-changed ]]; then commit_work; record_gate; fi
     answers=$(awk '/^### Review by / {exit} /^[0-9]+\. \[(BLOCKER|MAJOR)\]/ {sub(/\./, "", $1); printf "FINDING %s: SECOND OPINION — café path is unreachable\\n", $1}' <<< "$prompt")

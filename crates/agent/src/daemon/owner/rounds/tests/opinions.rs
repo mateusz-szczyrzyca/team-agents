@@ -303,3 +303,43 @@ async fn a_changed_tip_waits_for_all_opinions_and_opinion_runs_have_no_bus() {
     rig.stop().await.unwrap();
     assert_eq!(rig.github.reviews(1).len(), 2);
 }
+
+#[tokio::test]
+async fn confirmed_continuation_lists_only_the_blocker_still_needing_a_fix() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-mixed,fix-work:2"),
+            investigator("inv-r1", "opinion-probe:CONFIRMED"),
+            investigator("inv-r2", "opinion-probe:CONFIRMED"),
+            investigator("inv-r3", "opinion-probe:CONFIRMED"),
+            investigator("inv-r4", "opinion-probe:CONFIRMED"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+        .await;
+    rig.item_where("1.1", "mixed answers verified", |p| matches!(p, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    let continuation = rig.kept_prompt(&tasks[0], 3);
+    assert!(
+        !continuation.lines().any(|line| line.starts_with("1. [")),
+        "{continuation}"
+    );
+    assert!(
+        continuation.lines().any(|line| line.starts_with("2. [BLOCKER]")),
+        "{continuation}"
+    );
+    assert_eq!(rig.kept_runs(&tasks[0]), 3);
+    let state = rig.state();
+    let item = &state.team(&team).unwrap().items()[0];
+    assert_eq!(item.fix_passes().len(), 1);
+    assert_eq!(
+        item.findings().unwrap().fixed_answers(std::num::NonZeroU32::MIN),
+        [std::num::NonZeroU32::MIN, std::num::NonZeroU32::new(2).unwrap()].into()
+    );
+}
