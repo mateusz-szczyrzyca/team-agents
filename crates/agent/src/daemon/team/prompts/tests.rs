@@ -166,6 +166,21 @@ async fn a_resumed_member_that_is_woken_gets_only_the_wake() {
 }
 
 #[tokio::test]
+async fn a_wake_up_tells_first_to_read_the_messages_because_an_unread_one_brings_it_back() {
+    let texts = texts().await;
+    let team = crew_of(CHAIN, 1, 0);
+
+    let prompt = shaped(&texts, &team, 2, Some(&Why::Woken), false);
+
+    let (_, rest) = prompt.split_once('\n').expect("a title line");
+    assert!(
+        rest.trim_start()
+            .starts_with("Call `read_messages` now: a message that stays unread brings this wake-up back."),
+        "{prompt}"
+    );
+}
+
+#[tokio::test]
 async fn a_resumed_member_that_is_given_an_item_gets_the_item_its_branch_and_its_checks() {
     let texts = texts().await;
     let team = crew_of(CHAIN, 1, 0);

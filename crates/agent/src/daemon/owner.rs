@@ -15,6 +15,7 @@ mod round_state;
 mod rounds;
 mod start;
 mod teams;
+mod wakes;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::num::NonZeroUsize;
@@ -382,6 +383,10 @@ pub(super) struct Owner {
     hangs: HashMap<TaskId, u32>,
     /// Why a queued task of a team starts now; read when its run is made ready.
     reasons: HashMap<TaskId, Why>,
+    /// How often each task was woken for the newest message that waits for it.
+    wake_counts: HashMap<TaskId, wakes::WakeCount>,
+    /// What the log line of the run of a task that was woken says of the wake-up; read when the run starts.
+    wake_notes: HashMap<TaskId, wakes::WakeNote>,
     /// What is still to be done on the bus, oldest first: it is tried again at every look until it is done.
     outbox: VecDeque<Outbound>,
     /// The requests for workers that are being served, by the task of the worker.
@@ -452,6 +457,8 @@ impl Owner {
             wakes: HashMap::new(),
             hangs: HashMap::new(),
             reasons: HashMap::new(),
+            wake_counts: HashMap::new(),
+            wake_notes: HashMap::new(),
             outbox: VecDeque::new(),
             serving: HashMap::new(),
             closed: HashSet::new(),
@@ -586,6 +593,11 @@ impl Owner {
     /// Starts the run of `task`, or fails the task when it cannot be made ready.
     async fn start(&mut self, task: TaskId) -> Result<(), OwnerError> {
         let why = self.reasons.remove(&task);
+        // What a wake-up noted is for the run it starts, and for no other.
+        let woke = self
+            .wake_notes
+            .remove(&task)
+            .filter(|_| matches!(why, Some(Why::Woken)));
         let planned = {
             let context = Context {
                 state: &self.parts.state,
@@ -646,7 +658,7 @@ impl Owner {
         };
         let rounds = round_state::rounds_for(&self.parts.state, &task, why.as_ref())?;
         let reason = run_why(&self.parts.state, &task, why.as_ref());
-        self.begin(&task, plan, rounds, reason).await
+        self.begin(&task, plan, rounds, (reason, woke)).await
     }
 
     /// Records the start of the run of `plan`, which works for `rounds`, and hands it to the engine.
@@ -655,7 +667,7 @@ impl Owner {
         task: &TaskId,
         plan: Plan,
         rounds: Vec<RoundId>,
-        reason: RunWhy,
+        (reason, woke): (RunWhy, Option<wakes::WakeNote>),
     ) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
         let now = Timestamp::now(&self.parts.clock)?;
@@ -695,13 +707,27 @@ impl Owner {
         );
         {
             let _entered = run_span.enter();
-            tracing::info!(
-                event = LogEvent::RunStarted.as_str(),
-                task = %task,
-                run = %plan.run,
-                agent = %located.agent,
-                "run started"
-            );
+            if let Some(note) = &woke {
+                tracing::info!(
+                    event = LogEvent::RunStarted.as_str(),
+                    task = %task,
+                    run = %plan.run,
+                    agent = %located.agent,
+                    why = "wake_up",
+                    message_id = ?note.message.as_ref().map(|message| message.id),
+                    from = note.message.as_ref().map_or("", |message| message.from.as_str()),
+                    wake_ups = note.wake_ups,
+                    "run started: the bus woke the agent for a message"
+                );
+            } else {
+                tracing::info!(
+                    event = LogEvent::RunStarted.as_str(),
+                    task = %task,
+                    run = %plan.run,
+                    agent = %located.agent,
+                    "run started"
+                );
+            }
         }
         let engine = self.parts.engine.clone();
         let cancel = self.shutdown.child_token();

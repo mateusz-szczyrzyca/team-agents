@@ -76,7 +76,9 @@ asleep_minutes = 5
 
 # An exhausted quota pauses the task until the reset time the CLI gives; `quota_pause_minutes` is the pause when it
 # gives none. A rate limit (HTTP 429) is a short pause. `tail_lines`: how many of a run's last lines of error output
-# are read to recognise these limits.
+# are read to recognise these limits. `wake_ups_per_message`: a message to a sleeping agent starts a run of it; when
+# that many runs end without the agent reading the message, it is not woken for it again (the message stays unread
+# until the agent's next run reads it) and a warning is logged; 0 never wakes an agent for a message.
 
 [limits]
 # Per-run turn budget for CLIs that support one (currently Claude Code); must be positive.
@@ -86,6 +88,7 @@ turn_limit_resumes = 3
 quota_pause_minutes = 30
 rate_limit_pause_minutes = 5
 tail_lines = 30
+wake_ups_per_message = 2
 
 # Reviews: "changes requested" goes back to the team at most `fix_passes` times; then you are asked. The checks
 # before a review (see the repository's `checks` below) send a round back at most `check_passes` times. A reviewer whose

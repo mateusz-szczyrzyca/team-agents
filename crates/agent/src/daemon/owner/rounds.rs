@@ -368,6 +368,10 @@ pub(super) enum AutopilotNotice {
     NoVerdict,
     /// An unanswered second opinion holds the round.
     Opinion,
+    /// The lead repeatedly supplied an invalid fix response.
+    ResponseRefused,
+    /// A reviewer supplied a verdict but its report was refused.
+    ReportRefused,
     /// Branch publish failed.
     PublishFailed,
     /// Automatic handover corrections are exhausted.
@@ -394,6 +398,8 @@ impl AutopilotNotice {
             Self::Decision => AutopilotPrompt::NoticeDecision,
             Self::NoVerdict => AutopilotPrompt::NoticeNoVerdict,
             Self::Opinion => AutopilotPrompt::NoticeOpinion,
+            Self::ResponseRefused => AutopilotPrompt::NoticeResponseRefused,
+            Self::ReportRefused => AutopilotPrompt::NoticeReportRefused,
             Self::PublishFailed => AutopilotPrompt::NoticePublishFailed,
             Self::HandoverHeld => AutopilotPrompt::NoticeHandoverHeld,
             Self::TeamAsleep => AutopilotPrompt::NoticeTeamAsleep,
@@ -409,7 +415,7 @@ impl AutopilotNotice {
     #[must_use]
     pub(super) const fn kind(self) -> NoticeKind {
         match self {
-            Self::Decision => NoticeKind::Decision,
+            Self::Decision | Self::ResponseRefused | Self::ReportRefused => NoticeKind::Decision,
             Self::NoVerdict => NoticeKind::NoVerdict,
             Self::Opinion => NoticeKind::Opinion,
             Self::PublishFailed | Self::HandoverHeld => NoticeKind::PublishFailed,
@@ -792,6 +798,10 @@ mod joined_pass_tests;
 #[path = "rounds/tests/verification.rs"]
 mod verification_tests;
 
+#[cfg(test)]
+#[path = "rounds/tests/wake_ups.rs"]
+mod wake_ups_tests;
+
 /// Failure to retain a reviewer's commit for subsequent verification.
 #[derive(Debug, thiserror::Error)]
 #[error("cannot retain the reviewed commit of task {task}")]
@@ -806,3 +816,7 @@ pub(crate) struct ReviewedHeadError {
 #[cfg(test)]
 #[path = "rounds/tests/opinions.rs"]
 mod opinion_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/answer_reasons.rs"]
+mod answer_reason_tests;

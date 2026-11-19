@@ -346,6 +346,8 @@ FINDING 3: RESOLVED
 FINDING 4: OPEN — why it still holds, with file:line
 ```
 
+After RESOLVED, optionally add ` — reason`, ` - reason`, or `: reason`. Keep all answers before STATUS.
+
 A line for every open finding: a report that leaves one out is sent back. Run the finding's `CHECK:` to decide.
 `[BLOCKER]` and `[MAJOR]` findings that stay open — old or new — mean `REQUEST_CHANGES`; with one open you cannot say
 `APPROVE`. A criterion that was `not met` is answered the same way, in CRITERIA.

@@ -54,6 +54,9 @@ const DEFAULT_MAX_TURNS: NonZeroU32 = NonZeroU32::new(300).unwrap();
 /// Consecutive automatic continuations allowed after turn exhaustion.
 const DEFAULT_TURN_LIMIT_RESUMES: u32 = 3;
 
+/// Wake-ups for one unread message after which the harness stops waking a task for it, by default.
+const DEFAULT_WAKE_UPS_PER_MESSAGE: u32 = 2;
+
 /// Lines of a run's error output read to recognise limits, by default.
 const DEFAULT_TAIL_LINES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 
@@ -277,6 +280,9 @@ pub struct Limits {
     pub rate_limit_pause_minutes: Minutes,
     /// How many of the last lines of a run's error output are read to recognise a limit.
     pub tail_lines: NonZeroU32,
+    /// How many runs a task may be woken for the same unread message before the harness stops waking it for that
+    /// message; 0 never wakes a task for a message.
+    pub wake_ups_per_message: u32,
 }
 
 impl Default for Limits {
@@ -287,6 +293,7 @@ impl Default for Limits {
             quota_pause_minutes: Minutes::literal(DEFAULT_QUOTA_PAUSE_MINUTES),
             rate_limit_pause_minutes: Minutes::literal(DEFAULT_RATE_LIMIT_PAUSE_MINUTES),
             tail_lines: DEFAULT_TAIL_LINES,
+            wake_ups_per_message: DEFAULT_WAKE_UPS_PER_MESSAGE,
         }
     }
 }
@@ -1357,5 +1364,29 @@ workers = ["qwen", "qwen"]"#,
     fn non_ascii_text_in_values_and_comments_is_read() {
         let config = config("# zażółć gęślą jaźń\n[git]\nname = \"{agent} ✓\"\n");
         assert_eq!(config.git().name.render(&agent("a")), "a ✓");
+    }
+
+    #[test]
+    fn a_task_is_woken_twice_for_one_unread_message_unless_the_file_says_otherwise() {
+        assert_eq!(config("").limits().wake_ups_per_message, 2);
+        assert_eq!(config("[limits]\ntail_lines = 5\n").limits().wake_ups_per_message, 2);
+        assert_eq!(
+            config("[limits]\nwake_ups_per_message = 7\n")
+                .limits()
+                .wake_ups_per_message,
+            7
+        );
+        assert_eq!(
+            config("[limits]\nwake_ups_per_message = 0\n")
+                .limits()
+                .wake_ups_per_message,
+            0
+        );
+    }
+
+    #[test]
+    fn a_negative_number_of_wake_ups_is_refused_with_the_line_of_the_value() {
+        let text = "[limits]\nwake_ups_per_message = -1\n";
+        assert_eq!(error_line(text, &failure(text)), Some(2));
     }
 }

@@ -27,6 +27,9 @@ use crate::daemon::merge::count;
 /// Why what the autopilot adds to a prompt cannot be made.
 #[derive(Debug, thiserror::Error)]
 pub(in crate::daemon::owner) enum SectionError {
+    /// A refused answer cannot be described.
+    #[error("cannot render refused answer diagnostics")]
+    Response(#[from] super::responses::ResponseTextError),
     /// A findings text cannot be rendered.
     #[error("cannot render findings")]
     Findings(#[from] super::findings::TextError),
@@ -155,9 +158,28 @@ async fn round_sections_for(
             let values = Variables::new()
                 .with("line", problem.line.to_string())?
                 .with("reason", problem.kind.to_string())?;
-            Ok(Some(Addition::Replace(
-                texts.render(AutopilotPrompt::ReviewFindingsInvalid, &values)?,
-            )))
+            let mut correction = texts.render(AutopilotPrompt::ReviewFindingsInvalid, &values)?;
+            let ledger = found
+                .team
+                .items()
+                .iter()
+                .find(|item| match item.phase() {
+                    ItemPhase::InReview { reviews, .. } => {
+                        reviews.iter().any(|review| &review.task == found.member.task())
+                    }
+                    ItemPhase::Pending
+                    | ItemPhase::InProgress { .. }
+                    | ItemPhase::Fixing { .. }
+                    | ItemPhase::Approved { .. }
+                    | ItemPhase::Done { .. } => false,
+                })
+                .and_then(|item| item.findings());
+            let forms = match ledger {
+                Some(ledger) => super::responses::verifier_forms(texts, ledger)?,
+                None => String::new(),
+            };
+            correction.push_str(&super::responses::answer_diagnostic(texts, &problem.detail, &forms)?);
+            Ok(Some(Addition::Replace(correction)))
         }
         (Role::Reviewer, Some(Why::VerdictMissing)) => {
             let text = texts.render(AutopilotPrompt::ReviewVerdictMissing, &Variables::new())?;
@@ -172,7 +194,7 @@ async fn round_sections_for(
             // What the checks before a review tell the lead comes first: it is the last thing that happened to its round.
             let text = match checks_notice(ctx, found).await? {
                 Some(text) => Some(text),
-                None => match fix_pass(ctx, texts, found).await? {
+                None => match fix_pass(ctx, texts, found, matches!(why, Some(Why::Woken))).await? {
                     Some(text) => Some(text),
                     None => ask_human(ctx, texts, found).await?,
                 },
@@ -219,11 +241,13 @@ async fn checks_notice(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<Option<
     }
 }
 
-/// The fix pass of the lead `found`, if an item is being fixed by it: the reports of the reviewers of the pass.
+/// The fix pass of the lead `found`, if an item is being fixed by it: the reports of the reviewers of the pass, or, for a
+/// lead that was `woken` and was given the pass already, one line that says the pass is still open.
 pub(super) async fn fix_pass(
     ctx: &Context<'_>,
     texts: &AutopilotPrompts,
     found: &TaskRef<'_>,
+    woken: bool,
 ) -> Result<Option<String>, SectionError> {
     let team = found.team;
     let name = found.member.agent().name();
@@ -250,6 +274,18 @@ pub(super) async fn fix_pass(
         return Ok(None);
     };
     let passes = progress.fix_passes().len();
+    let asked_at = asked.requested_by.iter().map(|request| request.requested_at).max();
+    if woken && asked_at.is_some_and(|at| found.member.runs().iter().any(|run| run.started_at() >= at)) {
+        let values = Variables::new()
+            .with("pr", pr.number.to_string())?
+            .with("pass", passes.to_string())?;
+        return Ok(Some(
+            texts
+                .render(AutopilotPrompt::ReviewFixPassOpen, &values)?
+                .trim_end()
+                .to_owned(),
+        ));
+    }
     // The reports of the review pass that asked for this pass were kept under the number of the passes before it.
     let kept = count(passes.saturating_sub(1));
     let mut findings = vec![super::findings::open_text(texts, progress.findings())?];
