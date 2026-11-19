@@ -444,7 +444,7 @@ fn verifier_diagnostics_retain_the_refused_number_line_and_mistake() {
     ] {
         let error = parse_verification(text, ReviewVerdict::Approve, &[(number(3), Severity::Major)], &[]).unwrap_err();
         assert_eq!(
-            error.diagnostic(),
+            Some(&error.detail),
             Some(&AnswerDiagnostic {
                 source_line: source_line.map(str::to_owned),
                 number: NonZeroU32::new(id),
