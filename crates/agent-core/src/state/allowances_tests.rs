@@ -132,3 +132,38 @@ fn only_a_task_list_with_brief_allow_lines_is_written_as_an_object() {
     );
     assert!(teams[1]["task_list"].is_string());
 }
+
+/// The schema-9 fixture with the brief of its list-less third team replaced by `brief`, a JSON string body.
+fn schema_nine_with_only_brief(brief: &str) -> String {
+    let old = include_str!("../../tests/fixtures/state-before-task-allowances.json");
+    let marker = "\"task_list\": \"Tidy up the notes directory.\\n\"";
+    assert!(old.contains(marker));
+    old.replacen(marker, &format!("\"task_list\": \"{brief}\""), 1)
+}
+
+#[test]
+fn a_schema_nine_brief_made_only_of_allow_lines_is_read_as_the_brief_it_was() {
+    for (brief, text) in [
+        ("Allow: docs/*.txt\\n", "Allow: docs/*.txt\n"),
+        ("Allow: /absolute\\n", "Allow: /absolute\n"),
+        (
+            "Coordinator: inv-opus\\nAllow: docs/*.txt\\n",
+            "Coordinator: inv-opus\nAllow: docs/*.txt\n",
+        ),
+    ] {
+        let state = State::from_json(&schema_nine_with_only_brief(brief)).unwrap();
+        let team = state.teams().last().unwrap();
+        assert_eq!(team.task_list().text(), text);
+        assert_eq!(team.allowances(), []);
+        assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
+    }
+}
+
+#[test]
+fn a_schema_nine_brief_without_allow_lines_stays_a_plain_string() {
+    for brief in ["Tidy up.\\n", "Coordinator: inv-opus\\nTidy up.\\n"] {
+        let state = State::from_json(&schema_nine_with_only_brief(brief)).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
+        assert!(json["teams"].as_array().unwrap().last().unwrap()["task_list"].is_string());
+    }
+}
