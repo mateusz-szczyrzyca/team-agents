@@ -49,7 +49,10 @@ fn selected_text(
                 .with("text", &entry.finding.text)?
                 .with("check", &entry.finding.check)?;
             lines.push(texts.render(AutopilotPrompt::ReviewOpenFinding, &values)?);
-            lines.push(opinion_text(texts, ledger, entry.number)?);
+            let opinion = opinion_text(texts, ledger, entry.number)?;
+            if !opinion.is_empty() {
+                lines.push(opinion);
+            }
             let explanation = explanation_text(texts, ledger, entry.number)?;
             if !explanation.is_empty() {
                 lines.push(explanation);
