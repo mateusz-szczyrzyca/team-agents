@@ -35,6 +35,14 @@ pub enum Waiting {
     Defect,
 }
 
+impl Waiting {
+    /// The short status text, shared with the harness's prompt catalog.
+    #[must_use]
+    pub const fn text(self) -> &'static str {
+        ""
+    }
+}
+
 /// Reports an idle round's obligation; a closed or active round needs no wait line.
 #[must_use]
 pub fn round_wait(activity: Activity, obligation: Option<Obligation>) -> Option<Waiting> {

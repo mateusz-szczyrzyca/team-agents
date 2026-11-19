@@ -26,3 +26,18 @@ fn only_idle_open_rounds_wait_and_an_unowned_round_is_a_defect() {
         }
     }
 }
+
+#[test]
+fn wait_labels_name_every_owner_and_the_unowned_defect() {
+    let cases = [
+        (Waiting::For(Obligation::Gate), "a gate of the harness"),
+        (Waiting::For(Obligation::Review), "a review"),
+        (Waiting::For(Obligation::SecondOpinion), "a second opinion"),
+        (Waiting::For(Obligation::Human), "an answer of the human"),
+        (Waiting::For(Obligation::LeadCorrection), "the lead's correction"),
+        (Waiting::Defect, "nothing: this is a defect"),
+    ];
+    for (waiting, expected) in cases {
+        assert_eq!(waiting.text(), expected);
+    }
+}
