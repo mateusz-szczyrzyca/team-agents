@@ -2867,3 +2867,32 @@ async fn description_publication_refreshes_a_file_only_change_and_strips_owned_s
     assert_eq!(pull.body.matches("## Size\n").count(), 1);
     assert_eq!(pull.body.matches("## Gate\n").count(), 1);
 }
+
+#[tokio::test]
+async fn description_instructions_and_gate_provenance_reach_leads_reviewers_and_verifiers() {
+    let mut rig = fixing_rig(5).await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    let initial = rig.kept_prompt(&tasks[0], 1);
+    assert!(
+        initial.contains(rig.home.task_dir(&tasks[0]).join("description.md").to_str().unwrap()),
+        "{initial}"
+    );
+    let team = &state.teams()[0];
+    for reviewer in team.reviewers() {
+        let count = rig.runs(reviewer.task());
+        for run in 1..=count {
+            let prompt = rig.kept_prompt(reviewer.task(), usize::try_from(run).unwrap());
+            assert!(prompt.contains("## Harness gate at the reviewed commit"), "{prompt}");
+            assert!(prompt.contains("Do not run the gate."), "{prompt}");
+            assert!(
+                !prompt.contains("Run the repository's gate with `agent gate`"),
+                "{prompt}"
+            );
+        }
+    }
+}

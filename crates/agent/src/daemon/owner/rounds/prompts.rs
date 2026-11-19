@@ -504,3 +504,19 @@ pub(super) async fn verification_changes(
         &Variables::new().with("base", base)?,
     )?)
 }
+
+/// Supplies only a gate recorded at the reviewed head; otherwise requests the normal gate.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired after the gate provenance RED specification")
+)]
+fn review_gate(
+    _texts: &AutopilotPrompts,
+    _head: &CommitId,
+    _record: Option<&agent_core::state::GateRecord>,
+) -> Result<String, SectionError> {
+    Ok(String::new())
+}
+
+#[cfg(test)]
+mod tests;
