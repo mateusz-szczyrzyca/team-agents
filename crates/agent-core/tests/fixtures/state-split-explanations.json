@@ -1,0 +1,1636 @@
+{
+  "schema_version": 9,
+  "teams": [
+    {
+      "id": "team-20261119-131420-gt1d",
+      "repo": "team-agents",
+      "created_at": "2026-11-19T13:14:20Z",
+      "merge": "autopilot",
+      "task_list": "Build the two things.\n\n1. First\n[ ] 1.1 The first item\n    Do the first thing.\n\n2. Second\n[ ] 2.1 The second item\n    Do the second thing.\n",
+      "items": [
+        {
+          "id": "1.1",
+          "phase": {
+            "phase": "in_review",
+            "pr": {
+              "number": 132,
+              "branch": "agents/lead-ada/task-20261119-131420-ohs0",
+              "opened_at": "2026-11-19T15:32:41Z"
+            },
+            "reviews": [
+              {
+                "reviewer": "inv-cedar",
+                "task": "task-20261119-170919-quvr",
+                "requested_at": "2026-11-19T17:09:19Z",
+                "outcome": {
+                  "status": "pending"
+                }
+              },
+              {
+                "reviewer": "inv-hazel",
+                "task": "task-20261119-153246-oe7a",
+                "requested_at": "2026-11-19T17:09:19Z",
+                "outcome": {
+                  "status": "pending"
+                }
+              }
+            ]
+          },
+          "fix_passes": [
+            {
+              "requested_by": [
+                {
+                  "reviewer": "inv-dune",
+                  "task": "task-20261119-155721-ud36",
+                  "requested_at": "2026-11-19T15:57:21Z",
+                  "outcome": {
+                    "status": "submitted",
+                    "verdict": "REQUEST_CHANGES",
+                    "at": "2026-11-19T16:00:07Z"
+                  }
+                },
+                {
+                  "reviewer": "inv-hazel",
+                  "task": "task-20261119-153246-oe7a",
+                  "requested_at": "2026-11-19T15:32:46Z",
+                  "outcome": {
+                    "status": "submitted",
+                    "verdict": "REQUEST_CHANGES",
+                    "at": "2026-11-19T15:40:02Z"
+                  }
+                }
+              ]
+            },
+            {
+              "requested_by": [
+                {
+                  "reviewer": "inv-elm",
+                  "task": "task-20261119-163428-308v",
+                  "requested_at": "2026-11-19T16:34:28Z",
+                  "outcome": {
+                    "status": "submitted",
+                    "verdict": "REQUEST_CHANGES",
+                    "at": "2026-11-19T16:44:22Z"
+                  }
+                },
+                {
+                  "reviewer": "inv-gale",
+                  "task": "task-20261119-163428-yyri",
+                  "requested_at": "2026-11-19T16:34:28Z",
+                  "outcome": {
+                    "status": "submitted",
+                    "verdict": "REQUEST_CHANGES",
+                    "at": "2026-11-19T16:47:53Z"
+                  }
+                }
+              ]
+            }
+          ],
+          "findings": {
+            "review_count": 2,
+            "disputes": {
+              "accepted_heads": {
+                "17": "8ed62186ec3bd0554075e72159843817e1e0d734"
+              },
+              "changed_findings": [
+                17
+              ],
+              "explanations": {
+                "3": {
+                  "why": "explanation of finding 3",
+                  "status": "rejected",
+                  "votes": {
+                    "inv-elm": {
+                      "status": "rejected",
+                      "why": "vote on finding null"
+                    },
+                    "inv-gale": {
+                      "status": "rejected",
+                      "why": "vote on finding null"
+                    }
+                  }
+                },
+                "17": {
+                  "why": "explanation of finding 17",
+                  "status": "accepted",
+                  "votes": {
+                    "inv-elm": {
+                      "status": "accepted",
+                      "why": "vote on finding null"
+                    },
+                    "inv-gale": {
+                      "status": "accepted",
+                      "why": "vote on finding null"
+                    }
+                  }
+                },
+                "18": {
+                  "why": "explanation of finding 18",
+                  "status": "rejected",
+                  "votes": {
+                    "inv-elm": {
+                      "status": "rejected",
+                      "why": "vote on finding null"
+                    },
+                    "inv-gale": {
+                      "status": "rejected",
+                      "why": "vote on finding null"
+                    }
+                  }
+                },
+                "19": {
+                  "why": "explanation of finding 19",
+                  "status": "rejected",
+                  "votes": {
+                    "inv-elm": {
+                      "status": "rejected",
+                      "why": "vote on finding null"
+                    },
+                    "inv-gale": {
+                      "status": "rejected",
+                      "why": "vote on finding null"
+                    }
+                  }
+                },
+                "28": {
+                  "why": "explanation of finding 28",
+                  "status": "pending",
+                  "votes": {}
+                }
+              },
+              "raised": [],
+              "answered_pass": 2,
+              "bounces": 0,
+              "checked_run": "run-20261119-165511-re3x",
+              "correction": null
+            },
+            "verification": {
+              "reviewed_head": "8ed62186ec3bd0554075e72159843817e1e0d734",
+              "lead_message": "FINDING 3: FIXED — done\nFINDING 18: FIXED — done\nFINDING 19: FIXED — done\nFINDING 20: FIXED — done\nFINDING 27: FIXED — done\nFINDING 28: EXPLAINED — explanation of finding 28\n\nSTATUS: DONE",
+              "extra_fix_passes": 0
+            },
+            "entries": [
+              {
+                "number": 1,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "TDD-12",
+                  "place": "src/lib.rs:1",
+                  "text": "problem 1 → fix 1",
+                  "check": "check 1"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 2,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "API-9",
+                  "place": "src/lib.rs:2",
+                  "text": "problem 2 → fix 2",
+                  "check": "check 2"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 3,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "TDD-2",
+                  "place": "src/lib.rs:3",
+                  "text": "problem 3 → fix 3",
+                  "check": "check 3"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 4,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "COR",
+                  "place": "src/lib.rs:4",
+                  "text": "problem 4 → fix 4",
+                  "check": "check 4"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 5,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "COR",
+                  "place": "src/lib.rs:5",
+                  "text": "problem 5 → fix 5",
+                  "check": "check 5"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 6,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "CON-1",
+                  "place": "src/lib.rs:6",
+                  "text": "problem 6 → fix 6",
+                  "check": "check 6"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 7,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "ERR-2",
+                  "place": "src/lib.rs:7",
+                  "text": "problem 7 → fix 7",
+                  "check": "check 7"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 8,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "TDD-11",
+                  "place": "src/lib.rs:8",
+                  "text": "problem 8 → fix 8",
+                  "check": "check 8"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 9,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "COR",
+                  "place": "src/lib.rs:9",
+                  "text": "problem 9 → fix 9",
+                  "check": "check 9"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 10,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "COR",
+                  "place": "src/lib.rs:10",
+                  "text": "problem 10 → fix 10",
+                  "check": "check 10"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 11,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "COR",
+                  "place": "src/lib.rs:11",
+                  "text": "problem 11 → fix 11",
+                  "check": "check 11"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 12,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "ERR-6",
+                  "place": "src/lib.rs:12",
+                  "text": "problem 12 → fix 12",
+                  "check": "check 12"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 13,
+                "finding": {
+                  "severity": "BLOCKER",
+                  "rule": "GEN-3",
+                  "place": "src/lib.rs:13",
+                  "text": "problem 13 → fix 13",
+                  "check": "check 13"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 14,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "TDD-12",
+                  "place": "src/lib.rs:14",
+                  "text": "problem 14 → fix 14",
+                  "check": "check 14"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 15,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "CON-1",
+                  "place": "src/lib.rs:15",
+                  "text": "problem 15 → fix 15",
+                  "check": "check 15"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 16,
+                "finding": {
+                  "severity": "BLOCKER",
+                  "rule": "COR",
+                  "place": "src/lib.rs:16",
+                  "text": "problem 16 → fix 16",
+                  "check": "check 16"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 17,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "TDD-1",
+                  "place": "src/lib.rs:17",
+                  "text": "problem 17 → fix 17",
+                  "check": "check 17"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 18,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "TDD-2",
+                  "place": "src/lib.rs:18",
+                  "text": "problem 18 → fix 18",
+                  "check": "check 18"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 19,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "TDD-6",
+                  "place": "src/lib.rs:19",
+                  "text": "problem 19 → fix 19",
+                  "check": "check 19"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 20,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "ERR-2",
+                  "place": "src/lib.rs:20",
+                  "text": "problem 20 → fix 20",
+                  "check": "check 20"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 21,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "OBS-2",
+                  "place": "src/lib.rs:21",
+                  "text": "problem 21 → fix 21",
+                  "check": "check 21"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 22,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "DOC-4",
+                  "place": "src/lib.rs:22",
+                  "text": "problem 22 → fix 22",
+                  "check": "check 22"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 23,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "ERR-6",
+                  "place": "src/lib.rs:23",
+                  "text": "problem 23 → fix 23",
+                  "check": "check 23"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 24,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "API-10",
+                  "place": "src/lib.rs:24",
+                  "text": "problem 24 → fix 24",
+                  "check": "check 24"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 25,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "TDD-8",
+                  "place": "src/lib.rs:25",
+                  "text": "problem 25 → fix 25",
+                  "check": "check 25"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 26,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "LINT-8",
+                  "place": "src/lib.rs:26",
+                  "text": "problem 26 → fix 26",
+                  "check": "check 26"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 27,
+                "finding": {
+                  "severity": "BLOCKER",
+                  "rule": "COR",
+                  "place": "src/lib.rs:27",
+                  "text": "problem 27 → fix 27",
+                  "check": "check 27"
+                },
+                "reporter": "inv-gale",
+                "pass": 2,
+                "status": "open"
+              },
+              {
+                "number": 28,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "TDD-14",
+                  "place": "src/lib.rs:28",
+                  "text": "problem 28 → fix 28",
+                  "check": "check 28"
+                },
+                "reporter": "inv-gale",
+                "pass": 2,
+                "status": "open"
+              }
+            ],
+            "fixed": {
+              "1": [
+                1,
+                2,
+                4,
+                5,
+                6,
+                7,
+                13,
+                14,
+                15,
+                16,
+                20
+              ],
+              "2": [
+                3,
+                18,
+                19,
+                20,
+                27
+              ]
+            },
+            "pending": {},
+            "comment": 42
+          }
+        },
+        {
+          "id": "2.1",
+          "phase": {
+            "phase": "in_review",
+            "pr": {
+              "number": 132,
+              "branch": "agents/lead-ada/task-20261119-131420-ohs0",
+              "opened_at": "2026-11-19T15:32:41Z"
+            },
+            "reviews": [
+              {
+                "reviewer": "inv-cedar",
+                "task": "task-20261119-170919-quvr",
+                "requested_at": "2026-11-19T17:09:19Z",
+                "outcome": {
+                  "status": "pending"
+                }
+              },
+              {
+                "reviewer": "inv-hazel",
+                "task": "task-20261119-153246-oe7a",
+                "requested_at": "2026-11-19T17:09:19Z",
+                "outcome": {
+                  "status": "pending"
+                }
+              }
+            ]
+          },
+          "fix_passes": [
+            {
+              "requested_by": [
+                {
+                  "reviewer": "inv-elm",
+                  "task": "task-20261119-163428-308v",
+                  "requested_at": "2026-11-19T16:34:28Z",
+                  "outcome": {
+                    "status": "submitted",
+                    "verdict": "REQUEST_CHANGES",
+                    "at": "2026-11-19T16:44:22Z"
+                  }
+                },
+                {
+                  "reviewer": "inv-gale",
+                  "task": "task-20261119-163428-yyri",
+                  "requested_at": "2026-11-19T16:34:28Z",
+                  "outcome": {
+                    "status": "submitted",
+                    "verdict": "REQUEST_CHANGES",
+                    "at": "2026-11-19T16:47:53Z"
+                  }
+                }
+              ]
+            }
+          ],
+          "findings": {
+            "review_count": 2,
+            "disputes": {
+              "accepted_heads": {
+                "17": "8ed62186ec3bd0554075e72159843817e1e0d734"
+              },
+              "changed_findings": [
+                17
+              ],
+              "explanations": {
+                "3": {
+                  "why": "explanation of finding 3",
+                  "status": "rejected",
+                  "votes": {
+                    "inv-elm": {
+                      "status": "rejected",
+                      "why": "vote on finding null"
+                    },
+                    "inv-gale": {
+                      "status": "rejected",
+                      "why": "vote on finding null"
+                    }
+                  }
+                },
+                "17": {
+                  "why": "explanation of finding 17",
+                  "status": "accepted",
+                  "votes": {
+                    "inv-elm": {
+                      "status": "accepted",
+                      "why": "vote on finding null"
+                    },
+                    "inv-gale": {
+                      "status": "accepted",
+                      "why": "vote on finding null"
+                    }
+                  }
+                },
+                "18": {
+                  "why": "explanation of finding 18",
+                  "status": "rejected",
+                  "votes": {
+                    "inv-elm": {
+                      "status": "rejected",
+                      "why": "vote on finding null"
+                    },
+                    "inv-gale": {
+                      "status": "rejected",
+                      "why": "vote on finding null"
+                    }
+                  }
+                },
+                "19": {
+                  "why": "explanation of finding 19",
+                  "status": "rejected",
+                  "votes": {
+                    "inv-elm": {
+                      "status": "rejected",
+                      "why": "vote on finding null"
+                    },
+                    "inv-gale": {
+                      "status": "rejected",
+                      "why": "vote on finding null"
+                    }
+                  }
+                }
+              },
+              "raised": [],
+              "answered_pass": 1,
+              "bounces": 0,
+              "checked_run": "run-20261119-162414-9oqb",
+              "correction": null
+            },
+            "verification": {
+              "reviewed_head": "8ed62186ec3bd0554075e72159843817e1e0d734",
+              "lead_message": "FINDING 3: FIXED — done\nFINDING 18: FIXED — done\nFINDING 19: FIXED — done\nFINDING 20: FIXED — done\nFINDING 27: FIXED — done\nFINDING 28: EXPLAINED — explanation of finding 28\n\nSTATUS: DONE",
+              "extra_fix_passes": 0
+            },
+            "entries": [
+              {
+                "number": 1,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "TDD-12",
+                  "place": "src/lib.rs:1",
+                  "text": "problem 1 → fix 1",
+                  "check": "check 1"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 2,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "API-9",
+                  "place": "src/lib.rs:2",
+                  "text": "problem 2 → fix 2",
+                  "check": "check 2"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 3,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "TDD-2",
+                  "place": "src/lib.rs:3",
+                  "text": "problem 3 → fix 3",
+                  "check": "check 3"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 4,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "COR",
+                  "place": "src/lib.rs:4",
+                  "text": "problem 4 → fix 4",
+                  "check": "check 4"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 5,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "COR",
+                  "place": "src/lib.rs:5",
+                  "text": "problem 5 → fix 5",
+                  "check": "check 5"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 6,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "CON-1",
+                  "place": "src/lib.rs:6",
+                  "text": "problem 6 → fix 6",
+                  "check": "check 6"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 7,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "ERR-2",
+                  "place": "src/lib.rs:7",
+                  "text": "problem 7 → fix 7",
+                  "check": "check 7"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 8,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "TDD-11",
+                  "place": "src/lib.rs:8",
+                  "text": "problem 8 → fix 8",
+                  "check": "check 8"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 9,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "COR",
+                  "place": "src/lib.rs:9",
+                  "text": "problem 9 → fix 9",
+                  "check": "check 9"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 10,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "COR",
+                  "place": "src/lib.rs:10",
+                  "text": "problem 10 → fix 10",
+                  "check": "check 10"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 11,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "COR",
+                  "place": "src/lib.rs:11",
+                  "text": "problem 11 → fix 11",
+                  "check": "check 11"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 12,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "ERR-6",
+                  "place": "src/lib.rs:12",
+                  "text": "problem 12 → fix 12",
+                  "check": "check 12"
+                },
+                "reporter": "inv-dune",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 13,
+                "finding": {
+                  "severity": "BLOCKER",
+                  "rule": "GEN-3",
+                  "place": "src/lib.rs:13",
+                  "text": "problem 13 → fix 13",
+                  "check": "check 13"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 14,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "TDD-12",
+                  "place": "src/lib.rs:14",
+                  "text": "problem 14 → fix 14",
+                  "check": "check 14"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 15,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "CON-1",
+                  "place": "src/lib.rs:15",
+                  "text": "problem 15 → fix 15",
+                  "check": "check 15"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 16,
+                "finding": {
+                  "severity": "BLOCKER",
+                  "rule": "COR",
+                  "place": "src/lib.rs:16",
+                  "text": "problem 16 → fix 16",
+                  "check": "check 16"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 17,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "TDD-1",
+                  "place": "src/lib.rs:17",
+                  "text": "problem 17 → fix 17",
+                  "check": "check 17"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 18,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "TDD-2",
+                  "place": "src/lib.rs:18",
+                  "text": "problem 18 → fix 18",
+                  "check": "check 18"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 19,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "TDD-6",
+                  "place": "src/lib.rs:19",
+                  "text": "problem 19 → fix 19",
+                  "check": "check 19"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 20,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "ERR-2",
+                  "place": "src/lib.rs:20",
+                  "text": "problem 20 → fix 20",
+                  "check": "check 20"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 21,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "OBS-2",
+                  "place": "src/lib.rs:21",
+                  "text": "problem 21 → fix 21",
+                  "check": "check 21"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 22,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "DOC-4",
+                  "place": "src/lib.rs:22",
+                  "text": "problem 22 → fix 22",
+                  "check": "check 22"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 23,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "ERR-6",
+                  "place": "src/lib.rs:23",
+                  "text": "problem 23 → fix 23",
+                  "check": "check 23"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 24,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "API-10",
+                  "place": "src/lib.rs:24",
+                  "text": "problem 24 → fix 24",
+                  "check": "check 24"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "resolved"
+              },
+              {
+                "number": 25,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "TDD-8",
+                  "place": "src/lib.rs:25",
+                  "text": "problem 25 → fix 25",
+                  "check": "check 25"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 26,
+                "finding": {
+                  "severity": "MINOR",
+                  "rule": "LINT-8",
+                  "place": "src/lib.rs:26",
+                  "text": "problem 26 → fix 26",
+                  "check": "check 26"
+                },
+                "reporter": "inv-hazel",
+                "pass": 1,
+                "status": "open"
+              },
+              {
+                "number": 27,
+                "finding": {
+                  "severity": "BLOCKER",
+                  "rule": "COR",
+                  "place": "src/lib.rs:27",
+                  "text": "problem 27 → fix 27",
+                  "check": "check 27"
+                },
+                "reporter": "inv-gale",
+                "pass": 2,
+                "status": "open"
+              },
+              {
+                "number": 28,
+                "finding": {
+                  "severity": "MAJOR",
+                  "rule": "TDD-14",
+                  "place": "src/lib.rs:28",
+                  "text": "problem 28 → fix 28",
+                  "check": "check 28"
+                },
+                "reporter": "inv-gale",
+                "pass": 2,
+                "status": "open"
+              }
+            ],
+            "fixed": {
+              "1": [
+                1,
+                2,
+                4,
+                5,
+                6,
+                7,
+                13,
+                14,
+                15,
+                16,
+                20
+              ]
+            },
+            "pending": {},
+            "comment": 42
+          }
+        }
+      ],
+      "rounds": [
+        {
+          "id": "round-20261119-131420-xqqr",
+          "item": "1.1",
+          "opened_at": "2026-11-19T13:14:20Z",
+          "state": {
+            "status": "open"
+          }
+        },
+        {
+          "id": "round-20261119-153246-iaes",
+          "item": "2.1",
+          "opened_at": "2026-11-19T15:32:46Z",
+          "state": {
+            "status": "open"
+          }
+        }
+      ],
+      "crew": {
+        "kind": "team",
+        "coordinator": {
+          "task": "task-20261119-131420-ohs0",
+          "agent": {
+            "tier": "normal",
+            "name": "lead-ada"
+          },
+          "status": "waiting",
+          "runs": [
+            {
+              "id": "run-20261119-131421-8e69",
+              "started_at": "2026-11-19T13:14:21Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T13:34:38Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "SLEEPING"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-150510-sjdq",
+              "started_at": "2026-11-19T15:05:10Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T15:11:25Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-151130-s56n",
+              "started_at": "2026-11-19T15:11:30Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T15:17:32Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-151735-6ydm",
+              "started_at": "2026-11-19T15:17:35Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T15:18:07Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "QUESTIONS"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-152323-h0yw",
+              "started_at": "2026-11-19T15:23:23Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T15:26:03Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-152606-0hvg",
+              "started_at": "2026-11-19T15:26:06Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T15:26:19Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "QUESTIONS"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-153232-to72",
+              "started_at": "2026-11-19T15:32:32Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T15:32:41Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-160012-40e3",
+              "started_at": "2026-11-19T16:00:12Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T16:13:25Z",
+                "end": {
+                  "kind": "no_status",
+                  "exit_code": null
+                }
+              }
+            },
+            {
+              "id": "run-20261119-161327-vpv3",
+              "started_at": "2026-11-19T16:13:27Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T16:24:13Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-162414-9oqb",
+              "started_at": "2026-11-19T16:24:14Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T16:24:42Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-162444-gi5s",
+              "started_at": "2026-11-19T16:24:44Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T16:24:57Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "QUESTIONS"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-163409-t40e",
+              "started_at": "2026-11-19T16:34:09Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T16:34:21Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-163429-xgh9",
+              "started_at": "2026-11-19T16:34:29Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr",
+                "round-20261119-153246-iaes"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T16:35:39Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-164756-v6k6",
+              "started_at": "2026-11-19T16:47:56Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr",
+                "round-20261119-153246-iaes"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T16:48:36Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "QUESTIONS"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-165511-re3x",
+              "started_at": "2026-11-19T16:55:11Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr",
+                "round-20261119-153246-iaes"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T17:09:13Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            }
+          ],
+          "questions": [
+            {
+              "number": 1,
+              "file": "/home/example/agents/tasks/task-20261119-131420-ohs0/questions-1.md",
+              "asked_at": "2026-11-19T15:18:07Z",
+              "state": {
+                "status": "answered",
+                "at": "2026-11-19T15:23:23Z",
+                "via": "command"
+              }
+            },
+            {
+              "number": 2,
+              "file": "/home/example/agents/tasks/task-20261119-131420-ohs0/questions-2.md",
+              "asked_at": "2026-11-19T15:26:19Z",
+              "state": {
+                "status": "answered",
+                "at": "2026-11-19T15:32:32Z",
+                "via": "command"
+              }
+            },
+            {
+              "number": 3,
+              "file": "/home/example/agents/tasks/task-20261119-131420-ohs0/questions-3.md",
+              "asked_at": "2026-11-19T16:24:57Z",
+              "state": {
+                "status": "answered",
+                "at": "2026-11-19T16:34:09Z",
+                "via": "command"
+              }
+            },
+            {
+              "number": 4,
+              "file": "/home/example/agents/tasks/task-20261119-131420-ohs0/questions-4.md",
+              "asked_at": "2026-11-19T16:48:36Z",
+              "state": {
+                "status": "answered",
+                "at": "2026-11-19T16:55:11Z",
+                "via": "command"
+              }
+            }
+          ]
+        },
+        "members": [
+          {
+            "task": "task-20261119-131420-nni1",
+            "agent": {
+              "tier": "normal",
+              "name": "member-bob"
+            },
+            "status": "waiting",
+            "runs": [
+              {
+                "id": "run-20261119-131421-u61x",
+                "started_at": "2026-11-19T13:14:21Z",
+                "session": "00000000-0000-4000-8000-000000000001",
+                "rounds": [
+                  "round-20261119-131420-xqqr"
+                ],
+                "state": {
+                  "status": "ended",
+                  "at": "2026-11-19T15:05:26Z",
+                  "end": {
+                    "kind": "reported",
+                    "outcome": "SLEEPING"
+                  }
+                }
+              },
+              {
+                "id": "run-20261119-153246-mwu8",
+                "started_at": "2026-11-19T15:32:46Z",
+                "session": "00000000-0000-4000-8000-000000000001",
+                "rounds": [
+                  "round-20261119-153246-iaes"
+                ],
+                "state": {
+                  "status": "ended",
+                  "at": "2026-11-19T15:44:54Z",
+                  "end": {
+                    "kind": "reported",
+                    "outcome": "SLEEPING"
+                  }
+                }
+              }
+            ],
+            "questions": []
+          }
+        ],
+        "workers": []
+      },
+      "reviewers": [
+        {
+          "task": "task-20261119-153246-mrt6",
+          "agent": {
+            "tier": "investigator",
+            "name": "inv-fir"
+          },
+          "status": "failed",
+          "runs": [
+            {
+              "id": "run-20261119-153246-7aww",
+              "started_at": "2026-11-19T15:32:46Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T15:57:20Z",
+                "end": {
+                  "kind": "no_status",
+                  "exit_code": 0
+                }
+              }
+            }
+          ],
+          "questions": []
+        },
+        {
+          "task": "task-20261119-153246-oe7a",
+          "agent": {
+            "tier": "investigator",
+            "name": "inv-hazel"
+          },
+          "status": "waiting",
+          "runs": [
+            {
+              "id": "run-20261119-153246-52x4",
+              "started_at": "2026-11-19T15:32:46Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T15:39:25Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-153926-4w7l",
+              "started_at": "2026-11-19T15:39:26Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T15:40:02Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            },
+            {
+              "id": "run-20261119-170919-mui8",
+              "started_at": "2026-11-19T17:09:19Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T17:16:42Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            }
+          ],
+          "questions": []
+        },
+        {
+          "task": "task-20261119-155721-ud36",
+          "agent": {
+            "tier": "investigator",
+            "name": "inv-dune"
+          },
+          "status": "waiting",
+          "runs": [
+            {
+              "id": "run-20261119-155721-qfm9",
+              "started_at": "2026-11-19T15:57:21Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T16:00:07Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            }
+          ],
+          "questions": []
+        },
+        {
+          "task": "task-20261119-163428-308v",
+          "agent": {
+            "tier": "investigator",
+            "name": "inv-elm"
+          },
+          "status": "waiting",
+          "runs": [
+            {
+              "id": "run-20261119-163428-8jkd",
+              "started_at": "2026-11-19T16:34:28Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T16:44:22Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            }
+          ],
+          "questions": []
+        },
+        {
+          "task": "task-20261119-163428-yyri",
+          "agent": {
+            "tier": "investigator",
+            "name": "inv-gale"
+          },
+          "status": "waiting",
+          "runs": [
+            {
+              "id": "run-20261119-163428-s0qy",
+              "started_at": "2026-11-19T16:34:28Z",
+              "session": "00000000-0000-4000-8000-000000000001",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-19T16:47:53Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "DONE"
+                }
+              }
+            }
+          ],
+          "questions": []
+        },
+        {
+          "task": "task-20261119-170919-quvr",
+          "agent": {
+            "tier": "investigator",
+            "name": "inv-cedar"
+          },
+          "status": "running",
+          "runs": [
+            {
+              "id": "run-20261119-170919-1nw0",
+              "started_at": "2026-11-19T17:09:19Z",
+              "rounds": [
+                "round-20261119-131420-xqqr"
+              ],
+              "state": {
+                "status": "running"
+              }
+            }
+          ],
+          "questions": []
+        }
+      ]
+    }
+  ]
+}
