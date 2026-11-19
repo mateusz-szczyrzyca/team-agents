@@ -35,7 +35,10 @@ pub(crate) fn lead_sections(text: &str) -> String {
                     omitted = None;
                 }
                 let title = title.trim().trim_end_matches('#').trim();
-                if title.eq_ignore_ascii_case("Size") || title.eq_ignore_ascii_case("Gate") {
+                if title.eq_ignore_ascii_case("Size")
+                    || title.eq_ignore_ascii_case("Gate")
+                    || title.eq_ignore_ascii_case("Allowed beforehand")
+                {
                     omitted = Some(level);
                 }
             }
@@ -76,9 +79,33 @@ mod tests;
 
 /// Lists changed paths covered by the task's permissions, using a harness-owned template.
 pub(crate) fn allowed_section(
-    _texts: &AutopilotPrompts,
-    _files: &[agent_core::decide::checks::FileChange],
-    _allowances: &[agent_core::task_allowance::TaskAllowance],
+    texts: &AutopilotPrompts,
+    files: &[agent_core::decide::checks::FileChange],
+    allowances: &[agent_core::task_allowance::TaskAllowance],
 ) -> Result<Option<String>, PullTextError> {
-    Ok(None)
+    use agent_core::decide::checks::Change;
+    let mut covered = std::collections::BTreeMap::new();
+    for file in files {
+        let paths = std::iter::once(&file.path).chain(match &file.change {
+            Change::Renamed { from } => Some(from),
+            Change::Added | Change::Modified | Change::Deleted => None,
+        });
+        for path in paths {
+            if let Some(allowance) = allowances.iter().find(|line| line.matches(path)) {
+                covered.insert(path, allowance);
+            }
+        }
+    }
+    if covered.is_empty() {
+        return Ok(None);
+    }
+    let rows = covered
+        .into_iter()
+        .map(|(path, allowance)| format!("- `{path}` — `Allow: {}`", allowance.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(Some(texts.render(
+        AutopilotPrompt::PrAllowedBeforehand,
+        &Variables::new().with("paths", rows)?,
+    )?))
 }

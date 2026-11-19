@@ -766,7 +766,16 @@ impl Owner {
         let measured =
             crate::daemon::pr::description::measured_sections(&pulls.texts, size, record, previous.as_ref())?;
         let mut text = self.harness_text_of(pulls, team_id, repo, ids, record)?;
+        let merge_base = git
+            .merge_base(&base, &Revision::Commit(record.result.head.clone()))
+            .await?;
+        let facts = git.round_facts(&merge_base, &record.result.head, "").await?;
+        let allowed = crate::daemon::pr::description::allowed_section(&pulls.texts, &facts.files, team.allowances())?;
         text.body = [text.body.trim_end(), contribution.trim(), &measured].join("\n\n");
+        if let Some(section) = allowed {
+            text.body.push_str("\n\n");
+            text.body.push_str(section.trim_end());
+        }
         Ok(text)
     }
 
