@@ -5,6 +5,14 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.19.0 — 19.11.2026 — PR pending
+
+### Bug fixes
+- [agent] A refused review report no longer stops the daemon when items on one pull request have different
+  explanations. The reviewer receives a correction before any verdict or findings are recorded.
+- [agent] Review corrections and the notice after two unsuccessful corrections show the answers allowed for
+  the item that refused the report.
+
 ## 0.18.0 — 19.11.2026 — PR #133
 
 ### New features
