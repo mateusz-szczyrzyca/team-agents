@@ -614,20 +614,15 @@ impl Owner {
         if queued.is_empty() {
             return Ok(());
         }
-        let Some(free_bytes) = self.check_free_space() else {
-            return Ok(());
-        };
-        let min_limit_gb = self.parts.settings.config.disk().min_free_gb;
-        let min_limit_bytes = min_limit_gb.saturating_mul(GIBIBYTE);
-        if free_bytes < min_limit_bytes {
-            if !self.was_min_space {
-                self.was_min_space = true;
-                self.notify_rounds_waiting(free_bytes, min_limit_gb).await;
-            }
+        if !self.space_allows_run().await {
             return Ok(());
         }
         for task in queued {
             if self.runs.len() >= MAX_RUNS.get() {
+                break;
+            }
+            // Each launch is measured on its own: the space may have fallen since the last one started.
+            if !self.space_allows_run().await {
                 break;
             }
             self.start(task).await?;
@@ -635,9 +630,25 @@ impl Owner {
         Ok(())
     }
 
+    /// Whether a new run may start now: the free space is measured and is at least `disk.min_free_gb`. A refusal
+    /// notifies the human once while the space stays below the minimum.
+    async fn space_allows_run(&mut self) -> bool {
+        let Some(free_bytes) = self.check_free_space() else {
+            return false;
+        };
+        let min_limit_gb = self.parts.settings.config.disk().min_free_gb;
+        if free_bytes >= min_limit_gb.saturating_mul(GIBIBYTE) {
+            return true;
+        }
+        if !self.was_min_space {
+            self.was_min_space = true;
+            self.notify_rounds_waiting(free_bytes, min_limit_gb).await;
+        }
+        false
+    }
+
     /// Starts the run of `task`, or fails the task when it cannot be made ready.
     async fn start(&mut self, task: TaskId) -> Result<(), OwnerError> {
-        self.check_free_space();
         let why = self.reasons.remove(&task);
         // What a wake-up noted is for the run it starts, and for no other.
         let woke = self
@@ -848,16 +859,25 @@ impl Owner {
             Outcome::Failed(reason) => self.failed(&task, reason).await,
         };
         let free_bytes = self.check_free_space();
-        if let Ok(located) = self.locate(&task)
-            && located.role == Role::Reviewer
-        {
-            let low_limit_bytes = self.parts.settings.config.disk().low_free_gb.saturating_mul(GIBIBYTE);
-            if let Some(free) = free_bytes
-                && free < low_limit_bytes
-                && let Some(team) = self.parts.state.team(&located.team)
-            {
-                let worktree_dir = self.parts.store.home().worktree_dir(team.repo(), &task);
-                self.remove_target(&task, &worktree_dir);
+        match self.locate(&task) {
+            Ok(located) if located.role == Role::Reviewer => {
+                let low_limit_bytes = self.parts.settings.config.disk().low_free_gb.saturating_mul(GIBIBYTE);
+                if let Some(free) = free_bytes
+                    && free < low_limit_bytes
+                    && let Some(team) = self.parts.state.team(&located.team)
+                {
+                    let worktree_dir = self.parts.store.home().worktree_dir(team.repo(), &task);
+                    self.remove_target(&task, &worktree_dir);
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::GitCallFailed.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "cannot tell whether the finished run's task reviews: its build directory is not released"
+                );
             }
         }
         result
