@@ -1034,3 +1034,82 @@ async fn a_lint_suppression_named_in_the_lead_contribution_is_disclosed_before_r
     assert_eq!(rig.github.calls("POST", "/graphql").len(), 1);
     assert_eq!(record(&rig, &tasks[0]).await.passes_of(&["1.1".parse().unwrap()]), 0);
 }
+
+#[tokio::test]
+async fn grouped_allowances_cover_the_version_and_five_tests_and_reach_review() {
+    let mut rig = checking_rig("script:edit-five-and-version,questions,done", 2, SILENT, SILENT).await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap().replace(
+        "protected_paths = [\"ci/\"]",
+        "protected_paths = [\"ci/\", \"Cargo.toml\"]",
+    );
+    std::fs::write(rig.home.config_file(), config).unwrap();
+    std::fs::write(rig.repo.join("Cargo.toml"), "version = \"0.13.0\"\n").unwrap();
+    for name in ["one", "two", "three", "four", "five"] {
+        std::fs::write(rig.repo.join(format!("tests/{name}.txt")), "a\nb\nc\n").unwrap();
+    }
+    git(&rig.repo, &["add", "Cargo.toml", "tests"]);
+    git(&rig.repo, &["commit", "-q", "-m", "Seed the version and five tests"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    script(
+        &rig,
+        "edit-five-and-version",
+        "sed -i s/0.13.0/0.14.0/ Cargo.toml\nfor name in one two three four five; do sed -i 2d tests/$name.txt; done\ngit add Cargo.toml tests\ncommit -m 'Change the version and five tests'\n",
+    );
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let file = questions_of(&rig, &tasks[0], 1);
+    assert_eq!(file.entries().len(), 2);
+    assert!(!file.instructions().contains("`ok`"));
+    let answers = AnswerList::try_from(
+        file.entries()
+            .iter()
+            .map(|entry| AnswerInput {
+                question: entry.number(),
+                verdict: Verdict::from_text("allow").unwrap().unwrap(),
+            })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: NonZeroU32::MIN,
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    looked_again(&rig).await;
+    assert_eq!(
+        record(&rig, &tasks[0])
+            .await
+            .allowed_of(&["1.1".parse().unwrap()])
+            .len(),
+        6
+    );
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+    assert!(!rig.github.pulls()[0].draft);
+    let allowed = record(&rig, &tasks[0])
+        .await
+        .allowed_of(&["1.1".parse().unwrap()])
+        .to_vec();
+    assert_eq!(allowed.len(), 6);
+    for path in [
+        "Cargo.toml",
+        "tests/one.txt",
+        "tests/two.txt",
+        "tests/three.txt",
+        "tests/four.txt",
+        "tests/five.txt",
+    ] {
+        assert!(allowed.contains(&Subject::Path(path.parse().unwrap())), "{allowed:?}");
+    }
+}
