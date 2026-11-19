@@ -918,3 +918,89 @@ fn assert_exhausted_opinions(rig: &Rig, team: &agent_core::state::Team) {
         );
     }
 }
+
+#[tokio::test]
+async fn rate_limited_opinions_are_replaced_and_their_tasks_are_stopped() {
+    for probe in ["opinion-retry:RATE"] {
+        let mut rig = Rig::new(
+            &[
+                normal("claude-1", "work,opinion-ask"),
+                investigator("inv-r1", probe),
+                investigator("inv-r2", probe),
+                investigator("inv-r3", probe),
+                investigator("inv-r4", probe),
+                investigator("inv-r5", probe),
+                investigator("inv-r6", probe),
+            ],
+            1,
+            false,
+        )
+        .await;
+        rig.start().await;
+        let (team, tasks) = rig
+            .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+            .await;
+        rig.state_where("opinion outcome or exhausted hold", |state| {
+            let ledger = state.team(&team).unwrap().items()[0].findings();
+            ledger.is_some_and(|ledger| {
+                ledger.opinions().len() == 2
+                    && ledger
+                        .opinions()
+                        .values()
+                        .all(|opinion| matches!(opinion.stage, OpinionStage::Reported { .. }))
+            }) || rig
+                .notifications()
+                .iter()
+                .any(|n| n.contains("Second opinion needs attention"))
+        })
+        .await;
+        let state = rig.state();
+        let ledger = state.team(&team).unwrap().items()[0].findings().unwrap();
+        assert!(
+            ledger
+                .opinions()
+                .keys()
+                .all(|number| ledger.opinion_attempts(*number).len() >= 2)
+        );
+        rig.item_where("1.1", "replacement opinions counted", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+        rig.stop().await.unwrap();
+        let state = rig.state();
+        let item = &state.team(&team).unwrap().items()[0];
+        let ledger = item.findings().unwrap();
+        for number in ledger.opinions().keys() {
+            let attempts = ledger.opinion_attempts(*number);
+            assert_eq!(attempts.len(), 2);
+            assert_ne!(attempts[0].investigator, attempts[1].investigator);
+            assert!(attempts[0].failure.is_some());
+            assert_eq!(attempts[1].failure, None);
+            assert_eq!(
+                state.team(&team).unwrap().find(&attempts[0].task).unwrap().1.status(),
+                agent_core::status::TaskStatus::Stopped
+            );
+            assert!(
+                !item.fix_passes()[0]
+                    .requested_by
+                    .iter()
+                    .any(|review| attempts.iter().any(|attempt| attempt.investigator == review.reviewer))
+            );
+            for attempt in attempts {
+                assert!(
+                    rig.kept_prompt(&attempt.task, 1)
+                        .contains(ledger.opinions()[number].request.head.as_str())
+                );
+            }
+        }
+        assert_eq!(item.fix_passes().len(), 1);
+        assert_eq!(rig.kept_runs(&tasks[0]), 2);
+        assert_eq!(
+            rig.notifications()
+                .iter()
+                .filter(|n| n.contains("Second opinion needs attention"))
+                .count(),
+            0
+        );
+    }
+}

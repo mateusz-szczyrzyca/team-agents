@@ -223,6 +223,11 @@ case $action in
       owner=$(cat "$marker/owner")
       if [[ $owner == "$PWD" ]]; then
         case ${action#opinion-retry:} in
+          RATE)
+            printf '%s\n' 'Rate limit reached for requests' >&2
+            printf '{"type":"result","subtype":"error","is_error":true,"session_id":"%s"}\n' "$session"
+            exit 1
+            ;;
           FAILED) result 'Cannot inspect commit.\nSTATUS: FAILED' ;;
           EMPTY) result 'Cannot inspect commit.' ;;
           INVALID) result 'No opinion line.\nSTATUS: DONE' ;;
