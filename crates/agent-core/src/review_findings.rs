@@ -262,7 +262,7 @@ pub fn parse_verification(
 
 /// Parses one permitted verifier answer, with a nonempty evidence string.
 fn read_answer(value: &str, severity: Severity, pending: Option<bool>) -> Option<Answer> {
-    if value == "RESOLVED" && pending != Some(true) {
+    if accepts_reason(value, "RESOLVED") && pending != Some(true) {
         return Some(Answer::Resolved);
     }
     let (kind, why) = value.split_once(" — ")?;
@@ -284,6 +284,17 @@ fn read_answer(value: &str, severity: Severity, pending: Option<bool>) -> Option
         }),
         _ => None,
     }
+}
+
+/// Whether a fixed-outcome keyword is bare or followed by a nonempty optional reason.
+pub(crate) fn accepts_reason(value: &str, keyword: &str) -> bool {
+    value == keyword
+        || value.strip_prefix(keyword).is_some_and(|tail| {
+            [" — ", " - ", ": "].iter().any(|separator| {
+                tail.strip_prefix(separator)
+                    .is_some_and(|reason| !reason.trim().is_empty())
+            })
+        })
 }
 
 /// A Markdown code fence line: its character (backtick or tilde) and how many of them it has.

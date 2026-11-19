@@ -91,7 +91,10 @@ pub fn parse_lead(
         if ended || answers.iter().any(|(id, _)| id == number) {
             return Err(error());
         }
-        let response = if value == "FIXED" {
+        if *severity == Severity::Minor && !crate::review_findings::accepts_reason(value, "FIXED") {
+            continue;
+        }
+        let response = if crate::review_findings::accepts_reason(value, "FIXED") {
             Response::Fixed
         } else if *severity == Severity::Major && !used {
             let why = value
@@ -105,7 +108,7 @@ pub fn parse_lead(
         answers.push((*number, response));
     }
     for (number, severity, used) in open {
-        if !answers.iter().any(|(id, _)| id == number) {
+        if severity.blocks() && !answers.iter().any(|(id, _)| id == number) {
             return Err(ResponseError {
                 line: text.lines().count().saturating_add(1),
                 number: *number,
