@@ -46,7 +46,10 @@ use std::sync::Arc;
 
 /// A reduced copy of the evidence: the same numbered findings, but explanation 28 exists in only the first item.
 fn evidence_state() -> State {
-    let ledgers: Vec<Findings> = serde_json::from_str(include_str!("evidence-ledgers.json")).unwrap();
+    let ledgers: Vec<Findings> = serde_json::from_str(include_str!(
+        "../../../../../tests/fixtures/review-evidence-ledgers.json"
+    ))
+    .unwrap();
     let mut state = solo_state();
     state
         .add_reviewer(&team_id(0), member(3, investigator("inv-1")))
