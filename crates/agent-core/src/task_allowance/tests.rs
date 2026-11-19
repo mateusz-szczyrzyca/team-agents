@@ -43,3 +43,10 @@ fn allowances_refuse_invalid_forms_and_every_glob_reaching_rules() {
         assert_eq!(TaskAllowance::parse(pattern), Err(AllowanceError::Rules), "{pattern}");
     }
 }
+
+#[test]
+fn directory_wildcards_cannot_cover_nested_rule_files() {
+    for pattern in ["tests/**", "sub/**/", "tests/**/**", "src/**/AGENTS.*"] {
+        assert_eq!(TaskAllowance::parse(pattern), Err(AllowanceError::Rules), "{pattern}");
+    }
+}
