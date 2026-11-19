@@ -244,7 +244,7 @@ async fn correction_quotes_the_refused_line_and_the_second_items_allowed_answers
         "{text}"
     );
     assert!(text.contains("FINDING 28: RESOLVED"), "{text}");
-    assert!(text.contains("FINDING 28: OPEN"), "{text}");
+    assert!(text.contains("FINDING 28: RESOLVED or OPEN — why"), "{text}");
     assert!(!text.contains("FINDING 28: ACCEPTED — why"), "{text}");
 }
 
