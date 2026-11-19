@@ -21,6 +21,7 @@ use crate::ids::{AgentName, BranchName, InvestigatorName};
 use crate::kinds::{CliKind, Keyword, Tier, UnknownKeyword};
 use crate::log::LogLevel;
 use crate::repo_path::PathPatterns;
+use crate::review_response::opinion::Permission;
 
 pub use secrets::{InvalidSecret, MAX_SECRETS_BYTES, Position, Secret, Secrets, SecretsError};
 pub use values::{
@@ -324,6 +325,12 @@ impl Review {
     #[must_use]
     pub fn min_first_full_reviews(&self) -> ReviewCount {
         self.min_first_full_reviews.unwrap_or_default()
+    }
+
+    /// Whether a blocker may receive one independent second opinion.
+    #[must_use]
+    pub fn second_opinion(&self) -> Permission {
+        Permission::Enabled
     }
 }
 

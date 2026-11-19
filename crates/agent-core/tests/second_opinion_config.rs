@@ -12,3 +12,20 @@ fn second_opinions_default_on_and_can_be_disabled() {
         assert_eq!(config.review().allow_second_opinion_on_blocker, expected);
     }
 }
+
+#[test]
+fn the_review_section_gives_the_second_opinion_permission() {
+    use agent_core::review_response::opinion::Permission;
+    for (text, expected) in [
+        ("", Permission::Enabled),
+        ("[review]\nfix_passes = 2", Permission::Enabled),
+        ("[review]\nallow_second_opinion_on_blocker = true", Permission::Enabled),
+        (
+            "[review]\nallow_second_opinion_on_blocker = false",
+            Permission::Disabled,
+        ),
+    ] {
+        let config = Config::from_toml_str(text).expect("valid review configuration");
+        assert_eq!(config.review().second_opinion(), expected, "{text}");
+    }
+}
