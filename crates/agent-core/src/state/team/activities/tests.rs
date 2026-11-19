@@ -182,3 +182,102 @@ fn all_request_kinds_round_trip_including_future_workflows() {
         );
     }
 }
+
+#[test]
+fn second_opinions_retain_replacements_reports_and_each_failure_reason() {
+    use crate::review_response::opinion::{OpinionReport, Outcome};
+    use crate::state::{OpinionRequest, State};
+    for failure in [
+        OpinionFailure::Failed,
+        OpinionFailure::NoStatus,
+        OpinionFailure::MissingReport,
+        OpinionFailure::Silent,
+        OpinionFailure::Interrupted,
+    ] {
+        let mut state = State::from_json(include_str!(
+            "../../../../tests/fixtures/state-before-opinion-retries.json"
+        ))
+        .unwrap();
+        let id = state.teams()[0].id().clone();
+        let mut team = state.team_mut(&id).unwrap();
+        let item_id = "1.2".parse().unwrap();
+        {
+            let mut item = team.item_mut(item_id).unwrap();
+            let ledger = item.findings_mut().unwrap();
+            ledger
+                .request_opinion(
+                    nz(1),
+                    OpinionRequest {
+                        pass: nz(1),
+                        head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap(),
+                        reason: "café boundary".to_owned().try_into().unwrap(),
+                    },
+                )
+                .unwrap();
+            ledger
+                .assign_opinion_at(nz(1), "inv-first".parse().unwrap(), task(31), at(40))
+                .unwrap();
+        }
+        team.record_activities(at(41));
+        assert_eq!(team.activities().iter().filter(|a| a.task() == &task(31)).count(), 1);
+        let first = team.activities().iter().find(|a| a.task() == &task(31)).unwrap();
+        assert_eq!(
+            first.request(),
+            &ActivityRequest::SecondOpinion {
+                pass: nz(1),
+                finding: nz(1)
+            }
+        );
+        assert_eq!(first.asked_at(), at(40));
+        assert_eq!(first.outcome(), &ActivityOutcome::Working);
+        team.item_mut(item_id)
+            .unwrap()
+            .findings_mut()
+            .unwrap()
+            .fail_opinion(nz(1), &task(31), failure)
+            .unwrap();
+        team.record_activities(at(50));
+        team.item_mut(item_id)
+            .unwrap()
+            .findings_mut()
+            .unwrap()
+            .assign_opinion_at(nz(1), "inv-next".parse().unwrap(), task(32), at(60))
+            .unwrap();
+        team.record_activities(at(61));
+        team.item_mut(item_id)
+            .unwrap()
+            .findings_mut()
+            .unwrap()
+            .record_opinion(
+                nz(1),
+                &task(32),
+                OpinionReport {
+                    outcome: Outcome::Confirmed,
+                    evidence: "checked café branch".to_owned().try_into().unwrap(),
+                },
+            )
+            .unwrap();
+        team.record_activities(at(70));
+        team.record_activities(at(99));
+        let entries: Vec<_> = team
+            .activities()
+            .iter()
+            .filter(|a| matches!(a.request(), ActivityRequest::SecondOpinion { .. }))
+            .collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[0].outcome(),
+            &ActivityOutcome::Finished {
+                at: at(50),
+                end: ActivityEnd::OpinionFailed { reason: failure }
+            }
+        );
+        assert_eq!(
+            entries[1].outcome(),
+            &ActivityOutcome::Finished {
+                at: at(70),
+                end: ActivityEnd::Reported
+            }
+        );
+    }
+}
