@@ -137,7 +137,7 @@ impl ReportError {
     /// The original refused answer and precise mistake, when available.
     #[must_use]
     pub const fn diagnostic(&self) -> Option<&AnswerDiagnostic> {
-        None
+        Some(&self.detail)
     }
 }
 

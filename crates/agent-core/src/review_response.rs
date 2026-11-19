@@ -41,7 +41,7 @@ impl ResponseError {
     /// The original refused answer and precise mistake, when available.
     #[must_use]
     pub const fn diagnostic(&self) -> Option<&crate::review_findings::AnswerDiagnostic> {
-        None
+        Some(&self.detail)
     }
 }
 
