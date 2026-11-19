@@ -91,6 +91,10 @@ impl Findings {
         at: Timestamp,
     ) -> Result<(), OpinionStateError> {
         if self.opinion_attempts(number).len() >= 3
+            || self
+                .opinion_attempts(number)
+                .iter()
+                .any(|attempt| attempt.investigator == investigator || attempt.task == task)
             || !self
                 .opinions
                 .get(&number)
