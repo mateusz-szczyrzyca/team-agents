@@ -210,19 +210,20 @@ impl Findings {
                         .map(|(_, answer)| (review.reviewer.clone(), answer.clone()))
                 })
                 .collect();
-            if let Some(explanation) = disputes.explanations.get_mut(&entry.number) {
-                if explanation.status == ExplanationStatus::Pending && votes.len() == reviews.len() && !votes.is_empty()
-                {
-                    let accepted = votes.values().all(|a| matches!(a, Answer::Accepted { .. }));
-                    explanation.status = if accepted {
-                        ExplanationStatus::Accepted
-                    } else {
-                        ExplanationStatus::Rejected
-                    };
-                    explanation.votes = votes.clone();
-                    if accepted {
-                        entry.finding.severity = Severity::Minor;
-                    }
+            if let Some(explanation) = disputes.explanations.get_mut(&entry.number)
+                && explanation.status == ExplanationStatus::Pending
+                && votes.len() == reviews.len()
+                && !votes.is_empty()
+            {
+                let accepted = votes.values().all(|a| matches!(a, Answer::Accepted { .. }));
+                explanation.status = if accepted {
+                    ExplanationStatus::Accepted
+                } else {
+                    ExplanationStatus::Rejected
+                };
+                explanation.votes = votes.clone();
+                if accepted {
+                    entry.finding.severity = Severity::Minor;
                 }
             }
             for (reviewer, answer) in votes {

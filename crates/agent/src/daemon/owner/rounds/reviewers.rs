@@ -127,29 +127,7 @@ impl Owner {
         let Some(head) = git.branch_tip(&pr.branch).await? else {
             return Ok(false);
         };
-        let mut ledgers = Vec::new();
-        for id in items {
-            let Some(mut ledger) = self
-                .parts
-                .state
-                .team(team_id)
-                .and_then(|t| t.item(*id))
-                .and_then(|i| i.findings())
-                .cloned()
-            else {
-                continue;
-            };
-            let bases: std::collections::BTreeSet<_> = ledger
-                .disputes()
-                .into_iter()
-                .flat_map(|d| d.accepted_heads.values().cloned())
-                .collect();
-            for base in bases {
-                let changes = git.range_changes(&base, &head).await?;
-                ledger.changed_since_acceptance(&base, &changes);
-            }
-            ledgers.push((*id, ledger));
-        }
+        let ledgers = self.changed_explanations(team_id, items, &git, &head).await?;
         let mut prepared = Prepared::default();
         for reviewer in chosen {
             if let Err(error) = self
@@ -193,6 +171,40 @@ impl Owner {
             "reviews are asked for"
         );
         Ok(true)
+    }
+
+    /// Reads which accepted findings changed, before recording a new verification pass.
+    async fn changed_explanations(
+        &self,
+        team_id: &TeamId,
+        items: &[ItemId],
+        git: &Git,
+        head: &CommitId,
+    ) -> Result<Vec<(ItemId, agent_core::state::Findings)>, PublishError> {
+        let mut ledgers = Vec::new();
+        for id in items {
+            let Some(mut ledger) = self
+                .parts
+                .state
+                .team(team_id)
+                .and_then(|t| t.item(*id))
+                .and_then(|i| i.findings())
+                .cloned()
+            else {
+                continue;
+            };
+            let bases: std::collections::HashSet<_> = ledger
+                .disputes()
+                .into_iter()
+                .flat_map(|d| d.accepted_heads.values().cloned())
+                .collect();
+            for base in bases {
+                let changes = git.range_changes(&base, head).await?;
+                ledger.changed_since_acceptance(&base, &changes);
+            }
+            ledgers.push((*id, ledger));
+        }
+        Ok(ledgers)
     }
 
     /// Gets the worktree of `reviewer` ready for `head`: its own is moved there, or a new task with a worktree is made.

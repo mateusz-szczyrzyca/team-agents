@@ -78,39 +78,10 @@ impl Owner {
             let response = ledger.answer_lead(&message, pass);
             let correction = match response {
                 Ok(responses) => {
-                    if let ItemPhase::Fixing { pr, .. } = item.phase() {
-                        for (number, response) in responses {
-                            match response {
-                                agent_core::review_response::Response::Fixed => {}
-                                agent_core::review_response::Response::Explained(why) => self.record_event(
-                                    team_id,
-                                    self.rounds_of_items(team_id, &[id]),
-                                    agent_core::history::HistoryEvent::FindingExplained {
-                                        pr: pr.number,
-                                        number,
-                                        pass,
-                                        by: lead.agent.clone(),
-                                        why,
-                                    },
-                                ),
-                            }
-                        }
-                    }
+                    self.record_explanations(team_id, &item, &lead, responses);
                     None
                 }
-                Err(problem) => {
-                    let values = Variables::new()
-                        .with("line", problem.line.to_string())
-                        .and_then(|v| v.with("number", problem.number.to_string()))
-                        .and_then(|v| v.with("allowed", problem.allowed))
-                        .map_err(ResponseTextError::from)?;
-                    Some(
-                        pulls
-                            .texts
-                            .render(AutopilotPrompt::ReviewResponseInvalid, &values)
-                            .map_err(ResponseTextError::from)?,
-                    )
-                }
+                Err(problem) => Some(response_correction(pulls, &problem)?),
             };
             let Some(disputes) = ledger.disputes_mut() else {
                 continue;
@@ -150,4 +121,45 @@ impl Owner {
         }
         Ok(())
     }
+    /// Keeps each new explanation in the round history before verification.
+    fn record_explanations(
+        &mut self,
+        team_id: &TeamId,
+        item: &agent_core::state::ItemProgress,
+        lead: &super::Lead,
+        responses: Vec<(std::num::NonZeroU32, agent_core::review_response::Response)>,
+    ) {
+        let id = item.id();
+        let pass = crate::daemon::merge::count(item.fix_passes().len());
+        if let ItemPhase::Fixing { pr, .. } = item.phase() {
+            for (number, response) in responses {
+                match response {
+                    agent_core::review_response::Response::Fixed => {}
+                    agent_core::review_response::Response::Explained(why) => self.record_event(
+                        team_id,
+                        self.rounds_of_items(team_id, &[id]),
+                        agent_core::history::HistoryEvent::FindingExplained {
+                            pr: pr.number,
+                            number,
+                            pass,
+                            by: lead.agent.clone(),
+                            why,
+                        },
+                    ),
+                }
+            }
+        }
+    }
+}
+
+/// Renders a precise correction through the harness catalog.
+fn response_correction(
+    pulls: &Pulls,
+    problem: &agent_core::review_response::ResponseError,
+) -> Result<String, ResponseTextError> {
+    let values = Variables::new()
+        .with("line", problem.line.to_string())?
+        .with("number", problem.number.to_string())?
+        .with("allowed", problem.allowed)?;
+    Ok(pulls.texts.render(AutopilotPrompt::ReviewResponseInvalid, &values)?)
 }

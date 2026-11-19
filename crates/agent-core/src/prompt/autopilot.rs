@@ -213,19 +213,7 @@ impl AutopilotPrompt {
                 "harness/review/request.md",
                 &["team", "pr", "branch", "base", "head", "pass"],
             ),
-            Self::ReviewVerification => (
-                "harness/review/verification.md",
-                &[
-                    "team",
-                    "pr",
-                    "branch",
-                    "base",
-                    "head",
-                    "pass",
-                    "changes",
-                    "lead_message",
-                ],
-            ),
+            Self::ReviewVerification => ("harness/review/verification.md", VERIFICATION_VARIABLES),
             Self::ReviewVerificationChanges => ("harness/review/verification-changes.md", &["previous"]),
             Self::ReviewVerificationRewritten => ("harness/review/verification-rewritten.md", &["base"]),
             Self::ReviewIndependent => ("harness/review/independent.md", &[]),
@@ -248,18 +236,7 @@ impl AutopilotPrompt {
             Self::ReviewExplanation => ("harness/review/explanation.md", &["status", "why", "votes"]),
             Self::ReviewExplanationVote => ("harness/review/explanation-vote.md", &["reviewer", "status", "why"]),
             Self::ReviewFinding => ("harness/review/finding.md", &["reviewer", "report"]),
-            Self::ReviewAskHuman => (
-                "harness/review/ask-human.md",
-                &[
-                    "pr",
-                    "passes",
-                    "additional_passes",
-                    "findings",
-                    "questions_file",
-                    "number",
-                    "task",
-                ],
-            ),
+            Self::ReviewAskHuman => ("harness/review/ask-human.md", ASK_HUMAN_VARIABLES),
             Self::ReviewFindingsInvalid => ("harness/review/findings-invalid.md", &["line", "reason"]),
             Self::ReviewOpenFindings => ("harness/review/open-findings.md", &["findings"]),
             Self::ReviewOpenFinding => (
@@ -287,3 +264,25 @@ impl AutopilotPrompt {
         }
     }
 }
+
+/// Context supplied to an incremental verification request.
+const VERIFICATION_VARIABLES: &[&str] = &[
+    "team",
+    "pr",
+    "branch",
+    "base",
+    "head",
+    "pass",
+    "changes",
+    "lead_message",
+];
+/// Context supplied when the review budget needs a human decision.
+const ASK_HUMAN_VARIABLES: &[&str] = &[
+    "pr",
+    "passes",
+    "additional_passes",
+    "findings",
+    "questions_file",
+    "number",
+    "task",
+];

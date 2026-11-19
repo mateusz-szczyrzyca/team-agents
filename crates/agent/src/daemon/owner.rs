@@ -837,15 +837,10 @@ impl Owner {
         self.after_run(task, &located, &RunEnd::Stopped, None)
     }
 
-    /// A run that went to its end: its task goes where the end says.
-    async fn finished(&mut self, task: &TaskId, run: FinishedRun) -> Result<(), OwnerError> {
-        let located = self.locate(task)?;
-        let now = Timestamp::now(&self.parts.clock)?;
-        let mut events = Vec::new();
-        let settle_span = self.settle_span_of(task, &located.team);
-        self.attach_session(task, run.session.clone())?;
+    /// Retains the lead's bounded fix response alongside its verification context.
+    fn remember_fix_message(&mut self, located: &Located, message: Option<&str>) -> Result<(), OwnerError> {
         if matches!(located.role, Role::Solo | Role::Coordinator)
-            && let Some(message) = run.final_message.as_deref()
+            && let Some(message) = message
             && let Some(mut team) = self.parts.state.team_mut(&located.team)
         {
             let ids: Vec<_> = team.items().iter().map(agent_core::state::ItemProgress::id).collect();
@@ -862,6 +857,17 @@ impl Owner {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// A run that went to its end: its task goes where the end says.
+    async fn finished(&mut self, task: &TaskId, run: FinishedRun) -> Result<(), OwnerError> {
+        let located = self.locate(task)?;
+        let now = Timestamp::now(&self.parts.clock)?;
+        let mut events = Vec::new();
+        let settle_span = self.settle_span_of(task, &located.team);
+        self.attach_session(task, run.session.clone())?;
+        self.remember_fix_message(&located, run.final_message.as_deref())?;
         let settled = settle(
             located.role,
             &run.classified.end,
