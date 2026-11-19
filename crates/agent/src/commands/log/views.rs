@@ -123,6 +123,7 @@ fn is_review_event(event: &HistoryEvent) -> bool {
             | HistoryEvent::FindingRejected { .. }
             | HistoryEvent::FindingRaised { .. }
             | HistoryEvent::SecondOpinionAsked { .. }
+            | HistoryEvent::SecondOpinionEnded { .. }
             | HistoryEvent::FindingConfirmed { .. }
             | HistoryEvent::FindingNotConfirmed { .. }
     )

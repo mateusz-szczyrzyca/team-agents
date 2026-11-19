@@ -248,6 +248,7 @@ fn event_entry(tx: &Transaction<'_>, record: &EventRecord, limit: MaxTextBytes) 
         | HistoryEvent::FindingRejected { .. }
         | HistoryEvent::FindingRaised { .. }
         | HistoryEvent::SecondOpinionAsked { .. }
+        | HistoryEvent::SecondOpinionEnded { .. }
         | HistoryEvent::FindingConfirmed { .. }
         | HistoryEvent::FindingNotConfirmed { .. }
         | HistoryEvent::FixPassStarted { .. }

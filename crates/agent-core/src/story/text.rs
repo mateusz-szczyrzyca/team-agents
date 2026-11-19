@@ -303,6 +303,7 @@ const fn is_pull_request(event: &HistoryEvent) -> bool {
             | HistoryEvent::FindingRejected { .. }
             | HistoryEvent::FindingRaised { .. }
             | HistoryEvent::SecondOpinionAsked { .. }
+            | HistoryEvent::SecondOpinionEnded { .. }
             | HistoryEvent::FindingConfirmed { .. }
             | HistoryEvent::FindingNotConfirmed { .. }
             | HistoryEvent::FixPassStarted { .. }
@@ -784,6 +785,7 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         | HistoryEvent::FindingRejected { .. }
         | HistoryEvent::FindingRaised { .. }
         | HistoryEvent::SecondOpinionAsked { .. }
+        | HistoryEvent::SecondOpinionEnded { .. }
         | HistoryEvent::FindingConfirmed { .. }
         | HistoryEvent::FindingNotConfirmed { .. }
         | HistoryEvent::FixPassStarted { .. }
@@ -850,6 +852,21 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             why,
         } => {
             finding_evidence(page, at, event.kind(), (*pr, *number, *pass, by), why);
+        }
+        HistoryEvent::SecondOpinionEnded {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+            attempt,
+        } => {
+            let action = if attempt.get() < 3 {
+                "second opinion replaced"
+            } else {
+                "second opinion exhausted"
+            };
+            opinion_evidence(page, at, (action, event.kind()), (*pr, *number, *pass, by), why);
         }
         HistoryEvent::SecondOpinionAsked {
             pr,
@@ -983,6 +1000,7 @@ fn pull_lifecycle_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
         | HistoryEvent::FindingRejected { .. }
         | HistoryEvent::FindingRaised { .. }
         | HistoryEvent::SecondOpinionAsked { .. }
+        | HistoryEvent::SecondOpinionEnded { .. }
         | HistoryEvent::FindingConfirmed { .. }
         | HistoryEvent::FindingNotConfirmed { .. }
         | HistoryEvent::Gate { .. }

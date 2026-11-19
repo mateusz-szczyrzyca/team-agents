@@ -101,6 +101,7 @@ impl FromStr for LostKind {
             | EventKind::FindingAccepted
             | EventKind::FindingRejected
             | EventKind::FindingRaised
+            | EventKind::SecondOpinionEnded
             | EventKind::SecondOpinionAsked
             | EventKind::FindingConfirmed
             | EventKind::FindingNotConfirmed
@@ -223,6 +224,8 @@ pub enum EventKind {
     FindingRaised,
     /// [`HistoryEvent::SecondOpinionAsked`].
     SecondOpinionAsked,
+    /// An unsuccessful independent assignment, including its replacement or exhaustion.
+    SecondOpinionEnded,
     /// [`HistoryEvent::FindingConfirmed`].
     FindingConfirmed,
     /// [`HistoryEvent::FindingNotConfirmed`].
@@ -425,6 +428,21 @@ pub enum HistoryEvent {
         /// The lead's reason for disputing the blocker.
         why: String,
     },
+    /// An assigned second opinion ended without an answer.
+    SecondOpinionEnded {
+        /// The pull request.
+        pr: PrNumber,
+        /// The permanent finding number.
+        number: NonZeroU32,
+        /// The fix pass that requested the opinion.
+        pass: u32,
+        /// The selected independent investigator.
+        by: AgentName,
+        /// The unsuccessful run and its catalogued cause.
+        why: String,
+        /// Assignment number, counted from one; the third exhausts replacements.
+        attempt: NonZeroU32,
+    },
     /// An independent investigator confirmed a blocker.
     FindingConfirmed {
         /// The pull request.
@@ -577,6 +595,7 @@ impl HistoryEvent {
             Self::FindingRejected { .. } => EventKind::FindingRejected,
             Self::FindingRaised { .. } => EventKind::FindingRaised,
             Self::SecondOpinionAsked { .. } => EventKind::SecondOpinionAsked,
+            Self::SecondOpinionEnded { .. } => EventKind::SecondOpinionEnded,
             Self::FindingConfirmed { .. } => EventKind::FindingConfirmed,
             Self::FindingNotConfirmed { .. } => EventKind::FindingNotConfirmed,
 
@@ -631,6 +650,9 @@ impl HistoryEvent {
             | Self::SecondOpinionAsked {
                 pr, number, pass, by, ..
             }
+            | Self::SecondOpinionEnded {
+                pr, number, pass, by, ..
+            }
             | Self::FindingConfirmed {
                 pr, number, pass, by, ..
             }
@@ -662,6 +684,7 @@ impl HistoryEvent {
             | Self::FindingRejected { why, .. }
             | Self::FindingRaised { why, .. }
             | Self::SecondOpinionAsked { why, .. }
+            | Self::SecondOpinionEnded { why, .. }
             | Self::FindingConfirmed { why, .. }
             | Self::FindingNotConfirmed { why, .. } => vec![("why", why)],
             Self::Lost { detail, .. } => vec![("detail", detail)],
@@ -710,6 +733,7 @@ impl HistoryEvent {
             | Self::FindingRejected { by, .. }
             | Self::FindingRaised { by, .. }
             | Self::SecondOpinionAsked { by, .. }
+            | Self::SecondOpinionEnded { by, .. }
             | Self::FindingConfirmed { by, .. }
             | Self::FindingNotConfirmed { by, .. } => vec![by.as_str()],
             Self::PullMerged { commit, .. } => commit.iter().map(CommitId::as_str).collect(),
