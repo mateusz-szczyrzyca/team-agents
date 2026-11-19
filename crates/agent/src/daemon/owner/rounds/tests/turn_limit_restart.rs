@@ -890,3 +890,167 @@ async fn restart_replaces_questioned_legacy_opinion_tasks_with_surviving_worktre
     drop(step.owner);
     crate::daemon::history::close(step.writer).await;
 }
+
+#[tokio::test]
+async fn restart_stops_replaced_paused_opinion_tasks() {
+    use agent_core::state::{OpinionFailure, OpinionStage, State};
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-failure:HOLD"),
+            investigator("inv-r2", "opinion-failure:HOLD"),
+            investigator("inv-r3", "opinion-failure:HOLD"),
+            investigator("inv-r4", "opinion-failure:HOLD"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], super::rig::ONE, MergeMode::Autopilot, None)
+        .await;
+    rig.state_where("legacy assignments", |state| {
+        state.team(&team).unwrap().items()[0].findings().is_some_and(|ledger| {
+            ledger.opinions().len() == 2
+                && ledger
+                    .opinions()
+                    .values()
+                    .all(|opinion| matches!(opinion.stage, OpinionStage::Assigned { .. }))
+        })
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let mut wire: serde_json::Value = serde_json::from_str(&rig.state().to_json().unwrap()).unwrap();
+    wire["schema_version"] = serde_json::json!(8);
+    let finding = &mut wire["teams"][0]["items"][0]["findings"];
+    finding.as_object_mut().unwrap().remove("opinion_attempts");
+    let tasks: Vec<_> = finding["opinions"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|opinion| opinion["stage"]["task"].clone())
+        .collect();
+    for member in wire["teams"][0]["reviewers"].as_array_mut().unwrap() {
+        if tasks.contains(&member["task"]) {
+            member["status"] = serde_json::json!("paused");
+        }
+    }
+    let mut step = stepped(&rig).await;
+    step.owner.parts.state = State::from_json(&wire.to_string()).unwrap();
+    step.owner.pulls = Some(opinion_pulls(&step.owner).await);
+    step.owner.hold_restarted_opinions().await.unwrap();
+    let ledger = step.owner.parts.state.team(&team).unwrap().items()[0]
+        .findings()
+        .unwrap();
+    for (number, opinion) in ledger.opinions() {
+        assert_eq!(opinion.stage, OpinionStage::Waiting);
+        assert_eq!(ledger.opinion_attempts(*number).len(), 1);
+        assert_eq!(
+            ledger.opinion_attempts(*number)[0].failure,
+            Some(OpinionFailure::Interrupted)
+        );
+        assert_eq!(ledger.opinion_attempts(*number)[0].asked_at, None);
+    }
+    for task in &tasks {
+        let task = task.as_str().unwrap().parse().unwrap();
+        assert_eq!(
+            step.owner
+                .parts
+                .state
+                .team(&team)
+                .unwrap()
+                .find(&task)
+                .unwrap()
+                .1
+                .status(),
+            TaskStatus::Stopped
+        );
+    }
+    drop(step.owner);
+    crate::daemon::history::close(step.writer).await;
+}
+
+#[tokio::test]
+async fn restart_stops_replaced_waiting_opinion_tasks() {
+    use agent_core::state::{OpinionFailure, OpinionStage, State};
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-failure:HOLD"),
+            investigator("inv-r2", "opinion-failure:HOLD"),
+            investigator("inv-r3", "opinion-failure:HOLD"),
+            investigator("inv-r4", "opinion-failure:HOLD"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], super::rig::ONE, MergeMode::Autopilot, None)
+        .await;
+    rig.state_where("legacy assignments", |state| {
+        state.team(&team).unwrap().items()[0].findings().is_some_and(|ledger| {
+            ledger.opinions().len() == 2
+                && ledger
+                    .opinions()
+                    .values()
+                    .all(|opinion| matches!(opinion.stage, OpinionStage::Assigned { .. }))
+        })
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let mut wire: serde_json::Value = serde_json::from_str(&rig.state().to_json().unwrap()).unwrap();
+    wire["schema_version"] = serde_json::json!(8);
+    let finding = &mut wire["teams"][0]["items"][0]["findings"];
+    finding.as_object_mut().unwrap().remove("opinion_attempts");
+    let tasks: Vec<_> = finding["opinions"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|opinion| opinion["stage"]["task"].clone())
+        .collect();
+    for member in wire["teams"][0]["reviewers"].as_array_mut().unwrap() {
+        if tasks.contains(&member["task"]) {
+            member["status"] = serde_json::json!("waiting");
+        }
+    }
+    for task in &tasks {
+        let task = task.as_str().unwrap().parse().unwrap();
+        std::fs::remove_dir_all(rig.worktree(&task)).unwrap();
+    }
+    let mut step = stepped(&rig).await;
+    step.owner.parts.state = State::from_json(&wire.to_string()).unwrap();
+    step.owner.pulls = Some(opinion_pulls(&step.owner).await);
+    step.owner.hold_restarted_opinions().await.unwrap();
+    let ledger = step.owner.parts.state.team(&team).unwrap().items()[0]
+        .findings()
+        .unwrap();
+    for (number, opinion) in ledger.opinions() {
+        assert_eq!(opinion.stage, OpinionStage::Waiting);
+        assert_eq!(ledger.opinion_attempts(*number).len(), 1);
+        assert_eq!(
+            ledger.opinion_attempts(*number)[0].failure,
+            Some(OpinionFailure::Interrupted)
+        );
+        assert_eq!(ledger.opinion_attempts(*number)[0].asked_at, None);
+    }
+    for task in &tasks {
+        let task = task.as_str().unwrap().parse().unwrap();
+        assert_eq!(
+            step.owner
+                .parts
+                .state
+                .team(&team)
+                .unwrap()
+                .find(&task)
+                .unwrap()
+                .1
+                .status(),
+            TaskStatus::Stopped
+        );
+    }
+    drop(step.owner);
+    crate::daemon::history::close(step.writer).await;
+}
