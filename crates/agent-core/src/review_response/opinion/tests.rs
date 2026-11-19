@@ -222,3 +222,27 @@ fn a_refused_request_names_its_line_and_the_reason() {
         );
     }
 }
+
+#[test]
+fn minor_answers_do_not_block_opinion_protocol() {
+    let open = [
+        finding(Severity::Blocker, false),
+        OpenFinding {
+            number: NonZeroU32::new(2).unwrap(),
+            ..finding(Severity::Minor, false)
+        },
+    ];
+    for minor in [
+        "FIXED",
+        "SECOND OPINION — optional",
+        "EXPLAINED — optional",
+        "advice only",
+    ] {
+        let text = format!("FINDING 1: FIXED — tested\nFINDING 2: {minor}\nSTATUS: DONE");
+        let mut expected = vec![(NonZeroU32::MIN, LeadAnswer::Fixed)];
+        if minor == "FIXED" {
+            expected.push((NonZeroU32::new(2).unwrap(), LeadAnswer::Fixed));
+        }
+        assert_eq!(parse_lead(&text, &open, Permission::Enabled), Ok(expected));
+    }
+}
