@@ -93,6 +93,8 @@ tail_lines = 30
 # limit) after `replace_after_minutes`; when no investigator is free you are told.
 
 [review]
+# Stored permission for the later second-opinion activation; requests are still refused in this release.
+allow_second_opinion_on_blocker = true
 min_first_full_reviews = 2
 fix_passes = 5
 check_passes = 2

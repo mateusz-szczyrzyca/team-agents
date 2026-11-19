@@ -123,6 +123,7 @@ Provider quota exhaustion takes precedence over a turn limit and uses the quota 
 | Key | Default | Meaning |
 |---|---|---|
 | `min_first_full_reviews` | `2` | reviews per pass; explicit values below two or above the configured investigator count are refused; team creation requires this many outside investigators |
+| `allow_second_opinion_on_blocker` | `true` | permission for one second opinion on an open BLOCKER; omission means true. Stored for the later daemon activation; requests are still refused in this release |
 | `fix_passes` | `5` | "changes requested" goes back to the team at most this many times; then the human is asked. `0` asks at once |
 | `check_passes` | `2` | the checks before a review ([`[repos.NAME.checks]`](#reposnamechecks)) send a round back to the team at most this many times; then the human is asked. `0` asks at once |
 | `replace_after_minutes` | `15` | a reviewer that is paused this long with its review still to come is replaced by another free investigator; one whose task failed or was stopped is replaced at once. With no investigator free the human is told |
