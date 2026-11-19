@@ -350,14 +350,17 @@ pub fn assess_near(rules: &Checks, facts: &RoundFacts, unchanged: &[UnchangedLin
     issues
 }
 
-/// The protected path `file` touches: where it was when it moved out of one, otherwise where it is.
-fn protected_path<'a>(rules: &Checks, file: &'a FileChange) -> Option<&'a RepoPath> {
-    match &file.change {
-        Change::Renamed { from } if rules.protected_paths.matches(from) => Some(from),
-        Change::Added | Change::Modified | Change::Deleted | Change::Renamed { .. } => {
-            rules.protected_paths.matches(&file.path).then_some(&file.path)
-        }
-    }
+/// The protected paths `file` touches: where it was when it moved out of one and where it is when it is in one, each
+/// once, so that an allowance for one end does not cover the other.
+fn protected_paths<'a>(rules: &Checks, file: &'a FileChange) -> Vec<&'a RepoPath> {
+    let old = match &file.change {
+        Change::Renamed { from } => Some(from),
+        Change::Added | Change::Modified | Change::Deleted => None,
+    };
+    old.into_iter()
+        .chain(std::iter::once(&file.path))
+        .filter(|path| rules.protected_paths.matches(path))
+        .collect()
 }
 
 /// The protected files the round changed.
@@ -365,18 +368,19 @@ fn protected_changes(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
     facts
         .files
         .iter()
-        .filter_map(|file| {
-            let path = protected_path(rules, file)?;
+        .flat_map(|file| {
             let change = match file.change {
                 Change::Added => Touch::Added,
                 Change::Modified => Touch::Modified,
                 Change::Deleted => Touch::Deleted,
                 Change::Renamed { .. } => Touch::Renamed,
             };
-            Some(Issue::ProtectedChanged {
-                path: path.clone(),
-                change,
-            })
+            protected_paths(rules, file)
+                .into_iter()
+                .map(move |path| Issue::ProtectedChanged {
+                    path: path.clone(),
+                    change,
+                })
         })
         .collect()
 }
@@ -386,7 +390,7 @@ fn changed_tests(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
     facts
         .files
         .iter()
-        .filter(|file| protected_path(rules, file).is_none())
+        .filter(|file| protected_paths(rules, file).is_empty())
         .filter_map(|file| {
             let mode_changed = facts.mode_changed.contains(&file.path);
             let (existing, how) = match (&file.change, file.lines) {
