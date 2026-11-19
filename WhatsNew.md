@@ -5,6 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.22.0 — 19.11.2026 — PR #138
+
+### Enhancements
+- [agent] [agent-core] When a round check finds both team-fixable and human-only findings, the human is asked in the round's first check while the round goes back to the team for its part at the same time.
+
 ## 0.21.0 — 19.11.2026 — PR #132
 
 ### New features
