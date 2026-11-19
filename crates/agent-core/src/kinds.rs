@@ -374,7 +374,7 @@ impl ActivityKind {
     /// The stable text written to state and shown to the human.
     #[must_use]
     pub fn as_str(self) -> &'static str {
-        ""
+        self.into()
     }
 }
 
