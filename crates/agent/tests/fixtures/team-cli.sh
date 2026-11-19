@@ -101,6 +101,7 @@ result() {
 # Reads the messages of the agent: what a well-behaved agent of a team does first.
 read_messages() {
   local team task
+  [[ $deaf == true ]] && return 0
   team=$(grep -o 'team-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
   task=$(grep -o 'task-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
   [[ -n $bus_bin && -n $team ]] || return 0
@@ -173,7 +174,7 @@ if [[ $action == deaf-* ]]; then
   action=${action#deaf-}
 fi
 init
-[[ $deaf == true ]] || read_messages
+read_messages
 case $action in
   held-review)
     # A test releases each report explicitly, without depending on which reviewer finishes first.
