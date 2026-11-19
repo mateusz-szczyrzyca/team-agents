@@ -718,9 +718,9 @@ mod tests {
     #[test]
     fn the_version_is_checked_before_the_rest_so_a_newer_state_is_not_called_malformed() {
         for text in [
-            "{\"schema_version\": 7, \"teams\": {\"by_id\": 5}}",
-            "{\"teams\": [], \"schema_version\": 7, \"future\": true}",
-            "{\"schema_version\": 7}",
+            "{\"schema_version\": 8, \"teams\": {\"by_id\": 5}}",
+            "{\"teams\": [], \"schema_version\": 8, \"future\": true}",
+            "{\"schema_version\": 8}",
         ] {
             let err = State::from_json(text).unwrap_err();
 
