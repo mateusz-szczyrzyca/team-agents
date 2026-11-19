@@ -61,12 +61,8 @@ impl Activity {
 
     /// The line about low free disk space when below threshold.
     pub(crate) fn disk_line(&self) -> Option<String> {
-        let free_bytes = if let Ok(content) = std::fs::read_to_string(self.home.free_space_file()) {
-            content.trim().parse::<u64>().ok()
-        } else {
-            agent_runtime::disk::FreeSpace::free_space_bytes(&agent_runtime::disk::SystemFreeSpace, self.home.root())
-                .ok()
-        }?;
+        let content = std::fs::read_to_string(self.home.free_space_file()).ok()?;
+        let free_bytes = content.trim().parse::<u64>().ok()?;
         let free_gb = free_bytes / (1024 * 1024 * 1024);
         let low_free_gb = if let Ok(text) = std::fs::read_to_string(self.home.config_file()) {
             agent_core::config::Config::from_toml_str(&text).map_or(100, |c| c.disk().low_free_gb)
