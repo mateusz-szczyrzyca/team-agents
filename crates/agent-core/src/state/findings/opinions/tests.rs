@@ -262,8 +262,8 @@ fn accepts_atomic_opinion_answers_and_keeps_fixed_answers_after_reload() {
 }
 
 #[test]
-fn minor_findings_need_no_answer_but_cannot_request_an_opinion() {
-    use crate::review_response::opinion::{OpinionError, Permission, Refusal};
+fn minor_findings_need_no_answer_and_their_opinion_requests_are_ignored() {
+    use crate::review_response::opinion::{LeadAnswer, Permission};
     let mut ledger = ledger(Severity::Blocker);
     let mut minor = ledger.entries()[0].clone();
     minor.number = NonZeroU32::new(2).unwrap();
@@ -271,7 +271,6 @@ fn minor_findings_need_no_answer_but_cannot_request_an_opinion() {
     ledger.entries.push(minor);
     let pass = NonZeroU32::MIN;
     let head = request().head;
-    let before = ledger.clone();
     assert_eq!(
         ledger.answer_opinions(
             "FINDING 1: FIXED\nFINDING 2: SECOND OPINION — café",
@@ -279,13 +278,9 @@ fn minor_findings_need_no_answer_but_cannot_request_an_opinion() {
             &head,
             Permission::Enabled
         ),
-        Err(OpinionError::Forbidden {
-            number: NonZeroU32::new(2).unwrap(),
-            line: 2,
-            reason: Refusal::NotBlocker
-        })
+        Ok(vec![(NonZeroU32::MIN, LeadAnswer::Fixed)])
     );
-    assert_eq!(ledger, before);
+    assert_eq!(ledger.opinions().len(), 0);
     assert_eq!(
         ledger.answer_opinions("FINDING 1: FIXED", pass, &head, Permission::Enabled),
         Ok(vec![(

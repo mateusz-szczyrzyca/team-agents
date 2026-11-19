@@ -29,6 +29,8 @@ fn only_unused_blockers_with_permission_accept_opinions() {
                             LeadAnswer::SecondOpinion("café is unreachable".to_owned().try_into().unwrap())
                         )])
                     );
+                } else if severity == Severity::Minor {
+                    assert_eq!(result, Ok(vec![]));
                 } else {
                     assert!(
                         matches!(result, Err(OpinionError::Forbidden { number, .. }) if number == NonZeroU32::MIN),
@@ -194,7 +196,6 @@ fn a_refused_request_names_its_line_and_the_reason() {
         (Severity::Major, false, Disabled, KeyDisabled),
         (Severity::Blocker, true, Enabled, AlreadyAsked),
         (Severity::Major, false, Enabled, NotBlocker),
-        (Severity::Minor, false, Enabled, NotBlocker),
     ] {
         let number = NonZeroU32::new(2).unwrap();
         let open = [
