@@ -282,9 +282,15 @@ impl Issue {
     #[must_use]
     pub fn allowed_beforehand<'a>(
         &self,
-        _allowances: &'a [crate::task_allowance::TaskAllowance],
+        allowances: &'a [crate::task_allowance::TaskAllowance],
     ) -> Option<&'a crate::task_allowance::TaskAllowance> {
-        None
+        let path = match self {
+            Self::TestChanged { path, .. } | Self::ProtectedChanged { path, .. } | Self::RedTestEdited { path, .. } => {
+                path
+            }
+            Self::NoTests | Self::Marker { .. } => return None,
+        };
+        allowances.iter().find(|allowance| allowance.matches(path))
     }
 
     /// The kind used to group questions, together with [`Self::judge`].
