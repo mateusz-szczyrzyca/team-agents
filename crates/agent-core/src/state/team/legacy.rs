@@ -108,6 +108,7 @@ impl Team {
             rounds,
             crew,
             reviewers,
+            activities: Vec::new(),
         };
         check_team(&team)?;
         Ok(team)

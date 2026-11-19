@@ -667,6 +667,7 @@ impl Owner {
     /// Saves the state after what `look` changed, and tells the subscribers; the team is looked at again.
     async fn finish_look(&mut self, team: &TeamId, look: Look) -> Result<(), OwnerError> {
         if look.changed {
+            self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
             self.save().await?;
             let now = Timestamp::now(&self.parts.clock)?;
             for event in look.events {
@@ -827,3 +828,7 @@ mod disk_tests;
 #[cfg(test)]
 #[path = "rounds/tests/split_findings.rs"]
 mod split_findings_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/activities.rs"]
+mod activity_tests;

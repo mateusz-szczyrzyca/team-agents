@@ -32,8 +32,7 @@ mod protocol_findings_maps {
     /// - finding 5: opinion failed and attempted again
     /// - finding 6: fixed
     fn fix_pass_findings() -> Findings {
-        let fixture_state: State =
-            serde_json::from_str(include_str!("fixtures/state-v0-11-second-opinions.json")).unwrap();
+        let fixture_state: State = State::from_json(include_str!("fixtures/state-v0-11-second-opinions.json")).unwrap();
         let team = fixture_state.team(&team_id(1)).unwrap();
         let item = team.item(item("1.2")).unwrap();
         item.findings().unwrap().clone()
@@ -360,7 +359,10 @@ mod protocol_findings_maps {
         let fixture_text = include_str!("fixtures/state-v0-11-second-opinions.json");
         let state = State::from_json(fixture_text).unwrap();
         let serialized = format!("{}\n", state.to_json().unwrap());
-        assert_eq!(serialized, fixture_text);
+        assert_eq!(
+            serialized,
+            include_str!("fixtures/state-v0-11-second-opinions-activities.json")
+        );
 
         let item = &state.teams()[0].items()[1];
         let ledger = item.findings().unwrap();

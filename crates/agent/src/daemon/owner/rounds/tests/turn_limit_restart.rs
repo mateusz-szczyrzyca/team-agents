@@ -1060,3 +1060,83 @@ async fn restart_stops_replaced_waiting_opinion_tasks() {
     drop(step.owner);
     crate::daemon::history::close(step.writer).await;
 }
+
+#[tokio::test]
+async fn a_reviewer_that_cannot_be_started_after_a_run_without_a_status_fails_when_the_start_failed() {
+    use agent_core::state::{ActivityEnd, ActivityOutcome, ActivityRequest, Timestamp};
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], super::rig::ONE, MergeMode::Autopilot, None)
+        .await;
+    let running = rig
+        .state_where("a reviewer that runs", |state| {
+            let team = state.team(&team).unwrap();
+            team.activities().iter().any(|activity| {
+                activity.request() == &ActivityRequest::FirstReview
+                    && team
+                        .find(activity.task())
+                        .is_some_and(|(_, member)| member.current_run().is_some())
+            })
+        })
+        .await;
+    rig.stop().await.unwrap();
+    let mut step = stepped(&rig).await;
+    step.owner.parts.state = running;
+    let task = step
+        .owner
+        .parts
+        .state
+        .team(&team)
+        .unwrap()
+        .activities()
+        .iter()
+        .find(|activity| activity.request() == &ActivityRequest::FirstReview)
+        .unwrap()
+        .task()
+        .clone();
+    let ended = Timestamp::now(&step.owner.parts.clock).unwrap();
+    {
+        let mut team = step.owner.parts.state.team_mut(&team).unwrap();
+        let (_, mut member) = team.find_mut(&task).unwrap();
+        member.end_run(ended, RunEnd::NoStatus { exit_code: Some(1) }).unwrap();
+        member.transition(TaskStatus::Paused).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    step.owner
+        .fail_to_start(&task, "injected launch boundary failure".to_owned())
+        .await
+        .unwrap();
+    let outcome = step
+        .owner
+        .parts
+        .state
+        .team(&team)
+        .unwrap()
+        .activities()
+        .iter()
+        .find(|activity| activity.task() == &task)
+        .unwrap()
+        .outcome()
+        .clone();
+    let ActivityOutcome::Finished { end, .. } = outcome else {
+        panic!("the assignment ended")
+    };
+    assert_eq!(
+        end,
+        ActivityEnd::Failed {
+            reason: Some(RunEnd::NoStatus { exit_code: None })
+        }
+    );
+    drop(step.owner);
+    crate::daemon::history::close(step.writer).await;
+}

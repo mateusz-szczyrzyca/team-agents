@@ -93,6 +93,14 @@ socket and the files are the runtime's. `serde_json` is a dependency of `agent-c
 
 Below internally tagged enums (`Outcome`, `Reply`, `EventKind`), `serde` buffers enum variant contents into an intermediate tree where JSON object keys are preserved as strings. When a map or set is keyed by finding numbers (`NonZeroU32`), standard integer deserializers reject string keys with `invalid type: string, expected a nonzero u32`. All maps and sets keyed by finding numbers (`RoundDetail.opinion_attempts`, `RoundDetail.opinions`, `FindingsWire.opinions`, `FindingsWire.opinion_attempts`, `FindingsWire.fixed`, `Disputes.accepted_heads`, `Disputes.explanations`, `FindingsWire.opinion_notices`, `Disputes.changed_findings`) use `#[serde(deserialize_with = "crate::protocol::finding_map::deserialize_map")]` (or `deserialize_set`). Any new map or set keyed by finding numbers in protocol replies, events or persisted state must use these deserializers so it reads back correctly both from direct JSON and below tagged enums.
 
+Investigator activity history is a per-team `activities` list in state schema 11. Typed requests classify crew
+membership, first reviews, fix-pass verifications, second opinions and future investigation or allocation work.
+The daemon retains assignments before launching them, accepted reports before item phases discard their review
+lists, and terminal task outcomes before saving. Migration from schemas 1–10 reconstructs the same records from
+crew, item review/fix-pass history and opinion attempts, with deterministic timestamp fallbacks where older
+schemas kept no exact time. The record observes the existing review scheduler; it does not select investigators
+or add protocol/status fields.
+
 ### The prompt catalog and the CLI contract (`agent-core`)
 
 | Module | Types |

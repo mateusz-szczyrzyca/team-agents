@@ -1,8 +1,7 @@
-//! Reading a state of schema version 1, which this build migrates to version 2 as it reads it.
+//! Reading schemas 1 through 10 and reconstructing their investigator activity history.
 //!
-//! What changed in version 2: a team holds its rounds, a run names the rounds it works for, and the questions of a
-//! task are numbered with the key `number` where version 1 called it `round`. Nothing is written in version 1 any
-//! more: the state that is saved afterwards is version 2. The rounds a team gets are made by [`Team::from_v1`].
+//! Version 1 also gains rounds; versions before 10 preserve `Allow:` lines as brief text. The latest retained
+//! task evidence supplies deterministic activity timestamps when older opinion records lack exact times.
 
 use std::collections::HashSet;
 
@@ -31,7 +30,7 @@ struct StateV1 {
     teams: Vec<TeamV1>,
 }
 
-/// Reads `text`, a state of schema version 1, as the state of version 2 it stands for.
+/// Reads schema version 1 into the current state, including reconstructed rounds and activities.
 ///
 /// # Errors
 /// [`StateError`]: the text is not a state of version 1 (a field missing, unknown or not valid, or a team whose parts
@@ -46,6 +45,7 @@ pub(super) fn from_v1(text: &str) -> Result<State, StateError> {
     for team in old.teams {
         teams.push(Team::from_v1(team, &mut used).map_err(StateError::from)?);
     }
+    rebuild_activities(&mut teams);
     Ok(State::try_from(StateWire {
         schema_version: SchemaVersion,
         teams,
@@ -145,13 +145,40 @@ impl From<LegacyError> for StateError {
     }
 }
 
-/// Reads versions 2 through 9 with their defaulted fields; task allowances remain in the original task list.
+/// Reads versions 2 through 10; only versions before 10 keep allowances as brief text.
 pub(super) fn from_v2(text: &str) -> Result<State, StateError> {
     let mut value: Value = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
-    keep_allow_lines_in_briefs(&mut value);
+    if value
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .is_some_and(|version| version < 10)
+    {
+        keep_allow_lines_in_briefs(&mut value);
+    }
     if let Some(version) = value.get_mut("schema_version") {
         *version = Value::from(super::SCHEMA_VERSION);
     }
-    let wire: StateWire = serde_json::from_value(value).map_err(|source| StateError::Malformed { source })?;
+    let mut wire: StateWire = serde_json::from_value(value).map_err(|source| StateError::Malformed { source })?;
+    rebuild_activities(&mut wire.teams);
     Ok(State::try_from(wire)?)
+}
+
+/// Uses the latest retained run evidence when old records lack an ending timestamp.
+fn rebuild_activities(teams: &mut [Team]) {
+    for team in teams {
+        let at = team
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member)
+            .chain(team.reviewers())
+            .flat_map(super::Member::runs)
+            .map(|run| match run.state() {
+                super::RunState::Running => run.started_at(),
+                super::RunState::Ended { at, .. } => *at,
+            })
+            .max()
+            .unwrap_or(team.created_at());
+        team.record_activities(at);
+    }
 }
