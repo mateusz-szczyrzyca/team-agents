@@ -1212,6 +1212,16 @@ can be raised again only after its affected file changes from the commit at whic
 State schema 6 migrates schema 5 without adding this protocol to active pull requests; history schema 8 adds
 these events while preserving existing records and search.
 
+The second-opinion foundation adds `[review] allow_second_opinion_on_blocker = true`; omitting the key
+also means `true`. This release stores the permission and provides pure protocol APIs, but the daemon still
+refuses second-opinion requests and retains its existing fix-pass text. Activation follows in a separate task.
+The prepared protocol reads `FINDING 3: SECOND OPINION — why the blocker is false` once per open BLOCKER,
+and an investigator report beginning with `OPINION: CONFIRMED` or `OPINION: NOT CONFIRMED`, followed by
+evidence. MAJOR, MINOR, repeated requests and disabled permission are refused by that parser.
+State schema 7 migrates schema 6 with no opinions requested. History schema 9 admits run reason
+`second_opinion` and events `second_opinion_asked`, `finding_confirmed`, `finding_not_confirmed`;
+existing records, links and search remain readable. These keywords are ready for the later daemon integration.
+
 Before the review the daemon checks the round's own diff and commits through git, with no model, if the repository has a
 `[repos.NAME.checks]` table in `agents.toml` ([`docs/configuration.md`](docs/configuration.md)): the lists of path patterns that
 say what is a test, what is production code and what judges a round. A round that changes an existing test other than by added

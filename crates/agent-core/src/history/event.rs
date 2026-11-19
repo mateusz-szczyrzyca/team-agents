@@ -101,6 +101,9 @@ impl FromStr for LostKind {
             | EventKind::FindingAccepted
             | EventKind::FindingRejected
             | EventKind::FindingRaised
+            | EventKind::SecondOpinionAsked
+            | EventKind::FindingConfirmed
+            | EventKind::FindingNotConfirmed
             | EventKind::FixPassStarted
             | EventKind::PullApproved
             | EventKind::PullMerged
@@ -218,6 +221,13 @@ pub enum EventKind {
     FindingRejected,
     /// A finding decision recorded with its evidence.
     FindingRaised,
+    /// [`HistoryEvent::SecondOpinionAsked`].
+    SecondOpinionAsked,
+    /// [`HistoryEvent::FindingConfirmed`].
+    FindingConfirmed,
+    /// [`HistoryEvent::FindingNotConfirmed`].
+    FindingNotConfirmed,
+
     /// [`HistoryEvent::FixPassStarted`].
     FixPassStarted,
     /// [`HistoryEvent::PullApproved`].
@@ -402,6 +412,45 @@ pub enum HistoryEvent {
         /// The reason, including the target severity when raised.
         why: String,
     },
+    /// A second opinion was requested for a blocker.
+    SecondOpinionAsked {
+        /// The pull request.
+        pr: PrNumber,
+        /// The permanent finding number.
+        number: NonZeroU32,
+        /// The fix pass that requested the opinion.
+        pass: u32,
+        /// The selected independent investigator.
+        by: AgentName,
+        /// The lead's reason for disputing the blocker.
+        why: String,
+    },
+    /// An independent investigator confirmed a blocker.
+    FindingConfirmed {
+        /// The pull request.
+        pr: PrNumber,
+        /// The permanent finding number.
+        number: NonZeroU32,
+        /// The fix pass that requested the opinion.
+        pass: u32,
+        /// The selected independent investigator.
+        by: AgentName,
+        /// The investigator's evidence that the blocker holds.
+        why: String,
+    },
+    /// An independent investigator did not confirm a blocker.
+    FindingNotConfirmed {
+        /// The pull request.
+        pr: PrNumber,
+        /// The permanent finding number.
+        number: NonZeroU32,
+        /// The fix pass that requested the opinion.
+        pass: u32,
+        /// The selected independent investigator.
+        by: AgentName,
+        /// The investigator's evidence that the blocker does not hold.
+        why: String,
+    },
     /// A fix pass started: the reviews asked for changes and the team gets their findings.
     FixPassStarted {
         /// The pull request.
@@ -527,6 +576,10 @@ impl HistoryEvent {
             Self::FindingAccepted { .. } => EventKind::FindingAccepted,
             Self::FindingRejected { .. } => EventKind::FindingRejected,
             Self::FindingRaised { .. } => EventKind::FindingRaised,
+            Self::SecondOpinionAsked { .. } => EventKind::SecondOpinionAsked,
+            Self::FindingConfirmed { .. } => EventKind::FindingConfirmed,
+            Self::FindingNotConfirmed { .. } => EventKind::FindingNotConfirmed,
+
             Self::FixPassStarted { .. } => EventKind::FixPassStarted,
             Self::PullApproved { .. } => EventKind::PullApproved,
             Self::PullMerged { .. } => EventKind::PullMerged,
@@ -574,6 +627,15 @@ impl HistoryEvent {
             }
             | Self::FindingRaised {
                 pr, number, pass, by, ..
+            }
+            | Self::SecondOpinionAsked {
+                pr, number, pass, by, ..
+            }
+            | Self::FindingConfirmed {
+                pr, number, pass, by, ..
+            }
+            | Self::FindingNotConfirmed {
+                pr, number, pass, by, ..
             } => Some(format!("pr {pr} finding {number} pass {pass} by {by}")),
             Self::FixPassStarted { pr, pass, .. } => Some(format!("pr {pr} fix pass {pass}")),
             Self::QuestionAsked { task, number, .. } | Self::QuestionAnswered { task, number, .. } => {
@@ -598,7 +660,10 @@ impl HistoryEvent {
             Self::FindingExplained { why, .. }
             | Self::FindingAccepted { why, .. }
             | Self::FindingRejected { why, .. }
-            | Self::FindingRaised { why, .. } => vec![("why", why)],
+            | Self::FindingRaised { why, .. }
+            | Self::SecondOpinionAsked { why, .. }
+            | Self::FindingConfirmed { why, .. }
+            | Self::FindingNotConfirmed { why, .. } => vec![("why", why)],
             Self::Lost { detail, .. } => vec![("detail", detail)],
             Self::FixPassStarted { findings, .. } => vec![("findings", findings)],
             Self::QuestionAsked { text, .. } | Self::QuestionAnswered { text, .. } => vec![("text", text)],
@@ -643,7 +708,10 @@ impl HistoryEvent {
             Self::FindingExplained { by, .. }
             | Self::FindingAccepted { by, .. }
             | Self::FindingRejected { by, .. }
-            | Self::FindingRaised { by, .. } => vec![by.as_str()],
+            | Self::FindingRaised { by, .. }
+            | Self::SecondOpinionAsked { by, .. }
+            | Self::FindingConfirmed { by, .. }
+            | Self::FindingNotConfirmed { by, .. } => vec![by.as_str()],
             Self::PullMerged { commit, .. } => commit.iter().map(CommitId::as_str).collect(),
             Self::QuestionAsked { task, .. } | Self::QuestionAnswered { task, .. } => vec![task.as_str()],
             Self::Controlled { target, by, tasks, .. } => {

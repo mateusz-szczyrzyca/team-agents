@@ -131,6 +131,7 @@ fn table(texts: &AutopilotPrompts, ledger: &Findings) -> Result<String, TextErro
         let status = match entry.status {
             FindingStatus::Open => "open",
             FindingStatus::Resolved => "resolved",
+            FindingStatus::NotConfirmed => "not confirmed",
         };
         let values = Variables::new()
             .with("number", entry.number.to_string())?

@@ -105,7 +105,7 @@ fn previous_history_fixture_migrates_with_round_links_search_and_records_intact(
     drop(HistoryDb::open(&path, super::support::roomy()).unwrap());
     let raw = rusqlite::Connection::open(&path).unwrap();
     let version: u32 = raw.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     assert_eq!(
         Reader::open(&path)
             .unwrap()

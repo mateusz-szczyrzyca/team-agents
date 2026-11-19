@@ -29,7 +29,7 @@ The state is one JSON document, written indented with a newline at the end, the 
 
 ```json
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "teams": [ { "id": "team-20261111-193000-a1b2", "...": "..." } ]
 }
 ```
@@ -56,10 +56,24 @@ retain each explanation's reason, pending/accepted/rejected status and verifier 
 changed-file eligibility, upward severity decisions, the answered fix-pass number, and the checked run, correction
 text and bounce count. These fields preserve decisions and bounded corrections across daemon restarts.
 
+Version 6, before second opinions, is preserved in
+[`state-before-second-opinions.json`](../crates/agent-core/tests/fixtures/state-before-second-opinions.json).
+Migration to version 7 preserves the active round and its previous protocol markers; an absent `opinions`
+map means no finding has used an opinion. This release provides persistence and pure decisions only.
+A later task activates the daemon lifecycle, including fix passes already running at upgrade.
+
+The findings ledger's optional `opinions` map uses permanent finding numbers as keys. Each value retains
+`request` (`pass`, exact `head`, nonempty `reason`) and a tagged `stage`: `waiting`, `assigned`
+(`investigator`, `task`), or `reported` (the same owner and a `report` with `outcome` and nonempty `evidence`).
+Only an open BLOCKER can request once. Pending tasks can be replaced; only the assigned task may report,
+once. Confirmation leaves the finding open; non-confirmation closes it as `not_confirmed` without changing
+its number. The loader rejects unknown/non-blocker opinion owners and inconsistent statuses. A confirmed
+finding can later become `resolved`; a not-confirmed finding retains its report and stays closed.
+
 
 [`state-v1.json`](../crates/agent-core/tests/fixtures/state-v1.json) is a state of version 1, which had no rounds. It
 **must keep loading**: it is read through the migration (below) as exactly
-[`state-v1-as-v3.json`](../crates/agent-core/tests/fixtures/state-v1-as-v3.json), with only the schema version advanced to 6, every time.
+[`state-v1-as-v3.json`](../crates/agent-core/tests/fixtures/state-v1-as-v3.json), with only the schema version advanced to 7, every time.
 
 ### Reading and its rules
 
@@ -71,8 +85,8 @@ text and bounce count. These fields preserve decisions and bounded corrections a
   as one that was built through the API. There is one way to read a value, the `Deserialize` trait: the field-by-field
   reading that serde derives lives on a private mirror type (`remote`), so no public `T::deserialize` skips the checks.
 - **Versioned.** `State::from_json` reads `schema_version` **first**. A state of another version is refused with
-  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 6,
-  migrates versions 1, 2, 3, 4 and 5 as it reads them (see "Version 1" below); any other version is
+  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 7,
+  migrates versions 1, 2, 3, 4, 5 and 6 as it reads them (see "Version 1" below); any other version is
   refused. Version 2 is read as it is: its items have no `findings`, so a round that was open when the daemon was
   updated ends by the rules it started with (verdicts only), and the numbered findings hold for pull requests opened
   after the update. A change that old files do not satisfy raises the version and comes with a migration, a fixture of the old

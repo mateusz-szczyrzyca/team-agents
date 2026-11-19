@@ -74,7 +74,7 @@ mod history_events {
         }
     }
 
-    /// The four finding decisions, in keyword order.
+    /// The finding decisions and second opinions, in keyword order.
     fn finding_events() -> Vec<HistoryEvent> {
         vec![
             HistoryEvent::FindingExplained {
@@ -99,6 +99,27 @@ mod history_events {
                 why: "evidence".into(),
             },
             HistoryEvent::FindingRaised {
+                pr: pr(7),
+                number: NonZeroU32::MIN,
+                pass: 1,
+                by: "inv-codex".parse().unwrap(),
+                why: "evidence".into(),
+            },
+            HistoryEvent::SecondOpinionAsked {
+                pr: pr(7),
+                number: NonZeroU32::MIN,
+                pass: 1,
+                by: "inv-codex".parse().unwrap(),
+                why: "evidence".into(),
+            },
+            HistoryEvent::FindingConfirmed {
+                pr: pr(7),
+                number: NonZeroU32::MIN,
+                pass: 1,
+                by: "inv-codex".parse().unwrap(),
+                why: "evidence".into(),
+            },
+            HistoryEvent::FindingNotConfirmed {
                 pr: pr(7),
                 number: NonZeroU32::MIN,
                 pass: 1,
@@ -216,6 +237,9 @@ mod history_events {
             "finding_accepted",
             "finding_rejected",
             "finding_raised",
+            "second_opinion_asked",
+            "finding_confirmed",
+            "finding_not_confirmed",
             "fix_pass_started",
             "pull_approved",
             "pull_merged",
@@ -330,6 +354,9 @@ mod history_events {
             ("finding_accepted", vec!["why"]),
             ("finding_rejected", vec!["why"]),
             ("finding_raised", vec!["why"]),
+            ("second_opinion_asked", vec!["why"]),
+            ("finding_confirmed", vec!["why"]),
+            ("finding_not_confirmed", vec!["why"]),
             ("fix_pass_started", vec!["findings"]),
             ("pull_approved", vec![]),
             ("pull_merged", vec![]),
@@ -363,7 +390,7 @@ mod history_events {
             assert_eq!(json.matches("\"changed\"").count(), count, "{json}");
             total += count;
         }
-        assert_eq!(total, 15);
+        assert_eq!(total, 18);
     }
 
     #[test]

@@ -302,6 +302,9 @@ const fn is_pull_request(event: &HistoryEvent) -> bool {
             | HistoryEvent::FindingAccepted { .. }
             | HistoryEvent::FindingRejected { .. }
             | HistoryEvent::FindingRaised { .. }
+            | HistoryEvent::SecondOpinionAsked { .. }
+            | HistoryEvent::FindingConfirmed { .. }
+            | HistoryEvent::FindingNotConfirmed { .. }
             | HistoryEvent::FixPassStarted { .. }
             | HistoryEvent::PullApproved { .. }
             | HistoryEvent::PullMerged { .. }
@@ -440,6 +443,7 @@ fn why(why: &RunWhy) -> String {
         RunWhy::Request { asked_by: Some(run) } => format!("a worker serves a request of run {run}"),
         RunWhy::Request { asked_by: None } => "a worker serves a request".to_owned(),
         RunWhy::FixPass { number } => format!("fix pass {number} of the item"),
+        RunWhy::SecondOpinion { pr, pass } => format!("a second opinion on pull request #{pr}, fix pass {pass}"),
         RunWhy::Review { pr, pass } => format!("a review of pull request #{pr}, pass {}", pass.saturating_add(1)),
         RunWhy::AskHuman => "the fix passes are used up: the human is asked".to_owned(),
         RunWhy::VerdictMissing => "the report had no verdict: it is asked again".to_owned(),
@@ -779,6 +783,9 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         | HistoryEvent::FindingAccepted { .. }
         | HistoryEvent::FindingRejected { .. }
         | HistoryEvent::FindingRaised { .. }
+        | HistoryEvent::SecondOpinionAsked { .. }
+        | HistoryEvent::FindingConfirmed { .. }
+        | HistoryEvent::FindingNotConfirmed { .. }
         | HistoryEvent::FixPassStarted { .. }
         | HistoryEvent::PullApproved { .. }
         | HistoryEvent::PullMerged { .. }
@@ -811,8 +818,84 @@ fn controlled(page: &mut Page, at: Timestamp, action: ControlAction, target: &Ta
     entry(page, at, &format!("the human {v} {t} ({w}); reached {reached}"));
 }
 
-/// An event of a pull request, from its opening to its end; any other event is not told here.
+/// Renders finding evidence separately from the pull request lifecycle.
 fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
+    match event {
+        HistoryEvent::FindingExplained {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingAccepted {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingRejected {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingRaised {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::SecondOpinionAsked {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingConfirmed {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        }
+        | HistoryEvent::FindingNotConfirmed {
+            pr,
+            number,
+            pass,
+            by,
+            why,
+        } => {
+            finding_evidence(page, at, event.kind(), (*pr, *number, *pass, by), why);
+        }
+        HistoryEvent::PullOpened { .. }
+        | HistoryEvent::PullPushed { .. }
+        | HistoryEvent::PullReady { .. }
+        | HistoryEvent::ReviewAsked { .. }
+        | HistoryEvent::ReviewSubmitted { .. }
+        | HistoryEvent::FixPassStarted { .. }
+        | HistoryEvent::PullApproved { .. }
+        | HistoryEvent::PullMerged { .. }
+        | HistoryEvent::PullHandedOver { .. }
+        | HistoryEvent::PullClosed { .. }
+        | HistoryEvent::Gate { .. }
+        | HistoryEvent::Checked { .. }
+        | HistoryEvent::QuestionAsked { .. }
+        | HistoryEvent::QuestionAnswered { .. }
+        | HistoryEvent::Controlled { .. }
+        | HistoryEvent::Notified { .. }
+        | HistoryEvent::RoundClosed { .. }
+        | HistoryEvent::Lost { .. }
+        | HistoryEvent::TeamEnded {} => pull_lifecycle_event(page, at, event),
+    }
+}
+
+/// An event of a pull request, from its opening to its end; any other event is not told here.
+fn pull_lifecycle_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
     match event {
         HistoryEvent::PullOpened {
             number,
@@ -854,36 +937,6 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             entry(page, at, &format!("review pass {p} of #{pr} by {r}: {verdict}"));
             page.raw(2, "review report", report);
         }
-        HistoryEvent::FindingExplained {
-            pr,
-            number,
-            pass,
-            by,
-            why,
-        }
-        | HistoryEvent::FindingAccepted {
-            pr,
-            number,
-            pass,
-            by,
-            why,
-        }
-        | HistoryEvent::FindingRejected {
-            pr,
-            number,
-            pass,
-            by,
-            why,
-        }
-        | HistoryEvent::FindingRaised {
-            pr,
-            number,
-            pass,
-            by,
-            why,
-        } => {
-            finding_evidence(page, at, event.kind(), (*pr, *number, *pass, by), why);
-        }
         HistoryEvent::FixPassStarted { pr, pass, of, findings } => {
             entry(page, at, &format!("fix pass {pass} of {of} on #{pr} started"));
             page.raw(2, "findings sent to the team", findings);
@@ -901,7 +954,14 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             entry(page, at, &msg);
         }
         HistoryEvent::PullClosed { pr } => entry(page, at, &format!("pull request #{pr} closed without a merge")),
-        HistoryEvent::Gate { .. }
+        HistoryEvent::FindingExplained { .. }
+        | HistoryEvent::FindingAccepted { .. }
+        | HistoryEvent::FindingRejected { .. }
+        | HistoryEvent::FindingRaised { .. }
+        | HistoryEvent::SecondOpinionAsked { .. }
+        | HistoryEvent::FindingConfirmed { .. }
+        | HistoryEvent::FindingNotConfirmed { .. }
+        | HistoryEvent::Gate { .. }
         | HistoryEvent::Checked { .. }
         | HistoryEvent::QuestionAsked { .. }
         | HistoryEvent::QuestionAnswered { .. }

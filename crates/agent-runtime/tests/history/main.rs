@@ -52,3 +52,6 @@ mod turn_limit;
 
 #[cfg(test)]
 mod disputes;
+
+#[cfg(test)]
+mod opinions;

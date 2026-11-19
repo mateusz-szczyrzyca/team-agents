@@ -82,7 +82,7 @@ Both `Config` and `TaskList` take text, not paths: reading `agents.toml`, `secre
 
 | Module | Types |
 |---|---|
-| `state` | `State` (with its schema version 5; versions 2, 3 and 4 are migrated without changing active review rules and version 1 is migrated as it is read; the `findings` ledger of an item), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `Round`, `RoundLife`, `RoundEnd`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `GateRecord`, `GateTree`, `ChecksRecord` (the checks' record of a lead, a file of its task directory), `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
+| `state` | `State` (with its schema version 7; versions 2 through 6 are migrated without changing active review rules and version 1 is migrated as it is read; the `findings` ledger of an item), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `Round`, `RoundLife`, `RoundEnd`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `GateRecord`, `GateTree`, `ChecksRecord` (the checks' record of a lead, a file of its task directory), `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
 | `protocol` | `Request`, `Command`, `Response`, `Reply`, `Failure`, `Event`, `EventKind`, `Frame`, with the protocol version and `ProtocolError`. JSON lines over the daemon's socket. See [`state.md`](state.md) |
 | `review_findings` | `Severity` (`BLOCKER`, `MAJOR`, `MINOR`), `Finding`, `Answer` (`FINDING 3: RESOLVED`, `OPEN — why`), `parse_report`: a review report read into its findings and its answers for the open ones, or the line that is wrong. Pure: the harness sends the report back to its reviewer when it fails |
 | `questions` | `QuestionsFile`, `Entry`, `Verdict`: parsing and rendering of the questions file, the `ok` verdict, the `**ANSWERED**` marker. See [`state.md`](state.md) |
@@ -411,6 +411,22 @@ only, with reviewer and evidence retained in history. For an accepted explanatio
 must show a change to the affected file (including a rename) before raising is permitted. No second-opinion path
 is offered in this slice. State schema 6 migrates schema 5; history migration 008 preserves records, foreign-key
 links and the search index while admitting the four finding-decision event kinds.
+
+**Second-opinion foundation (part 1).** `Review::allow_second_opinion_on_blocker` defaults to true.
+`review_response::opinion::{parse_lead, parse_report}` validates whole lead messages and investigator evidence
+without changing state. `Evidence` prevents empty reasons; `Permission`, `OpenFinding`, `LeadAnswer`,
+`OpinionReport` and `Outcome` carry the checked protocol. The existing daemon still calls the legacy parser.
+`Findings::{request_opinion, assign_opinion, record_opinion, opinions}` persists waiting, task ownership,
+replacement and completed outcomes through `OpinionRequest`, `SecondOpinion` and `OpinionStage`.
+State schema 7 migrates schema 6 with an empty opinion map. History migration 009 adds the run reason and
+three outcome events while retaining earlier records and search.
+
+`decide::opinion::after_opinions` returns `Next`: wait for every requested opinion; return confirmed blockers
+to the lead in the same fix pass until answered FIXED; then verify the changed tip. If every blocking finding
+was not confirmed and the code did not change, `Next::DecideUnchanged` lets the later integration decide the
+pass without a new tip or redundant reviews. Otherwise an unchanged tip waits. Decisions filter by fix-pass
+number and never increment the pass count. The separate activation task must connect these APIs to investigator
+selection, scheduling, correction/replacement/restart handling, publication, prompts and status.
 
 Every posted review starts with the investigator's name and its configured CLI and model
 (the model is omitted when none is configured), a verdict heading, and the review pass and commit. The approval

@@ -10,6 +10,7 @@ pub mod asleep;
 pub mod assign;
 pub mod checks;
 pub mod disclosure;
+pub mod opinion;
 pub mod outcome;
 pub mod publish;
 pub mod reviewer;

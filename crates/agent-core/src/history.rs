@@ -591,6 +591,13 @@ pub enum RunWhy {
         /// How many fix passes the pull request had when the review was asked: `0` for the first review.
         pass: u32,
     },
+    /// An investigator checks one disputed blocker at the reviewed commit.
+    SecondOpinion {
+        /// Pull request containing the finding.
+        pr: PrNumber,
+        /// Existing fix pass; requesting an opinion does not increment it.
+        pass: u32,
+    },
     /// The fix passes are used up: the lead puts the question to the human.
     AskHuman,
     /// A reviewer's report had no verdict: it is asked again.
@@ -635,6 +642,8 @@ pub enum WhyKind {
     FixPass,
     /// [`RunWhy::Review`].
     Review,
+    /// [`RunWhy::SecondOpinion`].
+    SecondOpinion,
     /// [`RunWhy::AskHuman`].
     AskHuman,
     /// [`RunWhy::VerdictMissing`].
@@ -666,6 +675,7 @@ impl RunWhy {
             Self::Request { .. } => WhyKind::Request,
             Self::FixPass { .. } => WhyKind::FixPass,
             Self::Review { .. } => WhyKind::Review,
+            Self::SecondOpinion { .. } => WhyKind::SecondOpinion,
             Self::AskHuman => WhyKind::AskHuman,
             Self::VerdictMissing => WhyKind::VerdictMissing,
             Self::Checks => WhyKind::Checks,

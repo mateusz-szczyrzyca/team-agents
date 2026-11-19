@@ -21,6 +21,7 @@ use crate::ids::{AgentName, BranchName, InvestigatorName};
 use crate::kinds::{CliKind, Keyword, Tier, UnknownKeyword};
 use crate::log::LogLevel;
 use crate::repo_path::PathPatterns;
+use crate::review_response::opinion::Permission;
 
 pub use secrets::{InvalidSecret, MAX_SECRETS_BYTES, Position, Secret, Secrets, SecretsError};
 pub use values::{
@@ -294,6 +295,8 @@ impl Default for Limits {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Review {
+    /// Whether a blocker may receive one independent second opinion.
+    allow_second_opinion_on_blocker: bool,
     /// Explicit pass size; absent settings retain the legacy default and validation at team creation.
     min_first_full_reviews: Option<ReviewCount>,
     /// How many times "changes requested" goes back to the team before the human is asked; 0 asks at once.
@@ -308,6 +311,7 @@ pub struct Review {
 impl Default for Review {
     fn default() -> Self {
         Self {
+            allow_second_opinion_on_blocker: true,
             min_first_full_reviews: None,
             fix_passes: DEFAULT_FIX_PASSES,
             check_passes: DEFAULT_CHECK_PASSES,
@@ -321,6 +325,16 @@ impl Review {
     #[must_use]
     pub fn min_first_full_reviews(&self) -> ReviewCount {
         self.min_first_full_reviews.unwrap_or_default()
+    }
+
+    /// Whether a blocker may receive one independent second opinion.
+    #[must_use]
+    pub fn second_opinion(&self) -> Permission {
+        if self.allow_second_opinion_on_blocker {
+            Permission::Enabled
+        } else {
+            Permission::Disabled
+        }
     }
 }
 

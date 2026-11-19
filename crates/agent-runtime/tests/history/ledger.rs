@@ -808,6 +808,33 @@ fn pr_event_kinds(task: &agent_core::ids::TaskId, text: &str) -> Vec<HistoryEven
     ]
 }
 
+/// Opinion events with evidence in each free-text field.
+fn opinion_event_kinds(text: &str) -> Vec<HistoryEvent> {
+    vec![
+        HistoryEvent::SecondOpinionAsked {
+            pr: pr(7),
+            number: NonZeroU32::MIN,
+            pass: 1,
+            by: "inv-a".parse().unwrap(),
+            why: text.to_owned(),
+        },
+        HistoryEvent::FindingConfirmed {
+            pr: pr(7),
+            number: NonZeroU32::MIN,
+            pass: 1,
+            by: "inv-a".parse().unwrap(),
+            why: text.to_owned(),
+        },
+        HistoryEvent::FindingNotConfirmed {
+            pr: pr(7),
+            number: NonZeroU32::MIN,
+            pass: 1,
+            by: "inv-a".parse().unwrap(),
+            why: text.to_owned(),
+        },
+    ]
+}
+
 /// One event of every [`EventKind`](agent_core::history::EventKind), with `text` in every free-text field.
 fn all_event_kinds(world: &World, text: &str) -> Vec<HistoryEvent> {
     use agent_core::config::TailscaleLogin;
@@ -839,6 +866,7 @@ fn all_event_kinds(world: &World, text: &str) -> Vec<HistoryEvent> {
         },
     ];
     events.extend(pr_event_kinds(&task, text));
+    events.extend(opinion_event_kinds(text));
     events.extend([
         HistoryEvent::QuestionAsked {
             task: task.clone(),
