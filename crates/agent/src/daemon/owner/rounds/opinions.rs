@@ -201,10 +201,15 @@ impl Owner {
                 if *bounces <= super::verdicts::MAX_VERDICT_BOUNCES {
                     self.release(task, Why::VerdictMissing, &mut look)?;
                     self.finish_look(&located.team, look).await?;
+                } else {
+                    self.hold_opinion(pulls, &located.team, task).await?;
                 }
                 return Ok(true);
             }
-            None => return Ok(true),
+            None => {
+                self.hold_opinion(pulls, &located.team, task).await?;
+                return Ok(true);
+            }
         };
         let team_id = &located.team;
         let team = self
@@ -259,6 +264,101 @@ impl Owner {
         look.changed = true;
         self.finish_look(team_id, look).await?;
         Ok(true)
+    }
+
+    /// Holds an unanswered task and sends its human notice once, including across restarts.
+    pub(in crate::daemon::owner) async fn hold_opinion(
+        &mut self,
+        pulls: &Pulls,
+        team_id: &TeamId,
+        task: &TaskId,
+    ) -> Result<(), OwnerError> {
+        let Some((id, number, _)) = self
+            .parts
+            .state
+            .team(team_id)
+            .and_then(|team| pending_opinion(team, task))
+        else {
+            return Ok(());
+        };
+        let team = self
+            .parts
+            .state
+            .team(team_id)
+            .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+        let item = team.item(id).ok_or_else(|| OwnerError::LostItem {
+            team: team_id.clone(),
+            item: id,
+        })?;
+        let ItemPhase::Fixing { pr, .. } = item.phase() else {
+            return Ok(());
+        };
+        let ids = crate::daemon::merge::items_of(team, pr.number);
+        let mut ledger = item
+            .findings()
+            .cloned()
+            .ok_or(PublishError::Lost)
+            .map_err(OpinionDaemonError::from)?;
+        let fresh = ledger.mark_opinion_notice(number).map_err(OpinionDaemonError::from)?;
+        self.keep_opinions(team_id, &ids, &ledger)?;
+        let mut look = Look::default();
+        if self
+            .parts
+            .state
+            .find_task(task)
+            .is_some_and(|found| found.member.status() == agent_core::status::TaskStatus::Queued)
+        {
+            self.move_to(task, team_id, agent_core::status::TaskStatus::Stopped, &mut look.events)?;
+        }
+        if fresh {
+            let lead = self.lead_of(team_id)?;
+            let rounds = self
+                .rounds_of_items(team_id, &ids)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let values = Variables::new()
+                .with("round", rounds)
+                .and_then(|v| v.with("number", number.to_string()))
+                .and_then(|v| v.with("task", task.as_str()));
+            self.tell_human(
+                pulls,
+                super::AutopilotNotice::Opinion,
+                values,
+                &lead,
+                Timestamp::now(&self.parts.clock)?,
+            );
+        }
+        look.changed = true;
+        self.finish_look(team_id, look).await
+    }
+
+    /// Identifies unanswered opinions after startup without attempting part 2b recovery.
+    pub(in crate::daemon::owner) async fn hold_restarted_opinions(&mut self) -> Result<(), OwnerError> {
+        let Some(pulls) = self.pulls.clone() else {
+            return Ok(());
+        };
+        let pending: Vec<_> = self
+            .parts
+            .state
+            .teams()
+            .iter()
+            .flat_map(|team| {
+                team.items()
+                    .iter()
+                    .filter_map(|item| item.findings())
+                    .flat_map(|ledger| ledger.opinions().values())
+                    .filter_map(|opinion| match &opinion.stage {
+                        OpinionStage::Assigned { task, .. } => Some((team.id().clone(), task.clone())),
+                        OpinionStage::Waiting | OpinionStage::Reported { .. } => None,
+                    })
+            })
+            .collect();
+        for (team, task) in pending {
+            self.hold_opinion(&pulls, &team, &task).await?;
+        }
+        Ok(())
     }
 
     /// Returns confirmed blockers to the lead only after every requested opinion is in.

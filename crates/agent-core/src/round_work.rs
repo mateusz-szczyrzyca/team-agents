@@ -32,6 +32,9 @@ pub enum RoundWork {
     /// A reviewer works or has reported, or the team fixes what the reviewers asked for.
     #[strum(serialize = "PR in review")]
     PullInReview,
+    /// A requested independent opinion has not arrived.
+    #[strum(serialize = "waiting for a second opinion")]
+    SecondOpinion,
     /// The reviews approve: the pull request waits for its merge.
     #[strum(serialize = "PR approved")]
     PullApproved,
@@ -87,6 +90,14 @@ pub fn draft_pull<'a>(events: impl IntoIterator<Item = &'a HistoryEvent>) -> Dra
 pub fn round_work(detail: &RoundDetail, draft: DraftPull) -> Option<RoundWork> {
     if *detail.round.life() != RoundLife::Open {
         return None;
+    }
+    if detail.opinions.values().any(|opinion| {
+        matches!(
+            opinion.stage,
+            crate::state::OpinionStage::Waiting | crate::state::OpinionStage::Assigned { .. }
+        )
+    }) {
+        return Some(RoundWork::SecondOpinion);
     }
     match detail.item.as_ref().map(|item| item.status) {
         Some(ItemStatus::Done) => None,

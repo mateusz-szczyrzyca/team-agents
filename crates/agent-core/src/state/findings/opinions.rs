@@ -177,6 +177,21 @@ impl Findings {
         Ok(())
     }
 
+    /// Claims the one human notice for an unanswered opinion, returning whether it is new.
+    ///
+    /// # Errors
+    /// [`OpinionStateError`] when no assigned opinion exists for this finding.
+    pub fn mark_opinion_notice(&mut self, number: NonZeroU32) -> Result<bool, OpinionStateError> {
+        if !self
+            .opinions
+            .get(&number)
+            .is_some_and(|opinion| matches!(opinion.stage, OpinionStage::Assigned { .. }))
+        {
+            return Err(OpinionStateError { number });
+        }
+        Ok(self.opinion_notices.insert(number))
+    }
+
     /// The durable opinions indexed by permanent finding number.
     #[must_use]
     pub fn opinions(&self) -> &std::collections::BTreeMap<NonZeroU32, SecondOpinion> {

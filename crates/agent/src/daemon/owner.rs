@@ -544,6 +544,7 @@ impl Owner {
                 .await?;
             self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)?;
         }
+        self.hold_restarted_opinions().await?;
         self.remember_closed_teams();
         self.look_at_every_team();
         if !recovery.interrupted.is_empty() {
@@ -949,6 +950,15 @@ impl Owner {
             )
         {
             self.review_ended(task, &located, run.final_message.as_deref()).await?;
+        }
+        if !matches!(
+            end,
+            RunEnd::Reported {
+                outcome: RunOutcome::Done
+            }
+        ) && let Some(pulls) = self.pulls.clone()
+        {
+            self.hold_opinion(&pulls, &located.team, task).await?;
         }
         self.after_run(task, &located, &end, run.final_message.as_deref())
     }

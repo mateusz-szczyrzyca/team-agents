@@ -351,6 +351,8 @@ pub(super) enum AutopilotNotice {
     Decision,
     /// Reviewer completed without a verdict.
     NoVerdict,
+    /// An unanswered second opinion holds the round.
+    Opinion,
     /// Branch publish failed.
     PublishFailed,
     /// Team asleep.
@@ -374,6 +376,7 @@ impl AutopilotNotice {
         match self {
             Self::Decision => AutopilotPrompt::NoticeDecision,
             Self::NoVerdict => AutopilotPrompt::NoticeNoVerdict,
+            Self::Opinion => AutopilotPrompt::NoticeOpinion,
             Self::PublishFailed => AutopilotPrompt::NoticePublishFailed,
             Self::TeamAsleep => AutopilotPrompt::NoticeTeamAsleep,
             Self::StandingItem => AutopilotPrompt::NoticeStandingItem,
@@ -389,7 +392,7 @@ impl AutopilotNotice {
     pub(super) const fn kind(self) -> NoticeKind {
         match self {
             Self::Decision => NoticeKind::Decision,
-            Self::NoVerdict => NoticeKind::NoVerdict,
+            Self::NoVerdict | Self::Opinion => NoticeKind::NoVerdict,
             Self::PublishFailed => NoticeKind::PublishFailed,
             Self::TeamAsleep | Self::StandingItem => NoticeKind::TeamAsleep,
             Self::Closed => NoticeKind::Closed,

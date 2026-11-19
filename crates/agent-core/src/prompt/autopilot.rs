@@ -112,6 +112,8 @@ pub enum AutopilotPrompt {
     ReviewFindingsInvalid,
     /// The notification that a reviewer gave no verdict.
     NoticeNoVerdict,
+    /// An unanswered opinion requires human attention until recovery is available.
+    NoticeOpinion,
     /// The notification that the reviewers still ask for changes and the human has to decide.
     NoticeDecision,
     /// Startup warning when disjoint verifier groups cannot be guaranteed.
@@ -173,6 +175,7 @@ impl AutopilotPrompt {
         Self::ReviewOpenFindings,
         Self::ReviewFindingsInvalid,
         Self::NoticeNoVerdict,
+        Self::NoticeOpinion,
         Self::NoticeDecision,
         Self::NoticeReviewRotation,
         Self::NoticeMerged,
@@ -191,6 +194,7 @@ impl AutopilotPrompt {
                 | Self::NoticeMergeFailed
                 | Self::NoticeClosed
                 | Self::NoticeNoVerdict
+                | Self::NoticeOpinion
                 | Self::NoticeDecision
                 | Self::NoticeReviewRotation
                 | Self::NoticeMerged
@@ -291,6 +295,7 @@ impl AutopilotPrompt {
             Self::ReviewSeverityMajor => ("harness/review/severity-major.md", &[]),
             Self::ReviewSeverityMinor => ("harness/review/severity-minor.md", &[]),
             Self::ReviewVerdictMissing => ("harness/review/verdict-missing.md", &[]),
+            Self::NoticeOpinion => ("harness/review/notice-opinion.md", &["round", "number", "task"]),
             Self::NoticeNoVerdict => (
                 "harness/review/notice-no-verdict.md",
                 &["reviewer", "pr", "task", "why"],

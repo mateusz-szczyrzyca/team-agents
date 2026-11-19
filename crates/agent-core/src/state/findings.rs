@@ -62,6 +62,9 @@ pub struct Findings {
     /// One-shot opinions; an absent map means no opinion has been requested.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     opinions: BTreeMap<NonZeroU32, SecondOpinion>,
+    /// Findings whose unanswered-opinion notice was already sent.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    opinion_notices: std::collections::BTreeSet<NonZeroU32>,
     /// Code fixes accepted in each pass, including before an opinion completes.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     fixed: BTreeMap<NonZeroU32, std::collections::BTreeSet<NonZeroU32>>,
@@ -86,6 +89,9 @@ struct FindingsWire {
     /// Missing on every state written before schema 7.
     #[serde(default)]
     opinions: BTreeMap<NonZeroU32, SecondOpinion>,
+    /// Missing before schema 8: no unanswered-opinion notice was sent.
+    #[serde(default)]
+    opinion_notices: std::collections::BTreeSet<NonZeroU32>,
     /// Missing before schema 8: no lead fixes have been retained.
     #[serde(default)]
     fixed: BTreeMap<NonZeroU32, std::collections::BTreeSet<NonZeroU32>>,
@@ -128,6 +134,7 @@ impl TryFrom<FindingsWire> for Findings {
         let mut ledger = Self::new(wire.entries)?;
         ledger.opinions = wire.opinions;
         ledger.fixed = wire.fixed;
+        ledger.opinion_notices = wire.opinion_notices;
         ledger.disputes = wire.disputes;
         ledger.pending = wire.pending;
         ledger.comment = wire.comment;
@@ -219,6 +226,7 @@ impl Findings {
             entries,
             opinions: BTreeMap::new(),
             fixed: BTreeMap::new(),
+            opinion_notices: std::collections::BTreeSet::new(),
             pending: BTreeMap::new(),
             comment: None,
         })
