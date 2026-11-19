@@ -29,6 +29,10 @@ use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use tracing::Instrument;
 
+mod latest;
+
+pub use latest::{LatestMessageError, MessageNote};
+
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, capture, capture_with_input};
 
 /// How long one command may run before its process group is killed. A command waits for the bus lock, which others
