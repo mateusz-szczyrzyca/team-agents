@@ -7,6 +7,7 @@
 //! the question they wait on, what the lead is still to be told — is the record in the lead's task directory
 //! (`checks.json`), so that a daemon that restarts goes on. Without a `checks` table for the repository nothing is checked.
 
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 use agent_core::decide::checks::{Issue, Judge, Subject, assess_near, markers};
@@ -98,7 +99,7 @@ impl Owner {
         reviewing: &Reviewing<'_>,
         now: Timestamp,
     ) -> Result<Option<Held>, PublishError> {
-        let Site { pulls, team, lead } = site;
+        let Site { lead, .. } = site;
         let Some(rules) = self
             .parts
             .settings
@@ -160,174 +161,230 @@ impl Owner {
         match step {
             ChecksStep::StartReviews => Ok(None),
             ChecksStep::BackToTeam { pass } => {
-                let text = team_message(
-                    pulls.checks(),
-                    reviewing.pr,
+                self.send_back_to_team(
+                    site,
+                    reviewing,
+                    &mut record,
                     pass,
                     policy.check_passes,
                     &issues,
                     &refused,
-                    false,
-                )?;
-                record.set_passes(reviewing.items, pass.get());
-                record.asked = None;
-                record.sent = Some(Sent {
-                    at: now,
-                    pass: pass.get(),
-                    of: policy.check_passes,
-                    text,
-                });
-                self.parts.store.save_checks_record(&lead.task, &record).await?;
-                let lines = issue_lines(pulls, &issues)?;
-                self.record_checked(
-                    team,
-                    reviewing,
-                    lines,
-                    CheckOutcome::SentBack {
-                        pass,
-                        of: policy.check_passes,
-                    },
-                );
-                tracing::info!(
-                    event = agent_core::log::LogEvent::ChecksDecided.as_str(),
-                    outcome = "sent_back",
-                    team = %team,
-                    pr = %reviewing.pr,
-                    pass = pass.get(),
-                    issues = issues.len(),
-                    "the checks send the round back to the team"
-                );
-                Ok(Some(Held::WakeLead))
+                    now,
+                )
+                .await
             }
             ChecksStep::Both { pass } => {
-                let team_issues: Vec<Issue> = issues.iter().filter(|i| i.judge() == Judge::Team).cloned().collect();
-                let human_issues: Vec<Issue> = issues.iter().filter(|i| i.judge() == Judge::Human).cloned().collect();
-                let human_subjects: Vec<Subject> = human_issues.iter().map(Issue::subject).collect();
-
-                let is_unchanged = record.asked.as_ref().is_some_and(|a| a.subjects == human_subjects);
-                if !is_unchanged {
-                    let number = self
-                        .parts
-                        .state
-                        .find_task(&lead.task)
-                        .and_then(|found| next_number(found.member))
-                        .ok_or(PublishError::QuestionNumbers)?;
-                    let asked = questions(
-                        pulls.checks(),
-                        team,
-                        &lead.task,
-                        &human_issues,
-                        AskReason::OnlyTheHumanMayAllow,
-                        policy.check_passes,
-                    )?;
-                    let file = self.parts.store.home().questions_file(&lead.task, number);
-                    replace_text_file(&file, &asked.file.render(), QUESTIONS_FILE_MODE).await?;
-
-                    record.asked = Some(Asked {
-                        number,
-                        at: now,
-                        items: reviewing.items.to_vec(),
-                        subjects: asked.subjects,
-                        relays: 0,
-                    });
-                    let human_lines = issue_lines(pulls, &human_issues)?;
-                    self.record_checked(
-                        team,
-                        reviewing,
-                        human_lines,
-                        CheckOutcome::AskedHuman {
-                            reason: AskReason::OnlyTheHumanMayAllow,
-                            question: number,
-                        },
-                    );
-                    tracing::info!(
-                        event = agent_core::log::LogEvent::ChecksDecided.as_str(),
-                        outcome = "asked_human",
-                        team = %team,
-                        pr = %reviewing.pr,
-                        reason = ?AskReason::OnlyTheHumanMayAllow,
-                        issues = human_issues.len(),
-                        "the checks ask the human about the round"
-                    );
-                }
-
-                let text = team_message(
-                    pulls.checks(),
-                    reviewing.pr,
+                self.step_both(
+                    site,
+                    reviewing,
+                    &mut record,
                     pass,
                     policy.check_passes,
-                    &team_issues,
+                    &issues,
                     &refused,
-                    true,
-                )?;
-                record.set_passes(reviewing.items, pass.get());
-                record.sent = Some(Sent {
-                    at: now,
-                    pass: pass.get(),
-                    of: policy.check_passes,
-                    text,
-                });
-                self.parts.store.save_checks_record(&lead.task, &record).await?;
-                let team_lines = issue_lines(pulls, &team_issues)?;
-                self.record_checked(
-                    team,
-                    reviewing,
-                    team_lines,
-                    CheckOutcome::SentBack {
-                        pass,
-                        of: policy.check_passes,
-                    },
-                );
-                tracing::info!(
-                    event = agent_core::log::LogEvent::ChecksDecided.as_str(),
-                    outcome = "sent_back",
-                    team = %team,
-                    pr = %reviewing.pr,
-                    pass = pass.get(),
-                    issues = team_issues.len(),
-                    "the checks send the round back to the team"
-                );
-                Ok(Some(Held::WakeLead))
+                    now,
+                )
+                .await
             }
             ChecksStep::AskHuman { reason } => {
-                let human_subjects: Vec<Subject> = issues.iter().map(Issue::subject).collect();
-                let is_unchanged = record.asked.as_ref().is_some_and(|a| a.subjects == human_subjects);
-                if is_unchanged {
-                    if let Some(asked) = &record.asked {
-                        match self.where_is(&lead.task, asked).await? {
-                            Asking::Open => Ok(Some(Held::Waiting)),
-                            Asking::NotYet { ran: false } => Ok(Some(Held::WakeLead)),
-                            Asking::NotYet { ran: true } if record.sent.is_some() => {
-                                record.sent = None;
-                                record.asked = Some(Asked {
-                                    relays: 0,
-                                    at: now,
-                                    ..asked.clone()
-                                });
-                                self.parts.store.save_checks_record(&lead.task, &record).await?;
-                                Ok(Some(Held::WakeLead))
-                            }
-                            Asking::NotYet { ran: true } if asked.relays >= MAX_RELAYS => Ok(Some(Held::Notify)),
-                            Asking::NotYet { ran: true } => {
-                                record.asked = Some(Asked {
-                                    relays: asked.relays.saturating_add(1),
-                                    at: now,
-                                    ..asked.clone()
-                                });
-                                self.parts.store.save_checks_record(&lead.task, &record).await?;
-                                Ok(Some(Held::WakeLead))
-                            }
-                            Asking::Answered(_) => Ok(Some(Held::WakeLead)),
-                        }
-                    } else {
-                        self.put_question(site, reviewing, &mut record, &issues, (reason, checking.passes()), now)
-                            .await
-                    }
-                } else {
-                    self.put_question(site, reviewing, &mut record, &issues, (reason, checking.passes()), now)
-                        .await
-                }
+                self.step_ask_human(site, reviewing, &mut record, reason, checking.passes(), &issues, now)
+                    .await
             }
+        }
+    }
+
+    /// Sends the round back to the team for the pass `pass`.
+    #[expect(clippy::too_many_arguments, reason = "private helper taking round check context")]
+    async fn send_back_to_team(
+        &self,
+        site: Site<'_>,
+        reviewing: &Reviewing<'_>,
+        record: &mut ChecksRecord,
+        pass: NonZeroU32,
+        check_passes: u32,
+        issues: &[Issue],
+        refused: &[Subject],
+        now: Timestamp,
+    ) -> Result<Option<Held>, PublishError> {
+        let Site { pulls, team, lead } = site;
+        let text = team_message(pulls.checks(), reviewing.pr, pass, check_passes, issues, refused, false)?;
+        record.set_passes(reviewing.items, pass.get());
+        record.asked = None;
+        record.sent = Some(Sent {
+            at: now,
+            pass: pass.get(),
+            of: check_passes,
+            text,
+        });
+        self.parts.store.save_checks_record(&lead.task, record).await?;
+        let lines = issue_lines(pulls, issues)?;
+        self.record_checked(
+            team,
+            reviewing,
+            lines,
+            CheckOutcome::SentBack { pass, of: check_passes },
+        );
+        tracing::info!(
+            event = agent_core::log::LogEvent::ChecksDecided.as_str(),
+            outcome = "sent_back",
+            team = %team,
+            pr = %reviewing.pr,
+            pass = pass.get(),
+            issues = issues.len(),
+            "the checks send the round back to the team"
+        );
+        Ok(Some(Held::WakeLead))
+    }
+
+    /// Handles a check that found both team-fixable and human findings: writes questions for the human
+    /// and sends the round back to the team at the same time.
+    #[expect(clippy::too_many_arguments, reason = "private helper taking round check context")]
+    async fn step_both(
+        &mut self,
+        site: Site<'_>,
+        reviewing: &Reviewing<'_>,
+        record: &mut ChecksRecord,
+        pass: NonZeroU32,
+        check_passes: u32,
+        issues: &[Issue],
+        refused: &[Subject],
+        now: Timestamp,
+    ) -> Result<Option<Held>, PublishError> {
+        let Site { pulls, team, lead } = site;
+        let team_issues: Vec<Issue> = issues.iter().filter(|i| i.judge() == Judge::Team).cloned().collect();
+        let human_issues: Vec<Issue> = issues.iter().filter(|i| i.judge() == Judge::Human).cloned().collect();
+        let human_subjects: Vec<Subject> = human_issues.iter().map(Issue::subject).collect();
+
+        let is_unchanged = record.asked.as_ref().is_some_and(|a| a.subjects == human_subjects);
+        if !is_unchanged {
+            let number = self
+                .parts
+                .state
+                .find_task(&lead.task)
+                .and_then(|found| next_number(found.member))
+                .ok_or(PublishError::QuestionNumbers)?;
+            let asked = questions(
+                pulls.checks(),
+                team,
+                &lead.task,
+                &human_issues,
+                AskReason::OnlyTheHumanMayAllow,
+                check_passes,
+            )?;
+            let file = self.parts.store.home().questions_file(&lead.task, number);
+            replace_text_file(&file, &asked.file.render(), QUESTIONS_FILE_MODE).await?;
+
+            record.asked = Some(Asked {
+                number,
+                at: now,
+                items: reviewing.items.to_vec(),
+                subjects: asked.subjects,
+                relays: 0,
+            });
+            let human_lines = issue_lines(pulls, &human_issues)?;
+            self.record_checked(
+                team,
+                reviewing,
+                human_lines,
+                CheckOutcome::AskedHuman {
+                    reason: AskReason::OnlyTheHumanMayAllow,
+                    question: number,
+                },
+            );
+            tracing::info!(
+                event = agent_core::log::LogEvent::ChecksDecided.as_str(),
+                outcome = "asked_human",
+                team = %team,
+                pr = %reviewing.pr,
+                reason = ?AskReason::OnlyTheHumanMayAllow,
+                issues = human_issues.len(),
+                "the checks ask the human about the round"
+            );
+        }
+
+        let text = team_message(
+            pulls.checks(),
+            reviewing.pr,
+            pass,
+            check_passes,
+            &team_issues,
+            refused,
+            true,
+        )?;
+        record.set_passes(reviewing.items, pass.get());
+        record.sent = Some(Sent {
+            at: now,
+            pass: pass.get(),
+            of: check_passes,
+            text,
+        });
+        self.parts.store.save_checks_record(&lead.task, record).await?;
+        let team_lines = issue_lines(pulls, &team_issues)?;
+        self.record_checked(
+            team,
+            reviewing,
+            team_lines,
+            CheckOutcome::SentBack { pass, of: check_passes },
+        );
+        tracing::info!(
+            event = agent_core::log::LogEvent::ChecksDecided.as_str(),
+            outcome = "sent_back",
+            team = %team,
+            pr = %reviewing.pr,
+            pass = pass.get(),
+            issues = team_issues.len(),
+            "the checks send the round back to the team"
+        );
+        Ok(Some(Held::WakeLead))
+    }
+
+    /// Handles a check that asks the human.
+    #[expect(clippy::too_many_arguments, reason = "private helper taking round check context")]
+    async fn step_ask_human(
+        &mut self,
+        site: Site<'_>,
+        reviewing: &Reviewing<'_>,
+        record: &mut ChecksRecord,
+        reason: AskReason,
+        passes: u32,
+        issues: &[Issue],
+        now: Timestamp,
+    ) -> Result<Option<Held>, PublishError> {
+        let human_subjects: Vec<Subject> = issues.iter().map(Issue::subject).collect();
+        let is_unchanged = record.asked.as_ref().is_some_and(|a| a.subjects == human_subjects);
+        if is_unchanged {
+            if let Some(asked) = &record.asked {
+                match self.where_is(&site.lead.task, asked).await? {
+                    Asking::Open => Ok(Some(Held::Waiting)),
+                    Asking::NotYet { ran: false } | Asking::Answered(_) => Ok(Some(Held::WakeLead)),
+                    Asking::NotYet { ran: true } if record.sent.is_some() => {
+                        record.sent = None;
+                        record.asked = Some(Asked {
+                            relays: 0,
+                            at: now,
+                            ..asked.clone()
+                        });
+                        self.parts.store.save_checks_record(&site.lead.task, record).await?;
+                        Ok(Some(Held::WakeLead))
+                    }
+                    Asking::NotYet { ran: true } if asked.relays >= MAX_RELAYS => Ok(Some(Held::Notify)),
+                    Asking::NotYet { ran: true } => {
+                        record.asked = Some(Asked {
+                            relays: asked.relays.saturating_add(1),
+                            at: now,
+                            ..asked.clone()
+                        });
+                        self.parts.store.save_checks_record(&site.lead.task, record).await?;
+                        Ok(Some(Held::WakeLead))
+                    }
+                }
+            } else {
+                self.put_question(site, reviewing, record, issues, (reason, passes), now)
+                    .await
+            }
+        } else {
+            self.put_question(site, reviewing, record, issues, (reason, passes), now)
+                .await
         }
     }
 
@@ -492,10 +549,10 @@ impl Owner {
     /// Where the question `asked` of the lead `task` is.
     async fn where_is(&self, task: &TaskId, asked: &Asked) -> Result<Asking, PublishError> {
         let path = self.parts.store.home().questions_file(task, asked.number);
-        if let Ok(loaded) = questions::read(&path).await {
-            if questions::judge(&loaded.file) == questions::Judgement::Answered {
-                return Ok(Asking::Answered(path));
-            }
+        if let Ok(loaded) = questions::read(&path).await
+            && questions::judge(&loaded.file) == questions::Judgement::Answered
+        {
+            return Ok(Asking::Answered(path));
         }
         let found = self.parts.state.find_task(task).ok_or(PublishError::Lost)?;
         Ok(
