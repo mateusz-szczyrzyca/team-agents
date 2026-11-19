@@ -253,6 +253,12 @@ impl Team {
         &self.activities
     }
 
+    /// Ends the outstanding assignments of `task` as failed at `at`, with the reason of a run that ended without a status:
+    /// the daemon could not start the run the task was due.
+    pub fn fail_activities_before_a_run(&mut self, task: &TaskId, at: Timestamp) {
+        let _ = (task, at);
+    }
+
     /// Retains assignments and outcomes currently known by the team, without changing reviewer selection.
     pub fn record_activities(&mut self, at: Timestamp) {
         let mut found: Vec<(Activity, u32)> = Vec::new();

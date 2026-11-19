@@ -558,3 +558,122 @@ fn a_task_that_cannot_resume_fails_when_it_was_seen_and_not_with_its_earlier_sle
         );
     }
 }
+
+#[test]
+fn a_joined_item_shares_the_verification_and_not_the_equal_time_first_review() {
+    let mut team = team(1);
+    let first: ItemId = "1.2".parse().unwrap();
+    let joined: ItemId = "2.1".parse().unwrap();
+    team.open_round(round_id(1), Some(first), at(1)).unwrap();
+    team.open_round(round_id(2), Some(joined), at(2)).unwrap();
+    drive(&mut team, "1.2", PhaseKind::InReview);
+    let mut item = team.item_mut(first).unwrap();
+    item.ask_reviews(vec![review("inv-codex", 21, ReviewOutcome::Pending)])
+        .unwrap();
+    item.submit_review(&task(21), ReviewVerdict::RequestChanges, at(30))
+        .unwrap();
+    let ItemPhase::InReview { pr, .. } = item.phase().clone() else {
+        panic!("in review")
+    };
+    item.advance(ItemPhase::Fixing {
+        assignee: "codex-1".parse().unwrap(),
+        branch: pr.branch.clone(),
+        pr: pr.clone(),
+    })
+    .unwrap();
+    item.advance(ItemPhase::InReview {
+        pr: pr.clone(),
+        reviews: vec![],
+    })
+    .unwrap();
+    // The verification is asked at the same second as the first review.
+    item.ask_reviews(vec![review("inv-codex", 21, ReviewOutcome::Pending)])
+        .unwrap();
+    let mut item = team.item_mut(joined).unwrap();
+    item.advance(ItemPhase::InProgress {
+        assignee: "codex-1".parse().unwrap(),
+        branch: pr.branch.clone(),
+    })
+    .unwrap();
+    item.advance(ItemPhase::InReview { pr, reviews: vec![] }).unwrap();
+    item.ask_reviews(vec![review("inv-codex", 21, ReviewOutcome::Pending)])
+        .unwrap();
+    team.record_activities(at(41));
+    let of_reviewer: Vec<_> = team.activities().iter().filter(|a| a.task() == &task(21)).collect();
+    assert_eq!(of_reviewer.len(), 2);
+    assert_eq!(of_reviewer[0].request(), &ActivityRequest::FirstReview);
+    assert_eq!(of_reviewer[0].rounds(), &[round_id(1)]);
+    assert_eq!(of_reviewer[1].request(), &ActivityRequest::Verification { pass: nz(1) });
+    assert_eq!(of_reviewer[1].rounds(), &[round_id(1), round_id(2)]);
+}
+
+#[test]
+fn a_task_that_waited_for_the_human_and_cannot_resume_fails_when_it_was_seen() {
+    let mut team = team(1);
+    team.add_reviewer(member(21, inv("inv-codex"))).unwrap();
+    drive(&mut team, "1.2", PhaseKind::InReview);
+    team.item_mut("1.2".parse().unwrap())
+        .unwrap()
+        .ask_reviews(vec![review("inv-codex", 21, ReviewOutcome::Pending)])
+        .unwrap();
+    let (_, mut reviewer) = team.find_mut(&task(21)).unwrap();
+    reviewer.transition(TaskStatus::Running).unwrap();
+    reviewer.begin_run(run(1), at(30), None).unwrap();
+    reviewer
+        .end_run(
+            at(35),
+            RunEnd::Reported {
+                outcome: RunOutcome::Questions,
+            },
+        )
+        .unwrap();
+    reviewer.transition(TaskStatus::Questions).unwrap();
+    team.record_activities(at(36));
+    let (_, mut reviewer) = team.find_mut(&task(21)).unwrap();
+    reviewer.transition(TaskStatus::Queued).unwrap();
+    reviewer.transition(TaskStatus::Running).unwrap();
+    reviewer.transition(TaskStatus::Failed).unwrap();
+    team.record_activities(at(50));
+    assert_eq!(
+        team.activities().last().unwrap().outcome(),
+        &ActivityOutcome::Finished {
+            at: at(50),
+            end: ActivityEnd::Failed {
+                reason: Some(RunEnd::NoStatus { exit_code: None })
+            }
+        }
+    );
+}
+
+#[test]
+fn a_start_failure_after_a_run_without_a_status_is_told_to_the_record_and_not_inferred() {
+    let mut team = team(1);
+    team.add_reviewer(member(21, inv("inv-codex"))).unwrap();
+    drive(&mut team, "1.2", PhaseKind::InReview);
+    team.item_mut("1.2".parse().unwrap())
+        .unwrap()
+        .ask_reviews(vec![review("inv-codex", 21, ReviewOutcome::Pending)])
+        .unwrap();
+    let (_, mut reviewer) = team.find_mut(&task(21)).unwrap();
+    reviewer.transition(TaskStatus::Running).unwrap();
+    reviewer.begin_run(run(1), at(30), None).unwrap();
+    reviewer
+        .end_run(at(35), RunEnd::NoStatus { exit_code: Some(1) })
+        .unwrap();
+    reviewer.transition(TaskStatus::Queued).unwrap();
+    team.record_activities(at(36));
+    let (_, mut reviewer) = team.find_mut(&task(21)).unwrap();
+    reviewer.transition(TaskStatus::Running).unwrap();
+    reviewer.transition(TaskStatus::Failed).unwrap();
+    team.fail_activities_before_a_run(&task(21), at(50));
+    team.record_activities(at(51));
+    assert_eq!(
+        team.activities().last().unwrap().outcome(),
+        &ActivityOutcome::Finished {
+            at: at(50),
+            end: ActivityEnd::Failed {
+                reason: Some(RunEnd::NoStatus { exit_code: None })
+            }
+        }
+    );
+}
