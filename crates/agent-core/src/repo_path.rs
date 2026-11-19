@@ -249,7 +249,7 @@ impl PathPattern {
         let segments: Vec<&str> = self.0.trim_end_matches('/').split('/').collect();
         segments
             .last()
-            .is_some_and(|last| *last != "**" && (glob_segment(last, "AGENTS.md") || glob_segment(last, "CLAUDE.md")))
+            .is_some_and(|last| *last == "**" || glob_segment(last, "AGENTS.md") || glob_segment(last, "CLAUDE.md"))
             || match_segments(&segments, &["AGENTS.md"])
             || match_segments(&segments, &["CLAUDE.md"])
             || reaches_workflow(&segments, &[".github", "workflows"])
