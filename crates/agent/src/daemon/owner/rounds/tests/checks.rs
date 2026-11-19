@@ -916,7 +916,13 @@ async fn a_head_pushed_to_an_existing_draft_after_the_checks_sent_it_back_is_rec
 
 #[tokio::test]
 async fn with_both_kinds_the_human_is_asked_in_the_first_check_and_the_team_fixes_its_part_at_the_same_time() {
-    let mut rig = checking_rig("script:edit-test-and-code,script:add-test,done", 2, SILENT, SILENT).await;
+    let mut rig = checking_rig(
+        "script:edit-test-and-code,script:add-test,questions,done",
+        2,
+        SILENT,
+        SILENT,
+    )
+    .await;
     scripts(&rig);
     rig.start().await;
 
