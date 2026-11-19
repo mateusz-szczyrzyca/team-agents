@@ -61,6 +61,33 @@ pub struct OpinionStateError {
 }
 
 impl Findings {
+    /// Checks cross-record invariants once at the deserialization boundary.
+    pub(super) fn check_opinions(&self) -> Result<(), OpinionStateError> {
+        for (number, opinion) in &self.opinions {
+            let entry = self
+                .entries
+                .iter()
+                .find(|entry| entry.number == *number)
+                .ok_or(OpinionStateError { number: *number })?;
+            let consistent = match &opinion.stage {
+                OpinionStage::Waiting | OpinionStage::Assigned { .. } => entry.status == FindingStatus::Open,
+                OpinionStage::Reported { report, .. } => match report.outcome {
+                    Outcome::Confirmed => matches!(entry.status, FindingStatus::Open | FindingStatus::Resolved),
+                    Outcome::NotConfirmed => entry.status == FindingStatus::NotConfirmed,
+                },
+            };
+            if entry.finding.severity != Severity::Blocker || !consistent {
+                return Err(OpinionStateError { number: *number });
+            }
+        }
+        for entry in &self.entries {
+            if entry.status == FindingStatus::NotConfirmed && !self.opinions.contains_key(&entry.number) {
+                return Err(OpinionStateError { number: entry.number });
+            }
+        }
+        Ok(())
+    }
+
     /// The durable opinions indexed by permanent finding number.
     #[must_use]
     pub fn opinions(&self) -> &std::collections::BTreeMap<NonZeroU32, SecondOpinion> {

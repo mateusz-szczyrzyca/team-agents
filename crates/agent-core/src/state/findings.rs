@@ -104,8 +104,19 @@ pub struct InvalidFindingNumbers {
     pub found: u32,
 }
 
+/// A loaded ledger violates numbering or opinion ownership invariants.
+#[derive(Debug, thiserror::Error)]
+enum InvalidFindings {
+    /// Permanent finding numbers must remain contiguous.
+    #[error(transparent)]
+    Numbers(#[from] InvalidFindingNumbers),
+    /// Opinions must belong to an existing blocker and agree with its status.
+    #[error(transparent)]
+    Opinion(#[from] OpinionStateError),
+}
+
 impl TryFrom<FindingsWire> for Findings {
-    type Error = InvalidFindingNumbers;
+    type Error = InvalidFindings;
 
     fn try_from(wire: FindingsWire) -> Result<Self, Self::Error> {
         let mut ledger = Self::new(wire.entries)?;
@@ -115,6 +126,7 @@ impl TryFrom<FindingsWire> for Findings {
         ledger.comment = wire.comment;
         ledger.review_count = wire.review_count;
         ledger.verification = wire.verification;
+        ledger.check_opinions()?;
         Ok(ledger)
     }
 }
