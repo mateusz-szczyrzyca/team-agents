@@ -252,7 +252,12 @@ pub fn parse_verification(
     open: &[(NonZeroU32, Severity)],
     explained: &[NonZeroU32],
 ) -> Result<Report, ReportError> {
-    read_report(text, verdict, open, Some(explained))
+    read_report(text, verdict, open, Some(explained)).map_err(|mut error| {
+        if error.kind == ReportProblem::Answer {
+            error.kind = ReportProblem::DisputeAnswer;
+        }
+        error
+    })
 }
 
 /// Parses one permitted verifier answer, with a nonempty evidence string.
