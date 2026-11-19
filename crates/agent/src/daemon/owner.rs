@@ -707,8 +707,8 @@ impl Owner {
         );
         {
             let _entered = run_span.enter();
-            match &woke {
-                Some(note) => tracing::info!(
+            if let Some(note) = &woke {
+                tracing::info!(
                     event = LogEvent::RunStarted.as_str(),
                     task = %task,
                     run = %plan.run,
@@ -718,14 +718,15 @@ impl Owner {
                     from = note.message.as_ref().map_or("", |message| message.from.as_str()),
                     wake_ups = note.wake_ups,
                     "run started: the bus woke the agent for a message"
-                ),
-                None => tracing::info!(
+                );
+            } else {
+                tracing::info!(
                     event = LogEvent::RunStarted.as_str(),
                     task = %task,
                     run = %plan.run,
                     agent = %located.agent,
                     "run started"
-                ),
+                );
             }
         }
         let engine = self.parts.engine.clone();
