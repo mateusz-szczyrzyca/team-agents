@@ -68,6 +68,12 @@ pub enum AutopilotPrompt {
     ReviewDisputes,
     /// The one-time explanation protocol.
     ReviewResponseInvalid,
+    /// Correction for an unknown blocking finding number.
+    ReviewResponseNumbers,
+    /// Correction allowing an unused major explanation.
+    ReviewResponseExplain,
+    /// Correction requiring a code fix.
+    ReviewResponseFixed,
     /// The one-time explanation protocol.
     ReviewFixResponse,
     /// One reviewer's report among the findings the lead is given.
@@ -133,6 +139,9 @@ impl AutopilotPrompt {
         Self::ReviewExplanation,
         Self::ReviewDisputes,
         Self::ReviewResponseInvalid,
+        Self::ReviewResponseNumbers,
+        Self::ReviewResponseExplain,
+        Self::ReviewResponseFixed,
         Self::ReviewFixResponse,
         Self::ReviewFinding,
         Self::ReviewAskHuman,
@@ -231,6 +240,9 @@ impl AutopilotPrompt {
                 "harness/review/fix-response.md",
                 &["pr", "pass", "passes", "branch", "findings"],
             ),
+            Self::ReviewResponseNumbers => ("harness/review/response-numbers.md", &[]),
+            Self::ReviewResponseExplain => ("harness/review/response-explain.md", &[]),
+            Self::ReviewResponseFixed => ("harness/review/response-fixed.md", &[]),
             Self::ReviewResponseInvalid => ("harness/review/response-invalid.md", &["line", "number", "allowed"]),
             Self::ReviewDisputes => ("harness/review/disputes.md", &["findings"]),
             Self::ReviewExplanation => ("harness/review/explanation.md", &["status", "why", "votes"]),

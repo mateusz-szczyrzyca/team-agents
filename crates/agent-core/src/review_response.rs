@@ -25,7 +25,7 @@ pub enum Correction {
 
 /// A response that needs correction before verification can start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("invalid lead response at line {line}: finding {number} requires {allowed}")]
+#[error("invalid lead response at line {line} for finding {number}: {correction:?}")]
 pub struct ResponseError {
     /// One-based source line, or the end of the message for an omitted response.
     pub line: usize,
@@ -33,8 +33,6 @@ pub struct ResponseError {
     pub number: NonZeroU32,
     /// The typed correction the harness must render.
     pub correction: Correction,
-    /// The allowed response syntax for this finding.
-    pub allowed: &'static str,
 }
 
 /// Reads exactly one answer per blocking finding, refusing explanations already used or attached to blockers.
@@ -77,20 +75,18 @@ pub fn parse_lead(
             return Err(ResponseError {
                 line: index.saturating_add(1),
                 number: open.first().map_or(NonZeroU32::MIN, |entry| entry.0),
-                correction: Correction::FixedOnly,
-                allowed: "one answer for each supplied blocking number",
+                correction: Correction::OnePerFinding,
             });
         };
-        let allowed = if *severity == Severity::Major && !used {
-            "FIXED or EXPLAINED — why"
+        let correction = if *severity == Severity::Major && !used {
+            Correction::FixedOrExplained
         } else {
-            "FIXED (explanation and second opinion are forbidden)"
+            Correction::FixedOnly
         };
         let error = || ResponseError {
             line: index.saturating_add(1),
             number: *number,
-            correction: Correction::FixedOnly,
-            allowed,
+            correction,
         };
         if ended || answers.iter().any(|(id, _)| id == number) {
             return Err(error());
@@ -113,11 +109,10 @@ pub fn parse_lead(
             return Err(ResponseError {
                 line: text.lines().count().saturating_add(1),
                 number: *number,
-                correction: Correction::FixedOnly,
-                allowed: if *severity == Severity::Major && !used {
-                    "FIXED or EXPLAINED — why"
+                correction: if *severity == Severity::Major && !used {
+                    Correction::FixedOrExplained
                 } else {
-                    "FIXED"
+                    Correction::FixedOnly
                 },
             });
         }

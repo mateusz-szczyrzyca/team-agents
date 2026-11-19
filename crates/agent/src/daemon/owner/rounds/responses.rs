@@ -171,9 +171,16 @@ fn response_correction(
     pulls: &Pulls,
     problem: &agent_core::review_response::ResponseError,
 ) -> Result<String, ResponseTextError> {
+    use agent_core::review_response::Correction;
+    let instruction = match problem.correction {
+        Correction::OnePerFinding => AutopilotPrompt::ReviewResponseNumbers,
+        Correction::FixedOrExplained => AutopilotPrompt::ReviewResponseExplain,
+        Correction::FixedOnly => AutopilotPrompt::ReviewResponseFixed,
+    };
+    let allowed = pulls.texts.render(instruction, &Variables::new())?;
     let values = Variables::new()
         .with("line", problem.line.to_string())?
         .with("number", problem.number.to_string())?
-        .with("allowed", problem.allowed)?;
+        .with("allowed", allowed.trim_end())?;
     Ok(pulls.texts.render(AutopilotPrompt::ReviewResponseInvalid, &values)?)
 }
