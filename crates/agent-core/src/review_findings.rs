@@ -272,6 +272,16 @@ fn read_report(
             report.findings.push(finding);
         }
     }
+    finish_report(&lines, verdict, open, report)
+}
+
+/// Checks completeness and consistency after source lines have been read.
+fn finish_report(
+    lines: &[&str],
+    verdict: ReviewVerdict,
+    open: &[(NonZeroU32, Severity)],
+    report: Report,
+) -> Result<Report, ReportError> {
     if report.answers.len() != open.len() {
         return Err(ReportError {
             line: lines.len().saturating_add(1),
@@ -345,10 +355,8 @@ pub(crate) fn answer_number(line: &str) -> Option<NonZeroU32> {
         .trim()
         .strip_prefix("FINDING ")?
         .split_once(':')?;
-    match number.trim().parse() {
-        Ok(number) => Some(number),
-        Err(_invalid_label) => None,
-    }
+    // A malformed label has no numeric diagnostic value; the refused source line retains it verbatim.
+    number.trim().parse().ok()
 }
 
 /// Parses one permitted verifier answer, with a nonempty evidence string.

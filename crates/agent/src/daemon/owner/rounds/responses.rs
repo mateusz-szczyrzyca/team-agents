@@ -156,9 +156,29 @@ impl Owner {
             let values = Variables::new()
                 .with("team", team_id.as_str())
                 .and_then(|v| v.with("items", id.to_string()))
-                .and_then(|v| v.with("reason", text));
+                .and_then(|v| v.with("reason", text))
+                .and_then(|v| v.with("bounces", bounces.to_string()))
+                .and_then(|v| v.with("task", lead.task.as_str()))
+                .and_then(|v| v.with("reviewer", lead.agent.as_str()))
+                .and_then(|v| {
+                    v.with(
+                        "pr",
+                        self.parts
+                            .state
+                            .team(team_id)
+                            .and_then(|team| team.item(id))
+                            .map_or_else(String::new, |item| match item.phase() {
+                                ItemPhase::Fixing { pr, .. } => pr.number.to_string(),
+                                ItemPhase::Pending
+                                | ItemPhase::InProgress { .. }
+                                | ItemPhase::InReview { .. }
+                                | ItemPhase::Approved { .. }
+                                | ItemPhase::Done { .. } => String::new(),
+                            }),
+                    )
+                });
             let now = Timestamp::now(&self.parts.clock)?;
-            self.tell_human(pulls, AutopilotNotice::PublishFailed, values, &lead, now);
+            self.tell_human(pulls, AutopilotNotice::ResponseRefused, values, &lead, now);
         }
         Ok(())
     }
@@ -253,7 +273,7 @@ fn response_correction(
     let allowed = pulls.texts.render(instruction, &Variables::new())?;
     let values = Variables::new()
         .with("line", problem.line.to_string())?
-        .with("number", problem.number.to_string())?
+        .with("number", problem.detail.number.unwrap_or(problem.number).to_string())?
         .with("allowed", allowed.trim_end())?;
     Ok(pulls.texts.render(AutopilotPrompt::ReviewResponseInvalid, &values)?)
 }
@@ -303,7 +323,7 @@ fn fix_answer(
             }),
         None => ledger.answer_lead(message, pass).map_err(OpinionError::from),
     };
-    let correction = match response {
+    let (correction, detail) = match response {
         Ok(responses) => {
             return Ok(FixAnswer::Accepted(responses));
         }
@@ -315,11 +335,13 @@ fn fix_answer(
                         && entry.finding.severity == agent_core::review_findings::Severity::Blocker
                         && !ledger.opinions().contains_key(&entry.number)
                 });
-            if eligible {
-                opinion_correction(pulls, problem.line, problem.number)?
-            } else {
-                response_correction(pulls, &problem)?
-            }
+            let correction =
+                if eligible && problem.detail.mistake != agent_core::review_findings::AnswerMistake::UnknownNumber {
+                    opinion_correction(pulls, problem.line, problem.number)?
+                } else {
+                    response_correction(pulls, &problem)?
+                };
+            (correction, problem.detail)
         }
         Err(OpinionError::Forbidden { number, line, .. }) => {
             let correction = match ledger
@@ -340,24 +362,39 @@ fn fix_answer(
                     agent_core::review_response::Correction::FixedOnly
                 }
             };
-            response_correction(
+            let detail = agent_core::review_findings::AnswerDiagnostic {
+                source_line: message.lines().nth(line.saturating_sub(1)).map(str::to_owned),
+                number: Some(number),
+                mistake: agent_core::review_findings::AnswerMistake::NotAllowed,
+            };
+            let correction = response_correction(
                 pulls,
                 &agent_core::review_response::ResponseError {
                     number,
                     line,
                     correction,
-                    detail: agent_core::review_findings::AnswerDiagnostic {
-                        source_line: message.lines().nth(line.saturating_sub(1)).map(str::to_owned),
-                        number: Some(number),
-                        mistake: agent_core::review_findings::AnswerMistake::NotAllowed,
-                    },
+                    detail: detail.clone(),
                 },
-            )?
+            )?;
+            (correction, detail)
         }
-        Err(OpinionError::MissingReason { number, line }) => opinion_correction(pulls, line, number)?,
-        Err(OpinionError::MissingVerdict | OpinionError::MissingEvidence) => unlocated_correction(&pulls.texts)?,
+        Err(OpinionError::MissingReason { number, line }) => (
+            opinion_correction(pulls, line, number)?,
+            agent_core::review_findings::AnswerDiagnostic {
+                source_line: message.lines().nth(line.saturating_sub(1)).map(str::to_owned),
+                number: Some(number),
+                mistake: agent_core::review_findings::AnswerMistake::NotAllowed,
+            },
+        ),
+        Err(OpinionError::MissingVerdict | OpinionError::MissingEvidence) => {
+            return Ok(FixAnswer::Correction(unlocated_correction(&pulls.texts)?));
+        }
     };
-    Ok(FixAnswer::Correction(correction))
+    let forms = lead_forms(&pulls.texts, ledger, permission)?;
+    let diagnostic = answer_diagnostic(&pulls.texts, &detail, &forms)?;
+    Ok(FixAnswer::Correction(
+        [correction.trim_end(), diagnostic.trim_end()].join("\n\n"),
+    ))
 }
 
 /// A response is either accepted in full or returned for correction.
@@ -380,14 +417,118 @@ fn unlocated_correction(
 mod tests;
 
 /// Renders source evidence and the complete list of permitted answers from the catalog.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired to corrections in the following GREEN commit")
-)]
 pub(super) fn answer_diagnostic(
-    _texts: &agent_runtime::autopilot_prompts::AutopilotPrompts,
-    _detail: &agent_core::review_findings::AnswerDiagnostic,
-    _forms: &str,
+    texts: &agent_runtime::autopilot_prompts::AutopilotPrompts,
+    detail: &agent_core::review_findings::AnswerDiagnostic,
+    forms: &str,
 ) -> Result<String, ResponseTextError> {
-    Ok(String::new())
+    use agent_core::review_findings::AnswerMistake;
+    let prompt = match detail.mistake {
+        AnswerMistake::UnknownNumber => AutopilotPrompt::ReviewMistakeUnknown,
+        AnswerMistake::Duplicate => AutopilotPrompt::ReviewMistakeDuplicate,
+        AnswerMistake::AfterStatus => AutopilotPrompt::ReviewMistakeAfterStatus,
+        AnswerMistake::NotAllowed => AutopilotPrompt::ReviewMistakeForbidden,
+        AnswerMistake::Missing => AutopilotPrompt::ReviewMistakeMissing,
+        AnswerMistake::AfterFindings => AutopilotPrompt::ReviewMistakeAfterFindings,
+        AnswerMistake::Malformed => AutopilotPrompt::ReviewMistakeMalformed,
+        AnswerMistake::Verdict => AutopilotPrompt::ReviewMistakeVerdict,
+    };
+    let mistake = texts.render(prompt, &Variables::new())?;
+    Ok(texts.render(
+        AutopilotPrompt::ReviewAnswerDiagnostic,
+        &Variables::new()
+            .with(
+                "number",
+                detail.number.map_or_else(String::new, |number| number.to_string()),
+            )?
+            .with("source", detail.source_line.as_deref().unwrap_or_default())?
+            .with("mistake", mistake.trim_end())?
+            .with("forms", forms)?,
+    )?)
+}
+
+/// Lists the forms the lead may use for each open blocking finding.
+fn lead_forms(
+    texts: &agent_runtime::autopilot_prompts::AutopilotPrompts,
+    ledger: &agent_core::state::Findings,
+    permission: Permission,
+) -> Result<String, ResponseTextError> {
+    use agent_core::review_findings::Severity;
+    let mut forms = String::new();
+    for entry in ledger
+        .entries()
+        .iter()
+        .filter(|entry| entry.status == agent_core::state::FindingStatus::Open && entry.finding.severity.blocks())
+    {
+        let instruction = match entry.finding.severity {
+            Severity::Blocker
+                if permission == Permission::Enabled && !ledger.opinions().contains_key(&entry.number) =>
+            {
+                AutopilotPrompt::ReviewResponseOpinion
+            }
+            Severity::Major
+                if !ledger
+                    .disputes()
+                    .is_some_and(|d| d.explanations.contains_key(&entry.number)) =>
+            {
+                AutopilotPrompt::ReviewResponseExplain
+            }
+            Severity::Blocker | Severity::Major | Severity::Minor => AutopilotPrompt::ReviewResponseFixed,
+        };
+        let allowed = texts.render(instruction, &Variables::new())?;
+        forms.push_str(
+            &texts.render(
+                AutopilotPrompt::ReviewResponseForm,
+                &Variables::new()
+                    .with("number", entry.number.to_string())?
+                    .with("allowed", allowed.trim_end())?,
+            )?,
+        );
+    }
+    Ok(forms)
+}
+
+/// Lists the verifier's forms for every open blocking finding and pending explanation.
+pub(super) fn verifier_forms(
+    texts: &agent_runtime::autopilot_prompts::AutopilotPrompts,
+    ledger: &agent_core::state::Findings,
+) -> Result<String, ResponseTextError> {
+    use agent_core::review_findings::Severity;
+    let mut forms = String::new();
+    for entry in ledger
+        .entries()
+        .iter()
+        .filter(|entry| entry.status == agent_core::state::FindingStatus::Open && entry.finding.severity.blocks())
+    {
+        let pending = ledger.disputes().is_some_and(|d| {
+            d.explanations
+                .get(&entry.number)
+                .is_some_and(|e| e.status == agent_core::state::ExplanationStatus::Pending)
+        });
+        let instruction = if pending {
+            AutopilotPrompt::ReviewVerifierPending
+        } else {
+            AutopilotPrompt::ReviewVerifierResolved
+        };
+        let mut allowed = texts.render(instruction, &Variables::new())?.trim_end().to_owned();
+        let raising = match entry.finding.severity {
+            Severity::Blocker => None,
+            Severity::Major => Some(AutopilotPrompt::ReviewRaiseBlocker),
+            Severity::Minor => Some(AutopilotPrompt::ReviewRaiseMajor),
+        };
+        if let Some(raising) = raising.filter(|_| ledger.disputes().is_some()) {
+            let raise = texts.render(raising, &Variables::new())?;
+            allowed.push(' ');
+            allowed.push_str(raise.trim_end());
+        }
+        forms.push_str(
+            &texts.render(
+                AutopilotPrompt::ReviewResponseForm,
+                &Variables::new()
+                    .with("number", entry.number.to_string())?
+                    .with("allowed", &allowed)?,
+            )?,
+        );
+    }
+    Ok(forms)
 }

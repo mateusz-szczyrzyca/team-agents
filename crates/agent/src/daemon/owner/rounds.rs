@@ -369,16 +369,8 @@ pub(super) enum AutopilotNotice {
     /// An unanswered second opinion holds the round.
     Opinion,
     /// The lead repeatedly supplied an invalid fix response.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "wired to corrections in the following GREEN commit")
-    )]
     ResponseRefused,
     /// A reviewer supplied a verdict but its report was refused.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "wired to corrections in the following GREEN commit")
-    )]
     ReportRefused,
     /// Branch publish failed.
     PublishFailed,
