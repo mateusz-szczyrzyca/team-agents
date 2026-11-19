@@ -98,6 +98,8 @@ pub struct Feature {
 pub struct TaskList {
     /// The name from a `Coordinator:` line, if the list starts with one.
     coordinator: Option<AgentName>,
+    /// Root-relative permissions given in the header.
+    allowances: Vec<crate::task_allowance::TaskAllowance>,
     /// The text before the first feature, without the `Coordinator:` line and the blank lines around it.
     brief: String,
     /// The features, in the order written.
@@ -306,7 +308,7 @@ impl TaskList {
     /// The permissions declared before the brief, in their written order.
     #[must_use]
     pub fn allowances(&self) -> &[crate::task_allowance::TaskAllowance] {
-        &[]
+        &self.allowances
     }
 
     /// Parses a task list.
@@ -626,6 +628,8 @@ struct Parser<'a> {
     started: bool,
     /// The coordinator named by the first line.
     coordinator: Option<AgentName>,
+    /// Root-relative permissions given in the header.
+    allowances: Vec<crate::task_allowance::TaskAllowance>,
     /// The lines before the first feature.
     brief: Vec<&'a str>,
     /// The features read so far; the last one is the current one.
@@ -653,6 +657,21 @@ impl<'a> Parser<'a> {
                 );
                 return Ok(());
             }
+        }
+        if self.features.is_empty()
+            && self.brief.iter().all(|line| line.trim().is_empty())
+            && let Some(pattern) = text.strip_prefix("Allow:")
+        {
+            let pattern = pattern.trim();
+            self.allowances
+                .push(crate::task_allowance::TaskAllowance::parse(pattern).map_err(|source| {
+                    TaskListError::InvalidAllowance {
+                        line,
+                        text: pattern.to_owned(),
+                        source,
+                    }
+                })?);
+            return Ok(());
         }
         match classify(text) {
             LineKind::Blank => self.blank(line, text),
@@ -820,6 +839,7 @@ impl<'a> Parser<'a> {
         }
         Ok(TaskList {
             coordinator: self.coordinator,
+            allowances: self.allowances,
             brief,
             features: self.features,
         })
