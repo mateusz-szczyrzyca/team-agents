@@ -46,6 +46,12 @@ pub enum AutopilotPrompt {
     ReviewRequest,
     /// Independence instructions for first-pass reviewers without a bus.
     ReviewIndependent,
+    /// A later pass checks findings and the changes since the preceding review.
+    ReviewVerification,
+    /// The diff command for an ancestor reviewed commit.
+    ReviewVerificationChanges,
+    /// The fallback diff when the lead rewrote the reviewed history.
+    ReviewVerificationRewritten,
     /// The review the harness posts on the pull request for a reviewer's report.
     ReviewComment,
     /// The verdict line of an approved review.
@@ -80,6 +86,8 @@ pub enum AutopilotPrompt {
     NoticeNoVerdict,
     /// The notification that the reviewers still ask for changes and the human has to decide.
     NoticeDecision,
+    /// Startup warning when disjoint verifier groups cannot be guaranteed.
+    NoticeReviewRotation,
     /// The notification that a pull request was merged.
     NoticeMerged,
 }
@@ -104,6 +112,9 @@ impl AutopilotPrompt {
         Self::NoticeClosed,
         Self::ReviewRequest,
         Self::ReviewIndependent,
+        Self::ReviewVerification,
+        Self::ReviewVerificationChanges,
+        Self::ReviewVerificationRewritten,
         Self::ReviewComment,
         Self::ReviewVerdictApprove,
         Self::ReviewVerdictRequestChanges,
@@ -121,6 +132,7 @@ impl AutopilotPrompt {
         Self::ReviewFindingsInvalid,
         Self::NoticeNoVerdict,
         Self::NoticeDecision,
+        Self::NoticeReviewRotation,
         Self::NoticeMerged,
     ];
 
@@ -138,6 +150,7 @@ impl AutopilotPrompt {
                 | Self::NoticeClosed
                 | Self::NoticeNoVerdict
                 | Self::NoticeDecision
+                | Self::NoticeReviewRotation
                 | Self::NoticeMerged
         ) {
             Audience::Human
@@ -185,6 +198,21 @@ impl AutopilotPrompt {
                 "harness/review/request.md",
                 &["team", "pr", "branch", "base", "head", "pass"],
             ),
+            Self::ReviewVerification => (
+                "harness/review/verification.md",
+                &[
+                    "team",
+                    "pr",
+                    "branch",
+                    "base",
+                    "head",
+                    "pass",
+                    "changes",
+                    "lead_message",
+                ],
+            ),
+            Self::ReviewVerificationChanges => ("harness/review/verification-changes.md", &["previous"]),
+            Self::ReviewVerificationRewritten => ("harness/review/verification-rewritten.md", &["base"]),
             Self::ReviewIndependent => ("harness/review/independent.md", &[]),
             Self::ReviewComment => (
                 "harness/review/comment.md",
@@ -199,7 +227,15 @@ impl AutopilotPrompt {
             Self::ReviewFinding => ("harness/review/finding.md", &["reviewer", "report"]),
             Self::ReviewAskHuman => (
                 "harness/review/ask-human.md",
-                &["pr", "passes", "findings", "questions_file", "number", "task"],
+                &[
+                    "pr",
+                    "passes",
+                    "additional_passes",
+                    "findings",
+                    "questions_file",
+                    "number",
+                    "task",
+                ],
             ),
             Self::ReviewFindingsInvalid => ("harness/review/findings-invalid.md", &["line", "reason"]),
             Self::ReviewOpenFindings => ("harness/review/open-findings.md", &["findings"]),
@@ -220,7 +256,11 @@ impl AutopilotPrompt {
                 "harness/review/notice-no-verdict.md",
                 &["reviewer", "pr", "task", "why"],
             ),
-            Self::NoticeDecision => ("harness/review/notice-decision.md", &["team", "pr", "passes"]),
+            Self::NoticeReviewRotation => ("harness/review/notice-rotation.md", &["reviews"]),
+            Self::NoticeDecision => (
+                "harness/review/notice-decision.md",
+                &["team", "pr", "passes", "additional_passes", "findings"],
+            ),
         }
     }
 }

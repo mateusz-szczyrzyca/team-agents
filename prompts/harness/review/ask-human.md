@@ -7,6 +7,6 @@ approval; [MINOR] never does. Name the finding numbers in your questions. The re
 {{findings}}
 
 Write the questions the human has to decide to `{{questions_file}}` (questions number {{number}} of the task `{{task}}`), in the
-format of your first message, each with your recommendation: for example another fix pass and what it should do about
+format of your first message, each with your recommendation: for example {{additional_passes}} more fix passes and what it should do about
 a finding you think is wrong, or leaving the pull request to the human. Then end your turn with `STATUS: QUESTIONS` and
-do nothing else. The answers come in your next run, and the harness then starts one more fix pass.
+do nothing else. The answers come in your next run, and the harness then grants {{additional_passes}} more fix passes.

@@ -720,11 +720,11 @@ mod tests {
     /// A state of schema version 1 with two teams: the fixture of the core, which must keep loading.
     const FIXTURE: &str = include_str!("../../agent-core/tests/fixtures/state-v1.json");
 
-    /// What the state of `FIXTURE` is saved as, migrated to schema version 4.
+    /// What the state of `FIXTURE` is saved as, migrated to schema version 5.
     fn saved() -> String {
         include_str!("../../agent-core/tests/fixtures/state-v1-as-v3.json").replacen(
             "\"schema_version\": 3",
-            "\"schema_version\": 4",
+            "\"schema_version\": 5",
             1,
         )
     }
@@ -948,14 +948,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = home_in(&dir);
         let store = StateStore::open(home.clone()).await.unwrap();
-        std::fs::write(home.state_file(), "{\"schema_version\": 5, \"teams\": 7}").unwrap();
+        std::fs::write(home.state_file(), "{\"schema_version\": 6, \"teams\": 7}").unwrap();
 
         let result = store.load().await;
 
         assert!(
             matches!(
                 &result,
-                Err(StoreError::Invalid { path, source: StateError::UnsupportedSchema(UnsupportedSchema { found: 5 }) })
+                Err(StoreError::Invalid { path, source: StateError::UnsupportedSchema(UnsupportedSchema { found: 6 }) })
                     if *path == home.state_file()
             ),
             "{result:?}"

@@ -82,7 +82,7 @@ Both `Config` and `TaskList` take text, not paths: reading `agents.toml`, `secre
 
 | Module | Types |
 |---|---|
-| `state` | `State` (with its schema version 4; versions 2 and 3 are migrated without changing active review rules and version 1 is migrated as it is read; the `findings` ledger of an item), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `Round`, `RoundLife`, `RoundEnd`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `GateRecord`, `GateTree`, `ChecksRecord` (the checks' record of a lead, a file of its task directory), `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
+| `state` | `State` (with its schema version 5; versions 2, 3 and 4 are migrated without changing active review rules and version 1 is migrated as it is read; the `findings` ledger of an item), `Team`, `Crew`, `Member`, `Participant`, `Run`, `RunEnd`, `Question`, `Round`, `RoundLife`, `RoundEnd`, `ItemProgress`, `ItemPhase`, `PullRequest`, `Review`, `FixPass`, `GateResult`, `GateRecord`, `GateTree`, `ChecksRecord` (the checks' record of a lead, a file of its task directory), `Timestamp`, `SessionId`, `CommitId`, `PrNumber`. See [`state.md`](state.md) |
 | `protocol` | `Request`, `Command`, `Response`, `Reply`, `Failure`, `Event`, `EventKind`, `Frame`, with the protocol version and `ProtocolError`. JSON lines over the daemon's socket. See [`state.md`](state.md) |
 | `review_findings` | `Severity` (`BLOCKER`, `MAJOR`, `MINOR`), `Finding`, `Answer` (`FINDING 3: RESOLVED`, `OPEN — why`), `parse_report`: a review report read into its findings and its answers for the open ones, or the line that is wrong. Pure: the harness sends the report back to its reviewer when it fails |
 | `questions` | `QuestionsFile`, `Entry`, `Verdict`: parsing and rendering of the questions file, the `ok` verdict, the `**ANSWERED**` marker. See [`state.md`](state.md) |
@@ -358,11 +358,19 @@ passes retain the bus and post each report when received. Schema-three ledgers h
 two reviews, immediate publication and bus access until their PR ends; new PRs store the configured count.
 
 **Reviewers** (`daemon/review.rs`). The review pass of an item in review starts empty and is filled once (`ItemMut::ask_reviews`) with
-`[review] min_first_full_reviews` investigators (default two) drawn among the free ones — those that review for the team already (they wait in a review task of it) first,
-so that the fix is reviewed by who asked for it, then at random: configured, not in the crew, with no task that is going, asking or paused,
-no review to give and no team to lead that is not finished; the pull request waits for them. A reviewer is a task of the team
-with a worktree at the head (a new branch of its own), one per investigator: it ends `waiting`, not `done`, is given the next
-pull request, and the same one again after a fix pass, in the same session, and is closed with the team. Its prompt is the
+`[review] min_first_full_reviews` investigators (default two) drawn among the free ones: configured, outside the crew,
+with no running, asking or paused task, outstanding review or unfinished team to lead. For the first pass, available
+review tasks of the team are preferred. After a fix pass, investigators who have never reviewed this pull request
+come first, then those whose most recent pass was longest ago; ties are random. The preceding pass is reused only
+when other investigators are unavailable. The PR waits only when fewer than the required number are free.
+A reviewer is a task of the team with its own worktree at the reviewed head. It ends `waiting` and can be reused
+in the same session. A verification request replaces the full-review request after fixes: open numbered findings
+and their checks, `git diff <previous reviewed head>..HEAD`, the lead's last fix message, and the gate. If history
+was rewritten and the previous head is no longer an ancestor, it gives `git diff <base>...HEAD` and the reason.
+Verifiers answer every open finding, judge the changes and may add missed findings of any severity. They do not
+repeat the full review. The dedicated request in `harness/review/verification.md` carries these instructions.
+New ledgers persist this context and the additional fix allowance granted by the human; migrated PRs retain their
+previous draw, full-review requests and one-pass renewal until they end. The first-pass prompt remains the
 working context, the review rules, the brief, the request (pull request, branch, base, the commit under review) and each item of
 the pull request with its expected result and checks. Its final message is the report: the first `VERDICT:` line says
 `APPROVE` or `REQUEST_CHANGES` (markup and case aside), and its findings are read (below), or the report is asked for again, twice, and then the human is told. The
@@ -441,13 +449,14 @@ the human is asked. A reviewer that cannot give its review is replaced (above), 
   without a merge is told once. An approved pull request that waits is read again every 30 seconds.
 - **`--no-merge`.** Nothing is merged: the human is told once that the pull request is approved. The next item of the feature
   starts at the approval; what depends on the pull request waits until it is merged, which the daemon finds when it reads it.
-- **Fix pass.** It goes to the lead, which has the integrated branch: it is woken with the reports of both reviewers, each with its
-  verdict, the pass out of the configured ones and the branch (a solo agent switches to it first). When the gate has passed at
-  the new tip the same pull request is updated (a comment, and its description when a finished item joins) and the same reviewers
-  review it again.
+- **Fix pass.** It goes to the lead, which has the integrated branch: it is woken with the open numbered findings and
+  reviewer reports, the configured allowance and branch (a solo agent switches to it first). With the gate green at
+  the new tip the same PR is updated and a rotating verification pass starts. A fully approved first pass merges
+  without verification.
 - **The question.** When a reviewer still asks for changes after the configured passes, the lead is woken with the reports and the
-  questions file to write; its question reaches the human like any other (`agent answer`). The answer is one more fix pass. A lead
-  that ran and put no question leaves the human told directly, once.
+  questions file to write; its question reaches the human like any other (`agent answer`). The answer grants
+  `[review] fix_passes` more fix passes. The notice lists the allowance and open blocking findings. A lead that ran
+  and put no question leaves the human told directly, once.
 - When every item is merged the team ends: its tasks, the reviewers among them, are `done` and the human is notified.
   When it ends so — every item done, at least one by its merge (by the daemon or by the human; the others ticked `[x]` in the
   list), and no round open — git removes the worktrees of its
@@ -868,7 +877,8 @@ socket. One owner, no file races (CON-3).
 - The coordinator integrates a member's branch, gets the gate green and opens the PR. The next item of a feature
   starts when the previous one is merged (with `--no-merge`: approved by every reviewer).
 - Every PR gets `[review] min_first_full_reviews` reviews (default two) from investigators outside the team. A team that leaves fewer configured
-  investigators outside it is refused at start: "too many investigators in the team". "Changes requested" goes back
+  investigators outside it is refused at start: "too many investigators in the team". Fewer than twice the required
+  count outside the team warns that reviewer rotation may be unavailable, but the team starts. "Changes requested" goes back
   to the team at most 5 times; after that the human is asked.
 
 ## Rules of the plan

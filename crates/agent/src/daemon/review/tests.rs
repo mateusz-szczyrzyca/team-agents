@@ -604,3 +604,97 @@ fn a_joined_item_without_fix_passes_does_not_make_a_later_pass_independent() {
     assert_eq!(team.item("2.1".parse().unwrap()).unwrap().fix_passes().len(), 0);
     assert!(!super::independent_first_review(team, &task));
 }
+
+#[test]
+fn verifiers_rotate_through_the_least_recent_free_investigators() {
+    use super::{Reviewer, Slot, choose_verifiers};
+    use agent_core::config::ReviewCount;
+    use agent_core::state::{FixPass, Review, ReviewOutcome};
+    use rand::{SeedableRng, rngs::Xoshiro256PlusPlus};
+
+    for size in [3, 4, 6] {
+        let mut history: Vec<FixPass> = Vec::new();
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(17);
+        let names: Vec<agent_core::ids::InvestigatorName> =
+            (0..size).map(|i| format!("inv-r{i}").parse().unwrap()).collect();
+        for pass in 0..4 {
+            let free = names
+                .iter()
+                .map(|name| Reviewer {
+                    name: name.clone(),
+                    slot: Slot::Task("task-20261111-193007-k3x9".parse().unwrap()),
+                })
+                .collect();
+            let chosen = choose_verifiers(free, ReviewCount::TWO, &history, &mut rng).unwrap();
+            assert_eq!(chosen.len(), 2);
+            let ranks: Vec<_> = names
+                .iter()
+                .map(|name| {
+                    history
+                        .iter()
+                        .rposition(|p| p.requested_by.iter().any(|r| &r.reviewer == name))
+                })
+                .collect();
+            let mut expected = ranks.clone();
+            expected.sort();
+            let mut actual: Vec<_> = chosen
+                .iter()
+                .map(|reviewer| {
+                    history
+                        .iter()
+                        .rposition(|p| p.requested_by.iter().any(|r| r.reviewer == reviewer.name))
+                })
+                .collect();
+            actual.sort();
+            assert_eq!(actual, expected[..2], "size={size}, pass={pass}");
+            history.push(FixPass {
+                requested_by: chosen
+                    .into_iter()
+                    .map(|r| Review {
+                        reviewer: r.name,
+                        task: "task-20261111-193007-k3x9".parse().unwrap(),
+                        requested_at: "2026-11-11T19:41:00Z".parse().unwrap(),
+                        outcome: ReviewOutcome::Pending,
+                    })
+                    .collect(),
+            });
+        }
+    }
+}
+
+#[test]
+fn verification_draw_uses_only_available_candidates_and_keeps_random_ties() {
+    use super::{Reviewer, Slot, choose_verifiers};
+    use agent_core::config::ReviewCount;
+    use rand::{SeedableRng, rngs::Xoshiro256PlusPlus};
+    let mut firsts = std::collections::BTreeSet::new();
+    for seed in 0..32 {
+        let free = ["inv-free", "inv-other", "inv-third"]
+            .into_iter()
+            .map(|name| Reviewer {
+                name: name.parse().unwrap(),
+                slot: Slot::New,
+            })
+            .collect();
+        let chosen = choose_verifiers(
+            free,
+            ReviewCount::TWO,
+            &[],
+            &mut Xoshiro256PlusPlus::seed_from_u64(seed),
+        )
+        .unwrap();
+        assert_eq!(chosen.len(), 2);
+        assert_ne!(chosen[0].name, chosen[1].name);
+        firsts.insert(chosen[0].name.clone());
+    }
+    assert_eq!(firsts.len(), 3);
+    assert_eq!(
+        choose_verifiers(
+            Vec::new(),
+            ReviewCount::TWO,
+            &[],
+            &mut Xoshiro256PlusPlus::seed_from_u64(0)
+        ),
+        None
+    );
+}

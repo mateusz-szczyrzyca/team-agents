@@ -43,6 +43,9 @@ pub struct Findings {
     /// The independent protocol's pass size; absent on pull requests opened before its introduction.
     #[serde(skip_serializing_if = "Option::is_none")]
     review_count: Option<crate::config::ReviewCount>,
+    /// Verification context, absent on PRs opened before rotating verifications.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification: Option<Verification>,
     /// Findings, in permanent-number order; private so that only [`Findings::new`], the loader and
     /// [`Findings::finish`] can set the numbers.
     entries: Vec<RecordedFinding>,
@@ -61,6 +64,9 @@ struct FindingsWire {
     review_count: Option<crate::config::ReviewCount>,
     /// See [`Findings::entries`].
     entries: Vec<RecordedFinding>,
+    /// See [`Findings::verification`]; missing retains the previous protocol.
+    #[serde(default)]
+    verification: Option<Verification>,
     /// See [`Findings`]; absent when no report waits.
     #[serde(default)]
     pending: BTreeMap<TaskId, Report>,
@@ -87,6 +93,7 @@ impl TryFrom<FindingsWire> for Findings {
         ledger.pending = wire.pending;
         ledger.comment = wire.comment;
         ledger.review_count = wire.review_count;
+        ledger.verification = wire.verification;
         Ok(ledger)
     }
 }
@@ -102,7 +109,39 @@ pub enum FindingNumbersExhausted {
     Exhausted,
 }
 
+/// The context retained across fix passes for rotating verification reviews.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Verification {
+    /// The head of the last completed review pass, before the lead's fixes.
+    pub reviewed_head: Option<super::CommitId>,
+    /// The lead's final message of the latest fix pass.
+    pub lead_message: Option<String>,
+    /// Additional fix passes granted by the human beyond the configured initial limit.
+    pub extra_fix_passes: u32,
+}
+
 impl Findings {
+    /// Starts independent reviews followed by rotating verification passes.
+    #[must_use]
+    pub fn verifying(count: crate::config::ReviewCount) -> Self {
+        Self {
+            verification: Some(Verification::default()),
+            ..Self::independent(count)
+        }
+    }
+
+    /// The context of the rotating verification protocol, absent for legacy PRs.
+    #[must_use]
+    pub const fn verification(&self) -> Option<&Verification> {
+        self.verification.as_ref()
+    }
+
+    /// The mutable verification context of a PR using the rotating protocol.
+    pub const fn verification_mut(&mut self) -> Option<&mut Verification> {
+        self.verification.as_mut()
+    }
+
     /// Starts an independent review protocol with the configured pass size.
     #[must_use]
     pub fn independent(count: crate::config::ReviewCount) -> Self {
@@ -134,6 +173,7 @@ impl Findings {
         }
         Ok(Self {
             review_count: None,
+            verification: None,
             entries,
             pending: BTreeMap::new(),
             comment: None,

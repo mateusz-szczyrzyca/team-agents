@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::process::Command as Process;
 use std::str::FromStr;
 
@@ -503,4 +504,26 @@ team team-20261111-153000-t5m8 started on team-agents, merge: autopilot
   round-20261111-153002-q1w2  item 1.2  open
 "
     );
+}
+
+#[tokio::test]
+async fn rotation_advisory_is_present_only_when_the_local_roster_is_too_small() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap());
+    let agents = AgentList::try_from(vec!["lead".parse().unwrap()]).unwrap();
+    assert_eq!(rotation_warning(&home, &agents).await.unwrap(), None);
+    let mut text = "[tiers]\nnormal=['lead']\n[agents.lead]\ncli='claude'\n".to_owned();
+    for n in 0..4 {
+        write!(text, "[investigators.inv-{n}]\ncli='codex'\n").unwrap();
+        if n >= 1 {
+            std::fs::write(home.config_file(), &text).unwrap();
+            let warning = rotation_warning(&home, &agents).await.unwrap();
+            assert_eq!(warning.is_some(), n < 3, "{} investigators", n + 1);
+            if let Some(warning) = warning {
+                assert!(warning.starts_with("warning:"));
+                assert!(warning.contains('2'));
+                assert_eq!(warning.lines().count(), 1);
+            }
+        }
+    }
 }

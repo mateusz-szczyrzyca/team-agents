@@ -134,4 +134,13 @@ mod harness_autopilot_prompts {
         }
         assert!(read(spec.path()).contains("agent gate"));
     }
+
+    #[test]
+    fn rotation_notice_separates_its_warning_from_the_recovery_instruction() {
+        let text = read(AutopilotPrompt::NoticeReviewRotation.spec().path());
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("warning:"));
+        assert!(lines[1].contains("add investigators"));
+    }
 }

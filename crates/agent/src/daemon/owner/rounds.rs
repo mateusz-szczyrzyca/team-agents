@@ -749,3 +749,18 @@ mod publication_findings_tests;
 #[cfg(test)]
 #[path = "rounds/tests/joined_pass.rs"]
 mod joined_pass_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/verification.rs"]
+mod verification_tests;
+
+/// Failure to retain a reviewer's commit for subsequent verification.
+#[derive(Debug, thiserror::Error)]
+#[error("cannot retain the reviewed commit of task {task}")]
+pub(crate) struct ReviewedHeadError {
+    /// The reviewer whose worktree carries the commit.
+    task: TaskId,
+    /// The failed worktree or git operation.
+    #[source]
+    source: PublishError,
+}

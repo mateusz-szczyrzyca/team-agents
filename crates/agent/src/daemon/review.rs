@@ -11,6 +11,7 @@ use agent_core::ids::{InvestigatorName, TaskId, TeamId};
 use agent_core::kinds::UnknownKeyword;
 use agent_core::state::{ItemPhase, Member, Participant, ReviewOutcome, State, Team};
 use agent_core::status::{ReviewVerdict, TaskStatus};
+use rand::seq::SliceRandom;
 use rand::{Rng, RngExt};
 
 use super::team::is_finished;
@@ -272,4 +273,33 @@ pub(super) fn independent_first_review(team: &Team, task: &TaskId) -> bool {
         independent |= item.findings().is_some_and(|ledger| ledger.review_count().is_some());
     }
     independent
+}
+
+/// Draws verifiers, taking investigators never used on this PR before the least recently used.
+pub(super) fn choose_verifiers(
+    free: Vec<Reviewer>,
+    required: ReviewCount,
+    history: &[agent_core::state::FixPass],
+    rng: &mut impl Rng,
+) -> Option<Vec<Reviewer>> {
+    if free.len() < required.get() {
+        return None;
+    }
+    let mut pools = std::collections::BTreeMap::<Option<usize>, Vec<Reviewer>>::new();
+    for reviewer in free {
+        let last = history
+            .iter()
+            .rposition(|pass| pass.requested_by.iter().any(|r| r.reviewer == reviewer.name));
+        pools.entry(last).or_default().push(reviewer);
+    }
+    let mut chosen = Vec::with_capacity(required.get());
+    for mut pool in pools.into_values() {
+        pool.shuffle(rng);
+        let remaining = required.get().saturating_sub(chosen.len());
+        chosen.extend(pool.into_iter().take(remaining));
+        if chosen.len() == required.get() {
+            break;
+        }
+    }
+    Some(chosen)
 }

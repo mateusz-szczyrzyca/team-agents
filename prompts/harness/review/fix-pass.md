@@ -9,4 +9,4 @@ These severities block approval; [MINOR] never does. Then get the repository's g
 with `STATUS: DONE`.
 
 Do not push, and do not open or update the pull request: the harness pushes your branch when the gate has passed at its
-head, and asks the same reviewers again. Do not answer the reviewers on GitHub.
+head, and asks available investigators to verify the fixes, preferring a different group. Do not answer the reviewers on GitHub.

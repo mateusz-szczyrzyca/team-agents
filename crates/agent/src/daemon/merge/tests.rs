@@ -728,3 +728,61 @@ fn an_answer_about_an_item_that_is_not_in_review_is_refused_with_its_phase() {
         })
     );
 }
+
+#[test]
+fn renewed_fix_budget_allows_each_granted_pass_and_then_asks_again() {
+    use agent_core::config::ReviewCount;
+    use agent_core::state::Findings;
+    for (passes, expected) in [
+        (5, Next::FixPass { pass: pass(6) }),
+        (9, Next::FixPass { pass: pass(10) }),
+        (10, Next::AskHuman),
+    ] {
+        let mut team = after_passes(in_review(), passes);
+        {
+            let mut item = team.item_mut(item("1.1")).unwrap();
+            item.start_findings();
+            *item.findings_mut().unwrap() = Findings::verifying(ReviewCount::TWO);
+            item.findings_mut()
+                .unwrap()
+                .verification_mut()
+                .unwrap()
+                .extra_fix_passes = 5;
+        }
+        submit(&mut team, "1.1", 20, ReviewVerdict::Approve, 2000);
+        assert_eq!(
+            after_verdict(
+                team.item(item("1.1")).unwrap(),
+                &reviewer("inv-gemini"),
+                ReviewVerdict::RequestChanges,
+                AUTOPILOT
+            ),
+            Ok(expected)
+        );
+    }
+}
+
+#[test]
+fn a_zero_fix_allowance_grants_no_new_pass_but_preserves_legacy_answers() {
+    for modern in [true, false] {
+        let mut team = in_review();
+        if modern {
+            let mut progress = team.item_mut(item("1.1")).unwrap();
+            progress.start_findings();
+            *progress.findings_mut().unwrap() =
+                agent_core::state::Findings::verifying(agent_core::config::ReviewCount::TWO);
+        }
+        submit(&mut team, "1.1", 20, ReviewVerdict::Approve, 390);
+        submit(&mut team, "1.1", 21, ReviewVerdict::RequestChanges, 400);
+        let policy = RoundPolicy {
+            fix_passes: 0,
+            ..AUTOPILOT
+        };
+        let expected = if modern {
+            Next::Wait
+        } else {
+            Next::FixPass { pass: pass(1) }
+        };
+        assert_eq!(after_answer(team.item(item("1.1")).unwrap(), policy), Ok(expected));
+    }
+}

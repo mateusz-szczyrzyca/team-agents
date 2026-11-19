@@ -188,10 +188,49 @@ impl Owner {
             .team(team_id)
             .is_some_and(|team| crate::daemon::review::independent_first_review(team, task));
         let lead = self.lead_of(team_id)?;
+        let rotating = asked.items.iter().any(|id| {
+            self.parts
+                .state
+                .team(team_id)
+                .and_then(|team| team.item(*id))
+                .and_then(|item| item.findings())
+                .is_some_and(|ledger| ledger.verification().is_some())
+        });
         let next = self.decide(team_id, asked, verdict);
         let mut look = Look::default();
         self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
         let completed = self.record_findings(team_id, task, asked, verdict, message)?;
+        // Only a pull request that is verified by rotation keeps the reviewed head, so the protocols that started
+        // earlier never run the Git lookup.
+        if completed && rotating {
+            let agent: AgentName = asked.reviewer.as_str().parse()?;
+            let head = self
+                .worktree_git(&lead.repo, task, &agent)
+                .map_err(|source| super::ReviewedHeadError {
+                    task: task.clone(),
+                    source,
+                })?
+                .rev_parse(&Revision::Head)
+                .await
+                .map_err(|source| super::ReviewedHeadError {
+                    task: task.clone(),
+                    source: PublishError::from(source),
+                })?;
+            let mut team = self
+                .parts
+                .state
+                .team_mut(team_id)
+                .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+            for id in &asked.items {
+                let mut item = team.item_mut(*id).ok_or_else(|| OwnerError::LostItem {
+                    team: team_id.clone(),
+                    item: *id,
+                })?;
+                if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
+                    context.reviewed_head = Some(head.clone());
+                }
+            }
+        }
         self.record_event_at(
             now,
             team_id,

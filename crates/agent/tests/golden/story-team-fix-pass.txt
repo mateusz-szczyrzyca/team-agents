@@ -224,7 +224,7 @@ FINDINGS
    CHECK: read src/lib.rs:7
   ----- end of review report -----
 <time>  fix pass 1 of 5 on #1 started
-  ----- findings sent to the team (978 bytes) -----
+  ----- findings sent to the team (1027 bytes) -----
 # THE REVIEWERS ASKED FOR CHANGES (pull request #1, fix pass 1 of 5)
 
 All reviews of your pull request are in, and at least one asks for changes. The reports, each with its verdict:
@@ -250,7 +250,7 @@ These severities block approval; [MINOR] never does. Then get the repository's g
 with `STATUS: DONE`.
 
 Do not push, and do not open or update the pull request: the harness pushes your branch when the gate has passed at its
-head, and asks the same reviewers again. Do not answer the reviewers on GitHub.
+head, and asks available investigators to verify the fixes, preferring a different group. Do not answer the reviewers on GitHub.
   ----- end of findings sent to the team -----
 <time>  run <run-15>: inv-lead (investigator, claude) as coordinator, because fix pass 1 of the item
     task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/inv-lead/<task-4>

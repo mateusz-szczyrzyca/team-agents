@@ -31,7 +31,7 @@ impl Owner {
     }
 
     /// What the pull requests that wait for the human need: the lead is woken to put the question; a lead that ran and put
-    /// none leaves the human told directly; an answer gives one more fix pass.
+    /// none leaves the human told directly; an answer renews the configured fix budget.
     pub(super) fn ask_the_human(&mut self, pulls: &Pulls, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
@@ -80,16 +80,36 @@ impl Owner {
         if !self.watch.announced.insert(announcement) {
             return Ok(());
         }
+        let ledger = waits
+            .items
+            .first()
+            .and_then(|id| self.parts.state.team(team_id)?.item(*id)?.findings());
+        let additional = if ledger.is_some_and(|ledger| ledger.verification().is_some()) {
+            self.parts.settings.config.review().fix_passes
+        } else {
+            1
+        };
+        let blocking = match super::findings::blocking_text(&pulls.texts, ledger) {
+            Ok(text) => text,
+            Err(error) => {
+                // Notifications are best effort; failed rendering must not stop the round.
+                tracing::error!(event = LogEvent::NotificationFailed.as_str(), error = %error_chain(&error),
+                    "cannot render blocking findings for the human");
+                return Ok(());
+            }
+        };
         let now = Timestamp::now(&self.parts.clock)?;
         let values = Variables::new()
             .with("team", team_id.as_str())
             .and_then(|values| values.with("pr", waits.pr.number.to_string()))
-            .and_then(|values| values.with("passes", waits.passes.to_string()));
+            .and_then(|values| values.with("passes", waits.passes.to_string()))
+            .and_then(|values| values.with("additional_passes", additional.to_string()))
+            .and_then(|values| values.with("findings", blocking));
         self.tell_human(pulls, AutopilotNotice::Decision, values, lead, now);
         Ok(())
     }
 
-    /// The human answered the question about `waits`: the round machine gives the lead one more fix pass.
+    /// The human answered the question about `waits`: the round machine starts a renewed fix budget.
     pub(super) fn start_pass_after_answer(
         &mut self,
         team_id: &TeamId,
@@ -109,6 +129,8 @@ impl Owner {
             let next = after_answer(progress, policy);
             match next {
                 Ok(Next::FixPass { .. }) => moving.push(*id),
+                // A configured zero allowance cannot start a fix pass, even after an answer.
+                Ok(Next::Wait) => {}
                 Ok(other) => {
                     tracing::warn!(
                         event = LogEvent::QuestionsFileInvalid.as_str(),
@@ -129,6 +151,11 @@ impl Owner {
                 }
             }
         }
+        if moving.is_empty() {
+            // No fix pass starts (a zero allowance): the lead has nothing new to do, and releasing it on every look would
+            // start it again and again.
+            return Ok(());
+        }
         for id in moving {
             let mut team_mut = self
                 .parts
@@ -139,6 +166,9 @@ impl Owner {
                 team: team_id.clone(),
                 item: id,
             })?;
+            if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
+                context.extra_fix_passes = context.extra_fix_passes.saturating_add(policy.fix_passes);
+            }
             let after = ItemPhase::Fixing {
                 assignee: lead.agent.clone(),
                 branch: waits.pr.branch.clone(),
