@@ -143,17 +143,19 @@ STATUS: QUESTIONS
       uncommitted: added .fake-prompt-3 (+<n> -<n>)
       uncommitted: added .fake-runs (+<n> -<n>)
 <time>  task <task-4> asked the human (questions 1)
-  ----- questions (1149 bytes) -----
-# Checks before the review — team <team-2>, task <task-4>
+  ----- questions (1470 bytes) -----
+# Checks before the review — team <team-2>, task <task-4> [checks:v1]
 
-> Answer every question after **Verdict:** — `ok` accepts the recommendation. When you are done, put **ANSWERED** on the last line and save: the answers are sent at once (or run `agent answer <task-4>`).
+> Answer every question after **Verdict:** with `allow`, `refuse`, or `allow except <path> <path> ...`. Name only exact paths listed in that question after `except`; those paths are refused and the others allowed. Complete every verdict. Put **ANSWERED** on the last line and save, or run `agent answer <task-4>`. Keep the group membership labels unchanged.
 
 ## 1. Allow the round to change production code without a test of its own?
 The team went back to work 1 time(s) on what the checks found, and the round still has these findings. You decide: allow them, or send the round back once more.
 
 - The round changes production code and adds no line to a test file. Every change of behaviour comes with its test, written first and committed before the code. A change that cannot have its test first (layout, prompt wording, a line of configuration) says so in a commit message: `Test-First: not possible — <reason>`.
 
-Write `allow` to let the round go to its review as it is; the harness records it for the item and does not ask again. Write `refuse`, or `ok`, to send the round back to the team.
+Write `allow` to let the round go to its review as it is; the harness records it for the item and does not ask again. Write `refuse` to send the round back to the team. Write `allow except <path> <path> ...` to refuse only those listed paths and allow the others. Use an explicit verdict for every question.
+
+**Checks version one:** n:
 
 **Recommended:** `refuse` — send the round back to the team to settle it.
 
@@ -172,17 +174,19 @@ Questions number 1 of task <task-4> wait for your answers in <home>/tasks/<task-
 Answer in the file (put **ANSWERED** on its last line and save) or run `agent answer <task-4>`.
   ----- end of notification -----
 <time>  task <task-4>: the human answered questions 1 (command)
-  ----- answered questions (1169 bytes) -----
-# Checks before the review — team <team-2>, task <task-4>
+  ----- answered questions (1490 bytes) -----
+# Checks before the review — team <team-2>, task <task-4> [checks:v1]
 
-> Answer every question after **Verdict:** — `ok` accepts the recommendation. When you are done, put **ANSWERED** on the last line and save: the answers are sent at once (or run `agent answer <task-4>`).
+> Answer every question after **Verdict:** with `allow`, `refuse`, or `allow except <path> <path> ...`. Name only exact paths listed in that question after `except`; those paths are refused and the others allowed. Complete every verdict. Put **ANSWERED** on the last line and save, or run `agent answer <task-4>`. Keep the group membership labels unchanged.
 
 ## 1. Allow the round to change production code without a test of its own?
 The team went back to work 1 time(s) on what the checks found, and the round still has these findings. You decide: allow them, or send the round back once more.
 
 - The round changes production code and adds no line to a test file. Every change of behaviour comes with its test, written first and committed before the code. A change that cannot have its test first (layout, prompt wording, a line of configuration) says so in a commit message: `Test-First: not possible — <reason>`.
 
-Write `allow` to let the round go to its review as it is; the harness records it for the item and does not ask again. Write `refuse`, or `ok`, to send the round back to the team.
+Write `allow` to let the round go to its review as it is; the harness records it for the item and does not ask again. Write `refuse` to send the round back to the team. Write `allow except <path> <path> ...` to refuse only those listed paths and allow the others. Use an explicit verdict for every question.
+
+**Checks version one:** n:
 
 **Recommended:** `refuse` — send the round back to the team to settle it.
 
