@@ -436,13 +436,15 @@ a silent run is cancelled before its request is reassigned. The third failure re
 sends the catalogued human notice once, listing all assignments and causes. Late reports from replaced or
 exhausted assignments are rejected.
 
-At startup the owner resumes an unanswered task with a surviving worktree through the ordinary release path.
-A missing task or worktree records an interrupted assignment and triggers the bounded draw. Accepted opinions
+At startup the owner resumes an unanswered task queued for release with a surviving worktree.
+A task that cannot be queued, including one awaiting human answers, or a missing task/worktree records an
+interrupted assignment and triggers the bounded draw. Accepted opinions
 are skipped. Recovery never changes the pass count or the FIXED answers. State schema 9 migrates schema 8 with
 empty attempt history, keeping legacy assignments and their accepted answers readable. `agent status` exposes
-the finding, owner and assignment time, or the wait for a free investigator. The story renders existing opinion
-events with evidence previews and retains each failed assignment through `second_opinion_asked`; run records
-identify the investigator of each new assignment. No new history keyword is introduced.
+the finding, owner and assignment time, or the wait for a free investigator. Each `second_opinion_asked`
+event names the selected investigator. History schema 10 adds `second_opinion_ended`, recording each failed
+investigator, assignment number and cause. The story renders replacements and exhaustion with evidence
+previews; the migration preserves existing records, round links and search.
 
 Every posted review starts with the investigator's name and its configured CLI and model
 (the model is omitted when none is configured), a verdict heading, and the review pass and commit. The approval

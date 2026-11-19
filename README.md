@@ -1236,7 +1236,8 @@ their tasks and how each assignment ended. Inspect those tasks and arrange an in
 continuing the round; no fourth investigator is asked automatically.
 
 On daemon restart, an unanswered assignment resumes its existing task when that task can resume and its
-worktree survives, or waits for another investigator when the task ended or its task/worktree is gone.
+worktree survives, or waits for another investigator when the task ended, awaits human answers, or its
+task/worktree is gone.
 Accepted opinions and FIXED answers survive;
 recovery and replacements do not consume another fix pass. `agent status <round>` names each waiting finding,
 its investigator and assignment time, or says it waits for a free independent investigator. `agent log <round>`
@@ -1244,9 +1245,9 @@ tells the requests, unsuccessful assignments and decisions, including the first 
 
 State schema 9 migrates schema 8, including running fix passes, preserving FIXED answers and completed opinions.
 The optional attempt history defaults to empty; findings without opinion fields have had no second opinion.
-History schema 9 already admits run reason `second_opinion` and events `second_opinion_asked`,
-`finding_confirmed`, `finding_not_confirmed`; this release reuses them without new database keywords.
-Existing records, links and search remain readable.
+History schema 10 adds `second_opinion_ended` for replacement and exhaustion, alongside the existing
+`second_opinion_asked`, `finding_confirmed`, and `finding_not_confirmed` events and `second_opinion` run reason.
+Each request names its selected investigator. Existing records, links and search migrate automatically.
 
 Before the review the daemon checks the round's own diff and commits through git, with no model, if the repository has a
 `[repos.NAME.checks]` table in `agents.toml` ([`docs/configuration.md`](docs/configuration.md)): the lists of path patterns that
@@ -2166,8 +2167,3 @@ make integration        # real agent CLIs and accounts (costs usage)
 
 MIT — see [LICENSE](LICENSE).
 
-Second-opinion history records each investigator selected for a finding. `agent log` names an unsuccessful
-investigator and why the opinion was replaced, or says that its three attempts are exhausted. History
-schema 10 migrates existing records automatically; old requests remain readable. After a daemon restart,
-an opinion task awaiting human answers cannot be resumed automatically and enters the same bounded
-replacement process.
