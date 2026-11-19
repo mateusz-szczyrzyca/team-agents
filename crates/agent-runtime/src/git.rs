@@ -30,6 +30,7 @@ mod changes;
 #[cfg(test)]
 mod deadline_tests;
 mod range;
+mod size;
 
 pub use changes::WorkChanges;
 
@@ -2404,5 +2405,35 @@ mod tests {
                 ..
             }
         ));
+    }
+    #[tokio::test]
+    async fn pr_size_counts_changes_outside_tests_at_the_named_head() {
+        let fixture = Fixture::new();
+        let base = fixture.head();
+        fixture.commit(
+            "lib.rs",
+            "//! Production.\npub fn value() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn example() {}\n}\n",
+            "Add production and inline tests",
+        );
+        fixture.commit("tests.rs", "test only\n", "Add tests");
+        fixture.commit("Cargo.lock", "generated\n", "Regenerate lock");
+        fixture.commit("sample.snap", "snapshot\n", "Record snapshot");
+        fixture.commit("README.md", "Żółć.\n", "Document");
+        let head = fixture.head();
+        fixture.commit("later.txt", "unrelated\n", "Move checkout beyond measured head");
+        let count = fixture
+            .git()
+            .pull_request_size(&Revision::Commit(base.clone()), &head)
+            .await
+            .unwrap();
+        assert_eq!(count, 4);
+        assert_eq!(
+            fixture
+                .git()
+                .pull_request_size(&Revision::Commit(base), &fixture.head())
+                .await
+                .unwrap(),
+            5
+        );
     }
 }
