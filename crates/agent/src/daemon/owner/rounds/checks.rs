@@ -27,7 +27,9 @@ use super::super::start::next_number;
 use super::super::{Owner, OwnerError};
 use super::publish::{Ready, Site};
 use super::{Announcement, Lead, PublishError, Pulls};
-use crate::daemon::checks::{MAX_RELAYS, authored, grouped_decisions, named, questions, reason, team_message};
+use crate::daemon::checks::{
+    MAX_RELAYS, authored, grouped_decisions, named, questions, reason, team_message, team_message_with_waiting,
+};
 use crate::daemon::notice::{NoticeContext, NoticeKind, layout_notification};
 use crate::daemon::questions;
 use crate::daemon::team::Why;
@@ -161,30 +163,34 @@ impl Owner {
         match step {
             ChecksStep::StartReviews => Ok(None),
             ChecksStep::BackToTeam { pass } => {
-                self.send_back_to_team(
-                    site,
-                    reviewing,
-                    &mut record,
-                    pass,
-                    policy.check_passes,
-                    &issues,
-                    &refused,
-                    now,
-                )
-                .await
-            }
-            ChecksStep::Both { pass } => {
-                self.step_both(
-                    site,
-                    reviewing,
-                    &mut record,
-                    pass,
-                    policy.check_passes,
-                    &issues,
-                    &refused,
-                    now,
-                )
-                .await
+                let has_waiting_human = issues
+                    .iter()
+                    .any(|i| i.judge() == Judge::Human && !refused.contains(&i.subject()));
+                if has_waiting_human {
+                    self.step_both(
+                        site,
+                        reviewing,
+                        &mut record,
+                        pass,
+                        policy.check_passes,
+                        &issues,
+                        &refused,
+                        now,
+                    )
+                    .await
+                } else {
+                    self.send_back_to_team(
+                        site,
+                        reviewing,
+                        &mut record,
+                        pass,
+                        policy.check_passes,
+                        &issues,
+                        &refused,
+                        now,
+                    )
+                    .await
+                }
             }
             ChecksStep::AskHuman { reason } => {
                 self.step_ask_human(site, reviewing, &mut record, reason, checking.passes(), &issues, now)
@@ -207,7 +213,7 @@ impl Owner {
         now: Timestamp,
     ) -> Result<Option<Held>, PublishError> {
         let Site { pulls, team, lead } = site;
-        let text = team_message(pulls.checks(), reviewing.pr, pass, check_passes, issues, refused, false)?;
+        let text = team_message(pulls.checks(), reviewing.pr, pass, check_passes, issues, refused)?;
         record.set_passes(reviewing.items, pass.get());
         record.asked = None;
         record.sent = Some(Sent {
@@ -251,8 +257,16 @@ impl Owner {
         now: Timestamp,
     ) -> Result<Option<Held>, PublishError> {
         let Site { pulls, team, lead } = site;
-        let team_issues: Vec<Issue> = issues.iter().filter(|i| i.judge() == Judge::Team).cloned().collect();
-        let human_issues: Vec<Issue> = issues.iter().filter(|i| i.judge() == Judge::Human).cloned().collect();
+        let team_issues: Vec<Issue> = issues
+            .iter()
+            .filter(|i| i.judge() == Judge::Team || refused.contains(&i.subject()))
+            .cloned()
+            .collect();
+        let human_issues: Vec<Issue> = issues
+            .iter()
+            .filter(|i| i.judge() == Judge::Human && !refused.contains(&i.subject()))
+            .cloned()
+            .collect();
         let human_subjects: Vec<Subject> = human_issues.iter().map(Issue::subject).collect();
 
         let is_unchanged = record.asked.as_ref().is_some_and(|a| a.subjects == human_subjects);
@@ -302,15 +316,7 @@ impl Owner {
             );
         }
 
-        let text = team_message(
-            pulls.checks(),
-            reviewing.pr,
-            pass,
-            check_passes,
-            &team_issues,
-            refused,
-            true,
-        )?;
+        let text = team_message_with_waiting(pulls.checks(), reviewing.pr, pass, check_passes, &team_issues, refused)?;
         record.set_passes(reviewing.items, pass.get());
         record.sent = Some(Sent {
             at: now,

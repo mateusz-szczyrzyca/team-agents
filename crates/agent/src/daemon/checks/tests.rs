@@ -185,7 +185,7 @@ async fn the_team_is_told_the_pull_request_the_pass_and_every_reason() {
     let texts = texts().await;
     let issues = [Issue::NoTests, marker("src/a.rs", Marker::SkipsTest)];
 
-    let message = team_message(&texts, pr(7), number(2), 3, &issues, &[], false).unwrap();
+    let message = team_message(&texts, pr(7), number(2), 3, &issues, &[]).unwrap();
 
     assert!(message.contains("pull request #7"), "{message}");
     assert!(message.contains("check 2"), "{message}");
@@ -208,7 +208,6 @@ async fn what_the_human_refused_is_told_to_the_team_with_each_subject() {
         2,
         &[edited("tests/a.rs", 1)],
         &[file("tests/a.rs"), Subject::NoTests],
-        false,
     )
     .unwrap();
 
@@ -222,7 +221,7 @@ async fn the_team_is_told_when_other_findings_wait_for_the_human() {
     let texts = texts().await;
     let issues = [Issue::NoTests];
 
-    let message = team_message(&texts, pr(7), number(1), 2, &issues, &[], true).unwrap();
+    let message = team_message_with_waiting(&texts, pr(7), number(1), 2, &issues, &[]).unwrap();
 
     assert!(
         message.contains("The other findings wait for the human and are not the team's to touch"),

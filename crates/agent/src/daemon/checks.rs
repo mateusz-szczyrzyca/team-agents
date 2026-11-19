@@ -155,6 +155,32 @@ pub(super) fn team_message(
     passes: u32,
     issues: &[Issue],
     refused: &[Subject],
+) -> Result<String, ChecksTextError> {
+    team_message_impl(texts, pr, pass, passes, issues, refused, false)
+}
+
+/// What the lead is told when the checks send the round back while other findings wait for the human.
+///
+/// # Errors
+/// [`ChecksTextError`].
+pub(super) fn team_message_with_waiting(
+    texts: &ChecksPrompts,
+    pr: PrNumber,
+    pass: NonZeroU32,
+    passes: u32,
+    issues: &[Issue],
+    refused: &[Subject],
+) -> Result<String, ChecksTextError> {
+    team_message_impl(texts, pr, pass, passes, issues, refused, true)
+}
+
+fn team_message_impl(
+    texts: &ChecksPrompts,
+    pr: PrNumber,
+    pass: NonZeroU32,
+    passes: u32,
+    issues: &[Issue],
+    refused: &[Subject],
     waits_human: bool,
 ) -> Result<String, ChecksTextError> {
     let refused = if refused.is_empty() {
