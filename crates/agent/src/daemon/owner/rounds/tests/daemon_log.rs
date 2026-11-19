@@ -1414,6 +1414,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     assert_eq!(panic_row.level(), LogLevel::Error);
     observed.insert(LogEvent::DaemonPanicked);
     super::daemon_log_cause_tests::record_named_daemon_causes(&mut observed).await;
+    super::disk_tests::record_build_directory_removed(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
     assert_eq!(

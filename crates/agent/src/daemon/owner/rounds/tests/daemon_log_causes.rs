@@ -29,7 +29,7 @@ use crate::daemon::owner::fixture::{Daemon, answer};
 use crate::fixtures::{solo_state, task, team_id};
 
 /// The names this file proves, each by its cause.
-const PROVED: [LogEvent; 17] = [
+const PROVED: [LogEvent; 16] = [
     LogEvent::DaemonTaskFailed,
     LogEvent::TeamNotStarted,
     LogEvent::NotificationFailed,
@@ -46,7 +46,6 @@ const PROVED: [LogEvent; 17] = [
     LogEvent::NotificationSent,
     LogEvent::QuestionsFileOpened,
     LogEvent::PeerGone,
-    LogEvent::BuildDirectoryRemoved,
 ];
 
 /// The variable that makes [`signalled_daemon_child_process`] run `agent daemon` in the home it names.
@@ -783,46 +782,6 @@ async fn a_request_given_to_a_worker_is_logged_with_the_worker() {
 
 // ---- every name of this file --------------------------------------------------------------------------------------
 
-async fn record_build_directory_removed(observed: &mut BTreeSet<LogEvent>) {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("history.db");
-    let db = HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
-    let started = History::start(
-        db,
-        Setup {
-            reporter: Arc::new(SilentReporter),
-            capacity: DEFAULT_QUEUE,
-        },
-    )
-    .unwrap();
-    let daemon = Daemon::new(&solo_state(), None);
-    let layer = HistoryLayer::new(
-        LogLevel::Debug,
-        SharedClock::new(daemon.clock.clone()),
-        Secrets::default(),
-        Some(started.history.clone()),
-    );
-    let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(layer).into();
-
-    let worktree_dir = daemon.home.worktree_dir(&crate::fixtures::repo(), &task(1));
-    let target = worktree_dir.join("target");
-    std::fs::create_dir_all(&target).unwrap();
-    std::fs::write(target.join("output.bin"), b"build output").unwrap();
-
-    let (owner, _sinks) = daemon.bare_owner().await;
-    let owner = owner.with_history(started.history.clone());
-    async {
-        owner.remove_target(&task(1), &worktree_dir);
-    }
-    .with_subscriber(dispatch)
-    .await;
-
-    started.writer.close().unwrap();
-    let logs = logs_in(&path);
-    let removed = row(&logs, LogEvent::BuildDirectoryRemoved, |_| true);
-    proved(observed, removed, LogEvent::BuildDirectoryRemoved);
-}
-
 /// Provokes the cause of every name in [`PROVED`] and adds each name whose row was found to `observed`.
 pub(super) async fn record_named_daemon_causes(observed: &mut BTreeSet<LogEvent>) {
     record_daemon_life(observed).await;
@@ -834,7 +793,6 @@ pub(super) async fn record_named_daemon_causes(observed: &mut BTreeSet<LogEvent>
     record_checks_and_reviews(observed).await;
     record_late_report(observed).await;
     record_delegated_request(observed).await;
-    record_build_directory_removed(observed).await;
 }
 
 #[tokio::test]

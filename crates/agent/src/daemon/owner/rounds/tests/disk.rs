@@ -1,15 +1,26 @@
 //! Integration tests for disk space monitoring, target cleanup and run refusals.
 
+use std::collections::BTreeSet;
+use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use agent_core::config::AbsolutePath;
+use agent_core::history::MaxTextBytes;
 use agent_core::ids::AgentName;
+use agent_core::log::{LogEntry, LogEvent, LogLevel};
 use agent_core::protocol::{AgentList, Client, Command, FailureKind, RunRequest};
 use agent_core::state::{ItemPhase, MergeMode, TaskListText};
+use agent_runtime::clock::SharedClock;
+use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, HistoryLayer, Problem, Reader, Reporter, Setup};
+use tracing::instrument::WithSubscriber;
+use tracing_subscriber::layer::SubscriberExt;
 
 use super::rig::{CHAIN, ONE, Rig, investigator, normal};
 use crate::client::{ClientError, Connection};
+use crate::daemon::owner::fixture::Daemon;
+use crate::fixtures::{repo, solo_state, task};
 
 /// A published lead and two approving reviewers.
 async fn rig() -> Rig {
@@ -149,4 +160,74 @@ async fn queued_tasks_wait_below_min_free_space_and_resume_when_space_back() {
         .await;
 
     rig.stop().await.unwrap();
+}
+
+/// A reporter that says nothing: the test reads the row.
+#[derive(Debug)]
+struct SilentReporter;
+
+impl Reporter for SilentReporter {
+    fn report(&self, _problem: &Problem) {}
+}
+
+/// Removes a worktree's build directory and records `BuildDirectoryRemoved` in `observed` once its row is found at its level.
+pub(super) async fn record_build_directory_removed(observed: &mut BTreeSet<LogEvent>) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let db = HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
+    let started = History::start(
+        db,
+        Setup {
+            reporter: Arc::new(SilentReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let daemon = Daemon::new(&solo_state(), None);
+    let layer = HistoryLayer::new(
+        LogLevel::Debug,
+        SharedClock::new(daemon.clock.clone()),
+        agent_core::config::Secrets::default(),
+        Some(started.history.clone()),
+    );
+    let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(layer).into();
+
+    let worktree_dir = daemon.home.worktree_dir(&repo(), &task(1));
+    let target = worktree_dir.join("target");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("output.bin"), b"build output").unwrap();
+
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let owner = owner.with_history(started.history.clone());
+    async {
+        owner.remove_target(&task(1), &worktree_dir);
+    }
+    .with_subscriber(dispatch)
+    .await;
+
+    started.writer.close().unwrap();
+    let logs = logs_in(&path);
+    let removed = row(&logs, LogEvent::BuildDirectoryRemoved);
+    assert_eq!(removed.event(), LogEvent::BuildDirectoryRemoved);
+    assert_eq!(removed.level(), LogEvent::BuildDirectoryRemoved.level(), "{removed:?}");
+    observed.insert(LogEvent::BuildDirectoryRemoved);
+}
+
+#[tokio::test]
+async fn removing_a_build_directory_is_logged_as_build_directory_removed() {
+    let mut observed = BTreeSet::new();
+    record_build_directory_removed(&mut observed).await;
+    assert!(observed.contains(&LogEvent::BuildDirectoryRemoved));
+}
+
+/// The rows of `daemon_logs` in the history file `path`.
+fn logs_in(path: &Path) -> Vec<LogEntry> {
+    Reader::open(path).unwrap().daemon_logs().unwrap()
+}
+
+/// The first row of `event` in `logs`; the test fails with every row when there is none.
+fn row(logs: &[LogEntry], event: LogEvent) -> &LogEntry {
+    logs.iter()
+        .find(|entry| entry.event() == event)
+        .unwrap_or_else(|| panic!("no {event} row in {logs:#?}"))
 }

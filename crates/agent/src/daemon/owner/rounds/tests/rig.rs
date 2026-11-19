@@ -210,23 +210,24 @@ impl Rig {
         let secrets = home.root().join("secrets.toml");
         std::fs::write(&secrets, "github_token = \"ghp_test_token_0123\"\n").unwrap();
         std::fs::set_permissions(&secrets, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+        let free_space = {
+            let fs = agent_runtime::disk::FakeFreeSpace::new(200 * 1024 * 1024 * 1024);
+            agent_runtime::disk::SharedFreeSpace::register(
+                home.root().to_path_buf(),
+                agent_runtime::disk::SharedFreeSpace::new(fs.clone()),
+            );
+            fs
+        };
         Self {
             _dir: dir,
-            home: home.clone(),
+            home,
             repo,
             origin,
             github,
             shutdown: CancellationToken::new(),
             daemon: None,
             clock: TickingClock::new(),
-            free_space: {
-                let fs = agent_runtime::disk::FakeFreeSpace::new(200 * 1024 * 1024 * 1024);
-                agent_runtime::disk::SharedFreeSpace::register(
-                    home.root().to_path_buf(),
-                    agent_runtime::disk::SharedFreeSpace::new(fs.clone()),
-                );
-                fs
-            },
+            free_space,
         }
     }
 
