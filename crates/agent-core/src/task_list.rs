@@ -36,11 +36,26 @@ const BYTE_ORDER_MARK: char = '\u{feff}';
 /// The text that starts the optional first line naming the coordinator.
 const COORDINATOR_PREFIX: &str = "Coordinator:";
 
+/// The text that starts a line naming a path or glob that the task's rounds may change.
+const ALLOW_PREFIX: &str = "Allow:";
+
 /// The text that starts the line listing the features a feature waits for.
 const DEPENDS_ON_PREFIX: &str = "Depends on:";
 
 /// What `Depends on:` says for a feature that waits for none; any case.
 const NO_DEPENDENCIES: &str = "none";
+
+/// How the `Allow:` lines before the brief of a task list are read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AllowLines {
+    /// Each line is a permission, as a task list of this version means it.
+    #[default]
+    Permissions,
+    /// The lines are text of the brief, as every version before the lines existed read them: a state of such a version
+    /// may hold a brief that starts with one, and it neither has to be a valid pattern nor grants anything.
+    Brief,
+}
 
 /// Whether an item is marked as done in the text: `[ ]` or `[x]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -98,6 +113,8 @@ pub struct Feature {
 pub struct TaskList {
     /// The name from a `Coordinator:` line, if the list starts with one.
     coordinator: Option<AgentName>,
+    /// Root-relative permissions given in the header.
+    allowances: Vec<crate::task_allowance::TaskAllowance>,
     /// The text before the first feature, without the `Coordinator:` line and the blank lines around it.
     brief: String,
     /// The features, in the order written.
@@ -154,6 +171,17 @@ pub enum ItemProblem {
 /// carries the number of the line it is on, counted from 1.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TaskListError {
+    /// An allowance has invalid syntax or could permit a rules file.
+    #[error("line {line}: invalid Allow: {text:?}")]
+    InvalidAllowance {
+        /// The line of the directive.
+        line: NonZeroUsize,
+        /// The refused pattern.
+        text: String,
+        /// Why the pattern was refused.
+        #[source]
+        source: crate::task_allowance::AllowanceError,
+    },
     /// The text has nothing in it but blank lines, or only a `Coordinator:` line.
     #[error("the task list is empty")]
     Empty,
@@ -292,6 +320,12 @@ pub enum TaskListError {
 }
 
 impl TaskList {
+    /// The permissions declared before the brief, in their written order.
+    #[must_use]
+    pub fn allowances(&self) -> &[crate::task_allowance::TaskAllowance] {
+        &self.allowances
+    }
+
     /// Parses a task list.
     ///
     /// ```
@@ -307,6 +341,14 @@ impl TaskList {
     /// A [`TaskListError`]: the text is empty or over [`MAX_TASK_LIST_BYTES`], or a line is not valid where it is;
     /// all but those two carry the line.
     pub fn parse(text: &str) -> Result<Self, TaskListError> {
+        Self::parse_with(text, AllowLines::Permissions)
+    }
+
+    /// Parses a task list whose `Allow:` lines before the brief are read as `allow_lines` says.
+    ///
+    /// # Errors
+    /// The [`TaskListError`] of [`TaskList::parse`].
+    pub fn parse_with(text: &str, allow_lines: AllowLines) -> Result<Self, TaskListError> {
         if text.len() > MAX_TASK_LIST_BYTES {
             return Err(TaskListError::TooLarge {
                 len: text.len(),
@@ -314,11 +356,27 @@ impl TaskList {
             });
         }
         let text = text.strip_prefix(BYTE_ORDER_MARK).unwrap_or(text);
-        let mut parser = Parser::default();
+        let mut parser = Parser {
+            allow_lines,
+            ..Parser::default()
+        };
         for (index, line) in text.lines().enumerate() {
             parser.accept(NonZeroUsize::MIN.saturating_add(index), line)?;
         }
         parser.finish()
+    }
+
+    /// Whether `text` has a line `Allow:` before its brief, valid or not: an earlier version read such a line as brief.
+    #[must_use]
+    pub fn has_allow_lines(text: &str) -> bool {
+        match Self::parse(text) {
+            Ok(list) => !list.allowances.is_empty(),
+            Err(TaskListError::InvalidAllowance { .. }) => true,
+            // Nothing is left of the list once its `Allow:` lines are permissions: it is made of them if reading them
+            // as brief gives a list.
+            Err(TaskListError::Empty) => Self::parse_with(text, AllowLines::Brief).is_ok(),
+            Err(_) => false,
+        }
     }
 
     /// The name from the `Coordinator:` line, if the list starts with one. It may name a normal agent or an
@@ -609,6 +667,10 @@ struct Parser<'a> {
     started: bool,
     /// The coordinator named by the first line.
     coordinator: Option<AgentName>,
+    /// How a line `Allow:` before the brief is read.
+    allow_lines: AllowLines,
+    /// Root-relative permissions given in the header.
+    allowances: Vec<crate::task_allowance::TaskAllowance>,
     /// The lines before the first feature.
     brief: Vec<&'a str>,
     /// The features read so far; the last one is the current one.
@@ -636,6 +698,22 @@ impl<'a> Parser<'a> {
                 );
                 return Ok(());
             }
+        }
+        if self.allow_lines == AllowLines::Permissions
+            && self.features.is_empty()
+            && self.brief.iter().all(|line| line.trim().is_empty())
+            && let Some(pattern) = text.strip_prefix(ALLOW_PREFIX)
+        {
+            let pattern = pattern.trim();
+            self.allowances
+                .push(crate::task_allowance::TaskAllowance::parse(pattern).map_err(|source| {
+                    TaskListError::InvalidAllowance {
+                        line,
+                        text: pattern.to_owned(),
+                        source,
+                    }
+                })?);
+            return Ok(());
         }
         match classify(text) {
             LineKind::Blank => self.blank(line, text),
@@ -803,6 +881,7 @@ impl<'a> Parser<'a> {
         }
         Ok(TaskList {
             coordinator: self.coordinator,
+            allowances: self.allowances,
             brief,
             features: self.features,
         })
@@ -1472,3 +1551,7 @@ Depends on: 2,3,1,
         );
     }
 }
+
+#[cfg(test)]
+#[path = "task_list/allowances_tests.rs"]
+mod allowances_tests;

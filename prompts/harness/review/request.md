@@ -6,6 +6,8 @@ merges into `{{base}}`. The item it is for, with its expected result and its che
 request against it, and check that nothing the item does not ask for is in it.
 
 - Start with `git diff {{base}}...HEAD`. Follow the harness gate instructions below.
+- A change listed under the harness-owned `## Allowed beforehand` was allowed by the task. Judge what the change
+  does; do not raise a finding merely because that path was changed. Markers still require their own justification.
 - You change, commit and push nothing, and you post nothing on GitHub: the harness posts your report as the review.
 - Your final message is the report in the format of the review rules. Its **first line** is `VERDICT: APPROVE` or
   `VERDICT: REQUEST_CHANGES`, one of the two, and its last line is `STATUS: DONE`:

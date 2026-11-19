@@ -82,8 +82,8 @@ impl Owner {
             .pull_text_of(pulls, team, &lead.repo, reviewing.items, &reviewing.ready.record)
             .await?;
         Ok([
-            authored(reviewing.description, &header.body),
-            authored(&fresh.body, &header.body),
+            crate::daemon::pr::description::checks_description(&authored(reviewing.description, &header.body)),
+            crate::daemon::pr::description::checks_description(&authored(&fresh.body, &header.body)),
         ]
         .join("\n\n"))
     }
@@ -347,12 +347,13 @@ impl Owner {
             .collect();
         edited.dedup();
         let unchanged = git.range_unchanged_lines(&merge_base, tip, &edited).await?;
-        Ok(assess_near(
-            rules,
-            &facts,
-            &unchanged,
-            &record.allowed_of(reviewing.items),
-        ))
+        let team = self.parts.state.find_task(&lead.task).ok_or(PublishError::Lost)?.team;
+        Ok(
+            assess_near(rules, &facts, &unchanged, &record.allowed_of(reviewing.items))
+                .into_iter()
+                .filter(|issue| issue.allowed_beforehand(team.allowances()).is_none())
+                .collect(),
+        )
     }
 
     /// Where the question `asked` of the lead `task` is.

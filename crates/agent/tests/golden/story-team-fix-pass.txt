@@ -237,7 +237,7 @@ FINDINGS
    CHECK: read src/lib.rs:7
   ----- end of review report -----
 <time>  fix pass 1 of 5 on #1 started
-  ----- findings sent to the team (2423 bytes) -----
+  ----- findings sent to the team (2443 bytes) -----
 # THE REVIEWERS ASKED FOR CHANGES (pull request #1, fix pass 1 of 5)
 
 All reviews of your pull request are in, and at least one asks for changes. The reports, each with its verdict:
@@ -278,7 +278,7 @@ head, and asks available investigators to verify the fixes, preferring a differe
 Write and update `<home>/tasks/<task-4>/description.md`, outside the repository. Include what and why, tests and their results,
 deviations, out of scope, skipped tests and lint suppressions with their paths and reasons. The harness publishes it
 when the pull request opens and refreshes it after file-only changes too. Do not edit the pull request on GitHub.
-The harness writes Size and Gate from the published commit: omit those sections from your file. If the file is missing
+The harness writes Size, Gate and Allowed beforehand from the published commit: omit those sections from your file. If the file is missing
 or empty, publication continues and says that you supplied no description. If writing fails, report the error.
   ----- end of findings sent to the team -----
 <time>  run <run-15>: inv-lead (investigator, claude) as coordinator, because fix pass 1 of the item

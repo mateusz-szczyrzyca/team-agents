@@ -12,6 +12,7 @@ use serde_json::Value;
 use super::team::{LegacyError, TeamV1};
 use super::{InvalidState, SchemaVersion, State, StateError, StateWire, Team};
 use crate::ids::RoundId;
+use crate::task_list::{AllowLines, TaskList};
 
 /// The schema version this module reads.
 pub(super) const LEGACY_VERSION: u32 = 1;
@@ -38,6 +39,7 @@ struct StateV1 {
 pub(super) fn from_v1(text: &str) -> Result<State, StateError> {
     let mut value: Value = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
     adapt_members(&mut value).map_err(|source| StateError::Malformed { source })?;
+    keep_allow_lines_in_briefs(&mut value);
     let old: StateV1 = serde_json::from_value(value).map_err(|source| StateError::Malformed { source })?;
     let mut used: HashSet<RoundId> = HashSet::new();
     let mut teams = Vec::with_capacity(old.teams.len());
@@ -49,6 +51,26 @@ pub(super) fn from_v1(text: &str) -> Result<State, StateError> {
         teams,
         wake_deliveries: std::collections::BTreeMap::new(),
     })?)
+}
+
+/// Marks a task list of an earlier version that starts with a line `Allow:` as one whose lines are brief: those
+/// versions did not read the line as a permission, so it must neither refuse the state nor grant anything now, and
+/// its text stays as it was.
+fn keep_allow_lines_in_briefs(value: &mut Value) {
+    let Some(teams) = value.get_mut("teams").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for team in teams {
+        let Some(list) = team.get_mut("task_list") else {
+            continue;
+        };
+        let Some(text) = list.as_str() else {
+            continue;
+        };
+        if TaskList::has_allow_lines(text) {
+            *list = serde_json::json!({ "text": text, "allow_lines": AllowLines::Brief });
+        }
+    }
 }
 
 /// Makes the members of the state `value` fit version 2 where the text of version 1 does not: every question gets the
@@ -123,9 +145,10 @@ impl From<LegacyError> for StateError {
     }
 }
 
-/// Reads versions 2 and 3 without enabling independent reviews on their existing rounds.
+/// Reads versions 2 through 9 with their defaulted fields; task allowances remain in the original task list.
 pub(super) fn from_v2(text: &str) -> Result<State, StateError> {
     let mut value: Value = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
+    keep_allow_lines_in_briefs(&mut value);
     if let Some(version) = value.get_mut("schema_version") {
         *version = Value::from(super::SCHEMA_VERSION);
     }

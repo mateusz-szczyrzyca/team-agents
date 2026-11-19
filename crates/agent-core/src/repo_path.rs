@@ -237,21 +237,58 @@ fn check_pattern(text: &str) -> Result<(), InvalidPathPattern> {
 text_value!(PathPattern, check_pattern, keep, InvalidPathPattern);
 
 impl PathPattern {
+    /// Matches a task allowance at the root, including patterns without a slash.
+    pub(crate) fn matches_rooted(&self, path: &RepoPath) -> bool {
+        let path: Vec<&str> = path.as_str().split('/').collect();
+        match_segments(&self.directory_segments(), &path)
+    }
+
+    /// Whether this pattern can name a rules file or a file below the workflows directory.
+    pub(crate) fn reaches_rules(&self) -> bool {
+        let segments = self.directory_segments();
+        segments
+            .last()
+            .is_some_and(|last| *last == "**" || glob_segment(last, "AGENTS.md") || glob_segment(last, "CLAUDE.md"))
+            || match_segments(&segments, &["AGENTS.md"])
+            || match_segments(&segments, &["CLAUDE.md"])
+            || reaches_workflow(&segments, &[".github", "workflows"])
+    }
+
+    /// The segments of the pattern, where a directory (a trailing `/`) matches everything below it.
+    fn directory_segments(&self) -> Vec<&str> {
+        let mut pattern: Vec<&str> = self.0.split('/').collect();
+        if let Some(last) = pattern.last_mut()
+            && last.is_empty()
+        {
+            *last = "**";
+        }
+        pattern
+    }
+
     /// Whether the pattern matches `path`.
     #[must_use]
     pub fn matches(&self, path: &RepoPath) -> bool {
         if !self.0.contains('/') {
             return glob_segment(&self.0, path.file_name());
         }
-        let mut pattern: Vec<&str> = self.0.split('/').collect();
-        // A directory matches everything below it.
-        if let Some(last) = pattern.last_mut()
-            && last.is_empty()
-        {
-            *last = "**";
-        }
+        let pattern = self.directory_segments();
         let segments: Vec<&str> = path.as_str().split('/').collect();
         match_segments(&pattern, &segments)
+    }
+}
+
+/// Whether the pattern names the fixed directory prefix or some path below it.
+fn reaches_workflow(pattern: &[&str], prefix: &[&str]) -> bool {
+    let Some((name, tail)) = prefix.split_first() else {
+        return true;
+    };
+    let Some((segment, rest)) = pattern.split_first() else {
+        return false;
+    };
+    if *segment == "**" {
+        reaches_workflow(rest, prefix) || reaches_workflow(pattern, tail)
+    } else {
+        glob_segment(segment, name) && reaches_workflow(rest, tail)
     }
 }
 

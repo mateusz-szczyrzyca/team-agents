@@ -5,6 +5,21 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.19.0 — 19.11.2026 — PR #134
+
+### New features
+- [agent] [agent-core] A task list can start with lines `Allow: <path or glob>`, for example
+  `Allow: tests/golden/*.txt`. The checks before a review no longer ask you about changes to those paths.
+  `AGENTS.md`, `CLAUDE.md` and `.github/workflows/` can never be allowed this way: `agent run` refuses such a task list
+  and starts nothing.
+- [agent] `agent run` prints the allowances when the team starts, and the pull request lists what the round changed
+  under them in `## Allowed beforehand`.
+
+### Enhancements
+- [agent-core] Moving a file from one protected place to another now asks about both places, not only the old one.
+- [agent-core] The state file is migrated to the new version when it is read; a brief that started with an `Allow:`
+  line before is kept as it was.
+
 ## 0.18.0 — 19.11.2026 — PR #133
 
 ### New features

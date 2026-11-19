@@ -1,7 +1,7 @@
 # The task list
 
 `agent run <agents...> "tasks"` and `agent run <agents...> -f tasks.md` start work from a **task list**: a text with an
-optional coordinator, a brief, and features made of items. One item is one task, one branch and one pull request. The
+optional coordinator and path allowances, a brief, and features made of items. One item is one task, one branch and one pull request. The
 text of `"tasks"` and the text of the file are parsed by the same function, so they give the same list. The plan of the
 Rust rewrite itself, [`rust-agent-plan.md`](../crates/agent-core/tests/fixtures/rust-agent-plan.md), is a task list and a
 test fixture: it must parse. The parser is [`agent-core`](../crates/agent-core/src/task_list.rs)'s `TaskList::parse`.
@@ -10,6 +10,8 @@ test fixture: it must parse. The parser is [`agent-core`](../crates/agent-core/s
 
 ```text
 Coordinator: inv-opus                       optional, the first line of the text
+Allow: Cargo.toml                           optional paths allowed before every round
+Allow: tests/**/*.golden
 
 Rewrite the thing. Everything before the    the brief: free text every member reads
 first feature is the brief.
@@ -35,7 +37,22 @@ Depends on: 1
   (both have the same form); which of them it is, the configuration says. `--coordinator` on the command line wins over
   it. Later in the brief the line is plain text (inside a feature it is an `UnexpectedLine`). An invalid name is an
   error at that line.
-- **The brief** — every line before the first feature, without the `Coordinator:` line, with the blank lines at its
+- **`Allow: PATH`** — at column 0, before the first nonblank line of the brief and after `Coordinator:` when
+  present. Repeat it for each path or glob the task requires changing. Paths are relative to the repository root;
+  `*` matches characters within one path component, `?` one character, and a whole `**` component matches zero or
+  more components. `Cargo.toml` covers only the root file; `tests/**/*.golden` covers golden files at every depth
+  under `tests/`. Whitespace around the pattern is removed. Empty patterns, absolute paths, `..`, unsupported glob
+  syntax, and patterns that could reach `AGENTS.md`, `CLAUDE.md` or `.github/workflows/` are errors naming their line.
+  Consequently `*`, `**`, `**/*`, `*.md`, `tests/**`, `.github/**` and `**/CLAUDE.md` are refused;
+  recursive directory globs could cover a nested rules file. Patterns are at most 512 bytes,
+  with at most four `**` components. After the brief starts an `Allow:` line is ordinary brief text.
+  The team keeps these allowances for every round and daemon restart. They cover changes, removals and renames of
+  test files and protected configuration paths; uncovered paths still require a decision. They never permit lint
+  suppressions, skipped tests, test-detection code or missing tests. Later human answers remain per-path decisions.
+  `agent run` prints every allowance. Each pull request lists changed covered paths and their `Allow:` line under
+  the harness-owned `## Allowed beforehand`; no covered changes means no heading. Reviewers judge those changes
+  on their behavior. A text containing only header directives is empty.
+- **The brief** — every line before the first feature, without the header directives, with the blank lines at its
   start and end removed and everything else kept, indentation included. A text with no feature at all is a brief
   alone, which is how `agent run claude-1 "Fix the flaky test"` works. Text that is only blank lines (or only a
   coordinator) is an error.
@@ -71,6 +88,7 @@ mark, blank lines and the coordinator line count). The first fault in the text i
 |---|---|
 | `Empty` | nothing in the text but blank lines, or only a `Coordinator:` line |
 | `TooLarge` | the text is over 1 MiB |
+| `InvalidAllowance` | an `Allow:` header has invalid or unsafe syntax; the error names its line and pattern |
 | `InvalidCoordinator` | the `Coordinator:` line has no valid name |
 | `FeatureNumber` | the number of a feature is `0`, has a leading zero, or is over 65535; `NumberProblem` says which: `Shape` (not digits, or a leading zero) or `Range` (`0`, over 65535) |
 | `FeatureWithoutTitle` | `N.` with no title |
@@ -90,7 +108,7 @@ mark, blank lines and the coordinator line count). The first fault in the text i
 ## What the parser gives
 
 ```text
-TaskList { coordinator: Option<AgentName>, brief, features }
+TaskList { allowances: Vec<TaskAllowance>, coordinator: Option<AgentName>, brief, features }
 Feature  { number, title, depends_on: Vec<feature number>, items }
 Item     { id: ItemId, title, mark: Open | Done, description, expected_result: Option, checks: Option }
 ```
