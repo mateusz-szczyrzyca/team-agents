@@ -1,5 +1,8 @@
 //! The permanent findings ledger of one pull request, including reports waiting for their peers.
 
+mod disputes;
+pub use disputes::{Disputes, Explanation, ExplanationStatus, RaisedFinding};
+
 use super::Review;
 use crate::ids::{InvestigatorName, TaskId};
 use crate::review_findings::{Answer, Finding, Report, Severity};
@@ -43,6 +46,9 @@ pub struct Findings {
     /// The independent protocol's pass size; absent on pull requests opened before its introduction.
     #[serde(skip_serializing_if = "Option::is_none")]
     review_count: Option<crate::config::ReviewCount>,
+    /// Dispute protocol, absent for pull requests already open before schema 6.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disputes: Option<Disputes>,
     /// Verification context, absent on PRs opened before rotating verifications.
     #[serde(skip_serializing_if = "Option::is_none")]
     verification: Option<Verification>,
@@ -62,6 +68,9 @@ struct FindingsWire {
     /// See [`Findings::review_count`]; absence retains the previous protocol.
     #[serde(default)]
     review_count: Option<crate::config::ReviewCount>,
+    /// Missing retains the earlier fix/verification protocol.
+    #[serde(default)]
+    disputes: Option<Disputes>,
     /// See [`Findings::entries`].
     entries: Vec<RecordedFinding>,
     /// See [`Findings::verification`]; missing retains the previous protocol.
@@ -90,6 +99,7 @@ impl TryFrom<FindingsWire> for Findings {
 
     fn try_from(wire: FindingsWire) -> Result<Self, Self::Error> {
         let mut ledger = Self::new(wire.entries)?;
+        ledger.disputes = wire.disputes;
         ledger.pending = wire.pending;
         ledger.comment = wire.comment;
         ledger.review_count = wire.review_count;
@@ -126,6 +136,7 @@ impl Findings {
     #[must_use]
     pub fn verifying(count: crate::config::ReviewCount) -> Self {
         Self {
+            disputes: Some(Disputes::default()),
             verification: Some(Verification::default()),
             ..Self::independent(count)
         }
@@ -172,6 +183,7 @@ impl Findings {
             }
         }
         Ok(Self {
+            disputes: None,
             review_count: None,
             verification: None,
             entries,

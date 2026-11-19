@@ -24,7 +24,8 @@ mod values;
 pub use checked::CheckedMut;
 pub use checks::{Asked, ChecksRecord, ItemChecks, Sent};
 pub use findings::{
-    FindingNumbersExhausted, FindingStatus, Findings, InvalidFindingNumbers, RecordedFinding, Verification,
+    Disputes, Explanation, ExplanationStatus, FindingNumbersExhausted, FindingStatus, Findings, InvalidFindingNumbers,
+    RaisedFinding, RecordedFinding, Verification,
 };
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
 pub use item::{
