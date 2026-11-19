@@ -660,3 +660,89 @@ async fn failed_silent_reports_and_exhausted_corrections_are_given_to_another_in
         );
     }
 }
+
+#[tokio::test]
+async fn restart_resumes_the_same_unanswered_opinions_once_and_keeps_answers() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-release"),
+            investigator("inv-r2", "opinion-release"),
+            investigator("inv-r3", "opinion-release"),
+            investigator("inv-r4", "opinion-release"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+        .await;
+    let before = rig
+        .state_where("opinion processes running", |state| {
+            let team = state.team(&team).unwrap();
+            team.items()[0].findings().is_some_and(|ledger| {
+                ledger.opinions().len() == 2
+                    && ledger.opinions().values().all(|opinion| {
+                        let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+                            return false;
+                        };
+                        team.find(task).unwrap().1.current_run().is_some()
+                    })
+            })
+        })
+        .await;
+    let ledger = before.team(&team).unwrap().items()[0].findings().unwrap();
+    let assignments: Vec<_> = ledger
+        .opinions()
+        .values()
+        .map(|opinion| {
+            let OpinionStage::Assigned { investigator, task } = &opinion.stage else {
+                panic!("assigned")
+            };
+            (investigator.clone(), task.clone())
+        })
+        .collect();
+    rig.stop().await.unwrap();
+    std::fs::write(rig.home.root().join("opinion-release"), "ready").unwrap();
+    rig.start().await;
+    rig.state_where("recovered answers or erroneous hold", |state| {
+        state.team(&team).unwrap().items()[0]
+            .findings()
+            .unwrap()
+            .opinions()
+            .values()
+            .all(|opinion| matches!(opinion.stage, OpinionStage::Reported { .. }))
+            || rig
+                .notifications()
+                .iter()
+                .any(|n| n.contains("Second opinion needs attention"))
+    })
+    .await;
+    let state = rig.state();
+    let ledger = state.team(&team).unwrap().items()[0].findings().unwrap();
+    for (opinion, (who, original)) in ledger.opinions().values().zip(&assignments) {
+        assert!(
+            matches!(&opinion.stage, OpinionStage::Reported { investigator, task, .. } if investigator == who && task == original)
+        );
+    }
+    rig.item_where("1.1", "done after recovered opinions", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+    rig.stop().await.unwrap();
+    rig.start().await;
+    rig.stop().await.unwrap();
+    for (_, task) in assignments {
+        assert_eq!(rig.kept_runs(&task), 2);
+    }
+    assert_eq!(rig.state().team(&team).unwrap().items()[0].fix_passes().len(), 1);
+    assert_eq!(
+        rig.notifications()
+            .iter()
+            .filter(|n| n.contains("Second opinion needs attention"))
+            .count(),
+        0
+    );
+}
