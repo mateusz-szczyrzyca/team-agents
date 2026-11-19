@@ -123,7 +123,7 @@ impl From<LegacyError> for StateError {
     }
 }
 
-/// Reads versions 2 and 3 without enabling independent reviews on their existing rounds.
+/// Reads versions 2 through 9 with their defaulted fields; task allowances remain in the original task list.
 pub(super) fn from_v2(text: &str) -> Result<State, StateError> {
     let mut value: Value = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
     if let Some(version) = value.get_mut("schema_version") {
