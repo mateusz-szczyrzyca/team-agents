@@ -224,7 +224,7 @@ case $action in
         result "OPINION: $outcome\nRead src/lib.rs:7; café path examined.\nSTATUS: DONE"
       fi
     elif [[ $prompt == *'# OPEN FINDINGS TO VERIFY'* ]]; then
-      answers=$(awk '/^[0-9]+\. \[/{sub(/\./, "", $1); printf "FINDING %s: RESOLVED\\n", $1}' <<< "$prompt")
+      answers=$(awk '/^# OPEN FINDINGS TO VERIFY/ {open=1} open && /^[0-9]+\. \[/{sub(/\./, "", $1); printf "FINDING %s: RESOLVED\\n", $1}' <<< "$prompt")
       result "VERDICT: APPROVE\n$answers\nSTATUS: DONE"
     else
       result 'VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [BLOCKER] COR src/lib.rs:7 — café defect → fix it\n   CHECK: read src/lib.rs:7\nSTATUS: DONE'
