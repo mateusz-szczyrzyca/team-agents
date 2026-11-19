@@ -815,7 +815,7 @@ mod tests {
     #[test]
     fn serde_reads_a_state_through_the_same_checks() {
         let good = State::new().to_json().unwrap();
-        let other_version = "{\"schema_version\": 7, \"teams\": []}";
+        let other_version = "{\"schema_version\": 8, \"teams\": []}";
         let one = serde_json::to_value(team_of(1, 1)).unwrap();
         let duplicate = json!({"schema_version": 1, "teams": [one, one]}).to_string();
 
