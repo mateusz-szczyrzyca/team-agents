@@ -3,7 +3,7 @@
 use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, RepoName};
-use agent_core::ids::{AgentName, TaskId, TeamId};
+use agent_core::ids::{AgentName, RoundId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::state::{Completion, ItemPhase};
 use agent_core::status::TaskStatus;
@@ -24,6 +24,11 @@ enum Cleanup {
 }
 
 impl Owner {
+    /// Removes `target/` directories from all tasks of `round`.
+    pub(in crate::daemon::owner) fn cleanup_round_targets(&self, _team_id: &TeamId, _round: &RoundId) {
+        // Stub for RED: do nothing
+    }
+
     /// Releases completed workspaces only after every item is done, at least one merged, and no round is open.
     /// Cleanup is a side effect: failure is logged and never reverses a durable merge or prevents team closure.
     pub(in crate::daemon::owner) async fn cleanup_merged_worktrees(&self, team_id: &TeamId) {
