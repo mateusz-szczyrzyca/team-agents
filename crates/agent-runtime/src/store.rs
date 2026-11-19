@@ -59,6 +59,9 @@ const ACTIVITY_FILE: &str = "activity.jsonl";
 /// The file in a task's directory that holds the last gate record of the task.
 const GATE_RECORD_FILE: &str = "gate.json";
 
+/// The preceding gate, kept separately so old gate records remain unchanged.
+const PREVIOUS_GATE_FILE: &str = "gate-previous.json";
+
 /// The name of the file with the record of the checks before a review, in the directory of the lead's task.
 const CHECKS_RECORD_FILE: &str = "checks.json";
 
@@ -590,9 +593,17 @@ impl StateStore {
     /// [`StoreError::RenderGateRecord`], [`StoreError::CreateDir`], [`StoreError::WriteTemp`], [`StoreError::Replace`],
     /// [`StoreError::SyncDir`] and [`StoreError::Worker`].
     pub async fn save_gate_record(&self, task: &TaskId, record: &GateRecord) -> Result<(), StoreError> {
+        if let Some(previous) = self.load_gate_record(task).await? {
+            self.write_gate_record(task, PREVIOUS_GATE_FILE, &previous).await?;
+        }
+        self.write_gate_record(task, GATE_RECORD_FILE, record).await
+    }
+
+    /// Atomically replaces one gate record while the store holds the home lock.
+    async fn write_gate_record(&self, task: &TaskId, name: &str, record: &GateRecord) -> Result<(), StoreError> {
         let text = serde_json::to_vec_pretty(record).map_err(|source| StoreError::RenderGateRecord { source })?;
         let dir = self.home.task_dir(task);
-        let target = self.home.gate_record_file(task);
+        let target = dir.join(name);
         let write_dir = dir.clone();
         let file = blocking(move || {
             create_dir(&write_dir)?;
@@ -606,8 +617,8 @@ impl StateStore {
     ///
     /// # Errors
     /// Returns read and parse errors with the record path.
-    pub async fn previous_gate_record(&self, _task: &TaskId) -> Result<Option<GateRecord>, StoreError> {
-        Ok(None)
+    pub async fn previous_gate_record(&self, task: &TaskId) -> Result<Option<GateRecord>, StoreError> {
+        read_gate_record(&self.home.task_dir(task).join(PREVIOUS_GATE_FILE)).await
     }
 
     /// The last gate record of `task`; `None` when the task has never been gated.
@@ -616,13 +627,7 @@ impl StateStore {
     /// [`StoreError::ReadTaskFile`] when the file cannot be read, is too large or is not UTF-8 text;
     /// [`StoreError::ParseGateRecord`] when it is not a gate record.
     pub async fn load_gate_record(&self, task: &TaskId) -> Result<Option<GateRecord>, StoreError> {
-        let path = self.home.gate_record_file(task);
-        let Some(file) = read_task_file(&path).await? else {
-            return Ok(None);
-        };
-        serde_json::from_str(&file)
-            .map(Some)
-            .map_err(|source| StoreError::ParseGateRecord { path, source })
+        read_gate_record(&self.home.gate_record_file(task)).await
     }
 
     /// Saves `record`, the record of the checks before a review of `task`, in the task's directory, replacing the one
@@ -714,6 +719,22 @@ impl StagedState {
         })
         .await
     }
+}
+
+/// Reads a bounded gate record; missing records are normal for older homes and ungated tasks.
+///
+/// # Errors
+/// Returns [`StoreError::ReadTaskFile`] or [`StoreError::ParseGateRecord`] with the file path.
+pub async fn read_gate_record(path: &Path) -> Result<Option<GateRecord>, StoreError> {
+    let Some(file) = read_task_file(path).await? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&file)
+        .map(Some)
+        .map_err(|source| StoreError::ParseGateRecord {
+            path: path.to_owned(),
+            source,
+        })
 }
 
 #[cfg(test)]
