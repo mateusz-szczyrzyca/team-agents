@@ -50,3 +50,16 @@ fn directory_wildcards_cannot_cover_nested_rule_files() {
         assert_eq!(TaskAllowance::parse(pattern), Err(AllowanceError::Rules), "{pattern}");
     }
 }
+
+#[test]
+fn directory_patterns_and_the_workflows_directory_itself_are_refused() {
+    for pattern in [
+        ".github/workflows/",
+        ".github/workflows",
+        ".github/",
+        "tests/",
+        "Cargo.toml/",
+    ] {
+        assert_eq!(TaskAllowance::parse(pattern), Err(AllowanceError::Rules), "{pattern}");
+    }
+}
