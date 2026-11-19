@@ -209,3 +209,64 @@ async fn activity_history_records_the_reports_of_second_opinions() {
         );
     }
 }
+
+#[tokio::test]
+async fn three_reviews_rotate_pairs_and_the_next_team_uses_the_oldest_global_pair() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,fix-work-pushed,fix-work-pushed"),
+            normal("claude-2", "work"),
+            investigator("inv-r1", "rotating-verify"),
+            investigator("inv-r2", "rotating-verify"),
+            investigator("inv-r3", "rotating-verify"),
+            investigator("inv-r4", "rotating-verify"),
+            investigator("inv-r5", "rotating-verify"),
+            investigator("inv-r6", "rotating-verify"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (first, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.state_where("first team merged", |state| {
+        matches!(state.team(&first).unwrap().items()[0].phase(), ItemPhase::Done { .. })
+    })
+    .await;
+    let (second, _) = rig.run(&["claude-2"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .state_where("second team asked", |state| {
+            state.team(&second).unwrap().activities().len() == 2
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let asked = |id| {
+        state
+            .team(id)
+            .unwrap()
+            .activities()
+            .iter()
+            .map(|activity| activity.investigator().as_str())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        asked(&first),
+        ["inv-r1", "inv-r2", "inv-r3", "inv-r4", "inv-r5", "inv-r6"]
+    );
+    assert_eq!(asked(&second), ["inv-r1", "inv-r2"]);
+    // Each team keeps its own task and worktree for the same investigator.
+    for name in ["inv-r1", "inv-r2"] {
+        let task = |id| {
+            state
+                .team(id)
+                .unwrap()
+                .activities()
+                .iter()
+                .find(|activity| activity.investigator().as_str() == name)
+                .unwrap()
+                .task()
+        };
+        assert_ne!(task(&first), task(&second));
+    }
+}
