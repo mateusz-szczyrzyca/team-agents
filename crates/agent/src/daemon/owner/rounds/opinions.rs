@@ -394,8 +394,32 @@ impl Owner {
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(", ");
+            let mut attempts = Vec::new();
+            for attempt in ledger.opinion_attempts(number) {
+                let Some(failure) = attempt.failure else {
+                    continue;
+                };
+                let template = match failure {
+                    OpinionFailure::Failed => AutopilotPrompt::OpinionAttemptFailed,
+                    OpinionFailure::NoStatus => AutopilotPrompt::OpinionAttemptNoStatus,
+                    OpinionFailure::MissingReport => AutopilotPrompt::OpinionAttemptMissingReport,
+                    OpinionFailure::Silent => AutopilotPrompt::OpinionAttemptSilent,
+                    OpinionFailure::Interrupted => AutopilotPrompt::OpinionAttemptInterrupted,
+                };
+                let variables = Variables::new()
+                    .with("investigator", attempt.investigator.as_str())
+                    .and_then(|v| v.with("task", attempt.task.as_str()))
+                    .map_err(OpinionDaemonError::from)?;
+                attempts.push(
+                    pulls
+                        .texts
+                        .render(template, &variables)
+                        .map_err(OpinionDaemonError::from)?,
+                );
+            }
             let values = Variables::new()
-                .with("round", rounds)
+                .with("attempts", attempts.join("\n"))
+                .and_then(|v| v.with("round", rounds))
                 .and_then(|v| v.with("number", number.to_string()))
                 .and_then(|v| v.with("task", task.as_str()));
             self.tell_human(

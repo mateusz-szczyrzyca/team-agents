@@ -112,7 +112,17 @@ pub enum AutopilotPrompt {
     ReviewFindingsInvalid,
     /// The notification that a reviewer gave no verdict.
     NoticeNoVerdict,
-    /// An unanswered opinion requires human attention until recovery is available.
+    /// Retain an unsuccessful opinion assignment in the human notice.
+    OpinionAttemptFailed,
+    /// Retain an unsuccessful opinion assignment in the human notice.
+    OpinionAttemptNoStatus,
+    /// Retain an unsuccessful opinion assignment in the human notice.
+    OpinionAttemptMissingReport,
+    /// Retain an unsuccessful opinion assignment in the human notice.
+    OpinionAttemptSilent,
+    /// Retain an unsuccessful opinion assignment in the human notice.
+    OpinionAttemptInterrupted,
+    /// An unanswered opinion exhausted its automatic replacements.
     NoticeOpinion,
     /// The notification that the reviewers still ask for changes and the human has to decide.
     NoticeDecision,
@@ -175,6 +185,11 @@ impl AutopilotPrompt {
         Self::ReviewOpenFindings,
         Self::ReviewFindingsInvalid,
         Self::NoticeNoVerdict,
+        Self::OpinionAttemptFailed,
+        Self::OpinionAttemptNoStatus,
+        Self::OpinionAttemptMissingReport,
+        Self::OpinionAttemptSilent,
+        Self::OpinionAttemptInterrupted,
         Self::NoticeOpinion,
         Self::NoticeDecision,
         Self::NoticeReviewRotation,
@@ -295,7 +310,21 @@ impl AutopilotPrompt {
             Self::ReviewSeverityMajor => ("harness/review/severity-major.md", &[]),
             Self::ReviewSeverityMinor => ("harness/review/severity-minor.md", &[]),
             Self::ReviewVerdictMissing => ("harness/review/verdict-missing.md", &[]),
-            Self::NoticeOpinion => ("harness/review/notice-opinion.md", &["round", "number", "task"]),
+            Self::OpinionAttemptFailed => ("harness/review/opinion-attempt-failed.md", &["investigator", "task"]),
+            Self::OpinionAttemptNoStatus => ("harness/review/opinion-attempt-nostatus.md", &["investigator", "task"]),
+            Self::OpinionAttemptMissingReport => (
+                "harness/review/opinion-attempt-missingreport.md",
+                &["investigator", "task"],
+            ),
+            Self::OpinionAttemptSilent => ("harness/review/opinion-attempt-silent.md", &["investigator", "task"]),
+            Self::OpinionAttemptInterrupted => (
+                "harness/review/opinion-attempt-interrupted.md",
+                &["investigator", "task"],
+            ),
+            Self::NoticeOpinion => (
+                "harness/review/notice-opinion.md",
+                &["round", "number", "task", "attempts"],
+            ),
             Self::NoticeNoVerdict => (
                 "harness/review/notice-no-verdict.md",
                 &["reviewer", "pr", "task", "why"],

@@ -1,0 +1,1 @@
+- {{investigator}} ({{task}}): the interrupted task could not be resumed.
