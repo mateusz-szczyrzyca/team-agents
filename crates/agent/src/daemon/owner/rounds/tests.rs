@@ -2764,7 +2764,7 @@ async fn rejected_explanation_is_not_retried_and_fix_response_correction_does_no
     use agent_core::history::{HistoryEvent, Record};
     use agent_runtime::history::Reader;
     let mut rig = Rig::new(&[
-        normal("claude-1", "work,done:FINDING 1: EXPLAINED — explicit units,done:FINDING 1: EXPLAINED — try again,fix-work"),
+        normal("claude-1", "work,done:FINDING 1: EXPLAINED — explicit units,done:FINDING 1: EXPLAINED — try again,fix-work:1"),
         investigator("inv-r1", "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 work-1.txt:1 — units → newtype\\n   CHECK: read signature,done:VERDICT: REQUEST_CHANGES\\nFINDING 1: REJECTED — parameters can be swapped,done:VERDICT: APPROVE\\nFINDING 1: RESOLVED"),
         investigator("inv-r2", "done:VERDICT: APPROVE,done:VERDICT: APPROVE\\nFINDING 1: ACCEPTED — clear names,done:VERDICT: APPROVE\\nFINDING 1: RESOLVED"),
     ], 5, false).await;

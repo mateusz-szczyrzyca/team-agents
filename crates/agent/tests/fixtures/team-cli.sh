@@ -274,7 +274,7 @@ case $action in
   questions) result 'I have to ask.\nSTATUS: QUESTIONS' ;;
   slowdone) sleep 1; result 'Finished the work.\nSTATUS: DONE' ;;
   slowfail) sleep 1; result 'I could not do it.\nSTATUS: FAILED' ;;
-  fix-work|fix-work-pushed|fix-commit|fix-done|fix-gated|fix-script:*)
+  fix-work|fix-work:*|fix-work-pushed|fix-commit|fix-done|fix-gated|fix-script:*)
     # New fix actions preserve the original actions and answer the ledger before the attached reports.
     case $action in
       fix-done) ;;
@@ -293,6 +293,9 @@ case $action in
       message='Finished the item.'
     fi
     answers=$(awk '/^### Review by / {exit} /^[0-9]+\. \[(BLOCKER|MAJOR)\]/ {sub(/\./, "", $1); printf "FINDING %s: FIXED\\n", $1}' <<< "$prompt")
+    if [[ $action == fix-work:* ]]; then
+      answers="FINDING ${action#fix-work:}: FIXED"'\n'
+    fi
     result "$message"'\n'"$answers"'STATUS: DONE'
     ;;
   work)
