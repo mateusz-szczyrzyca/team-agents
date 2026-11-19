@@ -596,16 +596,10 @@ async fn each_question_is_answered_for_its_own_file_and_only_what_was_refused_go
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     rig.status_is(&tasks[0], TaskStatus::Questions).await;
     let file = questions_of(&rig, &tasks[0], 1);
-    let answers = AnswerList::try_from(vec![
-        AnswerInput {
-            question: NonZeroU32::MIN,
-            verdict: Verdict::from_text("allow").unwrap().unwrap(),
-        },
-        AnswerInput {
-            question: NonZeroU32::new(2).unwrap(),
-            verdict: Verdict::from_text("refuse").unwrap().unwrap(),
-        },
-    ])
+    let answers = AnswerList::try_from(vec![AnswerInput {
+        question: NonZeroU32::MIN,
+        verdict: Verdict::from_text("allow except tests/other.txt").unwrap().unwrap(),
+    }])
     .unwrap();
     let reply = crate::client::Connection::connect(&rig.home.socket_file())
         .await
@@ -625,10 +619,11 @@ async fn each_question_is_answered_for_its_own_file_and_only_what_was_refused_go
     let back = rig.prompt(&tasks[0], 4).await;
     rig.stop().await.unwrap();
 
-    let titles: Vec<&str> = file.entries().iter().map(agent_core::questions::Entry::title).collect();
+    assert_eq!(file.entries().len(), 1);
+    let body = file.entries()[0].body();
     assert!(
-        titles[0].contains("`tests/existing.txt`") && titles[1].contains("`tests/other.txt`"),
-        "{titles:?}"
+        body.contains("`tests/existing.txt`") && body.contains("`tests/other.txt`"),
+        "{body}"
     );
     assert!(
         back.contains("refused to allow") && back.contains("- `tests/other.txt`"),
@@ -975,16 +970,10 @@ async fn a_mixed_allow_and_refuse_answer_records_the_issues_the_human_allowed() 
 
     let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     rig.status_is(&tasks[0], TaskStatus::Questions).await;
-    let answers = AnswerList::try_from(vec![
-        AnswerInput {
-            question: NonZeroU32::MIN,
-            verdict: Verdict::from_text("allow").unwrap().unwrap(),
-        },
-        AnswerInput {
-            question: NonZeroU32::new(2).unwrap(),
-            verdict: Verdict::from_text("refuse").unwrap().unwrap(),
-        },
-    ])
+    let answers = AnswerList::try_from(vec![AnswerInput {
+        question: NonZeroU32::MIN,
+        verdict: Verdict::from_text("allow except tests/other.txt").unwrap().unwrap(),
+    }])
     .unwrap();
     let reply = crate::client::Connection::connect(&rig.home.socket_file())
         .await

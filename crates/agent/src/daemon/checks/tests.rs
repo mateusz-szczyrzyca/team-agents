@@ -275,7 +275,7 @@ async fn a_question_holds_the_reasons_for_its_subject_and_the_words_that_answer_
 }
 
 #[tokio::test]
-async fn several_issues_of_one_file_are_one_question_with_all_their_reasons() {
+async fn several_kinds_in_one_file_are_separate_questions_with_all_their_reasons() {
     let texts = texts().await;
     let issues = [
         marker("src/a.rs", Marker::SkipsTest),
@@ -285,8 +285,9 @@ async fn several_issues_of_one_file_are_one_question_with_all_their_reasons() {
     let asked = questions(&texts, &team(), &task(), &issues, AskReason::PassesUsed, 2).unwrap();
 
     assert_eq!(asked.subjects, [file("src/a.rs")]);
-    let body = asked.file.entries()[0].body();
-    for issue in &issues {
+    assert_eq!(asked.file.entries().len(), 2);
+    for (entry, issue) in asked.file.entries().iter().zip(&issues) {
+        let body = entry.body();
         assert!(body.contains(&reason(&texts, issue).unwrap()), "{body}");
     }
 }
