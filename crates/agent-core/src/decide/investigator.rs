@@ -34,8 +34,46 @@ pub fn choose(
     excluded: &BTreeSet<InvestigatorName>,
     required: NonZeroUsize,
 ) -> Option<Vec<InvestigatorName>> {
-    let _ = (configured, free, activities, team, excluded, required);
-    None
+    let latest = activities
+        .iter()
+        .filter(|activity| activity.team == team)
+        .map(|activity| activity.asked_at)
+        .max();
+    let mut candidates = Vec::new();
+    for name in configured.intersection(free) {
+        if excluded.contains(name) {
+            continue;
+        }
+        let own: Vec<_> = activities
+            .iter()
+            .filter(|activity| activity.investigator == name)
+            .collect();
+        if own
+            .iter()
+            .any(|activity| activity.team == team && activity.kind == ActivityKind::TeamMember)
+        {
+            continue;
+        }
+        let last_team = own
+            .iter()
+            .filter(|activity| activity.team == team)
+            .map(|activity| activity.asked_at)
+            .max();
+        let last_anywhere = own.iter().map(|activity| activity.asked_at).max();
+        let recent = latest.is_some() && last_team == latest;
+        candidates.push((recent, last_team, last_anywhere, name));
+    }
+    if candidates.len() < required.get() {
+        return None;
+    }
+    candidates.sort_unstable();
+    Some(
+        candidates
+            .into_iter()
+            .take(required.get())
+            .map(|(_, _, _, name)| name.clone())
+            .collect(),
+    )
 }
 
 #[cfg(test)]
