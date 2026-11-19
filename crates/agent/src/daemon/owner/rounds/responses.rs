@@ -350,9 +350,7 @@ fn fix_answer(
             )?
         }
         Err(OpinionError::MissingReason { number, line }) => opinion_correction(pulls, line, number)?,
-        Err(OpinionError::MissingVerdict | OpinionError::MissingEvidence) => {
-            opinion_correction(pulls, 1, std::num::NonZeroU32::MIN)?
-        }
+        Err(OpinionError::MissingVerdict | OpinionError::MissingEvidence) => unlocated_correction(&pulls.texts)?,
     };
     Ok(FixAnswer::Correction(correction))
 }
@@ -365,3 +363,13 @@ enum FixAnswer {
     /// Complete instructions for correcting the response.
     Correction(String),
 }
+
+/// Requests a complete response when no finding or line was identified.
+fn unlocated_correction(
+    texts: &agent_runtime::autopilot_prompts::AutopilotPrompts,
+) -> Result<String, ResponseTextError> {
+    Ok(texts.render(AutopilotPrompt::ReviewResponseOpinion, &Variables::new())?)
+}
+
+#[cfg(test)]
+mod tests;
