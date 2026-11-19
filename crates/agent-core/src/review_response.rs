@@ -122,3 +122,5 @@ pub fn parse_lead(
 
 #[cfg(test)]
 mod tests;
+
+pub mod opinion;
