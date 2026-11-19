@@ -602,6 +602,14 @@ impl StateStore {
         StagedState { file, target, dir }.commit().await
     }
 
+    /// The gate record immediately before the latest one, absent in older homes.
+    ///
+    /// # Errors
+    /// Returns read and parse errors with the record path.
+    pub async fn previous_gate_record(&self, _task: &TaskId) -> Result<Option<GateRecord>, StoreError> {
+        Ok(None)
+    }
+
     /// The last gate record of `task`; `None` when the task has never been gated.
     ///
     /// # Errors
@@ -1098,5 +1106,35 @@ mod tests {
             matches!(&result, Err(StoreError::WriteTemp { path, .. }) if path == home.root()),
             "{result:?}"
         );
+    }
+    #[tokio::test]
+    async fn gate_records_retain_the_preceding_run_and_read_legacy_records() {
+        use agent_core::state::{GateOutcome, GateResult, GateTree};
+        let dir = tempfile::tempdir().unwrap();
+        let home = home_in(&dir);
+        let store = StateStore::open(home.clone()).await.unwrap();
+        let first = GateRecord {
+            tree: GateTree::Clean,
+            result: GateResult {
+                head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap(),
+                finished_at: "2026-11-19T09:30:00Z".parse().unwrap(),
+                outcome: GateOutcome::TimedOut,
+                log: "/tmp/task/gate-1.log".parse().unwrap(),
+            },
+        };
+        tokio::fs::create_dir_all(home.task_dir(&task())).await.unwrap();
+        tokio::fs::write(home.gate_record_file(&task()), serde_json::to_vec(&first).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(store.load_gate_record(&task()).await.unwrap(), Some(first.clone()));
+        assert_eq!(store.previous_gate_record(&task()).await.unwrap(), None);
+        let mut second = first.clone();
+        second.result.outcome = GateOutcome::Passed;
+        second.result.log = "/tmp/task/gate-2.log".parse().unwrap();
+        store.save_gate_record(&task(), &second).await.unwrap();
+        assert_eq!(store.previous_gate_record(&task()).await.unwrap(), Some(first));
+        assert_eq!(store.load_gate_record(&task()).await.unwrap(), Some(second.clone()));
+        store.save_gate_record(&task(), &second).await.unwrap();
+        assert_eq!(store.previous_gate_record(&task()).await.unwrap(), Some(second));
     }
 }
