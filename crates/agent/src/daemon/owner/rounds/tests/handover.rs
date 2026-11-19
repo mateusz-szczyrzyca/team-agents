@@ -77,3 +77,41 @@ async fn repeated_uncommitted_fixes_send_one_notice_naming_the_round_and_recover
     assert_eq!(rig.runs(&tasks[0]), 5);
     assert_eq!(rig.github.reviews(1).len(), 2);
 }
+
+#[tokio::test]
+async fn an_exhausted_handover_reports_its_human_wait_in_the_round_detail() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,fix-done"),
+            investigator("inv-r1", CHANGES),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.notification_with("FIXED needs a commit").await;
+    let round = rig.state().team(&team).unwrap().rounds().last().unwrap().id().clone();
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            agent_core::protocol::Client::Cli,
+            agent_core::protocol::Command::Show(agent_core::protocol::ShowRequest {
+                target: agent_core::protocol::Target::Round(round),
+            }),
+        )
+        .await
+        .unwrap();
+    rig.stop().await.unwrap();
+    let agent_core::protocol::Reply::Round { round } = reply else {
+        panic!("expected round detail");
+    };
+    let value = serde_json::to_value(round).unwrap();
+    assert_eq!(
+        value.get("waiting").and_then(serde_json::Value::as_str),
+        Some("an answer of the human")
+    );
+}
