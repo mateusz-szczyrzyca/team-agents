@@ -31,7 +31,7 @@ mod state_file {
 
         assert_eq!(
             state.to_json().unwrap(),
-            include_str!("fixtures/state-v1-as-v2.json").replacen("\"schema_version\": 2", "\"schema_version\": 5", 1)
+            include_str!("fixtures/state-v1-as-v2.json").replacen("\"schema_version\": 2", "\"schema_version\": 6", 1)
         );
     }
 
@@ -163,14 +163,14 @@ mod state_file {
 
     #[test]
     fn the_same_state_of_another_schema_version_is_refused_with_that_version() {
-        let text = FIXTURE.replacen("\"schema_version\": 1", "\"schema_version\": 6", 1);
+        let text = FIXTURE.replacen("\"schema_version\": 1", "\"schema_version\": 7", 1);
         assert_ne!(text, FIXTURE);
 
         let err = State::from_json(&text).unwrap_err();
 
         assert!(matches!(
             err,
-            StateError::UnsupportedSchema(UnsupportedSchema { found: 6 })
+            StateError::UnsupportedSchema(UnsupportedSchema { found: 7 })
         ));
     }
 }
