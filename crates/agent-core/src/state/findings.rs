@@ -1,8 +1,10 @@
 //! The permanent findings ledger of one pull request, including reports waiting for their peers.
 
+mod answers;
 mod disputes;
 mod opinions;
 mod shared;
+pub use answers::{Decision, Raise, VerifierAnswers};
 pub use disputes::{Disputes, Explanation, ExplanationStatus, RaisedFinding};
 pub use opinions::{OpinionAttempt, OpinionFailure, OpinionRequest, OpinionStage, OpinionStateError, SecondOpinion};
 pub use shared::{Reconciled, reconcile};

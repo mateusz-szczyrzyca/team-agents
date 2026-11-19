@@ -25,9 +25,9 @@ mod wake_delivery;
 pub use checked::CheckedMut;
 pub use checks::{Asked, ChecksRecord, ItemChecks, Sent};
 pub use findings::{
-    Disputes, Explanation, ExplanationStatus, FindingNumbersExhausted, FindingStatus, Findings, InvalidFindingNumbers,
-    OpinionAttempt, OpinionFailure, OpinionRequest, OpinionStage, OpinionStateError, RaisedFinding, Reconciled,
-    RecordedFinding, SecondOpinion, Verification, reconcile,
+    Decision, Disputes, Explanation, ExplanationStatus, FindingNumbersExhausted, FindingStatus, Findings,
+    InvalidFindingNumbers, OpinionAttempt, OpinionFailure, OpinionRequest, OpinionStage, OpinionStateError, Raise,
+    RaisedFinding, Reconciled, RecordedFinding, SecondOpinion, Verification, VerifierAnswers, reconcile,
 };
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
 pub use item::{

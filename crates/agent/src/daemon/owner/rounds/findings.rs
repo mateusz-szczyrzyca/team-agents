@@ -28,6 +28,11 @@ pub(super) fn open_text(texts: &AutopilotPrompts, ledger: Option<&Findings>) -> 
     selected_text(texts, ledger, |_| true)
 }
 
+/// The open findings for a verifier, each with the answers it may get beside it.
+pub(super) fn verification_text(texts: &AutopilotPrompts, ledger: Option<&Findings>) -> Result<String, TextError> {
+    open_text(texts, ledger)
+}
+
 /// Renders the selected open entries with their verification checks.
 pub(super) fn selected_text(
     texts: &AutopilotPrompts,
