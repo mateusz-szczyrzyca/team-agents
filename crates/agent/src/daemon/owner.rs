@@ -838,6 +838,10 @@ impl Owner {
         let mut events = Vec::new();
         self.move_to(task, &located.team, TaskStatus::Running, &mut events)?;
         self.move_to(task, &located.team, TaskStatus::Failed, &mut events)?;
+        // No run exists for this failure: the record is told, because it cannot tell it from an earlier run's end.
+        if let Some(mut team) = self.parts.state.team_mut(&located.team) {
+            team.fail_activities_before_a_run(task, now);
+        }
         self.commit(task, &located, now, events, Some(Notice::StartFailed { reason }))
             .await?;
         if let Some(pulls) = self.pulls.clone() {

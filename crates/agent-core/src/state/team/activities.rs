@@ -4,7 +4,8 @@ use super::Team;
 use crate::ids::{InvestigatorName, RoundId, TaskId};
 use crate::kinds::ActivityKind;
 use crate::state::{
-    CheckedMut, ItemPhase, Member, OpinionFailure, Participant, ReviewOutcome, RunEnd, RunState, Timestamp,
+    CheckedMut, Completion, ItemPhase, ItemProgress, Member, OpinionFailure, Participant, PrNumber, ReviewOutcome,
+    RunEnd, RunState, Timestamp,
 };
 use crate::status::{RunOutcome, TaskStatus};
 use serde::{Deserialize, Serialize};
@@ -51,22 +52,12 @@ impl ActivityRequest {
         }
     }
 
-    /// The fix passes behind a first review (0) or a verification; `None` for any other request. Items of one pull
-    /// request count their own passes, so the same review is seen with different passes: the most is the pull request's.
-    const fn review_pass(&self) -> Option<u32> {
-        match self {
-            Self::FirstReview => Some(0),
-            Self::Verification { pass } => Some(pass.get()),
-            Self::TeamMember | Self::SecondOpinion { .. } | Self::Investigation | Self::TaskAllocation => None,
-        }
-    }
-
-    /// What distinguishes assignments of one task asked at one time: the passes of a review do not, because items of one
-    /// pull request count them differently.
+    /// What distinguishes assignments of one task asked at one time.
     const fn subject(&self) -> ActivitySubject {
         match self {
             Self::TeamMember => ActivitySubject::TeamMember,
-            Self::FirstReview | Self::Verification { .. } => ActivitySubject::Review,
+            Self::FirstReview => ActivitySubject::Review { pass: 0 },
+            Self::Verification { pass } => ActivitySubject::Review { pass: pass.get() },
             Self::SecondOpinion { pass, finding } => ActivitySubject::SecondOpinion {
                 pass: *pass,
                 finding: *finding,
@@ -82,8 +73,11 @@ impl ActivityRequest {
 enum ActivitySubject {
     /// See [`ActivityRequest::TeamMember`].
     TeamMember,
-    /// A first review or a verification of the same review pass.
-    Review,
+    /// A first review (pass 0) or the verification after the given fix pass of the pull request.
+    Review {
+        /// The fix passes of the pull request before this review.
+        pass: u32,
+    },
     /// See [`ActivityRequest::SecondOpinion`].
     SecondOpinion {
         /// The fix pass whose answer requested the opinion.
@@ -256,25 +250,47 @@ impl Team {
     /// Ends the outstanding assignments of `task` as failed at `at`, with the reason of a run that ended without a status:
     /// the daemon could not start the run the task was due.
     pub fn fail_activities_before_a_run(&mut self, task: &TaskId, at: Timestamp) {
-        let _ = (task, at);
+        for entry in &mut self.activities {
+            if &entry.task == task && matches!(entry.outcome, ActivityOutcome::Working) {
+                entry.outcome = ActivityOutcome::Finished {
+                    at: at.max(entry.asked_at),
+                    end: ActivityEnd::Failed {
+                        reason: Some(RunEnd::NoStatus { exit_code: None }),
+                    },
+                };
+            }
+        }
+    }
+
+    /// The fix passes of the pull request of `item` that came before the item joined it: the most passes any item on the
+    /// pull request has had, less the item's own. Zero for an item that has no pull request.
+    fn passes_before_joining(&self, item: &ItemProgress) -> u32 {
+        let Some(pull) = pull_of(item) else {
+            return 0;
+        };
+        let most = self
+            .items
+            .iter()
+            .filter(|other| pull_of(other) == Some(pull))
+            .map(|other| other.fix_passes().len())
+            .max()
+            .unwrap_or(0);
+        u32::try_from(most.saturating_sub(item.fix_passes().len())).unwrap_or(u32::MAX)
     }
 
     /// Retains assignments and outcomes currently known by the team, without changing reviewer selection.
     pub fn record_activities(&mut self, at: Timestamp) {
-        let mut found: Vec<(Activity, u32)> = Vec::new();
+        let mut found = Vec::new();
         for (_, member) in self.crew.roster() {
             if let Participant::Investigator(investigator) = member.agent() {
-                found.push((
-                    Activity {
-                        investigator: investigator.clone(),
-                        task: member.task().clone(),
-                        rounds: self.rounds.iter().map(|round| round.id().clone()).collect(),
-                        request: ActivityRequest::TeamMember,
-                        asked_at: self.created_at,
-                        outcome: ActivityOutcome::Working,
-                    },
-                    0,
-                ));
+                found.push(Activity {
+                    investigator: investigator.clone(),
+                    task: member.task().clone(),
+                    rounds: self.rounds.iter().map(|round| round.id().clone()).collect(),
+                    request: ActivityRequest::TeamMember,
+                    asked_at: self.created_at,
+                    outcome: ActivityOutcome::Working,
+                });
             }
         }
         for item in &self.items {
@@ -285,7 +301,9 @@ impl Team {
                 .map(|round| round.id().clone())
                 .collect();
             let mut item_found = Vec::new();
-            let mut pass: Option<NonZeroU32> = None;
+            // An item that joined a pull request after some fix passes counts only the passes since: the pull
+            // request's pass of its first review is the difference to the most any item on it has had.
+            let mut pass = NonZeroU32::new(self.passes_before_joining(item));
             let mut reviews = |reviews: &[crate::state::Review]| {
                 let request = pass.map_or(ActivityRequest::FirstReview, |pass| ActivityRequest::Verification {
                     pass,
@@ -321,14 +339,16 @@ impl Team {
                 | ItemPhase::Done { .. } => {}
             }
             item_found.extend(self.opinion_activities(item, &rounds, at));
-            found.extend(number_repeats(item_found));
+            found.extend(item_found);
         }
-        let mut index: HashMap<(ActivityKey, u32), usize> = HashMap::new();
-        for (position, (known, repeat)) in number_repeats(self.activities.iter().cloned()).enumerate() {
-            index.insert((known.key(), repeat), position);
-        }
-        for (candidate, repeat) in found {
-            self.retain_activity(&mut index, candidate, repeat);
+        let mut index: HashMap<ActivityKey, usize> = self
+            .activities
+            .iter()
+            .enumerate()
+            .map(|(position, known)| (known.key(), position))
+            .collect();
+        for candidate in found {
+            self.retain_activity(&mut index, candidate);
         }
         let endings: Vec<_> = self
             .activities
@@ -347,12 +367,9 @@ impl Team {
 
     /// Combines copies of an assignment shared by several items without losing a completed report; `index` finds the
     /// retained assignments by identity and gains the new one.
-    fn retain_activity(&mut self, index: &mut HashMap<(ActivityKey, u32), usize>, candidate: Activity, repeat: u32) {
-        let Some(known) = index
-            .get(&(candidate.key(), repeat))
-            .and_then(|at| self.activities.get_mut(*at))
-        else {
-            index.insert((candidate.key(), repeat), self.activities.len());
+    fn retain_activity(&mut self, index: &mut HashMap<ActivityKey, usize>, candidate: Activity) {
+        let Some(known) = index.get(&candidate.key()).and_then(|at| self.activities.get_mut(*at)) else {
+            index.insert(candidate.key(), self.activities.len());
             self.activities.push(candidate);
             return;
         };
@@ -360,11 +377,6 @@ impl Team {
             if !known.rounds.contains(&round) {
                 known.rounds.push(round);
             }
-        }
-        if let (Some(have), Some(seen)) = (known.request.review_pass(), candidate.request.review_pass())
-            && seen > have
-        {
-            known.request = candidate.request;
         }
         let already_reported = matches!(
             known.outcome,
@@ -388,17 +400,21 @@ impl Team {
     }
 }
 
-/// Pairs each assignment with how many assignments of the same identity came before it in `found`: an item whose reviews
-/// of two passes were asked at the same time keeps both, while the copies of one review that several items hold are
-/// still combined, because each of them counts the same way.
-fn number_repeats(found: impl IntoIterator<Item = Activity>) -> impl Iterator<Item = (Activity, u32)> {
-    let mut seen: HashMap<ActivityKey, u32> = HashMap::new();
-    found.into_iter().map(move |activity| {
-        let before = seen.entry(activity.key()).or_insert(0);
-        let repeat = *before;
-        *before = before.saturating_add(1);
-        (activity, repeat)
-    })
+/// The pull request an item is reviewed, fixed or approved on, or was merged with.
+fn pull_of(item: &ItemProgress) -> Option<PrNumber> {
+    match item.phase() {
+        ItemPhase::InReview { pr, .. }
+        | ItemPhase::Fixing { pr, .. }
+        | ItemPhase::Approved { pr, .. }
+        | ItemPhase::Done {
+            completion: Completion::Merged { pr, .. },
+        } => Some(pr.number),
+        ItemPhase::Pending
+        | ItemPhase::InProgress { .. }
+        | ItemPhase::Done {
+            completion: Completion::Listed,
+        } => None,
+    }
 }
 
 /// Whether a run that ended like this can have failed its task by itself. The other ends leave the task alive (it slept,
@@ -406,8 +422,8 @@ fn number_repeats(found: impl IntoIterator<Item = Activity>) -> impl Iterator<It
 const fn can_fail_task(end: &RunEnd) -> bool {
     match end {
         RunEnd::Reported { outcome } => match outcome {
-            RunOutcome::Failed | RunOutcome::Questions => true,
-            RunOutcome::Done | RunOutcome::Sleeping | RunOutcome::Excluded => false,
+            RunOutcome::Failed => true,
+            RunOutcome::Done | RunOutcome::Questions | RunOutcome::Sleeping | RunOutcome::Excluded => false,
         },
         RunEnd::NoStatus { .. } | RunEnd::Hung | RunEnd::TurnLimit => true,
         RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited | RunEnd::Stopped => false,
@@ -462,6 +478,11 @@ fn terminal(member: &Member, entry: &Activity, now: Timestamp) -> Option<Activit
 }
 
 impl CheckedMut<'_, Team> {
+    /// See [`Team::fail_activities_before_a_run`].
+    pub fn fail_activities_before_a_run(&mut self, task: &TaskId, at: Timestamp) {
+        self.value.fail_activities_before_a_run(task, at);
+    }
+
     /// See [`Team::record_activities`].
     pub fn record_activities(&mut self, at: Timestamp) {
         self.value.record_activities(at);
