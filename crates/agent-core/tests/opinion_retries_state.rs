@@ -81,3 +81,45 @@ fn round_details_keep_assignment_times_for_status_and_omit_them_for_legacy_findi
     let detail = agent_core::protocol::RoundDetail::new(team, round, Vec::new());
     assert_eq!(detail.opinion_attempts.get(&NonZeroU32::MIN), Some(&expected));
 }
+
+#[test]
+fn legacy_assignment_rejects_replacing_a_retained_attempt_without_corrupting_state() {
+    use agent_core::state::{OpinionFailure, OpinionRequest, OpinionStateError};
+    let mut state = State::from_json(include_str!("fixtures/state-before-opinion-retries.json")).unwrap();
+    let team_id = state.teams()[0].id().clone();
+    let number = NonZeroU32::MIN;
+    let first: agent_core::ids::TaskId = "task-20261111-193007-k3x9".parse().unwrap();
+    let mut team = state.team_mut(&team_id).unwrap();
+    let mut item = team.item_mut("1.2".parse().unwrap()).unwrap();
+    let ledger = item.findings_mut().unwrap();
+    ledger
+        .request_opinion(
+            number,
+            OpinionRequest {
+                pass: number,
+                head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap(),
+                reason: "café boundary".to_owned().try_into().unwrap(),
+            },
+        )
+        .unwrap();
+    ledger
+        .assign_opinion_at(
+            number,
+            "inv-first".parse().unwrap(),
+            first.clone(),
+            "2026-11-11T19:50:00Z".parse().unwrap(),
+        )
+        .unwrap();
+    ledger.fail_opinion(number, &first, OpinionFailure::Failed).unwrap();
+    let before = ledger.clone();
+    assert_eq!(
+        ledger.assign_opinion(
+            number,
+            "inv-next".parse().unwrap(),
+            "task-20261111-193008-k3x9".parse().unwrap()
+        ),
+        Err(OpinionStateError { number })
+    );
+    assert_eq!(*ledger, before);
+    assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
+}
