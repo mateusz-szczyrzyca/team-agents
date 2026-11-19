@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use crate::cli::ActivityEvent;
 use crate::decide::checks::{Change, FileChange, Lines};
+use crate::decide::opinion::MAX_OPINION_ATTEMPTS;
 use crate::decide::round::AskReason;
 use crate::history::{
     CheckOutcome, EventRecord, HistoryEvent, HowChosen, Launch, LostCause, LostKind, Record, RecordKind, RoundOpening,
@@ -861,7 +862,7 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
             why,
             attempt,
         } => {
-            let action = if attempt.get() < 3 {
+            let action = if attempt.get() < u32::from(MAX_OPINION_ATTEMPTS) {
                 "second opinion replaced"
             } else {
                 "second opinion exhausted"

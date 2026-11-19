@@ -1,5 +1,6 @@
 //! Durable attempts and ownership when an independent investigator cannot answer.
 use super::{Findings, OpinionStage, OpinionStateError};
+use crate::decide::opinion::MAX_OPINION_ATTEMPTS;
 use crate::ids::{InvestigatorName, TaskId};
 use crate::state::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -41,7 +42,7 @@ impl Findings {
         for (number, attempts) in &self.opinion_attempts {
             let invalid = || OpinionStateError { number: *number };
             let opinion = self.opinions.get(number).ok_or_else(invalid)?;
-            if attempts.is_empty() || attempts.len() > 3 {
+            if attempts.is_empty() || attempts.len() > usize::from(MAX_OPINION_ATTEMPTS) {
                 return Err(invalid());
             }
             let mut investigators = std::collections::HashSet::new();
@@ -56,11 +57,11 @@ impl Findings {
                 return Err(invalid());
             }
             let consistent = match &opinion.stage {
-                OpinionStage::Waiting => last.failure.is_some() && attempts.len() < 3,
+                OpinionStage::Waiting => last.failure.is_some() && attempts.len() < usize::from(MAX_OPINION_ATTEMPTS),
                 OpinionStage::Assigned { investigator, task } => {
                     last.investigator == *investigator
                         && last.task == *task
-                        && (last.failure.is_none() || attempts.len() == 3)
+                        && (last.failure.is_none() || attempts.len() == usize::from(MAX_OPINION_ATTEMPTS))
                 }
                 OpinionStage::Reported { investigator, task, .. } => {
                     last.investigator == *investigator && last.task == *task && last.failure.is_none()
@@ -90,7 +91,7 @@ impl Findings {
         task: TaskId,
         at: Timestamp,
     ) -> Result<(), OpinionStateError> {
-        if self.opinion_attempts(number).len() >= 3
+        if self.opinion_attempts(number).len() >= usize::from(MAX_OPINION_ATTEMPTS)
             || self
                 .opinion_attempts(number)
                 .iter()

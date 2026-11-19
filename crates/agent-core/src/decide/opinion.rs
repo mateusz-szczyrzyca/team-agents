@@ -4,6 +4,9 @@ use crate::state::{Findings, OpinionStage};
 use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 
+/// Maximum assignments for one opinion request: the first investigator and two replacements.
+pub const MAX_OPINION_ATTEMPTS: u8 = 3;
+
 /// Whether the lead handed over a commit different from the reviewed head.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tip {
@@ -85,7 +88,7 @@ pub fn unanswered(failure: crate::state::OpinionFailure, attempts: usize) -> Una
         | OpinionFailure::MissingReport
         | OpinionFailure::Silent
         | OpinionFailure::Interrupted => {
-            if attempts < 3 {
+            if attempts < usize::from(MAX_OPINION_ATTEMPTS) {
                 Unanswered::Replace
             } else {
                 Unanswered::Hold
