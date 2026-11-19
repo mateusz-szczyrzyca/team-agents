@@ -1235,8 +1235,9 @@ After the third unsuccessful assignment, one human notice lists the round, findi
 their tasks and how each assignment ended. Inspect those tasks and arrange an independent opinion before
 continuing the round; no fourth investigator is asked automatically.
 
-On daemon restart, an unanswered assignment resumes its existing task when its worktree survives, or waits
-for another investigator when that task or worktree is gone. Accepted opinions and FIXED answers survive;
+On daemon restart, an unanswered assignment resumes its existing task when that task can resume and its
+worktree survives, or waits for another investigator when the task ended or its task/worktree is gone.
+Accepted opinions and FIXED answers survive;
 recovery and replacements do not consume another fix pass. `agent status <round>` names each waiting finding,
 its investigator and assignment time, or says it waits for a free independent investigator. `agent log <round>`
 tells the requests, unsuccessful assignments and decisions, including the first evidence line and the full evidence.
