@@ -254,9 +254,9 @@ fn team_part(
             seen.push(reviewer.as_str());
             let names: Vec<&str> = among.iter().map(InvestigatorName::as_str).collect();
             let how = if names.is_empty() {
-                "drawn at random".to_owned()
+                "selected".to_owned()
             } else {
-                format!("drawn at random among {}", names.join(", "))
+                format!("selected among {}", names.join(", "))
             };
             page.line(0, &format!("{next}. {} — reviewer — {how}", reviewer.as_str()));
             next = next.saturating_add(1);

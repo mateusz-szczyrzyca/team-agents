@@ -1220,7 +1220,8 @@ no running or queued work; a sleeping coordinator or member can review elsewhere
 requests reserve their investigator while awaiting scheduling. A team's own coordinator and members are always
 excluded, as are a finding's reporter and previous opinion participants where independence requires it. Existing
 ended reviewer tasks within the same team are not reopened. If too few eligible investigators remain, the round
-waits for a free independent investigator; these permanent exclusions are never relaxed.
+waits for a free independent investigator; these permanent exclusions are never relaxed. The text of
+`agent log --round <round-id>` describes reviewers as selected among the available candidates, for both old and new histories.
 
 Fewer than twice the review count outside the team produces a startup warning and does not prevent starting. A pull request keeps its review count
 even if the configuration changes. Active pull requests migrated from an older daemon retain their original review protocol.
