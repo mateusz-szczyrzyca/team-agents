@@ -36,11 +36,45 @@ const BYTE_ORDER_MARK: char = '\u{feff}';
 /// The text that starts the optional first line naming the coordinator.
 const COORDINATOR_PREFIX: &str = "Coordinator:";
 
+/// The text that starts a line naming a path or glob that the task's rounds may change.
+const ALLOW_PREFIX: &str = "Allow:";
+
 /// The text that starts the line listing the features a feature waits for.
 const DEPENDS_ON_PREFIX: &str = "Depends on:";
 
 /// What `Depends on:` says for a feature that waits for none; any case.
 const NO_DEPENDENCIES: &str = "none";
+
+/// `text`, a task list that an earlier version stored, with its first header line `Allow:` made part of the brief, as it
+/// was then: the line gets a leading space. Versions that did not read the line kept it in the brief, so it neither
+/// has to be a valid pattern nor grants anything.
+pub(crate) fn keep_allow_line_in_brief(text: &str) -> String {
+    let rest = text.strip_prefix(BYTE_ORDER_MARK);
+    let mut kept = String::with_capacity(text.len().saturating_add(1));
+    if rest.is_some() {
+        kept.push(BYTE_ORDER_MARK);
+    }
+    let rest = rest.unwrap_or(text);
+    let mut in_header = true;
+    let mut seen_text = false;
+    for line in rest.split_inclusive('\n') {
+        let content = line.trim_end_matches(['\r', '\n']);
+        if in_header {
+            if content.trim().is_empty() {
+                // Blank lines do not end the header.
+            } else if !seen_text && content.starts_with(COORDINATOR_PREFIX) {
+                seen_text = true;
+            } else {
+                in_header = false;
+                if content.starts_with(ALLOW_PREFIX) {
+                    kept.push(' ');
+                }
+            }
+        }
+        kept.push_str(line);
+    }
+    kept
+}
 
 /// Whether an item is marked as done in the text: `[ ]` or `[x]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -660,7 +694,7 @@ impl<'a> Parser<'a> {
         }
         if self.features.is_empty()
             && self.brief.iter().all(|line| line.trim().is_empty())
-            && let Some(pattern) = text.strip_prefix("Allow:")
+            && let Some(pattern) = text.strip_prefix(ALLOW_PREFIX)
         {
             let pattern = pattern.trim();
             self.allowances

@@ -38,6 +38,7 @@ struct StateV1 {
 pub(super) fn from_v1(text: &str) -> Result<State, StateError> {
     let mut value: Value = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
     adapt_members(&mut value).map_err(|source| StateError::Malformed { source })?;
+    keep_allow_lines_in_briefs(&mut value);
     let old: StateV1 = serde_json::from_value(value).map_err(|source| StateError::Malformed { source })?;
     let mut used: HashSet<RoundId> = HashSet::new();
     let mut teams = Vec::with_capacity(old.teams.len());
@@ -49,6 +50,21 @@ pub(super) fn from_v1(text: &str) -> Result<State, StateError> {
         teams,
         wake_deliveries: std::collections::BTreeMap::new(),
     })?)
+}
+
+/// Keeps a line `Allow:` that a task list of an earlier version starts with in its brief: those versions did not read
+/// it as a permission, so it must neither refuse the state nor grant anything now.
+fn keep_allow_lines_in_briefs(value: &mut Value) {
+    let Some(teams) = value.get_mut("teams").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for team in teams {
+        if let Some(list) = team.get_mut("task_list")
+            && let Some(text) = list.as_str()
+        {
+            *list = Value::from(crate::task_list::keep_allow_line_in_brief(text));
+        }
+    }
 }
 
 /// Makes the members of the state `value` fit version 2 where the text of version 1 does not: every question gets the
@@ -126,6 +142,7 @@ impl From<LegacyError> for StateError {
 /// Reads versions 2 through 9 with their defaulted fields; task allowances remain in the original task list.
 pub(super) fn from_v2(text: &str) -> Result<State, StateError> {
     let mut value: Value = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
+    keep_allow_lines_in_briefs(&mut value);
     if let Some(version) = value.get_mut("schema_version") {
         *version = Value::from(super::SCHEMA_VERSION);
     }
