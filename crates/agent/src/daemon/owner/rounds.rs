@@ -767,3 +767,7 @@ pub(crate) struct ReviewedHeadError {
     #[source]
     source: PublishError,
 }
+
+#[cfg(test)]
+#[path = "rounds/tests/opinions.rs"]
+mod opinion_tests;
