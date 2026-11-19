@@ -712,6 +712,23 @@ impl Owner {
         Ok(())
     }
 
+    /// Renders only the harness header, so authored file disclosures remain distinguishable.
+    pub(super) fn harness_text_of(
+        &self,
+        pulls: &Pulls,
+        team_id: &TeamId,
+        repo: &RepoName,
+        ids: &[ItemId],
+        record: &GateRecord,
+    ) -> Result<crate::daemon::pr::PullText, PublishError> {
+        let team = self
+            .parts
+            .state
+            .team(team_id)
+            .ok_or_else(|| PublishError::RepoGone { repo: repo.clone() })?;
+        Ok(pull_text(&pulls.texts, team, repo, ids, record)?)
+    }
+
     /// The title and the description of the pull request of `ids`.
     pub(super) async fn pull_text_of(
         &self,
@@ -742,7 +759,7 @@ impl Owner {
         let previous = self.parts.store.previous_gate_record(lead.task()).await?;
         let measured =
             crate::daemon::pr::description::measured_sections(&pulls.texts, size, record, previous.as_ref())?;
-        let mut text = pull_text(&pulls.texts, team, repo, ids, record)?;
+        let mut text = self.harness_text_of(pulls, team_id, repo, ids, record)?;
         text.body = [text.body.trim_end(), contribution.trim(), &measured].join("\n\n");
         Ok(text)
     }

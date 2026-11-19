@@ -74,6 +74,20 @@ enum Asking {
 }
 
 impl Owner {
+    /// Keeps authored remote disclosures and the current lead contribution visible to the checks.
+    async fn written_description(&self, site: Site<'_>, reviewing: &Reviewing<'_>) -> Result<String, PublishError> {
+        let Site { pulls, team, lead } = site;
+        let header = self.harness_text_of(pulls, team, &lead.repo, reviewing.items, &reviewing.ready.record)?;
+        let fresh = self
+            .pull_text_of(pulls, team, &lead.repo, reviewing.items, &reviewing.ready.record)
+            .await?;
+        Ok([
+            authored(reviewing.description, &header.body),
+            authored(&fresh.body, &header.body),
+        ]
+        .join("\n\n"))
+    }
+
     /// Checks the round of `reviewing`; `None` when the review may start, and what to do when it may not.
     ///
     /// # Errors
@@ -121,11 +135,7 @@ impl Owner {
                 }
             }
         }
-        // The description the harness would write for these items names files in passing: what counts is what somebody added.
-        let harness = self
-            .pull_text_of(pulls, team, &lead.repo, reviewing.items, &reviewing.ready.record)
-            .await?;
-        let written = authored(reviewing.description, &harness.body);
+        let written = self.written_description(site, reviewing).await?;
         let issues = self.round_issues(lead, reviewing, &written, &rules, &record).await?;
         let policy = ChecksPolicy::new(self.parts.settings.config.review());
         let checking = Checking::after(record.passes_of(reviewing.items));

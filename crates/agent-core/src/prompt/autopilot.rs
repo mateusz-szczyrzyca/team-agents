@@ -363,7 +363,9 @@ impl AutopilotPrompt {
     /// The context required to render this text.
     const fn variables(self) -> &'static [&'static str] {
         match self {
-            Self::ReviewFixNoCommitUndone
+            Self::PrGateRetry
+            | Self::PrNoLead
+            | Self::ReviewFixNoCommitUndone
             | Self::WaitNothing
             | Self::WaitCorrection
             | Self::WaitHuman
@@ -397,7 +399,6 @@ impl AutopilotPrompt {
             Self::PrGate | Self::ReviewGate => &["head", "finished", "result", "log"],
             Self::PrLeadInstructions => &["description_file"],
             Self::ReviewGateMissing => &["head"],
-            Self::PrGateRetry | Self::PrNoLead => &[],
             Self::GateNotPassed => &["branch", "reason", "sent", "limit"],
             Self::BranchNotJoined => BRANCH_VARIABLES,
             Self::TeamAsleep => &["team", "items", "minutes", "tasks", "woken", "limit"],
