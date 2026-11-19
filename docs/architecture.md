@@ -371,7 +371,7 @@ When the lead has reported `STATUS: DONE` and waits, but an item in progress or 
 
 The first pass of a newly opened PR is independent: reviewer runs have no Agentbus MCP server, including replacement
 and report-correction runs. The harness keeps reports locally until all verdicts arrive, then posts them in request
-order and updates the findings table. The request forbids reading peer reviews or contacting other reviewers. Later
+order and updates the findings comment. The request forbids reading peer reviews or contacting other reviewers. Later
 passes retain the bus and post each report when received. Schema-three ledgers have no frozen `review_count` and retain
 two reviews, immediate publication and bus access until their PR ends; new PRs store the configured count.
 

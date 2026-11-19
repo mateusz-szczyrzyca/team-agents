@@ -1209,8 +1209,12 @@ never blocks) — a rule ID and a `CHECK:` line that tells how to see whether it
 finding has no or another severity or no check, or whose verdict contradicts its findings (`APPROVE` with a `[BLOCKER]` or
 `[MAJOR]`, `REQUEST_CHANGES` with neither), goes back to its reviewer. The findings of a pull request keep their numbers over
 all review passes; a reviewer of a later pass answers for every open one (`FINDING 3: RESOLVED` or `FINDING 3: OPEN — why`).
-The harness keeps one comment on the pull request with the table of all findings, edited after every pass, and the fix-pass
-text names the findings that block by number. `agent status <round>` counts the open ones of each severity. Pull requests
+The harness keeps one comment on the pull request with all findings, edited after every pass, and the fix-pass
+text names the findings that block by number. The comment is a list, not a table: a header line counts the open findings
+of each severity (`open — 0 BLOCKER, 1 MAJOR, 0 MINOR; closed — 2`), then each open finding has an entry: a first line with
+its number, severity, rule, state (`open`, `resolved`, `not confirmed`), reporter and place, and below it the text cut to
+160 characters at a word boundary (`…` when cut). An explanation or a second opinion is a third line of its entry.
+Closed findings (resolved, not confirmed, or explained and accepted) are folded in one `<details>` block, `Closed (N)`. `agent status <round>` counts the open ones of each severity. Pull requests
 opened before the relevant protocol update keep their original review rules until they end.
 
 For new pull requests, the lead's fix message answers every open blocking finding before `STATUS:`:
