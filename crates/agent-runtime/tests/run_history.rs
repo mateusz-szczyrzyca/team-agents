@@ -288,6 +288,7 @@ mod run_history {
             names,
             [
                 "AGENTS_HOME",
+                "CARGO_INCREMENTAL",
                 "FAKE_SECRET",
                 "GIT_AUTHOR_EMAIL",
                 "GIT_AUTHOR_NAME",
