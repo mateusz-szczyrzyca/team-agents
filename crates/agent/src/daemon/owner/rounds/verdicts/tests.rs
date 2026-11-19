@@ -104,7 +104,6 @@ fn evidence_state() -> State {
         )
         .unwrap();
     reviewer.transition(TaskStatus::Waiting).unwrap();
-    drop(team);
     state
 }
 
