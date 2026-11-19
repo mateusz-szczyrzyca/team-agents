@@ -41,3 +41,31 @@ fn opinions_are_told_in_words_with_the_first_line_of_the_evidence() {
     }
     assert_eq!(page.text, include_str!("opinions.golden"));
 }
+
+#[test]
+fn failed_opinion_history_distinguishes_replacement_from_exhaustion() {
+    for (attempt, action) in [(1, "replaced"), (3, "exhausted")] {
+        let event = serde_json::from_value::<HistoryEvent>(serde_json::json!({
+            "event": "second_opinion_ended", "pr": 1, "number": 2, "pass": 1,
+            "by": "inv-first", "why": "the run failed", "attempt": attempt
+        }));
+        assert_eq!(
+            event
+                .as_ref()
+                .map(|event| event.kind().to_string())
+                .map_err(ToString::to_string),
+            Ok("second_opinion_ended".to_owned())
+        );
+        let event = event.unwrap();
+        let mut page = Page::default();
+        pull_request_event(&mut page, "2026-11-11T19:50:00Z".parse().unwrap(), &event);
+        assert_eq!(
+            page.text,
+            format!(
+                "2026-11-11T19:50:00Z  second opinion {action}: pull request #1 finding 2, pass 1, by inv-first; the run failed (second_opinion_ended)\n  ----- evidence (14 bytes) -----\nthe run failed\n  ----- end of evidence -----\n"
+            )
+        );
+        assert_eq!(event.identities(), ["inv-first"]);
+        assert_eq!(event.key(), Some("pr 1 finding 2 pass 1 by inv-first".to_owned()));
+    }
+}
