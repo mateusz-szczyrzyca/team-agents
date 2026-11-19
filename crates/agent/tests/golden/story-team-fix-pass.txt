@@ -101,9 +101,9 @@ STATUS: DONE
     prompt: <n> lines, <n> bytes
       # YOU HAVE BEEN WOKEN UP (team <team-2>)
       
-      A message to you or to your team has arrived. Everything of this session still holds, the rules of your first message
-      included.
+      Call `read_messages` now: a message that stays unread brings this wake-up back.
       
+      A message to you or to your team has arrived. Everything of this session still holds, the rules of your first message
       … <n> more lines
     command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-9>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-9>/claude-settings.json --resume <uuid> --scenario sleep,lead-gated,fix-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-4>, at commit <commit-1>
@@ -124,9 +124,9 @@ STATUS: DONE
     prompt: <n> lines, <n> bytes
       # YOU HAVE BEEN WOKEN UP (team <team-2>)
       
-      A message to you or to your team has arrived. Everything of this session still holds, the rules of your first message
-      included.
+      Call `read_messages` now: a message that stays unread brings this wake-up back.
       
+      A message to you or to your team has arrived. Everything of this session still holds, the rules of your first message
       … <n> more lines
     command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-10>/mcp.json --max-turns 300 --settings <home>/tasks/<task-6>/runs/<run-10>/claude-settings.json --resume <uuid> --scenario script:wait-for-worker,sleep --as claude-1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-6>, at commit <commit-2>
