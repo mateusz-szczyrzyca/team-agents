@@ -2,8 +2,10 @@
 
 mod disputes;
 mod opinions;
+mod shared;
 pub use disputes::{Disputes, Explanation, ExplanationStatus, RaisedFinding};
 pub use opinions::{OpinionAttempt, OpinionFailure, OpinionRequest, OpinionStage, OpinionStateError, SecondOpinion};
+pub use shared::{Reconciled, reconcile};
 
 use super::Review;
 use crate::ids::{InvestigatorName, TaskId};

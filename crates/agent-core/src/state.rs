@@ -26,8 +26,8 @@ pub use checked::CheckedMut;
 pub use checks::{Asked, ChecksRecord, ItemChecks, Sent};
 pub use findings::{
     Disputes, Explanation, ExplanationStatus, FindingNumbersExhausted, FindingStatus, Findings, InvalidFindingNumbers,
-    OpinionAttempt, OpinionFailure, OpinionRequest, OpinionStage, OpinionStateError, RaisedFinding, RecordedFinding,
-    SecondOpinion, Verification,
+    OpinionAttempt, OpinionFailure, OpinionRequest, OpinionStage, OpinionStateError, RaisedFinding, Reconciled,
+    RecordedFinding, SecondOpinion, Verification, reconcile,
 };
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
 pub use item::{
