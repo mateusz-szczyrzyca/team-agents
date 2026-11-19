@@ -199,6 +199,43 @@ impl Owner {
         let next = self.decide(team_id, asked, verdict);
         let mut look = Look::default();
         self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
+        let decisions = asked
+            .items
+            .first()
+            .and_then(|id| self.parts.state.team(team_id)?.item(*id)?.findings())
+            .filter(|ledger| ledger.disputes().is_some())
+            .map(|ledger| ledger.parse_report(message, verdict))
+            .transpose()?
+            .map_or_else(Vec::new, |report| report.answers);
+        let by: AgentName = asked.reviewer.as_str().parse()?;
+        for (number, answer) in decisions {
+            use agent_core::review_findings::Answer;
+            let event = match answer {
+                Answer::Accepted { why } => HistoryEvent::FindingAccepted {
+                    pr: asked.pr.number,
+                    number,
+                    pass: passes,
+                    by: by.clone(),
+                    why,
+                },
+                Answer::Rejected { why } => HistoryEvent::FindingRejected {
+                    pr: asked.pr.number,
+                    number,
+                    pass: passes,
+                    by: by.clone(),
+                    why,
+                },
+                Answer::Raised { severity, why } => HistoryEvent::FindingRaised {
+                    pr: asked.pr.number,
+                    number,
+                    pass: passes,
+                    by: by.clone(),
+                    why: format!("[{}] {why}", severity.word()),
+                },
+                Answer::Resolved | Answer::Open { .. } => continue,
+            };
+            self.record_event_at(now, team_id, self.rounds_of_items(team_id, &asked.items), event);
+        }
         let completed = self.record_findings(team_id, task, asked, verdict, message)?;
         // Only a pull request that is verified by rotation keeps the reviewed head, so the protocols that started
         // earlier never run the Git lookup.

@@ -61,7 +61,12 @@ pub(super) fn print(
                 (Record::Run(_), LogView::Runs | LogView::Prompts) | (Record::Changes(_), LogView::Changes) => true,
                 (Record::Event(e), LogView::Reviews) => matches!(
                     e.event,
-                    HistoryEvent::ReviewAsked { .. } | HistoryEvent::ReviewSubmitted { .. }
+                    HistoryEvent::ReviewAsked { .. }
+                        | HistoryEvent::ReviewSubmitted { .. }
+                        | HistoryEvent::FindingExplained { .. }
+                        | HistoryEvent::FindingAccepted { .. }
+                        | HistoryEvent::FindingRejected { .. }
+                        | HistoryEvent::FindingRaised { .. }
                 ),
                 _ => false,
             })

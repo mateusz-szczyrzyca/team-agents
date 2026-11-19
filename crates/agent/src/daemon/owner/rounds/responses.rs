@@ -77,7 +77,27 @@ impl Owner {
                 .to_owned();
             let response = ledger.answer_lead(&message, pass);
             let correction = match response {
-                Ok(_) => None,
+                Ok(responses) => {
+                    if let ItemPhase::Fixing { pr, .. } = item.phase() {
+                        for (number, response) in responses {
+                            match response {
+                                agent_core::review_response::Response::Fixed => {}
+                                agent_core::review_response::Response::Explained(why) => self.record_event(
+                                    team_id,
+                                    self.rounds_of_items(team_id, &[id]),
+                                    agent_core::history::HistoryEvent::FindingExplained {
+                                        pr: pr.number,
+                                        number,
+                                        pass,
+                                        by: lead.agent.clone(),
+                                        why,
+                                    },
+                                ),
+                            }
+                        }
+                    }
+                    None
+                }
                 Err(problem) => {
                     let values = Variables::new()
                         .with("line", problem.line.to_string())
