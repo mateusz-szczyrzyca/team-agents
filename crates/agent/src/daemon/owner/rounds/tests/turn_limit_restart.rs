@@ -382,3 +382,65 @@ async fn verification_refreshes_accepted_explanations_from_the_actual_git_change
         crate::daemon::history::close(step.writer).await;
     }
 }
+
+#[tokio::test]
+async fn fix_responses_do_not_read_head_until_a_new_done_response_is_selected() {
+    use crate::daemon::owner::rounds::Pulls;
+    use crate::daemon::owner::teams::Look;
+    use agent_core::state::State;
+    use agent_runtime::autopilot_prompts::AutopilotPrompts;
+    use agent_runtime::checks_prompts::ChecksPrompts;
+    let mut rig = Rig::new(&[
+        normal("claude-1", "work,sleep"),
+        investigator("inv-r1", "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 work-1.txt:1 — units → document units\\n   CHECK: read work-1.txt"),
+        investigator("inv-r2", "done:VERDICT: APPROVE"),
+    ], 5, false).await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["claude-1"], super::rig::ONE, MergeMode::Autopilot, None)
+        .await;
+    rig.prompt(&tasks[0], 2).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.stop().await.unwrap();
+    let worktree = rig.worktree(&tasks[0]);
+    std::fs::rename(worktree.join(".git"), worktree.join(".git-held")).unwrap();
+    let original: serde_json::Value = serde_json::from_str(&rig.state().to_json().unwrap()).unwrap();
+    for mode in ["unfinished", "answered", "checked"] {
+        let mut saved = original.clone();
+        let found = &mut saved["teams"][0];
+        if mode != "unfinished" {
+            let run = found["crew"]["member"]["runs"]
+                .as_array_mut()
+                .unwrap()
+                .last_mut()
+                .unwrap();
+            run["state"]["end"] = serde_json::json!({"kind":"reported", "outcome":"DONE"});
+            let run_id = run["id"].clone();
+            let disputes = &mut found["items"][0]["findings"]["disputes"];
+            if mode == "answered" {
+                disputes["answered_pass"] = 1.into();
+            } else {
+                disputes["checked_run"] = run_id;
+            }
+        }
+        let mut step = stepped(&rig).await;
+        step.owner.parts.state = State::from_json(&saved.to_string()).unwrap();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+        let language = step.owner.parts.settings.config.language();
+        let pulls = Pulls::new(
+            Arc::new(AutopilotPrompts::load(&root, language).await.unwrap()),
+            Arc::new(ChecksPrompts::load(&root, language).await.unwrap()),
+            &step.owner.parts.settings,
+        )
+        .unwrap()
+        .unwrap();
+        let before = step.owner.parts.state.clone();
+        let mut look = Look::default();
+        let result = step.owner.read_fix_responses(&pulls, &team, &mut look).await;
+        assert!(matches!(result, Ok(())), "{mode}: {result:?}");
+        assert_eq!(step.owner.parts.state, before);
+        assert!(!look.changed);
+        drop(step.owner);
+        crate::daemon::history::close(step.writer).await;
+    }
+}
