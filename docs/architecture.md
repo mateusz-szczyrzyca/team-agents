@@ -91,6 +91,8 @@ They take and give text too (`State::from_json`, `Request::from_line`, `Question
 socket and the files are the runtime's. `serde_json` is a dependency of `agent-core` for that; it does no I/O.
 `strum` (derives only) gives the keyword enums their text, as `McpServerKind` does.
 
+Below internally tagged enums (`Outcome`, `Reply`, `EventKind`), `serde` buffers enum variant contents into an intermediate tree where JSON object keys are preserved as strings. When a map or set is keyed by finding numbers (`NonZeroU32`), standard integer deserializers reject string keys with `invalid type: string, expected a nonzero u32`. All maps and sets keyed by finding numbers (`RoundDetail.opinion_attempts`, `RoundDetail.opinions`, `FindingsWire.opinions`, `FindingsWire.opinion_attempts`, `FindingsWire.fixed`, `DisputesWire.accepted_heads`, `DisputesWire.explanations`, `FindingsWire.opinion_notices`, `DisputesWire.changed_findings`) use `#[serde(deserialize_with = "crate::protocol::finding_map::deserialize_map")]` (or `deserialize_set`). Any new map or set keyed by finding numbers in protocol replies, events or persisted state must use these deserializers so it reads back correctly both from direct JSON and below tagged enums.
+
 ### The prompt catalog and the CLI contract (`agent-core`)
 
 | Module | Types |
