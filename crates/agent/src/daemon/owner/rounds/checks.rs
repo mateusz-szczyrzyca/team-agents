@@ -347,12 +347,13 @@ impl Owner {
             .collect();
         edited.dedup();
         let unchanged = git.range_unchanged_lines(&merge_base, tip, &edited).await?;
-        Ok(assess_near(
-            rules,
-            &facts,
-            &unchanged,
-            &record.allowed_of(reviewing.items),
-        ))
+        let team = self.parts.state.find_task(&lead.task).ok_or(PublishError::Lost)?.team;
+        Ok(
+            assess_near(rules, &facts, &unchanged, &record.allowed_of(reviewing.items))
+                .into_iter()
+                .filter(|issue| issue.allowed_beforehand(team.allowances()).is_none())
+                .collect(),
+        )
     }
 
     /// Where the question `asked` of the lead `task` is.
