@@ -37,14 +37,6 @@ pub struct ResponseError {
     pub detail: AnswerDiagnostic,
 }
 
-impl ResponseError {
-    /// The original refused answer and precise mistake, when available.
-    #[must_use]
-    pub const fn diagnostic(&self) -> Option<&crate::review_findings::AnswerDiagnostic> {
-        Some(&self.detail)
-    }
-}
-
 /// Reads exactly one answer per blocking finding, refusing explanations already used or attached to blockers.
 ///
 /// # Errors

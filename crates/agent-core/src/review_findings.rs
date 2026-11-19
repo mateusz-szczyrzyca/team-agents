@@ -133,14 +133,6 @@ pub struct ReportError {
     pub detail: AnswerDiagnostic,
 }
 
-impl ReportError {
-    /// The original refused answer and precise mistake, when available.
-    #[must_use]
-    pub const fn diagnostic(&self) -> Option<&AnswerDiagnostic> {
-        Some(&self.detail)
-    }
-}
-
 /// The correction a report requires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ReportProblem {
