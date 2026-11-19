@@ -1359,3 +1359,194 @@ async fn task_allowances_cover_version_and_golden_changes_in_successive_rounds()
         assert!(!rig.home.questions_file(&task, NonZeroU32::MIN).exists());
     }
 }
+
+#[tokio::test]
+async fn the_team_is_clean_first_while_the_human_has_not_answered_the_round_waits_and_agent_status_says_so() {
+    let mut rig = checking_rig("script:edit-test-and-code,script:add-test,questions", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+
+    let state = rig.state();
+    let round = state.teams()[0].round_of("1.1".parse().unwrap()).unwrap().id().clone();
+    let mut connection = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap();
+    let mut shown = Vec::new();
+    crate::commands::status::status(
+        &mut connection,
+        Some(agent_core::protocol::Target::Round(round)),
+        &mut shown,
+    )
+    .await
+    .unwrap();
+    let status_text = String::from_utf8_lossy(&shown);
+    assert!(
+        status_text.contains("waits for an answer of the human"),
+        "{status_text}"
+    );
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn human_allows_while_the_team_works_and_review_starts_with_no_second_question_once_team_clean() {
+    let mut rig = checking_rig(
+        "script:edit-test-and-code,script:add-test-while-working",
+        2,
+        SILENT,
+        SILENT,
+    )
+    .await;
+    scripts(&rig);
+    let root = rig.home.root().display();
+    script(
+        &rig,
+        "add-test-while-working",
+        &format!(
+            "echo case > tests/new.txt\ngit add tests/new.txt\ncommit -m 'Add a test'\ntouch \"{root}/.fake-team-working\"\nwhile [ ! -f \"{root}/.fake-human-allowed\" ]; do sleep 0.05; done\n"
+        ),
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.prompt(&tasks[0], 2).await;
+    let file = questions_of(&rig, &tasks[0], 1);
+    assert_eq!(file.entries().len(), 1);
+
+    let working_flag = rig.home.root().join(".fake-team-working");
+    rig.wait_for("team working on fix pass", || working_flag.exists()).await;
+
+    let q_path = rig.home.questions_file(&tasks[0], NonZeroU32::MIN);
+    let mut file = QuestionsFile::parse(&tokio::fs::read_to_string(&q_path).await.unwrap()).unwrap();
+    file.set_verdict(NonZeroU32::MIN, Some(Verdict::from_text("allow").unwrap().unwrap()))
+        .unwrap();
+    file.mark_answered();
+    tokio::fs::write(&q_path, file.render()).await.unwrap();
+
+    let allow_flag = rig.home.root().join(".fake-human-allowed");
+    tokio::fs::write(&allow_flag, "ok").await.unwrap();
+
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(!rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists());
+    let kept = record(&rig, &tasks[0]).await;
+    assert_eq!(
+        kept.allowed_of(&["1.1".parse().unwrap()]),
+        [Subject::Path("tests/existing.txt".parse().unwrap())]
+    );
+}
+
+#[tokio::test]
+async fn when_a_second_item_changes_an_allowed_path_again_the_human_is_asked_again() {
+    let mut rig = checking_rig(
+        "script:edit-test,questions,done,script:edit-test,questions,done",
+        2,
+        APPROVE,
+        APPROVE,
+    )
+    .await;
+    scripts(&rig);
+    rig.start().await;
+
+    let list = super::rig::CHAIN;
+    let (_, tasks) = rig.run(&["claude-1"], list, MergeMode::Autopilot, None).await;
+
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let file1 = questions_of(&rig, &tasks[0], 1);
+    assert!(file1.entries()[0].title().contains("`tests/existing.txt`"));
+    answer(&rig, &tasks[0], 1, "allow").await;
+
+    rig.item_where("1.1", "first item merged", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let file2 = questions_of(&rig, &tasks[0], 2);
+    assert!(file2.entries()[0].title().contains("`tests/existing.txt`"));
+    answer(&rig, &tasks[0], 2, "allow").await;
+
+    rig.item_where("1.2", "second item merged", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn with_both_kinds_check_passes_are_not_used_up_by_the_human_question() {
+    let mut rig = checking_rig(
+        "script:edit-test-and-code,script:add-test,questions,done",
+        2,
+        SILENT,
+        SILENT,
+    )
+    .await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+
+    let prompt = rig.prompt(&tasks[0], 2).await;
+    assert!(prompt.contains("check 1"), "{prompt}");
+    assert!(prompt.contains("2 such returns are allowed"), "{prompt}");
+    assert_eq!(record(&rig, &tasks[0]).await.passes_of(&["1.1".parse().unwrap()]), 1);
+
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn restart_of_the_daemon_in_the_waiting_for_human_and_team_pass_states_round_trips() {
+    let mut rig = checking_rig(
+        "script:edit-test-and-code,script:add-test,questions,done",
+        2,
+        SILENT,
+        SILENT,
+    )
+    .await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    assert!(rig.home.questions_file(&tasks[0], NonZeroU32::MIN).exists());
+
+    rig.stop().await.unwrap();
+    rig.start().await;
+
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    let kept = record(&rig, &tasks[0]).await;
+    assert_eq!(
+        kept.allowed_of(&["1.1".parse().unwrap()]),
+        [Subject::Path("tests/existing.txt".parse().unwrap())]
+    );
+}
+
+#[tokio::test]
+async fn a_round_sent_back_with_an_open_human_only_finding_gets_the_question_at_the_first_check() {
+    let mut rig = checking_rig("script:edit-test,questions,done", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+
+    let file = questions_of(&rig, &tasks[0], 1);
+    assert_eq!(file.entries().len(), 1);
+    assert!(file.entries()[0].title().contains("`tests/existing.txt`"));
+
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+}
