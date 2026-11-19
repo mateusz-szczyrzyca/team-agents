@@ -1439,8 +1439,10 @@ impl Owner {
                     .find_round(round)
                     .ok_or_else(|| not_found(format!("there is no round {round}")))?;
                 let tasks = self.round_tasks(team, round)?;
+                let mut detail = RoundDetail::new(team, found, tasks);
+                detail.waiting = self.waiting_for(team, found).map(|wait| wait.text().to_owned());
                 Ok(Reply::Round {
-                    round: Box::new(RoundDetail::new(team, found, tasks)),
+                    round: Box::new(detail),
                 })
             }
         }

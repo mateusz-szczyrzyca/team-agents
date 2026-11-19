@@ -273,7 +273,40 @@ impl Owner {
                 team: team_id,
                 lead: &lead,
             };
-            match self.try_publish(site, &publication, now).await {
+            let items = items_of(&publication);
+            let rounds: Vec<_> = self
+                .parts
+                .state
+                .team(team_id)
+                .into_iter()
+                .flat_map(|team| team.rounds())
+                .filter(|round| round.item().is_some_and(|id| items.contains(&id.to_string())))
+                .map(|round| round.id().clone())
+                .collect();
+            for round in &rounds {
+                self.watch.waits.remove(round);
+            }
+            let attempt = self.try_publish(site, &publication, now).await;
+            use agent_core::decide::wait::Obligation;
+            let obligation = match &attempt {
+                Ok(Attempt::Nothing | Attempt::Published(_)) => None,
+                Ok(Attempt::Held(super::checks::Held::Waiting | super::checks::Held::Notify)) => {
+                    Some(Obligation::Human)
+                }
+                Ok(
+                    Attempt::Held(super::checks::Held::WakeLead)
+                    | Attempt::SentBack { .. }
+                    | Attempt::Uncommitted { .. }
+                    | Attempt::NotJoined { .. },
+                ) => Some(Obligation::LeadCorrection),
+                Err(_) => Some(Obligation::Review),
+            };
+            if let Some(obligation) = obligation {
+                for round in rounds {
+                    self.watch.waits.insert(round, obligation);
+                }
+            }
+            match attempt {
                 Ok(Attempt::Nothing) => {}
                 Ok(Attempt::Published(published)) => {
                     self.watch.retry_at.remove(&key);

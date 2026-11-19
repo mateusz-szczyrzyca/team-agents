@@ -39,7 +39,14 @@ impl Waiting {
     /// The short status text, shared with the harness's prompt catalog.
     #[must_use]
     pub const fn text(self) -> &'static str {
-        ""
+        match self {
+            Self::For(Obligation::Gate) => include_str!("../../../../prompts/harness/pr/wait-gate.md"),
+            Self::For(Obligation::Review) => include_str!("../../../../prompts/harness/pr/wait-review.md"),
+            Self::For(Obligation::SecondOpinion) => include_str!("../../../../prompts/harness/pr/wait-opinion.md"),
+            Self::For(Obligation::Human) => include_str!("../../../../prompts/harness/pr/wait-human.md"),
+            Self::For(Obligation::LeadCorrection) => include_str!("../../../../prompts/harness/pr/wait-correction.md"),
+            Self::Defect => include_str!("../../../../prompts/harness/pr/wait-nothing.md"),
+        }
     }
 }
 

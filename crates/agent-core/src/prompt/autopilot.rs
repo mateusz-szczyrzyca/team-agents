@@ -12,6 +12,18 @@ use super::{Audience, PromptSpec};
 /// Every text of the autopilot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AutopilotPrompt {
+    /// Describe an idle round in status output.
+    WaitNothing,
+    /// Describe an idle round in status output.
+    WaitCorrection,
+    /// Describe an idle round in status output.
+    WaitHuman,
+    /// Describe an idle round in status output.
+    WaitOpinion,
+    /// Describe an idle round in status output.
+    WaitReview,
+    /// Describe an idle round in status output.
+    WaitGate,
     /// Ask an independent investigator to check one finding at the handed-over commit.
     ReviewOpinionRequest,
     /// Return an unchanged fix pass that requires a commit.
@@ -142,6 +154,12 @@ impl AutopilotPrompt {
     /// Every text of the catalog.
     pub const ALL: &'static [Self] = &[
         Self::ReviewOpinionRequest,
+        Self::WaitGate,
+        Self::WaitReview,
+        Self::WaitOpinion,
+        Self::WaitHuman,
+        Self::WaitCorrection,
+        Self::WaitNothing,
         Self::ReviewFixNoCommit,
         Self::ReviewFixNoCommitReason,
         Self::NoticeHandoverHeld,
@@ -234,6 +252,12 @@ impl AutopilotPrompt {
     /// The path, audience and variables of this text.
     const fn definition(self) -> (&'static str, &'static [&'static str]) {
         match self {
+            Self::WaitNothing => ("harness/pr/wait-nothing.md", &[]),
+            Self::WaitCorrection => ("harness/pr/wait-correction.md", &[]),
+            Self::WaitHuman => ("harness/pr/wait-human.md", &[]),
+            Self::WaitOpinion => ("harness/pr/wait-opinion.md", &[]),
+            Self::WaitReview => ("harness/pr/wait-review.md", &[]),
+            Self::WaitGate => ("harness/pr/wait-gate.md", &[]),
             Self::ReviewFixNoCommit => ("harness/review/fix-no-commit.md", &["branch", "tip", "sent", "limit"]),
             Self::ReviewFixNoCommitReason => ("harness/review/fix-no-commit-reason.md", &["tip"]),
             Self::NoticeHandoverHeld => (

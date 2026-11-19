@@ -21,6 +21,7 @@ pub(crate) use opinions::OpinionDaemonError;
 pub(crate) use responses::ResponseTextError;
 mod reviewers;
 mod verdicts;
+mod waiting;
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -125,6 +126,8 @@ impl Pulls {
 /// been told.
 #[derive(Debug, Default)]
 pub(super) struct PullWatch {
+    /// The next publication action owned by the harness, per round.
+    waits: HashMap<agent_core::ids::RoundId, agent_core::decide::wait::Obligation>,
     /// The branches whose publication failed, and the time before which they are not tried again.
     retry_at: HashMap<(TeamId, BranchName), Timestamp>,
     /// What the human was told once and is not told again.
