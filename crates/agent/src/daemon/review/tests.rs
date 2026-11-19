@@ -429,6 +429,28 @@ gate = ["true"]
         assert!(!free.iter().any(|reviewer| reviewer.name == name("inv-d")));
     }
 
+    #[test]
+    fn sleeping_coordinator_is_free_elsewhere_but_never_for_own_team() {
+        let mut state = state();
+        state.insert_team(led_by("inv-b", 1)).unwrap();
+        go(&mut state, 11, &[TaskStatus::Running, TaskStatus::Waiting]);
+        assert!(names(&free_reviewers(&state, &config(), &team_id(0))).contains(&"inv-b"));
+        assert!(!names(&free_reviewers(&state, &config(), &team_id(1))).contains(&"inv-b"));
+    }
+
+    #[test]
+    fn questions_and_pauses_without_a_run_do_not_reserve_an_investigator() {
+        for statuses in [
+            vec![TaskStatus::Running, TaskStatus::Questions],
+            vec![TaskStatus::Paused],
+        ] {
+            let mut state = state();
+            state.insert_team(led_by("inv-b", 1)).unwrap();
+            go(&mut state, 11, &statuses);
+            assert!(names(&free_reviewers(&state, &config(), &team_id(0))).contains(&"inv-b"));
+        }
+    }
+
     fn pool(count: usize) -> Vec<Reviewer> {
         ["inv-a", "inv-b", "inv-c", "inv-d"]
             .iter()
