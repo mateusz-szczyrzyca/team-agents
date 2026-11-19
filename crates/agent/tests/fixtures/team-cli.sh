@@ -222,6 +222,20 @@ case $action in
       result 'VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [BLOCKER] COR src/lib.rs:7 — café defect → fix it\n   CHECK: read src/lib.rs:7\nSTATUS: DONE'
     fi
     ;;
+  opinion-fix-pushed)
+    commit_work
+    record_gate
+    git "${GIT_FIXTURE[@]}" push -q origin HEAD
+    result 'FINDING 1: FIXED\nFINDING 2: FIXED\nSTATUS: DONE'
+    ;;
+  opinion-release)
+    if [[ $prompt == *'# SECOND OPINION REQUEST'* ]]; then
+      while [[ ! -f $home/opinion-release ]]; do sleep 0.02; done
+      result 'OPINION: NOT CONFIRMED\nRead src/lib.rs:7; café path is unreachable.\nSTATUS: DONE'
+    else
+      result 'VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [BLOCKER] COR src/lib.rs:7 — café defect → fix it\n   CHECK: read src/lib.rs:7\nSTATUS: DONE'
+    fi
+    ;;
   opinion-probe:*)
     if [[ $prompt == *'# SECOND OPINION REQUEST'* || $prompt == *'# CORRECT YOUR SECOND OPINION'* ]]; then
       outcome=${action#opinion-probe:}

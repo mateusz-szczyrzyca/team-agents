@@ -343,3 +343,236 @@ async fn confirmed_continuation_lists_only_the_blocker_still_needing_a_fix() {
         [std::num::NonZeroU32::MIN, std::num::NonZeroU32::new(2).unwrap()].into()
     );
 }
+
+#[tokio::test]
+async fn opinion_history_records_the_request_outcome_and_run_reason() {
+    use agent_core::history::{HistoryEvent, Record, RunWhy};
+    use agent_runtime::history::Reader;
+    for confirmed in [false, true] {
+        let probe = if confirmed {
+            "opinion-probe:CONFIRMED"
+        } else {
+            "opinion-probe:NOT CONFIRMED"
+        };
+        let lead = if confirmed {
+            "work,opinion-ask,fix-work-pushed"
+        } else {
+            "work,opinion-ask"
+        };
+        let mut rig = Rig::new(
+            &[
+                normal("claude-1", lead),
+                investigator("inv-r1", probe),
+                investigator("inv-r2", probe),
+                investigator("inv-r3", probe),
+                investigator("inv-r4", probe),
+            ],
+            1,
+            false,
+        )
+        .await;
+        rig.start().await;
+        let (team, _) = rig
+            .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+            .await;
+        rig.item_where("1.1", "opinions recorded and settled", |p| {
+            matches!(p, ItemPhase::Done { .. })
+        })
+        .await;
+        rig.stop().await.unwrap();
+        let state = rig.state();
+        let item = &state.team(&team).unwrap().items()[0];
+        let reader = Reader::open(&rig.home.history_file()).unwrap();
+        let events: Vec<_> = reader
+            .team_records(&team)
+            .unwrap()
+            .into_iter()
+            .filter_map(|row| match row.record {
+                Record::Event(event)
+                    if matches!(
+                        event.event,
+                        HistoryEvent::SecondOpinionAsked { .. }
+                            | HistoryEvent::FindingConfirmed { .. }
+                            | HistoryEvent::FindingNotConfirmed { .. }
+                    ) =>
+                {
+                    Some(event)
+                }
+                _ => None,
+            })
+            .collect();
+        let runs = reader.runs_of_team(&team).unwrap();
+        assert_eq!(events.len(), 4);
+        for (number, opinion) in item.findings().unwrap().opinions() {
+            let OpinionStage::Reported {
+                investigator,
+                task,
+                report,
+                ..
+            } = &opinion.stage
+            else {
+                panic!("missing report")
+            };
+            let ask = HistoryEvent::SecondOpinionAsked {
+                pr: agent_core::state::PrNumber::new(std::num::NonZeroU32::MIN),
+                number: *number,
+                pass: 1,
+                by: "claude-1".parse().unwrap(),
+                why: opinion.request.reason.as_str().to_owned(),
+            };
+            let by = investigator.as_str().parse().unwrap();
+            let why = report.evidence.as_str().to_owned();
+            let outcome = if confirmed {
+                HistoryEvent::FindingConfirmed {
+                    pr: agent_core::state::PrNumber::new(std::num::NonZeroU32::MIN),
+                    number: *number,
+                    pass: 1,
+                    by,
+                    why,
+                }
+            } else {
+                HistoryEvent::FindingNotConfirmed {
+                    pr: agent_core::state::PrNumber::new(std::num::NonZeroU32::MIN),
+                    number: *number,
+                    pass: 1,
+                    by,
+                    why,
+                }
+            };
+            for expected in [ask, outcome] {
+                let recorded: Vec<_> = events.iter().filter(|e| e.event == expected).collect();
+                assert_eq!(recorded.len(), 1, "{expected:?}");
+                assert_eq!(
+                    recorded[0].rounds,
+                    [state.team(&team).unwrap().rounds()[0].id().clone()]
+                );
+            }
+            let recorded: Vec<_> = runs.iter().filter(|run| &run.start.value.task == task).collect();
+            assert_eq!(
+                recorded
+                    .iter()
+                    .filter(|run| matches!(run.start.value.why, RunWhy::SecondOpinion { .. }))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                recorded[0].start.value.why,
+                RunWhy::SecondOpinion {
+                    pr: agent_core::state::PrNumber::new(std::num::NonZeroU32::MIN),
+                    pass: 1
+                }
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_confirmed_blocker_refuses_a_second_request_in_the_same_fix_pass() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask,opinion-ask,opinion-fix-pushed"),
+            investigator("inv-r1", "opinion-probe:CONFIRMED"),
+            investigator("inv-r2", "opinion-probe:CONFIRMED"),
+            investigator("inv-r3", "opinion-probe:CONFIRMED"),
+            investigator("inv-r4", "opinion-probe:CONFIRMED"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+        .await;
+    rig.item_where("1.1", "second request corrected and code verified", |p| {
+        matches!(p, ItemPhase::Done { .. })
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let correction = rig.kept_prompt(&tasks[0], 4);
+    assert!(
+        correction.contains("FIXED (explanation and second opinion are forbidden)"),
+        "{correction}"
+    );
+    assert!(correction.contains("FINDING 1"), "{correction}");
+    assert_eq!(rig.kept_runs(&tasks[0]), 4);
+    let state = rig.state();
+    let item = &state.team(&team).unwrap().items()[0];
+    assert_eq!(item.fix_passes().len(), 1);
+    assert_eq!(item.findings().unwrap().opinions().len(), 2);
+}
+
+#[tokio::test]
+async fn an_opinion_waits_for_a_free_eligible_investigator_then_uses_it() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-release"),
+            investigator("inv-r2", "opinion-release"),
+            investigator("inv-r3", "opinion-release"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+        .await;
+    let waiting = rig
+        .state_where(
+            "one assigned and one waiting for the only eligible investigator",
+            |state| {
+                let Some(ledger) = state.team(&team).unwrap().items()[0].findings() else {
+                    return false;
+                };
+                ledger.opinions().len() == 2
+                    && ledger
+                        .opinions()
+                        .values()
+                        .filter(|o| matches!(o.stage, OpinionStage::Assigned { .. }))
+                        .count()
+                        == 1
+                    && ledger
+                        .opinions()
+                        .values()
+                        .filter(|o| matches!(o.stage, OpinionStage::Waiting))
+                        .count()
+                        == 1
+            },
+        )
+        .await;
+    assert!(matches!(
+        waiting.team(&team).unwrap().items()[0].phase(),
+        ItemPhase::Fixing { .. }
+    ));
+    assert_eq!(rig.github.reviews(1).len(), 2);
+    std::fs::write(rig.home.root().join("opinion-release"), "ready").unwrap();
+    rig.item_where("1.1", "both opinions settled after capacity released", |p| {
+        matches!(p, ItemPhase::Done { .. })
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let item = &state.team(&team).unwrap().items()[0];
+    let investigators: std::collections::BTreeSet<_> = item
+        .findings()
+        .unwrap()
+        .opinions()
+        .values()
+        .map(|opinion| {
+            let OpinionStage::Reported { investigator, .. } = &opinion.stage else {
+                panic!("missing report")
+            };
+            investigator.clone()
+        })
+        .collect();
+    assert_eq!(investigators.len(), 1);
+    assert!(
+        !item.fix_passes()[0]
+            .requested_by
+            .iter()
+            .any(|review| investigators.contains(&review.reviewer))
+    );
+    assert_eq!(rig.github.reviews(1).len(), 2);
+}
