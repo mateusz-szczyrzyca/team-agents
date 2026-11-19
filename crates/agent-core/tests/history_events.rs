@@ -326,6 +326,10 @@ mod history_events {
             ("pull_ready", vec![]),
             ("review_asked", vec![]),
             ("review_submitted", vec!["report"]),
+            ("finding_explained", vec!["why"]),
+            ("finding_accepted", vec!["why"]),
+            ("finding_rejected", vec!["why"]),
+            ("finding_raised", vec!["why"]),
             ("fix_pass_started", vec!["findings"]),
             ("pull_approved", vec![]),
             ("pull_merged", vec![]),
@@ -359,7 +363,7 @@ mod history_events {
             assert_eq!(json.matches("\"changed\"").count(), count, "{json}");
             total += count;
         }
-        assert_eq!(total, 11);
+        assert_eq!(total, 15);
     }
 
     #[test]
