@@ -147,3 +147,34 @@ fn rules_are_independent_of_input_order_or_activity_kind() {
         assert_eq!(select(&reversed, &free, &excluded, count), expected);
     }
 }
+
+#[test]
+fn the_pair_of_the_latest_request_comes_back_only_after_the_others_and_in_order() {
+    use ActivityKind::Reviewer;
+    // `a` and `b` were asked together last; `c` worked for the team earliest but latest anywhere.
+    let records = vec![
+        ("a", 1, Reviewer, 30),
+        ("b", 1, Reviewer, 30),
+        ("c", 1, Reviewer, 10),
+        ("c", 2, Reviewer, 50),
+        ("d", 1, Reviewer, 20),
+    ];
+    let all = ["a", "b", "c", "d"];
+    let order = |count| select(&records, &all, &[], count);
+
+    assert_eq!(order(1), Some(vec!["c".to_owned()]));
+    assert_eq!(order(2), Some(vec!["c".to_owned(), "d".to_owned()]));
+    // Rule 5: too few others are left, so the latest pair is relaxed, after them.
+    assert_eq!(order(3), Some(vec!["c".to_owned(), "d".to_owned(), "a".to_owned()]));
+    assert_eq!(
+        order(4),
+        Some(vec!["c".to_owned(), "d".to_owned(), "a".to_owned(), "b".to_owned()])
+    );
+    // When the others are busy, the latest pair is still chosen rather than leaving the request unfilled.
+    assert_eq!(
+        select(&records, &["a", "b"], &[], 2),
+        Some(vec!["a".to_owned(), "b".to_owned()])
+    );
+    // ...but never beyond the permanent exclusions.
+    assert_eq!(select(&records, &["a", "b"], &["a"], 2), None);
+}
