@@ -150,6 +150,7 @@ fn read_report(
     let lines: Vec<&str> = text.lines().collect();
     let mut report = Report::default();
     let mut in_findings = false;
+    let mut ended = false;
     let mut fence: Option<Fence> = None;
     for (index, line) in lines.iter().enumerate() {
         let line_number = index.saturating_add(1);
@@ -177,8 +178,11 @@ fn read_report(
         if finding_like(trimmed) && !(in_findings && numbered(trimmed)) {
             return Err(fail(ReportProblem::Finding));
         }
+        if trimmed.starts_with("STATUS:") {
+            ended = true;
+        }
         if let Some(answer) = trimmed.strip_prefix("FINDING ") {
-            if !report.findings.is_empty() {
+            if ended || !report.findings.is_empty() {
                 return Err(fail(ReportProblem::Answer));
             }
             let Some((id, value)) = answer.split_once(':') else {
