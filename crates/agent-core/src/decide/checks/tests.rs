@@ -1306,3 +1306,59 @@ fn issue_kinds_ignore_paths_counts_and_commits_but_preserve_test_change_variants
     );
     assert_eq!(Issue::NoTests.kind(), IssueKind::NoTests);
 }
+
+#[test]
+fn task_allowances_cover_only_path_changes_and_leave_other_tests_and_markers() {
+    let allowances = [crate::task_allowance::TaskAllowance::parse("tests/*.golden").unwrap()];
+    let mut facts = round(vec![
+        modified("tests/one.golden", 1, 1),
+        modified("tests/other.txt", 1, 1),
+    ]);
+    facts.added.push(line("tests/one.golden", 1, "#[ignore]"));
+    let issues = found(&facts);
+    let remaining: Vec<_> = issues
+        .iter()
+        .filter(|issue| issue.allowed_beforehand(&allowances).is_none())
+        .collect();
+    assert_eq!(
+        remaining,
+        vec![&Issue::TestChanged {
+            path: path("tests/other.txt"),
+            how: TestChange::Edited { removed: 1 }
+        }]
+    );
+    for issue in [
+        Issue::Marker {
+            path: path("tests/one.golden"),
+            marker: Marker::SkipsTest,
+            line: 1,
+            count: 1,
+        },
+        Issue::NoTests,
+    ] {
+        assert_eq!(issue.allowed_beforehand(&allowances), None);
+    }
+    for issue in [
+        Issue::ProtectedChanged {
+            path: path("tests/one.golden"),
+            change: Touch::Modified,
+        },
+        Issue::RedTestEdited {
+            path: path("tests/one.golden"),
+            red: id('a'),
+            edit: id('b'),
+        },
+        Issue::TestChanged {
+            path: path("tests/one.golden"),
+            how: TestChange::Deleted,
+        },
+        Issue::TestChanged {
+            path: path("tests/one.golden"),
+            how: TestChange::Renamed {
+                to: path("tests/two.golden"),
+            },
+        },
+    ] {
+        assert_eq!(issue.allowed_beforehand(&allowances), allowances.first());
+    }
+}

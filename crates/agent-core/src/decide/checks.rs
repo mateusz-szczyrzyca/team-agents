@@ -278,6 +278,15 @@ pub enum IssueKind {
 }
 
 impl Issue {
+    /// The task header that permits this path change; markers and missing tests always need their own decision.
+    #[must_use]
+    pub fn allowed_beforehand<'a>(
+        &self,
+        _allowances: &'a [crate::task_allowance::TaskAllowance],
+    ) -> Option<&'a crate::task_allowance::TaskAllowance> {
+        None
+    }
+
     /// The kind used to group questions, together with [`Self::judge`].
     #[must_use]
     pub fn kind(&self) -> IssueKind {
