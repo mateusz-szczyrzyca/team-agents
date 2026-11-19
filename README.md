@@ -1182,6 +1182,20 @@ requested" a question reaches you like any other. Answering grants another `[rev
 The notice names the allowance and open blocking findings. How it works, and its limits, are in
 [`docs/architecture.md`](docs/architecture.md) ("Pull requests, reviews and the merge").
 
+The Rust lead writes its contribution to `tasks/<lead>/description.md` under `AGENTS_HOME`, outside the repository.
+Its prompt names the full path. Include what changed and why, tests and their results, deviations, out of scope,
+skipped tests and lint suppressions with their paths and reasons. The harness builds the PR description from its
+header, this file, measured **Size** and recorded **Gate**, and the tests changed after RED. It rebuilds the body
+at publication, after a fix pass and while the PR is open, including when only this file changes. Edit the file
+rather than the description on GitHub; manual body edits are replaced. A missing or empty file does not hold a
+round: the description says the lead supplied none. Size and Gate headings in the contribution are removed.
+Size follows PR-1 at the published commit, excluding tests. Gate names that commit, finish time, outcome and log;
+a pass following a failed gate at the same commit is identified as a second run.
+
+Review and verification requests carry the lead's gate record when it belongs to the reviewed commit. Reviewers
+use that record and run single tests to investigate findings; they do not repeat the gate. Without a matching
+record, the request asks for `agent gate`. A reported red gate must identify the failed step and log line.
+
 Each posted Rust review starts with the investigator, CLI and configured model, a green **APPROVED** (`✅✅`) or
 red **REQUEST CHANGES** (`❌`) verdict, and the review pass and linked commit. The report follows a horizontal
 rule; its original `VERDICT:` line remains in local history. Commit IDs in pull request descriptions, branch
@@ -1280,7 +1294,8 @@ asked; the command waits for its turn and then for the gate (at most 16 wait; th
 with everything it started, after `gate_timeout_minutes` (default 30, counted from the start of the gate, not from the
 wait) and is recorded as failed; stopping or pausing the task stops its gate too. The result is recorded with the commit
 (`HEAD`) and whether the tree was clean, in `tasks/<task>/gate.json` and the task's activity log, and the full output is
-in `tasks/<task>/gate-<n>.log`. A tree is not clean when a file is changed or untracked, when a merge waits to be committed
+in `tasks/<task>/gate-<n>.log`. The preceding record is kept in `tasks/<task>/gate-previous.json` to disclose a
+second-run pass; older task directories without that optional file remain readable. A tree is not clean when a file is changed or untracked, when a merge waits to be committed
 or when the gate itself changed the tree or `HEAD`: such a gate may run, but its pass is not a pass of the commit. A run
 that waits for its own gate is never cut by the watchdog. The command succeeds for a pass and fails (status 1) for a
 failure, a timeout and a refusal. The command says first where the result is recorded: a model CLI cuts a shell command that runs long (the Bash tool of Claude Code has a time limit, in minutes, and a gate may take 30) while the gate goes on, and the agent then reads `tasks/<task>/gate.json`. Details: [`docs/architecture.md`](docs/architecture.md), "The gate".
