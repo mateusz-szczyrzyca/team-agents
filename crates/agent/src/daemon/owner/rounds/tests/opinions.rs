@@ -288,8 +288,10 @@ async fn a_changed_tip_waits_for_all_opinions_and_opinion_runs_have_no_bus() {
             panic!("unassigned");
         };
         let run = team.find(task).unwrap().1.current_run().unwrap();
-        let config: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(rig.home.run_dir(task, run.id()).join("mcp.json")).unwrap()).unwrap();
+        let path = rig.home.run_dir(task, run.id()).join("mcp.json");
+        rig.wait_for("opinion MCP configuration written", || path.is_file())
+            .await;
+        let config: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(config["mcpServers"].get("agentbus"), None);
     }
     assert_eq!(rig.github.reviews(1).len(), 2);
