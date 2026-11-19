@@ -89,6 +89,38 @@ pub struct Report {
     pub answers: Vec<(NonZeroU32, Answer)>,
 }
 
+/// The precise protocol mistake, independent of the correction's permitted forms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnswerMistake {
+    /// The supplied number is not open in this pull request.
+    UnknownNumber,
+    /// The same finding was answered twice.
+    Duplicate,
+    /// An answer followed the final status line.
+    AfterStatus,
+    /// The answer is not permitted for this finding's severity or protocol state.
+    NotAllowed,
+    /// A required answer was omitted.
+    Missing,
+    /// An answer followed the section for new findings.
+    AfterFindings,
+    /// The line has invalid syntax.
+    Malformed,
+    /// The verdict contradicts the findings.
+    Verdict,
+}
+
+/// Source evidence needed to correct a refused answer without guessing its number.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnswerDiagnostic {
+    /// The original untrimmed source line; absent for an omitted answer.
+    pub source_line: Option<String>,
+    /// The supplied or missing finding number, when one can be read.
+    pub number: Option<NonZeroU32>,
+    /// Why this particular line was refused.
+    pub mistake: AnswerMistake,
+}
+
 /// A malformed finding or a verdict that contradicts the report.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid review report at line {line}: {kind}")]
@@ -97,6 +129,14 @@ pub struct ReportError {
     pub line: usize,
     /// Which part of the protocol failed.
     pub kind: ReportProblem,
+}
+
+impl ReportError {
+    /// The original refused answer and precise mistake, when available.
+    #[must_use]
+    pub const fn diagnostic(&self) -> Option<&AnswerDiagnostic> {
+        None
+    }
 }
 
 /// The correction a report requires.

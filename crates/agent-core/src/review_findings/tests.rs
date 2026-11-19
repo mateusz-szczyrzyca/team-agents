@@ -382,3 +382,45 @@ fn verification_refuses_an_answer_after_status() {
         .expect_err("an answer after the final status is not part of the report");
     assert_eq!((error.line, error.kind), (3, ReportProblem::DisputeAnswer));
 }
+
+#[test]
+fn verifier_diagnostics_retain_the_refused_number_line_and_mistake() {
+    for (text, source_line, id, mistake) in [
+        (
+            "VERDICT: APPROVE\n  FINDING 99: RESOLVED",
+            Some("  FINDING 99: RESOLVED"),
+            99,
+            AnswerMistake::UnknownNumber,
+        ),
+        (
+            "FINDING 3: RESOLVED\nFINDING 3: RESOLVED",
+            Some("FINDING 3: RESOLVED"),
+            3,
+            AnswerMistake::Duplicate,
+        ),
+        (
+            "STATUS: DONE\nFINDING 3: RESOLVED",
+            Some("FINDING 3: RESOLVED"),
+            3,
+            AnswerMistake::AfterStatus,
+        ),
+        (
+            "FINDING 3: EXPLAINED — why",
+            Some("FINDING 3: EXPLAINED — why"),
+            3,
+            AnswerMistake::NotAllowed,
+        ),
+        ("VERDICT: APPROVE", None, 3, AnswerMistake::Missing),
+    ] {
+        let error = parse_verification(text, ReviewVerdict::Approve, &[(number(3), Severity::Major)], &[]).unwrap_err();
+        assert_eq!(
+            error.diagnostic(),
+            Some(&AnswerDiagnostic {
+                source_line: source_line.map(str::to_owned),
+                number: NonZeroU32::new(id),
+                mistake,
+            }),
+            "{text}"
+        );
+    }
+}

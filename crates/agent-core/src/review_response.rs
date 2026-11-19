@@ -35,6 +35,14 @@ pub struct ResponseError {
     pub correction: Correction,
 }
 
+impl ResponseError {
+    /// The original refused answer and precise mistake, when available.
+    #[must_use]
+    pub const fn diagnostic(&self) -> Option<&crate::review_findings::AnswerDiagnostic> {
+        None
+    }
+}
+
 /// Reads exactly one answer per blocking finding, refusing explanations already used or attached to blockers.
 ///
 /// # Errors

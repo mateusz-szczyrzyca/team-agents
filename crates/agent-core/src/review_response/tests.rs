@@ -143,3 +143,46 @@ fn six_answers_include_two_optional_minor_findings() {
         Ok(vec![])
     );
 }
+
+#[test]
+fn lead_diagnostics_retain_the_refused_number_line_and_mistake() {
+    use crate::review_findings::{AnswerDiagnostic, AnswerMistake};
+    for (text, source_line, number, mistake) in [
+        (
+            "  FINDING 99: FIXED",
+            Some("  FINDING 99: FIXED"),
+            99,
+            AnswerMistake::UnknownNumber,
+        ),
+        (
+            "FINDING 1: FIXED\nFINDING 1: FIXED",
+            Some("FINDING 1: FIXED"),
+            1,
+            AnswerMistake::Duplicate,
+        ),
+        (
+            "STATUS: DONE\nFINDING 1: FIXED",
+            Some("FINDING 1: FIXED"),
+            1,
+            AnswerMistake::AfterStatus,
+        ),
+        (
+            "FINDING 1: EXPLAINED — why",
+            Some("FINDING 1: EXPLAINED — why"),
+            1,
+            AnswerMistake::NotAllowed,
+        ),
+        ("STATUS: DONE", None, 1, AnswerMistake::Missing),
+    ] {
+        let error = parse_lead(text, &[(NonZeroU32::MIN, Severity::Blocker, false)]).unwrap_err();
+        assert_eq!(
+            error.diagnostic(),
+            Some(&AnswerDiagnostic {
+                source_line: source_line.map(str::to_owned),
+                number: NonZeroU32::new(number),
+                mistake,
+            }),
+            "{text}"
+        );
+    }
+}
