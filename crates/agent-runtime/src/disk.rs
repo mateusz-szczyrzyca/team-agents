@@ -102,9 +102,7 @@ impl FreeSpace for SystemFreeSpace {
             path: path.to_path_buf(),
             source,
         })?;
-        let frsize = u64::try_from(stat.f_frsize).unwrap_or(0);
-        let bavail = u64::try_from(stat.f_bavail).unwrap_or(0);
-        Ok(bavail.saturating_mul(frsize))
+        Ok(stat.f_bavail.saturating_mul(stat.f_frsize))
     }
 }
 
@@ -115,7 +113,7 @@ pub struct SharedFreeSpace(Arc<dyn FreeSpace + Send + Sync>);
 impl SharedFreeSpace {
     /// Wraps `measurer`.
     #[must_use]
-    pub fn new(measurer: impl FreeSpace + Send + Sync + 'static) -> Self {
+    pub fn new(measurer: impl FreeSpace + 'static) -> Self {
         Self(Arc::new(measurer))
     }
 
@@ -162,8 +160,7 @@ impl FakeFreeSpace {
 
 impl FreeSpace for FakeFreeSpace {
     fn free_space_bytes(&self, _path: &Path) -> Result<u64, FreeSpaceError> {
-        // Stub for RED: return wrong value 0
-        Ok(0)
+        Ok(self.bytes.load(Ordering::Relaxed))
     }
 }
 
@@ -247,7 +244,7 @@ pub fn largest_worktrees(home: &Home, count: usize) -> Result<Vec<WorktreeUsage>
             }
         }
     }
-    usages.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+    usages.sort_by_key(|a| std::cmp::Reverse(a.bytes));
     usages.truncate(count);
     Ok(usages)
 }
@@ -279,7 +276,7 @@ pub fn remove_build_directory(home: &Home, worktree: &Path) -> Result<u64, Build
     if !meta.is_dir() {
         return Err(BuildDirError::NotDirectory { path: target });
     }
-    let _bytes = directory_size(&target).map_err(|source| BuildDirError::Measure {
+    let bytes = directory_size(&target).map_err(|source| BuildDirError::Measure {
         path: target.clone(),
         source,
     })?;
@@ -287,6 +284,5 @@ pub fn remove_build_directory(home: &Home, worktree: &Path) -> Result<u64, Build
         path: target.clone(),
         source,
     })?;
-    // Stub for RED: return 0 instead of bytes
-    Ok(0)
+    Ok(bytes)
 }
