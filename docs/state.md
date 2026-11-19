@@ -316,7 +316,12 @@ Each is derived or lives elsewhere, so that there is one place for it:
   `{"tree":"clean"|"not_clean","result":{head, finished_at, outcome, log}}`: the daemon's own record of the run, which says
   whether the tree was clean at the start and at the end of the command (a changed or untracked file, a moved `HEAD`, or a
   merge waiting to be committed, is not). Only a `passed` on
-  a `clean` tree is a pass of `head`.
+  a `clean` tree is a pass of `head`. The previous record, in the same format, is retained in optional
+  `tasks/<task>/gate-previous.json` before replacing the latest record. This lets descriptions disclose a pass
+  after a failure at the same commit. An older task directory without it reads as before.
+- **Lead contribution to the PR description** — optional `tasks/<lead>/description.md`, outside the repository,
+  read as UTF-8 with a 1 MiB limit. The harness combines it with its own header, measured Size, recorded Gate
+  and TEST-FIX disclosure. Missing or empty text does not block a round. It is not part of `state.json`.
 - **The checks before a review** — `tasks/<lead>/checks.json`, the **checks record** of a team's lead, written by the daemon only:
   `{"items": {"<item id>": {"passes": N, "allowed": [<subject>, ...]}}, "asked": {...}, "sent": {...}}`. For each item the passes the
   checks sent its round back and what the human allowed (a subject is `{"path": "tests/a.rs"}` or `"no_tests"`); `asked` is the

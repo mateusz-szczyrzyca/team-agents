@@ -56,6 +56,20 @@ pub enum AutopilotPrompt {
     PrBodyChecks,
     /// The comment that tells the reviewers a fix pass updated the pull request.
     PrUpdate,
+    /// Measured pull request size.
+    PrSize,
+    /// Gate provenance for a pull request.
+    PrGate,
+    /// A passing retry after a failed gate.
+    PrGateRetry,
+    /// Missing lead contribution.
+    PrNoLead,
+    /// Instructions for the lead contribution file.
+    PrLeadInstructions,
+    /// Matching-head gate handed to a reviewer.
+    ReviewGate,
+    /// Missing matching-head gate.
+    ReviewGateMissing,
     /// What the lead is told when it is done and the gate has not passed at the tip of its branch.
     GateNotPassed,
     /// What the lead is told when it is done, the gate passed, and its branch contains none of the finished items.
@@ -177,6 +191,13 @@ impl AutopilotPrompt {
         Self::PrBodyExpected,
         Self::PrBodyChecks,
         Self::PrUpdate,
+        Self::PrSize,
+        Self::PrGate,
+        Self::PrGateRetry,
+        Self::PrNoLead,
+        Self::PrLeadInstructions,
+        Self::ReviewGate,
+        Self::ReviewGateMissing,
         Self::GateNotPassed,
         Self::BranchNotJoined,
         Self::TeamAsleep,
@@ -282,6 +303,13 @@ impl AutopilotPrompt {
             Self::PrBodyExpected => "harness/pr/body-expected.md",
             Self::PrBodyChecks => "harness/pr/body-checks.md",
             Self::PrUpdate => "harness/pr/update.md",
+            Self::PrSize => "harness/pr/size.md",
+            Self::PrGate => "harness/pr/gate.md",
+            Self::PrGateRetry => "harness/pr/gate-retry.md",
+            Self::PrNoLead => "harness/pr/no-lead.md",
+            Self::PrLeadInstructions => "harness/pr/lead-description.md",
+            Self::ReviewGate => "harness/review/gate.md",
+            Self::ReviewGateMissing => "harness/review/gate-missing.md",
             Self::GateNotPassed => "harness/pr/gate-not-passed.md",
             Self::BranchNotJoined => "harness/pr/branch-not-joined.md",
             Self::TeamAsleep => "harness/pr/team-asleep.md",
@@ -335,7 +363,9 @@ impl AutopilotPrompt {
     /// The context required to render this text.
     const fn variables(self) -> &'static [&'static str] {
         match self {
-            Self::ReviewFixNoCommitUndone
+            Self::PrGateRetry
+            | Self::PrNoLead
+            | Self::ReviewFixNoCommitUndone
             | Self::WaitNothing
             | Self::WaitCorrection
             | Self::WaitHuman
@@ -365,6 +395,10 @@ impl AutopilotPrompt {
             Self::PrBodyExpected => &["expected"],
             Self::PrBodyChecks => &["checks"],
             Self::PrUpdate => &["head", "pass", "gate"],
+            Self::PrSize => &["size"],
+            Self::PrGate | Self::ReviewGate => &["head", "finished", "result", "log"],
+            Self::PrLeadInstructions => &["description_file"],
+            Self::ReviewGateMissing => &["head"],
             Self::GateNotPassed => &["branch", "reason", "sent", "limit"],
             Self::BranchNotJoined => BRANCH_VARIABLES,
             Self::TeamAsleep => &["team", "items", "minutes", "tasks", "woken", "limit"],

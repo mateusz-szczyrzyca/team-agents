@@ -44,7 +44,7 @@ STATUS: DONE
 <time>  gate for task <task-4>: passed at <commit-2> (took <duration>); output <home>/tasks/<task-4>/gate-1.log
 <time>  pull request #1 opened: branch agents/claude-1/<task-4>-1.1 at <commit-2>
   title: Item 1.1: Pierwsza pozycja: zażółć gęślą jaźń
-  ----- pull request body (5915 bytes) -----
+  ----- pull request body (6359 bytes) -----
 Work of the team `<team-2>` on `example`, opened by the harness after the repository's gate passed on this branch
 (passed at [`<commit-2>`](https://github.com/octo/example/commit/<commit-2>)).
 
@@ -63,6 +63,19 @@ Opis: żółć żółć żółć żółć żółć żółć żółć żółć ż
 ## Reviews
 
 The configured number of investigators from outside the team review this pull request. Their reports are posted here as reviews.
+
+The lead supplied no description.
+
+## Size
+
+1 changed lines outside tests (PR-1).
+
+## Gate
+
+Commit: [`<commit-2>`](https://github.com/octo/example/commit/<commit-2>).
+Finished: <time>.
+Result: passed at [`<commit-2>`](https://github.com/octo/example/commit/<commit-2>).
+Log: `<home>/tasks/<task-4>/gate-1.log`.
   ----- end of pull request body -----
 <time>  pull request #1 marked ready for review
 <time>  review pass 1 of #1 asked of inv-r1 (task <task-5>) at <commit-2>

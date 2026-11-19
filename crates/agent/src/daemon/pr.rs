@@ -276,3 +276,5 @@ fn item_section(texts: &AutopilotPrompts, item: &Item) -> Result<String, PullTex
 
 #[cfg(test)]
 mod tests;
+
+pub(super) mod description;

@@ -59,6 +59,9 @@ const ACTIVITY_FILE: &str = "activity.jsonl";
 /// The file in a task's directory that holds the last gate record of the task.
 const GATE_RECORD_FILE: &str = "gate.json";
 
+/// The preceding gate, kept separately so old gate records remain unchanged.
+const PREVIOUS_GATE_FILE: &str = "gate-previous.json";
+
 /// The name of the file with the record of the checks before a review, in the directory of the lead's task.
 const CHECKS_RECORD_FILE: &str = "checks.json";
 
@@ -585,14 +588,24 @@ impl StateStore {
 
     /// Saves `record` as the last gate record of `task`, replacing the one before: written to a temporary file in the
     /// task's directory and renamed over [`Home::gate_record_file`], so that a reader sees a whole record or none.
+    /// The preceding record is retained in the optional sidecar before replacing the latest record.
     ///
     /// # Errors
-    /// [`StoreError::RenderGateRecord`], [`StoreError::CreateDir`], [`StoreError::WriteTemp`], [`StoreError::Replace`],
+    /// [`StoreError::ReadTaskFile`], [`StoreError::ParseGateRecord`], [`StoreError::RenderGateRecord`],
+    /// [`StoreError::CreateDir`], [`StoreError::WriteTemp`], [`StoreError::Replace`],
     /// [`StoreError::SyncDir`] and [`StoreError::Worker`].
     pub async fn save_gate_record(&self, task: &TaskId, record: &GateRecord) -> Result<(), StoreError> {
+        if let Some(previous) = self.load_gate_record(task).await? {
+            self.write_gate_record(task, PREVIOUS_GATE_FILE, &previous).await?;
+        }
+        self.write_gate_record(task, GATE_RECORD_FILE, record).await
+    }
+
+    /// Atomically replaces one gate record while the store holds the home lock.
+    async fn write_gate_record(&self, task: &TaskId, name: &str, record: &GateRecord) -> Result<(), StoreError> {
         let text = serde_json::to_vec_pretty(record).map_err(|source| StoreError::RenderGateRecord { source })?;
         let dir = self.home.task_dir(task);
-        let target = self.home.gate_record_file(task);
+        let target = dir.join(name);
         let write_dir = dir.clone();
         let file = blocking(move || {
             create_dir(&write_dir)?;
@@ -602,19 +615,21 @@ impl StateStore {
         StagedState { file, target, dir }.commit().await
     }
 
+    /// The gate record immediately before the latest one, absent in older homes.
+    ///
+    /// # Errors
+    /// Returns read and parse errors with the record path.
+    pub async fn previous_gate_record(&self, task: &TaskId) -> Result<Option<GateRecord>, StoreError> {
+        read_gate_record(&self.home.task_dir(task).join(PREVIOUS_GATE_FILE)).await
+    }
+
     /// The last gate record of `task`; `None` when the task has never been gated.
     ///
     /// # Errors
     /// [`StoreError::ReadTaskFile`] when the file cannot be read, is too large or is not UTF-8 text;
     /// [`StoreError::ParseGateRecord`] when it is not a gate record.
     pub async fn load_gate_record(&self, task: &TaskId) -> Result<Option<GateRecord>, StoreError> {
-        let path = self.home.gate_record_file(task);
-        let Some(file) = read_task_file(&path).await? else {
-            return Ok(None);
-        };
-        serde_json::from_str(&file)
-            .map(Some)
-            .map_err(|source| StoreError::ParseGateRecord { path, source })
+        read_gate_record(&self.home.gate_record_file(task)).await
     }
 
     /// Saves `record`, the record of the checks before a review of `task`, in the task's directory, replacing the one
@@ -706,6 +721,22 @@ impl StagedState {
         })
         .await
     }
+}
+
+/// Reads a bounded gate record; missing records are normal for older homes and ungated tasks.
+///
+/// # Errors
+/// Returns [`StoreError::ReadTaskFile`] or [`StoreError::ParseGateRecord`] with the file path.
+pub async fn read_gate_record(path: &Path) -> Result<Option<GateRecord>, StoreError> {
+    let Some(file) = read_task_file(path).await? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&file)
+        .map(Some)
+        .map_err(|source| StoreError::ParseGateRecord {
+            path: path.to_owned(),
+            source,
+        })
 }
 
 #[cfg(test)]
@@ -1098,5 +1129,35 @@ mod tests {
             matches!(&result, Err(StoreError::WriteTemp { path, .. }) if path == home.root()),
             "{result:?}"
         );
+    }
+    #[tokio::test]
+    async fn gate_records_retain_the_preceding_run_and_read_legacy_records() {
+        use agent_core::state::{GateOutcome, GateResult, GateTree};
+        let dir = tempfile::tempdir().unwrap();
+        let home = home_in(&dir);
+        let store = StateStore::open(home.clone()).await.unwrap();
+        let first = GateRecord {
+            tree: GateTree::Clean,
+            result: GateResult {
+                head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap(),
+                finished_at: "2026-11-19T09:30:00Z".parse().unwrap(),
+                outcome: GateOutcome::TimedOut,
+                log: "/tmp/task/gate-1.log".parse().unwrap(),
+            },
+        };
+        tokio::fs::create_dir_all(home.task_dir(&task())).await.unwrap();
+        tokio::fs::write(home.gate_record_file(&task()), serde_json::to_vec(&first).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(store.load_gate_record(&task()).await.unwrap(), Some(first.clone()));
+        assert_eq!(store.previous_gate_record(&task()).await.unwrap(), None);
+        let mut second = first.clone();
+        second.result.outcome = GateOutcome::Passed;
+        second.result.log = "/tmp/task/gate-2.log".parse().unwrap();
+        store.save_gate_record(&task(), &second).await.unwrap();
+        assert_eq!(store.previous_gate_record(&task()).await.unwrap(), Some(first));
+        assert_eq!(store.load_gate_record(&task()).await.unwrap(), Some(second.clone()));
+        store.save_gate_record(&task(), &second).await.unwrap();
+        assert_eq!(store.previous_gate_record(&task()).await.unwrap(), Some(second));
     }
 }

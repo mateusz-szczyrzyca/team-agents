@@ -318,6 +318,22 @@ time: items integrated into the same head share it and move together; a finished
 same branch (a solo agent's items each have a branch). A branch that cannot be published is tried again after a minute, and the
 human is told once.
 
+**Description ownership** (`daemon/pr/description.rs`, `owner/rounds/publish.rs`). The lead writes
+`tasks/<lead>/description.md`, a bounded UTF-8 file (at most 1 MiB), outside the worktree. Its initial and resumed
+prompts name this file. `pull_text_of` combines the harness header, the lead contribution with its Size and Gate
+sections removed, `Git::pull_request_size` at the recorded head, and `measured_sections` from the gate record.
+The existing TEST-FIX disclosure block follows. A missing or empty contribution uses `harness/pr/no-lead.md`
+and does not stop publication. A read error is reported with the file path. Manual GitHub body edits are
+replaced by this assembled description. `refresh_descriptions` runs independently of the publication plan for
+open rounds in review, fixing or approved, so a file-only change is published too; it only uses a gate record
+matching the remote PR head. It patches GitHub only when the rendered body differs.
+
+Size uses the PR-1 diff against the fetched base at the explicit commit, with test files, inline trailing test
+modules, snapshots, lock files and pure moves excluded. Gate records retain their existing JSON format:
+`Store::save_gate_record` first saves the preceding record in optional `gate-previous.json`, then atomically
+replaces `gate.json`. A successful clean record preceded by a failure at the same commit renders the second-run
+notice. Older homes without the sidecar load as before; no state-schema migration is needed.
+
 **The gate of a lead that is done** (`agent_core::decide::publish::gate_step`, `owner/rounds/publish.rs`). A lead need not have
 run the gate. When its last run ended with `STATUS: DONE` and no record passes at the tip of its branch, the harness acts instead
 of waiting: with no record of the tip it runs the gate itself, once for a tip, through the gate service (the record and the
@@ -358,6 +374,10 @@ and report-correction runs. The harness keeps reports locally until all verdicts
 order and updates the findings table. The request forbids reading peer reviews or contacting other reviewers. Later
 passes retain the bus and post each report when received. Schema-three ledgers have no frozen `review_count` and retain
 two reviews, immediate publication and bus access until their PR ends; new PRs store the configured count.
+
+Review and verification requests use `review_gate` to attach the matching lead gate's commit, finish time,
+result and log path. They forbid repeating that gate and allow single tests to investigate a finding. A stale
+or missing record instead renders the request to run `agent gate`; a red gate report names the step and log line.
 
 **Reviewers** (`daemon/review.rs`). The review pass of an item in review starts empty and is filled once (`ItemMut::ask_reviews`) with
 `[review] min_first_full_reviews` investigators (default two) drawn among the free ones: configured, outside the crew,
@@ -473,7 +493,7 @@ as written; files are never searched for under another name or at another commit
 in one listing per text, rather than starting a process for each path. A truncated listing is a lookup failure;
 the harness never treats an incomplete tree as the full set of files.
 
-When joined items or test-change disclosures change a published description, generated file links in identifiable
+When a published description is rebuilt, generated file links in identifiable
 harness-authored lines are rebuilt at the new head only when their destinations belong to the publishing
 repository from `origin`. Generated commit labels are recognized regardless of hexadecimal letter case.
 Other existing links retain their destinations. A description
@@ -693,7 +713,8 @@ what is production code and what judges a round are the three lists of path patt
 first round after the pull request is opened as a draft and before it is marked ready; for a fix pass before the branch is
 pushed, so that a head the checks hold back is not pushed and the reviewers keep the head they reviewed. The facts are the
 files, the commits and the added lines from the merge base with the fetched base branch to the tip (`agent_runtime::git`:
-`round_facts`) and the description of the pull request as GitHub has it now.
+`round_facts`), the authored parts of the current GitHub description, and the fresh lead contribution. The
+harness header is excluded from authored disclosures, so merely listing a path in the task does not authorize it.
 
 **The rules** (`agent_core::decide::checks`, each with the case that raises it and the nearest that does not):
 

@@ -153,8 +153,8 @@ async fn review_head_and_commit_links_in_reviews_pr_description_and_update_comme
     let pulls = rig.github.pulls();
     assert_eq!(pulls.len(), 1);
     let pr_body = &pulls[0].body;
-    let short_initial = initial_head.get(..7).unwrap();
-    let expected_pr_link = format!("[`{short_initial}`](https://github.com/{SLUG}/commit/{initial_head})");
+    let short_final = final_head.get(..7).unwrap();
+    let expected_pr_link = format!("[`{short_final}`](https://github.com/{SLUG}/commit/{final_head})");
     assert!(
         pr_body.contains(&expected_pr_link),
         "PR body missing commit link: {pr_body}"
@@ -329,8 +329,8 @@ Build the thing.
     let pr_body = &pulls[0].body;
 
     let expected_readme_link =
-        format!("[README.md:10-20](https://github.com/{SLUG}/blob/{initial_head}/README.md#L10-L20)");
-    let expected_work_link = format!("[work-1.txt](https://github.com/{SLUG}/blob/{initial_head}/work-1.txt)");
+        format!("[README.md:10-20](https://github.com/{SLUG}/blob/{final_head}/README.md#L10-L20)");
+    let expected_work_link = format!("[work-1.txt](https://github.com/{SLUG}/blob/{final_head}/work-1.txt)");
     assert!(
         pr_body.contains(&expected_readme_link),
         "PR body missing README file link: {pr_body}"
