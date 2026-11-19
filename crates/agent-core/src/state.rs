@@ -704,7 +704,7 @@ mod tests {
 
     #[test]
     fn a_state_of_another_schema_version_is_refused_with_that_version() {
-        for found in [0_u64, 9, 99, u64::MAX] {
+        for found in [0_u64, 10, 99, u64::MAX] {
             let text = format!("{{\"schema_version\": {found}, \"teams\": []}}");
 
             let err = State::from_json(&text).unwrap_err();
