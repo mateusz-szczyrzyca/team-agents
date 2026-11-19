@@ -275,17 +275,7 @@ impl Owner {
         let next = self.decide(team_id, asked, verdict);
         let mut look = Look::default();
         self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
-        let decisions = reports
-            .first()
-            .filter(|(id, _)| {
-                self.parts
-                    .state
-                    .team(team_id)
-                    .and_then(|team| team.item(*id))
-                    .and_then(|item| item.findings())
-                    .is_some_and(|ledger| ledger.disputes().is_some())
-            })
-            .map_or_else(Vec::new, |(_, report)| report.answers.clone());
+        let decisions = self.finding_decisions(team_id, &reports);
         self.record_finding_decisions(team_id, asked, decisions, now)?;
         let completed = self.record_findings(team_id, task, asked, reports)?;
         // Only a pull request that is verified by rotation keeps the reviewed head, so the protocols that started
@@ -400,6 +390,25 @@ impl Owner {
             self.post_review(pulls, lead, &review.task, &source, verdict, &report)
                 .await;
         }
+    }
+
+    /// Selects the pull request's verifier decisions once for its shared round history.
+    fn finding_decisions(
+        &self,
+        team_id: &TeamId,
+        reports: &[(ItemId, Report)],
+    ) -> Vec<(std::num::NonZeroU32, agent_core::review_findings::Answer)> {
+        reports
+            .first()
+            .filter(|(id, _)| {
+                self.parts
+                    .state
+                    .team(team_id)
+                    .and_then(|team| team.item(*id))
+                    .and_then(|item| item.findings())
+                    .is_some_and(|ledger| ledger.disputes().is_some())
+            })
+            .map_or_else(Vec::new, |(_, report)| report.answers.clone())
     }
 
     /// Checks each ledger that will receive the report, without mutating any of them.
