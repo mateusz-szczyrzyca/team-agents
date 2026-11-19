@@ -386,12 +386,14 @@ impl Owner {
         );
         self.keep_opinions(team_id, &ids, &ledger)?;
         let mut look = Look::default();
-        if self
-            .parts
-            .state
-            .find_task(task)
-            .is_some_and(|found| found.member.status() == agent_core::status::TaskStatus::Queued)
-        {
+        if self.parts.state.find_task(task).is_some_and(|found| {
+            matches!(
+                found.member.status(),
+                agent_core::status::TaskStatus::Queued
+                    | agent_core::status::TaskStatus::Waiting
+                    | agent_core::status::TaskStatus::Paused
+            )
+        }) {
             self.move_to(task, team_id, agent_core::status::TaskStatus::Stopped, &mut look.events)?;
         }
         self.reasons.remove(task);
