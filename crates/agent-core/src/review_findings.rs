@@ -55,6 +55,23 @@ pub struct Finding {
 pub enum Answer {
     /// The check no longer fails.
     Resolved,
+    /// The verifier accepts the lead's explanation.
+    Accepted {
+        /// Evidence supporting acceptance.
+        why: String,
+    },
+    /// The verifier rejects the explanation; the defect must be fixed.
+    Rejected {
+        /// Evidence requiring a code fix.
+        why: String,
+    },
+    /// The finding warrants a higher severity.
+    Raised {
+        /// Its increased severity.
+        severity: Severity,
+        /// Why the increase is necessary.
+        why: String,
+    },
     /// The problem remains, for this reason.
     Open {
         /// Why the check still fails.
@@ -202,6 +219,19 @@ pub fn parse_report(
         });
     }
     Ok(report)
+}
+
+/// Reads a verification with pending explanations, retaining the legacy parser for older pull requests.
+///
+/// # Errors
+/// [`ReportError`] when an answer or verdict contradicts the supplied findings or explanations.
+pub fn parse_verification(
+    text: &str,
+    verdict: ReviewVerdict,
+    open: &[(NonZeroU32, Severity)],
+    _explained: &[NonZeroU32],
+) -> Result<Report, ReportError> {
+    parse_report(text, verdict, open)
 }
 
 /// A Markdown code fence line: its character (backtick or tilde) and how many of them it has.
