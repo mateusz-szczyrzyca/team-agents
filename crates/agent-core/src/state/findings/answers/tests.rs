@@ -79,7 +79,7 @@ fn a_pull_request_before_explanations_offers_resolved_or_open_only() {
 }
 
 /// Every answer line `offered` names for its finding.
-fn forms(offered: &VerifierAnswers) -> Vec<String> {
+fn forms(offered: VerifierAnswers) -> Vec<String> {
     let mut forms = match offered.decision {
         Decision::Explanation => vec!["ACCEPTED — it holds — ünïcode", "REJECTED — it does not hold"],
         Decision::Outcome => vec!["RESOLVED", "OPEN — the check still fails"],
@@ -117,7 +117,7 @@ fn a_report_that_gives_any_answer_its_brief_offers_for_every_finding_is_read() {
         Findings::new(evidence().entries.clone()).unwrap(),
     ];
     for ledger in &ledgers {
-        let offered: Vec<Vec<String>> = ledger.verifier_answers().iter().map(forms).collect();
+        let offered: Vec<Vec<String>> = ledger.verifier_answers().into_iter().map(forms).collect();
         let first: Vec<String> = offered.iter().map(|forms| forms[0].clone()).collect();
         // Each form of each finding once, the others with their first form; then every finding with its k-th form.
         let mut reports = Vec::new();
@@ -155,7 +155,7 @@ fn an_answer_the_brief_does_not_offer_is_refused() {
             if offered.number == n(28) {
                 "FINDING 28: RESOLVED".to_owned()
             } else {
-                forms(offered)[0].clone()
+                forms(*offered)[0].clone()
             }
         })
         .collect();
