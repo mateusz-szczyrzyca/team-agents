@@ -552,12 +552,6 @@ pub enum ChecksStep {
         /// Why the human is asked.
         reason: AskReason,
     },
-    /// The round finds issues of both judges: the human is asked about what only they may allow, and the round goes
-    /// back to the team with what it can settle.
-    Both {
-        /// Which pass of the checks this is, counted from 1.
-        pass: NonZeroU32,
-    },
 }
 
 /// The checking phase of a round: after the gate is green at the head and before the reviews are asked, the first time
@@ -590,8 +584,6 @@ impl Checking {
     ///
     /// - No issue: the reviews start.
     /// - An issue the human refused: back to the team.
-    /// - Both kinds of issues: the human is asked for what only they may allow, and the team goes back while passes
-    ///   remain; when passes are used up, the human is asked about everything.
     /// - An issue the team can fix: back to the team while the policy has passes left, then the human is asked.
     /// - Only issues that the human alone may allow: the human is asked.
     #[must_use]
@@ -606,19 +598,14 @@ impl Checking {
             return back;
         }
         let team_can_fix = issues.iter().any(|issue| issue.judge() == Judge::Team);
-        let only_human = issues.iter().any(|issue| issue.judge() == Judge::Human);
-        match (team_can_fix, only_human, self.passes < policy.check_passes) {
-            (true, true, true) => ChecksStep::Both {
-                pass: NonZeroU32::MIN.saturating_add(self.passes),
-            },
-            (true, _, false) => ChecksStep::AskHuman {
+        match (team_can_fix, self.passes < policy.check_passes) {
+            (true, true) => back,
+            (true, false) => ChecksStep::AskHuman {
                 reason: AskReason::PassesUsed,
             },
-            (true, false, true) => back,
-            (false, true, _) => ChecksStep::AskHuman {
+            (false, _) => ChecksStep::AskHuman {
                 reason: AskReason::OnlyTheHumanMayAllow,
             },
-            (false, false, _) => ChecksStep::StartReviews,
         }
     }
 }
