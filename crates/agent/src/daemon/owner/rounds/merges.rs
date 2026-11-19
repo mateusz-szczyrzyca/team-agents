@@ -170,7 +170,7 @@ impl Owner {
                 ItemPhase::Approved { pr, .. } => pr,
                 ItemPhase::Fixing { pr, .. }
                     if progress.findings().is_some_and(|ledger| {
-                        std::num::NonZeroU32::new(crate::daemon::merge::pull_passes(team, progress)).is_some_and(
+                        std::num::NonZeroU32::new(crate::daemon::merge::count(progress.fix_passes().len())).is_some_and(
                             |pass| {
                                 agent_core::decide::opinion::after_opinions(
                                     ledger,
