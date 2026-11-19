@@ -37,8 +37,11 @@ pub enum Waiting {
 
 /// Reports an idle round's obligation; a closed or active round needs no wait line.
 #[must_use]
-pub fn round_wait(_activity: Activity, _obligation: Option<Obligation>) -> Option<Waiting> {
-    None
+pub fn round_wait(activity: Activity, obligation: Option<Obligation>) -> Option<Waiting> {
+    match activity {
+        Activity::Closed | Activity::Active => None,
+        Activity::Idle => Some(obligation.map_or(Waiting::Defect, Waiting::For)),
+    }
 }
 
 #[cfg(test)]
