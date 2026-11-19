@@ -1,5 +1,5 @@
 //! Durable attempts and ownership when an independent investigator cannot answer.
-use super::{Findings, OpinionStateError};
+use super::{Findings, OpinionStage, OpinionStateError};
 use crate::ids::{InvestigatorName, TaskId};
 use crate::state::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -29,8 +29,8 @@ pub struct OpinionAttempt {
     pub investigator: InvestigatorName,
     /// The sole task permitted to answer this assignment.
     pub task: TaskId,
-    /// When this investigator was asked; zero means an assignment migrated from schema 8.
-    pub asked_at: Timestamp,
+    /// When this investigator was asked; absent for an assignment migrated from schema 8.
+    pub asked_at: Option<Timestamp>,
     /// Absent while the assignment owns the report, or after a successful report.
     pub failure: Option<OpinionFailure>,
 }
@@ -38,8 +38,8 @@ pub struct OpinionAttempt {
 impl Findings {
     /// The attempts of a request, oldest first; old state has no retained attempts.
     #[must_use]
-    pub fn opinion_attempts(&self, _number: NonZeroU32) -> &[OpinionAttempt] {
-        &[]
+    pub fn opinion_attempts(&self, number: NonZeroU32) -> &[OpinionAttempt] {
+        self.opinion_attempts.get(&number).map_or(&[], Vec::as_slice)
     }
 
     /// Assigns a request and retains its investigator and start time.
@@ -49,11 +49,26 @@ impl Findings {
     pub fn assign_opinion_at(
         &mut self,
         number: NonZeroU32,
-        _investigator: InvestigatorName,
-        _task: TaskId,
-        _at: Timestamp,
+        investigator: InvestigatorName,
+        task: TaskId,
+        at: Timestamp,
     ) -> Result<(), OpinionStateError> {
-        Err(OpinionStateError { number })
+        if self.opinion_attempts(number).len() >= 3
+            || !self
+                .opinions
+                .get(&number)
+                .is_some_and(|opinion| matches!(opinion.stage, OpinionStage::Waiting))
+        {
+            return Err(OpinionStateError { number });
+        }
+        self.assign_opinion(number, investigator.clone(), task.clone())?;
+        self.opinion_attempts.entry(number).or_default().push(OpinionAttempt {
+            investigator,
+            task,
+            asked_at: Some(at),
+            failure: None,
+        });
+        Ok(())
     }
 
     /// Ends only the owning assignment, making the request wait when another attempt is allowed.
@@ -63,9 +78,37 @@ impl Findings {
     pub fn fail_opinion(
         &mut self,
         number: NonZeroU32,
-        _task: &TaskId,
-        _failure: OpinionFailure,
+        task: &TaskId,
+        failure: OpinionFailure,
     ) -> Result<(), OpinionStateError> {
-        Err(OpinionStateError { number })
+        let opinion = self.opinions.get_mut(&number).ok_or(OpinionStateError { number })?;
+        let OpinionStage::Assigned {
+            investigator,
+            task: owner,
+        } = &opinion.stage
+        else {
+            return Err(OpinionStateError { number });
+        };
+        if owner != task {
+            return Err(OpinionStateError { number });
+        }
+        let attempts = self.opinion_attempts.entry(number).or_default();
+        if attempts.is_empty() {
+            attempts.push(OpinionAttempt {
+                investigator: investigator.clone(),
+                task: task.clone(),
+                asked_at: None,
+                failure: None,
+            });
+        }
+        let last = attempts.last_mut().ok_or(OpinionStateError { number })?;
+        if last.task != *task || last.failure.is_some() {
+            return Err(OpinionStateError { number });
+        }
+        last.failure = Some(failure);
+        if crate::decide::opinion::unanswered(failure, attempts.len()) == crate::decide::opinion::Unanswered::Replace {
+            opinion.stage = OpinionStage::Waiting;
+        }
+        Ok(())
     }
 }

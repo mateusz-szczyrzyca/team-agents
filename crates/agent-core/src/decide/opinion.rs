@@ -77,8 +77,21 @@ pub enum Unanswered {
 
 /// Bounds automatic replacement to two, regardless of how each run ended.
 #[must_use]
-pub fn unanswered(_failure: crate::state::OpinionFailure, _attempts: usize) -> Unanswered {
-    Unanswered::Hold
+pub fn unanswered(failure: crate::state::OpinionFailure, attempts: usize) -> Unanswered {
+    use crate::state::OpinionFailure;
+    match failure {
+        OpinionFailure::Failed
+        | OpinionFailure::NoStatus
+        | OpinionFailure::MissingReport
+        | OpinionFailure::Silent
+        | OpinionFailure::Interrupted => {
+            if attempts < 3 {
+                Unanswered::Replace
+            } else {
+                Unanswered::Hold
+            }
+        }
+    }
 }
 
 #[cfg(test)]
