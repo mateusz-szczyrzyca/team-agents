@@ -6,11 +6,11 @@ All reviews of your pull request are in, and at least one asks for changes. The 
 
 Switch to your branch `{{branch}}`. Fix every [BLOCKER] in code. Fix a [MAJOR] in code or explain its deviation once.
 Before STATUS, answer every open blocking number exactly once:
-`FINDING 3: FIXED` or `FINDING 4: EXPLAINED — why the deviation is right`.
+`FINDING 3: FIXED` or `FINDING 4: EXPLAINED — why the deviation is right`. After FIXED, optionally add ` — reason`, ` - reason`, or `: reason`.
 A finding with any retained explanation cannot be explained again. All verifiers must accept an explanation;
 otherwise fix it in code. Never explain a BLOCKER.
 Correct a rejected message without starting another fix pass.
-These severities block approval; [MINOR] never does. Then get the repository's gate green with `agent gate` and end
+These severities block approval; [MINOR] never does. You may answer an open MINOR with FIXED; other answers to open MINOR findings are ignored. Then get the repository's gate green with `agent gate` and end
 with `STATUS: DONE`.
 
 Do not push, and do not open or update the pull request: the harness pushes your branch when the gate has passed at its

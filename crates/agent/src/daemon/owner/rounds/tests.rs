@@ -2827,7 +2827,7 @@ async fn third_invalid_fix_response_notifies_human_and_holds_publication() {
     assert!(matches!(item.phase(), ItemPhase::Fixing { .. }));
     assert_eq!(rig.github.reviews(1).len(), 2);
     assert_eq!(rig.notifications().len(), 1);
-    assert!(rig.notifications()[0].contains("\nStatus: 📕 not published\n"));
+    assert!(rig.notifications()[0].contains("\nStatus: ❓ needs your decision\n"));
 }
 
 #[tokio::test]

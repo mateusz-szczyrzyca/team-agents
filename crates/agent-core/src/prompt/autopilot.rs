@@ -84,6 +84,10 @@ pub enum AutopilotPrompt {
     NoticeApproved,
     /// The notification that a pull request could not be opened or updated.
     NoticePublishFailed,
+    /// The lead repeatedly supplied an invalid fix response.
+    NoticeResponseRefused,
+    /// A verdict was present but the reviewer report was refused.
+    NoticeReportRefused,
     /// The notification that an approved pull request could not be merged.
     NoticeMergeFailed,
     /// The notification that a pull request was closed without being merged.
@@ -114,6 +118,38 @@ pub enum AutopilotPrompt {
     ReviewDisputes,
     /// The one-time explanation protocol.
     ReviewResponseInvalid,
+    /// The verdict answer correction.
+    ReviewMistakeVerdict,
+    /// The malformed answer correction.
+    ReviewMistakeMalformed,
+    /// The after-findings answer correction.
+    ReviewMistakeAfterFindings,
+    /// The missing answer correction.
+    ReviewMistakeMissing,
+    /// The forbidden answer correction.
+    ReviewMistakeForbidden,
+    /// The after-status answer correction.
+    ReviewMistakeAfterStatus,
+    /// The duplicate answer correction.
+    ReviewMistakeDuplicate,
+    /// The unknown answer correction.
+    ReviewMistakeUnknown,
+    /// Permitted increases from minor.
+    ReviewRaiseMajor,
+    /// Permitted increase from major to blocker.
+    ReviewRaiseBlocker,
+    /// Verifier forms for a pending explanation.
+    ReviewVerifierPending,
+    /// Verifier forms without a pending explanation.
+    ReviewVerifierResolved,
+    /// One numbered permitted answer.
+    ReviewResponseForm,
+    /// Source evidence and all available answers after a refused line.
+    ReviewAnswerDiagnostic,
+    /// The same for a refused line whose label is no finding number.
+    ReviewAnswerDiagnosticUnnumbered,
+    /// Correction for a refused line whose label is no finding number.
+    ReviewResponseUnnumbered,
     /// Correction for an unknown blocking finding number.
     ReviewResponseNumbers,
     /// Correction allowing an unused major explanation.
@@ -122,6 +158,8 @@ pub enum AutopilotPrompt {
     ReviewResponseFixed,
     /// The one-time explanation protocol.
     ReviewFixResponse,
+    /// Tell a lead woken during an open fix pass that the pass is still open and its response is due.
+    ReviewFixPassOpen,
     /// One reviewer's report among the findings the lead is given.
     ReviewFinding,
     /// What the lead is told when the fix passes are used up: to ask the human.
@@ -207,6 +245,8 @@ impl AutopilotPrompt {
         Self::NoticeStandingItem,
         Self::NoticeApproved,
         Self::NoticePublishFailed,
+        Self::NoticeResponseRefused,
+        Self::NoticeReportRefused,
         Self::NoticeMergeFailed,
         Self::NoticeClosed,
         Self::ReviewRequest,
@@ -222,10 +262,27 @@ impl AutopilotPrompt {
         Self::ReviewExplanation,
         Self::ReviewDisputes,
         Self::ReviewResponseInvalid,
+        Self::ReviewMistakeVerdict,
+        Self::ReviewMistakeMalformed,
+        Self::ReviewMistakeAfterFindings,
+        Self::ReviewMistakeMissing,
+        Self::ReviewMistakeForbidden,
+        Self::ReviewMistakeAfterStatus,
+        Self::ReviewMistakeDuplicate,
+        Self::ReviewMistakeUnknown,
+        Self::ReviewRaiseMajor,
+        Self::ReviewRaiseBlocker,
+        Self::ReviewVerifierPending,
+        Self::ReviewVerifierResolved,
+        Self::ReviewResponseForm,
+        Self::ReviewAnswerDiagnostic,
+        Self::ReviewAnswerDiagnosticUnnumbered,
+        Self::ReviewResponseUnnumbered,
         Self::ReviewResponseNumbers,
         Self::ReviewResponseExplain,
         Self::ReviewResponseFixed,
         Self::ReviewFixResponse,
+        Self::ReviewFixPassOpen,
         Self::ReviewFinding,
         Self::ReviewAskHuman,
         Self::ReviewVerdictMissing,
@@ -260,6 +317,8 @@ impl AutopilotPrompt {
                 | Self::NoticeTeamAsleep
                 | Self::NoticeStandingItem
                 | Self::NoticeApproved
+                | Self::NoticeResponseRefused
+                | Self::NoticeReportRefused
                 | Self::NoticePublishFailed
                 | Self::NoticeMergeFailed
                 | Self::NoticeClosed
@@ -320,6 +379,8 @@ impl AutopilotPrompt {
             Self::NoticeStandingItem => "harness/pr/notice-standing-item.md",
             Self::NoticeApproved => "harness/pr/notice-approved.md",
             Self::NoticePublishFailed => "harness/pr/notice-publish-failed.md",
+            Self::NoticeResponseRefused => "harness/pr/notice-response-refused.md",
+            Self::NoticeReportRefused => "harness/review/notice-report-refused.md",
             Self::NoticeMergeFailed => "harness/pr/notice-merge-failed.md",
             Self::NoticeClosed => "harness/pr/notice-closed.md",
             Self::NoticeMerged => "harness/pr/notice-merged.md",
@@ -333,10 +394,27 @@ impl AutopilotPrompt {
             Self::ReviewVerdictRequestChanges => "harness/review/verdict-request-changes.md",
             Self::ReviewFixPass => "harness/review/fix-pass.md",
             Self::ReviewFixResponse => "harness/review/fix-response.md",
+            Self::ReviewFixPassOpen => "harness/review/fix-pass-open.md",
             Self::ReviewResponseNumbers => "harness/review/response-numbers.md",
             Self::ReviewResponseExplain => "harness/review/response-explain.md",
             Self::ReviewResponseFixed => "harness/review/response-fixed.md",
             Self::ReviewResponseInvalid => "harness/review/response-invalid.md",
+            Self::ReviewMistakeVerdict => "harness/review/mistake-verdict.md",
+            Self::ReviewMistakeMalformed => "harness/review/mistake-malformed.md",
+            Self::ReviewMistakeAfterFindings => "harness/review/mistake-after-findings.md",
+            Self::ReviewMistakeMissing => "harness/review/mistake-missing.md",
+            Self::ReviewMistakeForbidden => "harness/review/mistake-forbidden.md",
+            Self::ReviewMistakeAfterStatus => "harness/review/mistake-after-status.md",
+            Self::ReviewMistakeDuplicate => "harness/review/mistake-duplicate.md",
+            Self::ReviewMistakeUnknown => "harness/review/mistake-unknown.md",
+            Self::ReviewRaiseMajor => "harness/review/raise-major.md",
+            Self::ReviewRaiseBlocker => "harness/review/raise-blocker.md",
+            Self::ReviewVerifierPending => "harness/review/verifier-pending.md",
+            Self::ReviewVerifierResolved => "harness/review/verifier-resolved.md",
+            Self::ReviewResponseForm => "harness/review/response-form.md",
+            Self::ReviewAnswerDiagnostic => "harness/review/answer-diagnostic.md",
+            Self::ReviewAnswerDiagnosticUnnumbered => "harness/review/answer-diagnostic-unnumbered.md",
+            Self::ReviewResponseUnnumbered => "harness/review/response-unnumbered.md",
             Self::ReviewDisputes => "harness/review/disputes.md",
             Self::ReviewExplanation => "harness/review/explanation.md",
             Self::ReviewExplanationVote => "harness/review/explanation-vote.md",
@@ -386,6 +464,18 @@ impl AutopilotPrompt {
             | Self::ReviewSeverityBlocker
             | Self::ReviewSeverityMajor
             | Self::ReviewSeverityMinor
+            | Self::ReviewMistakeVerdict
+            | Self::ReviewMistakeMalformed
+            | Self::ReviewMistakeAfterFindings
+            | Self::ReviewMistakeMissing
+            | Self::ReviewMistakeForbidden
+            | Self::ReviewMistakeAfterStatus
+            | Self::ReviewMistakeDuplicate
+            | Self::ReviewMistakeUnknown
+            | Self::ReviewRaiseMajor
+            | Self::ReviewRaiseBlocker
+            | Self::ReviewVerifierPending
+            | Self::ReviewVerifierResolved
             | Self::ReviewVerdictMissing => &[],
             Self::ReviewFixNoCommit => &["branch", "tip", "sent", "limit"],
             Self::ReviewFixNoCommitReason => &["tip"],
@@ -410,6 +500,9 @@ impl AutopilotPrompt {
             Self::NoticeStandingItem => &["team", "item", "member", "task", "line"],
             Self::NoticeApproved => &["team", "repo", "pr", "url"],
             Self::NoticePublishFailed => &["team", "items", "reason"],
+            Self::NoticeResponseRefused | Self::NoticeReportRefused => {
+                &["team", "items", "reason", "bounces", "task", "reviewer", "pr"]
+            }
             Self::NoticeMergeFailed => &["team", "pr", "url", "reason"],
             Self::NoticeClosed => &["team", "pr", "url"],
             Self::NoticeMerged => &["team", "pr", "url", "items"],
@@ -420,7 +513,12 @@ impl AutopilotPrompt {
             Self::ReviewComment => &["reviewer", "client", "verdict", "pass", "commit", "report"],
             Self::ReviewVerdictApprove | Self::ReviewVerdictRequestChanges => &["icon"],
             Self::ReviewFixPass | Self::ReviewFixResponse => FIX_PASS_VARIABLES,
+            Self::ReviewFixPassOpen => &["pr", "pass"],
             Self::ReviewResponseInvalid => &["line", "number", "allowed"],
+            Self::ReviewResponseForm => &["number", "allowed"],
+            Self::ReviewAnswerDiagnostic => &["number", "source", "mistake", "forms"],
+            Self::ReviewAnswerDiagnosticUnnumbered => &["source", "mistake", "forms"],
+            Self::ReviewResponseUnnumbered => &["line"],
             Self::ReviewExplanation => &["status", "why", "votes"],
             Self::ReviewExplanationVote => &["reviewer", "status", "why"],
             Self::ReviewFinding => &["reviewer", "report"],

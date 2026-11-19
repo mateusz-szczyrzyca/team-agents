@@ -141,7 +141,7 @@ impl Owner {
             pr = %asked.pr.number,
             ?problem,
             count,
-            "a reviewer's report has no verdict"
+            "a reviewer's report was refused"
         );
         if count <= MAX_VERDICT_BOUNCES {
             let mut look = Look::default();
@@ -158,12 +158,43 @@ impl Owner {
         }
         let now = Timestamp::now(&self.parts.clock)?;
         let lead = self.lead_of(&located.team)?;
-        let values = Variables::new()
-            .with("reviewer", asked.reviewer.as_str())
-            .and_then(|values| values.with("pr", asked.pr.number.to_string()))
-            .and_then(|values| values.with("task", task.as_str()))
-            .and_then(|values| values.with("why", NO_VERDICT_LINE));
-        self.tell_human(pulls, AutopilotNotice::NoVerdict, values, &lead, now);
+        if let VerdictProblem::Findings(problem) = problem {
+            let forms = match asked
+                .items
+                .first()
+                .and_then(|id| self.parts.state.team(&located.team)?.item(*id)?.findings())
+            {
+                Some(ledger) => super::responses::verifier_forms(&pulls.texts, ledger)?,
+                None => String::new(),
+            };
+            let reason = super::responses::answer_diagnostic(&pulls.texts, &problem.detail, &forms)?;
+            let values = Variables::new()
+                .with("team", located.team.as_str())
+                .and_then(|v| {
+                    v.with(
+                        "items",
+                        asked
+                            .items
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )
+                })
+                .and_then(|v| v.with("reason", reason))
+                .and_then(|v| v.with("bounces", count.to_string()))
+                .and_then(|v| v.with("task", task.as_str()))
+                .and_then(|v| v.with("reviewer", asked.reviewer.as_str()))
+                .and_then(|v| v.with("pr", asked.pr.number.to_string()));
+            self.tell_human(pulls, AutopilotNotice::ReportRefused, values, &lead, now);
+        } else {
+            let values = Variables::new()
+                .with("reviewer", asked.reviewer.as_str())
+                .and_then(|values| values.with("pr", asked.pr.number.to_string()))
+                .and_then(|values| values.with("task", task.as_str()))
+                .and_then(|values| values.with("why", NO_VERDICT_LINE));
+            self.tell_human(pulls, AutopilotNotice::NoVerdict, values, &lead, now);
+        }
         Ok(())
     }
 

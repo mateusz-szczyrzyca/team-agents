@@ -111,6 +111,7 @@ and an investigator.
 | `limits.quota_pause_minutes` | `30` | the pause of an exhausted quota when the CLI gives no reset time |
 | `limits.rate_limit_pause_minutes` | `5` | the pause of a rate limit (HTTP 429) |
 | `limits.tail_lines` | `30` | how many of a run's last lines of error output are read to recognise a limit |
+| `limits.wake_ups_per_message` | `2` | runs a task is woken for one unread message; after that many that end without the message read, the task is not woken for it again, a `bus_down` warning names the task, the message and the count, and the message waits for the task's next run; `0` never wakes a task for a message |
 
 A turn-limit ending queues the task and resumes the same session with a short continuation prompt. With the default
 `turn_limit_resumes = 3`, the fourth consecutive exhaustion fails the task and sends one notification with the count.

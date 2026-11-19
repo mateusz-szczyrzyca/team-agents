@@ -58,7 +58,12 @@ fn refuses_missing_unknown_or_rule_id_severities_and_missing_checks() {
             parse_report(&format!("FINDINGS\n{line}"), ReviewVerdict::RequestChanges, &[]),
             Err(ReportError {
                 line: source_line,
-                kind
+                kind,
+                detail: AnswerDiagnostic {
+                    source_line: Some(line.lines().next().unwrap().to_owned()),
+                    number: None,
+                    mistake: AnswerMistake::Malformed,
+                },
             })
         );
     }
@@ -169,7 +174,12 @@ fn refuses_a_numbered_finding_outside_the_findings_section() {
             parse_report(text, ReviewVerdict::Approve, &[]),
             Err(ReportError {
                 line: 3,
-                kind: ReportProblem::Finding
+                kind: ReportProblem::Finding,
+                detail: AnswerDiagnostic {
+                    source_line: Some(text.lines().nth(2).unwrap().to_owned()),
+                    number: None,
+                    mistake: AnswerMistake::Malformed,
+                },
             }),
             "{text}"
         );
@@ -191,7 +201,12 @@ fn refuses_an_unnumbered_finding_line_anywhere() {
             parse_report(text, ReviewVerdict::Approve, &[]),
             Err(ReportError {
                 line,
-                kind: ReportProblem::Finding
+                kind: ReportProblem::Finding,
+                detail: AnswerDiagnostic {
+                    source_line: Some(text.lines().nth(line - 1).unwrap().to_owned()),
+                    number: None,
+                    mistake: AnswerMistake::Malformed,
+                },
             }),
             "{text}"
         );
@@ -238,7 +253,12 @@ FINDINGS\n1. [MAJOR] ERR-3 y.rs:4 — real problem → fix\n   CHECK: read y.rs\
             parse_report(&text, ReviewVerdict::Approve, &[]),
             Err(ReportError {
                 line: 1,
-                kind: ReportProblem::Verdict
+                kind: ReportProblem::Verdict,
+                detail: AnswerDiagnostic {
+                    source_line: Some("VERDICT: APPROVE".to_owned()),
+                    number: None,
+                    mistake: AnswerMistake::Verdict,
+                },
             }),
             "{text}"
         );
@@ -255,7 +275,12 @@ FINDINGS\n1. [MAJOR] ERR-3 y.rs:4 — problem → fix\n   CHECK: read y.rs\n";
         parse_report(text, ReviewVerdict::Approve, &[]),
         Err(ReportError {
             line: 1,
-            kind: ReportProblem::Verdict
+            kind: ReportProblem::Verdict,
+            detail: AnswerDiagnostic {
+                source_line: Some("VERDICT: APPROVE".to_owned()),
+                number: None,
+                mistake: AnswerMistake::Verdict,
+            },
         })
     );
     let report = parse_report(text, ReviewVerdict::RequestChanges, &[]).unwrap();
@@ -356,7 +381,92 @@ fn malformed_explanation_votes_receive_the_explanation_protocol_correction() {
         ),
         Err(ReportError {
             line: 1,
-            kind: ReportProblem::DisputeAnswer
+            kind: ReportProblem::DisputeAnswer,
+            detail: AnswerDiagnostic {
+                source_line: Some("FINDING 3: RESOLVED".to_owned()),
+                number: Some(number(3)),
+                mistake: AnswerMistake::NotAllowed,
+            },
         })
     );
+}
+
+#[test]
+fn resolved_accepts_optional_reason_separators() {
+    for suffix in ["", " — vérifié", " - vérifié", ": vérifié"] {
+        let text = format!("VERDICT: APPROVE\nFINDING 3: RESOLVED{suffix}\nSTATUS: DONE");
+        assert_eq!(
+            parse_verification(&text, ReviewVerdict::Approve, &[(number(3), Severity::Blocker)], &[]),
+            Ok(Report {
+                findings: vec![],
+                answers: vec![(number(3), Answer::Resolved)]
+            })
+        );
+    }
+}
+
+#[test]
+fn verification_refuses_an_answer_after_status() {
+    let text = "VERDICT: APPROVE\nSTATUS: DONE\nFINDING 3: RESOLVED";
+    let error = parse_verification(text, ReviewVerdict::Approve, &[(number(3), Severity::Major)], &[])
+        .expect_err("an answer after the final status is not part of the report");
+    assert_eq!((error.line, error.kind), (3, ReportProblem::DisputeAnswer));
+}
+
+#[test]
+fn verifier_diagnostics_retain_the_refused_number_line_and_mistake() {
+    for (text, source_line, id, mistake) in [
+        (
+            "VERDICT: APPROVE\n  FINDING 99: RESOLVED",
+            Some("  FINDING 99: RESOLVED"),
+            99,
+            AnswerMistake::UnknownNumber,
+        ),
+        (
+            "FINDING 3: RESOLVED\nFINDING 3: RESOLVED",
+            Some("FINDING 3: RESOLVED"),
+            3,
+            AnswerMistake::Duplicate,
+        ),
+        (
+            "STATUS: DONE\nFINDING 3: RESOLVED",
+            Some("FINDING 3: RESOLVED"),
+            3,
+            AnswerMistake::AfterStatus,
+        ),
+        (
+            "FINDING 3: EXPLAINED — why",
+            Some("FINDING 3: EXPLAINED — why"),
+            3,
+            AnswerMistake::NotAllowed,
+        ),
+        ("VERDICT: APPROVE", None, 3, AnswerMistake::Missing),
+    ] {
+        let error = parse_verification(text, ReviewVerdict::Approve, &[(number(3), Severity::Major)], &[]).unwrap_err();
+        assert_eq!(
+            Some(&error.detail),
+            Some(&AnswerDiagnostic {
+                source_line: source_line.map(str::to_owned),
+                number: NonZeroU32::new(id),
+                mistake,
+            }),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn invalid_numeric_answer_labels_keep_the_original_source_and_no_invented_number() {
+    for label in ["0", "café", "4294967296"] {
+        let text = format!("  FINDING {label}: RESOLVED");
+        let error = parse_report(&text, ReviewVerdict::Approve, &[(NonZeroU32::MIN, Severity::Major)]).unwrap_err();
+        assert_eq!(
+            error.detail,
+            AnswerDiagnostic {
+                source_line: Some(text),
+                number: None,
+                mistake: AnswerMistake::UnknownNumber,
+            }
+        );
+    }
 }

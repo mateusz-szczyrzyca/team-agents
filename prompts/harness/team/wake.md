@@ -1,5 +1,7 @@
 # YOU HAVE BEEN WOKEN UP (team {{team}})
 
+Call `read_messages` now: a message that stays unread brings this wake-up back.
+
 A message to you or to your team has arrived. Everything of this session still holds, the rules of your first message
 included.
 

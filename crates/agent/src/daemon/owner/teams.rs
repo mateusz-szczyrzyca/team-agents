@@ -30,6 +30,7 @@ use agent_runtime::team_prompts::TeamPrompts;
 use serde_json::json;
 use tracing::Instrument;
 
+use super::wakes::Wake;
 use super::{Located, Owner, OwnerError};
 use crate::daemon::team::{
     Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace, assignable,
@@ -473,15 +474,33 @@ impl Owner {
             }
         };
         let plan = reconcile(team, &on_bus)?;
+        let mut held = Vec::new();
         for task in plan.wake {
-            self.release(&task, Why::Woken, look)?;
+            if self.wake_member(team_id, &task, look).await? == Wake::Held {
+                held.push(task);
+            }
         }
         for (member, state) in plan.set {
+            // A member that is not woken stays as the bus has it, woken: it is not made active, and not woken again at the
+            // next look.
+            if state == MemberState::Active
+                && held
+                    .iter()
+                    .any(|task| self.task_of(team_id, &member).as_ref() == Some(task))
+            {
+                continue;
+            }
             match self.parts.bus.team_set(team_id, &member, state).await {
                 // A member that went to sleep while something waits for it is woken at once.
                 Ok(Woken::Message | Woken::Board) if state == MemberState::Sleeping => {
                     if let Some(task) = self.task_of(team_id, &member) {
-                        self.release(&task, Why::Woken, look)?;
+                        self.wake_member(team_id, &task, look).await?;
+                    }
+                }
+                // A member that went to sleep with nothing waiting read what woke it.
+                Ok(Woken::No) if state == MemberState::Sleeping => {
+                    if let Some(task) = self.task_of(team_id, &member) {
+                        self.wake_settled(&task);
                     }
                 }
                 Ok(Woken::Message | Woken::Board | Woken::No) => {}

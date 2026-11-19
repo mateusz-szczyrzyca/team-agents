@@ -29,6 +29,8 @@ fn only_unused_blockers_with_permission_accept_opinions() {
                             LeadAnswer::SecondOpinion("café is unreachable".to_owned().try_into().unwrap())
                         )])
                     );
+                } else if severity == Severity::Minor {
+                    assert_eq!(result, Ok(vec![]));
                 } else {
                     assert!(
                         matches!(result, Err(OpinionError::Forbidden { number, .. }) if number == NonZeroU32::MIN),
@@ -98,6 +100,23 @@ fn reads_mixed_answers_atomically_and_retains_legacy_validation() {
                 line,
                 number: NonZeroU32::new(number).unwrap(),
                 correction,
+                detail: crate::review_findings::AnswerDiagnostic {
+                    source_line: text.lines().nth(line - 1).map(str::to_owned),
+                    number: if text.starts_with("FINDING 9:") {
+                        NonZeroU32::new(9)
+                    } else {
+                        NonZeroU32::new(number)
+                    },
+                    mistake: if line > text.lines().count() {
+                        crate::review_findings::AnswerMistake::Missing
+                    } else if text.starts_with("FINDING 9:") {
+                        crate::review_findings::AnswerMistake::UnknownNumber
+                    } else if text.starts_with("STATUS:") {
+                        crate::review_findings::AnswerMistake::AfterStatus
+                    } else {
+                        crate::review_findings::AnswerMistake::Duplicate
+                    },
+                },
             })),
             "{text}"
         );
@@ -194,7 +213,6 @@ fn a_refused_request_names_its_line_and_the_reason() {
         (Severity::Major, false, Disabled, KeyDisabled),
         (Severity::Blocker, true, Enabled, AlreadyAsked),
         (Severity::Major, false, Enabled, NotBlocker),
-        (Severity::Minor, false, Enabled, NotBlocker),
     ] {
         let number = NonZeroU32::new(2).unwrap();
         let open = [
@@ -220,5 +238,29 @@ fn a_refused_request_names_its_line_and_the_reason() {
             }),
             "{severity:?} used={used} {permission:?}"
         );
+    }
+}
+
+#[test]
+fn minor_answers_do_not_block_opinion_protocol() {
+    let open = [
+        finding(Severity::Blocker, false),
+        OpenFinding {
+            number: NonZeroU32::new(2).unwrap(),
+            ..finding(Severity::Minor, false)
+        },
+    ];
+    for minor in [
+        "FIXED",
+        "SECOND OPINION — optional",
+        "EXPLAINED — optional",
+        "advice only",
+    ] {
+        let text = format!("FINDING 1: FIXED — tested\nFINDING 2: {minor}\nSTATUS: DONE");
+        let mut expected = vec![(NonZeroU32::MIN, LeadAnswer::Fixed)];
+        if minor == "FIXED" {
+            expected.push((NonZeroU32::new(2).unwrap(), LeadAnswer::Fixed));
+        }
+        assert_eq!(parse_lead(&text, &open, Permission::Enabled), Ok(expected));
     }
 }

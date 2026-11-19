@@ -36,6 +36,10 @@
 #                   whatever the run is to have done
 #   stream:NAME     prints the lines of the file `fake-scripts/NAME.jsonl` of the home the configuration names — events of Claude
 #                   Code's stream JSON, which a test writes — and ends with STATUS: DONE: the steps the history is to record
+#   fix-held:K      like `fix-work:K`, but first creates `.fake-started-N` and waits for the test to create `.fake-release-N` (N is
+#                   the number of the run): a message can reach the agent while its run works
+#   answer:K        ends with FINDING K: FIXED and STATUS: DONE, and changes nothing in the worktree
+#   deaf-ACTION     does ACTION without reading its messages first, like an agent that ignores the wake-up text
 #   integrate       merges every other local branch of the form agents/*/task-*-N.N into the worktree's branch, records
 #                   the gate as `work` does and ends with STATUS: DONE
 #
@@ -97,6 +101,7 @@ result() {
 # Reads the messages of the agent: what a well-behaved agent of a team does first.
 read_messages() {
   local team task
+  [[ $deaf == true ]] && return 0
   team=$(grep -o 'team-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
   task=$(grep -o 'task-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
   [[ -n $bus_bin && -n $team ]] || return 0
@@ -163,6 +168,11 @@ wait_for_peer_review() {
   rm -f "$fifo"
 }
 
+deaf=false
+if [[ $action == deaf-* ]]; then
+  deaf=true
+  action=${action#deaf-}
+fi
 init
 read_messages
 case $action in
@@ -380,6 +390,19 @@ case $action in
   questions) result 'I have to ask.\nSTATUS: QUESTIONS' ;;
   slowdone) sleep 1; result 'Finished the work.\nSTATUS: DONE' ;;
   slowfail) sleep 1; result 'I could not do it.\nSTATUS: FAILED' ;;
+  review-reasons)
+    if [[ $prompt == *'# OPEN FINDINGS TO VERIFY'* ]]; then
+      answers=$(awk '/^# OPEN FINDINGS TO VERIFY/ {open=1} open && /^[0-9]+\. \[/{sub(/\./, "", $1); printf "FINDING %s: RESOLVED — café regression checked\\n", $1}' <<< "$prompt")
+      result "VERDICT: APPROVE\n$answers\nSTATUS: DONE"
+    else
+      result 'VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — café regression missing → add it\n   CHECK: read src/lib.rs:7\n2. [MINOR] DOC-1 src/lib.rs:8 — wording → clarify it\n   CHECK: read src/lib.rs:8\nSTATUS: DONE'
+    fi
+    ;;
+  fix-reasons-minor)
+    commit_work
+    record_gate
+    result 'FINDING 1: FIXED — café regression added\nFINDING 2: FIXED - wording clarified\nFINDING 3: FIXED: café regression added\nFINDING 4: FIXED\nSTATUS: DONE'
+    ;;
   fix-work|fix-work:*|fix-work-pushed|fix-commit|fix-done|fix-gated|fix-script:*)
     # New fix actions preserve the original actions and answer the ledger before the attached reports.
     case $action in
@@ -404,6 +427,18 @@ case $action in
     fi
     result "$message"'\n'"$answers"'STATUS: DONE'
     ;;
+  fix-held:*)
+    : > ".fake-started-$n"
+    for _ in $(seq 1 600); do
+      [[ -f ".fake-release-$n" ]] && break
+      sleep 0.05
+    done
+    [[ -f ".fake-release-$n" ]] || { echo "the test never released run $n" >&2; exit 65; }
+    commit_work
+    record_gate
+    result 'Finished the item.\nFINDING '"${action#fix-held:}"': FIXED\nSTATUS: DONE'
+    ;;
+  answer:*) result 'FINDING '"${action#answer:}"': FIXED\nSTATUS: DONE' ;;
   work)
     commit_work
     record_gate
