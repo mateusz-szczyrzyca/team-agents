@@ -143,6 +143,15 @@ pub(super) fn named(texts: &ChecksPrompts, subject: &Subject) -> Result<String, 
     })
 }
 
+/// What extra notice is included in the message to the team.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TeamMessageNotice {
+    /// No extra notice is included.
+    None,
+    /// Findings wait on a decision from the human.
+    WaitingForHuman,
+}
+
 /// What the lead is told when the checks send the round back as the `pass`-th of `passes`: every reason, and what the
 /// human `refused`.
 ///
@@ -156,7 +165,7 @@ pub(super) fn team_message(
     issues: &[Issue],
     refused: &[Subject],
 ) -> Result<String, ChecksTextError> {
-    team_message_impl(texts, pr, pass, passes, issues, refused, false)
+    team_message_impl(texts, pr, pass, passes, issues, refused, TeamMessageNotice::None)
 }
 
 /// What the lead is told when the checks send the round back while other findings wait for the human.
@@ -171,7 +180,7 @@ pub(super) fn team_message_with_waiting(
     issues: &[Issue],
     refused: &[Subject],
 ) -> Result<String, ChecksTextError> {
-    team_message_impl(texts, pr, pass, passes, issues, refused, true)
+    team_message_impl(texts, pr, pass, passes, issues, refused, TeamMessageNotice::WaitingForHuman)
 }
 
 fn team_message_impl(
@@ -181,7 +190,7 @@ fn team_message_impl(
     passes: u32,
     issues: &[Issue],
     refused: &[Subject],
-    waits_human: bool,
+    notice: TeamMessageNotice,
 ) -> Result<String, ChecksTextError> {
     let refused = if refused.is_empty() {
         String::new()
@@ -196,11 +205,12 @@ fn team_message_impl(
         )?;
         format!("\n{}\n", told.trim())
     };
-    let human = if waits_human {
-        let told = texts.render(ChecksPrompt::WaitsHuman, &Variables::new())?;
-        format!("\n{}\n", told.trim())
-    } else {
-        String::new()
+    let human = match notice {
+        TeamMessageNotice::WaitingForHuman => {
+            let told = texts.render(ChecksPrompt::WaitsHuman, &Variables::new())?;
+            format!("\n{}\n", told.trim())
+        }
+        TeamMessageNotice::None => String::new(),
     };
     let values = Variables::new()
         .with("pr", pr.to_string())?
