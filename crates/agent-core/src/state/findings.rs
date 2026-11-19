@@ -90,16 +90,16 @@ struct FindingsWire {
     /// See [`Findings::entries`].
     entries: Vec<RecordedFinding>,
     /// Missing on every state written before schema 7.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::protocol::finding_map::deserialize_map")]
     opinions: BTreeMap<NonZeroU32, SecondOpinion>,
     /// Missing before schema 9: legacy assignments have no attempt history.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::protocol::finding_map::deserialize_map")]
     opinion_attempts: BTreeMap<NonZeroU32, Vec<OpinionAttempt>>,
     /// Missing before schema 8: no unanswered-opinion notice was sent.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::protocol::finding_map::deserialize_set")]
     opinion_notices: std::collections::BTreeSet<NonZeroU32>,
     /// Missing before schema 8: no lead fixes have been retained.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::protocol::finding_map::deserialize_map")]
     fixed: BTreeMap<NonZeroU32, std::collections::BTreeSet<NonZeroU32>>,
     /// See [`Findings::verification`]; missing retains the previous protocol.
     #[serde(default)]
