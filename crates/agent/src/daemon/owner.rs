@@ -741,6 +741,10 @@ impl Owner {
         self.move_to(task, &located.team, TaskStatus::Failed, &mut events)?;
         self.commit(task, &located, now, events, Some(Notice::StartFailed { reason }))
             .await?;
+        if let Some(pulls) = self.pulls.clone() {
+            self.retry_opinion(&pulls, &located.team, task, agent_core::state::OpinionFailure::Failed)
+                .await?;
+        }
         self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)
     }
 
