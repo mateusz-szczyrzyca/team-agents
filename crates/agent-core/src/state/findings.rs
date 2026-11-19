@@ -1,7 +1,9 @@
 //! The permanent findings ledger of one pull request, including reports waiting for their peers.
 
 mod disputes;
+mod opinions;
 pub use disputes::{Disputes, Explanation, ExplanationStatus, RaisedFinding};
+pub use opinions::{OpinionRequest, OpinionStage, OpinionStateError, SecondOpinion};
 
 use super::Review;
 use crate::ids::{InvestigatorName, TaskId};
@@ -18,6 +20,8 @@ pub enum FindingStatus {
     Open,
     /// Every verifier of a pass accepted the fix.
     Resolved,
+    /// An independent opinion did not confirm the reported defect.
+    NotConfirmed,
 }
 
 /// A finding with its permanent identity and provenance.
@@ -55,6 +59,9 @@ pub struct Findings {
     /// Findings, in permanent-number order; private so that only [`Findings::new`], the loader and
     /// [`Findings::finish`] can set the numbers.
     entries: Vec<RecordedFinding>,
+    /// One-shot opinions; an absent map means no opinion has been requested.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    opinions: BTreeMap<NonZeroU32, SecondOpinion>,
     /// Reports received during the current pass; numbering waits for request order to be known in full.
     pending: BTreeMap<TaskId, Report>,
     /// The harness comment, updated instead of posting another table.
@@ -73,6 +80,9 @@ struct FindingsWire {
     disputes: Option<Disputes>,
     /// See [`Findings::entries`].
     entries: Vec<RecordedFinding>,
+    /// Missing on every state written before schema 7.
+    #[serde(default)]
+    opinions: BTreeMap<NonZeroU32, SecondOpinion>,
     /// See [`Findings::verification`]; missing retains the previous protocol.
     #[serde(default)]
     verification: Option<Verification>,
@@ -99,6 +109,7 @@ impl TryFrom<FindingsWire> for Findings {
 
     fn try_from(wire: FindingsWire) -> Result<Self, Self::Error> {
         let mut ledger = Self::new(wire.entries)?;
+        ledger.opinions = wire.opinions;
         ledger.disputes = wire.disputes;
         ledger.pending = wire.pending;
         ledger.comment = wire.comment;
@@ -187,6 +198,7 @@ impl Findings {
             review_count: None,
             verification: None,
             entries,
+            opinions: BTreeMap::new(),
             pending: BTreeMap::new(),
             comment: None,
         })
