@@ -18,7 +18,7 @@ use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
 use crate::daemon::merge::{Next, VerdictError, after_verdict, count};
-use crate::daemon::review::{VerdictProblem, parse_verdict, report_text, report_without_verdict};
+use crate::daemon::review::{ReportRefusal, VerdictProblem, parse_verdict, report_text, report_without_verdict};
 use crate::daemon::team::Why;
 
 use super::super::{Located, Owner, OwnerError};
@@ -147,15 +147,17 @@ impl Owner {
         let now = Timestamp::now(&self.parts.clock)?;
         let lead = self.lead_of(&located.team)?;
         if let VerdictProblem::Findings(problem) = problem {
-            let forms = match asked
-                .items
-                .first()
-                .and_then(|id| self.parts.state.team(&located.team)?.item(*id)?.findings())
+            let forms = match self
+                .parts
+                .state
+                .team(&located.team)
+                .and_then(|team| team.item(problem.item))
+                .and_then(|item| item.findings())
             {
                 Some(ledger) => super::responses::verifier_forms(&pulls.texts, ledger)?,
                 None => String::new(),
             };
-            let reason = super::responses::answer_diagnostic(&pulls.texts, &problem.detail, &forms)?;
+            let reason = super::responses::answer_diagnostic(&pulls.texts, &problem.problem.detail, &forms)?;
             let values = Variables::new()
                 .with("team", located.team.as_str())
                 .and_then(|v| {
@@ -407,7 +409,7 @@ impl Owner {
         asked: &Asked,
         verdict: ReviewVerdict,
         message: &str,
-    ) -> Result<Vec<(ItemId, Report)>, agent_core::review_findings::ReportError> {
+    ) -> Result<Vec<(ItemId, Report)>, ReportRefusal> {
         let mut reports = Vec::new();
         for id in &asked.items {
             let Some(item) = self.parts.state.team(team_id).and_then(|team| team.item(*id)) else {
@@ -417,7 +419,10 @@ impl Owner {
                 continue;
             }
             if let Some(ledger) = item.findings() {
-                reports.push((*id, ledger.parse_report(message, verdict)?));
+                let report = ledger
+                    .parse_report(message, verdict)
+                    .map_err(|problem| ReportRefusal { item: *id, problem })?;
+                reports.push((*id, report));
             }
         }
         Ok(reports)

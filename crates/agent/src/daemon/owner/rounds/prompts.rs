@@ -156,29 +156,19 @@ async fn round_sections_for(
     match (found.role, why) {
         (Role::Reviewer, Some(Why::ReviewFormat(problem))) => {
             let values = Variables::new()
-                .with("line", problem.line.to_string())?
-                .with("reason", problem.kind.to_string())?;
+                .with("line", problem.problem.line.to_string())?
+                .with("reason", problem.problem.kind.to_string())?;
             let mut correction = texts.render(AutopilotPrompt::ReviewFindingsInvalid, &values)?;
-            let ledger = found
-                .team
-                .items()
-                .iter()
-                .find(|item| match item.phase() {
-                    ItemPhase::InReview { reviews, .. } => {
-                        reviews.iter().any(|review| &review.task == found.member.task())
-                    }
-                    ItemPhase::Pending
-                    | ItemPhase::InProgress { .. }
-                    | ItemPhase::Fixing { .. }
-                    | ItemPhase::Approved { .. }
-                    | ItemPhase::Done { .. } => false,
-                })
-                .and_then(|item| item.findings());
+            let ledger = found.team.item(problem.item).and_then(|item| item.findings());
             let forms = match ledger {
                 Some(ledger) => super::responses::verifier_forms(texts, ledger)?,
                 None => String::new(),
             };
-            correction.push_str(&super::responses::answer_diagnostic(texts, &problem.detail, &forms)?);
+            correction.push_str(&super::responses::answer_diagnostic(
+                texts,
+                &problem.problem.detail,
+                &forms,
+            )?);
             Ok(Some(Addition::Replace(correction)))
         }
         (Role::Reviewer, Some(Why::VerdictMissing)) => {
