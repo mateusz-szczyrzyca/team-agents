@@ -2165,3 +2165,9 @@ make integration        # real agent CLIs and accounts (costs usage)
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Second-opinion history records each investigator selected for a finding. `agent log` names an unsuccessful
+investigator and why the opinion was replaced, or says that its three attempts are exhausted. History
+schema 10 migrates existing records automatically; old requests remain readable. After a daemon restart,
+an opinion task awaiting human answers cannot be resumed automatically and enters the same bounded
+replacement process.

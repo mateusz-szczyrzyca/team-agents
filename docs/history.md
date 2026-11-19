@@ -78,7 +78,7 @@ so its ledger row starts with `runs.at` and takes `run_ends.at` once the end is 
 | `synchronous` | `NORMAL` | in WAL mode a crash may lose the last commits, never corrupt the file |
 | `foreign_keys` | `ON` (each connection of the writer) | the rows of one record hold together |
 | `busy_timeout` | 5 seconds | a person with `sqlite3` open does not make the writer lose a batch at once |
-| `user_version` | the version of the schema, `9` | forward-only migrations (below) |
+| `user_version` | the version of the schema, `10` | forward-only migrations (below) |
 
 Every ordinary table is `STRICT` (FTS5 manages its virtual and shadow tables): a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
 (a step of the kind `message` has a text and no path), so a row that something else wrote is refused by SQLite or, if
@@ -394,7 +394,8 @@ linked to every round of its team; a team-wide control or loss note when no roun
 | `pull_ready` | the pull request was marked ready | `pr` | `pr N` |
 | `review_asked` | a reviewer was asked | `pr`, `pass` (`0` is the first review), `head`, `reviewer`, `task`, optional `among` (the draw candidates) | `pr N pass P reviewer R` |
 | `review_submitted` | a reviewer submitted | `pr`, `pass`, `reviewer`, `task`, `verdict`, `report` whole | `pr N pass P reviewer R` |
-| `second_opinion_asked`, `finding_confirmed`, `finding_not_confirmed` | a requested second opinion, unsuccessful assignment or its outcome | `pr`, `number`, `pass`, `by`, `why` | finding number, investigator and reason/evidence |
+| `second_opinion_asked`, `finding_confirmed`, `finding_not_confirmed` | an assigned second opinion or its outcome | `pr`, `number`, `pass`, `by`, `why` | finding number, investigator and reason/evidence |
+| `second_opinion_ended` | an unsuccessful independent assignment | `pr`, `number`, `pass`, `by`, `why`, `attempt` | finding, failed investigator, cause and assignment number |
 | `finding_explained`, `finding_accepted`, `finding_rejected`, `finding_raised` | a lead explanation or verifier decision | `pr`, `number`, `pass`, `by`, `why` | finding number, actor and evidence |
 | `fix_pass_started` | the reviews asked for changes | `pr`, `pass` (from 1), `of`, `findings` whole | `pr N fix pass P` |
 | `pull_approved` | both reviews approved | `pr` | `pr N` |
@@ -707,10 +708,11 @@ records, round links and indexed search. The schema-8 fixture is loaded, populat
 and migrated by the compatibility test. No daemon emits these records until the lifecycle is activated.
 
 
-Bounded second-opinion recovery reuses schema 9. `second_opinion_asked` records the original request's lead
-and reason; an unsuccessful assignment records its investigator and the catalogued task/end cause using
-the same event. Its existing per-investigator identity retains each failed attempt without duplicate rows.
-Each replacement's ordinary `second_opinion` run names the selected investigator and pass. Confirmed and
-not-confirmed events retain the accepted investigator and evidence. The round story prints these in words,
-previews the first evidence line, and preserves the complete evidence below it. No database migration or
-new keyword is necessary for these records; databases from before bounded recovery remain readable.
+History schema 10 adds `second_opinion_ended`. Migration 010 preserves records, round links and indexed
+search while extending the event constraint; a populated schema-9 database verifies the upgrade.
+`second_opinion_asked` records each selected investigator and the request's reason, keyed by pull request,
+finding, pass and investigator. Legacy requests naming the lead remain readable. An unsuccessful assignment
+records the same context in `second_opinion_ended`, with its one-based `attempt` and catalogued cause in
+`why`. The story calls the first two failures “second opinion replaced” and the third “second opinion
+exhausted”, naming the unsuccessful investigator and the first cause line. Confirmed and not-confirmed
+events retain the accepted investigator and evidence. Complete evidence remains below each story entry.
