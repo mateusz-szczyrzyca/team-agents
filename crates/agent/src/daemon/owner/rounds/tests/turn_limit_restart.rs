@@ -569,3 +569,64 @@ async fn opinion_pulls(owner: &Owner) -> crate::daemon::owner::rounds::Pulls {
     .unwrap()
     .unwrap()
 }
+
+#[tokio::test]
+async fn engine_failure_preserves_the_opinion_request_for_reassignment() {
+    use agent_core::state::{OpinionFailure, OpinionStage};
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-failure:HOLD"),
+            investigator("inv-r2", "opinion-failure:HOLD"),
+            investigator("inv-r3", "opinion-failure:HOLD"),
+            investigator("inv-r4", "opinion-failure:HOLD"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], super::rig::ONE, MergeMode::Autopilot, None)
+        .await;
+    let running = rig
+        .state_where("assigned opinion runs", |state| {
+            let team = state.team(&team).unwrap();
+            team.items()[0].findings().is_some_and(|ledger| {
+                ledger.opinions().len() == 2
+                    && ledger.opinions().values().all(|opinion| {
+                        let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+                            return false;
+                        };
+                        team.find(task).unwrap().1.current_run().is_some()
+                    })
+            })
+        })
+        .await;
+    rig.stop().await.unwrap();
+    let mut step = stepped(&rig).await;
+    step.owner.parts.state = running;
+    step.owner.pulls = Some(opinion_pulls(&step.owner).await);
+    let (number, task) = {
+        let ledger = step.owner.parts.state.team(&team).unwrap().items()[0]
+            .findings()
+            .unwrap();
+        let (number, opinion) = ledger.opinions().first_key_value().unwrap();
+        let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+            panic!("assigned")
+        };
+        (*number, task.clone())
+    };
+    step.owner
+        .failed(&task, "injected engine boundary failure".to_owned())
+        .await
+        .unwrap();
+    let ledger = step.owner.parts.state.team(&team).unwrap().items()[0]
+        .findings()
+        .unwrap();
+    assert_eq!(ledger.opinions()[&number].stage, OpinionStage::Waiting);
+    assert_eq!(ledger.opinion_attempts(number).len(), 1);
+    assert_eq!(ledger.opinion_attempts(number)[0].failure, Some(OpinionFailure::Failed));
+    drop(step.owner);
+    crate::daemon::history::close(step.writer).await;
+}
