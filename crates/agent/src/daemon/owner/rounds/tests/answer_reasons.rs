@@ -100,3 +100,29 @@ async fn refused_report_with_verdict_quotes_the_answer_instead_of_claiming_no_ve
     assert!(!notice.contains("gave no verdict"), "{notice}");
     assert!(!notice.contains("could not be published"), "{notice}");
 }
+
+#[tokio::test]
+async fn a_label_that_is_no_number_is_refused_without_naming_a_finding() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,answer:#15"),
+            investigator("inv-r1", "review-reasons"),
+            investigator("inv-r2", "review-reasons"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let notice = rig.notification_with("The lead's fix response was refused").await;
+    rig.stop().await.unwrap();
+
+    let correction = rig.kept_prompt(&tasks[0], 3);
+    for text in [&notice, &correction] {
+        assert!(text.contains("FINDING #15: FIXED"), "{text}");
+        assert!(text.contains("FINDING 1: FIXED or EXPLAINED"), "{text}");
+        assert!(!text.contains("For FINDING"), "{text}");
+        assert!(!text.contains("FINDING :"), "{text}");
+    }
+}
