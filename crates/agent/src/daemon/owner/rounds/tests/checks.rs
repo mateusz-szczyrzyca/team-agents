@@ -1193,3 +1193,36 @@ async fn task_allowances_reach_review_without_questions_and_survive_daemon_resta
     assert_eq!(record(&rig, &tasks[0]).await.allowed_of(&["1.1".parse().unwrap()]), []);
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn preallowed_paths_do_not_disclose_markers_or_cover_other_changed_tests() {
+    let mut rig = checking_rig("script:allowed-marker,questions", 0, SILENT, SILENT).await;
+    for name in ["tests/allowed.rs", "tests/other.rs", "tests/third.rs"] {
+        std::fs::write(rig.repo.join(name), "fn original() {}\n").unwrap();
+    }
+    git(&rig.repo, &["add", "tests"]);
+    git(&rig.repo, &["commit", "-qm", "Seed test files"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    script(
+        &rig,
+        "allowed-marker",
+        "printf '#[ignore]\\nfn changed() {}\\n' > tests/allowed.rs\nprintf 'fn changed() {}\\n' > tests/other.rs\nprintf 'fn changed() {}\\n' > tests/third.rs\ngit add tests\ncommit -m 'Change tests and add a marker'\n",
+    );
+    rig.start().await;
+    let list = format!("Allow: tests/allowed.rs\n{ONE}");
+    let (_, tasks) = rig.run(&["claude-1"], &list, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let file = questions_of(&rig, &tasks[0], 1);
+    assert_eq!(file.entries().len(), 2, "one edited-test group and one marker group");
+    let record = record(&rig, &tasks[0]).await;
+    let asked = record.asked.unwrap();
+    assert_eq!(
+        asked.subjects,
+        vec![
+            Subject::Path("tests/other.rs".parse().unwrap()),
+            Subject::Path("tests/third.rs".parse().unwrap()),
+            Subject::Path("tests/allowed.rs".parse().unwrap())
+        ]
+    );
+    rig.stop().await.unwrap();
+}
