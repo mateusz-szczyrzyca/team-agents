@@ -85,6 +85,9 @@ pub(crate) fn measured_sections(
 mod tests;
 
 /// Lists changed paths covered by the task's permissions, using a harness-owned template.
+///
+/// # Errors
+/// [`PullTextError`] if template rendering or variable construction fails.
 pub(crate) fn allowed_section(
     texts: &AutopilotPrompts,
     files: &[agent_core::decide::checks::FileChange],
