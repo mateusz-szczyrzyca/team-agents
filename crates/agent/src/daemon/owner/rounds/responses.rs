@@ -493,7 +493,7 @@ fn lead_forms(
     Ok(forms)
 }
 
-/// Lists the verifier's forms for every open blocking finding and pending explanation.
+/// Lists the verifier's forms for every open finding and pending explanation: a verifier answers the minor ones too.
 pub(super) fn verifier_forms(
     texts: &agent_runtime::autopilot_prompts::AutopilotPrompts,
     ledger: &agent_core::state::Findings,
@@ -503,7 +503,7 @@ pub(super) fn verifier_forms(
     for entry in ledger
         .entries()
         .iter()
-        .filter(|entry| entry.status == agent_core::state::FindingStatus::Open && entry.finding.severity.blocks())
+        .filter(|entry| entry.status == agent_core::state::FindingStatus::Open)
     {
         let pending = ledger.disputes().is_some_and(|d| {
             d.explanations

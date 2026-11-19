@@ -5,7 +5,7 @@ Refused source line:
 {{source}}
 ```
 
-Open blocking findings and allowed forms:
+Open findings you must answer and the allowed forms:
 {{forms}}
 
 After FIXED or RESOLVED, optionally add ` — reason`, ` - reason`, or `: reason`.
