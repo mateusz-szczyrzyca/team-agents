@@ -85,6 +85,19 @@ impl Owner {
     /// # Errors
     /// [`OwnerError`] when the state cannot be saved.
     pub(super) async fn run_request(&mut self, request: RunRequest) -> Result<Result<Reply, Failure>, OwnerError> {
+        let free_bytes = self.check_free_space().await;
+        let min_limit_gb = self.parts.settings.config.disk().min_free_gb;
+        let min_limit_bytes = min_limit_gb.saturating_mul(1024 * 1024 * 1024);
+        if free_bytes < min_limit_bytes {
+            let free_gb = free_bytes / (1024 * 1024 * 1024);
+            return Ok(Err(Failure {
+                kind: FailureKind::Refused,
+                message: format!(
+                    "not enough free disk space: {free_gb} GB free, minimum is {min_limit_gb} GB; remove build directories or unused worktrees in {}",
+                    self.parts.store.home().worktrees_dir().display()
+                ),
+            }));
+        }
         let formed = match form(
             &request,
             &self.parts.settings.config,
