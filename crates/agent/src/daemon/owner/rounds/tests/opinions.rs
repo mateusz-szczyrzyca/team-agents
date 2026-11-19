@@ -92,3 +92,107 @@ async fn opinions_settle_together_before_verification_or_unchanged_approval() {
         assert_eq!(rig.kept_runs(&tasks[0]), if confirmed { 3 } else { 2 });
     }
 }
+
+#[tokio::test]
+async fn unanswered_opinions_notify_once_and_keep_waiting_across_restart() {
+    for probe in [
+        "opinion-failure:FAILED",
+        "opinion-failure:EMPTY",
+        "opinion-failure:INVALID",
+        "opinion-failure:HOLD",
+    ] {
+        let mut rig = Rig::new(
+            &[
+                normal("claude-1", "work,opinion-ask"),
+                investigator("inv-r1", probe),
+                investigator("inv-r2", probe),
+                investigator("inv-r3", probe),
+                investigator("inv-r4", probe),
+            ],
+            1,
+            false,
+        )
+        .await;
+        rig.start().await;
+        let (team, _) = rig
+            .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+            .await;
+        rig.state_where("both opinions assigned", |state| {
+            state.team(&team).unwrap().items()[0].findings().is_some_and(|ledger| {
+                ledger.opinions().len() == 2
+                    && ledger
+                        .opinions()
+                        .values()
+                        .all(|o| matches!(o.stage, OpinionStage::Assigned { .. }))
+            })
+        })
+        .await;
+        if probe.ends_with("HOLD") {
+            rig.state_where("both opinion runs started", |state| {
+                let team = state.team(&team).unwrap();
+                team.items()[0].findings().unwrap().opinions().values().all(|opinion| {
+                    let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+                        return false;
+                    };
+                    team.find(task).unwrap().1.current_run().is_some()
+                })
+            })
+            .await;
+        } else {
+            rig.wait_for("one notice per unanswered opinion", || {
+                rig.notifications()
+                    .iter()
+                    .filter(|n| n.contains("Second opinion needs attention"))
+                    .count()
+                    == 2
+            })
+            .await;
+        }
+        rig.stop().await.unwrap();
+        rig.start().await;
+        rig.wait_for("restart notices", || {
+            rig.notifications()
+                .iter()
+                .filter(|n| n.contains("Second opinion needs attention"))
+                .count()
+                == 2
+        })
+        .await;
+        let state = rig.state();
+        let team = state.team(&team).unwrap();
+        let item = &team.items()[0];
+        let round = &team.rounds()[0];
+        let detail = agent_core::protocol::RoundDetail::new(team, round, Vec::new());
+        assert_eq!(
+            agent_core::round_work::round_work(&detail, agent_core::round_work::DraftPull::Absent)
+                .unwrap()
+                .to_string(),
+            "waiting for a second opinion"
+        );
+        assert!(matches!(item.phase(), ItemPhase::Fixing { .. }));
+        for (number, opinion) in item.findings().unwrap().opinions() {
+            let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+                panic!("must remain pending")
+            };
+            assert_eq!(
+                rig.notifications()
+                    .iter()
+                    .filter(|n| n.contains("Second opinion needs attention")
+                        && n.contains(round.id().as_str())
+                        && n.contains(task.as_str())
+                        && n.contains(&format!("FINDING {number}")))
+                    .count(),
+                1
+            );
+        }
+        rig.stop().await.unwrap();
+        assert_eq!(
+            rig.notifications()
+                .iter()
+                .filter(|n| n.contains("Second opinion needs attention"))
+                .count(),
+            2
+        );
+        assert_eq!(rig.github.reviews(1).len(), 2);
+    }
+}

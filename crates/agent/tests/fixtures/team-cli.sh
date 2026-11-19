@@ -210,6 +210,18 @@ case $action in
     fi
     result "$report"'\nSTATUS: DONE'
     ;;
+  opinion-failure:*)
+    if [[ $prompt == *'# SECOND OPINION REQUEST'* || $prompt == *'# CORRECT YOUR SECOND OPINION'* ]]; then
+      case ${action#opinion-failure:} in
+        FAILED) result 'Cannot inspect commit.\nSTATUS: FAILED' ;;
+        EMPTY) result 'Cannot inspect commit.' ;;
+        INVALID) result 'No opinion line.\nSTATUS: DONE' ;;
+        HOLD) while :; do sleep 0.02; done ;;
+      esac
+    else
+      result 'VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [BLOCKER] COR src/lib.rs:7 — café defect → fix it\n   CHECK: read src/lib.rs:7\nSTATUS: DONE'
+    fi
+    ;;
   opinion-probe:*)
     if [[ $prompt == *'# SECOND OPINION REQUEST'* || $prompt == *'# CORRECT YOUR SECOND OPINION'* ]]; then
       outcome=${action#opinion-probe:}
