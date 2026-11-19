@@ -30,9 +30,10 @@ impl Owner {
     ) -> Result<(), OwnerError> {
         let lead = self.lead_of(team)?;
         let rotating = self.parts.state.team(team).is_some_and(|team| {
-            team.items().iter().any(|item| {
-                matches!(item.phase(), ItemPhase::Fixing { .. })
-                    && item.findings().is_some_and(|ledger| ledger.verification().is_some())
+            response_run(team, &lead.task).is_some_and(|run| {
+                team.items().iter().any(|item| {
+                    needs_response(item, run) && item.findings().is_some_and(|ledger| ledger.verification().is_some())
+                })
             })
         });
         if !rotating {
@@ -69,50 +70,22 @@ impl Owner {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
-        let Some(run) = team
-            .find(&lead.task)
-            .and_then(|(_, member)| member.runs().last())
-            .filter(|run| {
-                matches!(
-                    run.state(),
-                    RunState::Ended {
-                        end: RunEnd::Reported {
-                            outcome: RunOutcome::Done
-                        },
-                        ..
-                    }
-                )
-            })
-            .cloned()
-        else {
+        let Some(run) = response_run(team, &lead.task).cloned() else {
             return Ok(());
         };
         let fixing: Vec<_> = team
             .items()
             .iter()
-            .filter(|i| matches!(i.phase(), ItemPhase::Fixing { .. }))
-            .map(|i| (i.id(), i.clone()))
+            .filter(|item| needs_response(item, &run))
+            .cloned()
             .collect();
         let mut explained = std::collections::HashSet::new();
-        for (id, item) in fixing {
+        for item in fixing {
+            let id = item.id();
             let pass = crate::daemon::merge::count(item.fix_passes().len());
             let Some(mut ledger) = item.findings().cloned() else {
                 continue;
             };
-            let Some(disputes) = ledger.disputes() else {
-                continue;
-            };
-            if disputes.answered_pass == pass || disputes.checked_run.as_ref() == Some(run.id()) {
-                continue;
-            }
-            // An earlier DONE run is not a response to reviews requested after it started.
-            if item
-                .fix_passes()
-                .last()
-                .is_some_and(|p| p.requested_by.iter().any(|r| r.requested_at > run.started_at()))
-            {
-                continue;
-            }
             let message = ledger
                 .verification()
                 .and_then(|v| v.lead_message.as_deref())
@@ -227,6 +200,43 @@ impl Owner {
             }
         }
     }
+}
+
+/// The completed lead run that can supply a fix response.
+fn response_run<'a>(
+    team: &'a agent_core::state::Team,
+    task: &agent_core::ids::TaskId,
+) -> Option<&'a agent_core::state::Run> {
+    team.find(task)
+        .and_then(|(_, member)| member.runs().last())
+        .filter(|run| {
+            matches!(
+                run.state(),
+                RunState::Ended {
+                    end: RunEnd::Reported {
+                        outcome: RunOutcome::Done
+                    },
+                    ..
+                }
+            )
+        })
+}
+
+/// Whether this item still needs that run's response to its current fix pass.
+fn needs_response(item: &agent_core::state::ItemProgress, run: &agent_core::state::Run) -> bool {
+    if !matches!(item.phase(), ItemPhase::Fixing { .. }) {
+        return false;
+    }
+    let Some(disputes) = item.findings().and_then(agent_core::state::Findings::disputes) else {
+        return false;
+    };
+    let pass = crate::daemon::merge::count(item.fix_passes().len());
+    disputes.answered_pass != pass
+        && disputes.checked_run.as_ref() != Some(run.id())
+        && !item
+            .fix_passes()
+            .last()
+            .is_some_and(|pass| pass.requested_by.iter().any(|r| r.requested_at > run.started_at()))
 }
 
 /// Renders a precise correction through the harness catalog.
