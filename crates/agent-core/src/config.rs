@@ -39,6 +39,14 @@ const DEFAULT_HANG_MINUTES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 /// Hangs in a row without progress after which a task is marked hung, by default.
 const DEFAULT_HANG_STRIKES: NonZeroU32 = NonZeroU32::new(3).unwrap();
 
+/// `[build]`: Cargo cache policy for agent CLIs and repository gates.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Build {
+    /// Whether managed builds keep incremental compilation artifacts.
+    pub incremental: bool,
+}
+
 /// `[watchdog] asleep_minutes` when the file does not give it.
 const DEFAULT_ASLEEP_MINUTES: NonZeroU32 = NonZeroU32::new(5).unwrap();
 
@@ -543,6 +551,8 @@ pub struct Config {
     investigators: BTreeMap<InvestigatorName, InvestigatorConfig>,
     /// The programs.
     binaries: Binaries,
+    /// Cargo cache policy for managed processes.
+    build: Build,
     /// The hang watchdog.
     watchdog: Watchdog,
     /// The limit pauses.
@@ -599,6 +609,9 @@ struct RawConfig {
     /// See [`Config::binaries`].
     #[serde(default)]
     binaries: Binaries,
+    /// See [`Config::build`].
+    #[serde(default)]
+    build: Build,
     /// See [`Config::watchdog`].
     #[serde(default)]
     watchdog: Watchdog,
@@ -648,6 +661,7 @@ impl RawConfig {
             investigators,
             tiers: RawTiers { normal, workers },
             binaries,
+            build,
             watchdog,
             limits,
             disk,
@@ -680,6 +694,7 @@ impl RawConfig {
             workers,
             investigators,
             binaries,
+            build,
             watchdog,
             limits,
             disk,
@@ -820,6 +835,12 @@ impl Config {
     #[must_use]
     pub fn binaries(&self) -> &Binaries {
         &self.binaries
+    }
+
+    /// Cargo cache policy for agent CLIs and repository gates.
+    #[must_use]
+    pub const fn build(&self) -> &Build {
+        &self.build
     }
 
     /// The hang watchdog.

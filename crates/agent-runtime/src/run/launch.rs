@@ -143,6 +143,9 @@ pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch,
     }
     // What the adapter sets is what its CLI needs to work: it wins over a secret of the same name.
     env.extend(spec.env);
+    // The configured cache policy wins over inherited and secret environment values.
+    let incremental = if parts.config.build().incremental { "1" } else { "0" };
+    env.insert(env_name("CARGO_INCREMENTAL")?, incremental.to_owned());
     Ok(Launch {
         process: ProcessSpec {
             program: spec.program,

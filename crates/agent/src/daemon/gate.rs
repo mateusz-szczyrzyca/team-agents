@@ -13,7 +13,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::config::{AbsolutePath, CommandLine, EnvName, InvalidValue};
+use agent_core::config::{AbsolutePath, Build, CommandLine, EnvName, InvalidValue};
 use agent_core::history::{EventRecord, HistoryEvent, LostCause, LostKind, Record};
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::log::LogEvent;
@@ -257,6 +257,8 @@ enum Ended {
 struct Service {
     /// What it is made of.
     parts: GateParts,
+    /// Cargo cache policy for every command this service launches.
+    build: Build,
     /// Where the gates that ran are recorded.
     history: History,
     /// Runs the gate commands; it has one slot, which is the machine's one gate at a time.
@@ -270,10 +272,17 @@ impl Service {
     fn new(parts: GateParts) -> Self {
         Self {
             parts,
+            build: Build::default(),
             history: History::disabled(),
             supervisor: Supervisor::new(NonZeroUsize::MIN),
             next_log: HashMap::new(),
         }
+    }
+
+    /// The same service with the configured Cargo cache policy.
+    fn with_build(mut self, build: Build) -> Self {
+        self.build = build;
+        self
     }
 
     /// The same service, recording the gates that run in `history`.
@@ -450,10 +459,15 @@ impl Service {
             name: PATH_VARIABLE,
             source,
         })?;
+        let incremental = EnvName::from_str("CARGO_INCREMENTAL").map_err(|source| GateError::EnvName {
+            name: "CARGO_INCREMENTAL",
+            source,
+        })?;
+        let value = if self.build.incremental { "1" } else { "0" };
         Ok(ProcessSpec {
             program: job.command.program().clone(),
             args: job.command.args().as_slice().to_vec(),
-            env: BTreeMap::from([(name, path)]),
+            env: BTreeMap::from([(name, path), (incremental, value.to_owned())]),
             working_dir: job.worktree.clone(),
             // One file for both streams, as `> log 2>&1` makes it: both are opened for appending.
             stdout_file: log.to_path_buf(),
@@ -607,13 +621,14 @@ async fn inspect(worktree: &AbsolutePath) -> Result<Inspected, GitError> {
 ///
 /// A job waits as long as the ones before it run; when its task is stopped it keeps its place, and is answered
 /// `conflict` without running when its turn comes.
-pub(super) async fn run_recorded(
+pub(super) async fn run_configured(
     mut jobs: mpsc::Receiver<GateJob>,
     parts: GateParts,
     history: History,
+    build: Build,
     shutdown: CancellationToken,
 ) {
-    let mut service = Service::new(parts).with_history(history);
+    let mut service = Service::new(parts).with_history(history).with_build(build);
     loop {
         let job = tokio::select! {
             () = shutdown.cancelled() => break,
@@ -624,6 +639,17 @@ pub(super) async fn run_recorded(
         };
         service.serve(job).await;
     }
+}
+
+/// Runs a service with the default build policy for callers that do not supply configuration.
+#[cfg(test)]
+pub(super) async fn run_recorded(
+    jobs: mpsc::Receiver<GateJob>,
+    parts: GateParts,
+    history: History,
+    shutdown: CancellationToken,
+) {
+    run_configured(jobs, parts, history, Build::default(), shutdown).await;
 }
 
 /// [`run_recorded`] with a history that records nothing: what the tests of the service run.

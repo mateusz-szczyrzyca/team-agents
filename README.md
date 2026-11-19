@@ -838,6 +838,19 @@ Then:
 
 ## Configuration
 
+For the Rust daemon, [`agents.toml`](docs/configuration.md) accepts an optional `[build]` table:
+
+```toml
+[build]
+incremental = false
+```
+
+The default disables Cargo incremental compilation for agent CLIs and repository gates with
+`CARGO_INCREMENTAL=0`, reducing per-worktree disk use; `true` sets it to `1`, overriding inherited values.
+Existing configurations without `[build]` use `false`. Builds started by hand keep Cargo's incremental policy.
+This workspace's dev and test profiles retain line tables for backtraces with file and line, without full debug
+information; the release profile and installed release binary are unaffected.
+
 `~/agents/agents.conf` is a bash file. The most important settings:
 
 | Setting | Meaning |

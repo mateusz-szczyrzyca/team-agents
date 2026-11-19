@@ -177,6 +177,10 @@ case $scenario in
       sleep 0.2
     done
     ;;
+  env-incremental)
+    printf '%s\n' "${CARGO_INCREMENTAL:-unset}" > .fake-incremental
+    finish_done
+    ;;
   env-home)
     printf '%s\n' "${AGENTS_HOME:-unset}" > .fake-home
     finish_done

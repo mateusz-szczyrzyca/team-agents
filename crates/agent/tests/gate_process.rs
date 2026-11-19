@@ -266,4 +266,49 @@ mod gate_process {
             assert_eq!(record["result"]["outcome"], serde_json::json!({"kind": "passed"}));
         }
     }
+
+    #[test]
+    fn gate_children_use_configured_incremental_policy_over_daemon_environment() {
+        for (setting, expected, inherited) in [
+            ("", "0", "1"),
+            ("[build]\nincremental = false", "0", "1"),
+            ("[build]\nincremental = true", "1", "0"),
+        ] {
+            let mut world = World::new();
+            let path = world.home.join("agents.toml");
+            let original = std::fs::read_to_string(&path).unwrap();
+            let previous = format!(
+                "gate = [\"{}\", \"{}\"]",
+                script("slow-gate.sh").display(),
+                world.order.display()
+            );
+            let config = original.replace(
+                &previous,
+                "gate = [\"/bin/sh\", \"-c\", 'printf %s \"${CARGO_INCREMENTAL-unset}\"']",
+            );
+            assert_ne!(config, original);
+            std::fs::write(path, format!("{config}\n{setting}\n")).unwrap();
+            world.daemon = Some(
+                agent()
+                    .args(["daemon", "--prompts-dir"])
+                    .arg(prompts())
+                    .env("AGENTS_HOME", &world.home)
+                    .env("CARGO_INCREMENTAL", inherited)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .unwrap(),
+            );
+            eventually("the socket", || world.home.join("agent.sock").exists());
+            let (task, tree) = world.solo("claude-1");
+            let output = world.agent_in(&tree, &["gate"]).output().unwrap();
+            assert!(output.status.success(), "{}", stderr(&output));
+            let record: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(world.home.join("tasks").join(task).join("gate.json")).unwrap())
+                    .unwrap();
+            let log = record["result"]["log"].as_str().unwrap();
+            assert_eq!(std::fs::read_to_string(log).unwrap(), expected);
+        }
+    }
 }
