@@ -592,6 +592,7 @@ impl Owner {
             );
         }
         if !repaired.is_empty() {
+            self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
             self.save().await?;
         }
         self.ask_unanswered_reviews().await?;
@@ -604,6 +605,7 @@ impl Owner {
                 tasks = recovery.interrupted.len(),
                 "runs that a restart interrupted have been reconciled"
             );
+            self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
             self.save().await?;
         }
         Ok(())
@@ -836,6 +838,10 @@ impl Owner {
         let mut events = Vec::new();
         self.move_to(task, &located.team, TaskStatus::Running, &mut events)?;
         self.move_to(task, &located.team, TaskStatus::Failed, &mut events)?;
+        // No run exists for this failure: the record is told, because it cannot tell it from an earlier run's end.
+        if let Some(mut team) = self.parts.state.team_mut(&located.team) {
+            team.fail_activities_before_a_run(task, now);
+        }
         self.commit(task, &located, now, events, Some(Notice::StartFailed { reason }))
             .await?;
         if let Some(pulls) = self.pulls.clone() {
@@ -1787,6 +1793,7 @@ impl Owner {
         events: Vec<EventKind>,
         notice: Option<Notice>,
     ) -> Result<(), OwnerError> {
+        self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
         self.save().await?;
         for kind in events {
             self.publish(at, kind);

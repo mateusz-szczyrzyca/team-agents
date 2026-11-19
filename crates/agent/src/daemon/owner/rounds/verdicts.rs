@@ -547,6 +547,7 @@ impl Owner {
                     item: *id,
                     source,
                 })?;
+            team_mut.record_activities(now);
             let round = self.round_of_item(team_id, *id)?;
             look.events.push(EventKind::ReviewSubmitted {
                 team: team_id.clone(),

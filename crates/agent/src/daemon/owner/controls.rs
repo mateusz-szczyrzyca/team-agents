@@ -85,6 +85,7 @@ impl Owner {
         if reached.is_empty() {
             return Ok(Err(nothing_done(steer, target, &skipped)));
         }
+        self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
         self.save().await?;
         // The control is recorded before what it causes: a team stopped ends its rounds after it.
         self.record_controlled(now, client, steer.into(), target, &aimed, &reached);
@@ -121,6 +122,7 @@ impl Owner {
             let mut look = Look::default();
             self.abandon_open_rounds(team, now, &mut look)?;
             if look.changed {
+                self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
                 self.save().await?;
                 for event in look.events {
                     self.publish(now, event);

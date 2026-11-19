@@ -29,7 +29,7 @@ The state is one JSON document, written indented with a newline at the end, the 
 
 ```json
 {
-  "schema_version": 9,
+  "schema_version": 11,
   "teams": [ { "id": "team-20261111-193000-a1b2", "...": "..." } ]
 }
 ```
@@ -99,7 +99,31 @@ close a replacement. Notice claims persist to avoid duplicate notifications afte
 
 [`state-v1.json`](../crates/agent-core/tests/fixtures/state-v1.json) is a state of version 1, which had no rounds. It
 **must keep loading**: it is read through the migration (below) as exactly
-[`state-v1-as-v3.json`](../crates/agent-core/tests/fixtures/state-v1-as-v3.json), with only the schema version advanced to 9, every time.
+[`state-v1-as-v3.json`](../crates/agent-core/tests/fixtures/state-v1-as-v3.json), with its schema advanced and reconstructed investigator activities, every time.
+
+### Investigator activities
+
+Schema 11 adds each team's optional `activities` list (omitted when empty). Each entry has `investigator`,
+`task`, `rounds`, `request`, `asked_at` and `outcome`. Request `kind` values are `team_member`, `first_review`,
+`verification` (with one-based `pass`), `second_opinion` (with `pass` and permanent `finding` number),
+`investigation` and `task_allocation`. These map to activity kinds `team-member`, `reviewer`, `investigator`
+and `task-allocator`; a task's role remains separate. No new investigation/allocation workflow starts yet.
+
+An outcome has `status: working`, or `status: finished` with `at` and `end`. End `kind` is `reported`,
+`stopped`, `failed` (with the last structured run `reason`, or null if unavailable), or `opinion_failed`
+(with the opinion attempt's structured failure `reason`). All times are RFC 3339. A finish cannot precede
+assignment and an entry cannot repeat a round. Accepted reports are retained across later stops or failures.
+Shared PR assignments merge their round references rather than counting once per item.
+
+Reading schemas 1–10 rebuilds records from investigator crew membership, each item's review and fix-pass
+history, and retained opinion attempts. Review assignment and submission timestamps remain exact. Opinion
+attempts without assignment times use their first task run, or team creation if none exists. An opinion's
+ending time uses its last ended run, or the team's latest retained run timestamp, bounded below by assignment.
+History discarded before this schema cannot be recovered. Current task permissions and all other legacy data
+remain intact. The previous-version fixture is
+[`state-before-activities.json`](../crates/agent-core/tests/fixtures/state-before-activities.json), written by
+main before this change with an open second fix pass and an assigned second opinion. Socket protocol and
+status output are unchanged; builds that write schema 10 cannot read a schema-11 state after it is saved.
 
 ### Reading and its rules
 
@@ -111,8 +135,8 @@ close a replacement. Notice claims persist to avoid duplicate notifications afte
   as one that was built through the API. There is one way to read a value, the `Deserialize` trait: the field-by-field
   reading that serde derives lives on a private mirror type (`remote`), so no public `T::deserialize` skips the checks.
 - **Versioned.** `State::from_json` reads `schema_version` **first**. A state of another version is refused with
-  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 7,
-  migrates versions 1, 2, 3, 4, 5 and 6 as it reads them (see "Version 1" below); any other version is
+  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 11,
+  migrates versions 1 through 10 as it reads them (see "Version 1" below); any other version is
   refused. Version 2 is read as it is: its items have no `findings`, so a round that was open when the daemon was
   updated ends by the rules it started with (verdicts only), and the numbered findings hold for pull requests opened
   after the update. A change that old files do not satisfy raises the version and comes with a migration, a fixture of the old

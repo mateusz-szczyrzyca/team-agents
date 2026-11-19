@@ -15,7 +15,9 @@ use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::{Keyword, Role, Tier, UnknownKeyword};
 use crate::task_list::{AllowLines, ItemMark, TaskList, TaskListError};
 
+mod activities;
 mod legacy;
+pub use activities::{Activity, ActivityEnd, ActivityOutcome, ActivityRequest};
 mod rounds;
 
 pub(super) use self::legacy::{LegacyError, TeamV1};
@@ -404,6 +406,9 @@ pub struct Team {
     crew: Crew,
     /// The investigators that review the team's pull requests, with their tasks.
     reviewers: Vec<Member>,
+    /// Durable assignments of investigators, including completed and replaced work.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    activities: Vec<Activity>,
 }
 
 /// How a [`Team`] is read; see [`checked!`].
@@ -430,6 +435,9 @@ struct TeamWire {
     /// See [`Team`]; a team written without reviewers has none.
     #[serde(default)]
     reviewers: Vec<Member>,
+    /// See [`Team`]; older states are rebuilt by the schema migration.
+    #[serde(default)]
+    activities: Vec<Activity>,
 }
 
 checked!(Team, TeamWire, check_team);
@@ -523,7 +531,7 @@ impl Team {
         task_list: TaskListText,
         crew: Crew,
     ) -> Self {
-        Self {
+        let mut team = Self {
             id,
             repo,
             created_at,
@@ -533,7 +541,10 @@ impl Team {
             task_list,
             crew,
             reviewers: Vec::new(),
-        }
+            activities: Vec::new(),
+        };
+        team.record_activities(created_at);
+        team
     }
 
     getter!("The team's ID.", pub const fn id(&self) -> &TeamId = &self.id);
@@ -798,23 +809,25 @@ mod tests {
         /// See [`Team`].
         #[serde(default)]
         reviewers: Vec<Member>,
+        /// Activities are initialized by the team constructor; these cases exercise items and reviewers.
+        #[serde(default, rename = "activities")]
+        _activities: Vec<Activity>,
     }
 
     impl TryFrom<TeamWire> for Team {
         type Error = TeamError;
 
         fn try_from(wire: TeamWire) -> Result<Self, Self::Error> {
-            let team = Self {
-                id: wire.id,
-                repo: wire.repo,
-                created_at: wire.created_at,
-                merge: wire.merge,
-                task_list: wire.task_list,
-                items: wire.items,
-                rounds: Vec::new(),
-                crew: wire.crew,
-                reviewers: wire.reviewers,
-            };
+            let mut team = Self::new(
+                wire.id,
+                wire.repo,
+                wire.created_at,
+                wire.merge,
+                wire.task_list,
+                wire.crew,
+            );
+            team.items = wire.items;
+            team.reviewers = wire.reviewers;
             check_team(&team)?;
             Ok(team)
         }

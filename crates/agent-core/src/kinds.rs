@@ -324,3 +324,60 @@ pub(crate) mod tests {
         assert_refuses("role", ROLES, &["lead", "helper", "investigator", "merger"]);
     }
 }
+
+/// The work an investigator undertakes for a team, independently of its task role.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(try_from = "String", into = "&'static str")]
+#[strum(serialize_all = "kebab-case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<ActivityKind>)]
+pub enum ActivityKind {
+    /// Coordinating or implementing the team's work.
+    TeamMember,
+    /// Reviewing, verifying a fix, or giving a second opinion.
+    Reviewer,
+    /// Answering a team's question or explaining a problem.
+    Investigator,
+    /// Dividing work or helping integrate members' branches.
+    TaskAllocator,
+}
+
+impl Keyword for ActivityKind {
+    const WHAT: &'static str = "activity kind";
+}
+
+impl TryFrom<String> for ActivityKind {
+    type Error = UnknownKeyword;
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+impl ActivityKind {
+    /// Every kind, in declaration order.
+    pub const ALL: &'static [Self] = <Self as strum::VariantArray>::VARIANTS;
+
+    /// The stable text written to state and shown to the human.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+#[cfg(test)]
+#[path = "kinds/activity_tests.rs"]
+mod activity_tests;
