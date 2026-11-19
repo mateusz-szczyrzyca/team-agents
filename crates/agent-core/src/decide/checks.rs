@@ -447,8 +447,7 @@ fn changes_after<'a>(commit: &'a CommitFacts, having: &HashSet<&CommitId>) -> im
             .first()
             .filter(|parent| having.contains(parent))
             .and_then(|_| commit.merge_files.first())
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
+            .map_or(&[][..], Vec::as_slice)
     } else {
         &commit.files
     };
