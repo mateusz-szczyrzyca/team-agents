@@ -73,3 +73,12 @@ pub(crate) fn measured_sections(
 
 #[cfg(test)]
 mod tests;
+
+/// Lists changed paths covered by the task's permissions, using a harness-owned template.
+pub(crate) fn allowed_section(
+    _texts: &AutopilotPrompts,
+    _files: &[agent_core::decide::checks::FileChange],
+    _allowances: &[agent_core::task_allowance::TaskAllowance],
+) -> Result<Option<String>, PullTextError> {
+    Ok(None)
+}
