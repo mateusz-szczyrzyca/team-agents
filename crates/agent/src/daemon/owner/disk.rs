@@ -1,6 +1,7 @@
 //! Free disk space of the home and the build directories released when it runs short. The measures and removals walk
 //! the disk, so they run on the blocking pool; the owner's loop takes their outcomes from `disk_jobs` and acts on them.
 
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use agent_core::ids::TaskId;
@@ -12,9 +13,47 @@ use agent_runtime::disk::{
 };
 use agent_runtime::notify::Notification;
 use agent_runtime::process::error_chain;
-use tokio::task::JoinError;
+use tokio::task::{Id, JoinError};
 
 use super::Owner;
+
+/// The build directory removals that have not ended. A task with one pending is not started: its new run would share
+/// the directory that the removal is deleting.
+#[derive(Debug, Default)]
+pub(super) struct PendingRemovals {
+    /// The task of each removal job that has not ended, by the job's id.
+    by_job: HashMap<Id, TaskId>,
+    /// How many removals of each task have not ended.
+    by_task: BTreeMap<TaskId, usize>,
+}
+
+impl PendingRemovals {
+    /// Records that the removal job `job` of `task` has started.
+    pub(super) fn start(&mut self, job: Id, task: &TaskId) {
+        self.by_job.insert(job, task.clone());
+        let count = self.by_task.entry(task.clone()).or_insert(0);
+        *count = count.saturating_add(1);
+    }
+
+    /// Records that the removal job `job` has ended, whatever its outcome; an unknown job changes nothing.
+    pub(super) fn finish(&mut self, job: Id) {
+        let Some(task) = self.by_job.remove(&job) else {
+            return;
+        };
+        let Some(count) = self.by_task.get_mut(&task) else {
+            return;
+        };
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            self.by_task.remove(&task);
+        }
+    }
+
+    /// Whether a removal of `task` has started and not ended.
+    pub(super) fn contains(&self, task: &TaskId) -> bool {
+        self.by_task.contains_key(task)
+    }
+}
 
 /// What became of one build directory: the bytes released, or the reason it was kept.
 pub(super) enum BuildDirOutcome {
@@ -97,11 +136,12 @@ impl Owner {
     pub(super) fn remove_target(&mut self, task: &TaskId, worktree_dir: &Path) {
         let home = self.parts.store.home().clone();
         let dir: PathBuf = worktree_dir.to_path_buf();
-        let task = task.clone();
-        self.disk_jobs.spawn_blocking(move || DiskJob::Target {
-            task,
+        let owner_of = task.clone();
+        let job = self.disk_jobs.spawn_blocking(move || DiskJob::Target {
+            task: owner_of,
             outcome: BuildDirOutcome::from(remove_build_directory(&home, &dir)),
         });
+        self.pending_removals.start(job.id(), task);
     }
 
     /// Removes the build directory of `task` once its run has ended, when a round closed while the run went on.
@@ -122,15 +162,22 @@ impl Owner {
     }
 
     /// Acts on the outcome of a disk job the loop has taken: logs a removal, sends the low-space notice.
-    pub(super) async fn disk_job_done(&mut self, joined: Result<DiskJob, JoinError>) {
+    pub(super) async fn disk_job_done(&mut self, joined: Result<(Id, DiskJob), JoinError>) {
         match joined {
-            Ok(DiskJob::Target { task, outcome }) => log_removal(&task, outcome),
-            Ok(DiskJob::LowSpace {
-                free_gb,
-                limit_gb,
-                largest,
-            }) => self.send_low_space_notice(free_gb, limit_gb, largest).await,
+            Ok((job, DiskJob::Target { task, outcome })) => {
+                self.pending_removals.finish(job);
+                log_removal(&task, outcome);
+            }
+            Ok((
+                _,
+                DiskJob::LowSpace {
+                    free_gb,
+                    limit_gb,
+                    largest,
+                },
+            )) => self.send_low_space_notice(free_gb, limit_gb, largest).await,
             Err(error) => {
+                self.pending_removals.finish(error.id());
                 tracing::warn!(error = %error_chain(&error), "a disk job ended without an outcome");
             }
         }
@@ -222,3 +269,6 @@ fn log_removal(task: &TaskId, outcome: BuildDirOutcome) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -436,6 +436,8 @@ pub(super) struct Owner {
     disk_jobs: JoinSet<disk::DiskJob>,
     /// Build directories of tasks whose run was going when their round closed; removed when the run ends.
     deferred_targets: BTreeMap<TaskId, PathBuf>,
+    /// Build directory removals not yet ended; a task with one is not started.
+    pending_removals: disk::PendingRemovals,
     /// Whether free space was below min threshold on last check.
     was_min_space: bool,
 }
@@ -494,6 +496,7 @@ impl Owner {
             was_low_space: false,
             disk_jobs: JoinSet::new(),
             deferred_targets: BTreeMap::new(),
+            pending_removals: disk::PendingRemovals::default(),
             was_min_space: false,
         }
     }
@@ -545,7 +548,7 @@ impl Owner {
                 },
                 Some(joined) = self.runs.join_next_with_id() => self.settle_joined(joined).await?,
                 Some(report) = next_report(&mut self.saved) => self.reported(report).await?,
-                Some(joined) = self.disk_jobs.join_next() => self.disk_job_done(joined).await,
+                Some(joined) = self.disk_jobs.join_next_with_id() => self.disk_job_done(joined).await,
                 _ = tick.tick() => {
                     self.wake_due().await?;
                     self.look_at_every_team();
@@ -555,7 +558,7 @@ impl Owner {
         let stopped = self.stop_runs().await;
         // The removals and listings already started finish before the owner ends: a stopped daemon leaves no build
         // directory half removed.
-        while let Some(joined) = self.disk_jobs.join_next().await {
+        while let Some(joined) = self.disk_jobs.join_next_with_id().await {
             self.disk_job_done(joined).await;
         }
         stopped
@@ -606,7 +609,7 @@ impl Owner {
                     .map(|member| member.task().clone())
                     .collect::<Vec<_>>()
             })
-            .filter(|task| !self.in_flight.contains(task))
+            .filter(|task| !self.in_flight.contains(task) && !self.pending_removals.contains(task))
             .collect();
         if queued.is_empty() {
             return Ok(());

@@ -449,6 +449,14 @@ case $action in
     record_gate
     result 'Finished the item.\nSTATUS: DONE'
     ;;
+  target-work)
+    # Like `work`, and leaves the build directory a build would leave, excluded from git so the tree stays clean.
+    printf 'target/\n' >> "$(git rev-parse --git-path info/exclude)"
+    mkdir -p target && printf 'build output\n' > target/output.bin
+    commit_work
+    record_gate
+    result 'Finished the item.\nSTATUS: DONE'
+    ;;
   work-pushed)
     # Like `work`, and pushes the branch itself, as an agent that does not leave the push to the harness.
     commit_work
