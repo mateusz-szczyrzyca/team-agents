@@ -958,7 +958,16 @@ impl Owner {
             }
         ) && let Some(pulls) = self.pulls.clone()
         {
-            self.hold_opinion(&pulls, &located.team, task).await?;
+            let failure = match end {
+                RunEnd::NoStatus { .. } => agent_core::state::OpinionFailure::NoStatus,
+                RunEnd::Hung => agent_core::state::OpinionFailure::Silent,
+                RunEnd::Reported { .. }
+                | RunEnd::QuotaExhausted { .. }
+                | RunEnd::RateLimited
+                | RunEnd::TurnLimit
+                | RunEnd::Stopped => agent_core::state::OpinionFailure::Failed,
+            };
+            self.retry_opinion(&pulls, &located.team, task, failure).await?;
         }
         self.after_run(task, &located, &end, run.final_message.as_deref())
     }

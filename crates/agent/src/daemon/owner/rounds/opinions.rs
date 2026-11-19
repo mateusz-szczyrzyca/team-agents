@@ -11,7 +11,7 @@ use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::review_response::opinion::{Outcome, parse_report};
-use agent_core::state::{Findings, ItemPhase, OpinionStage, Timestamp};
+use agent_core::state::{Findings, ItemPhase, OpinionFailure, OpinionStage, Timestamp};
 use std::collections::HashSet;
 use std::num::NonZeroU32;
 
@@ -124,6 +124,12 @@ impl Owner {
                 if let Some(entry) = ledger.entries().iter().find(|entry| entry.number == number) {
                     excluded.insert(entry.reporter.clone());
                 }
+                excluded.extend(
+                    ledger
+                        .opinion_attempts(number)
+                        .iter()
+                        .map(|attempt| attempt.investigator.clone()),
+                );
                 let free = free_reviewers(&self.parts.state, &self.parts.settings.config, team_id);
                 let Some(reviewer) = choose_opinion(free, &excluded, &mut self.parts.rng) else {
                     continue;
@@ -152,7 +158,7 @@ impl Owner {
                         .map_err(OpinionDaemonError::from)?;
                 }
                 ledger
-                    .assign_opinion(number, review.reviewer.clone(), review.task.clone())
+                    .assign_opinion_at(number, review.reviewer.clone(), review.task.clone(), now)
                     .map_err(OpinionDaemonError::from)?;
                 self.parts.state = next;
                 self.keep_opinions(team_id, &ids, &ledger)?;
@@ -202,12 +208,14 @@ impl Owner {
                     self.release(task, Why::VerdictMissing, &mut look)?;
                     self.finish_look(&located.team, look).await?;
                 } else {
-                    self.hold_opinion(pulls, &located.team, task).await?;
+                    self.retry_opinion(pulls, &located.team, task, OpinionFailure::MissingReport)
+                        .await?;
                 }
                 return Ok(true);
             }
             None => {
-                self.hold_opinion(pulls, &located.team, task).await?;
+                self.retry_opinion(pulls, &located.team, task, OpinionFailure::MissingReport)
+                    .await?;
                 return Ok(true);
             }
         };
@@ -264,6 +272,74 @@ impl Owner {
         look.changed = true;
         self.finish_look(team_id, look).await?;
         Ok(true)
+    }
+
+    /// Retains the unsuccessful owner before returning its request to the independent draw.
+    pub(in crate::daemon::owner) async fn retry_opinion(
+        &mut self,
+        pulls: &Pulls,
+        team_id: &TeamId,
+        task: &TaskId,
+        failure: OpinionFailure,
+    ) -> Result<(), OwnerError> {
+        let Some((id, number, _)) = self
+            .parts
+            .state
+            .team(team_id)
+            .and_then(|team| pending_opinion(team, task))
+        else {
+            return Ok(());
+        };
+        let team = self
+            .parts
+            .state
+            .team(team_id)
+            .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+        let item = team.item(id).ok_or_else(|| OwnerError::LostItem {
+            team: team_id.clone(),
+            item: id,
+        })?;
+        let ItemPhase::Fixing { pr, .. } = item.phase() else {
+            return Ok(());
+        };
+        let ids = crate::daemon::merge::items_of(team, pr.number);
+        let mut ledger = item
+            .findings()
+            .cloned()
+            .ok_or(PublishError::Lost)
+            .map_err(OpinionDaemonError::from)?;
+        if ledger
+            .opinion_attempts(number)
+            .last()
+            .is_some_and(|attempt| attempt.failure.is_some())
+        {
+            return Ok(());
+        }
+        ledger
+            .fail_opinion(number, task, failure)
+            .map_err(OpinionDaemonError::from)?;
+        let held = matches!(
+            ledger.opinions().get(&number).map(|opinion| &opinion.stage),
+            Some(OpinionStage::Assigned { .. })
+        );
+        self.keep_opinions(team_id, &ids, &ledger)?;
+        let mut look = Look::default();
+        if self
+            .parts
+            .state
+            .find_task(task)
+            .is_some_and(|found| found.member.status() == agent_core::status::TaskStatus::Queued)
+        {
+            self.move_to(task, team_id, agent_core::status::TaskStatus::Stopped, &mut look.events)?;
+        }
+        self.reasons.remove(task);
+        self.wakes.remove(task);
+        look.changed = true;
+        self.finish_look(team_id, look).await?;
+        if held {
+            self.hold_opinion(pulls, team_id, task).await?;
+        }
+        Ok(())
     }
 
     /// Holds an unanswered task and sends its human notice once, including across restarts.
