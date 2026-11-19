@@ -349,10 +349,10 @@ impl Team {
                 known.rounds.push(round);
             }
         }
-        if let (Some(have), Some(seen)) = (known.request.review_pass(), candidate.request.review_pass()) {
-            if seen > have {
-                known.request = candidate.request;
-            }
+        if let (Some(have), Some(seen)) = (known.request.review_pass(), candidate.request.review_pass())
+            && seen > have
+        {
+            known.request = candidate.request;
         }
         let already_reported = matches!(
             known.outcome,
