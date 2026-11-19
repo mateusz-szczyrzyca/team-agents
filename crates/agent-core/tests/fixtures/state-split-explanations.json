@@ -102,11 +102,11 @@
                   "votes": {
                     "inv-elm": {
                       "status": "rejected",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 3"
                     },
                     "inv-gale": {
                       "status": "rejected",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 3"
                     }
                   }
                 },
@@ -116,11 +116,11 @@
                   "votes": {
                     "inv-elm": {
                       "status": "accepted",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 17"
                     },
                     "inv-gale": {
                       "status": "accepted",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 17"
                     }
                   }
                 },
@@ -130,11 +130,11 @@
                   "votes": {
                     "inv-elm": {
                       "status": "rejected",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 18"
                     },
                     "inv-gale": {
                       "status": "rejected",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 18"
                     }
                   }
                 },
@@ -144,11 +144,11 @@
                   "votes": {
                     "inv-elm": {
                       "status": "rejected",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 19"
                     },
                     "inv-gale": {
                       "status": "rejected",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 19"
                     }
                   }
                 },
@@ -631,11 +631,11 @@
                   "votes": {
                     "inv-elm": {
                       "status": "rejected",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 3"
                     },
                     "inv-gale": {
                       "status": "rejected",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 3"
                     }
                   }
                 },
@@ -645,11 +645,11 @@
                   "votes": {
                     "inv-elm": {
                       "status": "accepted",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 17"
                     },
                     "inv-gale": {
                       "status": "accepted",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 17"
                     }
                   }
                 },
@@ -659,11 +659,11 @@
                   "votes": {
                     "inv-elm": {
                       "status": "rejected",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 18"
                     },
                     "inv-gale": {
                       "status": "rejected",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 18"
                     }
                   }
                 },
@@ -673,11 +673,11 @@
                   "votes": {
                     "inv-elm": {
                       "status": "rejected",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 19"
                     },
                     "inv-gale": {
                       "status": "rejected",
-                      "why": "vote on finding null"
+                      "why": "vote on finding 19"
                     }
                   }
                 }

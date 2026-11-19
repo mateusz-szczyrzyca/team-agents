@@ -205,8 +205,10 @@ fn every_differing_finding_is_reported_once_in_number_order() {
     let repaired = reconcile(&mut ledgers);
 
     assert_eq!(repaired.iter().map(|r| r.number).collect::<Vec<_>>(), vec![n(8), n(28)]);
-    assert_eq!(ledgers[0], ledgers[1]);
-    assert_eq!(ledgers[1], ledgers[2]);
+    for ledger in &ledgers[1..] {
+        assert_eq!(ledger.entries(), ledgers[0].entries());
+        assert_eq!(explanations(ledger), explanations(&ledgers[0]));
+    }
 }
 
 #[test]
