@@ -12,6 +12,7 @@ use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::review_response::opinion::{Outcome, parse_report};
 use agent_core::state::{Findings, ItemPhase, OpinionFailure, OpinionStage, Timestamp};
+use agent_core::status::TaskStatus;
 use std::collections::HashSet;
 use std::num::NonZeroU32;
 
@@ -534,7 +535,13 @@ impl Owner {
                 let exists = tokio::fs::try_exists(&path)
                     .await
                     .map_err(|source| OpinionDaemonError(OpinionCause::Inspect { path, source }))?;
-                if self.parts.state.find_task(&task).is_none() || !exists {
+                let resumable = self.parts.state.find_task(&task).is_some_and(|found| {
+                    !matches!(
+                        found.member.status(),
+                        TaskStatus::Failed | TaskStatus::Stopped | TaskStatus::Done
+                    )
+                });
+                if !resumable || !exists {
                     self.retry_opinion(&pulls, &team, &task, OpinionFailure::Interrupted)
                         .await?;
                 } else {
