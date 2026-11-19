@@ -1,5 +1,6 @@
 //! Second-opinion syntax and eligibility through the pure public API.
 use super::*;
+use crate::review_response::{Correction, ResponseError};
 
 fn finding(severity: Severity, opinion_used: bool) -> OpenFinding {
     OpenFinding {
@@ -71,18 +72,35 @@ fn reads_mixed_answers_atomically_and_retains_legacy_validation() {
             (NonZeroU32::new(2).unwrap(), LeadAnswer::Fixed)
         ])
     );
-    for text in [
-        "FINDING 1: SECOND OPINION — reason",
-        "FINDING 1: SECOND OPINION — reason\nFINDING 1: FIXED\nFINDING 2: FIXED",
-        "FINDING 9: SECOND OPINION — reason",
-        "STATUS: DONE\nFINDING 1: SECOND OPINION — reason\nFINDING 2: FIXED",
-        "```\nFINDING 1: SECOND OPINION — reason\n```\nFINDING 2: FIXED",
+    for (text, line, number, correction) in [
+        ("FINDING 1: SECOND OPINION — reason", 2, 2, Correction::FixedOrExplained),
+        (
+            "FINDING 1: SECOND OPINION — reason\nFINDING 1: FIXED\nFINDING 2: FIXED",
+            2,
+            1,
+            Correction::FixedOnly,
+        ),
+        ("FINDING 9: SECOND OPINION — reason", 1, 1, Correction::OnePerFinding),
+        (
+            "STATUS: DONE\nFINDING 1: SECOND OPINION — reason\nFINDING 2: FIXED",
+            2,
+            1,
+            Correction::FixedOnly,
+        ),
+        (
+            "```\nFINDING 1: SECOND OPINION — reason\n```\nFINDING 2: FIXED",
+            5,
+            1,
+            Correction::FixedOnly,
+        ),
     ] {
-        assert!(
-            matches!(
-                parse_lead(text, &open, Permission::Enabled),
-                Err(OpinionError::Response(_))
-            ),
+        assert_eq!(
+            parse_lead(text, &open, Permission::Enabled),
+            Err(OpinionError::Response(ResponseError {
+                line,
+                number: NonZeroU32::new(number).unwrap(),
+                correction,
+            })),
             "{text}"
         );
     }
