@@ -32,8 +32,38 @@ pub enum Next {
 /// `fixed` contains the confirmed findings the lead has subsequently answered `FIXED`.
 #[must_use]
 pub fn after_opinions(findings: &Findings, pass: NonZeroU32, fixed: &BTreeSet<NonZeroU32>, tip: Tip) -> Next {
-    let _inputs = (findings, pass, fixed, tip);
-    Next::AwaitOpinions
+    let opinions: Vec<_> = findings
+        .opinions()
+        .iter()
+        .filter(|(_, opinion)| opinion.request.pass == pass)
+        .collect();
+    if opinions
+        .iter()
+        .any(|(_, opinion)| matches!(opinion.stage, OpinionStage::Waiting | OpinionStage::Assigned { .. }))
+    {
+        return Next::AwaitOpinions;
+    }
+    let confirmed: Vec<_> = opinions
+        .iter()
+        .filter_map(|(number, opinion)| match &opinion.stage {
+            OpinionStage::Reported { report, .. }
+                if report.outcome == Outcome::Confirmed && !fixed.contains(number) =>
+            {
+                Some(**number)
+            }
+            OpinionStage::Waiting | OpinionStage::Assigned { .. } | OpinionStage::Reported { .. } => None,
+        })
+        .collect();
+    if !confirmed.is_empty() {
+        return Next::FixConfirmed(confirmed);
+    }
+    match tip {
+        Tip::Changed => Next::Verify,
+        Tip::Unchanged if !opinions.is_empty() && !findings.open().iter().any(|(_, severity)| severity.blocks()) => {
+            Next::DecideUnchanged
+        }
+        Tip::Unchanged => Next::AwaitTip,
+    }
 }
 
 #[cfg(test)]
