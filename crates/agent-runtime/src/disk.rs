@@ -2,30 +2,8 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
-
-static REGISTRY: RwLock<Vec<(PathBuf, SharedFreeSpace)>> = RwLock::new(Vec::new());
-
-/// A system free space measurer that delegates to any registered path prefix before statvfs.
-#[derive(Debug, Default)]
-struct DelegatingFreeSpace;
-
-impl FreeSpace for DelegatingFreeSpace {
-    fn free_space_bytes(&self, path: &Path) -> Result<u64, FreeSpaceError> {
-        if let Ok(reg) = REGISTRY.read() {
-            for (prefix, measurer) in reg.iter() {
-                if path.starts_with(prefix) {
-                    return measurer.free_space_bytes(path);
-                }
-            }
-        }
-        if path.starts_with("/tmp") {
-            return Ok(200 * 1024 * 1024 * 1024);
-        }
-        SystemFreeSpace.free_space_bytes(path)
-    }
-}
 
 use crate::store::Home;
 
@@ -74,6 +52,14 @@ pub enum BuildDirError {
     OutsideHome {
         /// The path inspected.
         path: PathBuf,
+    },
+    /// The worktree or the worktrees directory could not be inspected.
+    #[error("cannot inspect {path:?}")]
+    Inspect {
+        /// The path that could not be inspected.
+        path: PathBuf,
+        /// The OS error.
+        source: std::io::Error,
     },
     /// The target directory is a symbolic link.
     #[error("target path {path:?} is a symbolic link")]
@@ -142,22 +128,7 @@ impl SharedFreeSpace {
     /// Creates a shared instance using the system measurer.
     #[must_use]
     pub fn system() -> Self {
-        Self::new(DelegatingFreeSpace)
-    }
-
-    /// Registers a free space measurer for paths prefixed with `prefix`.
-    pub fn register(prefix: PathBuf, measurer: Self) {
-        if let Ok(mut reg) = REGISTRY.write() {
-            reg.retain(|(p, _)| p != &prefix);
-            reg.push((prefix, measurer));
-        }
-    }
-
-    /// Unregisters the free space measurer for `prefix`.
-    pub fn unregister(prefix: &Path) {
-        if let Ok(mut reg) = REGISTRY.write() {
-            reg.retain(|(p, _)| p != prefix);
-        }
+        Self::new(SystemFreeSpace)
     }
 }
 
@@ -199,6 +170,17 @@ impl FreeSpace for FakeFreeSpace {
     fn free_space_bytes(&self, _path: &Path) -> Result<u64, FreeSpaceError> {
         Ok(self.bytes.load(Ordering::Relaxed))
     }
+}
+
+/// One gibibyte in bytes, the unit of the `[disk]` thresholds.
+pub const GIBIBYTE: u64 = 1024 * 1024 * 1024;
+
+/// Renders `bytes` in gibibytes with two decimals, rounded down: 1 GiB and 300 MiB is `1.29 GB`.
+#[must_use]
+pub fn gibibytes_text(bytes: u64) -> String {
+    let whole = bytes / GIBIBYTE;
+    let hundredths = (bytes % GIBIBYTE).saturating_mul(100) / GIBIBYTE;
+    format!("{whole}.{hundredths:02} GB")
 }
 
 /// Computes the disk usage of `path` by recursively summing file sizes.
@@ -289,7 +271,8 @@ pub fn largest_worktrees(home: &Home, count: usize) -> Result<Vec<WorktreeUsage>
 /// Removes the `target/` directory inside `worktree` if present and returns the bytes released.
 ///
 /// Safety guarantees:
-/// - Verifies `worktree` is strictly inside `home.worktrees_dir()`.
+/// - Verifies `worktree` is strictly inside `home.worktrees_dir()`, after resolving symbolic links, so a worktree or a
+///   parent directory that links elsewhere is refused.
 /// - Never removes a symlink.
 ///
 /// # Errors
@@ -297,6 +280,31 @@ pub fn largest_worktrees(home: &Home, count: usize) -> Result<Vec<WorktreeUsage>
 pub fn remove_build_directory(home: &Home, worktree: &Path) -> Result<u64, BuildDirError> {
     let worktrees_root = home.worktrees_dir();
     if !worktree.starts_with(&worktrees_root) || worktree == worktrees_root {
+        return Err(BuildDirError::OutsideHome {
+            path: worktree.to_path_buf(),
+        });
+    }
+    let canonical_root = match std::fs::canonicalize(&worktrees_root) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(source) => {
+            return Err(BuildDirError::Inspect {
+                path: worktrees_root.clone(),
+                source,
+            });
+        }
+    };
+    let canonical_worktree = match std::fs::canonicalize(worktree) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(source) => {
+            return Err(BuildDirError::Inspect {
+                path: worktree.to_path_buf(),
+                source,
+            });
+        }
+    };
+    if !canonical_worktree.starts_with(&canonical_root) || canonical_worktree == canonical_root {
         return Err(BuildDirError::OutsideHome {
             path: worktree.to_path_buf(),
         });

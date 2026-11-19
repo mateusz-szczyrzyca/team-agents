@@ -178,6 +178,9 @@ impl Daemon {
             user_home: Some(dir.path().join("user")),
             runtime_dir: dir.path().join("runtime"),
             fallback_dir: dir.path().join("fallback"),
+            free_space: agent_runtime::disk::SharedFreeSpace::new(agent_runtime::disk::FakeFreeSpace::new(
+                200 * 1024 * 1024 * 1024,
+            )),
         };
         for made in [
             surroundings.runtime_dir.clone(),

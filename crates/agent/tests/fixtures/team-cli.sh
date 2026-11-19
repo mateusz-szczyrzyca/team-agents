@@ -368,6 +368,11 @@ case $action in
     result "$report"'\nSTATUS: DONE'
     ;;
   done:*) result "${action#done:}"'\nSTATUS: DONE' ;;
+  target-done:*)
+    # Leaves the build directory a build would leave in the worktree, then finishes with the text after the colon.
+    mkdir -p target && printf 'build output\n' > target/output.bin
+    result "${action#target-done:}"'\nSTATUS: DONE'
+    ;;
   sleep) result 'Nothing to do now.\nSTATUS: SLEEPING' ;;
   fail) result 'I could not do it.\nSTATUS: FAILED' ;;
   nostatus) result 'I think that is all.' ;;

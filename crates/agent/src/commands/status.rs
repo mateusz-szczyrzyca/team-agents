@@ -10,6 +10,7 @@ use agent_core::protocol::{Client, Command, Reply, RoundDetail, ShowRequest, Sta
 use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState};
 use agent_core::status::TaskStatus;
+use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::process::error_chain;
 use agent_runtime::run::activity::last_activity;
 use agent_runtime::store::Home;
@@ -59,20 +60,44 @@ impl Activity {
         }
     }
 
-    /// The line about low free disk space when below threshold.
+    /// The line about low free disk space when below threshold, or the reason the space or the limit cannot be read.
+    /// `None` before the daemon has measured the space, and when the space is above the limit.
     pub(crate) fn disk_line(&self) -> Option<String> {
-        let content = std::fs::read_to_string(self.home.free_space_file()).ok()?;
-        let free_bytes = content.trim().parse::<u64>().ok()?;
-        let free_gb = free_bytes / (1024 * 1024 * 1024);
-        let low_free_gb = if let Ok(text) = std::fs::read_to_string(self.home.config_file()) {
-            agent_core::config::Config::from_toml_str(&text).map_or(100, |c| c.disk().low_free_gb)
-        } else {
-            100
+        let content = match std::fs::read_to_string(self.home.free_space_file()) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(error) => return Some(format!("disk: cannot read the free space ({})\n", error_chain(&error))),
         };
+        let free_bytes = match content.trim().parse::<u64>() {
+            Ok(bytes) => bytes,
+            Err(error) => return Some(format!("disk: cannot read the free space ({error})\n")),
+        };
+        let low_free_gb = match self.low_free_gb() {
+            Ok(gb) => gb,
+            Err(message) => return Some(message),
+        };
+        let free_gb = free_bytes / GIBIBYTE;
         if free_gb < low_free_gb {
             Some(format!("disk: {free_gb} GB free, limit {low_free_gb} GB\n"))
         } else {
             None
+        }
+    }
+
+    /// The `disk.low_free_gb` of the configuration: the default when the file is absent, the message to show when it
+    /// cannot be read or parsed.
+    fn low_free_gb(&self) -> Result<u64, String> {
+        match std::fs::read_to_string(self.home.config_file()) {
+            Ok(text) => agent_core::config::Config::from_toml_str(&text)
+                .map(|config| config.disk().low_free_gb)
+                .map_err(|error| format!("disk: cannot read the configuration ({})\n", error_chain(&error))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(agent_core::config::Disk::default().low_free_gb)
+            }
+            Err(error) => Err(format!(
+                "disk: cannot read the configuration ({})\n",
+                error_chain(&error)
+            )),
         }
     }
 }

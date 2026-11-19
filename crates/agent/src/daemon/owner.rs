@@ -7,6 +7,7 @@
 
 mod answers;
 mod controls;
+mod disk;
 #[cfg(test)]
 mod fixture;
 mod gate;
@@ -17,8 +18,9 @@ mod start;
 mod teams;
 mod wakes;
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,7 +45,7 @@ use agent_core::state::{
 use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
-use agent_runtime::disk::FreeSpace;
+use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::history::{History, Scoped, log_decision};
 use agent_runtime::notify::Notification;
@@ -429,6 +431,11 @@ pub(super) struct Owner {
     shutdown: CancellationToken,
     /// Whether free space was below low threshold on last check.
     was_low_space: bool,
+    /// Disk work that runs off the loop: build directory removals and the low-space listing. Each outcome is handled
+    /// by the loop when it is ready.
+    disk_jobs: JoinSet<disk::DiskJob>,
+    /// Build directories of tasks whose run was going when their round closed; removed when the run ends.
+    deferred_targets: BTreeMap<TaskId, PathBuf>,
     /// Whether free space was below min threshold on last check.
     was_min_space: bool,
 }
@@ -485,6 +492,8 @@ impl Owner {
             history: History::disabled(),
             shutdown,
             was_low_space: false,
+            disk_jobs: JoinSet::new(),
+            deferred_targets: BTreeMap::new(),
             was_min_space: false,
         }
     }
@@ -536,13 +545,20 @@ impl Owner {
                 },
                 Some(joined) = self.runs.join_next_with_id() => self.settle_joined(joined).await?,
                 Some(report) = next_report(&mut self.saved) => self.reported(report).await?,
+                Some(joined) = self.disk_jobs.join_next() => self.disk_job_done(joined).await,
                 _ = tick.tick() => {
                     self.wake_due().await?;
                     self.look_at_every_team();
                 }
             }
         }
-        self.stop_runs().await
+        let stopped = self.stop_runs().await;
+        // The removals and listings already started finish before the owner ends: a stopped daemon leaves no build
+        // directory half removed.
+        while let Some(joined) = self.disk_jobs.join_next().await {
+            self.disk_job_done(joined).await;
+        }
+        stopped
     }
 
     // ---- start and recovery ---------------------------------------------------------------------------------
@@ -595,9 +611,11 @@ impl Owner {
         if queued.is_empty() {
             return Ok(());
         }
-        let free_bytes = self.check_free_space().await;
+        let Some(free_bytes) = self.check_free_space().await else {
+            return Ok(());
+        };
         let min_limit_gb = self.parts.settings.config.disk().min_free_gb;
-        let min_limit_bytes = min_limit_gb.saturating_mul(1024 * 1024 * 1024);
+        let min_limit_bytes = min_limit_gb.saturating_mul(GIBIBYTE);
         if free_bytes < min_limit_bytes {
             if !self.was_min_space {
                 self.was_min_space = true;
@@ -616,7 +634,7 @@ impl Owner {
 
     /// Starts the run of `task`, or fails the task when it cannot be made ready.
     async fn start(&mut self, task: TaskId) -> Result<(), OwnerError> {
-        let _ = self.check_free_space().await;
+        self.check_free_space().await;
         let why = self.reasons.remove(&task);
         // What a wake-up noted is for the run it starts, and for no other.
         let woke = self
@@ -816,6 +834,7 @@ impl Owner {
         };
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;
         self.in_flight.remove(&task);
+        self.release_deferred_target(&task);
         self.cancels.remove(&task);
         self.holds.remove(&task);
         let result = match outcome {
@@ -829,14 +848,9 @@ impl Owner {
         if let Ok(located) = self.locate(&task)
             && located.role == Role::Reviewer
         {
-            let low_limit_bytes = self
-                .parts
-                .settings
-                .config
-                .disk()
-                .low_free_gb
-                .saturating_mul(1024 * 1024 * 1024);
-            if free_bytes < low_limit_bytes
+            let low_limit_bytes = self.parts.settings.config.disk().low_free_gb.saturating_mul(GIBIBYTE);
+            if let Some(free) = free_bytes
+                && free < low_limit_bytes
                 && let Some(team) = self.parts.state.team(&located.team)
             {
                 let worktree_dir = self.parts.store.home().worktree_dir(team.repo(), &task);
@@ -1820,88 +1834,9 @@ impl Owner {
         }
     }
 
-    /// Measures free disk space in bytes, records it in `home.free_space_file()`, and triggers low-space notification
-    /// on crossing below `disk.low_free_gb`.
-    pub(super) async fn check_free_space(&mut self) -> u64 {
-        let root = self.parts.store.home().root();
-        let free_bytes = match self.parts.free_space.free_space_bytes(root) {
-            Ok(b) => b,
-            Err(error) => {
-                tracing::warn!("cannot measure free disk space: {error}");
-                return u64::MAX;
-            }
-        };
-        drop(std::fs::write(
-            self.parts.store.home().free_space_file(),
-            free_bytes.to_string(),
-        ));
-
-        let low_limit_gb = self.parts.settings.config.disk().low_free_gb;
-        let low_limit_bytes = low_limit_gb.saturating_mul(1024 * 1024 * 1024);
-        let is_low = free_bytes < low_limit_bytes;
-
-        if is_low && !self.was_low_space {
-            self.was_low_space = true;
-            let free_gb = free_bytes / (1024 * 1024 * 1024);
-            self.notify_low_disk(free_gb, low_limit_gb).await;
-        } else if !is_low && self.was_low_space {
-            self.was_low_space = false;
-        }
-
-        let min_limit_gb = self.parts.settings.config.disk().min_free_gb;
-        let min_limit_bytes = min_limit_gb.saturating_mul(1024 * 1024 * 1024);
-        if free_bytes >= min_limit_bytes && self.was_min_space {
-            self.was_min_space = false;
-        }
-
-        free_bytes
-    }
-
-    /// Notifies the human that free disk space is below threshold, listing the largest worktrees.
-    async fn notify_low_disk(&self, free_gb: u64, limit_gb: u64) {
-        let largest = agent_runtime::disk::largest_worktrees(self.parts.store.home(), 5).unwrap_or_default();
-        let mut lines = Vec::new();
-        for w in largest {
-            let gb = w.bytes / (1024 * 1024 * 1024);
-            let mb = (w.bytes % (1024 * 1024 * 1024)) / (1024 * 1024);
-            lines.push(format!("- {}: {gb}.{mb:02} GB", w.path.display()));
-        }
-        let worktrees = if lines.is_empty() {
-            "none".to_owned()
-        } else {
-            lines.join("\n")
-        };
-        let values = match agent_core::prompt::Variables::new()
-            .with("free", free_gb.to_string())
-            .and_then(|v| v.with("limit", limit_gb.to_string()))
-            .and_then(|v| v.with("worktrees", worktrees))
-        {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("cannot build variables for low disk notice: {e}");
-                return;
-            }
-        };
-        if let Ok(rendered) = self
-            .parts
-            .texts
-            .render(agent_core::prompt::HarnessPrompt::NoticeLowDisk, &values)
-        {
-            let mut split = rendered.splitn(2, '\n');
-            let title = split.next().unwrap_or("Low free disk space").trim();
-            let body = split.next().unwrap_or_default().trim();
-            if let Ok(notification) = Notification::new(title, body)
-                && let Ok(now) = Timestamp::now(&self.parts.clock)
-                && let Err(e) = self.parts.notifier.notify(now, &notification).await
-            {
-                tracing::warn!(event = LogEvent::NotificationFailed.as_str(), error = %error_chain(&e), "cannot deliver low disk notification");
-            }
-        }
-    }
-
     /// Notifies the human that open rounds wait for disk space.
     pub(super) async fn notify_rounds_waiting(&mut self, free_bytes: u64, min_gb: u64) {
-        let free_gb = free_bytes / (1024 * 1024 * 1024);
+        let free_gb = free_bytes / (GIBIBYTE);
         let values = match agent_core::prompt::Variables::new()
             .with("free", free_gb.to_string())
             .and_then(|v| v.with("min", min_gb.to_string()))

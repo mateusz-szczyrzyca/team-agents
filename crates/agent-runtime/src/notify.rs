@@ -167,6 +167,20 @@ pub enum NotifyError {
         /// Why the command did not run to its end.
         source: CaptureError,
     },
+    /// The emergency command could not be run to its end: not started, or over its time. No file is written.
+    #[error("cannot run the emergency notification command")]
+    EmergencyCommand {
+        /// Why the command did not run to its end.
+        source: CaptureError,
+    },
+    /// The emergency command ended with a failure. No file is written.
+    #[error("the emergency notification command failed with {exit:?}: {stderr}")]
+    EmergencyFailed {
+        /// How the command ended.
+        exit: ExitReport,
+        /// What it said, cut, with the secrets removed.
+        stderr: String,
+    },
     /// The command ended with a failure. The file is written.
     #[error("the notification command for {file:?} failed with {exit:?}: {stderr}")]
     CommandFailed {
@@ -279,10 +293,11 @@ impl Notifier {
         text.trim().chars().take(MAX_DIAGNOSTIC_CHARS).collect()
     }
 
-    /// Runs the notification command once with `reason` as its argument when a file cannot be written.
+    /// Runs the notification command once with `reason` as its argument when a file cannot be written. No file is
+    /// written, so the errors name the command only.
     ///
     /// # Errors
-    /// [`NotifyError::Command`] and [`NotifyError::CommandFailed`] when running the command fails.
+    /// [`NotifyError::EmergencyCommand`] and [`NotifyError::EmergencyFailed`] when running the command fails.
     pub async fn notify_emergency(&self, reason: &str) -> Result<(), NotifyError> {
         let Some(line) = &self.command else {
             return Ok(());
@@ -296,15 +311,13 @@ impl Notifier {
             timeout: self.command_timeout,
             max_bytes: MAX_COMMAND_OUTPUT_BYTES,
         };
-        let captured = capture(command, limits).await.map_err(|source| NotifyError::Command {
-            file: PathBuf::new(),
-            source,
-        })?;
+        let captured = capture(command, limits)
+            .await
+            .map_err(|source| NotifyError::EmergencyCommand { source })?;
         if captured.exit.succeeded() {
             return Ok(());
         }
-        Err(NotifyError::CommandFailed {
-            file: PathBuf::new(),
+        Err(NotifyError::EmergencyFailed {
             exit: captured.exit,
             stderr: self.diagnostic(&captured.stderr.bytes),
         })
@@ -689,6 +702,23 @@ mod tests {
         n.notify_emergency("out of disk space").await.unwrap();
 
         assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "out of disk space");
+        let notes_dir = dir.path().join("notes");
+        assert!(!notes_dir.exists() || files_in(&notes_dir).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failing_emergency_command_is_reported_without_a_file_and_without_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let failing = command(&["sh", "-c", "echo \"login with $NOTIFY_TOKEN failed\" >&2; exit 3"]);
+        let notifier = notifier(dir.path(), Some(failing));
+
+        let result = notifier.notify_emergency("out of disk space").await;
+
+        let Err(NotifyError::EmergencyFailed { exit, stderr }) = result else {
+            panic!("expected a failed emergency command: {result:?}")
+        };
+        assert_eq!(exit, ExitReport::Exited { code: 3 });
+        assert_eq!(stderr, "login with [redacted] failed");
         let notes_dir = dir.path().join("notes");
         assert!(!notes_dir.exists() || files_in(&notes_dir).is_empty());
     }

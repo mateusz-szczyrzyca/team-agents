@@ -78,3 +78,43 @@ fn largest_worktrees_finds_top_five_ordered_by_size() {
     assert_eq!(top[3].bytes, 300);
     assert_eq!(top[4].bytes, 200);
 }
+
+#[test]
+#[cfg(unix)]
+fn remove_build_directory_refuses_a_worktree_that_links_outside_home() {
+    let temp = tempfile::tempdir().unwrap();
+    let abs = AbsolutePath::try_from(temp.path().to_str().unwrap().to_owned()).unwrap();
+    let home = Home::new(&abs);
+    let repo_dir = home.worktrees_dir().join("test-repo");
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    let external = temp.path().join("external");
+    std::fs::create_dir_all(external.join("target")).unwrap();
+    std::fs::write(external.join("target").join("binary"), b"build output").unwrap();
+    let linked_worktree = repo_dir.join("task-1");
+    std::os::unix::fs::symlink(&external, &linked_worktree).unwrap();
+
+    let err = remove_build_directory(&home, &linked_worktree).unwrap_err();
+
+    assert!(matches!(err, BuildDirError::OutsideHome { .. }));
+    assert!(external.join("target").join("binary").exists());
+}
+
+#[test]
+fn remove_build_directory_of_a_missing_worktree_releases_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let abs = AbsolutePath::try_from(temp.path().to_str().unwrap().to_owned()).unwrap();
+    let home = Home::new(&abs);
+    std::fs::create_dir_all(home.worktrees_dir().join("test-repo")).unwrap();
+
+    let released = remove_build_directory(&home, &home.worktrees_dir().join("test-repo").join("gone")).unwrap();
+
+    assert_eq!(released, 0);
+}
+
+#[test]
+fn gibibytes_text_rounds_down_to_hundredths() {
+    assert_eq!(gibibytes_text(0), "0.00 GB");
+    assert_eq!(gibibytes_text(GIBIBYTE + 5 * 1024 * 1024), "1.00 GB");
+    assert_eq!(gibibytes_text(GIBIBYTE + 300 * 1024 * 1024), "1.29 GB");
+    assert_eq!(gibibytes_text(34 * GIBIBYTE), "34.00 GB");
+}

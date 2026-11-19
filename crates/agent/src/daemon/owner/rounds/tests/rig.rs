@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::fake_github::{ACCOUNT, FakeGitHub};
 use crate::client::Connection;
-use crate::daemon::{DaemonError, DaemonSetup, Timings, run, run_with_log_layer};
+use crate::daemon::{DaemonError, DaemonSetup, Surroundings, Timings, run_in, run_with_log_layer};
 
 /// The longest any wait of these tests lasts.
 pub(super) const PATIENCE: Duration = Duration::from_secs(30);
@@ -210,14 +210,7 @@ impl Rig {
         let secrets = home.root().join("secrets.toml");
         std::fs::write(&secrets, "github_token = \"ghp_test_token_0123\"\n").unwrap();
         std::fs::set_permissions(&secrets, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
-        let free_space = {
-            let fs = agent_runtime::disk::FakeFreeSpace::new(200 * 1024 * 1024 * 1024);
-            agent_runtime::disk::SharedFreeSpace::register(
-                home.root().to_path_buf(),
-                agent_runtime::disk::SharedFreeSpace::new(fs.clone()),
-            );
-            fs
-        };
+        let free_space = agent_runtime::disk::FakeFreeSpace::new(200 * 1024 * 1024 * 1024);
         Self {
             _dir: dir,
             home,
@@ -228,6 +221,14 @@ impl Rig {
             daemon: None,
             clock: TickingClock::new(),
             free_space,
+        }
+    }
+
+    /// The surroundings of this daemon: the environment of the process, with the fake measure of free disk space.
+    fn surroundings(&self) -> Surroundings {
+        Surroundings {
+            free_space: agent_runtime::disk::SharedFreeSpace::new(self.free_space.clone()),
+            ..Surroundings::from_process()
         }
     }
 
@@ -257,7 +258,7 @@ impl Rig {
         let socket = self.home.socket_file();
         let deadline = Instant::now() + PATIENCE;
         'attempts: loop {
-            let daemon = tokio::spawn(run(self.setup(), self.shutdown.clone()));
+            let daemon = tokio::spawn(run_in(self.setup(), self.surroundings(), self.shutdown.clone()));
             while !socket.exists() {
                 if daemon.is_finished() {
                     match daemon.await.unwrap() {
@@ -284,7 +285,7 @@ impl Rig {
         'attempts: loop {
             let mut setup = self.setup();
             setup.prompts_dir = prompts.to_path_buf();
-            let daemon = tokio::spawn(run(setup, self.shutdown.clone()));
+            let daemon = tokio::spawn(run_in(setup, self.surroundings(), self.shutdown.clone()));
             while !socket.exists() {
                 if daemon.is_finished() {
                     match daemon.await.unwrap() {
@@ -362,15 +363,17 @@ impl Rig {
     /// Starts the daemon, which is expected to refuse; returns what it said.
     pub(super) async fn start_refused(&mut self) -> DaemonError {
         self.shutdown = CancellationToken::new();
-        tokio::time::timeout(PATIENCE, run(self.setup(), self.shutdown.clone()))
-            .await
-            .unwrap()
-            .expect_err("the daemon was expected to refuse to start")
+        tokio::time::timeout(
+            PATIENCE,
+            run_in(self.setup(), self.surroundings(), self.shutdown.clone()),
+        )
+        .await
+        .unwrap()
+        .expect_err("the daemon was expected to refuse to start")
     }
 
     /// Stops the daemon and returns how it ended.
     pub(super) async fn stop(&mut self) -> Result<(), DaemonError> {
-        agent_runtime::disk::SharedFreeSpace::unregister(self.home.root());
         self.shutdown.cancel();
         let daemon = self.daemon.take().unwrap();
         tokio::time::timeout(PATIENCE, daemon).await.unwrap().unwrap()

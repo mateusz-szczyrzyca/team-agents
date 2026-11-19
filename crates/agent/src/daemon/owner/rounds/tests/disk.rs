@@ -1,7 +1,7 @@
 //! Integration tests for disk space monitoring, target cleanup and run refusals.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -198,9 +198,11 @@ pub(super) async fn record_build_directory_removed(observed: &mut BTreeSet<LogEv
     std::fs::write(target.join("output.bin"), b"build output").unwrap();
 
     let (owner, _sinks) = daemon.bare_owner().await;
-    let owner = owner.with_history(started.history.clone());
+    let mut owner = owner.with_history(started.history.clone());
     async {
         owner.remove_target(&task(1), &worktree_dir);
+        let joined = owner.disk_jobs.join_next().await.expect("the removal was started");
+        owner.disk_job_done(joined).await;
     }
     .with_subscriber(dispatch)
     .await;
@@ -230,4 +232,66 @@ fn row(logs: &[LogEntry], event: LogEvent) -> &LogEntry {
     logs.iter()
         .find(|entry| entry.event() == event)
         .unwrap_or_else(|| panic!("no {event} row in {logs:#?}"))
+}
+
+/// Two reviewers that build: each leaves a `target/` directory in its worktree before it approves.
+async fn building_rig() -> Rig {
+    let rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", "target-done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "target-done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    std::fs::write(rig.repo.join(".git/info/exclude"), ".fake-*\n").unwrap();
+    rig
+}
+
+/// The reviewer of the item that its run has approved, with its worktree.
+async fn approved_reviewer(rig: &mut Rig) -> (agent_core::ids::TaskId, PathBuf) {
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let state = rig
+        .item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
+        .await;
+    let reviewer = state.team(&team).unwrap().reviewers()[0].task().clone();
+    let tree = rig.worktree(&reviewer);
+    (reviewer, tree)
+}
+
+#[tokio::test]
+async fn reviewer_target_is_removed_when_the_space_is_below_the_low_limit() {
+    let mut rig = building_rig().await;
+    rig.free_space.set(50 * 1024 * 1024 * 1024);
+    rig.start().await;
+
+    let (_reviewer, tree) = approved_reviewer(&mut rig).await;
+    let target = tree.join("target");
+    rig.wait_for("the reviewer target to be removed", || !target.exists())
+        .await;
+
+    assert!(tree.exists(), "the checkout stays");
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn low_disk_notice_is_sent_once_while_the_space_stays_low() {
+    let mut rig = rig().await;
+    rig.free_space.set(50 * 1024 * 1024 * 1024);
+    rig.start().await;
+
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    rig.item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
+        .await;
+    wait_for_notification(&rig, "Low free disk space").await;
+
+    let notices = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("Low free disk space"))
+        .count();
+    assert_eq!(notices, 1, "one notice per crossing, team {team}");
+    rig.stop().await.unwrap();
 }

@@ -23,6 +23,7 @@ use agent_core::status::{ItemStatus, TaskStatus};
 use agent_runtime::agentbus::{
     AgentBusError, DelegationStatus, DelegationUpdate, FailureClass, MemberState, Recipient, RequestId, Woken,
 };
+use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::git::{CommitIdentity, DeleteMode, Git, GitError, RemoveMode, Revision, WorktreeBranch};
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
@@ -83,11 +84,19 @@ impl Owner {
 
     /// Refuses starting a team if free disk space is below minimum threshold.
     async fn check_disk_for_run(&mut self) -> Result<(), Failure> {
-        let free_bytes = self.check_free_space().await;
+        let Some(free_bytes) = self.check_free_space().await else {
+            return Err(Failure {
+                kind: FailureKind::Refused,
+                message: format!(
+                    "cannot measure the free disk space of {}: no run starts until it can be measured; see the daemon log",
+                    self.parts.store.home().root().display()
+                ),
+            });
+        };
         let min_limit_gb = self.parts.settings.config.disk().min_free_gb;
-        let min_limit_bytes = min_limit_gb.saturating_mul(1024 * 1024 * 1024);
+        let min_limit_bytes = min_limit_gb.saturating_mul(GIBIBYTE);
         if free_bytes < min_limit_bytes {
-            let free_gb = free_bytes / (1024 * 1024 * 1024);
+            let free_gb = free_bytes / GIBIBYTE;
             return Err(Failure {
                 kind: FailureKind::Refused,
                 message: format!(
