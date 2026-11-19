@@ -146,3 +146,40 @@ fn reads_both_outcomes_with_markup_and_requires_opening_verdict_and_evidence() {
     let error = serde_json::from_str::<Evidence>("\" \"").expect_err("empty evidence must be refused");
     assert_eq!(error.classify(), serde_json::error::Category::Data);
 }
+
+#[test]
+fn a_final_status_line_is_not_evidence() {
+    assert_eq!(
+        parse_report("OPINION: CONFIRMED\nSTATUS: DONE"),
+        Err(OpinionError::MissingEvidence)
+    );
+    assert_eq!(
+        parse_report("OPINION: NOT CONFIRMED\n\nSTATUS: DONE\n"),
+        Err(OpinionError::MissingEvidence)
+    );
+    assert_eq!(
+        parse_report("OPINION: CONFIRMED\nRead café.rs: it is unreachable.\n\nSTATUS: DONE"),
+        Ok(OpinionReport {
+            outcome: Outcome::Confirmed,
+            evidence: "Read café.rs: it is unreachable.".to_owned().try_into().unwrap(),
+        })
+    );
+}
+
+#[test]
+fn markup_inside_the_keyword_line_is_ignored() {
+    for (text, outcome) in [
+        ("**OPINION:** CONFIRMED\nevidence", Outcome::Confirmed),
+        ("`OPINION:` `NOT CONFIRMED`\nevidence", Outcome::NotConfirmed),
+        ("**OPINION: NOT CONFIRMED**\nevidence", Outcome::NotConfirmed),
+    ] {
+        assert_eq!(
+            parse_report(text),
+            Ok(OpinionReport {
+                outcome,
+                evidence: "evidence".to_owned().try_into().unwrap(),
+            }),
+            "{text}"
+        );
+    }
+}
