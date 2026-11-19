@@ -122,7 +122,9 @@ impl Owner {
             }
         }
         // The description the harness would write for these items names files in passing: what counts is what somebody added.
-        let harness = self.pull_text_of(pulls, team, &lead.repo, reviewing.items, &reviewing.ready.record)?;
+        let harness = self
+            .pull_text_of(pulls, team, &lead.repo, reviewing.items, &reviewing.ready.record)
+            .await?;
         let written = authored(reviewing.description, &harness.body);
         let issues = self.round_issues(lead, reviewing, &written, &rules, &record).await?;
         let policy = ChecksPolicy::new(self.parts.settings.config.review());

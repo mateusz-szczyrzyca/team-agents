@@ -6,10 +6,6 @@ use agent_core::state::GateRecord;
 use agent_runtime::autopilot_prompts::AutopilotPrompts;
 
 /// Removes harness-owned sections from the lead's contribution.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired into publication after the RED specification")
-)]
 pub(crate) fn lead_sections(text: &str) -> String {
     let mut kept = Vec::new();
     let mut omitted = None;
@@ -46,10 +42,6 @@ pub(crate) fn lead_sections(text: &str) -> String {
 }
 
 /// Renders the measured size and recorded gate, including a preceding failure at this head.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired into publication after the RED specification")
-)]
 pub(crate) fn measured_sections(
     texts: &AutopilotPrompts,
     size: usize,

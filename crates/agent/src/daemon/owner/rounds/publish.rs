@@ -438,7 +438,7 @@ impl Owner {
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
         let existing = github.find_open_pull_request(head_branch).await?;
         carry(ready, head_branch, existing.as_ref().map(|found| &found.head)).await?;
-        let text = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record)?;
+        let text = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record).await?;
         let base = self.base_branch(&lead.repo)?;
         let remote = if let Some(mut found) = existing {
             if found.head != ready.tip {
@@ -489,7 +489,7 @@ impl Owner {
             return Ok(Attempt::Held(held));
         }
         // The reviewers find the `TEST-FIX:` commits of the round listed in the description: the harness writes that.
-        let body = self.disclosed(lead, ready, &remote.body).await?;
+        let body = self.disclosed(lead, ready, &text.body).await?;
         let body = if body == remote.body {
             body
         } else {
@@ -625,20 +625,13 @@ impl Owner {
             },
         );
         // The description follows the round: the items that joined, and the `TEST-FIX:` commits the round has now.
+        let text = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record).await?;
         let mut update = PullRequestUpdate::default();
-        let mut body = before.body.clone();
-        if !joined.is_empty() {
-            let text = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record)?;
+        if text.title != before.title {
             update.title = Some(text.title);
-            body = text.body;
         }
-        let body = self.disclosed(lead, ready, &body).await?;
-        let body = if body == before.body {
-            body
-        } else {
-            let harness = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record)?;
-            refresh_harness_files(&ready.git, &body, &harness.body).await
-        };
+        let body = self.disclosed(lead, ready, &text.body).await?;
+        let body = refresh_harness_files(&ready.git, &body, &text.body).await;
         let body = self.link_commits(&ready.git, &ready.tip, &body).await;
         if body != before.body {
             update.body = Some(body);
@@ -664,8 +657,63 @@ impl Owner {
         }))
     }
 
+    /// Refreshes descriptions independently of publication, including file-only changes during review.
+    pub(super) async fn refresh_descriptions(&mut self, pulls: &Pulls, team: &TeamId) -> Result<(), PublishError> {
+        let found = self.parts.state.team(team).ok_or(PublishError::Lost)?;
+        let mut open = std::collections::BTreeMap::new();
+        for item in found.items() {
+            let pr = match item.phase() {
+                ItemPhase::InReview { pr, .. } | ItemPhase::Approved { pr, .. } | ItemPhase::Fixing { pr, .. } => pr,
+                ItemPhase::Pending | ItemPhase::InProgress { .. } | ItemPhase::Done { .. } => continue,
+            };
+            open.entry(pr.number).or_insert_with(Vec::new).push(item.id());
+        }
+        if open.is_empty() {
+            return Ok(());
+        }
+        let (_, member) = found.crew().roster().into_iter().next().ok_or(PublishError::Lost)?;
+        let lead = Lead {
+            repo: found.repo().clone(),
+            task: member.task().clone(),
+            agent: member.agent().name().parse()?,
+            done: false,
+        };
+        let Some(record) = self.parts.store.load_gate_record(&lead.task).await? else {
+            return Ok(());
+        };
+        let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
+        let github = self.github_for(pulls, &lead.repo, &git).await?;
+        for (number, ids) in open {
+            let remote = github.get_pull_request(number).await?;
+            if remote.state != agent_runtime::github::PullState::Open || remote.head != record.result.head {
+                continue;
+            }
+            let ready = Ready {
+                git: git.clone(),
+                tip: remote.head.clone(),
+                record: record.clone(),
+            };
+            let text = self.pull_text_of(pulls, team, &lead.repo, &ids, &record).await?;
+            let body = self.disclosed(&lead, &ready, &text.body).await?;
+            let body = refresh_harness_files(&git, &body, &text.body).await;
+            let body = self.link_commits(&git, &remote.head, &body).await;
+            if body != remote.body {
+                github
+                    .update_pull_request(
+                        number,
+                        &PullRequestUpdate {
+                            body: Some(body),
+                            ..PullRequestUpdate::default()
+                        },
+                    )
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
     /// The title and the description of the pull request of `ids`.
-    pub(super) fn pull_text_of(
+    pub(super) async fn pull_text_of(
         &self,
         pulls: &Pulls,
         team_id: &TeamId,
@@ -678,7 +726,25 @@ impl Owner {
             .state
             .team(team_id)
             .ok_or_else(|| PublishError::RepoGone { repo: repo.clone() })?;
-        Ok(pull_text(&pulls.texts, team, repo, ids, record)?)
+        let (_, lead) = team.crew().roster().into_iter().next().ok_or(PublishError::Lost)?;
+        let git = self.worktree_git(repo, lead.task(), &lead.agent().name().parse()?)?;
+        let path = self.parts.store.home().task_dir(lead.task()).join("description.md");
+        let contribution = agent_runtime::text_file::read_text_file(&path, 1 << 20)
+            .await
+            .map_err(|source| PublishError::Description { path, source })?;
+        let mut contribution =
+            crate::daemon::pr::description::lead_sections(contribution.as_ref().map_or("", |file| file.text.as_str()));
+        if contribution.is_empty() {
+            contribution = pulls.texts.render(AutopilotPrompt::PrNoLead, &Variables::new())?;
+        }
+        let base = Revision::RemoteBranch(self.base_branch(repo)?);
+        let size = git.pull_request_size(&base, &record.result.head).await?;
+        let previous = self.parts.store.previous_gate_record(lead.task()).await?;
+        let measured =
+            crate::daemon::pr::description::measured_sections(&pulls.texts, size, record, previous.as_ref())?;
+        let mut text = pull_text(&pulls.texts, team, repo, ids, record)?;
+        text.body = [text.body.trim_end(), contribution.trim(), &measured].join("\n\n");
+        Ok(text)
     }
 
     /// The branch the pull requests of `repo` are made against.

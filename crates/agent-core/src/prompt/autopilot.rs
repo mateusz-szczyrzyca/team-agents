@@ -62,6 +62,8 @@ pub enum AutopilotPrompt {
     PrGate,
     /// A passing retry after a failed gate.
     PrGateRetry,
+    /// Missing lead contribution.
+    PrNoLead,
     /// What the lead is told when it is done and the gate has not passed at the tip of its branch.
     GateNotPassed,
     /// What the lead is told when it is done, the gate passed, and its branch contains none of the finished items.
@@ -186,6 +188,7 @@ impl AutopilotPrompt {
         Self::PrSize,
         Self::PrGate,
         Self::PrGateRetry,
+        Self::PrNoLead,
         Self::GateNotPassed,
         Self::BranchNotJoined,
         Self::TeamAsleep,
@@ -294,6 +297,7 @@ impl AutopilotPrompt {
             Self::PrSize => "harness/pr/size.md",
             Self::PrGate => "harness/pr/gate.md",
             Self::PrGateRetry => "harness/pr/gate-retry.md",
+            Self::PrNoLead => "harness/pr/no-lead.md",
             Self::GateNotPassed => "harness/pr/gate-not-passed.md",
             Self::BranchNotJoined => "harness/pr/branch-not-joined.md",
             Self::TeamAsleep => "harness/pr/team-asleep.md",
@@ -379,7 +383,7 @@ impl AutopilotPrompt {
             Self::PrUpdate => &["head", "pass", "gate"],
             Self::PrSize => &["size"],
             Self::PrGate => &["head", "finished", "result", "log"],
-            Self::PrGateRetry => &[],
+            Self::PrGateRetry | Self::PrNoLead => &[],
             Self::GateNotPassed => &["branch", "reason", "sent", "limit"],
             Self::BranchNotJoined => BRANCH_VARIABLES,
             Self::TeamAsleep => &["team", "items", "minutes", "tasks", "woken", "limit"],
