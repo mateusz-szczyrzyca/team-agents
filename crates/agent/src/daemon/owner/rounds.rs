@@ -702,6 +702,10 @@ mod round_records_tests;
 mod tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/handover.rs"]
+mod handover_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/history_failures.rs"]
 mod history_failures_tests;
 
