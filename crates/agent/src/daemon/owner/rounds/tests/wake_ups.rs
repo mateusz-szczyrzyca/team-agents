@@ -332,3 +332,57 @@ async fn an_unreadable_bus_log_is_told_once_and_does_not_stretch_the_wake_ups() 
     assert_eq!(unreadable.len(), 1, "{unreadable:?}");
     assert_eq!(unreadable[0].count().get(), 1);
 }
+
+#[tokio::test]
+async fn wake_delivery_is_saved_before_running_and_marked_delivered_at_the_limit() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,deaf-fix-held:1,deaf-sleep"),
+            normal("claude-1", "fix-held:1"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    start_logged(&mut rig).await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    say(&rig, &tasks[0], "keep this message until you can read it").await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("the first wake-up to start", || {
+        worktree.join(".fake-started-2").exists()
+    })
+    .await;
+    let pending = rig.state().wake_delivery(&tasks[0]);
+    std::fs::write(worktree.join(".fake-release-2"), "").unwrap();
+    rig.wait_for("the wake-up budget to be exhausted", || {
+        logged(&rig)
+            .iter()
+            .any(|row| row.event() == LogEvent::BusDown && row.fields().contains_key("wake_ups"))
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        matches!(
+            pending,
+            Some(agent_core::state::WakeDelivery::Pending {
+                message: Some(_),
+                count: 1
+            })
+        ),
+        "the first wake-up was not saved: {pending:?}"
+    );
+    let Some(agent_core::state::WakeDelivery::Pending { message, count: 1 }) = pending else {
+        panic!("the first wake-up was not saved: {pending:?}");
+    };
+    assert!(message.is_some(), "the saved delivery identifies its message");
+    assert_eq!(
+        rig.state().wake_delivery(&tasks[0]),
+        Some(agent_core::state::WakeDelivery::Delivered { message, count: 2 })
+    );
+}
