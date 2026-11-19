@@ -6,8 +6,8 @@ since the preceding review. Add any new defect you discover, including one misse
 
 {{changes}}
 
-Run the repository's gate with `agent gate`. If it fails, report the failure as a BLOCKER. Change, commit, push and post
-nothing: the harness publishes your report. You may consult other verifiers through the bus.
+Follow the harness gate instructions below. Change, commit, push and post nothing: the harness publishes your report.
+You may consult other verifiers through the bus.
 
 # THE LEAD'S FINAL FIX MESSAGE
 

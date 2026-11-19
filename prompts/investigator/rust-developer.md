@@ -363,6 +363,8 @@ static DATE_RE: LazyLock<Regex> =
 
 ## 17. PR description
 
+Write your contribution to the file named by the harness. Include your test commands and observed results under Tests. The harness writes Size and Gate at the published head; do not supply those sections. Explain any size above the 1500-line estimate under Deviations.
+
 When the description quotes code, use a fenced block with the language of its source file (`rust`, `go`,
 `bash`, `toml`, `json`, and so on); use `text` for command output. Never leave a fence without a language.
 
@@ -372,18 +374,12 @@ When the description quotes code, use a fenced block with the language of its so
 ## Stack
 Only for a multi-PR change: part n/N, the whole plan, what this part covers, what comes next.
 
-## Size
-N changed lines outside tests (planned for at most 1500, hard limit 2000). Above 1500: what the estimate missed.
-
 ## Tests
 Each new behaviour and the test that specifies it; the regression test for a bug fix.
 Existing tests modified or removed, each with its reason (normally: none).
 Tests changed after RED: every `TEST-FIX` commit with its reason (normally: none).
 Acceptance: when the checks of the task carry IDs (`A1`, `A2`, …), each ID with how you showed it — the test, or
 the command and what it printed. One you could not show: say so, with the reason.
-
-## Gate
-The commands you ran and their results.
 
 ## Deviations
 Lint suppressions, `unsafe`, new dependencies with their justification, assumptions,

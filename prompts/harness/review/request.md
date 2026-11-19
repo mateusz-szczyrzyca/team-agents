@@ -5,8 +5,7 @@ of it. Its head is the commit `{{head}}` of the branch `{{branch}}`, and your wo
 merges into `{{base}}`. The item it is for, with its expected result and its checks, follows below: judge the pull
 request against it, and check that nothing the item does not ask for is in it.
 
-- Start with `git diff {{base}}...HEAD`. Run the repository's gate with `agent gate`: it waits for its turn on this
-  machine and prints its verdict.
+- Start with `git diff {{base}}...HEAD`. Follow the harness gate instructions below.
 - You change, commit and push nothing, and you post nothing on GitHub: the harness posts your report as the review.
 - Your final message is the report in the format of the review rules. Its **first line** is `VERDICT: APPROVE` or
   `VERDICT: REQUEST_CHANGES`, one of the two, and its last line is `STATUS: DONE`:

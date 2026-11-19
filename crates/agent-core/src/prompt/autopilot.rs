@@ -64,6 +64,12 @@ pub enum AutopilotPrompt {
     PrGateRetry,
     /// Missing lead contribution.
     PrNoLead,
+    /// Instructions for the lead contribution file.
+    PrLeadInstructions,
+    /// Matching-head gate handed to a reviewer.
+    ReviewGate,
+    /// Missing matching-head gate.
+    ReviewGateMissing,
     /// What the lead is told when it is done and the gate has not passed at the tip of its branch.
     GateNotPassed,
     /// What the lead is told when it is done, the gate passed, and its branch contains none of the finished items.
@@ -189,6 +195,9 @@ impl AutopilotPrompt {
         Self::PrGate,
         Self::PrGateRetry,
         Self::PrNoLead,
+        Self::PrLeadInstructions,
+        Self::ReviewGate,
+        Self::ReviewGateMissing,
         Self::GateNotPassed,
         Self::BranchNotJoined,
         Self::TeamAsleep,
@@ -298,6 +307,9 @@ impl AutopilotPrompt {
             Self::PrGate => "harness/pr/gate.md",
             Self::PrGateRetry => "harness/pr/gate-retry.md",
             Self::PrNoLead => "harness/pr/no-lead.md",
+            Self::PrLeadInstructions => "harness/pr/lead-description.md",
+            Self::ReviewGate => "harness/review/gate.md",
+            Self::ReviewGateMissing => "harness/review/gate-missing.md",
             Self::GateNotPassed => "harness/pr/gate-not-passed.md",
             Self::BranchNotJoined => "harness/pr/branch-not-joined.md",
             Self::TeamAsleep => "harness/pr/team-asleep.md",
@@ -382,7 +394,9 @@ impl AutopilotPrompt {
             Self::PrBodyChecks => &["checks"],
             Self::PrUpdate => &["head", "pass", "gate"],
             Self::PrSize => &["size"],
-            Self::PrGate => &["head", "finished", "result", "log"],
+            Self::PrGate | Self::ReviewGate => &["head", "finished", "result", "log"],
+            Self::PrLeadInstructions => &["description_file"],
+            Self::ReviewGateMissing => &["head"],
             Self::PrGateRetry | Self::PrNoLead => &[],
             Self::GateNotPassed => &["branch", "reason", "sent", "limit"],
             Self::BranchNotJoined => BRANCH_VARIABLES,
