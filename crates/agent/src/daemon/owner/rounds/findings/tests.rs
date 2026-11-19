@@ -7,7 +7,7 @@ use std::num::NonZeroU32;
 use std::path::Path;
 
 #[tokio::test]
-async fn findings_table_matches_the_golden_and_keeps_report_data_in_one_cell() {
+async fn open_text_lists_open_findings_for_the_prompts() {
     let texts = AutopilotPrompts::load(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
         &Language::default(),
@@ -35,7 +35,6 @@ async fn findings_table_matches_the_golden_and_keeps_report_data_in_one_cell() {
         });
     }
     let ledger = Findings::new(entries).unwrap();
-    assert_eq!(table(&texts, &ledger).unwrap(), include_str!("table.md"));
     assert_eq!(
         open_text(&texts, Some(&ledger)).unwrap(),
         "2. [MAJOR] ERR-3 src/lib.rs:42 — problem | <tag>\n→ fix café\n   CHECK: read src/lib.rs:42\n\n3. [MINOR] ERR-3 src/lib.rs:42 — problem | <tag>\n→ fix café\n   CHECK: read src/lib.rs:42\n"
@@ -81,7 +80,7 @@ async fn human_decision_lists_only_unresolved_blocking_findings() {
 }
 
 #[tokio::test]
-async fn explanations_and_verifier_evidence_are_in_the_table_and_request() {
+async fn explanations_and_verifier_evidence_are_in_the_request() {
     use agent_core::review_findings::Answer;
     use agent_core::state::{Explanation, ExplanationStatus};
     let texts = AutopilotPrompts::load(
@@ -114,7 +113,6 @@ async fn explanations_and_verifier_evidence_are_in_the_table_and_request() {
             .into(),
         },
     );
-    assert_eq!(table(&texts, &ledger).unwrap(), include_str!("explanation-table.md"));
     assert!(
         open_text(&texts, Some(&ledger))
             .unwrap()
@@ -128,14 +126,9 @@ async fn explanations_and_verifier_evidence_are_in_the_table_and_request() {
 }
 
 #[tokio::test]
-async fn findings_table_shows_a_not_confirmed_blocker_with_its_reporter() {
-    let texts = AutopilotPrompts::load(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
-        &Language::default(),
-    )
-    .await
-    .unwrap();
-    let entry = RecordedFinding {
+async fn not_confirmed_blocker_shows_its_state_and_reporter_in_its_entry() {
+    let texts = load_texts().await;
+    let ledger = Findings::new(vec![RecordedFinding {
         number: NonZeroU32::MIN,
         finding: Finding {
             severity: Severity::Blocker,
@@ -147,17 +140,17 @@ async fn findings_table_shows_a_not_confirmed_blocker_with_its_reporter() {
         reporter: "inv-codex".parse().unwrap(),
         pass: NonZeroU32::MIN,
         status: FindingStatus::NotConfirmed,
-    };
-    let ledger = Findings::new(vec![entry]).unwrap();
+    }])
+    .unwrap();
 
-    let table = table(&texts, &ledger).unwrap();
+    let comment = comment(&texts, &ledger).unwrap();
 
-    let row = table
+    let entry = comment
         .lines()
-        .find(|line| line.contains("fix café"))
-        .expect("the finding has a row");
-    assert!(row.contains("not confirmed"), "{row}");
-    assert!(row.contains("inv-codex"), "{row}");
+        .find(|line| line.starts_with("**1** "))
+        .expect("the finding has an entry");
+    assert!(entry.contains("· not confirmed · inv-codex"), "{entry}");
+    assert_eq!(text_line(&comment, 1), "fix café");
 }
 
 /// A recorded finding of these tests: rule ERR-3 at `src/lib.rs:42`, reported by `inv-codex`.
@@ -327,7 +320,7 @@ async fn explained_finding_is_closed_and_its_explanation_is_the_third_line() {
 
 #[tokio::test]
 async fn second_opinion_is_the_third_line_of_its_finding() {
-    use agent_core::review_response::opinion::{Evidence, Outcome, OpinionReport};
+    use agent_core::review_response::opinion::{Outcome, OpinionReport};
     use agent_core::state::OpinionRequest;
     let texts = load_texts().await;
     let mut ledger = Findings::new(vec![recorded(1, Severity::Blocker, FindingStatus::Open, "fix café")]).unwrap();
