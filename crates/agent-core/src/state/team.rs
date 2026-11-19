@@ -456,7 +456,7 @@ impl Team {
     /// The task-authored permissions, retained with the team's original task list across every round and restart.
     #[must_use]
     pub fn allowances(&self) -> &[crate::task_allowance::TaskAllowance] {
-        &[]
+        self.task_list.list().allowances()
     }
 
     /// A team that has just been formed: every item pending, except those the task list marks done.
