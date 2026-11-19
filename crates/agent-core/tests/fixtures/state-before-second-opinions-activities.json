@@ -285,31 +285,13 @@
             "round-20261111-193000-a1b4"
           ],
           "request": {
-            "kind": "first_review"
-          },
-          "asked_at": "2026-11-11T19:41:00Z",
-          "outcome": {
-            "status": "finished",
-            "at": "2026-11-11T19:44:00Z",
-            "end": {
-              "kind": "reported"
-            }
-          }
-        },
-        {
-          "investigator": "inv-codex",
-          "task": "task-20261111-193007-k3x9",
-          "rounds": [
-            "round-20261111-193000-a1b4"
-          ],
-          "request": {
             "kind": "verification",
             "pass": 1
           },
           "asked_at": "2026-11-11T19:41:00Z",
           "outcome": {
             "status": "finished",
-            "at": "2026-11-11T19:50:00Z",
+            "at": "2026-11-11T19:44:00Z",
             "end": {
               "kind": "reported"
             }
