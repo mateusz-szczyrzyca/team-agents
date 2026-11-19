@@ -102,6 +102,11 @@ pub struct ReportError {
 /// The correction a report requires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ReportProblem {
+    /// A modern verifier needs the explanation and raising syntax in its correction.
+    #[error(
+        "answer each open FINDING N exactly once before new findings: pending explanations require ACCEPTED — why or REJECTED — why; others require RESOLVED or OPEN — why; RAISED [MAJOR|BLOCKER] — why may only increase severity"
+    )]
+    DisputeAnswer,
     /// An accepted explanation is protected while its code is unchanged.
     #[error(
         "accepted explanation remains MINOR until its file changes; answer FINDING N: RESOLVED or FINDING N: OPEN — why"

@@ -344,3 +344,19 @@ fn explanations_require_a_reasoned_vote_and_raising_never_lowers_severity() {
         )]
     );
 }
+
+#[test]
+fn malformed_explanation_votes_receive_the_explanation_protocol_correction() {
+    assert_eq!(
+        parse_verification(
+            "FINDING 3: RESOLVED",
+            ReviewVerdict::Approve,
+            &[(number(3), Severity::Major)],
+            &[number(3)]
+        ),
+        Err(ReportError {
+            line: 1,
+            kind: ReportProblem::DisputeAnswer
+        })
+    );
+}
