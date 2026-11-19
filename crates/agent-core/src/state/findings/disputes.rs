@@ -94,8 +94,87 @@ impl Findings {
     ///
     /// # Errors
     /// [`ResponseError`] identifies the line to correct; no decisions change on failure.
-    pub fn answer_lead(&mut self, _text: &str, _pass: u32) -> Result<Vec<(NonZeroU32, Response)>, ResponseError> {
-        Ok(vec![])
+    pub fn answer_lead(&mut self, text: &str, pass: u32) -> Result<Vec<(NonZeroU32, Response)>, ResponseError> {
+        let Some(disputes) = &mut self.disputes else {
+            return Ok(vec![]);
+        };
+        let blocking: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|e| e.status == FindingStatus::Open && e.finding.severity.blocks())
+            .map(|e| {
+                (
+                    e.number,
+                    e.finding.severity,
+                    disputes.explanations.contains_key(&e.number),
+                )
+            })
+            .collect();
+        let responses = crate::review_response::parse_lead(text, &blocking)?;
+        for (number, response) in &responses {
+            if let Response::Explained(why) = response {
+                disputes.explanations.insert(
+                    *number,
+                    Explanation {
+                        why: why.clone(),
+                        status: ExplanationStatus::Pending,
+                        votes: BTreeMap::new(),
+                    },
+                );
+            }
+        }
+        disputes.answered_pass = pass;
+        disputes.bounces = 0;
+        disputes.correction = None;
+        Ok(responses)
+    }
+    /// Applies the completed pass's votes before ordinary fix resolutions.
+    pub(super) fn finish_disputes(&mut self, reviews: &[super::Review]) {
+        let Some(disputes) = &mut self.disputes else {
+            return;
+        };
+        for entry in &mut self.entries {
+            let votes: BTreeMap<_, _> = reviews
+                .iter()
+                .filter_map(|review| {
+                    self.pending
+                        .get(&review.task)?
+                        .answers
+                        .iter()
+                        .find(|(n, _)| *n == entry.number)
+                        .map(|(_, answer)| (review.reviewer.clone(), answer.clone()))
+                })
+                .collect();
+            if let Some(explanation) = disputes.explanations.get_mut(&entry.number) {
+                if explanation.status == ExplanationStatus::Pending && votes.len() == reviews.len() && !votes.is_empty()
+                {
+                    let accepted = votes.values().all(|a| matches!(a, Answer::Accepted { .. }));
+                    explanation.status = if accepted {
+                        ExplanationStatus::Accepted
+                    } else {
+                        ExplanationStatus::Rejected
+                    };
+                    explanation.votes = votes.clone();
+                    if accepted {
+                        entry.finding.severity = Severity::Minor;
+                    }
+                }
+            }
+            for (reviewer, answer) in votes {
+                if let Answer::Raised { severity, why } = answer {
+                    if severity == Severity::Blocker || entry.finding.severity == Severity::Minor {
+                        entry.finding.severity = severity;
+                    }
+                    entry.status = FindingStatus::Open;
+                    disputes.raised.push(RaisedFinding {
+                        number: entry.number,
+                        reviewer,
+                        severity,
+                        why,
+                    });
+                }
+            }
+        }
     }
 }
 

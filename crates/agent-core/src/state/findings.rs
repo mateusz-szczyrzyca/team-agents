@@ -226,6 +226,7 @@ impl Findings {
             .try_fold(self.entries.len(), usize::checked_add)
             .ok_or(FindingNumbersExhausted::Exhausted)?;
         u32::try_from(added).map_err(FindingNumbersExhausted::Capacity)?;
+        self.finish_disputes(reviews);
         for entry in &mut self.entries {
             if !reviews.is_empty()
                 && reviews.iter().all(|review| {
