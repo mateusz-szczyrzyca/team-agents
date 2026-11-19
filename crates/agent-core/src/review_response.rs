@@ -29,10 +29,71 @@ pub struct ResponseError {
 /// # Errors
 /// [`ResponseError`] identifies an absent, duplicated, unknown or forbidden answer.
 pub fn parse_lead(
-    _text: &str,
-    _open: &[(NonZeroU32, Severity, bool)],
+    text: &str,
+    open: &[(NonZeroU32, Severity, bool)],
 ) -> Result<Vec<(NonZeroU32, Response)>, ResponseError> {
-    Ok(Vec::new())
+    let mut answers = Vec::new();
+    let mut ended = false;
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.starts_with("STATUS:") {
+            ended = true;
+        }
+        let Some(value) = line.strip_prefix("FINDING ") else {
+            continue;
+        };
+        let found = value.split_once(':').and_then(|(number, value)| {
+            open.iter()
+                .find(|(id, _, _)| id.to_string() == number.trim())
+                .map(|entry| (entry, value.trim()))
+        });
+        let Some(((number, severity, used), value)) = found else {
+            return Err(ResponseError {
+                line: index.saturating_add(1),
+                number: open.first().map_or(NonZeroU32::MIN, |entry| entry.0),
+                allowed: "one answer for each supplied blocking number",
+            });
+        };
+        let allowed = if *severity == Severity::Major && !used {
+            "FIXED or EXPLAINED — why"
+        } else {
+            "FIXED (explanation and second opinion are forbidden)"
+        };
+        let error = || ResponseError {
+            line: index.saturating_add(1),
+            number: *number,
+            allowed,
+        };
+        if ended || answers.iter().any(|(id, _)| id == number) {
+            return Err(error());
+        }
+        let response = if value == "FIXED" {
+            Response::Fixed
+        } else if *severity == Severity::Major && !used {
+            let why = value
+                .strip_prefix("EXPLAINED — ")
+                .filter(|why| !why.trim().is_empty())
+                .ok_or_else(error)?;
+            Response::Explained(why.trim().to_owned())
+        } else {
+            return Err(error());
+        };
+        answers.push((*number, response));
+    }
+    for (number, severity, used) in open {
+        if !answers.iter().any(|(id, _)| id == number) {
+            return Err(ResponseError {
+                line: text.lines().count().saturating_add(1),
+                number: *number,
+                allowed: if *severity == Severity::Major && !used {
+                    "FIXED or EXPLAINED — why"
+                } else {
+                    "FIXED"
+                },
+            });
+        }
+    }
+    Ok(answers)
 }
 
 #[cfg(test)]
