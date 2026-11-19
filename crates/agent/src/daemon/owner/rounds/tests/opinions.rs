@@ -1004,3 +1004,83 @@ async fn rate_limited_opinions_are_replaced_and_their_tasks_are_stopped() {
         );
     }
 }
+
+#[tokio::test]
+async fn cli_commands_read_round_during_and_after_second_opinions() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-probe:NOT CONFIRMED"),
+            investigator("inv-r2", "opinion-probe:NOT CONFIRMED"),
+            investigator("inv-r3", "opinion-probe:NOT CONFIRMED"),
+            investigator("inv-r4", "opinion-probe:NOT CONFIRMED"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+        .await;
+
+    let state = rig
+        .state_where("opinions asked", |state| {
+            state.team(&team).unwrap().items()[0]
+                .findings()
+                .is_some_and(|l| !l.opinions().is_empty())
+        })
+        .await;
+    let round_target = agent_core::protocol::Target::Round(state.team(&team).unwrap().rounds()[0].id().clone());
+    let activity = crate::commands::status::Activity::new(rig.home.clone(), time::UtcOffset::UTC);
+
+    // While opinion is asked for:
+    let mut conn = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap();
+    let mut out = Vec::new();
+    crate::commands::status::status_active(&mut conn, None, &activity, &mut out)
+        .await
+        .unwrap();
+
+    let mut out_running = Vec::new();
+    crate::commands::status::status_active(&mut conn, None, &activity, &mut out_running)
+        .await
+        .unwrap();
+
+    let mut out_show = Vec::new();
+    crate::commands::status::status_active(&mut conn, Some(round_target.clone()), &activity, &mut out_show)
+        .await
+        .unwrap();
+
+    let log_req = crate::commands::log::LogRequest {
+        selection: agent_core::story::Selection::Round(state.team(&team).unwrap().rounds()[0].id().clone()),
+        format: crate::commands::log::Format::Text(agent_core::story::StoryOptions {
+            prompts: agent_core::story::PromptView::Preview,
+            steps: agent_core::story::StepView::LeftOut,
+        }),
+    };
+    let mut out_log = Vec::new();
+    crate::commands::log::log(&rig.home.history_file(), &log_req, &mut out_log).unwrap();
+
+    rig.item_where("1.1", "done after opinions", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+
+    // After opinion is reported:
+    let mut out_after = Vec::new();
+    crate::commands::status::status_active(&mut conn, None, &activity, &mut out_after)
+        .await
+        .unwrap();
+
+    let mut out_show_after = Vec::new();
+    crate::commands::status::status_active(&mut conn, Some(round_target), &activity, &mut out_show_after)
+        .await
+        .unwrap();
+
+    let mut out_log_after = Vec::new();
+    crate::commands::log::log(&rig.home.history_file(), &log_req, &mut out_log_after).unwrap();
+
+    rig.stop().await.unwrap();
+}

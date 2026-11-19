@@ -169,10 +169,18 @@ pub struct RoundDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting: Option<String>,
     /// Assignment times and failed investigators, absent before schema 9.
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "crate::protocol::finding_map::deserialize_map",
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
     pub opinion_attempts: std::collections::BTreeMap<NonZeroU32, Vec<crate::state::OpinionAttempt>>,
     /// Independent opinions belonging to the round, absent before schema 8.
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "crate::protocol::finding_map::deserialize_map",
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
     pub opinions: std::collections::BTreeMap<NonZeroU32, crate::state::SecondOpinion>,
     /// Permanent findings of the pull request, omitted for legacy rounds.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
