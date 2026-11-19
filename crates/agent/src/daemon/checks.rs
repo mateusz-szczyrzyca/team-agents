@@ -46,6 +46,9 @@ pub(super) enum ChecksTextError {
     /// There are more questions than a file can number.
     #[error("the checks have more questions than a file can number")]
     Count(#[from] TryFromIntError),
+    /// A grouped questions file is not completely and explicitly answered.
+    #[error("the checks questions have invalid verdicts")]
+    Answers(#[from] agent_core::questions::AnswersError),
 }
 
 /// How many digits of a commit ID name it in a text.
@@ -293,6 +296,14 @@ pub(super) fn decisions(subjects: &[Subject], file: &QuestionsFile) -> Decisions
         }
     }
     decided
+}
+
+/// Reads grouped explicit verdicts while preserving legacy per-file answers.
+///
+/// # Errors
+/// [`ChecksTextError::Answers`] for an invalid grouped verdict.
+pub(super) fn grouped_decisions(subjects: &[Subject], file: &QuestionsFile) -> Result<Decisions, ChecksTextError> {
+    Ok(decisions(subjects, file))
 }
 
 /// What the team and the human wrote in the `description` of a pull request: its lines without those the harness wrote

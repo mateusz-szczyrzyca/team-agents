@@ -671,3 +671,94 @@ fn description_refresh_restores_file_links_with_blob_directories() {
         }
     }
 }
+
+#[tokio::test]
+async fn twenty_edited_tests_are_one_group_with_every_reason_and_two_kinds_are_two_groups() {
+    let texts = texts().await;
+    let mut issues: Vec<Issue> = (1..=20).map(|n| edited(&format!("tests/{n}.rs"), n)).collect();
+    let asked = questions(&texts, &team(), &task(), &issues, AskReason::OnlyTheHumanMayAllow, 0).unwrap();
+    assert_eq!(asked.file.entries().len(), 1);
+    assert_eq!(asked.subjects.len(), 20);
+    for issue in &issues {
+        assert!(asked.file.entries()[0].body().contains(&reason(&texts, issue).unwrap()));
+    }
+    issues.push(Issue::TestChanged {
+        path: path("tests/deleted.rs"),
+        how: TestChange::Deleted,
+    });
+    let asked = questions(&texts, &team(), &task(), &issues, AskReason::OnlyTheHumanMayAllow, 0).unwrap();
+    assert_eq!(asked.file.entries().len(), 2);
+    assert!(!asked.file.instructions().contains("`ok`"));
+    assert!(asked.file.instructions().contains("allow except"));
+}
+
+#[tokio::test]
+async fn grouped_answers_record_per_path_and_a_refusal_wins_for_a_path_in_two_groups() {
+    let texts = texts().await;
+    let issues = [
+        edited("tests/a.rs", 1),
+        edited("tests/b.rs", 2),
+        marker("tests/a.rs", Marker::SkipsTest),
+    ];
+    for (first, second, allowed, refused) in [
+        ("allow", "allow", vec![file("tests/a.rs"), file("tests/b.rs")], vec![]),
+        ("refuse", "refuse", vec![], vec![file("tests/a.rs"), file("tests/b.rs")]),
+        (
+            "allow except tests/b.rs",
+            "allow",
+            vec![file("tests/a.rs")],
+            vec![file("tests/b.rs")],
+        ),
+        ("allow", "refuse", vec![file("tests/b.rs")], vec![file("tests/a.rs")]),
+    ] {
+        let mut asked = questions(&texts, &team(), &task(), &issues, AskReason::PassesUsed, 2).unwrap();
+        asked
+            .file
+            .set_verdict(number(1), Verdict::from_text(first).unwrap())
+            .unwrap();
+        asked
+            .file
+            .set_verdict(number(2), Verdict::from_text(second).unwrap())
+            .unwrap();
+        assert_eq!(
+            grouped_decisions(&asked.subjects, &asked.file).unwrap(),
+            Decisions { allowed, refused }
+        );
+    }
+}
+
+#[tokio::test]
+async fn grouped_decisions_reject_invalid_verdicts_and_legacy_decisions_stay_compatible() {
+    let texts = texts().await;
+    for verdict in ["ok", "", "yes", "allow except tests/unknown.rs"] {
+        let mut asked = questions(
+            &texts,
+            &team(),
+            &task(),
+            &[edited("tests/a.rs", 1)],
+            AskReason::OnlyTheHumanMayAllow,
+            0,
+        )
+        .unwrap();
+        asked
+            .file
+            .set_verdict(number(1), Verdict::from_text(verdict).unwrap())
+            .unwrap();
+        assert!(
+            matches!(
+                grouped_decisions(&asked.subjects, &asked.file),
+                Err(ChecksTextError::Answers(_))
+            ),
+            "{verdict}"
+        );
+    }
+    let subjects = [file("tests/a.rs"), file("tests/b.rs")];
+    let legacy = file_answered(&subjects, &[Some("ok"), Some("ALLOW it")]);
+    assert_eq!(
+        grouped_decisions(&subjects, &legacy).unwrap(),
+        Decisions {
+            allowed: vec![file("tests/b.rs")],
+            refused: vec![file("tests/a.rs")]
+        }
+    );
+}
