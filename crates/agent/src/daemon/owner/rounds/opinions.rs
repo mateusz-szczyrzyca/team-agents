@@ -179,7 +179,12 @@ impl Owner {
                         pr: pr.number,
                         number,
                         pass: request.pass.get(),
-                        by: lead.agent.clone(),
+                        by: review
+                            .reviewer
+                            .as_str()
+                            .parse()
+                            .map_err(PublishError::from)
+                            .map_err(OpinionDaemonError::from)?,
                         why: request.reason.as_str().to_owned(),
                     },
                 );
@@ -366,7 +371,12 @@ impl Owner {
             Timestamp::now(&self.parts.clock)?,
             team_id,
             self.rounds_of_items(team_id, &ids),
-            HistoryEvent::SecondOpinionAsked {
+            HistoryEvent::SecondOpinionEnded {
+                attempt: ledger
+                    .opinion_attempts(number)
+                    .iter()
+                    .skip(1)
+                    .fold(NonZeroU32::MIN, |count, _| count.saturating_add(1)),
                 pr: pr_number,
                 number,
                 pass,
