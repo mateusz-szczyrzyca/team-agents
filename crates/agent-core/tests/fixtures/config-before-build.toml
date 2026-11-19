@@ -1,0 +1,193 @@
+# agents.toml — the configuration of the agent harness. docs/configuration.md describes every setting.
+# Copy it to $AGENTS_HOME/agents.toml and edit. Secrets (tokens, API keys) go to secrets.toml, mode 0600, never here.
+
+# The language of what only you read: questions and notifications. Commits, pull requests, reviews and code stay
+# in English.
+language = "English"
+
+# --- Agents ----------------------------------------------------------------------------------------------------
+# One table per agent. The name is lowercase letters, digits and '-'; an agent runs one task at a time, so add
+# more entries (claude-2, ...) for more parallel work.
+#   cli   claude | codex | gemini (Antigravity, the `agy` command) | opencode (any API provider)
+#   model optional; without it the CLI runs its default model
+#   args  optional extra arguments for the CLI, an array: every element is one argument, nothing is split
+
+[agents.claude-1]
+cli = "claude"
+model = "sonnet"
+
+[agents.codex-1]
+cli = "codex"
+args = ["-c", "model_reasoning_effort=\"medium\""]
+
+[agents.gemini-1]
+cli = "gemini"
+
+# A worker, a cheap model for simple tasks (opencode takes "provider/model"); list it under `workers` below:
+# [agents.deepinfra-glm]
+# cli = "opencode"
+# model = "deepinfra/zai-org/GLM-5.3-Flash"
+
+# --- Investigators (advanced, expensive models) -------------------------------------------------------------------
+# They review every pull request, and lead the teams they are in. Every pull request gets two reviews from
+# investigators outside the team, so keep at least two, more than the investigators you put in one team.
+
+[investigators.inv-opus]
+cli = "claude"
+model = "opus"
+
+[investigators.inv-codex]
+cli = "codex"
+args = ["-c", "model_reasoning_effort=\"high\""]
+
+# --- Which agents are normal, which are workers -----------------------------------------------------------------
+# Every agent is in exactly one of the two lists. `normal`: takes task-list items, solo or in a team, and may
+# coordinate a team. `workers`: never coordinate and take no items; they serve `delegate` requests, the first free
+# worker in the order of this list, so put the stronger ones first.
+
+[tiers]
+normal = ["claude-1", "codex-1", "gemini-1"]
+workers = []
+
+# --- Programs ------------------------------------------------------------------------------------------------------
+# A bare name is looked up on `agent_path`, the PATH the agents see (toolchains: cargo, go, ...); an absolute path
+# is used as it is. The directory of the daemon executable is automatically prepended first to PATH without duplicates.
+# Paths start at the root: there is no `~`. Every setting here has a default.
+
+[binaries]
+claude = "/home/you/.local/bin/claude"
+codex = "/home/you/.local/bin/codex"
+agy = "/home/you/.local/bin/agy"
+opencode = "/home/you/.local/bin/opencode"
+agentbus = "/home/you/.local/bin/agentbus"
+# Serena (https://github.com/oraios/serena) finds code through language servers; without this line it is not used.
+# serena = "serena"
+agent_path = ["/home/you/.local/bin", "/home/you/.cargo/bin", "/home/you/go/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+
+# --- Hang watchdog and limits ---------------------------------------------------------------------------------------
+# A run with no activity for `hang_minutes` is killed and resumed from its session; after `hang_strikes` hangs in a
+# row without progress the task is marked hung. A team whose every task sleeps for `asleep_minutes` while an item of it
+# is unfinished waits for nobody: its lead is woken and told so, and after two such wake-ups you are told.
+
+[watchdog]
+hang_minutes = 30
+hang_strikes = 3
+asleep_minutes = 5
+
+# An exhausted quota pauses the task until the reset time the CLI gives; `quota_pause_minutes` is the pause when it
+# gives none. A rate limit (HTTP 429) is a short pause. `tail_lines`: how many of a run's last lines of error output
+# are read to recognise these limits. `wake_ups_per_message`: a message to a sleeping agent starts a run of it; when
+# that many runs end without the agent reading the message, it is not woken for it again (the message stays unread
+# until the agent's next run reads it) and a warning is logged; 0 never wakes an agent for a message.
+
+[limits]
+# Per-run turn budget for CLIs that support one (currently Claude Code); must be positive.
+max_turns = 300
+# Consecutive turn-limit continuations in the same session; 0 disables automatic continuation.
+turn_limit_resumes = 3
+quota_pause_minutes = 30
+rate_limit_pause_minutes = 5
+tail_lines = 30
+wake_ups_per_message = 2
+
+# Reviews: "changes requested" goes back to the team at most `fix_passes` times; then you are asked. The checks
+# before a review (see the repository's `checks` below) send a round back at most `check_passes` times. A reviewer whose
+# task failed or was stopped is replaced by another free investigator at once, and one that is paused (a quota, a rate
+# limit) after `replace_after_minutes`; when no investigator is free you are told.
+
+[review]
+# Stored permission for the later second-opinion activation; requests are still refused in this release.
+allow_second_opinion_on_blocker = true
+min_first_full_reviews = 2
+fix_passes = 5
+check_passes = 2
+replace_after_minutes = 15
+
+# --- Git and GitHub ----------------------------------------------------------------------------------------------
+# The identity of every commit an agent makes; {agent} is the agent's name. `signing_key` is an SSH private key that
+# signs the commits ("Verified" on GitHub); without it commits are unsigned, even if your own git signs everything.
+
+[git]
+name = "{agent} (team-agents)"
+email = "{agent}@team-agents.invalid"
+# signing_key = "/home/you/.ssh/agents_signing"
+
+# Text on GitHub is data, not instructions, unless these accounts wrote it. Put the human's and the agents'
+# own account here; the agents' token is in secrets.toml.
+
+[github]
+trusted_accounts = ["your-github-login", "your-agents-github-login"]
+# The GitHub API is the public one. A GitHub Enterprise installation has its own address:
+# api_base = "https://github.example.com/api/v3"
+
+# --- Notifications -------------------------------------------------------------------------------------------------
+# `command` is run with the path of a notification file as its last argument: the first line is the title, the rest
+# the body. Without it notifications are only files, in `directory` (default: notifications/ in $AGENTS_HOME).
+
+[notifications]
+# command = ["/home/you/bin/notify-ntfy"]
+# directory = "/home/you/agents/notifications"
+
+# --- Questions -----------------------------------------------------------------------------------------------------
+# An agent that needs you writes a questions file and you are notified. `open = "vscode"` also opens the file in the
+# VS Code window connected to this host (Remote-SSH), if there is one; `vscode_server_dirs` are the server directories
+# searched for its remote command (default: .vscode-server, .vscode-server-insiders and .cursor-server in the home
+# directory of the user the daemon runs as). `editor` is what `agent answer` starts: a program and its arguments, the
+# file is its last argument (default: $VISUAL, then $EDITOR).
+
+[questions]
+open = "off"
+# vscode_server_dirs = ["/home/you/.vscode-server"]
+# editor = ["nano"]
+
+# --- History -------------------------------------------------------------------------------------------------------
+# The daemon records what happens — every team and round, every prompt, every step and change of every run — in
+# `history.db` in $AGENTS_HOME (docs/history.md). `max_text_bytes` is the longest text one field keeps: a longer one is
+# cut at a character boundary and marked cut. A history that cannot be written never stops the work; `agent status`
+# shows how many records were lost.
+
+[history]
+enabled = true
+max_text_bytes = 1048576
+# Closed rounds and their gate output; 0 keeps everything. Open rounds always stay.
+keep_days = 0
+
+# --- Daemon log ----------------------------------------------------------------------------------------------------
+# The daemon's own log goes to its standard error (the systemd journal) and to `history.db` (docs/log.md).
+# `level` is error | warn | info (default) | debug.
+
+[log]
+level = "info"
+# Rows belonging to no round; scoped rows follow history.keep_days.
+keep_days = 0
+
+# --- Dashboard -----------------------------------------------------------------------------------------------------
+# It listens on a loopback address only; remote access goes through `tailscale serve`, and only the Tailscale
+# logins listed here get in.
+
+[web]
+listen = "127.0.0.1:8787"
+allowed_logins = ["you@example.com"]
+
+# --- Repositories --------------------------------------------------------------------------------------------------
+# One table per repository, named as GitHub names it. `gate` is the command (a program and its arguments, never a
+# shell line) that must pass before a pull request is opened, run in the worktree, for at most `gate_timeout_minutes`.
+
+[repos.team-agents]
+base_branch = "main"
+gate = ["make", "gate"]
+gate_timeout_minutes = 30
+
+# The checks before a review look at the round's own diff, with no model. They know no repository: these lists are all
+# they have. A pattern is a glob over paths relative to the repository's root: `*` and `?` within a name, `**` for
+# any number of directories, `dir/` for everything below a directory, and a pattern without a `/` for a file name at
+# any depth. A repository without this table goes straight to review.
+#   test_paths       the test files: a round may add lines to them; changing, removing or renaming one needs your word
+#   code_paths       the production code: a round that changes it has to add lines to a test file
+#   protected_paths  what judges a round (the gate's scripts, lint and CI configuration, the rules): changing one needs
+#                    your word
+
+[repos.team-agents.checks]
+test_paths = ["**/tests/", "**/tests.rs", "*_test.go", "*.bats"]
+code_paths = ["bin/", "agentbus/", "live/", "crates/", "tools/"]
+protected_paths = [".github/", "AGENTS.md", "CLAUDE.md", "GEMINI.md", "Makefile", "tools/gate.sh", "tools/test-lock.sh", "Cargo.toml", "clippy.toml", "rustfmt.toml", "rust-toolchain.toml"]

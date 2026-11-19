@@ -394,10 +394,9 @@ async fn run_with_rng_and_log_layer(
         agent_path: settings.config.binaries().agent_path.clone(),
         stop_grace: timings.run.stop_grace,
     };
-    sides.spawn(Scoped::new(
-        gate::run_recorded(gate_jobs, gate_parts, opened.history.clone(), shutdown.clone()),
-        dispatch.clone(),
-    ));
+    let build = *settings.config.build();
+    let gate_service = gate::run_configured(gate_jobs, gate_parts, opened.history.clone(), build, shutdown.clone());
+    sides.spawn(Scoped::new(gate_service, dispatch.clone()));
 
     let owner = Owner::new(
         OwnerParts {
