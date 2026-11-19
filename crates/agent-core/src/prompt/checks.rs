@@ -51,6 +51,8 @@ pub enum ChecksPrompt {
     QuestionTitleNoTests,
     /// The text of a question: why the human is asked, the issues and how to answer.
     QuestionBody,
+    /// What to write when a checks verdict is invalid.
+    QuestionInvalidVerdict,
     /// The recommendation of a question.
     QuestionRecommend,
     /// Why the human is asked when only they may allow what was found.
@@ -83,6 +85,7 @@ impl ChecksPrompt {
         Self::QuestionTitlePath,
         Self::QuestionTitleNoTests,
         Self::QuestionBody,
+        Self::QuestionInvalidVerdict,
         Self::QuestionRecommend,
         Self::WhyOnlyHuman,
         Self::WhyPassesUsed,
@@ -152,6 +155,9 @@ impl ChecksPrompt {
             }
             Self::QuestionTitleNoTests => {
                 PromptSpec::new("harness/checks/question-title-no-tests.md", Audience::Human, &[])
+            }
+            Self::QuestionInvalidVerdict => {
+                PromptSpec::new("harness/checks/question-invalid-verdict.md", Audience::Human, &[])
             }
             Self::QuestionBody => PromptSpec::new(
                 "harness/checks/question-body.md",

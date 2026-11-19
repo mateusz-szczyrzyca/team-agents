@@ -338,6 +338,8 @@ pub enum AnswerProblem {
     MissingVerdict,
     /// The verdict is `ok` but the question has no recommendation to accept.
     AcceptWithoutRecommendation,
+    /// A versioned checks question needs an explicit, valid verdict.
+    ChecksVerdict(checks::InvalidChecksVerdict),
 }
 
 /// The questions of a file that cannot be answered from their verdicts, each with its problem, in file order.
@@ -478,6 +480,7 @@ impl Entry {
 
     /// The answer the verdict gives, or why it gives none.
     fn answer(&self) -> Result<Choice, AnswerProblem> {
+        self.checks_verdict().map_err(AnswerProblem::ChecksVerdict)?;
         match (self.verdict(), self.recommendation()) {
             (None, _) => Err(AnswerProblem::MissingVerdict),
             (Some(Verdict::Accept), None) => Err(AnswerProblem::AcceptWithoutRecommendation),
@@ -971,6 +974,7 @@ impl fmt::Display for AnswerProblem {
         f.write_str(match self {
             Self::MissingVerdict => "no verdict",
             Self::AcceptWithoutRecommendation => "`ok` but no recommendation to accept",
+            Self::ChecksVerdict(_) => checks::INVALID_VERDICT,
         })
     }
 }
