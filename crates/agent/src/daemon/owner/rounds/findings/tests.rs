@@ -126,3 +126,36 @@ async fn explanations_and_verifier_evidence_are_in_the_table_and_request() {
             .contains("inv-opus: ACCEPTED — contract is clear")
     );
 }
+
+#[tokio::test]
+async fn findings_table_shows_a_not_confirmed_blocker_with_its_reporter() {
+    let texts = AutopilotPrompts::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &Language::default(),
+    )
+    .await
+    .unwrap();
+    let entry = RecordedFinding {
+        number: NonZeroU32::MIN,
+        finding: Finding {
+            severity: Severity::Blocker,
+            rule: "ERR-3".into(),
+            place: "src/lib.rs:42".into(),
+            text: "fix café".into(),
+            check: "read src/lib.rs:42".into(),
+        },
+        reporter: "inv-codex".parse().unwrap(),
+        pass: NonZeroU32::MIN,
+        status: FindingStatus::NotConfirmed,
+    };
+    let ledger = Findings::new(vec![entry]).unwrap();
+
+    let table = table(&texts, &ledger).unwrap();
+
+    let row = table
+        .lines()
+        .find(|line| line.contains("fix café"))
+        .expect("the finding has a row");
+    assert!(row.contains("not confirmed"), "{row}");
+    assert!(row.contains("inv-codex"), "{row}");
+}
