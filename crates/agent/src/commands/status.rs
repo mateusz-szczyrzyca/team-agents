@@ -61,8 +61,25 @@ impl Activity {
 
     /// The line about low free disk space when below threshold.
     pub(crate) fn disk_line(&self) -> Option<String> {
-        // Stub for RED: return None
-        None
+        let free_bytes = if let Ok(content) = std::fs::read_to_string(self.home.free_space_file()) {
+            content.trim().parse::<u64>().ok()
+        } else {
+            agent_runtime::disk::FreeSpace::free_space_bytes(&agent_runtime::disk::SystemFreeSpace, self.home.root())
+                .ok()
+        }?;
+        let free_gb = free_bytes / (1024 * 1024 * 1024);
+        let low_free_gb = if let Ok(text) = std::fs::read_to_string(self.home.config_file()) {
+            agent_core::config::Config::from_toml_str(&text)
+                .map(|c| c.disk().low_free_gb)
+                .unwrap_or(100)
+        } else {
+            100
+        };
+        if free_gb < low_free_gb {
+            Some(format!("disk: {free_gb} GB free, limit {low_free_gb} GB\n"))
+        } else {
+            None
+        }
     }
 }
 
@@ -89,7 +106,12 @@ pub(crate) async fn status_active(
     let (teams, history) = teams(connection, target).await?;
     let told = rounds::told(connection, activity, &teams).await?;
     let text = render_with(&teams, &|task| activity.of(task), &|round| told.of(round));
-    write(out, &format!("{text}{}", told.unread()), history.as_ref())
+    write(
+        out,
+        &format!("{text}{}", told.unread()),
+        history.as_ref(),
+        activity.disk_line().as_deref(),
+    )
 }
 
 /// [`status_active`] without the last activity of the tasks: what the tests of the status ask for.
@@ -103,7 +125,7 @@ pub(crate) async fn status(
         return show_round(connection, round, out).await;
     }
     let (teams, history) = teams(connection, target).await?;
-    write(out, &render(&teams), history.as_ref())
+    write(out, &render(&teams), history.as_ref(), None)
 }
 
 /// Asks the daemon for every team and writes to `out` those that have a round that goes on, with those rounds only:
@@ -125,7 +147,7 @@ pub(crate) async fn status_running(
         let text = render_with(&teams, &|task| activity.of(task), &|round| told.of(round));
         format!("{text}{}", told.unread())
     };
-    write(out, &text, history.as_ref())
+    write(out, &text, history.as_ref(), activity.disk_line().as_deref())
 }
 
 /// The teams of `teams` that have an open round, each with its open rounds only.
@@ -154,9 +176,17 @@ async fn teams(
     }
 }
 
-/// Writes `text`, then the line about the history when it is not whole.
-fn write(out: &mut impl Write, text: &str, history: Option<&HistoryHealth>) -> Result<(), StatusError> {
+/// Writes `text`, then the line about low disk space if any, then the line about the history when it is not whole.
+fn write(
+    out: &mut impl Write,
+    text: &str,
+    history: Option<&HistoryHealth>,
+    disk: Option<&str>,
+) -> Result<(), StatusError> {
     out.write_all(text.as_bytes()).map_err(StatusError::Output)?;
+    if let Some(disk) = disk {
+        out.write_all(disk.as_bytes()).map_err(StatusError::Output)?;
+    }
     out.write_all(render_history(history).as_bytes())
         .map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)
