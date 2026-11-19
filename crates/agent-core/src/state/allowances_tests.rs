@@ -117,3 +117,18 @@ fn a_schema_one_brief_with_an_allow_line_is_kept_byte_for_byte() {
     assert_eq!(team.allowances(), []);
     assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
 }
+
+#[test]
+fn only_a_task_list_with_brief_allow_lines_is_written_as_an_object() {
+    let state = State::from_json(&schema_nine_with_brief_line("Allow: docs/*.txt")).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
+    let teams = json["teams"].as_array().unwrap();
+    assert_eq!(teams[0]["task_list"]["allow_lines"], serde_json::json!("brief"));
+    assert!(
+        teams[0]["task_list"]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Allow: docs/*.txt\n")
+    );
+    assert!(teams[1]["task_list"].is_string());
+}
