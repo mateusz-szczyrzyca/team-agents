@@ -57,23 +57,27 @@ fn round() -> RoundId {
 /// The evidence with the ledgers of its two items already brought together.
 fn repaired() -> State {
     let mut state = evidence();
-    let mut team = state.team_mut(&team()).unwrap();
-    let ids = ["1.1".parse().unwrap(), "2.1".parse().unwrap()];
-    let mut ledgers: Vec<_> = ids
-        .iter()
-        .map(|id| team.item(*id).unwrap().findings().unwrap().clone())
-        .collect();
-    reconcile(&mut ledgers);
-    for (id, ledger) in ids.iter().zip(ledgers) {
-        *team.item_mut(*id).unwrap().findings_mut().unwrap() = ledger;
+    {
+        let mut team = state.team_mut(&team()).unwrap();
+        let ids = ["1.1".parse().unwrap(), "2.1".parse().unwrap()];
+        let mut ledgers: Vec<_> = ids
+            .iter()
+            .map(|id| team.item(*id).unwrap().findings().unwrap().clone())
+            .collect();
+        reconcile(&mut ledgers);
+        for (id, ledger) in ids.iter().zip(ledgers) {
+            *team.item_mut(*id).unwrap().findings_mut().unwrap() = ledger;
+        }
     }
-    drop(team);
     state
 }
 
+/// The `event` field of an event logged, and its `finding` field when it has one.
+type Logged = (String, Option<String>);
+
 /// The `event` and `finding` fields of every event logged.
 #[derive(Clone, Default)]
-struct Events(Arc<Mutex<Vec<(String, Option<String>)>>>);
+struct Events(Arc<Mutex<Vec<Logged>>>);
 
 /// Reads the two fields of one event.
 #[derive(Default)]
@@ -301,17 +305,18 @@ fn fixing_again(message: &str) -> State {
             },
         )
         .unwrap();
-    let (_, mut member) = state.find_task_mut(&lead()).unwrap();
-    member
-        .end_run(
-            "2026-11-19T17:55:00Z".parse().unwrap(),
-            RunEnd::Reported {
-                outcome: RunOutcome::Done,
-            },
-        )
-        .unwrap();
-    member.transition(TaskStatus::Waiting).unwrap();
-    drop(member);
+    {
+        let (_, mut member) = state.find_task_mut(&lead()).unwrap();
+        member
+            .end_run(
+                "2026-11-19T17:55:00Z".parse().unwrap(),
+                RunEnd::Reported {
+                    outcome: RunOutcome::Done,
+                },
+            )
+            .unwrap();
+        member.transition(TaskStatus::Waiting).unwrap();
+    }
     state
 }
 
