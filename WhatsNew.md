@@ -5,6 +5,16 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.23.0 — 19.11.2026 — PR pending
+
+### Bug fixes
+- [agent] A coordinator or member whose run sleeps can review another team while remaining excluded from its own.
+- [agent-core] Reviewer stories no longer claim that deterministic assignments were random.
+
+### Enhancements
+- [agent] [agent-core] Reviews, verifications and second opinions choose investigators in a fixed order: first those who have not worked for the team, then those asked longest ago, with work for other teams breaking ties.
+- [agent] [agent-core] A round without enough reviewers says it waits for a free independent investigator.
+
 ## 0.22.0 — 19.11.2026 — PR #137
 
 ### New features
