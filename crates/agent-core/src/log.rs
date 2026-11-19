@@ -184,6 +184,8 @@ pub enum LogEvent {
     NotificationSent,
     /// A new questions file is opened in the editor, or is not because the editor is not there.
     QuestionsFileOpened,
+    /// A build directory was removed to release disk space.
+    BuildDirectoryRemoved,
     /// A pure decision of `agent_core::decide` takes action, with its input and result.
     DecisionTaken,
     /// An outside call (`git`, `agentbus`, GitHub API, model CLI) completes, with its duration and outcome.
@@ -247,7 +249,8 @@ impl LogEvent {
             | Self::ReviewsRequested
             | Self::ReviewReportLate
             | Self::NotificationSent
-            | Self::QuestionsFileOpened => LogLevel::Info,
+            | Self::QuestionsFileOpened
+            | Self::BuildDirectoryRemoved => LogLevel::Info,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
     }
