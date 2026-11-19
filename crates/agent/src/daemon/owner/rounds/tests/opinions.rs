@@ -1031,56 +1031,111 @@ async fn cli_commands_read_round_during_and_after_second_opinions() {
                 .is_some_and(|l| !l.opinions().is_empty())
         })
         .await;
-    let round_target = agent_core::protocol::Target::Round(state.team(&team).unwrap().rounds()[0].id().clone());
+    let round_id = state.team(&team).unwrap().rounds()[0].id().clone();
+    let round_text = round_id.to_string();
+    let round_target = agent_core::protocol::Target::Round(round_id.clone());
     let activity = crate::commands::status::Activity::new(rig.home.clone(), time::UtcOffset::UTC);
-
-    // While opinion is asked for:
-    let mut conn = crate::client::Connection::connect(&rig.home.socket_file())
-        .await
-        .unwrap();
-    let mut out = Vec::new();
-    crate::commands::status::status_active(&mut conn, None, &activity, &mut out)
-        .await
-        .unwrap();
-
-    let mut out_running = Vec::new();
-    crate::commands::status::status_active(&mut conn, None, &activity, &mut out_running)
-        .await
-        .unwrap();
-
-    let mut out_show = Vec::new();
-    crate::commands::status::status_active(&mut conn, Some(round_target.clone()), &activity, &mut out_show)
-        .await
-        .unwrap();
-
     let log_req = crate::commands::log::LogRequest {
-        selection: agent_core::story::Selection::Round(state.team(&team).unwrap().rounds()[0].id().clone()),
+        selection: agent_core::story::Selection::Round(round_id),
         format: crate::commands::log::Format::Text(agent_core::story::StoryOptions {
             prompts: agent_core::story::PromptView::Preview,
             steps: agent_core::story::StepView::LeftOut,
         }),
     };
-    let mut out_log = Vec::new();
-    crate::commands::log::log(&rig.home.history_file(), &log_req, &mut out_log).unwrap();
+    let mut conn = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap();
+
+    // While the opinion is asked for, the round is open: every command prints it.
+    let (out, out_running, out_show, out_log) =
+        read_round_by_every_command(&mut conn, &rig.home.history_file(), &activity, &round_target, &log_req).await;
+    assert_contains(&out, &round_text, "status while the opinion is asked for");
+    assert_contains(
+        &out_running,
+        &round_text,
+        "status --running while the opinion is asked for",
+    );
+    assert_contains(
+        &out_show,
+        &round_text,
+        "show of the round while the opinion is asked for",
+    );
+    assert_contains(&out_log, &round_text, "log of the round while the opinion is asked for");
 
     rig.item_where("1.1", "done after opinions", |phase| {
         matches!(phase, ItemPhase::Done { .. })
     })
     .await;
 
-    // After opinion is reported:
-    let mut out_after = Vec::new();
-    crate::commands::status::status_active(&mut conn, None, &activity, &mut out_after)
-        .await
-        .unwrap();
-
-    let mut out_show_after = Vec::new();
-    crate::commands::status::status_active(&mut conn, Some(round_target), &activity, &mut out_show_after)
-        .await
-        .unwrap();
-
-    let mut out_log_after = Vec::new();
-    crate::commands::log::log(&rig.home.history_file(), &log_req, &mut out_log_after).unwrap();
+    // After the opinion is reported, status, show and log print the round. status --running prints it while the
+    // round is open; the state is read after the commands, and a round only goes from open to closed, so an open
+    // round in that later state was open when the command read it.
+    let (out_after, out_running_after, out_show_after, out_log_after) =
+        read_round_by_every_command(&mut conn, &rig.home.history_file(), &activity, &round_target, &log_req).await;
+    let open_in_later_state = matches!(
+        rig.state().team(&team).unwrap().rounds()[0].life(),
+        agent_core::state::RoundLife::Open
+    );
+    assert_contains(&out_after, &round_text, "status after the opinion is reported");
+    assert_contains(
+        &out_show_after,
+        &round_text,
+        "show of the round after the opinion is reported",
+    );
+    assert_contains(
+        &out_log_after,
+        &round_text,
+        "log of the round after the opinion is reported",
+    );
+    if open_in_later_state {
+        assert_contains(
+            &out_running_after,
+            &round_text,
+            "status --running after the opinion is reported",
+        );
+    } else {
+        assert_contains(
+            &out_running_after,
+            "no team has an open round",
+            "status --running once the round is closed",
+        );
+    }
 
     rig.stop().await.unwrap();
+}
+
+/// Runs `status`, `status --running`, `show` of `target` and `log` of the round, and returns what each writes. Every
+/// command must succeed: the test fails on the first error, with the command that failed.
+async fn read_round_by_every_command(
+    conn: &mut crate::client::Connection,
+    history: &std::path::Path,
+    activity: &crate::commands::status::Activity,
+    target: &agent_core::protocol::Target,
+    log_req: &crate::commands::log::LogRequest,
+) -> (String, String, String, String) {
+    let mut out = Vec::new();
+    crate::commands::status::status_active(conn, None, activity, &mut out)
+        .await
+        .expect("status succeeds");
+    let mut out_running = Vec::new();
+    crate::commands::status::status_running(conn, activity, &mut out_running)
+        .await
+        .expect("status --running succeeds");
+    let mut out_show = Vec::new();
+    crate::commands::status::status_active(conn, Some(target.clone()), activity, &mut out_show)
+        .await
+        .expect("show of the round succeeds");
+    let mut out_log = Vec::new();
+    crate::commands::log::log(history, log_req, &mut out_log).expect("log of the round succeeds");
+    (
+        String::from_utf8(out).expect("status writes UTF-8"),
+        String::from_utf8(out_running).expect("status --running writes UTF-8"),
+        String::from_utf8(out_show).expect("show writes UTF-8"),
+        String::from_utf8(out_log).expect("log writes UTF-8"),
+    )
+}
+
+/// Fails with `what` when `text` does not contain `needle`.
+fn assert_contains(text: &str, needle: &str, what: &str) {
+    assert!(text.contains(needle), "{what} should print {needle:?}, got:\n{text}");
 }
