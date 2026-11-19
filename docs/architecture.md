@@ -390,7 +390,7 @@ after the first, when it leaves an open finding without its `FINDING n: RESOLVED
 with its items (`findings`, [`state.md`](state.md)): numbers that never change, counted over the pull request in the order the
 reviews were asked and then the order of the report, and a status, `open` until every reviewer of a later pass says
 `RESOLVED`. A pass is numbered when all its reports are in. The text of a fix pass lists the open findings with number,
-severity and place, and says which block; every `[BLOCKER]` and `[MAJOR]` is fixed in the code. A review pass after a fix
+severity and place, and says which block. BLOCKER findings require code fixes; a MAJOR may instead receive one explanation, decided unanimously by the verifiers. A review pass after a fix
 pass is given the open findings with their numbers and checks. The harness keeps **one comment** of its own on the pull
 request, made when the first findings are in and edited in place after every pass (`agent_runtime::github`, a `PATCH`): one row
 per finding with number, severity, rule, place, the text cut to a line, status and reporter, the severity in bold and colour
@@ -398,6 +398,19 @@ per finding with number, severity, rule, place, the text cut to a line, status a
 that cannot be posted or edited is logged and holds nothing. `[MINOR]` findings that are open stay in it when the pull request
 is merged. A round opened before the update has no ledger and ends by the verdict-only rules it began with. `agent status
 <round>` shows how many findings are open of each severity.
+
+**Finding decisions** (`review_response`, `state/findings/disputes`, `owner/rounds/responses.rs`). New PR ledgers
+carry optional `disputes` state; its absence preserves the protocol of an active migrated PR. A fix response must
+answer every open blocking finding with `FIXED`, or an unused MAJOR with `EXPLAINED — why`. Validation is atomic:
+an invalid complete response changes no explanations. The checked run and correction count survive restart; two
+correction runs are allowed, without consuming a fix pass, and exhaustion holds publication and notifies the human.
+The dedicated verification request (`harness/review/disputes.md`) supplies the explanation and requires ACCEPTED
+or REJECTED with evidence. Unanimous acceptance makes the finding MINOR; any rejection keeps it blocking and
+requires a fix. The explanation and individual votes remain in state and the table. RAISED changes severity upwards
+only, with reviewer and evidence retained in history. For an accepted explanation, a diff against its accepted head
+must show a change to the affected file (including a rename) before raising is permitted. No second-opinion path
+is offered in this slice. State schema 6 migrates schema 5; history migration 008 preserves records, foreign-key
+links and the search index while admitting the four finding-decision event kinds.
 
 Every posted review starts with the investigator's name and its configured CLI and model
 (the model is omitted when none is configured), a verdict heading, and the review pass and commit. The approval
@@ -451,7 +464,7 @@ the human is asked. A reviewer that cannot give its review is replaced (above), 
   starts at the approval; what depends on the pull request waits until it is merged, which the daemon finds when it reads it.
 - **Fix pass.** It goes to the lead, which has the integrated branch: it is woken with the open numbered findings and
   reviewer reports, the configured allowance and branch (a solo agent switches to it first). With the gate green at
-  the new tip the same PR is updated and a rotating verification pass starts. A fully approved first pass merges
+  the checked tip the same PR is updated and a rotating verification pass starts. A fully approved first pass merges
   without verification.
 - **The question.** When a reviewer still asks for changes after the configured passes, the lead is woken with the reports and the
   questions file to write; its question reaches the human like any other (`agent answer`). The answer grants

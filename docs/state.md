@@ -29,7 +29,7 @@ The state is one JSON document, written indented with a newline at the end, the 
 
 ```json
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "teams": [ { "id": "team-20261111-193000-a1b2", "...": "..." } ]
 }
 ```
@@ -49,11 +49,17 @@ Version 4, before rotating verification, is preserved in
 Its active PRs keep the same reviewers, full-review requests and single-pass renewal. New PRs add optional
 `verification` context to their findings ledger: `reviewed_head`, `lead_message` and `extra_fix_passes`.
 This preserves the previous reviewed commit, the latest fix message and the human's renewed allowance across restarts.
+Version 5, before one-time explanations, is preserved in
+[`state-before-disputes.json`](../crates/agent-core/tests/fixtures/state-before-disputes.json).
+Its active ledgers have no `disputes` marker and retain their previous lead and verifier protocol. New ledgers
+retain each explanation's reason, pending/accepted/rejected status and verifier votes, the accepted commit and
+changed-file eligibility, upward severity decisions, the answered fix-pass number, and the checked run, correction
+text and bounce count. These fields preserve decisions and bounded corrections across daemon restarts.
 
 
 [`state-v1.json`](../crates/agent-core/tests/fixtures/state-v1.json) is a state of version 1, which had no rounds. It
 **must keep loading**: it is read through the migration (below) as exactly
-[`state-v1-as-v3.json`](../crates/agent-core/tests/fixtures/state-v1-as-v3.json), with only the schema version advanced to 5, every time.
+[`state-v1-as-v3.json`](../crates/agent-core/tests/fixtures/state-v1-as-v3.json), with only the schema version advanced to 6, every time.
 
 ### Reading and its rules
 
@@ -65,8 +71,8 @@ This preserves the previous reviewed commit, the latest fix message and the huma
   as one that was built through the API. There is one way to read a value, the `Deserialize` trait: the field-by-field
   reading that serde derives lives on a private mirror type (`remote`), so no public `T::deserialize` skips the checks.
 - **Versioned.** `State::from_json` reads `schema_version` **first**. A state of another version is refused with
-  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 5,
-  migrates versions 1, 2, 3 and 4 as it reads them (see "Version 1" below); any other version is
+  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 6,
+  migrates versions 1, 2, 3, 4 and 5 as it reads them (see "Version 1" below); any other version is
   refused. Version 2 is read as it is: its items have no `findings`, so a round that was open when the daemon was
   updated ends by the rules it started with (verdicts only), and the numbered findings hold for pull requests opened
   after the update. A change that old files do not satisfy raises the version and comes with a migration, a fixture of the old

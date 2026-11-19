@@ -7,6 +7,6 @@ You may raise severity with `FINDING 6: RAISED [MAJOR] — why` or `[BLOCKER]` i
 Never lower severity yourself. Do not raise an accepted explanation unless the relevant code changed.
 An explained MAJOR becomes MINOR only if every verifier accepts; rejection requires a code fix.
 Do not approve with a rejected explanation, raised blocking finding, or any open BLOCKER or MAJOR.
-New findings go under FINDINGS in the review format. If evidence is unavailable, leave the finding OPEN.
+New findings go under FINDINGS in the review format. If evidence is unavailable, REJECT a pending explanation and leave other findings OPEN.
 
 {{findings}}
