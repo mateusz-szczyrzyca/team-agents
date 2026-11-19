@@ -294,6 +294,8 @@ impl Default for Limits {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Review {
+    /// Whether a blocker may receive one independent second opinion.
+    pub allow_second_opinion_on_blocker: bool,
     /// Explicit pass size; absent settings retain the legacy default and validation at team creation.
     min_first_full_reviews: Option<ReviewCount>,
     /// How many times "changes requested" goes back to the team before the human is asked; 0 asks at once.
@@ -308,6 +310,7 @@ pub struct Review {
 impl Default for Review {
     fn default() -> Self {
         Self {
+            allow_second_opinion_on_blocker: false,
             min_first_full_reviews: None,
             fix_passes: DEFAULT_FIX_PASSES,
             check_passes: DEFAULT_CHECK_PASSES,
