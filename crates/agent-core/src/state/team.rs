@@ -453,6 +453,12 @@ pub enum ReviewerProblem {
 }
 
 impl Team {
+    /// The task-authored permissions, retained with the team's original task list across every round and restart.
+    #[must_use]
+    pub fn allowances(&self) -> &[crate::task_allowance::TaskAllowance] {
+        &[]
+    }
+
     /// A team that has just been formed: every item pending, except those the task list marks done.
     #[must_use]
     pub fn new(
@@ -1421,3 +1427,7 @@ mod tests {
         assert_refused::<Team>(&repo);
     }
 }
+
+#[cfg(test)]
+#[path = "team/allowances_tests.rs"]
+mod allowances_tests;
