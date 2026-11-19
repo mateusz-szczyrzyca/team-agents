@@ -560,6 +560,37 @@ impl Git {
             .map_err(|source| GitError::NotACommit { operation, source })
     }
 
+    /// The blob object hash of `path` at `commit`, or `None` if the path does not exist at that commit.
+    ///
+    /// # Errors
+    /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and
+    /// [`GitError::Unexpected`].
+    pub async fn path_blob(&self, commit: &CommitId, path: &RepoPath) -> Result<Option<String>, GitError> {
+        let operation = GitOperation::RevParse;
+        let spec = format!("{commit}:{}", path.as_str());
+        let captured = self
+            .run(
+                operation,
+                Reach::Local,
+                &[
+                    arg("rev-parse"),
+                    arg("--verify"),
+                    arg("--quiet"),
+                    arg("--end-of-options"),
+                    arg(&spec),
+                ],
+            )
+            .await?;
+        match captured.exit {
+            ExitReport::Exited { code: 0 } => {
+                let printed = text(operation, &captured.stdout)?;
+                Ok(Some(printed.trim().to_owned()))
+            }
+            ExitReport::Exited { code: 1 } => Ok(None),
+            ExitReport::Exited { .. } | ExitReport::Signaled { .. } => Err(failed(operation, &captured)),
+        }
+    }
+
     /// Resolves an abbreviated or full commit ID `text` to its full [`CommitId`], or `None` if it does not name a
     /// commit.
     ///

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::values::Timestamp;
 use crate::decide::checks::Subject;
+use crate::decide::round::AskReason;
 use crate::ids::ItemId;
 
 /// What the checks hold for one item.
@@ -68,6 +69,15 @@ pub struct ChecksRecord {
     /// What the lead is to be told when it runs next, until it has been told.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sent: Option<Sent>,
+    /// Why the question was asked, if any question is recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked_reason: Option<AskReason>,
+    /// The content bindings (e.g. blob object hashes) of asked subjects when asked.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub asked_bindings: BTreeMap<Subject, Option<String>>,
+    /// The content bindings (e.g. blob object hashes) of allowed subjects when allowed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub allowed_bindings: BTreeMap<Subject, Option<String>>,
 }
 
 impl ChecksRecord {
@@ -93,6 +103,28 @@ impl ChecksRecord {
         allowed.into_iter().cloned().collect()
     }
 
+    /// What the human allowed for any of `items`, without repeats, filtering out any allowed subject whose
+    /// binding does not match `current` (if a binding was recorded for that subject).
+    #[must_use]
+    pub fn allowed_matching(&self, items: &[ItemId], current: &BTreeMap<Subject, Option<String>>) -> Vec<Subject> {
+        let mut allowed = BTreeSet::new();
+        for item in items {
+            if let Some(held) = self.items.get(item) {
+                for subject in &held.allowed {
+                    if let Some(expected) = self.allowed_bindings.get(subject) {
+                        if current.get(subject) == Some(expected) {
+                            allowed.insert(subject.clone());
+                        }
+                    } else {
+                        // Backward compatibility: no binding recorded in older states.
+                        allowed.insert(subject.clone());
+                    }
+                }
+            }
+        }
+        allowed.into_iter().collect()
+    }
+
     /// Records that the checks sent back the round of `items` for the `passes`-th time.
     pub fn set_passes(&mut self, items: &[ItemId], passes: u32) {
         for item in items {
@@ -102,12 +134,24 @@ impl ChecksRecord {
 
     /// Records that the human allowed `subjects` for every one of `items`.
     pub fn allow(&mut self, items: &[ItemId], subjects: &[Subject]) {
+        self.allow_with_bindings(items, subjects, &BTreeMap::new());
+    }
+
+    /// Records that the human allowed `subjects` with `bindings` for every one of `items`.
+    pub fn allow_with_bindings(
+        &mut self,
+        items: &[ItemId],
+        subjects: &[Subject],
+        bindings: &BTreeMap<Subject, Option<String>>,
+    ) {
         for item in items {
-            self.items
-                .entry(*item)
-                .or_default()
-                .allowed
-                .extend(subjects.iter().cloned());
+            let entry = self.items.entry(*item).or_default();
+            entry.allowed.extend(subjects.iter().cloned());
+        }
+        for subject in subjects {
+            if let Some(hash) = bindings.get(subject) {
+                self.allowed_bindings.insert(subject.clone(), hash.clone());
+            }
         }
     }
 
