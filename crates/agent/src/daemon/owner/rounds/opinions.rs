@@ -18,6 +18,14 @@ use std::num::NonZeroU32;
 /// Failure to schedule, render or persist a second opinion.
 #[derive(Debug, thiserror::Error)]
 enum OpinionCause {
+    /// A surviving assignment could not be inspected.
+    #[error("cannot inspect second opinion worktree {path:?}")]
+    Inspect {
+        /// The assigned worktree.
+        path: std::path::PathBuf,
+        /// The filesystem failure.
+        source: std::io::Error,
+    },
     /// A worktree could not be prepared.
     #[error("cannot prepare second opinion")]
     Prepare(#[from] PublishError),
@@ -478,9 +486,19 @@ impl Owner {
             if exhausted {
                 self.hold_opinion(&pulls, &team, &task).await?;
             } else {
-                let mut look = Look::default();
-                self.release(&task, Why::Review, &mut look)?;
-                self.finish_look(&team, look).await?;
+                let repo = self.lead_of(&team)?.repo;
+                let path = self.parts.store.home().worktree_dir(&repo, &task);
+                let exists = tokio::fs::try_exists(&path)
+                    .await
+                    .map_err(|source| OpinionDaemonError(OpinionCause::Inspect { path, source }))?;
+                if self.parts.state.find_task(&task).is_none() || !exists {
+                    self.retry_opinion(&pulls, &team, &task, OpinionFailure::Interrupted)
+                        .await?;
+                } else {
+                    let mut look = Look::default();
+                    self.release(&task, Why::Review, &mut look)?;
+                    self.finish_look(&team, look).await?;
+                }
             }
         }
         Ok(())
