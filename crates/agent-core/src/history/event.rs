@@ -418,11 +418,11 @@ pub enum HistoryEvent {
         pr: PrNumber,
         /// The permanent finding number.
         number: NonZeroU32,
-        /// The review or fix pass.
+        /// The fix pass that requested the opinion.
         pass: u32,
-        /// The lead or verifier.
+        /// The selected independent investigator.
         by: AgentName,
-        /// The reason, including the target severity when raised.
+        /// The lead reason for a request, or the investigator evidence for an outcome.
         why: String,
     },
     /// An independent investigator confirmed a blocker.
@@ -431,11 +431,11 @@ pub enum HistoryEvent {
         pr: PrNumber,
         /// The permanent finding number.
         number: NonZeroU32,
-        /// The review or fix pass.
+        /// The fix pass that requested the opinion.
         pass: u32,
-        /// The lead or verifier.
+        /// The selected independent investigator.
         by: AgentName,
-        /// The reason, including the target severity when raised.
+        /// The lead reason for a request, or the investigator evidence for an outcome.
         why: String,
     },
     /// An independent investigator did not confirm a blocker.
@@ -444,11 +444,11 @@ pub enum HistoryEvent {
         pr: PrNumber,
         /// The permanent finding number.
         number: NonZeroU32,
-        /// The review or fix pass.
+        /// The fix pass that requested the opinion.
         pass: u32,
-        /// The lead or verifier.
+        /// The selected independent investigator.
         by: AgentName,
-        /// The reason, including the target severity when raised.
+        /// The lead reason for a request, or the investigator evidence for an outcome.
         why: String,
     },
     /// A fix pass started: the reviews asked for changes and the team gets their findings.
