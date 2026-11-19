@@ -13,7 +13,7 @@ use std::num::NonZeroU64;
 
 use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::log::LogEvent;
-use agent_core::state::{Findings, ItemPhase, Team};
+use agent_core::state::{Findings, ItemPhase, Team, WakeDelivery};
 use agent_runtime::agentbus::MessageNote;
 use agent_runtime::process::error_chain;
 
@@ -129,6 +129,14 @@ impl Owner {
         if woken.count >= limit {
             if !woken.stopped {
                 woken.stopped = true;
+                self.parts.state.record_wake_delivery(
+                    task.clone(),
+                    Some(WakeDelivery::Delivered {
+                        message: woken.message,
+                        count: woken.count,
+                    }),
+                );
+                look.changed = true;
                 tracing::warn!(
                     event = LogEvent::BusDown.as_str(),
                     team = %team_id,
@@ -151,6 +159,14 @@ impl Owner {
                 wake_ups: woken.count,
             },
         );
+        self.parts.state.record_wake_delivery(
+            task.clone(),
+            Some(WakeDelivery::Pending {
+                message: woken.message,
+                count: woken.count,
+            }),
+        );
+        look.changed = true;
         self.wake_counts.insert(task.clone(), woken);
         self.release(task, Why::Woken, look)?;
         Ok(Wake::Queued)
