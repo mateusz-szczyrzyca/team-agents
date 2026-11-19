@@ -79,8 +79,8 @@ impl MergeMode {
 pub struct TaskListText {
     /// The text, as given.
     text: String,
-    /// What the text parses into.
-    list: TaskList,
+    /// The cached parse is boxed to keep run requests small as task headers grow.
+    list: Box<TaskList>,
 }
 
 impl TaskListText {
@@ -90,7 +90,10 @@ impl TaskListText {
     /// The [`TaskListError`] of the parse.
     pub fn new(text: String) -> Result<Self, TaskListError> {
         let list = TaskList::parse(&text)?;
-        Ok(Self { text, list })
+        Ok(Self {
+            text,
+            list: Box::new(list),
+        })
     }
 
     getter!("The text, as given.", pub fn text(&self) -> &str = &self.text);

@@ -1226,3 +1226,58 @@ async fn preallowed_paths_do_not_disclose_markers_or_cover_other_changed_tests()
     );
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn task_allowances_cover_version_and_golden_changes_in_successive_rounds() {
+    let mut rig = checking_rig("script:preallow-round", 2, APPROVE, APPROVE).await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace(
+            "protected_paths = [\"ci/\"]",
+            "protected_paths = [\"ci/\", \"Cargo.toml\"]",
+        ),
+    )
+    .unwrap();
+    std::fs::write(rig.repo.join("Cargo.toml"), "version = \"0.1.0\"\n").unwrap();
+    std::fs::write(rig.repo.join("tests/prompt.golden"), "original\n").unwrap();
+    git(&rig.repo, &["add", "Cargo.toml", "tests/prompt.golden"]);
+    git(&rig.repo, &["commit", "-qm", "Seed version and prompt golden"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    script(
+        &rig,
+        "preallow-round",
+        "if grep -q '0.1.0' Cargo.toml; then version=0.2.0; else version=0.3.0; fi\nprintf 'version = \"%s\"\\n' \"$version\" > Cargo.toml\ncat Cargo.toml > tests/prompt.golden\ngit add Cargo.toml tests/prompt.golden\ncommit -m 'Raise version and replace golden'\n",
+    );
+    rig.start().await;
+    let list = format!("Allow: Cargo.toml\nAllow: tests/*.golden\n{}", super::rig::CHAIN);
+    let (team, tasks) = rig.run(&["claude-1"], &list, MergeMode::Autopilot, None).await;
+    rig.item_where("1.2", "second round merged", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let pulls = rig.github.pulls();
+    assert_eq!(pulls.len(), 2);
+    for pull in pulls {
+        assert!(pull.body.contains("## Allowed beforehand"), "{}", pull.body);
+        assert!(
+            pull.body
+                .contains("[`Cargo.toml`](https://github.com/octo/example/blob/")
+                && pull.body.contains("/Cargo.toml) — `Allow: Cargo.toml`"),
+            "{}",
+            pull.body
+        );
+        assert!(
+            pull.body
+                .contains("[`tests/prompt.golden`](https://github.com/octo/example/blob/")
+                && pull.body.contains("/tests/prompt.golden) — `Allow: tests/*.golden`"),
+            "{}",
+            pull.body
+        );
+    }
+    assert_eq!(rig.state().team(&team).unwrap().allowances().len(), 2);
+    for task in tasks {
+        assert!(!rig.home.questions_file(&task, NonZeroU32::MIN).exists());
+    }
+}
