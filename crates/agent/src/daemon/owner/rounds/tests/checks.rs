@@ -1100,7 +1100,7 @@ async fn grouped_allowances_cover_the_version_and_five_tests_and_reach_review() 
     let allowed = record(&rig, &tasks[0])
         .await
         .allowed_of(&["1.1".parse().unwrap()])
-        .to_vec();
+        .clone();
     assert_eq!(allowed.len(), 6);
     for path in [
         "Cargo.toml",
