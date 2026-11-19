@@ -237,12 +237,12 @@ async fn insufficient_independent_investigators_record_an_explicit_round_wait() 
 }
 
 /// Gives the item 1.1 of the sample team a ledger with one finding and a second opinion asked about it, in `stage`.
-fn with_opinion(state: &mut State, team: &TeamId, stage: agent_core::state::OpinionStage) {
+fn with_opinion(all: &mut State, team: &TeamId, stage: agent_core::state::OpinionStage) {
     use agent_core::review_findings::{Finding, Severity};
     use agent_core::state::{FindingStatus, Findings, OpinionRequest, RecordedFinding};
     use std::num::NonZeroU32;
 
-    let mut team = state.team_mut(team).unwrap();
+    let mut team = all.team_mut(team).unwrap();
     let mut item = team.item_mut("1.1".parse().unwrap()).unwrap();
     item.start_findings();
     let mut ledger = Findings::new(vec![RecordedFinding {
