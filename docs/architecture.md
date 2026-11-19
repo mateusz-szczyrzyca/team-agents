@@ -763,7 +763,7 @@ tests of `RoundState` list its phases and events):
 - an issue the team can fix — the round goes back to the lead with the reasons, at most `[review] check_passes` times; then
   the human is asked;
 - only issues that the human alone may allow — the human is asked at once;
-- both kinds — the team goes first.
+- both kinds — what only the human may allow is asked of the human in the round's first check, and in the same step the round goes back to the team with team-fixable findings. The team message lists only its own findings and states that the others wait for the human. If the human has not answered when the team's part is clean, the round waits for the human. An unchanged human finding is asked once.
 
 **The message to the team.** The lead is woken (`Why::Checks`) and told the reasons — one for each issue, from
 `prompts/harness/checks/` — with the pull request, the pass and what to do: settle every finding, get the gate green, end with

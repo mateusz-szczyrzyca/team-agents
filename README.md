@@ -1351,7 +1351,9 @@ conflict resolution that removes a frozen test line, still counts.
 
 A round that changes code without adding tests, edits the test of its own `RED:` commit, or adds a skipped test, a lint
 suppression or code that asks whether it runs under test goes back to the team with the reasons, `[review] check_passes` times
-(2), and then you are asked. It is "Round checks before the review" in [`docs/architecture.md`](docs/architecture.md).
+(2), and then you are asked. When a round check finds both team-fixable and human-only findings, the human is asked in the
+round's first check while the round goes back to the team for its part at the same time. It is "Round checks before the review"
+in [`docs/architecture.md`](docs/architecture.md).
 
 A gate is run with `agent gate`, by an agent in its worktree (the human can run it too):
 
