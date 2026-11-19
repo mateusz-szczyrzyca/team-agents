@@ -856,3 +856,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "state/allowances_tests.rs"]
+mod allowances_tests;
