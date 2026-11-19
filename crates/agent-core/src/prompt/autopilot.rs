@@ -122,6 +122,8 @@ pub enum AutopilotPrompt {
     ReviewResponseFixed,
     /// The one-time explanation protocol.
     ReviewFixResponse,
+    /// Tell a lead woken during an open fix pass that the pass is still open and its response is due.
+    ReviewFixPassOpen,
     /// One reviewer's report among the findings the lead is given.
     ReviewFinding,
     /// What the lead is told when the fix passes are used up: to ask the human.
@@ -224,6 +226,7 @@ impl AutopilotPrompt {
         Self::ReviewResponseExplain,
         Self::ReviewResponseFixed,
         Self::ReviewFixResponse,
+        Self::ReviewFixPassOpen,
         Self::ReviewFinding,
         Self::ReviewAskHuman,
         Self::ReviewVerdictMissing,
@@ -330,6 +333,7 @@ impl AutopilotPrompt {
             Self::ReviewVerdictRequestChanges => "harness/review/verdict-request-changes.md",
             Self::ReviewFixPass => "harness/review/fix-pass.md",
             Self::ReviewFixResponse => "harness/review/fix-response.md",
+            Self::ReviewFixPassOpen => "harness/review/fix-pass-open.md",
             Self::ReviewResponseNumbers => "harness/review/response-numbers.md",
             Self::ReviewResponseExplain => "harness/review/response-explain.md",
             Self::ReviewResponseFixed => "harness/review/response-fixed.md",
@@ -416,6 +420,7 @@ impl AutopilotPrompt {
             Self::ReviewComment => &["reviewer", "client", "verdict", "pass", "commit", "report"],
             Self::ReviewVerdictApprove | Self::ReviewVerdictRequestChanges => &["icon"],
             Self::ReviewFixPass | Self::ReviewFixResponse => FIX_PASS_VARIABLES,
+            Self::ReviewFixPassOpen => &["pr", "pass"],
             Self::ReviewResponseInvalid => &["line", "number", "allowed"],
             Self::ReviewExplanation => &["status", "why", "votes"],
             Self::ReviewExplanationVote => &["reviewer", "status", "why"],
