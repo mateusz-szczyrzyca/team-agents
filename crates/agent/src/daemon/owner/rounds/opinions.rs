@@ -410,7 +410,7 @@ impl Owner {
         self.finish_look(team_id, look).await
     }
 
-    /// Identifies unanswered opinions after startup without attempting part 2b recovery.
+    /// Resumes surviving assignments and retains the terminal notice after the retry budget is exhausted.
     pub(in crate::daemon::owner) async fn hold_restarted_opinions(&mut self) -> Result<(), OwnerError> {
         let Some(pulls) = self.pulls.clone() else {
             return Ok(());
@@ -431,8 +431,33 @@ impl Owner {
                     })
             })
             .collect();
+        let mut seen = HashSet::new();
         for (team, task) in pending {
-            self.hold_opinion(&pulls, &team, &task).await?;
+            if !seen.insert(task.clone()) {
+                continue;
+            }
+            let exhausted = self
+                .parts
+                .state
+                .team(&team)
+                .and_then(|team| pending_opinion(team, &task))
+                .and_then(|(id, number, _)| {
+                    self.parts
+                        .state
+                        .team(&team)?
+                        .item(id)?
+                        .findings()?
+                        .opinion_attempts(number)
+                        .last()
+                })
+                .is_some_and(|attempt| attempt.failure.is_some());
+            if exhausted {
+                self.hold_opinion(&pulls, &team, &task).await?;
+            } else {
+                let mut look = Look::default();
+                self.release(&task, Why::Review, &mut look)?;
+                self.finish_look(&team, look).await?;
+            }
         }
         Ok(())
     }
