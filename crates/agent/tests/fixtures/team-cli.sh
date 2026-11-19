@@ -285,6 +285,29 @@ case $action in
       result 'VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [BLOCKER] COR src/lib.rs:7 — café defect → fix it\n   CHECK: read src/lib.rs:7\nSTATUS: DONE'
     fi
     ;;
+  opinion-probe-hold-verify:*)
+    # Like opinion-probe, but the verification of the open findings waits until the test writes verify-release, so
+    # the round stays open while the opinions are reported.
+    if [[ $prompt == *'# SECOND OPINION REQUEST'* || $prompt == *'# CORRECT YOUR SECOND OPINION'* ]]; then
+      outcome=${action#opinion-probe-hold-verify:}
+      if [[ $outcome == BAD ]]; then
+        if [[ ! -f .opinion-corrected ]]; then
+          touch .opinion-corrected
+          result 'Read src/lib.rs:7; no defect.\nSTATUS: DONE'
+        else
+          result 'OPINION: NOT CONFIRMED\nRead src/lib.rs:7; café path is unreachable.\nSTATUS: DONE'
+        fi
+      else
+        result "OPINION: $outcome\nRead src/lib.rs:7; café path examined.\nSTATUS: DONE"
+      fi
+    elif [[ $prompt == *'# OPEN FINDINGS TO VERIFY'* ]]; then
+      while [[ ! -f $home/verify-release ]]; do sleep 0.02; done
+      answers=$(awk '/^# OPEN FINDINGS TO VERIFY/ {open=1} open && /^[0-9]+\. \[/{sub(/\./, "", $1); printf "FINDING %s: RESOLVED\\n", $1}' <<< "$prompt")
+      result "VERDICT: APPROVE\n$answers\nSTATUS: DONE"
+    else
+      result 'VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [BLOCKER] COR src/lib.rs:7 — café defect → fix it\n   CHECK: read src/lib.rs:7\nSTATUS: DONE'
+    fi
+    ;;
   opinion-mixed)
     result 'FINDING 1: FIXED\nFINDING 2: SECOND OPINION — café path is unreachable\nSTATUS: DONE'
     ;;

@@ -1007,13 +1007,15 @@ async fn rate_limited_opinions_are_replaced_and_their_tasks_are_stopped() {
 
 #[tokio::test]
 async fn cli_commands_read_round_during_and_after_second_opinions() {
+    // The verification of the open findings waits for the test (verify-release), so the round stays open while the
+    // commands read it: the opinions are reported, but the item is not approved and the round is not closed.
     let mut rig = Rig::new(
         &[
             normal("claude-1", "work,opinion-ask"),
-            investigator("inv-r1", "opinion-probe:NOT CONFIRMED"),
-            investigator("inv-r2", "opinion-probe:NOT CONFIRMED"),
-            investigator("inv-r3", "opinion-probe:NOT CONFIRMED"),
-            investigator("inv-r4", "opinion-probe:NOT CONFIRMED"),
+            investigator("inv-r1", "opinion-probe-hold-verify:NOT CONFIRMED"),
+            investigator("inv-r2", "opinion-probe-hold-verify:NOT CONFIRMED"),
+            investigator("inv-r3", "opinion-probe-hold-verify:NOT CONFIRMED"),
+            investigator("inv-r4", "opinion-probe-hold-verify:NOT CONFIRMED"),
         ],
         1,
         false,
@@ -1021,7 +1023,7 @@ async fn cli_commands_read_round_during_and_after_second_opinions() {
     .await;
     rig.start().await;
     let (team, _) = rig
-        .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+        .run(&["claude-1"], ONE, agent_core::state::MergeMode::NoMerge, None)
         .await;
 
     let state = rig
@@ -1062,11 +1064,9 @@ async fn cli_commands_read_round_during_and_after_second_opinions() {
     );
     assert_contains(&out_log, &round_text, "log of the round while the opinion is asked for");
 
-    // The opinion is reported while the round is open, and every command reads it right then. The round closes when
-    // the item is done; the state is read after the commands, and a round only goes from open to closed, so a round
-    // that is still open then was open when the commands read it: status --running must print it. Once it is closed,
-    // that line only says that no round is open.
-    rig.state_where("opinion reported", |state| {
+    // The opinions are reported while the verification is held, so the item is in review and the round is open: every
+    // command reads the round, and no assertion depends on timing.
+    rig.state_where("opinions reported", |state| {
         state.team(&team).unwrap().items()[0].findings().is_some_and(|l| {
             l.opinions()
                 .values()
@@ -1076,11 +1076,12 @@ async fn cli_commands_read_round_during_and_after_second_opinions() {
     .await;
     let (out_after, out_running_after, out_show_after, out_log_after) =
         read_round_by_every_command(&mut conn, &rig.home.history_file(), &activity, &round_target, &log_req).await;
-    let open_in_later_state = matches!(
-        rig.state().team(&team).unwrap().rounds()[0].life(),
-        agent_core::state::RoundLife::Open
-    );
     assert_contains(&out_after, &round_text, "status after the opinion is reported");
+    assert_contains(
+        &out_running_after,
+        &round_text,
+        "status --running after the opinion is reported",
+    );
     assert_contains(
         &out_show_after,
         &round_text,
@@ -1091,22 +1092,10 @@ async fn cli_commands_read_round_during_and_after_second_opinions() {
         &round_text,
         "log of the round after the opinion is reported",
     );
-    if open_in_later_state {
-        assert_contains(
-            &out_running_after,
-            &round_text,
-            "status --running after the opinion is reported",
-        );
-    } else {
-        assert_contains(
-            &out_running_after,
-            "no team has an open round",
-            "status --running once the round is closed",
-        );
-    }
 
-    rig.item_where("1.1", "done after opinions", |phase| {
-        matches!(phase, ItemPhase::Done { .. })
+    std::fs::write(rig.home.root().join("verify-release"), "ready").unwrap();
+    rig.item_where("1.1", "approved after the verification is released", |phase| {
+        matches!(phase, ItemPhase::Approved { .. })
     })
     .await;
     rig.stop().await.unwrap();
