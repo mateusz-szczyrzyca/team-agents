@@ -243,3 +243,92 @@ async fn a_wake_up_with_nothing_to_do_leaves_the_round_as_it_was() {
     assert_eq!(phase(&state), phase(&before));
     assert!(matches!(phase(&state), ItemPhase::Fixing { .. }));
 }
+
+/// Gives the home a limit on wake-ups that the replay cannot reach, so that only the hold can save the round.
+fn raise_wake_up_limit(rig: &Rig) {
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("\n[limits]\nwake_ups_per_message = 1000\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
+}
+
+#[tokio::test]
+async fn a_lead_whose_fix_response_was_taken_is_published_before_it_is_woken_again() {
+    let rig = held_fix_pass().await;
+    raise_wake_up_limit(&rig);
+    let mut rig = rig;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("the fix pass to start", || worktree.join(".fake-started-3").exists())
+        .await;
+    say(&rig, &tasks[0], "please also look at the docs").await;
+    std::fs::write(worktree.join(".fake-release-3"), "").unwrap();
+
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+}
+
+/// A line of the bus log that the daemon cannot read as a message and the bus itself ignores: its number is 0.
+const UNREADABLE_LINE: &str = r#"{"id":0,"ts":"2026-11-19 14:00:00","from":"nobody","to":"nobody","text":"x"}"#;
+
+#[tokio::test]
+async fn an_unreadable_bus_log_is_told_once_and_does_not_stretch_the_wake_ups() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,deaf-fix-held:1,deaf-sleep"),
+            normal("claude-1", "fix-held:1"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("\n[limits]\nwake_ups_per_message = 2\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
+    start_logged(&mut rig).await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    say(&rig, &tasks[0], "are you there?").await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("the first wake-up", || worktree.join(".fake-started-2").exists())
+        .await;
+    {
+        use std::io::Write;
+        let mut log = std::fs::OpenOptions::new()
+            .append(true)
+            .open(rig.home.root().join("bus/messages.jsonl"))
+            .unwrap();
+        writeln!(log, "{UNREADABLE_LINE}").unwrap();
+    }
+    std::fs::write(worktree.join(".fake-release-2"), "").unwrap();
+
+    rig.wait_for("the wake-ups to stop", || {
+        logged(&rig)
+            .iter()
+            .any(|row| row.event() == LogEvent::BusDown && row.fields().contains_key("wake_ups"))
+    })
+    .await;
+    std::fs::write(rig.worktree(&tasks[1]).join(".fake-release-1"), "").unwrap();
+    let runs = rig.runs(&tasks[0]);
+    rig.stop().await.unwrap();
+
+    assert_eq!(
+        runs, 3,
+        "one run of its own and two wake-ups, with the log unreadable for the second"
+    );
+    let unreadable: Vec<_> = logged(&rig)
+        .into_iter()
+        .filter(|row| {
+            row.event() == LogEvent::BusDown && row.task() == Some(&tasks[0]) && row.fields().contains_key("error")
+        })
+        .collect();
+    assert_eq!(unreadable.len(), 1, "{unreadable:?}");
+    assert_eq!(unreadable[0].count().get(), 1);
+}
