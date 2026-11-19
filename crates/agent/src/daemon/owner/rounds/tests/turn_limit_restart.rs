@@ -553,7 +553,7 @@ async fn opinion_inactivity_uses_review_patience_and_resets_on_output() {
 async fn opinion_pulls(owner: &Owner) -> crate::daemon::owner::rounds::Pulls {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
     let language = owner.parts.settings.config.language();
-    let pulls = crate::daemon::owner::rounds::Pulls::new(
+    crate::daemon::owner::rounds::Pulls::new(
         Arc::new(
             agent_runtime::autopilot_prompts::AutopilotPrompts::load(&root, language)
                 .await
@@ -567,6 +567,5 @@ async fn opinion_pulls(owner: &Owner) -> crate::daemon::owner::rounds::Pulls {
         &owner.parts.settings,
     )
     .unwrap()
-    .unwrap();
-    pulls
+    .unwrap()
 }
