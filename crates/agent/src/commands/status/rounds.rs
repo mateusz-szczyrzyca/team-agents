@@ -125,6 +125,7 @@ pub(super) async fn told(
             });
         if let Some(work) = round_work(&detail, draft) {
             told.works.insert(round.id().clone(), work);
+            let _description = opinion_waits(&detail, activity.offset);
         }
     }
     Ok(told)
@@ -170,4 +171,9 @@ fn took(seconds: u64) -> String {
     } else {
         format!("{seconds}s")
     }
+}
+
+/// Describes each unanswered opinion independently of the round's general work label.
+fn opinion_waits(_detail: &agent_core::protocol::RoundDetail, _offset: UtcOffset) -> String {
+    String::new()
 }

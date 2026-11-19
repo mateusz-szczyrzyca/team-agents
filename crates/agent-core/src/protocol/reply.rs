@@ -165,6 +165,9 @@ pub struct TeamSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoundDetail {
+    /// Assignment times and failed investigators, absent before schema 9.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub opinion_attempts: std::collections::BTreeMap<NonZeroU32, Vec<crate::state::OpinionAttempt>>,
     /// Independent opinions belonging to the round, absent before schema 8.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub opinions: std::collections::BTreeMap<NonZeroU32, crate::state::SecondOpinion>,
@@ -353,6 +356,7 @@ impl RoundDetail {
             tasks,
             pr,
             review_passes,
+            opinion_attempts: Default::default(),
             opinions: progress
                 .and_then(ItemProgress::findings)
                 .map(|ledger| ledger.opinions().clone())

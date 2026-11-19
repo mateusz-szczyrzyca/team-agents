@@ -346,3 +346,61 @@ async fn a_status_with_no_round_that_goes_on_reads_no_history() {
     assert!(!text.contains("the history cannot say"), "{text}");
     assert_eq!(daemon.requests().len(), 1);
 }
+
+#[test]
+fn unanswered_opinions_show_the_finding_investigator_assignment_time_and_free_wait() {
+    use agent_core::state::{OpinionAttempt, OpinionRequest, OpinionStage, SecondOpinion};
+    let state = rounds_state();
+    let team = state.team(&team_id(0)).unwrap();
+    let mut detail = RoundDetail::new(team, &round_of(&state, 2), Vec::new());
+    for (n, stage) in [
+        (
+            1,
+            OpinionStage::Assigned {
+                investigator: "inv-cafe".parse().unwrap(),
+                task: "task-20261111-153001-k3x9".parse().unwrap(),
+            },
+        ),
+        (2, OpinionStage::Waiting),
+        (
+            3,
+            OpinionStage::Assigned {
+                investigator: "inv-legacy".parse().unwrap(),
+                task: "task-20261111-153003-k3x9".parse().unwrap(),
+            },
+        ),
+    ] {
+        detail.opinions.insert(
+            NonZeroU32::new(n).unwrap(),
+            SecondOpinion {
+                request: OpinionRequest {
+                    pass: NonZeroU32::MIN,
+                    head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap(),
+                    reason: "café boundary".to_owned().try_into().unwrap(),
+                },
+                stage,
+            },
+        );
+    }
+    detail.opinion_attempts.insert(
+        NonZeroU32::MIN,
+        vec![OpinionAttempt {
+            investigator: "inv-cafe".parse().unwrap(),
+            task: "task-20261111-153001-k3x9".parse().unwrap(),
+            asked_at: Some(at(10)),
+            failure: None,
+        }],
+    );
+    assert_eq!(opinion_waits(&detail, warsaw()), include_str!("opinions.golden"));
+    detail.opinions.clear();
+    assert_eq!(opinion_waits(&detail, warsaw()), "");
+    let mut legacy = serde_json::to_value(&detail).unwrap();
+    legacy.as_object_mut().unwrap().remove("opinion_attempts");
+    assert_eq!(
+        serde_json::from_value::<RoundDetail>(legacy)
+            .unwrap()
+            .opinion_attempts
+            .len(),
+        0
+    );
+}

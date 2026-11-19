@@ -41,3 +41,40 @@ fn schema_eight_active_fix_pass_migrates_without_inventing_opinion_attempts() {
     assert_eq!(ledger.disputes().unwrap().answered_pass, 1);
     assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
 }
+
+#[test]
+fn round_details_keep_assignment_times_for_status_and_omit_them_for_legacy_findings() {
+    let mut state = State::from_json(include_str!("fixtures/state-before-opinion-retries.json")).unwrap();
+    let team_id = state.teams()[0].id().clone();
+    let mut team = state.team_mut(&team_id).unwrap();
+    let item_id = "1.2".parse().unwrap();
+    let mut item = team.item_mut(item_id).unwrap();
+    let ledger = item.findings_mut().unwrap();
+    ledger
+        .request_opinion(
+            NonZeroU32::MIN,
+            agent_core::state::OpinionRequest {
+                pass: NonZeroU32::MIN,
+                head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap(),
+                reason: "café boundary".to_owned().try_into().unwrap(),
+            },
+        )
+        .unwrap();
+    ledger
+        .assign_opinion_at(
+            NonZeroU32::MIN,
+            "inv-independent".parse().unwrap(),
+            "task-20261111-193007-k3x9".parse().unwrap(),
+            "2026-11-11T19:50:00Z".parse().unwrap(),
+        )
+        .unwrap();
+    let expected = ledger.opinion_attempts(NonZeroU32::MIN).to_vec();
+    let team = state.team(&team_id).unwrap();
+    let round = team
+        .rounds()
+        .iter()
+        .find(|round| round.item() == Some(item_id))
+        .unwrap();
+    let detail = agent_core::protocol::RoundDetail::new(team, round, Vec::new());
+    assert_eq!(detail.opinion_attempts.get(&NonZeroU32::MIN), Some(&expected));
+}
