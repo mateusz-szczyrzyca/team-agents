@@ -137,6 +137,7 @@ fn stopped_and_failed_assignments_keep_the_time_and_reason_without_reclosing_rep
         team.record_activities(at(21));
         assert_eq!(team.activities().len(), 2);
         let (_, mut reviewer) = team.find_mut(&task(21)).unwrap();
+        reviewer.transition(TaskStatus::Running).unwrap();
         reviewer.begin_run(run(1), at(22), None).unwrap();
         reviewer.end_run(at(30), end).unwrap();
         reviewer.transition(status).unwrap();
