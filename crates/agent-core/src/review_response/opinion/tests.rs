@@ -127,5 +127,6 @@ fn reads_both_outcomes_with_markup_and_requires_opening_verdict_and_evidence() {
         Err(OpinionError::MissingEvidence)
     );
     assert_eq!(Evidence::try_from(" \n".to_owned()), Err(OpinionError::MissingEvidence));
-    assert!(serde_json::from_str::<Evidence>("\" \"").is_err());
+    let error = serde_json::from_str::<Evidence>("\" \"").expect_err("empty evidence must be refused");
+    assert_eq!(error.classify(), serde_json::error::Category::Data);
 }
