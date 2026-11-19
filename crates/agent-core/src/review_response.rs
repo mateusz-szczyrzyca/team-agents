@@ -34,7 +34,20 @@ pub fn parse_lead(
 ) -> Result<Vec<(NonZeroU32, Response)>, ResponseError> {
     let mut answers = Vec::new();
     let mut ended = false;
+    let mut fence = None;
     for (index, line) in text.lines().enumerate() {
+        match (fence, crate::review_findings::fence_marker(line)) {
+            (None, Some(open)) => {
+                fence = Some(open);
+                continue;
+            }
+            (Some(open), Some(marker)) if marker.closes(open) => {
+                fence = None;
+                continue;
+            }
+            (Some(_), _) => continue,
+            (None, None) => {}
+        }
         let line = line.trim();
         if line.starts_with("STATUS:") {
             ended = true;

@@ -288,7 +288,7 @@ fn read_answer(value: &str, severity: Severity, pending: Option<bool>) -> Option
 
 /// A Markdown code fence line: its character (backtick or tilde) and how many of them it has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Fence {
+pub(crate) struct Fence {
     /// The fence character, `` ` `` or `~`.
     character: char,
     /// How many of the character open the line; at least three.
@@ -299,13 +299,13 @@ struct Fence {
 
 impl Fence {
     /// Whether this line closes `open`: the same character, at least as many, and nothing else on the line.
-    fn closes(self, open: Self) -> bool {
+    pub(crate) fn closes(self, open: Self) -> bool {
         self.bare && self.character == open.character && self.length >= open.length
     }
 }
 
 /// The fence a line is, if it starts with three or more backticks or tildes.
-fn fence_marker(line: &str) -> Option<Fence> {
+pub(crate) fn fence_marker(line: &str) -> Option<Fence> {
     let line = line.trim_start();
     let character = line.chars().next().filter(|c| matches!(c, '`' | '~'))?;
     let length = line.chars().take_while(|c| *c == character).count();
