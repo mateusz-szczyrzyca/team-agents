@@ -1113,3 +1113,58 @@ async fn grouped_allowances_cover_the_version_and_five_tests_and_reach_review() 
         assert!(allowed.contains(&Subject::Path(path.parse().unwrap())), "{allowed:?}");
     }
 }
+
+#[tokio::test]
+async fn legacy_pending_per_file_questions_resume_after_the_daemon_restarts() {
+    let mut rig = checking_rig("script:edit-test,questions,done", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    // An older daemon wrote a positional per-file question, without versioned membership.
+    let entry = agent_core::questions::Entry::new(NonZeroU32::MIN, "Allow tests/existing.txt?")
+        .unwrap()
+        .recommend("refuse")
+        .unwrap();
+    let legacy = QuestionsFile::new("Checks before the review", vec![entry]).unwrap();
+    std::fs::write(rig.home.questions_file(&tasks[0], NonZeroU32::MIN), legacy.render()).unwrap();
+    rig.start().await;
+    answer(&rig, &tasks[0], 1, "ALLOW this file").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+    assert_eq!(
+        record(&rig, &tasks[0]).await.allowed_of(&["1.1".parse().unwrap()]),
+        [Subject::Path("tests/existing.txt".parse().unwrap())]
+    );
+    assert!(!rig.github.pulls()[0].draft);
+}
+
+#[tokio::test]
+async fn refusing_a_protected_path_sends_it_back_until_the_team_restores_it() {
+    let mut rig = checking_rig(
+        "script:protected,questions,done,script:restore-protected",
+        2,
+        SILENT,
+        SILENT,
+    )
+    .await;
+    scripts(&rig);
+    script(
+        &rig,
+        "restore-protected",
+        "git checkout main -- ci/gate.sh\ngit add ci/gate.sh\ncommit -m 'Restore the protected gate'\n",
+    );
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 1, "refuse").await;
+    reviews_asked(&rig).await;
+    let back = rig.prompt(&tasks[0], 4).await;
+    rig.stop().await.unwrap();
+    assert!(
+        back.contains("refused to allow") && back.contains("ci/gate.sh"),
+        "{back}"
+    );
+    assert_eq!(record(&rig, &tasks[0]).await.allowed_of(&["1.1".parse().unwrap()]), []);
+}

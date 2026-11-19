@@ -1237,3 +1237,72 @@ fn merge_edits_are_scoped_to_first_parent_and_the_round_diff() {
         assert_eq!(found(&facts), expected);
     }
 }
+
+#[test]
+fn issue_kinds_ignore_paths_counts_and_commits_but_preserve_test_change_variants() {
+    let changes = [
+        TestChange::Deleted,
+        TestChange::Renamed {
+            to: path("tests/to.rs"),
+        },
+        TestChange::Edited { removed: 1 },
+        TestChange::EditedBinary,
+        TestChange::ModeChanged,
+    ];
+    for (i, how) in changes.iter().enumerate() {
+        let first = Issue::TestChanged {
+            path: path("tests/a.rs"),
+            how: how.clone(),
+        };
+        let second = Issue::TestChanged {
+            path: path("tests/b.rs"),
+            how: how.clone(),
+        };
+        assert_eq!(first.kind(), second.kind());
+        for other in changes.iter().skip(i + 1) {
+            assert_ne!(
+                first.kind(),
+                Issue::TestChanged {
+                    path: path("tests/a.rs"),
+                    how: other.clone()
+                }
+                .kind()
+            );
+        }
+    }
+    assert_eq!(
+        Issue::TestChanged {
+            path: path("tests/a.rs"),
+            how: TestChange::Edited { removed: 1 }
+        }
+        .kind(),
+        Issue::TestChanged {
+            path: path("tests/b.rs"),
+            how: TestChange::Edited { removed: 99 }
+        }
+        .kind()
+    );
+    assert_eq!(
+        Issue::ProtectedChanged {
+            path: path("AGENTS.md"),
+            change: Touch::Modified
+        }
+        .kind(),
+        IssueKind::ProtectedChanged
+    );
+    assert_eq!(
+        Issue::RedTestEdited {
+            path: path("tests/a.rs"),
+            red: id('1'),
+            edit: id('2')
+        }
+        .kind(),
+        Issue::RedTestEdited {
+            path: path("tests/b.rs"),
+            red: id('3'),
+            edit: id('4')
+        }
+        .kind()
+    );
+    assert_eq!(Issue::NoTests.kind(), IssueKind::NoTests);
+}

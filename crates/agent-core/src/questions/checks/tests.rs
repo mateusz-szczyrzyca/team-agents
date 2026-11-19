@@ -104,3 +104,27 @@ fn no_tests_cannot_be_named_as_a_path_exception() {
         .unwrap();
     assert_eq!(file.entries()[0].checks_verdict(), Err(InvalidChecksVerdict));
 }
+
+#[test]
+fn a_marked_checks_file_cannot_silently_treat_an_unlabelled_question_as_legacy() {
+    let mut file = QuestionsFile::new(
+        "Checks [checks:v1]",
+        vec![
+            Entry::new(NonZeroU32::MIN, "Missing membership")
+                .unwrap()
+                .recommend("refuse")
+                .unwrap(),
+        ],
+    )
+    .unwrap();
+    file.set_verdict(NonZeroU32::MIN, Verdict::from_text("allow").unwrap())
+        .unwrap();
+    let error = file.answers().unwrap_err();
+    assert_eq!(
+        error.problems,
+        [(
+            NonZeroU32::MIN,
+            crate::questions::AnswerProblem::ChecksVerdict(InvalidChecksVerdict)
+        )]
+    );
+}
