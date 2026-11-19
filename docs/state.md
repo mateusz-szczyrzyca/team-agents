@@ -66,6 +66,16 @@ Version 8 before bounded assignments is preserved in
 Migration to version 9 retains active fix passes, their protocol markers, FIXED answers and completed opinions.
 The migrated round uses the current opinion protocol without incrementing its fix-pass count.
 
+The optional top-level `wake_deliveries` map (added in 0.17.0, schema version unchanged) keeps the wake-up budget of each
+task that the bus woke for an unread message, by task ID. Each value is `{"state": "pending", "message": 12, "count": 1}` (the
+number of wake-ups spent for the newest unread message, with its number on the bus; `message` is null when no message
+could be named) or `{"state": "delivered", "message": 12, "count": 2}` (`limits.wake_ups_per_message` reached: the task is
+not woken for that message again). A state without
+the map loads as before and an empty map is not written; a daemon older than 0.17.0 refuses a state that holds it
+(`deny_unknown_fields`), so going back after a wake-up stop needs the field removed by hand. The loader of the new field is
+exercised by `crates/agent-core/tests/wake_delivery.rs` over
+[`state-before-wake-delivery.json`](../crates/agent-core/tests/fixtures/state-before-wake-delivery.json).
+
 The findings ledger's optional `opinions` map uses permanent finding numbers as keys. Each value retains
 `request` (`pass`, exact `head`, nonempty `reason`) and a tagged `stage`: `waiting`, `assigned`
 (`investigator`, `task`), or `reported` (the same owner and a `report` with `outcome` and nonempty `evidence`).
