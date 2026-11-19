@@ -164,9 +164,22 @@ impl Owner {
         }
         let lead = self.lead_of(team_id)?;
         for gone in gone {
+            let rounds = self.rounds_of_items(team_id, &gone.items);
             match self.try_replace(team_id, &lead, &gone, now).await {
-                Ok(true) => look.changed = true,
-                Ok(false) => self.nobody_reviews(pulls, team_id, &lead, &gone, now),
+                Ok(true) => {
+                    for round in &rounds {
+                        self.watch.waits.remove(round);
+                    }
+                    look.changed = true;
+                }
+                Ok(false) => {
+                    for round in rounds {
+                        self.watch
+                            .waits
+                            .insert(round, agent_core::decide::wait::Obligation::FreeInvestigator);
+                    }
+                    self.nobody_reviews(pulls, team_id, &lead, &gone, now);
+                }
                 Err(error) => {
                     tracing::warn!(
                         event = LogEvent::GitCallFailed.as_str(),

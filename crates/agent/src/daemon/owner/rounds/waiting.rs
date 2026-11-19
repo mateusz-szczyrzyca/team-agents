@@ -59,21 +59,43 @@ impl Owner {
         } else {
             Activity::Idle
         };
-        // A reviewer whose review is no longer asked — one that failed and was replaced — holds nothing of the round:
-        // only its open question waits for the human.
-        let human = members.iter().any(|(role, member)| {
-            member.open_question().is_some()
-                || (matches!(
-                    member.status(),
-                    TaskStatus::Questions | TaskStatus::Paused | TaskStatus::Stopped | TaskStatus::Failed
-                ) && (*role != Role::Reviewer || crate::daemon::merge::review_asked(team, member.task())))
-        });
-        let obligation = if human || self.pulls.is_none() {
+        let obligation = if self.pulls.is_none() {
             Some(Obligation::Human)
         } else {
-            self.round_obligation(team, round)
+            self.stuck_obligation(team, round)
+                .or_else(|| self.round_obligation(team, round))
         };
         round_wait(activity, obligation)
+    }
+
+    /// What a round with a member that cannot work waits for, or `None` when no member is stuck: the human, or, for a
+    /// reviewer whose review another free investigator takes, a free investigator once the owner found none.
+    ///
+    /// A reviewer whose review is no longer asked — one that failed and was replaced — holds nothing of the round:
+    /// only its open question waits for the human.
+    pub(in crate::daemon::owner) fn stuck_obligation(&self, team: &Team, round: &Round) -> Option<Obligation> {
+        let stuck = |status| {
+            matches!(
+                status,
+                TaskStatus::Questions | TaskStatus::Paused | TaskStatus::Stopped | TaskStatus::Failed
+            )
+        };
+        let members = team.members_in(round.id());
+        if members.iter().any(|(role, member)| {
+            member.open_question().is_some() || (stuck(member.status()) && *role != Role::Reviewer)
+        }) {
+            return Some(Obligation::Human);
+        }
+        let replaceable = members.iter().any(|(role, member)| {
+            *role == Role::Reviewer && stuck(member.status()) && crate::daemon::merge::review_asked(team, member.task())
+        });
+        replaceable.then(|| {
+            if self.watch.waits.get(round.id()) == Some(&Obligation::FreeInvestigator) {
+                Obligation::FreeInvestigator
+            } else {
+                Obligation::Human
+            }
+        })
     }
 
     /// The pending operation, including gates which do not run a model task.
@@ -86,10 +108,18 @@ impl Owner {
         }
         let item = round.item().and_then(|id| team.item(id));
         if let Some(ledger) = item.and_then(agent_core::state::ItemProgress::findings) {
+            // An opinion that is still unassigned after the scheduling of a look has no free independent investigator.
             if ledger
                 .opinions()
                 .values()
-                .any(|opinion| matches!(opinion.stage, OpinionStage::Waiting | OpinionStage::Assigned { .. }))
+                .any(|opinion| matches!(opinion.stage, OpinionStage::Waiting))
+            {
+                return Some(Obligation::FreeInvestigator);
+            }
+            if ledger
+                .opinions()
+                .values()
+                .any(|opinion| matches!(opinion.stage, OpinionStage::Assigned { .. }))
             {
                 return Some(Obligation::SecondOpinion);
             }
