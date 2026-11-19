@@ -167,3 +167,79 @@ async fn every_wake_up_is_logged_with_its_message_and_its_sender() {
         assert!(row.fields().contains_key("message_id"), "{:?}", row.fields());
     }
 }
+
+/// A team whose coordinator ends its fix pass with nothing to say (`sleep`), and gives the response in the run a message
+/// wakes it for.
+async fn sleepy_fix_pass() -> Rig {
+    Rig::new(
+        &[
+            investigator("inv-lead", "sleep,integrate,sleep,fix-work:1"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", CHANGES_ONCE),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_wake_up_during_an_open_fix_pass_says_so_in_one_line_and_its_response_starts_the_verification() {
+    let mut rig = sleepy_fix_pass().await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let fix_pass = rig.prompt(&tasks[0], 3).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    assert_eq!(
+        rig.runs(&tasks[0]),
+        3,
+        "a lead that sleeps is not woken again by the round"
+    );
+    say(&rig, &tasks[0], "how far are you?").await;
+
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    let wake_up = rig.kept_prompt(&tasks[0], 4);
+    rig.stop().await.unwrap();
+
+    assert!(fix_pass.contains("THE REVIEWERS ASKED FOR CHANGES"), "{fix_pass}");
+    assert!(
+        wake_up.contains("fix pass 1 of pull request #1 is still open"),
+        "{wake_up}"
+    );
+    assert!(!wake_up.contains("THE REVIEWERS ASKED FOR CHANGES"), "{wake_up}");
+}
+
+#[tokio::test]
+async fn a_wake_up_with_nothing_to_do_leaves_the_round_as_it_was() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,integrate,sleep,sleep,fix-work:1"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", CHANGES_ONCE),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.wait_for("the fix pass run", || rig.runs(&tasks[0]) == 3).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let before = rig.state();
+    say(&rig, &tasks[0], "no hurry").await;
+    rig.wait_for("the wake-up to run", || rig.runs(&tasks[0]) == 4).await;
+    let state = rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.stop().await.unwrap();
+
+    let phase =
+        |state: &agent_core::state::State| state.teams()[0].item("1.1".parse().unwrap()).unwrap().phase().clone();
+    assert_eq!(phase(&state), phase(&before));
+    assert!(matches!(phase(&state), ItemPhase::Fixing { .. }));
+}
