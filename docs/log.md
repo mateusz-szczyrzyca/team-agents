@@ -253,7 +253,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `run_hung` | `warn` | The hang watchdog stops a silent run, or process cleanup cannot kill or reap a process so that its end is known. |
 | `run_quota_exhausted` | `warn` | A run stops because its model quota is exhausted. |
 | `run_rate_limited` | `warn` | A run stops because of a rate limit. |
-| `bus_down` | `warn` | An `agentbus` operation fails and what waits for it is retried or dropped. |
+| `bus_down` | `warn` | An `agentbus` operation fails and what waits for it is retried or dropped; also a member that did not read the message it was woken for `limits.wake_ups_per_message` times is not woken for it again (`task`, `message_id`, `from`, `wake_ups`). |
 | `git_call_failed` | `warn` | A `git` call, worktree operation or branch operation fails or is retried. |
 | `github_call_failed` | `warn` | A GitHub API call, a publication or a merge fails or is retried, or the home has no GitHub token. |
 | `gate_cannot_start` | `warn` | A gate command cannot start or be recorded. |
@@ -273,7 +273,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `round_changed` | `info` | A round is opened or closed. |
 | `item_phase_changed` | `info` | An item's phase changes. |
 | `task_status_changed` | `info` | A task's status changes. |
-| `run_started` | `info` | A model CLI run starts. |
+| `run_started` | `info` | A model CLI run starts. A run that the bus's wake-up starts also has `why` (`wake_up`), `message_id`, `from` and `wake_ups` (the number of this wake-up for that message). |
 | `run_ended` | `info` | A model CLI run ends. |
 | `daemon_started` | `info` | The daemon has opened its state and its history and serves its socket, with `home`. |
 | `daemon_stop_requested` | `info` | A signal asks the daemon to stop, with `signal` (`SIGTERM` or `SIGINT`). |

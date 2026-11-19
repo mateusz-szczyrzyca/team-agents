@@ -283,8 +283,7 @@ first run of a member, the new item of a member with a session, the wake-up, the
 the coordinator and for a requester (with the sentence of how a worker that could not do a request ended,
 `worker-*.md`), and the notification that a team is finished.
 
-**Known limits.** An agent that never reads its messages is woken again and again (the Bash wake-loop guard is not
-ported). A request that is being served when the daemon stops is not returned. The bus gives the oldest request of every
+**Known limits.** An agent that never reads its messages is woken at most `limits.wake_ups_per_message` times for the same message (`owner/wakes.rs`): then the daemon stops, logs a `bus_down` warning and leaves the message unread on the bus. The counts are kept in memory only: a restart of the daemon starts them again. A request that is being served when the daemon stops is not returned. The bus gives the oldest request of every
 team to whichever team's worker asks: a look at a team holds the requests of other teams while it reads the queue on, and
 puts them back before the next team is looked at. The notices still in the outbox when the daemon stops are lost, and so is why a queued run starts (a wake-up, an item,
 a request): it then starts as the plain continuation of its task. The owner's loop waits for each `agentbus` and `git`

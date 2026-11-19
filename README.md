@@ -629,6 +629,12 @@ A sleeping member costs nothing; every wake-up starts a run and costs tokens. So
   message, or more than `AGENT_WAKE_RATE_MAX` (30) runs within 10 minutes — is **paused** for
   `AGENT_WAKE_LOOP_PAUSE_MIN` (15) minutes. You get a notification and the coordinator a `member_paused`
   message; the log shows `wake_loop_detected`.
+- **Wake-ups per message (Rust daemon).** A member is woken for the same unread message at most
+  `limits.wake_ups_per_message` times (default 2); then it is not woken for it again, a `bus_down` warning names the
+  task, the message and the count, and the message stays unread for the member's next run (a newer message wakes it
+  again). A lead whose fix response was taken is not woken until its branch is published. The `run_started` line of a
+  wake-up carries `why=wake_up`, `message_id`, `from` and `wake_ups`, and the wake-up prompt says first to call
+  `read_messages`; a wake-up during an open fix pass says in one line that the pass is still open.
 - **Exhausted quota.** When a provider stops a run because its quota or usage limit is exhausted ("Individual
   quota reached… Resets in 24m46s", "usage limit reached", "try again in 2 hours", "resets 3pm"…), the task is
   **paused** until the limit resets (plus a minute; `AGENT_QUOTA_PAUSE_MIN`, default 30 min, when the CLI does
