@@ -357,6 +357,11 @@ async fn reviewer_target_is_removed_at_the_end_of_its_run_below_the_low_limit() 
     let (held, quick) = reviewers_of(&rig, &team).await;
     let target = rig.worktree(&quick).join("target");
 
+    // The quick reviewer builds before it reports: only once its build is there can its removal be awaited.
+    rig.wait_for("the quick reviewer's build to be there", || {
+        target.join("output.bin").is_file()
+    })
+    .await;
     rig.wait_for("the quick reviewer's target to be removed", || !target.exists())
         .await;
 
