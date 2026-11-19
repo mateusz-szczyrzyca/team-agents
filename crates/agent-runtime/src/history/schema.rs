@@ -388,4 +388,8 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
         version: 7,
         sql: include_str!("turn_limit.sql"),
     },
+    Migration {
+        version: 8,
+        sql: include_str!("008-finding-decisions.sql"),
+    },
 ];
