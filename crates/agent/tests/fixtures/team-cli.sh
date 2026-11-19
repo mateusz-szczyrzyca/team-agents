@@ -212,7 +212,12 @@ case $action in
     ;;
   opinion-retry:*)
     if [[ $prompt == *'# SECOND OPINION REQUEST'* || $prompt == *'# CORRECT YOUR SECOND OPINION'* ]]; then
-      number=$(awk '/^[0-9]+\. \[/{sub(/\./, "", $1); print $1; exit}' <<< "$prompt")
+      if [[ $prompt == *'# SECOND OPINION REQUEST'* ]]; then
+        number=$(awk '/^[0-9]+\. \[/{sub(/\./, "", $1); print $1; exit}' <<< "$prompt")
+        printf '%s' "$number" > .opinion-number
+      else
+        number=$(cat .opinion-number)
+      fi
       marker="$home/opinion-first-$number"
       if mkdir "$marker"; then printf '%s' "$PWD" > "$marker/owner"; fi
       owner=$(cat "$marker/owner")
