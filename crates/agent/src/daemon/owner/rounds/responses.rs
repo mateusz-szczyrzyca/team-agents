@@ -107,7 +107,7 @@ impl Owner {
             look.changed = true;
             if let Some(text) = correction {
                 tracing::warn!(event = LogEvent::ChecksDecided.as_str(), task = %lead.task, pass, bounces, "invalid lead finding response: verification remains held");
-                if bounces <= u32::MAX {
+                if bounces <= super::verdicts::MAX_VERDICT_BOUNCES {
                     self.release(&lead.task, Why::Gate(text), look)?;
                 } else {
                     let values = Variables::new()
