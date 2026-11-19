@@ -234,15 +234,10 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
 
 CREATE VIRTUAL TABLE history_search USING fts5(sequence UNINDEXED, log UNINDEXED, run UNINDEXED, task UNINDEXED, body, tokenize='unicode61 remove_diacritics 0');
 
-CREATE TABLE 'history_search_data'(id INTEGER PRIMARY KEY, block BLOB);
 
-CREATE TABLE 'history_search_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID;
 
-CREATE TABLE 'history_search_content'(id INTEGER PRIMARY KEY, c0, c1, c2, c3, c4);
 
-CREATE TABLE 'history_search_docsize'(id INTEGER PRIMARY KEY, sz BLOB);
 
-CREATE TABLE 'history_search_config'(k PRIMARY KEY, v) WITHOUT ROWID;
 
 CREATE TRIGGER history_search_insert AFTER INSERT ON history_records BEGIN
  INSERT INTO history_search(rowid,sequence,run,task,body) SELECT h.sequence,h.sequence,
@@ -359,3 +354,5 @@ CREATE INDEX runs_by_task ON runs (task, at);
 
 CREATE INDEX runs_by_agent ON runs(agent,run);
 
+
+INSERT INTO history_cursors (name, value) VALUES ('daemon_logs', 0);
