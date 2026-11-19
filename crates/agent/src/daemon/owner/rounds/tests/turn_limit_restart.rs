@@ -630,3 +630,66 @@ async fn engine_failure_preserves_the_opinion_request_for_reassignment() {
     drop(step.owner);
     crate::daemon::history::close(step.writer).await;
 }
+
+#[tokio::test]
+async fn an_exhausted_opinion_ignores_a_late_successful_report() {
+    use agent_core::state::OpinionStage;
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-failure:FAILED"),
+            investigator("inv-r2", "opinion-failure:FAILED"),
+            investigator("inv-r3", "opinion-failure:FAILED"),
+            investigator("inv-r4", "opinion-failure:FAILED"),
+            investigator("inv-r5", "opinion-failure:FAILED"),
+            investigator("inv-r6", "opinion-failure:FAILED"),
+            investigator("inv-r7", "opinion-failure:FAILED"),
+            investigator("inv-r8", "opinion-failure:FAILED"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], super::rig::ONE, MergeMode::Autopilot, None)
+        .await;
+    rig.wait_for("both terminal notices", || {
+        rig.notifications()
+            .iter()
+            .filter(|notice| notice.contains("Second opinion needs attention"))
+            .count()
+            == 2
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let mut step = stepped(&rig).await;
+    let pulls = opinion_pulls(&step.owner).await;
+    let before = step.owner.parts.state.clone();
+    let task = match &before.team(&team).unwrap().items()[0]
+        .findings()
+        .unwrap()
+        .opinions()
+        .first_key_value()
+        .unwrap()
+        .1
+        .stage
+    {
+        OpinionStage::Assigned { task, .. } => task.clone(),
+        other => panic!("terminal assignment: {other:?}"),
+    };
+    let located = step.owner.locate(&task).unwrap();
+    let result = step
+        .owner
+        .opinion_ended(
+            &pulls,
+            &task,
+            &located,
+            Some("OPINION: CONFIRMED\nLate café report.\nSTATUS: DONE"),
+        )
+        .await;
+    assert!(matches!(result, Ok(true)), "{result:?}");
+    assert_eq!(step.owner.parts.state, before);
+    drop(step.owner);
+    crate::daemon::history::close(step.writer).await;
+}
