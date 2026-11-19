@@ -2702,3 +2702,59 @@ async fn a_zero_fix_allowance_does_not_restart_the_lead_again_after_its_answer_w
     let lead = team.find(&tasks[0]).unwrap().1;
     assert_eq!(lead.runs().len(), 3);
 }
+
+#[tokio::test]
+async fn a_major_explanation_is_verified_and_merges_without_another_code_commit() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,done:FINDING 1: EXPLAINED — units are explicit"),
+            investigator("inv-r1", "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 work-1.txt:1 — units unclear → document units\\n   CHECK: read work-1.txt,done:VERDICT: APPROVE\\nFINDING 1: ACCEPTED — explicit contract"),
+            investigator("inv-r2", "done:VERDICT: APPROVE,done:VERDICT: APPROVE\\nFINDING 1: ACCEPTED — explicit contract"),
+        ], 5, false,
+    ).await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.prompt(&tasks[0], 2).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let recorded = rig
+        .state()
+        .team(&team)
+        .unwrap()
+        .item("1.1".parse().unwrap())
+        .unwrap()
+        .findings()
+        .unwrap()
+        .disputes()
+        .unwrap()
+        .explanations
+        .len();
+    assert_eq!(recorded, 1);
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let ledger = state
+        .team(&team)
+        .unwrap()
+        .item("1.1".parse().unwrap())
+        .unwrap()
+        .findings()
+        .unwrap();
+    assert_eq!(
+        ledger.entries()[0].finding.severity,
+        agent_core::review_findings::Severity::Minor
+    );
+    assert_eq!(
+        ledger
+            .disputes()
+            .unwrap()
+            .explanations
+            .values()
+            .next()
+            .unwrap()
+            .votes
+            .len(),
+        2
+    );
+    assert_eq!(rig.github.reviews(1).len(), 4);
+}
