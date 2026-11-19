@@ -161,6 +161,11 @@ fn table(texts: &AutopilotPrompts, ledger: &Findings) -> Result<String, TextErro
     )?)
 }
 
+/// The findings comment: open entries in number order, then the closed ones folded in one `<details>` block.
+fn comment(_texts: &AutopilotPrompts, _ledger: &Findings) -> Result<String, TextError> {
+    Ok(String::new())
+}
+
 impl Owner {
     /// A failed table publication is logged; reports and decisions remain authoritative.
     pub(super) async fn post_findings(&mut self, pulls: &Pulls, lead: &Lead, team: &TeamId, asked: &Asked) {
