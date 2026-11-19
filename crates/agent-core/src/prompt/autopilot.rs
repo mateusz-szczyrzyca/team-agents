@@ -350,6 +350,10 @@ impl AutopilotPrompt {
     }
 
     /// The catalog file of this text.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one exhaustive arm per catalog text keeps paths auditable together"
+    )]
     const fn path(self) -> &'static str {
         match self {
             Self::WaitNothing => "harness/pr/wait-nothing.md",
