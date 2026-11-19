@@ -1362,3 +1362,42 @@ fn task_allowances_cover_only_path_changes_and_leave_other_tests_and_markers() {
         assert_eq!(issue.allowed_beforehand(&allowances), allowances.first());
     }
 }
+
+// Rule: a file moved from one protected place into another is an issue for each end; an allowance for the old place
+// does not cover the new one.
+#[test]
+fn a_move_between_two_protected_places_is_an_issue_for_each_end() {
+    let facts = round(vec![file(
+        "AGENTS.md",
+        Change::Renamed {
+            from: path(".github/ci.yml"),
+        },
+        text(0, 0),
+    )]);
+    let issues = found(&facts);
+    assert_eq!(
+        issues,
+        vec![
+            Issue::ProtectedChanged {
+                path: path(".github/ci.yml"),
+                change: Touch::Renamed,
+            },
+            Issue::ProtectedChanged {
+                path: path("AGENTS.md"),
+                change: Touch::Renamed,
+            },
+        ]
+    );
+    let allowances = [crate::task_allowance::TaskAllowance::parse(".github/ci.yml").unwrap()];
+    let remaining: Vec<_> = issues
+        .iter()
+        .filter(|issue| issue.allowed_beforehand(&allowances).is_none())
+        .collect();
+    assert_eq!(
+        remaining,
+        vec![&Issue::ProtectedChanged {
+            path: path("AGENTS.md"),
+            change: Touch::Renamed,
+        }]
+    );
+}
