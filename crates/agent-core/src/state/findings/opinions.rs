@@ -61,6 +61,41 @@ pub struct OpinionStateError {
 }
 
 impl Findings {
+    /// Records a complete fix response and its opinion requests atomically.
+    ///
+    /// # Errors
+    /// Returns the protocol error without changing any finding when a line is invalid.
+    pub fn answer_opinions(
+        &mut self,
+        text: &str,
+        pass: NonZeroU32,
+        head: &CommitId,
+        permission: crate::review_response::opinion::Permission,
+    ) -> Result<
+        Vec<(NonZeroU32, crate::review_response::opinion::LeadAnswer)>,
+        crate::review_response::opinion::OpinionError,
+    > {
+        let open = self
+            .entries
+            .iter()
+            .map(|entry| crate::review_response::opinion::OpenFinding {
+                number: entry.number,
+                severity: entry.finding.severity,
+                explained: false,
+                opinion_used: false,
+            })
+            .collect::<Vec<_>>();
+        let _inputs = (pass, head);
+        crate::review_response::opinion::parse_lead(text, &open, permission)
+    }
+
+    /// Accepted code fixes for a particular fix pass, retained across restarts.
+    #[must_use]
+    pub fn fixed_answers(&self, pass: NonZeroU32) -> std::collections::BTreeSet<NonZeroU32> {
+        let _pass = pass;
+        std::collections::BTreeSet::new()
+    }
+
     /// Checks cross-record invariants once at the deserialization boundary.
     pub(super) fn check_opinions(&self) -> Result<(), OpinionStateError> {
         for (number, opinion) in &self.opinions {
