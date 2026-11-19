@@ -58,7 +58,12 @@ fn refuses_missing_unknown_or_rule_id_severities_and_missing_checks() {
             parse_report(&format!("FINDINGS\n{line}"), ReviewVerdict::RequestChanges, &[]),
             Err(ReportError {
                 line: source_line,
-                kind
+                kind,
+                detail: AnswerDiagnostic {
+                    source_line: Some(line.lines().next().unwrap().to_owned()),
+                    number: None,
+                    mistake: AnswerMistake::Malformed,
+                },
             })
         );
     }
@@ -169,7 +174,12 @@ fn refuses_a_numbered_finding_outside_the_findings_section() {
             parse_report(text, ReviewVerdict::Approve, &[]),
             Err(ReportError {
                 line: 3,
-                kind: ReportProblem::Finding
+                kind: ReportProblem::Finding,
+                detail: AnswerDiagnostic {
+                    source_line: Some(text.lines().nth(2).unwrap().to_owned()),
+                    number: None,
+                    mistake: AnswerMistake::Malformed,
+                },
             }),
             "{text}"
         );
@@ -191,7 +201,12 @@ fn refuses_an_unnumbered_finding_line_anywhere() {
             parse_report(text, ReviewVerdict::Approve, &[]),
             Err(ReportError {
                 line,
-                kind: ReportProblem::Finding
+                kind: ReportProblem::Finding,
+                detail: AnswerDiagnostic {
+                    source_line: Some(text.lines().nth(line - 1).unwrap().to_owned()),
+                    number: None,
+                    mistake: AnswerMistake::Malformed,
+                },
             }),
             "{text}"
         );
@@ -238,7 +253,12 @@ FINDINGS\n1. [MAJOR] ERR-3 y.rs:4 — real problem → fix\n   CHECK: read y.rs\
             parse_report(&text, ReviewVerdict::Approve, &[]),
             Err(ReportError {
                 line: 1,
-                kind: ReportProblem::Verdict
+                kind: ReportProblem::Verdict,
+                detail: AnswerDiagnostic {
+                    source_line: Some("VERDICT: APPROVE".to_owned()),
+                    number: None,
+                    mistake: AnswerMistake::Verdict,
+                },
             }),
             "{text}"
         );
@@ -255,7 +275,12 @@ FINDINGS\n1. [MAJOR] ERR-3 y.rs:4 — problem → fix\n   CHECK: read y.rs\n";
         parse_report(text, ReviewVerdict::Approve, &[]),
         Err(ReportError {
             line: 1,
-            kind: ReportProblem::Verdict
+            kind: ReportProblem::Verdict,
+            detail: AnswerDiagnostic {
+                source_line: Some("VERDICT: APPROVE".to_owned()),
+                number: None,
+                mistake: AnswerMistake::Verdict,
+            },
         })
     );
     let report = parse_report(text, ReviewVerdict::RequestChanges, &[]).unwrap();
@@ -356,7 +381,12 @@ fn malformed_explanation_votes_receive_the_explanation_protocol_correction() {
         ),
         Err(ReportError {
             line: 1,
-            kind: ReportProblem::DisputeAnswer
+            kind: ReportProblem::DisputeAnswer,
+            detail: AnswerDiagnostic {
+                source_line: Some("FINDING 3: RESOLVED".to_owned()),
+                number: Some(number(3)),
+                mistake: AnswerMistake::NotAllowed,
+            },
         })
     );
 }

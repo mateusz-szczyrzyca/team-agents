@@ -346,6 +346,11 @@ fn fix_answer(
                     number,
                     line,
                     correction,
+                    detail: agent_core::review_findings::AnswerDiagnostic {
+                        source_line: message.lines().nth(line.saturating_sub(1)).map(str::to_owned),
+                        number: Some(number),
+                        mistake: agent_core::review_findings::AnswerMistake::NotAllowed,
+                    },
                 },
             )?
         }

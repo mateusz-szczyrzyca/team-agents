@@ -191,7 +191,12 @@ pub(crate) fn parse_lead_located(
         .iter()
         .map(|entry| (entry.number, entry.severity, entry.explained))
         .collect();
-    super::parse_lead(&normalized, &legacy)?
+    super::parse_lead(&normalized, &legacy)
+        .map_err(|mut error| {
+            // Normalization must never replace the source evidence shown to the lead.
+            error.detail.source_line = text.lines().nth(error.line.saturating_sub(1)).map(str::to_owned);
+            error
+        })?
         .into_iter()
         .map(|(number, answer)| {
             let answer = if let Some(&(line, reason)) = requests.get(&number) {

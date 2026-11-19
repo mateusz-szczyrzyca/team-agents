@@ -1,6 +1,6 @@
 //! The lead's checked answers to the blocking findings of a fix pass.
 
-use crate::review_findings::Severity;
+use crate::review_findings::{AnswerDiagnostic, AnswerMistake, Severity};
 use std::num::NonZeroU32;
 
 /// The lead's response to a blocking finding.
@@ -33,6 +33,8 @@ pub struct ResponseError {
     pub number: NonZeroU32,
     /// The typed correction the harness must render.
     pub correction: Correction,
+    /// Source evidence, including the actual unknown number rather than a compatibility fallback.
+    pub detail: AnswerDiagnostic,
 }
 
 impl ResponseError {
@@ -67,6 +69,7 @@ pub fn parse_lead(
             (Some(_), _) => continue,
             (None, None) => {}
         }
+        let source_line = line;
         let line = line.trim();
         if line.starts_with("STATUS:") {
             ended = true;
@@ -84,6 +87,11 @@ pub fn parse_lead(
                 line: index.saturating_add(1),
                 number: open.first().map_or(NonZeroU32::MIN, |entry| entry.0),
                 correction: Correction::OnePerFinding,
+                detail: AnswerDiagnostic {
+                    source_line: Some(source_line.to_owned()),
+                    number: crate::review_findings::answer_number(source_line),
+                    mistake: AnswerMistake::UnknownNumber,
+                },
             });
         };
         let correction = if *severity == Severity::Major && !used {
@@ -91,13 +99,21 @@ pub fn parse_lead(
         } else {
             Correction::FixedOnly
         };
-        let error = || ResponseError {
+        let error = |mistake| ResponseError {
             line: index.saturating_add(1),
             number: *number,
             correction,
+            detail: AnswerDiagnostic {
+                source_line: Some(source_line.to_owned()),
+                number: Some(*number),
+                mistake,
+            },
         };
-        if ended || answers.iter().any(|(id, _)| id == number) {
-            return Err(error());
+        if ended {
+            return Err(error(AnswerMistake::AfterStatus));
+        }
+        if answers.iter().any(|(id, _)| id == number) {
+            return Err(error(AnswerMistake::Duplicate));
         }
         if *severity == Severity::Minor && !crate::review_findings::accepts_reason(value, "FIXED") {
             continue;
@@ -108,10 +124,10 @@ pub fn parse_lead(
             let why = value
                 .strip_prefix("EXPLAINED — ")
                 .filter(|why| !why.trim().is_empty())
-                .ok_or_else(error)?;
+                .ok_or_else(|| error(AnswerMistake::NotAllowed))?;
             Response::Explained(why.trim().to_owned())
         } else {
-            return Err(error());
+            return Err(error(AnswerMistake::NotAllowed));
         };
         answers.push((*number, response));
     }
@@ -124,6 +140,11 @@ pub fn parse_lead(
                     Correction::FixedOrExplained
                 } else {
                     Correction::FixedOnly
+                },
+                detail: AnswerDiagnostic {
+                    source_line: None,
+                    number: Some(*number),
+                    mistake: AnswerMistake::Missing,
                 },
             });
         }

@@ -100,6 +100,23 @@ fn reads_mixed_answers_atomically_and_retains_legacy_validation() {
                 line,
                 number: NonZeroU32::new(number).unwrap(),
                 correction,
+                detail: crate::review_findings::AnswerDiagnostic {
+                    source_line: text.lines().nth(line - 1).map(str::to_owned),
+                    number: if text.starts_with("FINDING 9:") {
+                        NonZeroU32::new(9)
+                    } else {
+                        NonZeroU32::new(number)
+                    },
+                    mistake: if line > text.lines().count() {
+                        crate::review_findings::AnswerMistake::Missing
+                    } else if text.starts_with("FINDING 9:") {
+                        crate::review_findings::AnswerMistake::UnknownNumber
+                    } else if text.starts_with("STATUS:") {
+                        crate::review_findings::AnswerMistake::AfterStatus
+                    } else {
+                        crate::review_findings::AnswerMistake::Duplicate
+                    },
+                },
             })),
             "{text}"
         );

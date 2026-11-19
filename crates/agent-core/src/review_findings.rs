@@ -129,6 +129,8 @@ pub struct ReportError {
     pub line: usize,
     /// Which part of the protocol failed.
     pub kind: ReportProblem,
+    /// The exact refused source and mistake, separate from the protocol instruction.
+    pub detail: AnswerDiagnostic,
 }
 
 impl ReportError {
@@ -197,6 +199,16 @@ fn read_report(
         let fail = |kind| ReportError {
             line: line_number,
             kind,
+            detail: AnswerDiagnostic {
+                source_line: Some((*line).to_owned()),
+                number: answer_number(line),
+                mistake: AnswerMistake::Malformed,
+            },
+        };
+        let answer_fail = |mistake| {
+            let mut error = fail(ReportProblem::Answer);
+            error.detail.mistake = mistake;
+            error
         };
         match (fence, fence_marker(line)) {
             (None, Some(open)) => {
@@ -222,26 +234,29 @@ fn read_report(
             ended = true;
         }
         if let Some(answer) = trimmed.strip_prefix("FINDING ") {
-            if ended || !report.findings.is_empty() {
-                return Err(fail(ReportProblem::Answer));
+            if ended {
+                return Err(answer_fail(AnswerMistake::AfterStatus));
+            }
+            if !report.findings.is_empty() {
+                return Err(answer_fail(AnswerMistake::AfterFindings));
             }
             let Some((id, value)) = answer.split_once(':') else {
-                return Err(fail(ReportProblem::Answer));
+                return Err(answer_fail(AnswerMistake::Malformed));
             };
             let Some((id, _)) = open.iter().find(|(number, _)| number.to_string() == id.trim()) else {
-                return Err(fail(ReportProblem::Answer));
+                return Err(answer_fail(AnswerMistake::UnknownNumber));
             };
             let id = *id;
             if report.answers.iter().any(|(n, _)| *n == id) {
-                return Err(fail(ReportProblem::Answer));
+                return Err(answer_fail(AnswerMistake::Duplicate));
             }
             let severity = open
                 .iter()
                 .find(|(n, _)| *n == id)
                 .map(|(_, severity)| *severity)
-                .ok_or_else(|| fail(ReportProblem::Answer))?;
+                .ok_or_else(|| answer_fail(AnswerMistake::UnknownNumber))?;
             let answer = read_answer(value.trim(), severity, explained.map(|ids| ids.contains(&id)))
-                .ok_or_else(|| fail(ReportProblem::Answer))?;
+                .ok_or_else(|| answer_fail(AnswerMistake::NotAllowed))?;
             report.answers.push((id, answer));
         } else if in_findings && numbered(trimmed) {
             let mut finding = read_finding(trimmed).ok_or_else(|| fail(ReportProblem::Finding))?;
@@ -261,6 +276,14 @@ fn read_report(
         return Err(ReportError {
             line: lines.len().saturating_add(1),
             kind: ReportProblem::Answer,
+            detail: AnswerDiagnostic {
+                source_line: None,
+                number: open
+                    .iter()
+                    .find(|(id, _)| !report.answers.iter().any(|(n, _)| n == id))
+                    .map(|(id, _)| *id),
+                mistake: AnswerMistake::Missing,
+            },
         });
     }
     let blocking = report.findings.iter().any(|finding| finding.severity.blocks())
@@ -281,6 +304,15 @@ fn read_report(
                 .position(|line| line.contains("VERDICT:"))
                 .map_or(1, |n| n.saturating_add(1)),
             kind: ReportProblem::Verdict,
+            detail: AnswerDiagnostic {
+                source_line: lines
+                    .iter()
+                    .find(|line| line.contains("VERDICT:"))
+                    .or_else(|| lines.first())
+                    .map(|line| (*line).to_owned()),
+                number: None,
+                mistake: AnswerMistake::Verdict,
+            },
         });
     }
     Ok(report)
@@ -302,6 +334,21 @@ pub fn parse_verification(
         }
         error
     })
+}
+
+/// Reads an optional numeric label for diagnostics; malformed labels remain in the source line.
+/// A failed conversion is not a second error: the caller already refuses that source as malformed or unknown.
+pub(crate) fn answer_number(line: &str) -> Option<NonZeroU32> {
+    let (number, _) = line
+        .trim()
+        .trim_start_matches('#')
+        .trim()
+        .strip_prefix("FINDING ")?
+        .split_once(':')?;
+    match number.trim().parse() {
+        Ok(number) => Some(number),
+        Err(_invalid_label) => None,
+    }
 }
 
 /// Parses one permitted verifier answer, with a nonempty evidence string.
