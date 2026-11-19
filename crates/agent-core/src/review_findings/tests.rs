@@ -374,3 +374,11 @@ fn resolved_accepts_optional_reason_separators() {
         );
     }
 }
+
+#[test]
+fn verification_refuses_an_answer_after_status() {
+    let text = "VERDICT: APPROVE\nSTATUS: DONE\nFINDING 3: RESOLVED";
+    let error = parse_verification(text, ReviewVerdict::Approve, &[(number(3), Severity::Major)], &[])
+        .expect_err("an answer after the final status is not part of the report");
+    assert_eq!((error.line, error.kind), (3, ReportProblem::DisputeAnswer));
+}
