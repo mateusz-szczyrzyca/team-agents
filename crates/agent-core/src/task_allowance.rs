@@ -23,7 +23,11 @@ impl TaskAllowance {
     /// # Errors
     /// [`AllowanceError`] for invalid syntax or a pattern reaching rule files.
     pub fn parse(text: &str) -> Result<Self, AllowanceError> {
-        Ok(Self(text.parse()?))
+        let pattern: PathPattern = text.parse()?;
+        if pattern.reaches_rules() {
+            return Err(AllowanceError::Rules);
+        }
+        Ok(Self(pattern))
     }
 
     /// The pattern as the task author wrote it, without surrounding whitespace.
@@ -34,8 +38,8 @@ impl TaskAllowance {
 
     /// Whether this allowance covers a path relative to the repository root.
     #[must_use]
-    pub fn matches(&self, _path: &RepoPath) -> bool {
-        false
+    pub fn matches(&self, path: &RepoPath) -> bool {
+        self.0.matches_rooted(path)
     }
 }
 

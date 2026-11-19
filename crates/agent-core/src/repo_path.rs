@@ -237,6 +237,24 @@ fn check_pattern(text: &str) -> Result<(), InvalidPathPattern> {
 text_value!(PathPattern, check_pattern, keep, InvalidPathPattern);
 
 impl PathPattern {
+    /// Matches a task allowance at the root, including patterns without a slash.
+    pub(crate) fn matches_rooted(&self, path: &RepoPath) -> bool {
+        let pattern: Vec<&str> = self.0.trim_end_matches('/').split('/').collect();
+        let path: Vec<&str> = path.as_str().split('/').collect();
+        match_segments(&pattern, &path)
+    }
+
+    /// Whether this pattern can name a rules file or a file below the workflows directory.
+    pub(crate) fn reaches_rules(&self) -> bool {
+        let segments: Vec<&str> = self.0.trim_end_matches('/').split('/').collect();
+        segments
+            .last()
+            .is_some_and(|last| *last != "**" && (glob_segment(last, "AGENTS.md") || glob_segment(last, "CLAUDE.md")))
+            || match_segments(&segments, &["AGENTS.md"])
+            || match_segments(&segments, &["CLAUDE.md"])
+            || reaches_workflow(&segments, &[".github", "workflows"])
+    }
+
     /// Whether the pattern matches `path`.
     #[must_use]
     pub fn matches(&self, path: &RepoPath) -> bool {
@@ -252,6 +270,21 @@ impl PathPattern {
         }
         let segments: Vec<&str> = path.as_str().split('/').collect();
         match_segments(&pattern, &segments)
+    }
+}
+
+/// Whether some path below the fixed directory prefix can match the pattern.
+fn reaches_workflow(pattern: &[&str], prefix: &[&str]) -> bool {
+    let Some((segment, rest)) = pattern.split_first() else {
+        return false;
+    };
+    let Some((name, tail)) = prefix.split_first() else {
+        return true;
+    };
+    if *segment == "**" {
+        reaches_workflow(rest, prefix) || reaches_workflow(pattern, tail)
+    } else {
+        glob_segment(segment, name) && reaches_workflow(rest, tail)
     }
 }
 
