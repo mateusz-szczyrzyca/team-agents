@@ -146,6 +146,10 @@ pub enum AutopilotPrompt {
     ReviewResponseForm,
     /// Source evidence and all available answers after a refused line.
     ReviewAnswerDiagnostic,
+    /// The same for a refused line whose label is no finding number.
+    ReviewAnswerDiagnosticUnnumbered,
+    /// Correction for a refused line whose label is no finding number.
+    ReviewResponseUnnumbered,
     /// Correction for an unknown blocking finding number.
     ReviewResponseNumbers,
     /// Correction allowing an unused major explanation.
@@ -270,6 +274,8 @@ impl AutopilotPrompt {
         Self::ReviewVerifierResolved,
         Self::ReviewResponseForm,
         Self::ReviewAnswerDiagnostic,
+        Self::ReviewAnswerDiagnosticUnnumbered,
+        Self::ReviewResponseUnnumbered,
         Self::ReviewResponseNumbers,
         Self::ReviewResponseExplain,
         Self::ReviewResponseFixed,
@@ -404,6 +410,8 @@ impl AutopilotPrompt {
             Self::ReviewVerifierResolved => "harness/review/verifier-resolved.md",
             Self::ReviewResponseForm => "harness/review/response-form.md",
             Self::ReviewAnswerDiagnostic => "harness/review/answer-diagnostic.md",
+            Self::ReviewAnswerDiagnosticUnnumbered => "harness/review/answer-diagnostic-unnumbered.md",
+            Self::ReviewResponseUnnumbered => "harness/review/response-unnumbered.md",
             Self::ReviewDisputes => "harness/review/disputes.md",
             Self::ReviewExplanation => "harness/review/explanation.md",
             Self::ReviewExplanationVote => "harness/review/explanation-vote.md",
@@ -505,6 +513,8 @@ impl AutopilotPrompt {
             Self::ReviewResponseInvalid => &["line", "number", "allowed"],
             Self::ReviewResponseForm => &["number", "allowed"],
             Self::ReviewAnswerDiagnostic => &["number", "source", "mistake", "forms"],
+            Self::ReviewAnswerDiagnosticUnnumbered => &["source", "mistake", "forms"],
+            Self::ReviewResponseUnnumbered => &["line"],
             Self::ReviewExplanation => &["status", "why", "votes"],
             Self::ReviewExplanationVote => &["reviewer", "status", "why"],
             Self::ReviewFinding => &["reviewer", "report"],

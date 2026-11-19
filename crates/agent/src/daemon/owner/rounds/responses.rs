@@ -270,10 +270,15 @@ fn response_correction(
         Correction::FixedOrExplained => AutopilotPrompt::ReviewResponseExplain,
         Correction::FixedOnly => AutopilotPrompt::ReviewResponseFixed,
     };
+    let Some(number) = problem.detail.number else {
+        // A label that is no number names no finding: the first open one is not the one meant.
+        let values = Variables::new().with("line", problem.line.to_string())?;
+        return Ok(pulls.texts.render(AutopilotPrompt::ReviewResponseUnnumbered, &values)?);
+    };
     let allowed = pulls.texts.render(instruction, &Variables::new())?;
     let values = Variables::new()
         .with("line", problem.line.to_string())?
-        .with("number", problem.detail.number.unwrap_or(problem.number).to_string())?
+        .with("number", number.to_string())?
         .with("allowed", allowed.trim_end())?;
     Ok(pulls.texts.render(AutopilotPrompt::ReviewResponseInvalid, &values)?)
 }
@@ -434,17 +439,17 @@ pub(super) fn answer_diagnostic(
         AnswerMistake::Verdict => AutopilotPrompt::ReviewMistakeVerdict,
     };
     let mistake = texts.render(prompt, &Variables::new())?;
-    Ok(texts.render(
-        AutopilotPrompt::ReviewAnswerDiagnostic,
-        &Variables::new()
-            .with(
-                "number",
-                detail.number.map_or_else(String::new, |number| number.to_string()),
-            )?
-            .with("source", detail.source_line.as_deref().unwrap_or_default())?
-            .with("mistake", mistake.trim_end())?
-            .with("forms", forms)?,
-    )?)
+    let values = Variables::new()
+        .with("source", detail.source_line.as_deref().unwrap_or_default())?
+        .with("mistake", mistake.trim_end())?
+        .with("forms", forms)?;
+    Ok(match detail.number {
+        Some(number) => texts.render(
+            AutopilotPrompt::ReviewAnswerDiagnostic,
+            &values.with("number", number.to_string())?,
+        )?,
+        None => texts.render(AutopilotPrompt::ReviewAnswerDiagnosticUnnumbered, &values)?,
+    })
 }
 
 /// Lists the forms the lead may use for each open blocking finding.
