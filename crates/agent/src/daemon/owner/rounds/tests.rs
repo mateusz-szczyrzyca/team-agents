@@ -2827,5 +2827,6 @@ async fn third_invalid_fix_response_notifies_human_and_holds_publication() {
     assert!(matches!(item.phase(), ItemPhase::Fixing { .. }));
     assert_eq!(rig.github.reviews(1).len(), 2);
     assert_eq!(rig.notifications().len(), 1);
-    assert!(rig.notifications()[0].contains("FINDING 1:"));
+    let notification: serde_json::Value = serde_json::from_str(&rig.notifications()[0]).unwrap();
+    assert_eq!(notification["kind"], "publish_failed");
 }
