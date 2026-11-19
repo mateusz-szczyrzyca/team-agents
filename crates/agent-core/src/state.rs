@@ -20,6 +20,7 @@ mod run;
 mod strict;
 mod team;
 mod values;
+mod wake_delivery;
 
 pub use checked::CheckedMut;
 pub use checks::{Asked, ChecksRecord, ItemChecks, Sent};
@@ -43,8 +44,9 @@ pub use team::{
     ReviewerProblem, RoundsError, TaskListText, Team, TeamError, TeamMembers, TeamMut,
 };
 pub use values::{CommitId, InvalidCommitId, InvalidTimestamp, PrNumber, SessionId, Timestamp};
+pub use wake_delivery::WakeDelivery;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -85,6 +87,9 @@ pub struct State {
     schema_version: SchemaVersion,
     /// The teams, oldest first.
     teams: Vec<Team>,
+    /// Delivery budgets by task; an absent entry means no message has a recorded wake-up budget.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    wake_deliveries: BTreeMap<TaskId, WakeDelivery>,
 }
 
 /// What a [`State`] is written as, before its checks.
@@ -95,6 +100,9 @@ struct StateWire {
     schema_version: SchemaVersion,
     /// See [`State`].
     teams: Vec<Team>,
+    /// Optional in state written before wake-up delivery budgets were persisted.
+    #[serde(default)]
+    wake_deliveries: BTreeMap<TaskId, WakeDelivery>,
 }
 
 /// Only the schema version of a state file, read before the rest.
@@ -223,12 +231,31 @@ pub struct TaskRef<'a> {
 }
 
 impl State {
+    /// The wake delivery budget of a task, including historical tasks no longer in the crew.
+    #[must_use]
+    pub fn wake_delivery(&self, task: &TaskId) -> Option<WakeDelivery> {
+        self.wake_deliveries.get(task).copied()
+    }
+
+    /// Records a delivery budget, or forgets it when the task has read what woke it.
+    pub fn record_wake_delivery(&mut self, task: TaskId, delivery: Option<WakeDelivery>) {
+        match delivery {
+            Some(delivery) => {
+                self.wake_deliveries.insert(task, delivery);
+            }
+            None => {
+                self.wake_deliveries.remove(&task);
+            }
+        }
+    }
+
     /// A state without teams.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             schema_version: SchemaVersion,
             teams: Vec::new(),
+            wake_deliveries: BTreeMap::new(),
         }
     }
 
@@ -475,6 +502,7 @@ impl TryFrom<StateWire> for State {
         Ok(Self {
             schema_version: wire.schema_version,
             teams: wire.teams,
+            wake_deliveries: wire.wake_deliveries,
         })
     }
 }

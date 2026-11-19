@@ -47,6 +47,7 @@ pub(super) fn from_v1(text: &str) -> Result<State, StateError> {
     Ok(State::try_from(StateWire {
         schema_version: SchemaVersion,
         teams,
+        wake_deliveries: std::collections::BTreeMap::new(),
     })?)
 }
 
