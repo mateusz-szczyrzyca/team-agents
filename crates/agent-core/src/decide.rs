@@ -19,3 +19,6 @@ pub mod round;
 pub mod team;
 
 pub mod wait;
+
+/// Deterministic assignment of investigators to any team activity.
+pub mod investigator;
