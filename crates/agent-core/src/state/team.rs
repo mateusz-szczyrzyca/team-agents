@@ -800,23 +800,25 @@ mod tests {
         /// See [`Team`].
         #[serde(default)]
         reviewers: Vec<Member>,
+        /// Activities are initialized by the team constructor; these cases exercise items and reviewers.
+        #[serde(default, rename = "activities")]
+        _activities: Vec<Activity>,
     }
 
     impl TryFrom<TeamWire> for Team {
         type Error = TeamError;
 
         fn try_from(wire: TeamWire) -> Result<Self, Self::Error> {
-            let team = Self {
-                id: wire.id,
-                repo: wire.repo,
-                created_at: wire.created_at,
-                merge: wire.merge,
-                task_list: wire.task_list,
-                items: wire.items,
-                rounds: Vec::new(),
-                crew: wire.crew,
-                reviewers: wire.reviewers,
-            };
+            let mut team = Self::new(
+                wire.id,
+                wire.repo,
+                wire.created_at,
+                wire.merge,
+                wire.task_list,
+                wire.crew,
+            );
+            team.items = wire.items;
+            team.reviewers = wire.reviewers;
             check_team(&team)?;
             Ok(team)
         }
