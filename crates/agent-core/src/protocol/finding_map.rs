@@ -181,3 +181,6 @@ where
     let set = BTreeSet::<FindingKey>::deserialize(deserializer)?;
     Ok(set.into_iter().map(|k| k.0).collect())
 }
+
+#[cfg(test)]
+mod tests;

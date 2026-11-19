@@ -407,4 +407,24 @@ mod protocol_findings_maps {
             assert_state_refuses_key(invalid);
         }
     }
+
+    #[test]
+    fn key_deserialization_refuses_keys_that_are_not_canonical_decimal_numbers() {
+        for invalid in ["01", "+1", "007"] {
+            assert_state_refuses_key(invalid);
+        }
+    }
+
+    #[test]
+    fn every_reply_variant_round_trips_with_an_empty_ledger() {
+        let (state, team_id, round_id) = fixing_state(false);
+        assert_replies_round_trip(replies(&state, &team_id, &round_id));
+    }
+
+    #[test]
+    fn every_event_kind_variant_round_trips_with_an_empty_ledger() {
+        let (state, team_id, round_id) = fixing_state(false);
+        let summary = TeamSummary::from(state.team(&team_id).unwrap());
+        assert_event_round_trips(event_kinds(&team_id, &round_id, summary));
+    }
 }
