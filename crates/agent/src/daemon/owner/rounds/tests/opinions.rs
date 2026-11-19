@@ -182,32 +182,7 @@ async fn unanswered_opinions_notify_once_and_keep_waiting_across_restart() {
             "waiting for a second opinion"
         );
         assert!(matches!(item.phase(), ItemPhase::Fixing { .. }));
-        for (number, opinion) in item.findings().unwrap().opinions() {
-            let attempts = item.findings().unwrap().opinion_attempts(*number);
-            assert_eq!(attempts.len(), 3);
-            assert!(attempts.iter().all(|attempt| attempt.failure.is_some()));
-            let notice = rig
-                .notifications()
-                .into_iter()
-                .find(|n| n.contains("Second opinion needs attention") && n.contains(&format!("FINDING {number}")))
-                .unwrap();
-            for attempt in attempts {
-                assert!(notice.contains(attempt.investigator.as_str()), "{notice}");
-            }
-            let OpinionStage::Assigned { task, .. } = &opinion.stage else {
-                panic!("must remain pending")
-            };
-            assert_eq!(
-                rig.notifications()
-                    .iter()
-                    .filter(|n| n.contains("Second opinion needs attention")
-                        && n.contains(round.id().as_str())
-                        && n.contains(task.as_str())
-                        && n.contains(&format!("FINDING {number}")))
-                    .count(),
-                1
-            );
-        }
+        assert_exhausted_opinions(&rig, team);
         rig.stop().await.unwrap();
         assert_eq!(
             rig.notifications()
@@ -896,5 +871,37 @@ async fn replacement_history_keeps_each_failed_investigator_and_its_reason() {
                 attempt.investigator
             );
         }
+    }
+}
+
+/// Keeps all terminal ownership and notice assertions together.
+fn assert_exhausted_opinions(rig: &Rig, team: &agent_core::state::Team) {
+    let item = &team.items()[0];
+    let round = &team.rounds()[0];
+    for (number, opinion) in item.findings().unwrap().opinions() {
+        let attempts = item.findings().unwrap().opinion_attempts(*number);
+        assert_eq!(attempts.len(), 3);
+        assert!(attempts.iter().all(|attempt| attempt.failure.is_some()));
+        let notice = rig
+            .notifications()
+            .into_iter()
+            .find(|n| n.contains("Second opinion needs attention") && n.contains(&format!("FINDING {number}")))
+            .unwrap();
+        for attempt in attempts {
+            assert!(notice.contains(attempt.investigator.as_str()), "{notice}");
+        }
+        let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+            panic!("must remain pending")
+        };
+        assert_eq!(
+            rig.notifications()
+                .iter()
+                .filter(|n| n.contains("Second opinion needs attention")
+                    && n.contains(round.id().as_str())
+                    && n.contains(task.as_str())
+                    && n.contains(&format!("FINDING {number}")))
+                .count(),
+            1
+        );
     }
 }

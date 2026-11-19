@@ -492,23 +492,7 @@ async fn opinion_inactivity_uses_review_patience_and_resets_on_output() {
     rig.stop().await.unwrap();
     let mut step = stepped(&rig).await;
     step.owner.parts.state = running;
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
-    let language = step.owner.parts.settings.config.language();
-    let pulls = crate::daemon::owner::rounds::Pulls::new(
-        Arc::new(
-            agent_runtime::autopilot_prompts::AutopilotPrompts::load(&root, language)
-                .await
-                .unwrap(),
-        ),
-        Arc::new(
-            agent_runtime::checks_prompts::ChecksPrompts::load(&root, language)
-                .await
-                .unwrap(),
-        ),
-        &step.owner.parts.settings,
-    )
-    .unwrap()
-    .unwrap();
+    let pulls = opinion_pulls(&step.owner).await;
     let now = Timestamp::now(&step.owner.parts.clock).unwrap();
     step.owner.replace_silent_opinions(&pulls, &team, now).await.unwrap();
     let tasks: Vec<_> = step.owner.parts.state.team(&team).unwrap().items()[0]
@@ -563,4 +547,26 @@ async fn opinion_inactivity_uses_review_patience_and_resets_on_output() {
     }
     drop(step.owner);
     crate::daemon::history::close(step.writer).await;
+}
+
+/// Loads the real opinion catalog for deterministic owner stepping.
+async fn opinion_pulls(owner: &Owner) -> crate::daemon::owner::rounds::Pulls {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+    let language = owner.parts.settings.config.language();
+    let pulls = crate::daemon::owner::rounds::Pulls::new(
+        Arc::new(
+            agent_runtime::autopilot_prompts::AutopilotPrompts::load(&root, language)
+                .await
+                .unwrap(),
+        ),
+        Arc::new(
+            agent_runtime::checks_prompts::ChecksPrompts::load(&root, language)
+                .await
+                .unwrap(),
+        ),
+        &owner.parts.settings,
+    )
+    .unwrap()
+    .unwrap();
+    pulls
 }
