@@ -21,6 +21,7 @@ pub(crate) use opinions::OpinionDaemonError;
 pub(crate) use responses::ResponseTextError;
 mod reviewers;
 mod verdicts;
+mod waiting;
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -125,6 +126,10 @@ impl Pulls {
 /// been told.
 #[derive(Debug, Default)]
 pub(super) struct PullWatch {
+    /// Rounds whose missing scheduling obligation was already logged as an error.
+    unowned: HashSet<agent_core::ids::RoundId>,
+    /// The next publication action owned by the harness, per round.
+    waits: HashMap<agent_core::ids::RoundId, agent_core::decide::wait::Obligation>,
     /// The branches whose publication failed, and the time before which they are not tried again.
     retry_at: HashMap<(TeamId, BranchName), Timestamp>,
     /// What the human was told once and is not told again.
@@ -357,6 +362,8 @@ pub(super) enum AutopilotNotice {
     Opinion,
     /// Branch publish failed.
     PublishFailed,
+    /// Automatic handover corrections are exhausted.
+    HandoverHeld,
     /// Team asleep.
     TeamAsleep,
     /// Standing item behind a failed member while lead is done.
@@ -380,6 +387,7 @@ impl AutopilotNotice {
             Self::NoVerdict => AutopilotPrompt::NoticeNoVerdict,
             Self::Opinion => AutopilotPrompt::NoticeOpinion,
             Self::PublishFailed => AutopilotPrompt::NoticePublishFailed,
+            Self::HandoverHeld => AutopilotPrompt::NoticeHandoverHeld,
             Self::TeamAsleep => AutopilotPrompt::NoticeTeamAsleep,
             Self::StandingItem => AutopilotPrompt::NoticeStandingItem,
             Self::Closed => AutopilotPrompt::NoticeClosed,
@@ -396,7 +404,7 @@ impl AutopilotNotice {
             Self::Decision => NoticeKind::Decision,
             Self::NoVerdict => NoticeKind::NoVerdict,
             Self::Opinion => NoticeKind::Opinion,
-            Self::PublishFailed => NoticeKind::PublishFailed,
+            Self::PublishFailed | Self::HandoverHeld => NoticeKind::PublishFailed,
             Self::TeamAsleep | Self::StandingItem => NoticeKind::TeamAsleep,
             Self::Closed => NoticeKind::Closed,
             Self::Approved => NoticeKind::Approved,
@@ -700,6 +708,10 @@ mod rig;
 mod round_records_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/handover.rs"]
+mod handover_tests;
 
 #[cfg(test)]
 #[path = "rounds/tests/history_failures.rs"]

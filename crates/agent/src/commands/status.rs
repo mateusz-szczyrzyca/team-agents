@@ -283,7 +283,11 @@ pub(crate) fn round_line(round: &Round) -> String {
 /// A round in full as text: its line, the item, the pull request, the review passes, and the tasks that worked for it
 /// with where they work and their runs.
 pub(crate) fn render_round(detail: &RoundDetail) -> String {
-    let mut lines = vec![format!("{}  team {}", round_line(&detail.round), detail.team)];
+    let waiting = detail
+        .waiting
+        .as_ref()
+        .map_or_else(String::new, |waiting| format!(", waits for {waiting}"));
+    let mut lines = vec![format!("{}  team {}{waiting}", round_line(&detail.round), detail.team)];
     lines.push(format!("  opened {}", detail.round.opened_at()));
     if let RoundLife::Closed { at, how } = detail.round.life() {
         lines.push(format!("  closed {at}, {how}"));

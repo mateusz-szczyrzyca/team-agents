@@ -165,6 +165,9 @@ pub struct TeamSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoundDetail {
+    /// The obligation of an idle open round, absent from older daemon replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<String>,
     /// Assignment times and failed investigators, absent before schema 9.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub opinion_attempts: std::collections::BTreeMap<NonZeroU32, Vec<crate::state::OpinionAttempt>>,
@@ -350,6 +353,7 @@ impl RoundDetail {
             })
         });
         Self {
+            waiting: None,
             team: team.id().clone(),
             round: round.clone(),
             item,
