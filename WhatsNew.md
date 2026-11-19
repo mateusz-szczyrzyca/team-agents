@@ -5,24 +5,6 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.20.0 — 19.11.2026 — PR #136
-
-### Bug fixes
-- [agent] A reviewer's report that is right for one item of a pull request and wrong for another no longer stops the
-  daemon: the report goes back to the reviewer with the refused line and the answers allowed there, and nothing of it
-  is recorded.
-- [agent] A lead's explanation of a finding is kept for every item of the pull request, also for an item that joined
-  it later; before, it was kept for one item only and the verifiers' answers were refused for the other.
-- [agent] [agent-core] At its start the daemon repairs a state in which the items of one pull request disagree on a
-  finding, and logs each repaired finding as `restart_corrected`.
-- [agent] After a restart, a reviewer whose report was not taken is asked again, and a round no longer says it
-  waits for an answer of the human because a reviewer that was replaced had failed.
-
-### Enhancements
-- [agent] [agent-core] The verifier's brief names beside each open finding the answers it may get, for example
-  `ANSWER: FINDING 28: ACCEPTED — why or REJECTED — why or RAISED [BLOCKER] — why`, and the report is read by the
-  same list.
-
 ## 0.19.0 — 19.11.2026 — PR #134
 
 ### New features
