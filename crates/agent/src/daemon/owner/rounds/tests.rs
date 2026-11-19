@@ -2841,7 +2841,7 @@ async fn description_publication_supplies_measured_sections_without_a_lead_file(
     let body = &rig.github.pulls()[0].body;
     let head = rig.remote_tip(&format!("agents/claude-1/{}-1.1", tasks[0]));
     assert!(body.contains("## Size\n"), "{body}");
-    assert!(body.contains(&format!("Commit: `{head}`")), "{body}");
+    assert!(body.contains(&format!("Commit: [`{head}`](")), "{body}");
     assert!(body.contains("The lead supplied no description."), "{body}");
 }
 
