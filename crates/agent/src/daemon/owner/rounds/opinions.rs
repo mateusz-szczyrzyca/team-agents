@@ -330,6 +330,37 @@ impl Owner {
             ledger.opinions().get(&number).map(|opinion| &opinion.stage),
             Some(OpinionStage::Assigned { .. })
         );
+        let pr_number = pr.number;
+        let opinion = ledger
+            .opinions()
+            .get(&number)
+            .ok_or(PublishError::Lost)
+            .map_err(OpinionDaemonError::from)?;
+        let pass = opinion.request.pass.get();
+        let attempt = ledger
+            .opinion_attempts(number)
+            .last()
+            .ok_or(PublishError::Lost)
+            .map_err(OpinionDaemonError::from)?;
+        let why = self.opinion_attempt_text(pulls, attempt)?;
+        let by = attempt
+            .investigator
+            .as_str()
+            .parse()
+            .map_err(PublishError::from)
+            .map_err(OpinionDaemonError::from)?;
+        self.record_event_at(
+            Timestamp::now(&self.parts.clock)?,
+            team_id,
+            self.rounds_of_items(team_id, &ids),
+            HistoryEvent::SecondOpinionAsked {
+                pr: pr_number,
+                number,
+                pass,
+                by,
+                why,
+            },
+        );
         self.keep_opinions(team_id, &ids, &ledger)?;
         let mut look = Look::default();
         if self
@@ -348,6 +379,26 @@ impl Owner {
             self.hold_opinion(pulls, team_id, task).await?;
         }
         Ok(())
+    }
+
+    /// Renders the same retained failure in the history and the final human notice.
+    fn opinion_attempt_text(
+        &self,
+        pulls: &Pulls,
+        attempt: &agent_core::state::OpinionAttempt,
+    ) -> Result<String, OpinionDaemonError> {
+        let failure = attempt.failure.ok_or(PublishError::Lost)?;
+        let template = match failure {
+            OpinionFailure::Failed => AutopilotPrompt::OpinionAttemptFailed,
+            OpinionFailure::NoStatus => AutopilotPrompt::OpinionAttemptNoStatus,
+            OpinionFailure::MissingReport => AutopilotPrompt::OpinionAttemptMissingReport,
+            OpinionFailure::Silent => AutopilotPrompt::OpinionAttemptSilent,
+            OpinionFailure::Interrupted => AutopilotPrompt::OpinionAttemptInterrupted,
+        };
+        let variables = Variables::new()
+            .with("investigator", attempt.investigator.as_str())?
+            .with("task", attempt.task.as_str())?;
+        Ok(pulls.texts.render(template, &variables)?)
     }
 
     /// Holds an unanswered task and sends its human notice once, including across restarts.
@@ -404,26 +455,7 @@ impl Owner {
                 .join(", ");
             let mut attempts = Vec::new();
             for attempt in ledger.opinion_attempts(number) {
-                let Some(failure) = attempt.failure else {
-                    continue;
-                };
-                let template = match failure {
-                    OpinionFailure::Failed => AutopilotPrompt::OpinionAttemptFailed,
-                    OpinionFailure::NoStatus => AutopilotPrompt::OpinionAttemptNoStatus,
-                    OpinionFailure::MissingReport => AutopilotPrompt::OpinionAttemptMissingReport,
-                    OpinionFailure::Silent => AutopilotPrompt::OpinionAttemptSilent,
-                    OpinionFailure::Interrupted => AutopilotPrompt::OpinionAttemptInterrupted,
-                };
-                let variables = Variables::new()
-                    .with("investigator", attempt.investigator.as_str())
-                    .and_then(|v| v.with("task", attempt.task.as_str()))
-                    .map_err(OpinionDaemonError::from)?;
-                attempts.push(
-                    pulls
-                        .texts
-                        .render(template, &variables)
-                        .map_err(OpinionDaemonError::from)?,
-                );
+                attempts.push(self.opinion_attempt_text(pulls, attempt)?);
             }
             let values = Variables::new()
                 .with("attempts", attempts.join("\n"))
