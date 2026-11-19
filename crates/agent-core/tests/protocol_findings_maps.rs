@@ -32,8 +32,7 @@ mod protocol_findings_maps {
     /// - finding 5: opinion failed and attempted again
     /// - finding 6: fixed
     fn fix_pass_findings() -> Findings {
-        let fixture_state: State =
-            serde_json::from_str(include_str!("fixtures/state-v0-11-second-opinions.json")).unwrap();
+        let fixture_state: State = State::from_json(include_str!("fixtures/state-v0-11-second-opinions.json")).unwrap();
         let team = fixture_state.team(&team_id(1)).unwrap();
         let item = team.item(item("1.2")).unwrap();
         item.findings().unwrap().clone()
@@ -290,7 +289,7 @@ mod protocol_findings_maps {
     /// The state of the fixture with `key` added to its `fixed` map of item 1.2, as JSON text.
     fn state_with_fixed_key(key: &str) -> String {
         let mut value: serde_json::Value =
-            serde_json::from_str(include_str!("fixtures/state-v0-11-second-opinions.json")).unwrap();
+            State::from_json(include_str!("fixtures/state-v0-11-second-opinions.json")).unwrap();
         let fixed = &mut value["teams"][0]["items"][1]["findings"]["fixed"];
         fixed.as_object_mut().unwrap().insert(key.to_owned(), json!([]));
         serde_json::to_string(&value).unwrap()
