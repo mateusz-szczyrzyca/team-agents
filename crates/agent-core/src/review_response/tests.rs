@@ -37,3 +37,45 @@ fn refuses_missing_duplicate_unknown_and_forbidden_responses() {
     }
     assert_eq!(parse_lead("STATUS: DONE", &[]).unwrap(), vec![]);
 }
+
+#[test]
+fn fenced_examples_never_count_as_lead_answers() {
+    for (open, inside, close) in [
+        ("```rust", "FINDING 1: FIXED", "```"),
+        ("~~~text", "FINDING 1: FIXED", "~~~"),
+        ("````text", "```\nFINDING 1: FIXED", "````"),
+    ] {
+        let example = format!("{open}\n{inside}\n{close}\n");
+        let missing = parse_lead(&example, &[(NonZeroU32::MIN, Severity::Blocker, false)]);
+        assert!(
+            matches!(
+                missing,
+                Err(ResponseError {
+                    number: NonZeroU32::MIN,
+                    ..
+                })
+            ),
+            "{example}"
+        );
+        assert_eq!(
+            parse_lead(
+                &format!("{example}FINDING 1: FIXED\nSTATUS: DONE"),
+                &[(NonZeroU32::MIN, Severity::Blocker, false)]
+            )
+            .unwrap(),
+            vec![(NonZeroU32::MIN, Response::Fixed)]
+        );
+    }
+}
+
+#[test]
+fn inline_backticks_do_not_hide_the_real_lead_answer() {
+    assert_eq!(
+        parse_lead(
+            "```example `inline`\nFINDING 1: FIXED\nSTATUS: DONE",
+            &[(NonZeroU32::MIN, Severity::Blocker, false)]
+        )
+        .unwrap(),
+        vec![(NonZeroU32::MIN, Response::Fixed)]
+    );
+}
