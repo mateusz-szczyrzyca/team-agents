@@ -62,3 +62,15 @@ fn previous_schema_rebuilds_crew_first_review_verification_and_second_opinion() 
     assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
     assert_eq!(State::from_json(old).unwrap(), state);
 }
+
+#[test]
+fn schema_ten_permissions_survive_activity_reconstruction() {
+    let text = include_str!("fixtures/state-before-activities.json").replace(
+        "Coordinator: inv-opus\\n\\nBuild the thing.",
+        "Coordinator: inv-opus\\nAllow: docs/*.txt\\n\\nBuild the thing.",
+    );
+    let state = State::from_json(&text).unwrap();
+    let permissions: Vec<_> = state.teams()[0].allowances().iter().map(|p| p.as_str()).collect();
+    assert_eq!(permissions, ["docs/*.txt"]);
+    assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
+}
