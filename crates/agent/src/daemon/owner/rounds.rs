@@ -368,6 +368,18 @@ pub(super) enum AutopilotNotice {
     NoVerdict,
     /// An unanswered second opinion holds the round.
     Opinion,
+    /// The lead repeatedly supplied an invalid fix response.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "wired to corrections in the following GREEN commit")
+    )]
+    ResponseRefused,
+    /// A reviewer supplied a verdict but its report was refused.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "wired to corrections in the following GREEN commit")
+    )]
+    ReportRefused,
     /// Branch publish failed.
     PublishFailed,
     /// Automatic handover corrections are exhausted.
@@ -394,6 +406,8 @@ impl AutopilotNotice {
             Self::Decision => AutopilotPrompt::NoticeDecision,
             Self::NoVerdict => AutopilotPrompt::NoticeNoVerdict,
             Self::Opinion => AutopilotPrompt::NoticeOpinion,
+            Self::ResponseRefused => AutopilotPrompt::NoticeResponseRefused,
+            Self::ReportRefused => AutopilotPrompt::NoticeReportRefused,
             Self::PublishFailed => AutopilotPrompt::NoticePublishFailed,
             Self::HandoverHeld => AutopilotPrompt::NoticeHandoverHeld,
             Self::TeamAsleep => AutopilotPrompt::NoticeTeamAsleep,
@@ -409,7 +423,7 @@ impl AutopilotNotice {
     #[must_use]
     pub(super) const fn kind(self) -> NoticeKind {
         match self {
-            Self::Decision => NoticeKind::Decision,
+            Self::Decision | Self::ResponseRefused | Self::ReportRefused => NoticeKind::Decision,
             Self::NoVerdict => NoticeKind::NoVerdict,
             Self::Opinion => NoticeKind::Opinion,
             Self::PublishFailed | Self::HandoverHeld => NoticeKind::PublishFailed,

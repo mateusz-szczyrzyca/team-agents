@@ -84,6 +84,10 @@ pub enum AutopilotPrompt {
     NoticeApproved,
     /// The notification that a pull request could not be opened or updated.
     NoticePublishFailed,
+    /// The lead repeatedly supplied an invalid fix response.
+    NoticeResponseRefused,
+    /// A verdict was present but the reviewer report was refused.
+    NoticeReportRefused,
     /// The notification that an approved pull request could not be merged.
     NoticeMergeFailed,
     /// The notification that a pull request was closed without being merged.
@@ -205,6 +209,8 @@ impl AutopilotPrompt {
         Self::NoticeStandingItem,
         Self::NoticeApproved,
         Self::NoticePublishFailed,
+        Self::NoticeResponseRefused,
+        Self::NoticeReportRefused,
         Self::NoticeMergeFailed,
         Self::NoticeClosed,
         Self::ReviewRequest,
@@ -257,6 +263,8 @@ impl AutopilotPrompt {
                 | Self::NoticeTeamAsleep
                 | Self::NoticeStandingItem
                 | Self::NoticeApproved
+                | Self::NoticeResponseRefused
+                | Self::NoticeReportRefused
                 | Self::NoticePublishFailed
                 | Self::NoticeMergeFailed
                 | Self::NoticeClosed
@@ -317,6 +325,8 @@ impl AutopilotPrompt {
             Self::NoticeStandingItem => "harness/pr/notice-standing-item.md",
             Self::NoticeApproved => "harness/pr/notice-approved.md",
             Self::NoticePublishFailed => "harness/pr/notice-publish-failed.md",
+            Self::NoticeResponseRefused => "harness/pr/notice-response-refused.md",
+            Self::NoticeReportRefused => "harness/review/notice-report-refused.md",
             Self::NoticeMergeFailed => "harness/pr/notice-merge-failed.md",
             Self::NoticeClosed => "harness/pr/notice-closed.md",
             Self::NoticeMerged => "harness/pr/notice-merged.md",
@@ -406,6 +416,9 @@ impl AutopilotPrompt {
             Self::NoticeStandingItem => &["team", "item", "member", "task", "line"],
             Self::NoticeApproved => &["team", "repo", "pr", "url"],
             Self::NoticePublishFailed => &["team", "items", "reason"],
+            Self::NoticeResponseRefused | Self::NoticeReportRefused => {
+                &["team", "items", "reason", "bounces", "task", "reviewer", "pr"]
+            }
             Self::NoticeMergeFailed => &["team", "pr", "url", "reason"],
             Self::NoticeClosed => &["team", "pr", "url"],
             Self::NoticeMerged => &["team", "pr", "url", "items"],

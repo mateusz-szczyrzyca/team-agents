@@ -378,3 +378,16 @@ fn unlocated_correction(
 
 #[cfg(test)]
 mod tests;
+
+/// Renders source evidence and the complete list of permitted answers from the catalog.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired to corrections in the following GREEN commit")
+)]
+pub(super) fn answer_diagnostic(
+    _texts: &agent_runtime::autopilot_prompts::AutopilotPrompts,
+    _detail: &agent_core::review_findings::AnswerDiagnostic,
+    _forms: &str,
+) -> Result<String, ResponseTextError> {
+    Ok(String::new())
+}
