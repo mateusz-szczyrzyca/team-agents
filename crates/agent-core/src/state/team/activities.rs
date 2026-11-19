@@ -10,6 +10,8 @@ use crate::status::TaskStatus;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 
+mod opinions;
+
 /// What the team asked an investigator to do.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -140,6 +142,7 @@ impl Team {
                 .filter(|round| round.item() == Some(item.id()))
                 .map(|round| round.id().clone())
                 .collect();
+            found.extend(self.opinion_activities(item, &rounds, at));
             let mut pass: Option<NonZeroU32> = None;
             let mut reviews = |reviews: &[crate::state::Review]| {
                 let request = pass.map_or(ActivityRequest::FirstReview, |pass| ActivityRequest::Verification {
@@ -207,13 +210,23 @@ impl Team {
                     known.rounds.push(round);
                 }
             }
-            if matches!(
-                candidate.outcome,
+            let already_reported = matches!(
+                known.outcome,
                 ActivityOutcome::Finished {
                     end: ActivityEnd::Reported,
                     ..
                 }
-            ) {
+            );
+            if !already_reported
+                && (matches!(known.outcome, ActivityOutcome::Working)
+                    || matches!(
+                        candidate.outcome,
+                        ActivityOutcome::Finished {
+                            end: ActivityEnd::Reported,
+                            ..
+                        }
+                    ))
+            {
                 known.outcome = candidate.outcome;
             }
         } else {
