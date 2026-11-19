@@ -368,7 +368,7 @@ enum FixAnswer {
 fn unlocated_correction(
     texts: &agent_runtime::autopilot_prompts::AutopilotPrompts,
 ) -> Result<String, ResponseTextError> {
-    Ok(texts.render(AutopilotPrompt::ReviewResponseOpinion, &Variables::new())?)
+    Ok(texts.render(AutopilotPrompt::ReviewResponseNumbers, &Variables::new())?)
 }
 
 #[cfg(test)]
