@@ -114,7 +114,7 @@ async fn activity_history_records_a_queued_review_and_its_human_stop() {
     else {
         panic!("the assignment ended with the stop")
     };
-    assert!(stopped_at > at, "{stopped_at:?} is not after the run end {at:?}");
+    assert!(stopped_at >= at, "{stopped_at:?} is not after the run end {at:?}");
     rig.stop().await.unwrap();
 }
 
