@@ -200,8 +200,7 @@ impl Owner {
                 .collect();
             for base in bases {
                 let changes = git.range_changes(&base, head).await?;
-                ledger.changed_since_acceptance(&base, &[]);
-                drop(changes);
+                ledger.changed_since_acceptance(&base, &changes);
             }
             ledgers.push((*id, ledger));
         }
