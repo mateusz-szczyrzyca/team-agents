@@ -440,7 +440,7 @@ async fn description_changing_fix_pass_refreshes_harness_file_links_to_new_head(
     const ITEMS: &str = "Build it.\n\n1. First\n[ ] 1.1 The first item\n    Check README.md:7.\n    Expected result:\n    - it works\n    Checks:\n    - run it\n";
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,script:disclose"),
+            normal("claude-1", "work,fix-script:disclose"),
             investigator("inv-r1", R1_SCENARIO),
             investigator("inv-r2", APPROVING),
         ],

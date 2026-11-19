@@ -1467,7 +1467,7 @@ async fn when_the_fix_passes_are_used_up_the_lead_is_asked_to_put_the_question_t
 
 #[tokio::test]
 async fn the_humans_answer_starts_one_more_fix_pass_with_the_findings_and_the_answer() {
-    let mut rig = exhausting_rig("work,work,ask,work").await;
+    let mut rig = exhausting_rig("work,fix-work,ask,fix-work").await;
     rig.start().await;
 
     let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
@@ -1500,7 +1500,7 @@ async fn the_humans_answer_starts_one_more_fix_pass_with_the_findings_and_the_an
 
 #[tokio::test]
 async fn a_lead_that_ends_without_the_question_leaves_the_human_told_directly_once() {
-    let mut rig = exhausting_rig("work,work,done").await;
+    let mut rig = exhausting_rig("work,fix-work,done").await;
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
@@ -2554,7 +2554,7 @@ async fn independent_three_review_pass_holds_reports_and_has_no_bus() {
 async fn later_pass_reviewers_keep_the_bus_and_publish_without_waiting_for_peers() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "work,fix-work"),
             investigator("inv-r1", "held-review"),
             investigator("inv-r2", "held-review"),
         ],
