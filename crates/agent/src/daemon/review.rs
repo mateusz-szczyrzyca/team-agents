@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use agent_core::config::{Config, ReviewCount};
-use agent_core::ids::{InvestigatorName, TaskId, TeamId};
+use agent_core::ids::{InvestigatorName, ItemId, TaskId, TeamId};
 use agent_core::kinds::UnknownKeyword;
 use agent_core::state::{ItemPhase, Member, Participant, ReviewOutcome, State, Team};
 use agent_core::status::{ReviewVerdict, TaskStatus};
@@ -29,13 +29,24 @@ const VERDICT_KEY: &str = "VERDICT:";
 /// What a status line starts with.
 const STATUS_KEY: &str = "STATUS:";
 
+/// The item whose findings refuse a report, together with its precise protocol diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("review report refused for item {item}")]
+pub(crate) struct ReportRefusal {
+    /// The ledger whose allowed answers the correction must describe.
+    pub(crate) item: ItemId,
+    /// The refused source line and the rule it violated.
+    #[source]
+    pub(crate) problem: agent_core::review_findings::ReportError,
+}
+
 /// Why a reviewer's final message gives no verdict.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum VerdictProblem {
     /// No line of the message is a `VERDICT:` line.
     Missing,
     /// Structured findings or verification answers are malformed.
-    Findings(agent_core::review_findings::ReportError),
+    Findings(ReportRefusal),
     /// The first `VERDICT:` line has something other than one of the two verdicts.
     Unreadable {
         /// What the line says after `VERDICT:`, cut.

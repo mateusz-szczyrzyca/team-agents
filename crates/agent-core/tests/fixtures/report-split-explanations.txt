@@ -1,0 +1,33 @@
+VERDICT: REQUEST_CHANGES
+SUMMARY: Five open findings are resolved; three reasons remain to request changes.
+SIZE: 1347 changed lines outside tests (planned for 1500, hard limit 2000)
+GATE: rust ok — the harness gate passed
+
+FINDING 3: RESOLVED — the settle test fails without the removal.
+FINDING 8: OPEN — fixtures still change without a `TEST-FIX`; this stays MINOR.
+FINDING 17: RESOLVED — the explanation was accepted.
+FINDING 18: RESOLVED — all three mutants are killed now:
+   - settle removal disabled: the reviewer test fails;
+   - the emergency command replaced: the save test fails.
+   - the round-close cleanup disabled: the close test fails.
+FINDING 19: OPEN — nothing tests a second notice after recovery.
+FINDING 20: OPEN — one dropped outcome is still silent.
+FINDING 21: OPEN — two warnings still have no event field.
+FINDING 25: OPEN — a sleep is still in the test.
+FINDING 26: OPEN — a disclosed flaky test; out of scope, MINOR.
+FINDING 27: RESOLVED — the start gate skips a task with a removal pending.
+FINDING 28: ACCEPTED — the helper edit is forced by the asynchronous removal, and no assertion changed.
+
+CRITERIA
+K1 met — the round-close cleanup is tested.
+
+FINDINGS
+1. [MAJOR] TDD-3 src/lib.rs:612 — the start gate has no test that fails without it → add an owner-level test.
+   CHECK: delete the gate and run the tests; a test must fail
+2. [MINOR] LINT-8 src/lib.rs:7 — a test failed once under an unrelated mutation → list it under Flaky checks.
+   CHECK: run the tests several times
+
+ACCEPTED DEVIATIONS
+- [TDD-14] src/lib.rs:200 — the helper adaptations are forced by the asynchronous removal (finding 28).
+
+STATUS: DONE

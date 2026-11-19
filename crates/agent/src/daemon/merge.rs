@@ -75,6 +75,34 @@ pub(super) fn items_of(team: &Team, pr: PrNumber) -> Vec<ItemId> {
         .collect()
 }
 
+/// The fix passes of the pull request `progress` is on: the most that any of its items in `team` has had. An item that
+/// joined a fix pass has no pass of its own for it, and it takes the pull request's ledger, whose fix responses and
+/// fixes are kept by the pull request's pass. An item without a pull request counts its own passes.
+pub(super) fn pull_passes(team: &Team, progress: &ItemProgress) -> u32 {
+    let own = progress.fix_passes().len();
+    let Some(pr) = pull_of(progress) else {
+        return count(own);
+    };
+    let most = team
+        .items()
+        .iter()
+        .filter(|item| pull_of(item) == Some(pr))
+        .map(|item| item.fix_passes().len())
+        .max()
+        .map_or(own, |most| most.max(own));
+    count(most)
+}
+
+/// The pull request an item is reviewed, fixed or approved on; `None` before it has one and after it is done.
+pub(super) fn pull_of(progress: &ItemProgress) -> Option<PrNumber> {
+    match progress.phase() {
+        ItemPhase::InReview { pr, .. } | ItemPhase::Fixing { pr, .. } | ItemPhase::Approved { pr, .. } => {
+            Some(pr.number)
+        }
+        ItemPhase::Pending | ItemPhase::InProgress { .. } | ItemPhase::Done { .. } => None,
+    }
+}
+
 /// Where the round of `progress` is, as the round machine knows it; `None` for an item that has no pull request or is
 /// done.
 pub(super) fn round_state(progress: &ItemProgress) -> Option<RoundState> {
@@ -341,6 +369,23 @@ pub(super) fn review_deliveries(team: &Team) -> Vec<TaskId> {
         .filter(|member| asked_at(team, member.task()).is_some_and(|asked| !ran_since(member, asked)))
         .map(|member| member.task().clone())
         .collect()
+}
+
+/// The reviewers of `team` that wait with a review pending which they already ran for: their report was not taken —
+/// the daemon stopped before or while taking it, or sent it back as often as it may. After a restart they are asked
+/// again.
+pub(super) fn unanswered_reviews(team: &Team) -> Vec<TaskId> {
+    team.reviewers()
+        .iter()
+        .filter(|member| member.status() == TaskStatus::Waiting)
+        .filter(|member| asked_at(team, member.task()).is_some_and(|asked| ran_since(member, asked)))
+        .map(|member| member.task().clone())
+        .collect()
+}
+
+/// Whether the reviewer `task` has a review pending in `team`.
+pub(super) fn review_asked(team: &Team, task: &TaskId) -> bool {
+    asked_at(team, task).is_some()
 }
 
 /// When the review of the task `task` that is pending was asked; the latest, for a task asked in several items.

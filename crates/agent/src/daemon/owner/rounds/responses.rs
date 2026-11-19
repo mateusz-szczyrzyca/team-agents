@@ -32,7 +32,8 @@ impl Owner {
         let rotating = self.parts.state.team(team).is_some_and(|team| {
             response_run(team, &lead.task).is_some_and(|run| {
                 team.items().iter().any(|item| {
-                    needs_response(item, run) && item.findings().is_some_and(|ledger| ledger.verification().is_some())
+                    needs_response(item, run, crate::daemon::merge::pull_passes(team, item))
+                        && item.findings().is_some_and(|ledger| ledger.verification().is_some())
                 })
             })
         });
@@ -73,16 +74,17 @@ impl Owner {
         let Some(run) = response_run(team, &lead.task).cloned() else {
             return Ok(());
         };
+        // The items of one pull request share its ledger, which counts the pull request's passes: each is answered with
+        // that pass, also one that joined a fix pass and has fewer of its own.
         let fixing: Vec<_> = team
             .items()
             .iter()
-            .filter(|item| needs_response(item, &run))
-            .cloned()
+            .map(|item| (item.clone(), crate::daemon::merge::pull_passes(team, item)))
+            .filter(|(item, pass)| needs_response(item, &run, *pass))
             .collect();
         let mut explained = std::collections::HashSet::new();
-        for item in fixing {
+        for (item, pass) in fixing {
             let id = item.id();
-            let pass = crate::daemon::merge::count(item.fix_passes().len());
             let Some(mut ledger) = item.findings().cloned() else {
                 continue;
             };
@@ -104,7 +106,7 @@ impl Owner {
                     if let ItemPhase::Fixing { pr, .. } = item.phase()
                         && explained.insert(pr.number)
                     {
-                        self.record_explanations(team_id, &item, &lead, responses);
+                        self.record_explanations(team_id, &item, pass, &lead, responses);
                     }
                     None
                 }
@@ -182,15 +184,16 @@ impl Owner {
         }
         Ok(())
     }
-    /// Keeps each new explanation in the round history before verification.
+    /// Keeps each new explanation in the round history before verification, as given in fix pass `pass` of the pull
+    /// request.
     fn record_explanations(
         &mut self,
         team_id: &TeamId,
         item: &agent_core::state::ItemProgress,
+        pass: u32,
         lead: &super::Lead,
         responses: Vec<(std::num::NonZeroU32, agent_core::review_response::Response)>,
     ) {
-        let pass = crate::daemon::merge::count(item.fix_passes().len());
         if let ItemPhase::Fixing { pr, .. } = item.phase() {
             let items: Vec<_> = self
                 .parts
@@ -242,15 +245,14 @@ fn response_run<'a>(
         })
 }
 
-/// Whether this item still needs that run's response to its current fix pass.
-fn needs_response(item: &agent_core::state::ItemProgress, run: &agent_core::state::Run) -> bool {
+/// Whether this item still needs that run's response to the fix pass `pass` of its pull request.
+fn needs_response(item: &agent_core::state::ItemProgress, run: &agent_core::state::Run, pass: u32) -> bool {
     if !matches!(item.phase(), ItemPhase::Fixing { .. }) {
         return false;
     }
     let Some(disputes) = item.findings().and_then(agent_core::state::Findings::disputes) else {
         return false;
     };
-    let pass = crate::daemon::merge::count(item.fix_passes().len());
     disputes.answered_pass != pass
         && disputes.checked_run.as_ref() != Some(run.id())
         && !item
@@ -498,42 +500,40 @@ pub(super) fn verifier_forms(
     texts: &agent_runtime::autopilot_prompts::AutopilotPrompts,
     ledger: &agent_core::state::Findings,
 ) -> Result<String, ResponseTextError> {
-    use agent_core::review_findings::Severity;
     let mut forms = String::new();
-    for entry in ledger
-        .entries()
-        .iter()
-        .filter(|entry| entry.status == agent_core::state::FindingStatus::Open)
-    {
-        let pending = ledger.disputes().is_some_and(|d| {
-            d.explanations
-                .get(&entry.number)
-                .is_some_and(|e| e.status == agent_core::state::ExplanationStatus::Pending)
-        });
-        let instruction = if pending {
-            AutopilotPrompt::ReviewVerifierPending
-        } else {
-            AutopilotPrompt::ReviewVerifierResolved
-        };
-        let mut allowed = texts.render(instruction, &Variables::new())?.trim_end().to_owned();
-        let raising = match entry.finding.severity {
-            Severity::Blocker => None,
-            Severity::Major => Some(AutopilotPrompt::ReviewRaiseBlocker),
-            Severity::Minor => Some(AutopilotPrompt::ReviewRaiseMajor),
-        };
-        if let Some(raising) = raising.filter(|_| ledger.disputes().is_some()) {
-            let raise = texts.render(raising, &Variables::new())?;
-            allowed.push(' ');
-            allowed.push_str(raise.trim_end());
-        }
+    for answers in ledger.verifier_answers() {
         forms.push_str(
             &texts.render(
                 AutopilotPrompt::ReviewResponseForm,
                 &Variables::new()
-                    .with("number", entry.number.to_string())?
-                    .with("allowed", &allowed)?,
+                    .with("number", answers.number.to_string())?
+                    .with("allowed", verifier_allowed(texts, answers)?)?,
             )?,
         );
     }
     Ok(forms)
+}
+
+/// The answers a verifier may give for one finding, as one line of the catalog's words: what [`verifier_forms`] and the
+/// brief of a verifier both name.
+pub(super) fn verifier_allowed(
+    texts: &agent_runtime::autopilot_prompts::AutopilotPrompts,
+    answers: agent_core::state::VerifierAnswers,
+) -> Result<String, ResponseTextError> {
+    use agent_core::state::{Decision, Raise};
+    let decision = match answers.decision {
+        Decision::Explanation => AutopilotPrompt::ReviewVerifierPending,
+        Decision::Outcome => AutopilotPrompt::ReviewVerifierResolved,
+    };
+    let mut allowed = texts.render(decision, &Variables::new())?.trim_end().to_owned();
+    let raise = match answers.raise {
+        Raise::Never => None,
+        Raise::ToBlocker => Some(AutopilotPrompt::ReviewRaiseBlocker),
+        Raise::ToMajorOrBlocker => Some(AutopilotPrompt::ReviewRaiseMajor),
+    };
+    if let Some(raise) = raise {
+        allowed.push(' ');
+        allowed.push_str(texts.render(raise, &Variables::new())?.trim_end());
+    }
+    Ok(allowed)
 }

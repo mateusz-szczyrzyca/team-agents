@@ -573,19 +573,20 @@ impl Owner {
         look: &mut Look,
     ) -> Result<(), OwnerError> {
         let lead = self.lead_of(team_id)?;
-        let items = self
-            .parts
-            .state
-            .team(team_id)
-            .map_or_else(Vec::new, |team| team.items().to_vec());
-        for item in items {
+        let items = self.parts.state.team(team_id).map_or_else(Vec::new, |team| {
+            team.items()
+                .iter()
+                .map(|item| (item.clone(), crate::daemon::merge::pull_passes(team, item)))
+                .collect()
+        });
+        for (item, passes) in items {
             let ItemPhase::Fixing { .. } = item.phase() else {
                 continue;
             };
             let Some(ledger) = item.findings() else {
                 continue;
             };
-            let Some(pass) = NonZeroU32::new(crate::daemon::merge::count(item.fix_passes().len())) else {
+            let Some(pass) = NonZeroU32::new(passes) else {
                 continue;
             };
             if let Next::FixConfirmed(numbers) =

@@ -235,31 +235,7 @@ impl Owner {
         let lead = self.lead_of(team_id)?;
         for publication in plan {
             if let Publish::Update { fixing, .. } = &publication.publish
-                && fixing.iter().any(|id| {
-                    self.parts
-                        .state
-                        .team(team_id)
-                        .and_then(|t| t.item(*id))
-                        .is_some_and(|item| {
-                            item.findings().is_some_and(|ledger| {
-                                ledger
-                                    .disputes()
-                                    .is_some_and(|d| d.answered_pass != count(item.fix_passes().len()))
-                                    || std::num::NonZeroU32::new(count(item.fix_passes().len())).is_some_and(|pass| {
-                                        matches!(
-                                            agent_core::decide::opinion::after_opinions(
-                                                ledger,
-                                                pass,
-                                                &ledger.fixed_answers(pass),
-                                                agent_core::decide::opinion::Tip::Changed
-                                            ),
-                                            agent_core::decide::opinion::Next::AwaitOpinions
-                                                | agent_core::decide::opinion::Next::FixConfirmed(_)
-                                        )
-                                    })
-                            })
-                        })
-                })
+                && self.held_for_response(team_id, fixing)
             {
                 continue;
             }
@@ -521,16 +497,42 @@ impl Owner {
         }))
     }
 
+    /// Whether the update of a pull request whose items `fixing` are fixed waits: the lead's fix response to the pull
+    /// request's fix pass is not taken yet, or a second opinion of that pass is still out or confirmed a blocker.
+    fn held_for_response(&self, team_id: &TeamId, fixing: &[ItemId]) -> bool {
+        let Some(team) = self.parts.state.team(team_id) else {
+            return false;
+        };
+        fixing.iter().filter_map(|id| team.item(*id)).any(|item| {
+            let passes = crate::daemon::merge::pull_passes(team, item);
+            item.findings().is_some_and(|ledger| {
+                ledger.disputes().is_some_and(|d| d.answered_pass != passes)
+                    || std::num::NonZeroU32::new(passes).is_some_and(|pass| {
+                        matches!(
+                            agent_core::decide::opinion::after_opinions(
+                                ledger,
+                                pass,
+                                &ledger.fixed_answers(pass),
+                                agent_core::decide::opinion::Tip::Changed
+                            ),
+                            agent_core::decide::opinion::Next::AwaitOpinions
+                                | agent_core::decide::opinion::Next::FixConfirmed(_)
+                        )
+                    })
+            })
+        })
+    }
+
     /// Checks whether every blocking finding was answered without claiming a committed fix.
     fn unchanged_answers(&self, team: &TeamId, fixing: &[ItemId]) -> Answers {
         let accounted = fixing.iter().all(|id| {
             self.parts
                 .state
                 .team(team)
-                .and_then(|t| t.item(*id))
-                .is_some_and(|item| {
+                .and_then(|t| Some((t, t.item(*id)?)))
+                .is_some_and(|(team, item)| {
                     item.findings().is_some_and(|ledger| {
-                        NonZeroU32::new(count(item.fix_passes().len()))
+                        NonZeroU32::new(crate::daemon::merge::pull_passes(team, item))
                             .is_none_or(|pass| ledger.fixed_answers(pass).is_empty())
                             && ledger
                                 .entries()
@@ -1195,3 +1197,7 @@ impl Owner {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "tests/joined_pass_readers.rs"]
+mod joined_pass_readers_tests;
