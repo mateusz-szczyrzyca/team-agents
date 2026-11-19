@@ -469,3 +469,52 @@ fn an_investigator_of_the_crew_that_is_done_has_reported() {
         }
     );
 }
+
+/// The review of task 21 shared by `fixing`, which has had a fix pass, and `joined`, which has had none; recorded once.
+fn team_with_a_shared_verification(fixing: &str, joined: &str) -> Team {
+    let mut team = team(1);
+    let fixing_id: ItemId = fixing.parse().unwrap();
+    drive(&mut team, fixing, PhaseKind::InReview);
+    let mut item = team.item_mut(fixing_id).unwrap();
+    item.ask_reviews(vec![review("inv-codex", 21, ReviewOutcome::Pending)])
+        .unwrap();
+    item.submit_review(&task(21), ReviewVerdict::RequestChanges, at(30))
+        .unwrap();
+    let ItemPhase::InReview { pr, .. } = item.phase().clone() else {
+        panic!("in review")
+    };
+    item.advance(ItemPhase::Fixing {
+        assignee: "codex-1".parse().unwrap(),
+        branch: pr.branch.clone(),
+        pr: pr.clone(),
+    })
+    .unwrap();
+    item.advance(ItemPhase::InReview {
+        pr: pr.clone(),
+        reviews: vec![],
+    })
+    .unwrap();
+    let mut verification = review("inv-codex", 21, ReviewOutcome::Pending);
+    verification.requested_at = at(40);
+    item.ask_reviews(vec![verification.clone()]).unwrap();
+    let mut item = team.item_mut(joined.parse().unwrap()).unwrap();
+    item.advance(ItemPhase::InProgress {
+        assignee: "codex-1".parse().unwrap(),
+        branch: pr.branch.clone(),
+    })
+    .unwrap();
+    item.advance(ItemPhase::InReview { pr, reviews: vec![] }).unwrap();
+    item.ask_reviews(vec![verification]).unwrap();
+    team.record_activities(at(41));
+    team
+}
+
+#[test]
+fn a_shared_verification_is_one_activity_whichever_item_of_the_list_has_had_the_fix_pass() {
+    let team = team_with_a_shared_verification("2.1", "1.2");
+    let mut of_reviewer: Vec<_> = team.activities().iter().filter(|a| a.task() == &task(21)).collect();
+    of_reviewer.sort_by_key(|activity| activity.asked_at());
+    assert_eq!(of_reviewer.len(), 2);
+    assert_eq!(of_reviewer[0].request(), &ActivityRequest::FirstReview);
+    assert_eq!(of_reviewer[1].request(), &ActivityRequest::Verification { pass: nz(1) });
+}
