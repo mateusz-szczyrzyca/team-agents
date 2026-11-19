@@ -64,6 +64,16 @@ pub struct Disputes {
 }
 
 impl Findings {
+    /// Records the commit at which an explanation became accepted.
+    pub fn accepted_at(&mut self, _head: &crate::state::CommitId) {}
+    /// Marks accepted findings whose file changed since acceptance as eligible for raising.
+    pub fn changed_since_acceptance(
+        &mut self,
+        _base: &crate::state::CommitId,
+        _files: &[crate::decide::checks::FileChange],
+    ) {
+    }
+
     /// The dispute protocol, absent for migrated active pull requests.
     #[must_use]
     pub const fn disputes(&self) -> Option<&Disputes> {

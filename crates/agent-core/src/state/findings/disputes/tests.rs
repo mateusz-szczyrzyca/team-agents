@@ -112,3 +112,67 @@ fn one_rejection_requires_a_fix_and_any_verifier_can_raise() {
     );
     assert_eq!(ledger.disputes().unwrap().raised[0].reviewer, reviews[1].reviewer);
 }
+
+#[test]
+fn an_accepted_explanation_cannot_be_raised_until_its_file_changes() {
+    use crate::decide::checks::{Change, FileChange, Lines};
+    let (mut ledger, reviews) = ledger();
+    ledger
+        .answer_lead("FINDING 1: EXPLAINED — documented units", 1)
+        .unwrap();
+    for review in &reviews {
+        ledger.record(
+            review.task.clone(),
+            ledger
+                .parse_report("FINDING 1: ACCEPTED — sufficient", ReviewVerdict::Approve)
+                .unwrap(),
+        );
+    }
+    ledger.finish(&reviews, NonZeroU32::new(2).unwrap()).unwrap();
+    let head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap();
+    ledger.accepted_at(&head);
+    let raised = "FINDING 1: RAISED [MAJOR] — changed units";
+    assert!(matches!(
+        ledger.parse_report(raised, ReviewVerdict::RequestChanges),
+        Err(ReportError { line: 1, .. })
+    ));
+    let files = [FileChange {
+        path: "unrelated.rs".parse().unwrap(),
+        change: Change::Modified,
+        lines: Lines::Text { added: 1, removed: 1 },
+    }];
+    ledger.changed_since_acceptance(&head, &files);
+    assert!(matches!(
+        ledger.parse_report(raised, ReviewVerdict::RequestChanges),
+        Err(ReportError { line: 1, .. })
+    ));
+    let files = [FileChange {
+        path: "src/lib.rs".parse().unwrap(),
+        change: Change::Modified,
+        lines: Lines::Text { added: 1, removed: 1 },
+    }];
+    ledger.changed_since_acceptance(&"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".parse().unwrap(), &files);
+    assert!(matches!(
+        ledger.parse_report(raised, ReviewVerdict::RequestChanges),
+        Err(ReportError { line: 1, .. })
+    ));
+    ledger.changed_since_acceptance(&head, &files);
+    assert_eq!(
+        ledger
+            .parse_report(raised, ReviewVerdict::RequestChanges)
+            .unwrap()
+            .answers,
+        vec![(
+            NonZeroU32::MIN,
+            Answer::Raised {
+                severity: Severity::Major,
+                why: "changed units".into()
+            }
+        )]
+    );
+    ledger.changed_since_acceptance(&head, &[]);
+    assert!(matches!(
+        ledger.parse_report(raised, ReviewVerdict::RequestChanges),
+        Err(ReportError { line: 1, .. })
+    ));
+}
