@@ -154,6 +154,17 @@ pub enum ItemProblem {
 /// carries the number of the line it is on, counted from 1.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TaskListError {
+    /// An allowance has invalid syntax or could permit a rules file.
+    #[error("line {line}: invalid Allow: {text:?}")]
+    InvalidAllowance {
+        /// The line of the directive.
+        line: NonZeroUsize,
+        /// The refused pattern.
+        text: String,
+        /// Why the pattern was refused.
+        #[source]
+        source: crate::task_allowance::AllowanceError,
+    },
     /// The text has nothing in it but blank lines, or only a `Coordinator:` line.
     #[error("the task list is empty")]
     Empty,
@@ -292,6 +303,12 @@ pub enum TaskListError {
 }
 
 impl TaskList {
+    /// The permissions declared before the brief, in their written order.
+    #[must_use]
+    pub fn allowances(&self) -> &[crate::task_allowance::TaskAllowance] {
+        &[]
+    }
+
     /// Parses a task list.
     ///
     /// ```
@@ -1472,3 +1489,7 @@ Depends on: 2,3,1,
         );
     }
 }
+
+#[cfg(test)]
+#[path = "task_list/allowances_tests.rs"]
+mod allowances_tests;
