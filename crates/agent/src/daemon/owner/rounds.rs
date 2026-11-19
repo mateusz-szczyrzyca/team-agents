@@ -792,6 +792,10 @@ mod joined_pass_tests;
 #[path = "rounds/tests/verification.rs"]
 mod verification_tests;
 
+#[cfg(test)]
+#[path = "rounds/tests/wake_ups.rs"]
+mod wake_ups_tests;
+
 /// Failure to retain a reviewer's commit for subsequent verification.
 #[derive(Debug, thiserror::Error)]
 #[error("cannot retain the reviewed commit of task {task}")]

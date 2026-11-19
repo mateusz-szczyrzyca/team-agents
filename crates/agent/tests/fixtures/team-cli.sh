@@ -36,6 +36,10 @@
 #                   whatever the run is to have done
 #   stream:NAME     prints the lines of the file `fake-scripts/NAME.jsonl` of the home the configuration names — events of Claude
 #                   Code's stream JSON, which a test writes — and ends with STATUS: DONE: the steps the history is to record
+#   fix-held:K      like `fix-work:K`, but first creates `.fake-started-N` and waits for the test to create `.fake-release-N` (N is
+#                   the number of the run): a message can reach the agent while its run works
+#   answer:K        ends with FINDING K: FIXED and STATUS: DONE, and changes nothing in the worktree
+#   deaf-ACTION     does ACTION without reading its messages first, like an agent that ignores the wake-up text
 #   integrate       merges every other local branch of the form agents/*/task-*-N.N into the worktree's branch, records
 #                   the gate as `work` does and ends with STATUS: DONE
 #
@@ -163,8 +167,13 @@ wait_for_peer_review() {
   rm -f "$fifo"
 }
 
+deaf=false
+if [[ $action == deaf-* ]]; then
+  deaf=true
+  action=${action#deaf-}
+fi
 init
-read_messages
+[[ $deaf == true ]] || read_messages
 case $action in
   held-review)
     # A test releases each report explicitly, without depending on which reviewer finishes first.
@@ -404,6 +413,18 @@ case $action in
     fi
     result "$message"'\n'"$answers"'STATUS: DONE'
     ;;
+  fix-held:*)
+    : > ".fake-started-$n"
+    for _ in $(seq 1 600); do
+      [[ -f ".fake-release-$n" ]] && break
+      sleep 0.05
+    done
+    [[ -f ".fake-release-$n" ]] || { echo "the test never released run $n" >&2; exit 65; }
+    commit_work
+    record_gate
+    result 'Finished the item.\nFINDING '"${action#fix-held:}"': FIXED\nSTATUS: DONE'
+    ;;
+  answer:*) result 'FINDING '"${action#answer:}"': FIXED\nSTATUS: DONE' ;;
   work)
     commit_work
     record_gate
