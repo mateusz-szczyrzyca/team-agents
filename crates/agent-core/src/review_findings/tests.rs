@@ -454,3 +454,19 @@ fn verifier_diagnostics_retain_the_refused_number_line_and_mistake() {
         );
     }
 }
+
+#[test]
+fn invalid_numeric_answer_labels_keep_the_original_source_and_no_invented_number() {
+    for label in ["0", "café", "4294967296"] {
+        let text = format!("  FINDING {label}: RESOLVED");
+        let error = parse_report(&text, ReviewVerdict::Approve, &[(NonZeroU32::MIN, Severity::Major)]).unwrap_err();
+        assert_eq!(
+            error.detail,
+            AnswerDiagnostic {
+                source_line: Some(text),
+                number: None,
+                mistake: AnswerMistake::UnknownNumber,
+            }
+        );
+    }
+}

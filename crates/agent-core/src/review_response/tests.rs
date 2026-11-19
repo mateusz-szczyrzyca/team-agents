@@ -207,3 +207,20 @@ fn six_line_reproduction_keeps_finding_twenty_on_source_line_fifteen() {
         Ok(open.iter().map(|(n, _, _)| (*n, Response::Fixed)).collect())
     );
 }
+
+#[test]
+fn invalid_numeric_labels_remain_in_the_refused_source_without_inventing_a_number() {
+    use crate::review_findings::{AnswerDiagnostic, AnswerMistake};
+    for label in ["0", "café", "4294967296"] {
+        let text = format!("  FINDING {label}: FIXED");
+        let error = parse_lead(&text, &[(NonZeroU32::MIN, Severity::Blocker, false)]).unwrap_err();
+        assert_eq!(
+            error.detail,
+            AnswerDiagnostic {
+                source_line: Some(text),
+                number: None,
+                mistake: AnswerMistake::UnknownNumber,
+            }
+        );
+    }
+}
