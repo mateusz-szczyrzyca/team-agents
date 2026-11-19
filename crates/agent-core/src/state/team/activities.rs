@@ -8,6 +8,7 @@ use crate::state::{
 };
 use crate::status::TaskStatus;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 
 mod opinions;
@@ -49,6 +50,64 @@ impl ActivityRequest {
             Self::TaskAllocation => ActivityKind::TaskAllocator,
         }
     }
+
+    /// The fix passes behind a first review (0) or a verification; `None` for any other request. Items of one pull
+    /// request count their own passes, so the same review is seen with different passes: the most is the pull request's.
+    const fn review_pass(&self) -> Option<u32> {
+        match self {
+            Self::FirstReview => Some(0),
+            Self::Verification { pass } => Some(pass.get()),
+            Self::TeamMember | Self::SecondOpinion { .. } | Self::Investigation | Self::TaskAllocation => None,
+        }
+    }
+
+    /// What distinguishes assignments of one task asked at one time: the passes of a review do not, because items of one
+    /// pull request count them differently.
+    const fn subject(&self) -> ActivitySubject {
+        match self {
+            Self::TeamMember => ActivitySubject::TeamMember,
+            Self::FirstReview | Self::Verification { .. } => ActivitySubject::Review,
+            Self::SecondOpinion { pass, finding } => ActivitySubject::SecondOpinion {
+                pass: *pass,
+                finding: *finding,
+            },
+            Self::Investigation => ActivitySubject::Investigation,
+            Self::TaskAllocation => ActivitySubject::TaskAllocation,
+        }
+    }
+}
+
+/// What an assignment is about, for telling the copies of one assignment from different ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ActivitySubject {
+    /// See [`ActivityRequest::TeamMember`].
+    TeamMember,
+    /// A first review or a verification of the same review pass.
+    Review,
+    /// See [`ActivityRequest::SecondOpinion`].
+    SecondOpinion {
+        /// The fix pass whose answer requested the opinion.
+        pass: NonZeroU32,
+        /// The finding number.
+        finding: NonZeroU32,
+    },
+    /// See [`ActivityRequest::Investigation`].
+    Investigation,
+    /// See [`ActivityRequest::TaskAllocation`].
+    TaskAllocation,
+}
+
+/// The identity of an assignment: who, in which task, asked when and about what.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ActivityKey {
+    /// The investigator asked.
+    investigator: InvestigatorName,
+    /// Its task.
+    task: TaskId,
+    /// When it was asked.
+    asked_at: Timestamp,
+    /// What it was asked about.
+    subject: ActivitySubject,
 }
 
 /// How an assignment ended; failures retain the daemon's structured reason.
@@ -169,6 +228,16 @@ impl TryFrom<ActivityWire> for Activity {
 }
 
 impl Activity {
+    /// The identity under which copies of one assignment are combined.
+    fn key(&self) -> ActivityKey {
+        ActivityKey {
+            investigator: self.investigator.clone(),
+            task: self.task.clone(),
+            asked_at: self.asked_at,
+            subject: self.request.subject(),
+        }
+    }
+
     getter!("The investigator asked.", pub const fn investigator(&self) -> &InvestigatorName = &self.investigator);
     getter!("The task assigned.", pub const fn task(&self) -> &TaskId = &self.task);
     getter!("The rounds served.", pub fn rounds(&self) -> &[RoundId] = &self.rounds);
@@ -243,8 +312,14 @@ impl Team {
             }
             found.extend(self.opinion_activities(item, &rounds, at));
         }
+        let mut index: HashMap<ActivityKey, usize> = self
+            .activities
+            .iter()
+            .enumerate()
+            .map(|(position, known)| (known.key(), position))
+            .collect();
         for candidate in found {
-            self.retain_activity(candidate);
+            self.retain_activity(&mut index, candidate);
         }
         let endings: Vec<_> = self
             .activities
@@ -261,66 +336,88 @@ impl Team {
         }
     }
 
-    /// Combines copies of an assignment shared by several items without losing a completed report.
-    fn retain_activity(&mut self, candidate: Activity) {
-        if let Some(known) = self.activities.iter_mut().find(|known| {
-            known.investigator == candidate.investigator
-                && known.task == candidate.task
-                && known.request == candidate.request
-                && known.asked_at == candidate.asked_at
-        }) {
-            for round in candidate.rounds {
-                if !known.rounds.contains(&round) {
-                    known.rounds.push(round);
-                }
-            }
-            let already_reported = matches!(
-                known.outcome,
-                ActivityOutcome::Finished {
-                    end: ActivityEnd::Reported,
-                    ..
-                }
-            );
-            if !already_reported
-                && (matches!(known.outcome, ActivityOutcome::Working)
-                    || matches!(
-                        candidate.outcome,
-                        ActivityOutcome::Finished {
-                            end: ActivityEnd::Reported,
-                            ..
-                        }
-                    ))
-            {
-                known.outcome = candidate.outcome;
-            }
-        } else {
+    /// Combines copies of an assignment shared by several items without losing a completed report; `index` finds the
+    /// retained assignments by identity and gains the new one.
+    fn retain_activity(&mut self, index: &mut HashMap<ActivityKey, usize>, candidate: Activity) {
+        let Some(known) = index.get(&candidate.key()).and_then(|at| self.activities.get_mut(*at)) else {
+            index.insert(candidate.key(), self.activities.len());
             self.activities.push(candidate);
+            return;
+        };
+        for round in candidate.rounds {
+            if !known.rounds.contains(&round) {
+                known.rounds.push(round);
+            }
+        }
+        if let (Some(have), Some(seen)) = (known.request.review_pass(), candidate.request.review_pass()) {
+            if seen > have {
+                known.request = candidate.request;
+            }
+        }
+        let already_reported = matches!(
+            known.outcome,
+            ActivityOutcome::Finished {
+                end: ActivityEnd::Reported,
+                ..
+            }
+        );
+        if !already_reported
+            && (matches!(known.outcome, ActivityOutcome::Working)
+                || matches!(
+                    candidate.outcome,
+                    ActivityOutcome::Finished {
+                        end: ActivityEnd::Reported,
+                        ..
+                    }
+                ))
+        {
+            known.outcome = candidate.outcome;
         }
     }
 }
 
 /// A terminal task closes only outstanding assignments; a later stop cannot overwrite an accepted report.
+///
+/// The end of the last run since the assignment is the time of the ending only when that run caused the task's status:
+/// a failure or a completion is a run's end, a stop is one only when the run was stopped. A task stopped while it waited,
+/// or failed before any run could start, ends at `now`, when the daemon saw it; a start failure has the reason the daemon
+/// gives it, a run that ended without a status.
 fn terminal(member: &Member, entry: &Activity, now: Timestamp) -> Option<ActivityOutcome> {
     if !matches!(entry.outcome, ActivityOutcome::Working) {
         return None;
     }
     let last = member.runs().last().and_then(|run| match run.state() {
-        RunState::Ended { at, end } if *at >= entry.asked_at => Some((*at, end.clone())),
+        RunState::Ended { at, end } if *at >= entry.asked_at => Some((*at, end)),
         RunState::Ended { .. } | RunState::Running => None,
     });
-    let at = last.as_ref().map_or(now.max(entry.asked_at), |(at, _)| *at);
-    let end = match member.status() {
-        TaskStatus::Stopped => ActivityEnd::Stopped,
-        TaskStatus::Failed => ActivityEnd::Failed {
-            reason: last.map(|(_, end)| end),
-        },
-        TaskStatus::Done if entry.request == ActivityRequest::TeamMember => ActivityEnd::Reported,
-        TaskStatus::Done
-        | TaskStatus::Queued
-        | TaskStatus::Running
-        | TaskStatus::Waiting
-        | TaskStatus::Questions
-        | TaskStatus::Paused => return None,
+    let seen = now.max(entry.asked_at);
+    let (at, end) = match (member.status(), last) {
+        (TaskStatus::Stopped, Some((at, RunEnd::Stopped))) => (at, ActivityEnd::Stopped),
+        (TaskStatus::Stopped, _) => (seen, ActivityEnd::Stopped),
+        (TaskStatus::Failed, Some((at, end))) => (
+            at,
+            ActivityEnd::Failed {
+                reason: Some(end.clone()),
+            },
+        ),
+        (TaskStatus::Failed, None) => (
+            seen,
+            ActivityEnd::Failed {
+                reason: Some(RunEnd::NoStatus { exit_code: None }),
+            },
+        ),
+        (TaskStatus::Done, last) if entry.request == ActivityRequest::TeamMember => {
+            (last.map_or(seen, |(at, _)| at), ActivityEnd::Reported)
+        }
+        (
+            TaskStatus::Done
+            | TaskStatus::Queued
+            | TaskStatus::Running
+            | TaskStatus::Waiting
+            | TaskStatus::Questions
+            | TaskStatus::Paused,
+            _,
+        ) => return None,
     };
     Some(ActivityOutcome::Finished { at, end })
 }
