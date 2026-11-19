@@ -14,7 +14,10 @@ fn allowance_header_preserves_patterns_and_excludes_them_from_brief() {
     assert_eq!(list.brief(), "Żółć.");
     assert_eq!(list.coordinator().unwrap().as_str(), "inv-opus");
     assert!(TaskList::parse("Plain brief").unwrap().allowances().is_empty());
-    assert!(matches!(TaskList::parse("Allow: tests/**"), Err(TaskListError::Empty)));
+    assert!(matches!(
+        TaskList::parse("Allow: tests/**/*.golden"),
+        Err(TaskListError::Empty)
+    ));
 }
 
 #[test]
