@@ -454,3 +454,27 @@ fn exhausted_assignments_reject_late_reports_and_invalid_persisted_attempts() {
         );
     }
 }
+
+#[test]
+fn replacement_assignment_rejects_a_repeated_investigator_or_task_atomically() {
+    let mut findings = ledger(Severity::Blocker);
+    let number = NonZeroU32::MIN;
+    findings.request_opinion(number, request()).unwrap();
+    let at = "2026-11-11T19:50:00Z".parse().unwrap();
+    let task: TaskId = "task-20261111-193001-k3x9".parse().unwrap();
+    findings
+        .assign_opinion_at(number, "inv-first".parse().unwrap(), task.clone(), at)
+        .unwrap();
+    findings.fail_opinion(number, &task, OpinionFailure::Failed).unwrap();
+    let before = findings.clone();
+    for (investigator, task) in [
+        ("inv-first", "task-20261111-193002-k3x9"),
+        ("inv-second", "task-20261111-193001-k3x9"),
+    ] {
+        assert_eq!(
+            findings.assign_opinion_at(number, investigator.parse().unwrap(), task.parse().unwrap(), at),
+            Err(OpinionStateError { number })
+        );
+        assert_eq!(findings, before);
+    }
+}
