@@ -2803,3 +2803,29 @@ async fn rejected_explanation_is_not_retried_and_fix_response_correction_does_no
     decisions.sort_unstable();
     assert_eq!(decisions, ["accepted", "explained", "rejected"]);
 }
+
+#[tokio::test]
+async fn third_invalid_fix_response_notifies_human_and_holds_publication() {
+    let mut rig = Rig::new(&[
+        normal("claude-1", "work,done,done,done,sleep"),
+        investigator("inv-r1", "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 work-1.txt:1 — units unclear → name units\\n   CHECK: read work-1.txt"),
+        investigator("inv-r2", "done:VERDICT: APPROVE"),
+    ], 5, false).await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.wait_for("third correction decision", || {
+        !rig.notifications().is_empty() || rig.runs(&tasks[0]) >= 5
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let found = state.team(&team).unwrap();
+    assert_eq!(found.find(&tasks[0]).unwrap().1.runs().len(), 4);
+    let item = found.item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(item.findings().unwrap().disputes().unwrap().bounces, 3);
+    assert_eq!(item.fix_passes().len(), 1);
+    assert!(matches!(item.phase(), ItemPhase::Fixing { .. }));
+    assert_eq!(rig.github.reviews(1).len(), 2);
+    assert_eq!(rig.notifications().len(), 1);
+    assert!(rig.notifications()[0].contains("FINDING 1:"));
+}
