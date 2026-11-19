@@ -22,9 +22,11 @@ pub struct Activity<'a> {
 
 /// Selects a complete request, or waits when too few free investigators remain.
 ///
-/// Crew and caller exclusions are permanent. The latest request is placed after all
-/// other candidates, then each group is ordered by last team activity, last global
-/// activity and name. No activity sorts before any timestamp.
+/// Crew and caller exclusions are permanent. Candidates are ordered by their last
+/// activity for the team, then by their last activity anywhere, then by name; no
+/// activity sorts before any timestamp. The investigators of the latest request for the
+/// team have the newest activity in it, so they come after every other candidate and
+/// are chosen only when too few others are left (the relaxation of the latest request).
 #[must_use]
 pub fn choose(
     configured: &BTreeSet<InvestigatorName>,
@@ -34,11 +36,6 @@ pub fn choose(
     excluded: &BTreeSet<InvestigatorName>,
     required: NonZeroUsize,
 ) -> Option<Vec<InvestigatorName>> {
-    let latest = activities
-        .iter()
-        .filter(|activity| activity.team == team)
-        .map(|activity| activity.asked_at)
-        .max();
     let mut candidates = Vec::new();
     for name in configured.intersection(free) {
         if excluded.contains(name) {
@@ -60,8 +57,7 @@ pub fn choose(
             .map(|activity| activity.asked_at)
             .max();
         let last_anywhere = own.iter().map(|activity| activity.asked_at).max();
-        let recent = latest.is_some() && last_team == latest;
-        candidates.push((recent, last_team, last_anywhere, name));
+        candidates.push((last_team, last_anywhere, name));
     }
     if candidates.len() < required.get() {
         return None;
@@ -71,7 +67,7 @@ pub fn choose(
         candidates
             .into_iter()
             .take(required.get())
-            .map(|(_, _, _, name)| name.clone())
+            .map(|(_, _, name)| name.clone())
             .collect(),
     )
 }
