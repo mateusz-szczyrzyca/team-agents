@@ -395,7 +395,13 @@ async fn run_with_rng_and_log_layer(
         stop_grace: timings.run.stop_grace,
     };
     sides.spawn(Scoped::new(
-        gate::run_recorded(gate_jobs, gate_parts, opened.history.clone(), shutdown.clone()),
+        gate::run_configured(
+            gate_jobs,
+            gate_parts,
+            opened.history.clone(),
+            *settings.config.build(),
+            shutdown.clone(),
+        ),
         dispatch.clone(),
     ));
 
