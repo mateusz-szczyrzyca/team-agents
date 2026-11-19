@@ -14,7 +14,7 @@ use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
 use crate::daemon::merge::{count, review_deliveries};
-use crate::daemon::review::{Reviewer, Slot, choose_reviewers, choose_reviewers_for, choose_verifiers, free_reviewers};
+use crate::daemon::review::{Reviewer, Slot, free_reviewers, select_reviewers};
 use crate::daemon::team::{Why, task_branch};
 
 use super::super::{Owner, OwnerError};
@@ -97,23 +97,17 @@ impl Owner {
         let required = items
             .first()
             .and_then(|id| self.parts.state.team(team_id)?.item(*id)?.findings()?.review_count());
-        let team = self.parts.state.team(team_id).ok_or(PublishError::Lost)?;
-        let progress = items
-            .iter()
-            .map(|id| team.item(*id).ok_or(PublishError::Lost))
-            .collect::<Result<Vec<_>, _>>()?;
-        let history = progress
-            .into_iter()
-            .filter(|item| item.findings().and_then(|ledger| ledger.verification()).is_some())
-            .map(agent_core::state::ItemProgress::fix_passes)
-            .max_by_key(|passes| passes.len());
-        let chosen = match (required, history) {
-            (Some(count), Some(history)) if !history.is_empty() => {
-                choose_verifiers(free, count, history, &mut self.parts.rng)
-            }
-            (Some(count), _) => choose_reviewers_for(free, count, &mut self.parts.rng),
-            (None, _) => choose_reviewers(free, &mut self.parts.rng),
+        let required = required.unwrap_or(agent_core::config::ReviewCount::TWO);
+        let Some(required) = std::num::NonZeroUsize::new(required.get()) else {
+            return Err(PublishError::Lost);
         };
+        let chosen = select_reviewers(
+            &self.parts.state,
+            &self.parts.settings.config,
+            team_id,
+            required,
+            &std::collections::HashSet::new(),
+        );
         let Some(chosen) = chosen else {
             return Ok(false);
         };

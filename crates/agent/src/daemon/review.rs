@@ -6,15 +6,14 @@
 
 use std::collections::HashSet;
 
-use agent_core::config::{Config, ReviewCount};
+use agent_core::config::Config;
+use agent_core::decide::investigator::{Activity, choose};
 use agent_core::ids::{InvestigatorName, ItemId, TaskId, TeamId};
 use agent_core::kinds::UnknownKeyword;
 use agent_core::state::{ItemPhase, Member, Participant, ReviewOutcome, State, Team};
 use agent_core::status::{ReviewVerdict, TaskStatus};
-use rand::seq::{IteratorRandom, SliceRandom};
-use rand::{Rng, RngExt};
-
-use super::team::is_finished;
+use std::collections::BTreeSet;
+use std::num::NonZeroUsize;
 
 /// The longest report the harness keeps, posts and hands on, in characters: far above any real report, and under the
 /// limit of a comment on GitHub.
@@ -129,12 +128,12 @@ pub(super) struct Reviewer {
 }
 
 /// The investigators that may review a pull request of `team` now, by name: configured, outside its crew, with no task
-/// that is going or about to, no review to give and no team to lead or serve that is not finished.
+/// that is running or queued. A sleeping crew member may serve another team.
 pub(super) fn free_reviewers(state: &State, config: &Config, team: &TeamId) -> Vec<Reviewer> {
     let Some(reviewed) = state.team(team) else {
         return Vec::new();
     };
-    let busy = busy_investigators(state);
+    let busy = occupied_investigators(state);
     config
         .investigators()
         .keys()
@@ -187,38 +186,62 @@ fn slot_in(team: &Team, name: &InvestigatorName) -> Option<Slot> {
     }
 }
 
-/// The investigators that have something to do in any team: a task that is going, about to start, asking or paused; a
-/// review to give; or a place in the crew of a team that is not finished.
-fn busy_investigators(state: &State) -> HashSet<InvestigatorName> {
-    let mut busy = HashSet::new();
-    for team in state.teams() {
-        let finished = is_finished(team);
-        for (_, member) in team.crew().roster() {
-            if let Some(name) = investigator_of(member)
-                && engaged(member.status(), !finished)
-            {
-                busy.insert(name.clone());
-            }
-        }
-        for member in team.reviewers() {
-            if let Some(name) = investigator_of(member)
-                && engaged(member.status(), has_pending_review(team, member))
-            {
-                busy.insert(name.clone());
-            }
-        }
-    }
-    busy
+/// Investigators with a running or queued run, including accepted review requests
+/// waiting for the scheduler to queue their reusable task.
+fn occupied_investigators(state: &State) -> HashSet<InvestigatorName> {
+    state
+        .teams()
+        .iter()
+        .flat_map(|team| {
+            team.crew()
+                .roster()
+                .into_iter()
+                .map(|(_, member)| member)
+                .chain(team.reviewers().iter())
+                .filter(|member| {
+                    member.current_run().is_some()
+                        || matches!(member.status(), TaskStatus::Queued | TaskStatus::Running)
+                        || (member.status() == TaskStatus::Waiting && has_pending_review(team, member))
+                })
+                .filter_map(investigator_of)
+                .cloned()
+        })
+        .collect()
 }
 
-/// Whether a task with `status` keeps its investigator from another task; `waiting_matters` says whether a task that
-/// waits still has something to wait for.
-const fn engaged(status: TaskStatus, waiting_matters: bool) -> bool {
-    match status {
-        TaskStatus::Queued | TaskStatus::Running | TaskStatus::Questions | TaskStatus::Paused => true,
-        TaskStatus::Waiting => waiting_matters,
-        TaskStatus::Stopped | TaskStatus::Failed | TaskStatus::Done => false,
-    }
+/// Applies the common activity selector and preserves each chosen investigator's
+/// team-specific worktree slot. Caller exclusions are never relaxed.
+pub(super) fn select_reviewers(
+    state: &State,
+    config: &Config,
+    team: &TeamId,
+    required: NonZeroUsize,
+    excluded: &HashSet<InvestigatorName>,
+) -> Option<Vec<Reviewer>> {
+    let free = free_reviewers(state, config, team);
+    let configured = config.investigators().keys().cloned().collect();
+    let available = free.iter().map(|reviewer| reviewer.name.clone()).collect();
+    let activities: Vec<_> = state
+        .teams()
+        .iter()
+        .flat_map(|team| {
+            team.activities().iter().map(|activity| Activity {
+                investigator: activity.investigator(),
+                team: team.id(),
+                kind: activity.request().kind(),
+                asked_at: activity.asked_at(),
+            })
+        })
+        .collect();
+    let excluded: BTreeSet<_> = excluded.iter().cloned().collect();
+    let chosen = choose(&configured, &available, &activities, team, &excluded, required)?;
+    let order: std::collections::BTreeMap<_, _> = chosen.into_iter().zip(0_usize..).collect();
+    let mut selected: Vec<_> = free
+        .into_iter()
+        .filter(|reviewer| order.contains_key(&reviewer.name))
+        .collect();
+    selected.sort_by_key(|reviewer| order.get(&reviewer.name).copied());
+    Some(selected)
 }
 
 /// Whether the reviewer `member` has a review to give for an item of `team` that is in review.
@@ -236,35 +259,6 @@ fn has_pending_review(team: &Team, member: &Member) -> bool {
         | ItemPhase::Approved { .. }
         | ItemPhase::Done { .. } => false,
     })
-}
-
-/// Two reviewers for a pull request opened under the preceding protocol.
-///
-/// The reviewers that review for the team already (they wait in a review task of it) are drawn before new ones: they
-/// know the pull request and look at what became of their own findings.
-pub(super) fn choose_reviewers(free: Vec<Reviewer>, rng: &mut impl Rng) -> Option<Vec<Reviewer>> {
-    choose_reviewers_for(free, ReviewCount::TWO, rng)
-}
-
-/// Draws a complete configured pass, preferring the team's existing available review tasks.
-pub(super) fn choose_reviewers_for(
-    free: Vec<Reviewer>,
-    required: ReviewCount,
-    rng: &mut impl Rng,
-) -> Option<Vec<Reviewer>> {
-    if free.len() < required.get() {
-        return None;
-    }
-    let (mut known, mut new): (Vec<Reviewer>, Vec<Reviewer>) = free
-        .into_iter()
-        .partition(|reviewer| matches!(reviewer.slot, Slot::Task(_)));
-    let mut chosen = Vec::with_capacity(required.get());
-    for _ in 0..required.get() {
-        let pool = if known.is_empty() { &mut new } else { &mut known };
-        let index = rng.random_range(0..pool.len());
-        chosen.push(pool.swap_remove(index));
-    }
-    Some(chosen)
 }
 
 #[cfg(test)]
@@ -287,46 +281,6 @@ pub(super) fn independent_first_review(team: &Team, task: &TaskId) -> bool {
         independent |= item.findings().is_some_and(|ledger| ledger.review_count().is_some());
     }
     independent
-}
-
-/// Draws verifiers, taking investigators never used on this PR before the least recently used.
-pub(super) fn choose_verifiers(
-    free: Vec<Reviewer>,
-    required: ReviewCount,
-    history: &[agent_core::state::FixPass],
-    rng: &mut impl Rng,
-) -> Option<Vec<Reviewer>> {
-    if free.len() < required.get() {
-        return None;
-    }
-    let mut pools = std::collections::BTreeMap::<Option<usize>, Vec<Reviewer>>::new();
-    for reviewer in free {
-        let last = history
-            .iter()
-            .rposition(|pass| pass.requested_by.iter().any(|r| r.reviewer == reviewer.name));
-        pools.entry(last).or_default().push(reviewer);
-    }
-    let mut chosen = Vec::with_capacity(required.get());
-    for mut pool in pools.into_values() {
-        pool.shuffle(rng);
-        let remaining = required.get().saturating_sub(chosen.len());
-        chosen.extend(pool.into_iter().take(remaining));
-        if chosen.len() == required.get() {
-            break;
-        }
-    }
-    Some(chosen)
-}
-
-/// Draws one independent opinion from the free investigators outside the answered pass.
-pub(super) fn choose_opinion(
-    free: Vec<Reviewer>,
-    excluded: &HashSet<InvestigatorName>,
-    rng: &mut impl Rng,
-) -> Option<Reviewer> {
-    free.into_iter()
-        .filter(|reviewer| !excluded.contains(&reviewer.name))
-        .choose(rng)
 }
 
 /// The pending second opinion owned by a task, while its round is being fixed.

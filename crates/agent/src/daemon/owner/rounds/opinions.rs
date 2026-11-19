@@ -4,7 +4,7 @@ use super::super::{Located, Owner, OwnerError};
 use super::reviewers::Prepared;
 use super::verdicts::Asked;
 use super::{PublishError, Pulls};
-use crate::daemon::review::{choose_opinion, free_reviewers, pending_opinion};
+use crate::daemon::review::{pending_opinion, select_reviewers};
 use crate::daemon::team::Why;
 use agent_core::decide::opinion::{Next, Tip, after_opinions};
 use agent_core::history::HistoryEvent;
@@ -141,8 +141,14 @@ impl Owner {
                         .iter()
                         .map(|attempt| attempt.investigator.clone()),
                 );
-                let free = free_reviewers(&self.parts.state, &self.parts.settings.config, team_id);
-                let Some(reviewer) = choose_opinion(free, &excluded, &mut self.parts.rng) else {
+                let Some(reviewer) = select_reviewers(
+                    &self.parts.state,
+                    &self.parts.settings.config,
+                    team_id,
+                    std::num::NonZeroUsize::MIN,
+                    &excluded,
+                )
+                .and_then(|reviewers| reviewers.into_iter().next()) else {
                     continue;
                 };
                 let now = Timestamp::now(&self.parts.clock)?;

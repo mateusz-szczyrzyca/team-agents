@@ -9,7 +9,6 @@ use agent_core::state::{ItemPhase, PullRequest, ReviewOutcome, RunState, Timesta
 use agent_core::status::TaskStatus;
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
-use rand::RngExt;
 use std::collections::HashSet;
 
 use super::super::teams::Look;
@@ -17,7 +16,7 @@ use super::super::{Owner, OwnerError};
 use super::reviewers::Prepared;
 use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 use crate::daemon::merge::count;
-use crate::daemon::review::{Reviewer, free_reviewers};
+use crate::daemon::review::{free_reviewers, select_reviewers};
 
 /// A review that does not come: its reviewer cannot work.
 struct Gone {
@@ -194,16 +193,19 @@ impl Owner {
         gone: &Gone,
         now: Timestamp,
     ) -> Result<bool, PublishError> {
-        let mut free: Vec<Reviewer> = free_reviewers(&self.parts.state, &self.parts.settings.config, team_id)
-            .into_iter()
-            .filter(|reviewer| !gone.pass.contains(&reviewer.name))
-            .collect();
-        if free.is_empty() {
-            return Ok(false);
-        }
+        let free = free_reviewers(&self.parts.state, &self.parts.settings.config, team_id);
         let among: Vec<_> = free.iter().map(|reviewer| reviewer.name.clone()).collect();
-        let index = self.parts.rng.random_range(0..free.len());
-        let chosen = free.swap_remove(index);
+        let excluded = gone.pass.iter().cloned().collect();
+        let Some(chosen) = select_reviewers(
+            &self.parts.state,
+            &self.parts.settings.config,
+            team_id,
+            std::num::NonZeroUsize::MIN,
+            &excluded,
+        )
+        .and_then(|reviewers| reviewers.into_iter().next()) else {
+            return Ok(false);
+        };
         log_decision(
             "replace_reviewer",
             &format!(
