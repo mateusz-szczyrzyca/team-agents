@@ -410,7 +410,10 @@ of every team into the pure selector and maps its chosen names back to team-spec
 
 Only running or queued work reserves an investigator across teams. Accepted pending reviews and opinions count
 as queued work before their reusable task is scheduled. Sleeping coordinators and members may serve another
-team, but never their own. Same-team ended reviewer tasks retain their existing lifecycle restriction. Crew and
+team, but never their own. Within the same team, an investigator whose reviewer task is `Stopped`, `Failed`, `Paused`, `Questions` or `Done` is
+not offered again (`slot_in`): the state keeps one task per investigator in a team, `release` queues only a waiting
+task, a stopped or held task is not started against the human, and `Done` is final. Such an investigator is free for
+every other team. Crew and
 caller exclusions (including the reporter, answered pass and prior opinion attempts) are permanent.
 
 Candidates with no team activity precede those with activity; then the oldest latest team assignment wins,

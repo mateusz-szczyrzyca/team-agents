@@ -1218,8 +1218,10 @@ count. The investigators asked in the team's latest request, including both of a
 candidates and are reused only when needed to fill the request. An investigator is free across teams when it has
 no running or queued work; a sleeping coordinator or member can review elsewhere. Accepted review and opinion
 requests reserve their investigator while awaiting scheduling. A team's own coordinator and members are always
-excluded, as are a finding's reporter and previous opinion participants where independence requires it. Existing
-ended reviewer tasks within the same team are not reopened. If too few eligible investigators remain, the round
+excluded, as are a finding's reporter and previous opinion participants where independence requires it. Within the
+same team, an investigator whose reviewer task there is stopped, failed, paused, waiting for your answers or done is
+not offered again for a later review: the harness does not start a reviewer you stopped or held, and a task that
+is done cannot start again; the investigator is free for every other team. If too few eligible investigators remain, the round
 waits for a free independent investigator; these permanent exclusions are never relaxed. The text of
 `agent log --round <round-id>` describes reviewers as selected among the available candidates, for both old and new histories.
 
