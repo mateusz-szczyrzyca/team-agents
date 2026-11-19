@@ -190,12 +190,23 @@ impl Owner {
         self.parts.state = next;
         log_initial_lifecycle(&formed);
         self.record_team_start(&request, &id);
+        self.publish_team_started(&id, &tasks, started)?;
+        Ok(Ok(Reply::Started { team: id, tasks }))
+    }
+
+    /// Publishes the initial events and logs when a team starts.
+    fn publish_team_started(
+        &mut self,
+        id: &TeamId,
+        tasks: &[TaskId],
+        started: Vec<EventKind>,
+    ) -> Result<(), OwnerError> {
         let now = Timestamp::now(&self.parts.clock)?;
         self.publish(now, EventKind::TeamStarted { team: id.clone() });
         for event in started {
             self.publish(now, event);
         }
-        self.publish_summary(now, &id);
+        self.publish_summary(now, id);
         tracing::info!(
             event = LogEvent::TeamChanged.as_str(),
             team = %id,
@@ -203,8 +214,8 @@ impl Owner {
             tasks = tasks.len(),
             "a team is started"
         );
-        self.look_at(&id);
-        Ok(Ok(Reply::Started { team: id, tasks }))
+        self.look_at(id);
+        Ok(())
     }
 
     /// Makes the worktree of every task of `formed`, from the checkout of the request; when one cannot be made, those
