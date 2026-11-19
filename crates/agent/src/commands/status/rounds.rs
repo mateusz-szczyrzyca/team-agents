@@ -34,6 +34,8 @@ mod tests;
 /// What the status says of the rounds of one answer of the daemon.
 #[derive(Debug)]
 pub(super) struct Told {
+    /// What can advance each idle open round.
+    waiting: HashMap<RoundId, String>,
     /// Where the work of each round that goes on is.
     works: HashMap<RoundId, RoundWork>,
     /// The findings waiting for independent investigators.
@@ -47,7 +49,10 @@ pub(super) struct Told {
 impl Told {
     /// What follows the line of `round`.
     pub(super) fn of(&self, round: &Round) -> String {
-        let suffix = suffix(round, self.works.get(round.id()).copied(), self.offset);
+        let mut suffix = suffix(round, self.works.get(round.id()).copied(), self.offset);
+        if let Some(waiting) = self.waiting.get(round.id()) {
+            suffix.push_str(&format!(", waits for {waiting}"));
+        }
         match self.opinions.get(round.id()) {
             Some(opinions) => format!("{suffix}{opinions}"),
             None => suffix,
@@ -111,6 +116,7 @@ pub(super) async fn told(
     teams: &[TeamSummary],
 ) -> Result<Told, StatusError> {
     let mut told = Told {
+        waiting: HashMap::new(),
         works: HashMap::new(),
         opinions: HashMap::new(),
         offset: activity.offset,
@@ -123,6 +129,9 @@ pub(super) async fn told(
     let mut drafts: Option<Drafts> = None;
     for round in going {
         let detail = round_detail(connection, round.id().clone()).await?;
+        if let Some(waiting) = &detail.waiting {
+            told.waiting.insert(round.id().clone(), waiting.clone());
+        }
         let draft = drafts
             .get_or_insert_with(|| Drafts::open(&activity.home))
             .of(round.id())
