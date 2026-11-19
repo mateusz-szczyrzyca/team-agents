@@ -13,6 +13,16 @@ pub(crate) const MAX_DESCRIPTION_BYTES: usize = 1 << 20;
 
 /// Removes harness-owned sections from the lead's contribution.
 pub(crate) fn lead_sections(text: &str) -> String {
+    without_sections(text, &["Size", "Gate", "Allowed beforehand"])
+}
+
+/// Excludes task permissions from marker justifications supplied by the lead or the remote description.
+pub(crate) fn checks_description(text: &str) -> String {
+    without_sections(text, &["Allowed beforehand"])
+}
+
+/// Removes only the named headings and their children, respecting fenced examples.
+fn without_sections(text: &str, names: &[&str]) -> String {
     let mut kept = Vec::new();
     let mut omitted = None;
     let mut fence = None;
@@ -35,7 +45,7 @@ pub(crate) fn lead_sections(text: &str) -> String {
                     omitted = None;
                 }
                 let title = title.trim().trim_end_matches('#').trim();
-                if title.eq_ignore_ascii_case("Size") || title.eq_ignore_ascii_case("Gate") {
+                if names.iter().any(|name| title.eq_ignore_ascii_case(name)) {
                     omitted = Some(level);
                 }
             }
@@ -73,3 +83,39 @@ pub(crate) fn measured_sections(
 
 #[cfg(test)]
 mod tests;
+
+/// Lists changed paths covered by the task's permissions, using a harness-owned template.
+///
+/// # Errors
+/// [`PullTextError`] if template rendering or variable construction fails.
+pub(crate) fn allowed_section(
+    texts: &AutopilotPrompts,
+    files: &[agent_core::decide::checks::FileChange],
+    allowances: &[agent_core::task_allowance::TaskAllowance],
+) -> Result<Option<String>, PullTextError> {
+    use agent_core::decide::checks::Change;
+    let mut covered = std::collections::BTreeMap::new();
+    for file in files {
+        let paths = std::iter::once(&file.path).chain(match &file.change {
+            Change::Renamed { from } => Some(from),
+            Change::Added | Change::Modified | Change::Deleted => None,
+        });
+        for path in paths {
+            if let Some(allowance) = allowances.iter().find(|line| line.matches(path)) {
+                covered.insert(path, allowance);
+            }
+        }
+    }
+    if covered.is_empty() {
+        return Ok(None);
+    }
+    let rows = covered
+        .into_iter()
+        .map(|(path, allowance)| format!("- `{path}` — `Allow: {}`", allowance.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(Some(texts.render(
+        AutopilotPrompt::PrAllowedBeforehand,
+        &Variables::new().with("paths", rows)?,
+    )?))
+}

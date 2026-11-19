@@ -45,7 +45,7 @@ mod state_v2 {
 
         assert_eq!(
             state.to_json().unwrap(),
-            V2.replacen("\"schema_version\": 2", "\"schema_version\": 9", 1)
+            V2.replacen("\"schema_version\": 2", "\"schema_version\": 10", 1)
         );
     }
 
@@ -88,14 +88,14 @@ mod state_v2 {
     #[test]
     fn a_state_of_schema_version_4_is_refused_as_an_unsupported_version_whatever_else_it_holds() {
         for text in [
-            V2.replacen("\"schema_version\": 2", "\"schema_version\": 10", 1),
-            "{\"schema_version\": 10, \"teams\": {\"by_id\": 5}}".to_owned(),
-            "{\"teams\": [], \"schema_version\": 10, \"future\": true}".to_owned(),
+            V2.replacen("\"schema_version\": 2", "\"schema_version\": 11", 1),
+            "{\"schema_version\": 11, \"teams\": {\"by_id\": 5}}".to_owned(),
+            "{\"teams\": [], \"schema_version\": 11, \"future\": true}".to_owned(),
         ] {
             let err = State::from_json(&text).unwrap_err();
 
             assert!(
-                matches!(err, StateError::UnsupportedSchema(UnsupportedSchema { found: 10 })),
+                matches!(err, StateError::UnsupportedSchema(UnsupportedSchema { found: 11 })),
                 "{err:?}"
             );
         }
@@ -125,7 +125,7 @@ mod state_v2 {
 
         assert_eq!(
             state.to_json().unwrap(),
-            V1_AS_V2.replacen("\"schema_version\": 2", "\"schema_version\": 9", 1)
+            V1_AS_V2.replacen("\"schema_version\": 2", "\"schema_version\": 10", 1)
         );
         assert_eq!(State::from_json(V1_AS_V2).unwrap(), state);
     }
@@ -145,7 +145,7 @@ mod state_v2 {
 
         let saved = state.to_json().unwrap();
 
-        assert!(saved.starts_with("{\n  \"schema_version\": 9,\n"));
+        assert!(saved.starts_with("{\n  \"schema_version\": 10,\n"));
         assert_eq!(State::from_json(&saved).unwrap(), state);
     }
 

@@ -1329,6 +1329,15 @@ the path. `agent answer` and the daemon reject `ok`, blank verdicts, unsupported
 accepting any answers. Other questions still accept `ok`. A pending checks file written by an older daemon keeps its old
 per-file questions and verdict rules, including `ok` accepting the recommendation to refuse.
 
+A task list can allow required path changes beforehand. Put `Allow: Cargo.toml` or, for example,
+`Allow: tests/**/*.golden` before its brief (after `Coordinator:` if present). The paths are relative to the repository
+root, with only `*`, `**` and `?` as glob operators. Invalid or overly broad patterns and patterns reaching `AGENTS.md`,
+`CLAUDE.md` or `.github/workflows/` are refused before work starts. These allowances survive every round and daemon
+restart, and `agent run` prints them. They permit covered test and protected-path changes, while other paths and
+all markers still follow the checks above. Human answers continue to be recorded per path in the unchanged
+`checks.json`. The harness lists changed covered paths with their covering directives under `## Allowed beforehand`
+in each pull request; it omits the heading when none changed. See [the task-list format](docs/task-list.md).
+
 A merge is checked against its first parent, on paths the round itself changes against the base. Merging the base branch
 brings no edit of a frozen test of its own; `git merge -s ours` changes nothing. An edit made inside a merge, including a
 conflict resolution that removes a frozen test line, still counts.

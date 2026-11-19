@@ -6,7 +6,7 @@ use std::num::NonZeroU32;
 fn schema_eight_active_fix_pass_migrates_without_inventing_opinion_attempts() {
     let old = include_str!("fixtures/state-before-opinion-retries.json");
     let state = State::from_json(old).unwrap();
-    assert_eq!(SCHEMA_VERSION, 9);
+    assert_eq!(SCHEMA_VERSION, 10);
     let ledger = state.teams()[0].items()[1].findings().unwrap();
     assert_eq!(ledger.opinion_attempts(NonZeroU32::MIN), []);
     assert_eq!(ledger.opinions().len(), 0);
@@ -16,7 +16,7 @@ fn schema_eight_active_fix_pass_migrates_without_inventing_opinion_attempts() {
     );
     assert_eq!(
         state.to_json().unwrap(),
-        old.replacen("\"schema_version\": 8", "\"schema_version\": 9", 1)
+        old.replacen("\"schema_version\": 8", "\"schema_version\": 10", 1)
     );
     assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
     let mut state = state;
