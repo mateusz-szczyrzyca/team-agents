@@ -191,3 +191,132 @@ fn refuses_persisted_opinions_with_missing_findings_or_inconsistent_outcomes() {
         assert_eq!(error.classify(), serde_json::error::Category::Data);
     }
 }
+
+#[test]
+fn accepts_atomic_opinion_answers_and_keeps_fixed_answers_after_reload() {
+    use crate::review_response::opinion::Permission;
+    let mut ledger = ledger(Severity::Blocker);
+    let mut second = ledger.entries()[0].clone();
+    second.number = NonZeroU32::new(2).unwrap();
+    ledger.entries.push(second);
+    ledger.disputes = Some(super::super::Disputes::default());
+    let pass = NonZeroU32::MIN;
+    let head = request().head;
+    let before = ledger.clone();
+    let error = ledger
+        .answer_opinions(
+            "FINDING 1: FIXED\nFINDING 2: SECOND OPINION — café",
+            pass,
+            &head,
+            Permission::Disabled,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, crate::review_response::opinion::OpinionError::Forbidden { number, .. } if number.get() == 2)
+    );
+    assert_eq!(ledger, before);
+    ledger
+        .answer_opinions(
+            "FINDING 1: FIXED\nFINDING 2: SECOND OPINION — café",
+            pass,
+            &head,
+            Permission::Enabled,
+        )
+        .unwrap();
+    assert_eq!(ledger.fixed_answers(pass), [NonZeroU32::MIN].into());
+    assert_eq!(
+        ledger.opinions()[&NonZeroU32::new(2).unwrap()].request.reason.as_str(),
+        "café"
+    );
+    let mut ledger: Findings = serde_json::from_str(&serde_json::to_string(&ledger).unwrap()).unwrap();
+    assert_eq!(ledger.fixed_answers(pass), [NonZeroU32::MIN].into());
+    let task: TaskId = "task-20261111-193007-k3x9".parse().unwrap();
+    ledger
+        .assign_opinion(NonZeroU32::new(2).unwrap(), "inv-opus".parse().unwrap(), task.clone())
+        .unwrap();
+    ledger
+        .record_opinion(
+            NonZeroU32::new(2).unwrap(),
+            &task,
+            OpinionReport {
+                outcome: Outcome::Confirmed,
+                evidence: "read branch".to_owned().try_into().unwrap(),
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        ledger.answer_opinions("FINDING 2: SECOND OPINION — again", pass, &head, Permission::Enabled),
+        Err(crate::review_response::opinion::OpinionError::Forbidden { .. })
+    ));
+    ledger
+        .answer_opinions("FINDING 2: FIXED", pass, &head, Permission::Enabled)
+        .unwrap();
+    assert_eq!(
+        ledger.fixed_answers(pass),
+        [NonZeroU32::MIN, NonZeroU32::new(2).unwrap()].into()
+    );
+    assert_eq!(
+        ledger.fixed_answers(NonZeroU32::new(2).unwrap()),
+        std::collections::BTreeSet::default()
+    );
+}
+
+#[test]
+fn minor_findings_need_no_answer_but_cannot_request_an_opinion() {
+    use crate::review_response::opinion::{OpinionError, Permission, Refusal};
+    let mut ledger = ledger(Severity::Blocker);
+    let mut minor = ledger.entries()[0].clone();
+    minor.number = NonZeroU32::new(2).unwrap();
+    minor.finding.severity = Severity::Minor;
+    ledger.entries.push(minor);
+    let pass = NonZeroU32::MIN;
+    let head = request().head;
+    let before = ledger.clone();
+    assert_eq!(
+        ledger.answer_opinions(
+            "FINDING 1: FIXED\nFINDING 2: SECOND OPINION — café",
+            pass,
+            &head,
+            Permission::Enabled
+        ),
+        Err(OpinionError::Forbidden {
+            number: NonZeroU32::new(2).unwrap(),
+            line: 2,
+            reason: Refusal::NotBlocker
+        })
+    );
+    assert_eq!(ledger, before);
+    assert_eq!(
+        ledger.answer_opinions("FINDING 1: FIXED", pass, &head, Permission::Enabled),
+        Ok(vec![(
+            NonZeroU32::MIN,
+            crate::review_response::opinion::LeadAnswer::Fixed
+        )])
+    );
+}
+
+#[test]
+fn a_missing_opinion_reason_identifies_the_actual_response_line_atomically() {
+    use crate::review_response::opinion::Permission;
+    let mut ledger = ledger(Severity::Blocker);
+    let mut second = ledger.entries()[0].clone();
+    second.number = NonZeroU32::new(2).unwrap();
+    ledger.entries.push(second);
+    let before = ledger.clone();
+    let error = ledger
+        .answer_opinions(
+            "Summary café\nFINDING 1: FIXED\nFINDING 2: SECOND OPINION — ",
+            NonZeroU32::MIN,
+            &request().head,
+            Permission::Enabled,
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        crate::review_response::opinion::OpinionError::MissingReason {
+            number: NonZeroU32::new(2).unwrap(),
+            line: 3,
+        }
+    );
+    assert_eq!(ledger, before);
+}

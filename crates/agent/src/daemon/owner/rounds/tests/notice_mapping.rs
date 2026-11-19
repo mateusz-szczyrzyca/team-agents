@@ -194,3 +194,21 @@ async fn autopilot_review_notices_render_expected_notes_and_statuses() {
 
     assert_autopilot_notices(&cases).await;
 }
+
+#[tokio::test]
+async fn unanswered_opinion_has_its_own_notice_kind_and_requests_a_human_decision() {
+    assert_ne!(AutopilotNotice::Opinion.kind(), AutopilotNotice::NoVerdict.kind());
+    assert_autopilot_notices(&[(
+        AutopilotNotice::Opinion,
+        NoticeStatus::Decision,
+        Variables::new()
+            .with("round", "round-1")
+            .unwrap()
+            .with("number", "5")
+            .unwrap()
+            .with("task", "task-2")
+            .unwrap(),
+        "Note: Second opinion needs attention",
+    )])
+    .await;
+}

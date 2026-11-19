@@ -506,6 +506,43 @@ impl CheckedMut<'_, ItemProgress> {
         self.value.replace_review(gone, with)
     }
 
+    /// Completes an unchanged pass whose blockers were all independently not confirmed.
+    ///
+    /// # Errors
+    /// [`AdvanceError::Transition`] unless this is a fixing item with no remaining blocker,
+    /// every opinion is settled, and `head` equals the last reviewed commit.
+    pub fn complete_unconfirmed(&mut self, head: &super::CommitId, at: Timestamp) -> Result<(), AdvanceError> {
+        use crate::decide::opinion::{Next, Tip, after_opinions};
+        let from = self.value.phase.kind();
+        let pass = self
+            .value
+            .fix_passes
+            .iter()
+            .try_fold(0_u32, |count, _| count.checked_add(1))
+            .and_then(std::num::NonZeroU32::new)
+            .ok_or(InvalidAdvance {
+                item: self.value.id,
+                from,
+                to: PhaseKind::Done,
+            })?;
+        if let ItemPhase::Fixing { pr, .. } = &self.value.phase
+            && let Some(ledger) = self.value.findings.as_ref()
+            && ledger.verification().and_then(|context| context.reviewed_head.as_ref()) == Some(head)
+            && after_opinions(ledger, pass, &ledger.fixed_answers(pass), Tip::Unchanged) == Next::DecideUnchanged
+        {
+            self.value.phase = ItemPhase::Done {
+                completion: Completion::Merged { pr: pr.clone(), at },
+            };
+            return Ok(());
+        }
+        Err(InvalidAdvance {
+            item: self.value.id,
+            from,
+            to: PhaseKind::Done,
+        }
+        .into())
+    }
+
     /// Enables numbered findings for a newly opened pull request.
     pub fn start_findings(&mut self) {
         self.value.findings = Some(Findings::default());

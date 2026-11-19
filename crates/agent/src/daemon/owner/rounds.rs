@@ -12,10 +12,12 @@ mod cleanup;
 mod findings;
 mod human;
 mod merges;
+mod opinions;
 mod prompts;
 mod publish;
 mod replace;
 mod responses;
+pub(crate) use opinions::OpinionDaemonError;
 pub(crate) use responses::ResponseTextError;
 mod reviewers;
 mod verdicts;
@@ -349,6 +351,8 @@ pub(super) enum AutopilotNotice {
     Decision,
     /// Reviewer completed without a verdict.
     NoVerdict,
+    /// An unanswered second opinion holds the round.
+    Opinion,
     /// Branch publish failed.
     PublishFailed,
     /// Team asleep.
@@ -372,6 +376,7 @@ impl AutopilotNotice {
         match self {
             Self::Decision => AutopilotPrompt::NoticeDecision,
             Self::NoVerdict => AutopilotPrompt::NoticeNoVerdict,
+            Self::Opinion => AutopilotPrompt::NoticeOpinion,
             Self::PublishFailed => AutopilotPrompt::NoticePublishFailed,
             Self::TeamAsleep => AutopilotPrompt::NoticeTeamAsleep,
             Self::StandingItem => AutopilotPrompt::NoticeStandingItem,
@@ -388,6 +393,7 @@ impl AutopilotNotice {
         match self {
             Self::Decision => NoticeKind::Decision,
             Self::NoVerdict => NoticeKind::NoVerdict,
+            Self::Opinion => NoticeKind::Opinion,
             Self::PublishFailed => NoticeKind::PublishFailed,
             Self::TeamAsleep | Self::StandingItem => NoticeKind::TeamAsleep,
             Self::Closed => NoticeKind::Closed,
@@ -422,7 +428,9 @@ impl Owner {
             return Ok(());
         };
         self.merge_approved(&pulls, team, look).await?;
-        self.check_fix_responses(&pulls, team, look)?;
+        self.read_fix_responses(&pulls, team, look).await?;
+        self.ask_opinions(&pulls, team, look).await?;
+        self.continue_opinions(&pulls, team, look)?;
         self.publish_branches(&pulls, team, look).await?;
         self.ask_for_reviews(team, look).await?;
         self.replace_reviewers(&pulls, team, look).await?;
@@ -767,3 +775,7 @@ pub(crate) struct ReviewedHeadError {
     #[source]
     source: PublishError,
 }
+
+#[cfg(test)]
+#[path = "rounds/tests/opinions.rs"]
+mod opinion_tests;

@@ -71,6 +71,9 @@ impl Owner {
         let Some(pulls) = self.pulls.clone() else {
             return Ok(());
         };
+        if self.opinion_ended(&pulls, task, located, message).await? {
+            return Ok(());
+        }
         let Some(message) = message else {
             return Ok(());
         };

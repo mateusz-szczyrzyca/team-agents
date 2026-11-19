@@ -97,6 +97,32 @@ pub(in crate::daemon::owner) async fn sections_for(
     working: &std::path::Path,
     why: Option<&Why>,
 ) -> Result<Option<Addition>, SectionError> {
+    if let Some((id, number, opinion)) = crate::daemon::review::pending_opinion(found.team, found.member.task()) {
+        if matches!(why, Some(Why::VerdictMissing)) {
+            return Ok(Some(Addition::Replace(
+                texts.render(AutopilotPrompt::ReviewOpinionCorrection, &Variables::new())?,
+            )));
+        }
+        if let Some(entry) = found
+            .team
+            .item(id)
+            .and_then(|item| item.findings())
+            .and_then(|ledger| ledger.entries().iter().find(|entry| entry.number == number))
+        {
+            let values = Variables::new()
+                .with("number", number.to_string())?
+                .with("severity", entry.finding.severity.word())?
+                .with("rule", &entry.finding.rule)?
+                .with("place", &entry.finding.place)?
+                .with("text", &entry.finding.text)?
+                .with("check", &entry.finding.check)?
+                .with("reason", opinion.request.reason.as_str())?
+                .with("head", opinion.request.head.as_str())?;
+            return Ok(Some(Addition::Replace(
+                texts.render(AutopilotPrompt::ReviewOpinionRequest, &values)?,
+            )));
+        }
+    }
     match (found.role, why) {
         (Role::Reviewer, Some(Why::ReviewFormat(problem))) => {
             let values = Variables::new()
@@ -200,6 +226,9 @@ pub(super) async fn fix_pass(
     // The reports of the review pass that asked for this pass were kept under the number of the passes before it.
     let kept = count(passes.saturating_sub(1));
     let mut findings = vec![super::findings::open_text(texts, progress.findings())?];
+    if ctx.settings.config.review().second_opinion() == agent_core::review_response::opinion::Permission::Enabled {
+        findings.push(texts.render(AutopilotPrompt::ReviewOpinionOffer, &Variables::new())?);
+    }
     findings.extend(reports_of(ctx, texts, &asked.requested_by, pr.number, kept).await?);
     let values = Variables::new()
         .with("pr", pr.number.to_string())?

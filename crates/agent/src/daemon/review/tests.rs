@@ -698,3 +698,37 @@ fn verification_draw_uses_only_available_candidates_and_keeps_random_ties() {
         None
     );
 }
+
+#[test]
+fn opinions_exclude_reporter_and_entire_answered_pass_over_many_seeds() {
+    use rand::SeedableRng;
+    let names = ["inv-reporter", "inv-pass", "inv-free-a", "inv-free-b"];
+    let mut selected = std::collections::BTreeSet::new();
+    for seed in 0..128 {
+        let free = names
+            .iter()
+            .map(|name| super::Reviewer {
+                name: name.parse().unwrap(),
+                slot: super::Slot::New,
+            })
+            .collect();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let chosen =
+            super::choose_opinion(free, &names[..2].iter().map(|n| n.parse().unwrap()).collect(), &mut rng).unwrap();
+        assert!(!names[..2].contains(&chosen.name.as_str()));
+        selected.insert(chosen.name);
+    }
+    assert_eq!(selected.len(), 2);
+    let only_reporter = vec![super::Reviewer {
+        name: names[0].parse().unwrap(),
+        slot: super::Slot::New,
+    }];
+    assert_eq!(
+        super::choose_opinion(
+            only_reporter,
+            &[names[0].parse().unwrap()].into(),
+            &mut rand::rngs::StdRng::seed_from_u64(1)
+        ),
+        None
+    );
+}

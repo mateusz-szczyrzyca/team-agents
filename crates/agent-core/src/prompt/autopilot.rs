@@ -12,6 +12,18 @@ use super::{Audience, PromptSpec};
 /// Every text of the autopilot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AutopilotPrompt {
+    /// Ask an independent investigator to check one finding at the handed-over commit.
+    ReviewOpinionRequest,
+    /// Return an opinion report that lacks a verdict or supporting evidence.
+    ReviewOpinionCorrection,
+    /// Offer the permitted second-opinion answer in a fix-pass prompt.
+    ReviewOpinionOffer,
+    /// Show the investigator, outcome and evidence beside a finding.
+    ReviewOpinionResult,
+    /// Return confirmed blockers to the lead for fixes in the current pass.
+    ReviewOpinionConfirmed,
+    /// Describe the allowed answers for an unused blocker with permission enabled.
+    ReviewResponseOpinion,
     /// The title of a pull request.
     PrTitle,
     /// The description of a pull request.
@@ -100,6 +112,8 @@ pub enum AutopilotPrompt {
     ReviewFindingsInvalid,
     /// The notification that a reviewer gave no verdict.
     NoticeNoVerdict,
+    /// An unanswered opinion requires human attention until recovery is available.
+    NoticeOpinion,
     /// The notification that the reviewers still ask for changes and the human has to decide.
     NoticeDecision,
     /// Startup warning when disjoint verifier groups cannot be guaranteed.
@@ -111,6 +125,12 @@ pub enum AutopilotPrompt {
 impl AutopilotPrompt {
     /// Every text of the catalog.
     pub const ALL: &'static [Self] = &[
+        Self::ReviewOpinionRequest,
+        Self::ReviewOpinionCorrection,
+        Self::ReviewOpinionOffer,
+        Self::ReviewOpinionResult,
+        Self::ReviewOpinionConfirmed,
+        Self::ReviewResponseOpinion,
         Self::PrTitle,
         Self::PrBody,
         Self::PrBodyItem,
@@ -155,6 +175,7 @@ impl AutopilotPrompt {
         Self::ReviewOpenFindings,
         Self::ReviewFindingsInvalid,
         Self::NoticeNoVerdict,
+        Self::NoticeOpinion,
         Self::NoticeDecision,
         Self::NoticeReviewRotation,
         Self::NoticeMerged,
@@ -173,6 +194,7 @@ impl AutopilotPrompt {
                 | Self::NoticeMergeFailed
                 | Self::NoticeClosed
                 | Self::NoticeNoVerdict
+                | Self::NoticeOpinion
                 | Self::NoticeDecision
                 | Self::NoticeReviewRotation
                 | Self::NoticeMerged
@@ -187,6 +209,15 @@ impl AutopilotPrompt {
     /// The path, audience and variables of this text.
     const fn definition(self) -> (&'static str, &'static [&'static str]) {
         match self {
+            Self::ReviewOpinionRequest => (
+                "harness/review/opinion-request.md",
+                &["number", "severity", "rule", "place", "text", "check", "reason", "head"],
+            ),
+            Self::ReviewOpinionCorrection => ("harness/review/opinion-correction.md", &[]),
+            Self::ReviewOpinionOffer => ("harness/review/opinion-offer.md", &[]),
+            Self::ReviewOpinionResult => ("harness/review/opinion-result.md", &["reviewer", "outcome", "evidence"]),
+            Self::ReviewOpinionConfirmed => ("harness/review/opinion-confirmed.md", &["findings"]),
+            Self::ReviewResponseOpinion => ("harness/review/response-opinion.md", &[]),
             Self::PrTitle => ("harness/pr/title.md", &["item_ids", "item_titles"]),
             Self::PrBody => ("harness/pr/body.md", &["team", "repo", "gate", "items"]),
             Self::PrBodyItem => (
@@ -264,6 +295,7 @@ impl AutopilotPrompt {
             Self::ReviewSeverityMajor => ("harness/review/severity-major.md", &[]),
             Self::ReviewSeverityMinor => ("harness/review/severity-minor.md", &[]),
             Self::ReviewVerdictMissing => ("harness/review/verdict-missing.md", &[]),
+            Self::NoticeOpinion => ("harness/review/notice-opinion.md", &["round", "number", "task"]),
             Self::NoticeNoVerdict => (
                 "harness/review/notice-no-verdict.md",
                 &["reviewer", "pr", "task", "why"],

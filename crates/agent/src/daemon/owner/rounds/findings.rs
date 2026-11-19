@@ -29,7 +29,7 @@ pub(super) fn open_text(texts: &AutopilotPrompts, ledger: Option<&Findings>) -> 
 }
 
 /// Renders the selected open entries with their verification checks.
-fn selected_text(
+pub(super) fn selected_text(
     texts: &AutopilotPrompts,
     ledger: Option<&Findings>,
     selected: impl Fn(&agent_core::state::RecordedFinding) -> bool,
@@ -49,6 +49,10 @@ fn selected_text(
                 .with("text", &entry.finding.text)?
                 .with("check", &entry.finding.check)?;
             lines.push(texts.render(AutopilotPrompt::ReviewOpenFinding, &values)?);
+            let opinion = opinion_text(texts, ledger, entry.number)?;
+            if !opinion.is_empty() {
+                lines.push(opinion);
+            }
             let explanation = explanation_text(texts, ledger, entry.number)?;
             if !explanation.is_empty() {
                 lines.push(explanation);
@@ -141,9 +145,10 @@ fn table(texts: &AutopilotPrompts, ledger: &Findings) -> Result<String, TextErro
             .with(
                 "text",
                 cell(&format!(
-                    "{} {}",
+                    "{} {} {}",
                     entry.finding.text,
-                    explanation_text(texts, ledger, entry.number)?
+                    explanation_text(texts, ledger, entry.number)?,
+                    opinion_text(texts, ledger, entry.number)?
                 )),
             )?
             .with("status", status)?
@@ -205,3 +210,31 @@ impl Owner {
 
 #[cfg(test)]
 mod tests;
+
+/// Investigator and evidence of a settled second opinion.
+fn opinion_text(
+    texts: &AutopilotPrompts,
+    ledger: &Findings,
+    number: std::num::NonZeroU32,
+) -> Result<String, TextError> {
+    let Some(agent_core::state::SecondOpinion {
+        stage: agent_core::state::OpinionStage::Reported {
+            investigator, report, ..
+        },
+        ..
+    }) = ledger.opinions().get(&number)
+    else {
+        return Ok(String::new());
+    };
+    let outcome = match report.outcome {
+        agent_core::review_response::opinion::Outcome::Confirmed => "CONFIRMED",
+        agent_core::review_response::opinion::Outcome::NotConfirmed => "NOT CONFIRMED",
+    };
+    Ok(texts.render(
+        AutopilotPrompt::ReviewOpinionResult,
+        &Variables::new()
+            .with("reviewer", investigator.as_str())?
+            .with("outcome", outcome)?
+            .with("evidence", report.evidence.as_str())?,
+    )?)
+}

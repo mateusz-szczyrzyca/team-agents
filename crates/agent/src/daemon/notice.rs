@@ -57,6 +57,8 @@ pub(super) enum NoticeKind {
     PublishFailed,
     /// Reviewer ended without a verdict (`review/notice-no-verdict`).
     NoVerdict,
+    /// An unanswered second opinion needs human attention (`review/notice-opinion`).
+    Opinion,
     /// Pull request merged (`pr/notice-merged`).
     Merged,
     /// Team asleep (`pr/notice-team-asleep`).
@@ -71,7 +73,7 @@ impl NoticeKind {
     pub(super) const fn status(self) -> NoticeStatus {
         match self {
             Self::Questions | Self::Incomplete => NoticeStatus::Questions,
-            Self::Decision | Self::NotAsked => NoticeStatus::Decision,
+            Self::Decision | Self::NotAsked | Self::Opinion => NoticeStatus::Decision,
             Self::Failed
             | Self::RunFailed
             | Self::StartFailed

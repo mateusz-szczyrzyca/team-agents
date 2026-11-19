@@ -11,7 +11,7 @@ use agent_core::ids::{InvestigatorName, TaskId, TeamId};
 use agent_core::kinds::UnknownKeyword;
 use agent_core::state::{ItemPhase, Member, Participant, ReviewOutcome, State, Team};
 use agent_core::status::{ReviewVerdict, TaskStatus};
-use rand::seq::SliceRandom;
+use rand::seq::{IteratorRandom, SliceRandom};
 use rand::{Rng, RngExt};
 
 use super::team::is_finished;
@@ -212,6 +212,9 @@ const fn engaged(status: TaskStatus, waiting_matters: bool) -> bool {
 
 /// Whether the reviewer `member` has a review to give for an item of `team` that is in review.
 fn has_pending_review(team: &Team, member: &Member) -> bool {
+    if pending_opinion(team, member.task()).is_some() {
+        return true;
+    }
     team.items().iter().any(|item| match item.phase() {
         ItemPhase::InReview { reviews, .. } => reviews
             .iter()
@@ -302,4 +305,35 @@ pub(super) fn choose_verifiers(
         }
     }
     Some(chosen)
+}
+
+/// Draws one independent opinion from the free investigators outside the answered pass.
+pub(super) fn choose_opinion(
+    free: Vec<Reviewer>,
+    excluded: &HashSet<InvestigatorName>,
+    rng: &mut impl Rng,
+) -> Option<Reviewer> {
+    free.into_iter()
+        .filter(|reviewer| !excluded.contains(&reviewer.name))
+        .choose(rng)
+}
+
+/// The pending second opinion owned by a task, while its round is being fixed.
+pub(super) fn pending_opinion<'a>(
+    team: &'a Team,
+    task: &TaskId,
+) -> Option<(
+    agent_core::ids::ItemId,
+    std::num::NonZeroU32,
+    &'a agent_core::state::SecondOpinion,
+)> {
+    team.items()
+        .iter()
+        .filter(|item| matches!(item.phase(), ItemPhase::Fixing { .. }))
+        .find_map(|item| {
+            item.findings()?.opinions().iter().find_map(|(number, opinion)| {
+                matches!(&opinion.stage, agent_core::state::OpinionStage::Assigned { task: owner, .. } if owner == task)
+                    .then_some((item.id(), *number, opinion))
+            })
+        })
 }

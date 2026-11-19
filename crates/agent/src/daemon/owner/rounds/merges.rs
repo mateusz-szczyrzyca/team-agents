@@ -90,6 +90,30 @@ impl Owner {
         }
         let lead = self.lead_of(team_id)?;
         for (pr, items) in approved {
+            let fixing = self
+                .parts
+                .state
+                .team(team_id)
+                .and_then(|team| items.first().and_then(|id| team.item(*id)))
+                .filter(|item| matches!(item.phase(), ItemPhase::Fixing { .. }))
+                .cloned();
+            if let Some(item) = fixing {
+                let git = self
+                    .worktree_git(&lead.repo, &lead.task, &lead.agent)
+                    .map_err(super::OpinionDaemonError::from)?;
+                let head = git
+                    .rev_parse(&agent_runtime::git::Revision::Head)
+                    .await
+                    .map_err(super::OpinionDaemonError::from)?;
+                if item
+                    .findings()
+                    .and_then(|ledger| ledger.verification())
+                    .and_then(|context| context.reviewed_head.as_ref())
+                    != Some(&head)
+                {
+                    continue;
+                }
+            }
             let now = Timestamp::now(&self.parts.clock)?;
             if !self.due(team_id, &pr, now) {
                 continue;
@@ -142,8 +166,29 @@ impl Owner {
             return found;
         };
         for progress in team.items() {
-            let ItemPhase::Approved { pr, .. } = progress.phase() else {
-                continue;
+            let pr = match progress.phase() {
+                ItemPhase::Approved { pr, .. } => pr,
+                ItemPhase::Fixing { pr, .. }
+                    if progress.findings().is_some_and(|ledger| {
+                        std::num::NonZeroU32::new(crate::daemon::merge::count(progress.fix_passes().len())).is_some_and(
+                            |pass| {
+                                agent_core::decide::opinion::after_opinions(
+                                    ledger,
+                                    pass,
+                                    &ledger.fixed_answers(pass),
+                                    agent_core::decide::opinion::Tip::Unchanged,
+                                ) == agent_core::decide::opinion::Next::DecideUnchanged
+                            },
+                        )
+                    }) =>
+                {
+                    pr
+                }
+                ItemPhase::Pending
+                | ItemPhase::InProgress { .. }
+                | ItemPhase::InReview { .. }
+                | ItemPhase::Fixing { .. }
+                | ItemPhase::Done { .. } => continue,
             };
             if found.iter().all(|(known, _)| known.number != pr.number) {
                 // The items of a pull request move together: all of them are approved.
@@ -287,13 +332,26 @@ impl Owner {
                 team: site.team.clone(),
                 item: *id,
             })?;
-            item.advance(ItemPhase::Done {
-                completion: Completion::Merged {
-                    pr: pr.clone(),
-                    at: now,
-                },
-            })
-            .map_err(|source| OwnerError::Item {
+            let completion = if matches!(item.phase(), ItemPhase::Fixing { .. }) {
+                let head = item
+                    .findings()
+                    .and_then(|ledger| ledger.verification())
+                    .and_then(|context| context.reviewed_head.as_ref())
+                    .cloned()
+                    .ok_or_else(|| OwnerError::LostItem {
+                        team: site.team.clone(),
+                        item: *id,
+                    })?;
+                item.complete_unconfirmed(&head, now)
+            } else {
+                item.advance(ItemPhase::Done {
+                    completion: Completion::Merged {
+                        pr: pr.clone(),
+                        at: now,
+                    },
+                })
+            };
+            completion.map_err(|source| OwnerError::Item {
                 team: site.team.clone(),
                 item: *id,
                 source,

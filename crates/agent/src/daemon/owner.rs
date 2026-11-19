@@ -115,6 +115,9 @@ struct RunTaskFailed(#[source] JoinError);
 /// Why the owner stopped with an error: something it cannot go on without.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum OwnerError {
+    /// A second opinion cannot be scheduled or retained.
+    #[error(transparent)]
+    Opinion(#[from] rounds::OpinionDaemonError),
     /// A fix response correction cannot be rendered.
     #[error("cannot render fix response correction")]
     FixResponse(#[from] rounds::ResponseTextError),
@@ -541,6 +544,7 @@ impl Owner {
                 .await?;
             self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)?;
         }
+        self.hold_restarted_opinions().await?;
         self.remember_closed_teams();
         self.look_at_every_team();
         if !recovery.interrupted.is_empty() {
@@ -933,7 +937,7 @@ impl Owner {
             && let Some(pulls) = self.pulls.clone()
         {
             let mut look = teams::Look::default();
-            self.check_fix_responses(&pulls, &located.team, &mut look)?;
+            self.read_fix_responses(&pulls, &located.team, &mut look).await?;
             events.extend(look.events);
         }
         self.commit(task, &located, now, events, notice).await?;
@@ -946,6 +950,15 @@ impl Owner {
             )
         {
             self.review_ended(task, &located, run.final_message.as_deref()).await?;
+        }
+        if !matches!(
+            end,
+            RunEnd::Reported {
+                outcome: RunOutcome::Done
+            }
+        ) && let Some(pulls) = self.pulls.clone()
+        {
+            self.hold_opinion(&pulls, &located.team, task).await?;
         }
         self.after_run(task, &located, &end, run.final_message.as_deref())
     }

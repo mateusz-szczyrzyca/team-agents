@@ -1201,8 +1201,8 @@ opened before the relevant protocol update keep their original review rules unti
 
 For new pull requests, the lead's fix message answers every open blocking finding before `STATUS:`:
 `FINDING 3: FIXED`, or, once for a MAJOR, `FINDING 3: EXPLAINED — why the deviation is right`.
-A BLOCKER requires a code fix. Missing or forbidden answers receive at most two corrections without consuming
-another fix pass; after that the human is notified and verification stays held. Second opinions are not available.
+A confirmed BLOCKER requires a code fix. Missing or forbidden answers receive at most two corrections without consuming
+another fix pass; after that the human is notified and verification stays held.
 Verifiers answer a pending explanation with `FINDING 3: ACCEPTED — why` or `FINDING 3: REJECTED — why`.
 Every verifier must accept before the finding becomes MINOR; one rejection requires a code fix and bars another
 explanation. The table retains the explanation and every verifier's evidence. A verifier may raise severity using
@@ -1212,15 +1212,29 @@ can be raised again only after its affected file changes from the commit at whic
 State schema 6 migrates schema 5 without adding this protocol to active pull requests; history schema 8 adds
 these events while preserving existing records and search.
 
-The second-opinion foundation adds `[review] allow_second_opinion_on_blocker = true`; omitting the key
-also means `true`. This release stores the permission and provides pure protocol APIs, but the daemon still
-refuses second-opinion requests and retains its existing fix-pass text. Activation follows in a separate task.
-The prepared protocol reads `FINDING 3: SECOND OPINION — why the blocker is false` once per open BLOCKER,
-and an investigator report beginning with `OPINION: CONFIRMED` or `OPINION: NOT CONFIRMED`, followed by
-evidence. MAJOR, MINOR, repeated requests and disabled permission are refused by that parser.
-State schema 7 migrates schema 6 with no opinions requested. History schema 9 admits run reason
+With `[review] allow_second_opinion_on_blocker = true` (also the default when omitted), the lead may answer
+`FINDING 3: SECOND OPINION — why the blocker is false` once per open BLOCKER. Set the key to `false` to disable
+this response and remove it from fix-pass instructions. MAJOR, MINOR and repeated requests are returned for
+correction. The entire response is checked before any answer is recorded; accepted FIXED answers survive restarts.
+
+Each request waits for a free investigator outside the team who neither reported the finding nor reviewed the
+pass being answered. The investigator examines only that finding at the handed-over commit, without a bus,
+and reports `OPINION: CONFIRMED` or `OPINION: NOT CONFIRMED`, followed by what it read or ran and what it showed.
+An invalid report receives the same two corrections as a missing review verdict. An unconfirmed finding closes
+permanently under its original number; the PR table names the investigator and retains the evidence. A confirmed
+blocker returns to the lead for a code fix in the same fix pass, with no additional charge against `fix_passes`.
+Every opinion must be accepted and every confirmed blocker answered FIXED before verification begins at a new tip.
+If all blocking findings close as not confirmed and the tip is unchanged, the pass is approved without another
+review and follows the round's usual merge or approval policy.
+
+This release holds an opinion that fails, exhausts its corrections or is unanswered after a daemon restart.
+One human notice names the round, finding and task; `agent status <round>` says `waiting for a second opinion`.
+Inspect the named task before continuing. Automatic re-request, investigator replacement and restart recovery
+follow in part 2b; an accepted opinion is retained and is never requested twice.
+State schema 8 migrates schema 7, including running fix passes, with no retained FIXED answers or notices.
+Findings without opinion fields have had no second opinion. History schema 9 already admits run reason
 `second_opinion` and events `second_opinion_asked`, `finding_confirmed`, `finding_not_confirmed`;
-existing records, links and search remain readable. These keywords are ready for the later daemon integration.
+this release records them without adding database keywords. Existing records, links and search remain readable.
 
 Before the review the daemon checks the round's own diff and commits through git, with no model, if the repository has a
 `[repos.NAME.checks]` table in `agents.toml` ([`docs/configuration.md`](docs/configuration.md)): the lists of path patterns that

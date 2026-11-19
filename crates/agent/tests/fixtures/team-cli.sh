@@ -210,6 +210,60 @@ case $action in
     fi
     result "$report"'\nSTATUS: DONE'
     ;;
+  opinion-failure:*)
+    if [[ $prompt == *'# SECOND OPINION REQUEST'* || $prompt == *'# CORRECT YOUR SECOND OPINION'* ]]; then
+      case ${action#opinion-failure:} in
+        FAILED) result 'Cannot inspect commit.\nSTATUS: FAILED' ;;
+        EMPTY) result 'Cannot inspect commit.' ;;
+        INVALID) result 'No opinion line.\nSTATUS: DONE' ;;
+        HOLD) while :; do sleep 0.02; done ;;
+      esac
+    else
+      result 'VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [BLOCKER] COR src/lib.rs:7 — café defect → fix it\n   CHECK: read src/lib.rs:7\nSTATUS: DONE'
+    fi
+    ;;
+  opinion-fix-pushed)
+    commit_work
+    record_gate
+    git "${GIT_FIXTURE[@]}" push -q origin HEAD
+    result 'FINDING 1: FIXED\nFINDING 2: FIXED\nSTATUS: DONE'
+    ;;
+  opinion-release)
+    if [[ $prompt == *'# SECOND OPINION REQUEST'* ]]; then
+      while [[ ! -f $home/opinion-release ]]; do sleep 0.02; done
+      result 'OPINION: NOT CONFIRMED\nRead src/lib.rs:7; café path is unreachable.\nSTATUS: DONE'
+    else
+      result 'VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [BLOCKER] COR src/lib.rs:7 — café defect → fix it\n   CHECK: read src/lib.rs:7\nSTATUS: DONE'
+    fi
+    ;;
+  opinion-probe:*)
+    if [[ $prompt == *'# SECOND OPINION REQUEST'* || $prompt == *'# CORRECT YOUR SECOND OPINION'* ]]; then
+      outcome=${action#opinion-probe:}
+      if [[ $outcome == BAD ]]; then
+        if [[ ! -f .opinion-corrected ]]; then
+          touch .opinion-corrected
+          result 'Read src/lib.rs:7; no defect.\nSTATUS: DONE'
+        else
+          result 'OPINION: NOT CONFIRMED\nRead src/lib.rs:7; café path is unreachable.\nSTATUS: DONE'
+        fi
+      else
+        result "OPINION: $outcome\nRead src/lib.rs:7; café path examined.\nSTATUS: DONE"
+      fi
+    elif [[ $prompt == *'# OPEN FINDINGS TO VERIFY'* ]]; then
+      answers=$(awk '/^# OPEN FINDINGS TO VERIFY/ {open=1} open && /^[0-9]+\. \[/{sub(/\./, "", $1); printf "FINDING %s: RESOLVED\\n", $1}' <<< "$prompt")
+      result "VERDICT: APPROVE\n$answers\nSTATUS: DONE"
+    else
+      result 'VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [BLOCKER] COR src/lib.rs:7 — café defect → fix it\n   CHECK: read src/lib.rs:7\nSTATUS: DONE'
+    fi
+    ;;
+  opinion-mixed)
+    result 'FINDING 1: FIXED\nFINDING 2: SECOND OPINION — café path is unreachable\nSTATUS: DONE'
+    ;;
+  opinion-ask|opinion-ask-changed)
+    if [[ $action == opinion-ask-changed ]]; then commit_work; record_gate; fi
+    answers=$(awk '/^### Review by / {exit} /^[0-9]+\. \[(BLOCKER|MAJOR)\]/ {sub(/\./, "", $1); printf "FINDING %s: SECOND OPINION — café path is unreachable\\n", $1}' <<< "$prompt")
+    result "$answers"'STATUS: DONE'
+    ;;
   rotating-verify)
     # Each verification resolves the supplied findings and adds a regression in pass two.
     answers=''

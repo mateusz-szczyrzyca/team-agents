@@ -8,7 +8,7 @@ Switch to your branch `{{branch}}`. Fix every [BLOCKER] in code. Fix a [MAJOR] i
 Before STATUS, answer every open blocking number exactly once:
 `FINDING 3: FIXED` or `FINDING 4: EXPLAINED — why the deviation is right`.
 A finding with any retained explanation cannot be explained again. All verifiers must accept an explanation;
-otherwise fix it in code. Never explain a BLOCKER. SECOND OPINION is unavailable and is refused.
+otherwise fix it in code. Never explain a BLOCKER.
 Correct a rejected message without starting another fix pass.
 These severities block approval; [MINOR] never does. Then get the repository's gate green with `agent gate` and end
 with `STATUS: DONE`.

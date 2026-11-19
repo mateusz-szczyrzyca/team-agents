@@ -590,7 +590,9 @@ fn mcp_servers(
         text(&bus_dir)?,
     ];
     let mut servers = BTreeMap::new();
-    if !crate::daemon::review::independent_first_review(team, task) {
+    if !crate::daemon::review::independent_first_review(team, task)
+        && crate::daemon::review::pending_opinion(team, task).is_none()
+    {
         servers.insert(McpServerKind::Agentbus, CommandLine::try_from(words)?);
     }
     if let Some(serena) = &binaries.serena {
@@ -651,6 +653,15 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
         return RunWhy::Continuation;
     };
     let (team, member) = (found.team, found.member);
+    if let Some((id, _, opinion)) = crate::daemon::review::pending_opinion(team, task)
+        && let Some(item) = team.item(id)
+        && let agent_core::state::ItemPhase::Fixing { pr, .. } = item.phase()
+    {
+        return RunWhy::SecondOpinion {
+            pr: pr.number,
+            pass: opinion.request.pass.get(),
+        };
+    }
     match why {
         // A lead woken because its team sleeps is woken, as by a message: the history has one reason for both.
         Some(Why::Woken | Why::Asleep(_)) => RunWhy::WakeUp,
