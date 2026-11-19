@@ -262,7 +262,34 @@ impl FileChange {
     }
 }
 
+/// A finding's kind, independent of its path, counts and commit IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IssueKind {
+    /// Existing test changes retain the specific change kind, but not its payload.
+    TestChanged(std::mem::Discriminant<TestChange>),
+    /// A protected path was changed.
+    ProtectedChanged,
+    /// A test frozen by RED was edited.
+    RedTestEdited,
+    /// Production code lacks tests.
+    NoTests,
+    /// Each marker kind has its own question.
+    Marker(markers::Marker),
+}
+
 impl Issue {
+    /// The kind used to group questions, together with [`Self::judge`].
+    #[must_use]
+    pub fn kind(&self) -> IssueKind {
+        match self {
+            Self::TestChanged { how, .. } => IssueKind::TestChanged(std::mem::discriminant(how)),
+            Self::ProtectedChanged { .. } => IssueKind::ProtectedChanged,
+            Self::RedTestEdited { .. } => IssueKind::RedTestEdited,
+            Self::NoTests => IssueKind::NoTests,
+            Self::Marker { marker, .. } => IssueKind::Marker(*marker),
+        }
+    }
+
     /// Who can allow the issue.
     #[must_use]
     pub const fn judge(&self) -> Judge {
@@ -394,7 +421,10 @@ fn edited_red_tests(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
             if is_named_test_fix(rules, facts, edit) {
                 continue;
             }
-            for file in changes_after(edit, &having_red).filter(|file| file.takes_lines_out()) {
+            for file in changes_after(edit, &having_red).filter(|file| {
+                file.takes_lines_out()
+                    && (edit.parents.len() < 2 || facts.files.iter().any(|changed| changed.path == file.path))
+            }) {
                 if tests.contains(&&file.path) && reported.insert((&file.path, &edit.id)) {
                     issues.push(Issue::RedTestEdited {
                         path: file.path.clone(),
@@ -408,17 +438,20 @@ fn edited_red_tests(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
     issues
 }
 
-/// The files `commit` changed against the parents that have a commit of `having`: its own files, and those of a merge
-/// against each such parent — against a parent without it, a merge's lines are those of the other side.
+/// The first-parent changes when that parent carries the RED commit. Other-parent diffs describe incoming work,
+/// including an ours merge's deliberately discarded branch, rather than edits made by this merge.
 fn changes_after<'a>(commit: &'a CommitFacts, having: &HashSet<&CommitId>) -> impl Iterator<Item = &'a FileChange> {
-    let through: Vec<&'a Vec<FileChange>> = commit
-        .parents
-        .iter()
-        .zip(&commit.merge_files)
-        .filter(|(parent, _)| having.contains(parent))
-        .map(|(_, files)| files)
-        .collect();
-    commit.files.iter().chain(through.into_iter().flatten())
+    let files = if commit.parents.len() > 1 {
+        commit
+            .parents
+            .first()
+            .filter(|parent| having.contains(parent))
+            .and_then(|_| commit.merge_files.first())
+            .map_or(&[][..], Vec::as_slice)
+    } else {
+        &commit.files
+    };
+    files.iter()
 }
 
 /// The commits that come after the one at `position` in its history, in the order of `commits`: those that have it or

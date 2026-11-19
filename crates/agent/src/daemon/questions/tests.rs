@@ -293,3 +293,43 @@ async fn the_notification_of_incomplete_answers_names_the_agent_the_task_the_fil
         note.body()
     );
 }
+
+fn strict_file() -> QuestionsFile {
+    let entry = agent_core::questions::Entry::new(n(1), "Edited test")
+        .unwrap()
+        .with_check_subjects(&[agent_core::decide::checks::Subject::Path("tests/a.rs".parse().unwrap())])
+        .recommend("refuse")
+        .unwrap();
+    let mut file = QuestionsFile::new("Checks [checks:v1]", vec![entry]).unwrap();
+    file.set_instructions("Write allow, refuse, or allow except paths.");
+    file
+}
+
+#[tokio::test]
+async fn strict_checks_instructions_survive_question_registration() {
+    let file = strict_file();
+    let prepared = with_instructions(&file, &texts().await, &task(1)).unwrap();
+    assert_eq!(prepared.instructions(), file.instructions());
+    assert!(!prepared.instructions().contains("`ok`"));
+}
+
+#[test]
+fn socket_and_hand_saved_checks_reject_invalid_verdicts_without_applying_them() {
+    for invalid in ["ok", "", "yes", "allow except tests/unknown.rs"] {
+        let original = strict_file();
+        if !invalid.is_empty() {
+            let refusal = apply(&original, &answers(&[(1, invalid)])).unwrap_err();
+            assert!(
+                matches!(refusal, Refusal::Incomplete { ref problems } if problems.len() == 1 && problems[0].0 == n(1))
+            );
+        }
+        assert_eq!(original, strict_file());
+        let mut saved = original;
+        saved.set_verdict(n(1), Verdict::from_text(invalid).unwrap()).unwrap();
+        saved.mark_answered();
+        let parsed = QuestionsFile::parse(&saved.render()).unwrap();
+        assert!(
+            matches!(judge(&parsed), Judgement::Incomplete { ref problems } if problems.len() == 1 && problems[0].0 == n(1))
+        );
+    }
+}

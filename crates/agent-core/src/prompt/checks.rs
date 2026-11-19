@@ -49,8 +49,14 @@ pub enum ChecksPrompt {
     QuestionTitlePath,
     /// The title of the question about the lack of tests.
     QuestionTitleNoTests,
+    /// The title of a question about several paths of one kind.
+    QuestionTitleGroup,
+    /// The explicit-verdict instructions for a grouped checks file.
+    QuestionsInstructions,
     /// The text of a question: why the human is asked, the issues and how to answer.
     QuestionBody,
+    /// What to write when a checks verdict is invalid.
+    QuestionInvalidVerdict,
     /// The recommendation of a question.
     QuestionRecommend,
     /// Why the human is asked when only they may allow what was found.
@@ -82,7 +88,10 @@ impl ChecksPrompt {
         Self::QuestionsTitle,
         Self::QuestionTitlePath,
         Self::QuestionTitleNoTests,
+        Self::QuestionTitleGroup,
+        Self::QuestionsInstructions,
         Self::QuestionBody,
+        Self::QuestionInvalidVerdict,
         Self::QuestionRecommend,
         Self::WhyOnlyHuman,
         Self::WhyPassesUsed,
@@ -152,6 +161,15 @@ impl ChecksPrompt {
             }
             Self::QuestionTitleNoTests => {
                 PromptSpec::new("harness/checks/question-title-no-tests.md", Audience::Human, &[])
+            }
+            Self::QuestionInvalidVerdict => {
+                PromptSpec::new("harness/checks/question-invalid-verdict.md", Audience::Human, &[])
+            }
+            Self::QuestionTitleGroup => {
+                PromptSpec::new("harness/checks/question-title-group.md", Audience::Human, &["count"])
+            }
+            Self::QuestionsInstructions => {
+                PromptSpec::new("harness/checks/questions-instructions.md", Audience::Human, &["task"])
             }
             Self::QuestionBody => PromptSpec::new(
                 "harness/checks/question-body.md",

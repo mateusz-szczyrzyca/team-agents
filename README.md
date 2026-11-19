@@ -1278,8 +1278,18 @@ Each request names its selected investigator. Existing records, links and search
 Before the review the daemon checks the round's own diff and commits through git, with no model, if the repository has a
 `[repos.NAME.checks]` table in `agents.toml` ([`docs/configuration.md`](docs/configuration.md)): the lists of path patterns that
 say what is a test, what is production code and what judges a round. A round that changes an existing test other than by added
-lines, or a protected file, waits on a question to you that names each file (answer `allow` to start the review, anything else
-sends it back); one that changes code without adding tests, edits the test of its own `RED:` commit, or adds a skipped test, a lint
+lines, or a protected file, waits for your decision. The questions group findings by kind and judge: one question lists all
+paths of that kind with their findings. Answer every question with `allow`, `refuse`, or `allow except <path> <path> ...`.
+The exception paths must belong to that question: they are refused and the others allowed. A refusal in any group refuses
+the path. `agent answer` and the daemon reject `ok`, blank verdicts, unsupported words and unknown exception paths before
+accepting any answers. Other questions still accept `ok`. A pending checks file written by an older daemon keeps its old
+per-file questions and verdict rules, including `ok` accepting the recommendation to refuse.
+
+A merge is checked against its first parent, on paths the round itself changes against the base. Merging the base branch
+brings no edit of a frozen test of its own; `git merge -s ours` changes nothing. An edit made inside a merge, including a
+conflict resolution that removes a frozen test line, still counts.
+
+A round that changes code without adding tests, edits the test of its own `RED:` commit, or adds a skipped test, a lint
 suppression or code that asks whether it runs under test goes back to the team with the reasons, `[review] check_passes` times
 (2), and then you are asked. It is "Round checks before the review" in [`docs/architecture.md`](docs/architecture.md).
 

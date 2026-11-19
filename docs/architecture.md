@@ -722,7 +722,7 @@ harness header is excluded from authored disclosures, so merely listing a path i
 |---|---|
 | an existing test file is changed other than by added lines, removed or renamed — a change of its mode (an executable bit) is a change too, with lines added or none (the facts read it with `git diff --raw`) | only the human |
 | a protected file is changed in any way | only the human |
-| a test file a `RED:` commit of the round touched has lines removed or replaced by a later commit (a descendant of it in the history), unless that commit touches test files only, its subject starts with `TEST-FIX:` and the description names it, by its ID or at least seven digits, under `## Tests changed after RED` (TDD-14). A later merge counts with what it changed against each parent that has the `RED:` commit, so a resolution that drops a line of the test is an edit; against a parent without it, the merge's lines are those of the other side, whose own commits answer for them | the team, or the human |
+| a test file a `RED:` commit of the round touched has lines removed or replaced by a later commit (a descendant of it in the history), unless that commit touches test files only, its subject starts with `TEST-FIX:` and the description names it, by its ID or at least seven digits, under `## Tests changed after RED` (TDD-14). A later merge counts only its diff against its first parent, when that parent has the `RED:` commit, and only paths that the round changes against its base. Incoming base changes and `git merge -s ours` do not edit a frozen test; an edit inside a merge or a conflict resolution that drops a frozen line still does | the team, or the human |
 | the round changes production code and adds no line to a test file, and none of its commits has a line `Test-First: not possible — <reason>` (TDD-1) | the team, or the human |
 | an added line skips a test, suppresses a lint or asks whether the code runs under test, in a file the description does not name (TDD-11, LINT-3, TDD-12). A suppression in Rust is `#[allow(…)]` and `#[expect(…)]` alike: the allowed spelling has to be named too. An attribute that `#[cfg_attr(…)]` applies counts as if it stood alone (`#[cfg_attr(not(test), expect(…))]`, `#[cfg_attr(miri, ignore)]`), also when rustfmt wraps it over several lines, and also when the round changes only one line of an attribute that was wrapped already: the daemon reads all the unchanged lines of a Rust file that has added ones, and an attribute with an added line is read as a whole, whatever its length. A file whose diff is too long to be read whole (over `8` MiB) cannot be checked: the round is not published and the human is told, as for any other failure to read the facts. `cfg!(test)` and `cfg!(not(test))` both ask whether the code runs under test. The description names a file with its whole path — `crates/other/src/a.rs` does not name `src/a.rs`, nor does `src/a.rs~` or `src/a.rs@backup`: a path is named as a whole token between delimiters (white space, quotes, brackets, `,;:#=*|`), and the dots and marks of a sentence may follow it | the team, or the human |
 
@@ -745,11 +745,29 @@ the same.
 
 **The question to the human.** The daemon cannot put a question for a task that waits (the status table has no `waiting →
 questions`), so — as for the reviewers' used-up passes — the lead is the messenger: the daemon writes the questions file of
-the lead's next round itself, one question for each subject (a file, or "production code without a test"), each with the
-reasons, why the human is asked, and the recommendation to refuse; it wakes the lead with the path and has it end its turn
-with `STATUS: QUESTIONS` and change nothing. The human answers like any other question (`agent answer`): **only the word
-`allow`, in any case, allows**; `ok` (the recommendation), any other text, no verdict and a question the lead removed refuse. Each subject's answer is the verdict of the question with its number, wherever it stands in the file: a removed
-question passes its permission to no other subject.
+the lead's next round itself, one question for each finding kind (`Issue::kind`, including the `TestChange` variant)
+and judge. Each question lists every path and finding of that kind, including removed lines and the edit and RED commits,
+why the human is asked, and the recommendation to refuse. It wakes the lead with the path and has it end its turn with
+`STATUS: QUESTIONS` and change nothing.
+
+The three explicit verdicts are `allow`, `refuse`, and `allow except <path> <path> ...`. The exceptions must be exact paths
+of that group; only they are refused. A path mentioned by several groups is allowed only when every group allows it.
+The CLI validates the entire file before sending any verdict, and the daemon uses the same validation for socket answers
+and a hand-saved `**ANSWERED**` file. Invalid verdicts (including `ok`, an empty verdict, an unknown word or an unknown
+exception path) leave the questions open and name what to correct. Ordinary questions still accept `ok`.
+
+New files carry `[checks:v1]` in their title and a `**Checks version one:**` part in each question containing its subjects:
+`p:<repository path>:` or `n:` for missing tests. Delimiters preserve spaces and non-ASCII paths through a Markdown round
+trip; longest complete paths disambiguate exceptions containing spaces. The title also prevents a question whose membership
+part was removed from silently reverting to the legacy grammar. This metadata lives only in the questions file; the
+persisted checks record still stores the unique subjects and per-path allowances, with no schema change. Group membership
+keeps a question's meaning when questions are reordered; a missing question refuses its subjects.
+
+An unanswered file written by an older daemon has neither marker and is read by the legacy positional rules: one question
+per subject, only a first word `allow` (case insensitive) allows; `ok` accepts the recommendation to refuse. Its existing
+record and scheduled answer resume across a daemon restart without rewriting the old question. `grouped_decisions` selects
+the grammar; `QuestionsFile::allowed_check_subjects` projects the validated group verdicts, and the daemon returns the
+same per-subject `Decisions` used by the owner.
 
 - *Allowed* — the subjects are recorded for the items, which start the review (it is not asked again for the same file), and
   the count of passes starts again. The lead, resumed with the answers, is told to change nothing and end with `STATUS: DONE`.

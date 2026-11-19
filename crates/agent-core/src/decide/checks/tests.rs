@@ -437,8 +437,7 @@ fn merging(mut commit: CommitFacts, against_each: Vec<Vec<FileChange>>) -> Commi
     commit
 }
 
-// Rule: a merge takes lines out of a test of a `RED:` commit when, against a parent that has the `RED:` commit, its file
-// lost lines — a resolution that drops what the `RED:` commit added, on either side of the merge.
+// Rule: a merge is judged against its first parent, on paths changed by the round.
 #[test]
 fn a_merge_that_takes_lines_out_of_a_red_test_against_a_parent_that_has_it_is_an_issue() {
     for (red_side, parents) in [("the first parent", "12"), ("the second parent", "21")] {
@@ -449,19 +448,24 @@ fn a_merge_that_takes_lines_out_of_a_red_test_against_a_parent_that_has_it_is_an
         } else {
             vec![against_other, against_red]
         };
-        let facts = history(vec![
+        let mut facts = history(vec![
             commit('1', "", "RED: test a", vec![added("tests/a.rs", 10)]),
             commit('2', "", "Member work", vec![added("src/b.rs", 5)]),
             merging(commit('3', parents, "Merge", vec![]), against_each),
         ]);
+        facts.files = vec![added("tests/a.rs", 9)];
 
         assert_eq!(
             found(&facts),
-            [Issue::RedTestEdited {
-                path: path("tests/a.rs"),
-                red: id('1'),
-                edit: id('3')
-            }],
+            if parents == "12" {
+                vec![Issue::RedTestEdited {
+                    path: path("tests/a.rs"),
+                    red: id('1'),
+                    edit: id('3'),
+                }]
+            } else {
+                vec![]
+            },
             "the RED commit on {red_side}"
         );
     }
@@ -1204,4 +1208,101 @@ fn a_path_between_delimiters_of_prose_and_markdown_names_the_file() {
 
         assert_eq!(found(&facts), [], "{description}");
     }
+}
+
+#[test]
+fn merge_edits_are_scoped_to_first_parent_and_the_round_diff() {
+    for (first, second, changed, expected) in [
+        (vec![], vec![modified("tests/a.rs", 0, 1)], true, vec![]),
+        (vec![modified("tests/a.rs", 0, 1)], vec![], false, vec![]),
+        (
+            vec![modified("tests/a.rs", 0, 1)],
+            vec![],
+            true,
+            vec![Issue::RedTestEdited {
+                path: path("tests/a.rs"),
+                red: id('1'),
+                edit: id('3'),
+            }],
+        ),
+    ] {
+        let mut facts = history(vec![
+            commit('1', "", "RED: test a", vec![added("tests/a.rs", 10)]),
+            commit('2', "", "Base work", vec![added("src/b.rs", 5)]),
+            merging(commit('3', "12", "Merge base", vec![]), vec![first, second]),
+        ]);
+        if changed {
+            facts.files = vec![added("tests/a.rs", 9)];
+        }
+        assert_eq!(found(&facts), expected);
+    }
+}
+
+#[test]
+fn issue_kinds_ignore_paths_counts_and_commits_but_preserve_test_change_variants() {
+    let changes = [
+        TestChange::Deleted,
+        TestChange::Renamed {
+            to: path("tests/to.rs"),
+        },
+        TestChange::Edited { removed: 1 },
+        TestChange::EditedBinary,
+        TestChange::ModeChanged,
+    ];
+    for (i, how) in changes.iter().enumerate() {
+        let first = Issue::TestChanged {
+            path: path("tests/a.rs"),
+            how: how.clone(),
+        };
+        let second = Issue::TestChanged {
+            path: path("tests/b.rs"),
+            how: how.clone(),
+        };
+        assert_eq!(first.kind(), second.kind());
+        for other in changes.iter().skip(i + 1) {
+            assert_ne!(
+                first.kind(),
+                Issue::TestChanged {
+                    path: path("tests/a.rs"),
+                    how: other.clone()
+                }
+                .kind()
+            );
+        }
+    }
+    assert_eq!(
+        Issue::TestChanged {
+            path: path("tests/a.rs"),
+            how: TestChange::Edited { removed: 1 }
+        }
+        .kind(),
+        Issue::TestChanged {
+            path: path("tests/b.rs"),
+            how: TestChange::Edited { removed: 99 }
+        }
+        .kind()
+    );
+    assert_eq!(
+        Issue::ProtectedChanged {
+            path: path("AGENTS.md"),
+            change: Touch::Modified
+        }
+        .kind(),
+        IssueKind::ProtectedChanged
+    );
+    assert_eq!(
+        Issue::RedTestEdited {
+            path: path("tests/a.rs"),
+            red: id('1'),
+            edit: id('2')
+        }
+        .kind(),
+        Issue::RedTestEdited {
+            path: path("tests/b.rs"),
+            red: id('3'),
+            edit: id('4')
+        }
+        .kind()
+    );
+    assert_eq!(Issue::NoTests.kind(), IssueKind::NoTests);
 }

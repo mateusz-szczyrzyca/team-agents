@@ -243,6 +243,9 @@ pub(super) fn with_instructions(
     texts: &QuestionsPrompts,
     task: &TaskId,
 ) -> Result<QuestionsFile, TextError> {
+    if file.is_checks() {
+        return Ok(file.clone());
+    }
     let values = Variables::new().with("task_id", task.as_str())?;
     let mut prepared = file.clone();
     prepared.set_instructions(&texts.render(QuestionsPrompt::Instructions, &values)?);

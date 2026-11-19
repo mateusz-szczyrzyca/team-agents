@@ -23,8 +23,13 @@
 //! own answer. `**ANSWERED**` on the last line says the human is done. The labels are fixed English words whatever
 //! language the questions are in; spaces inside the asterisks are tolerated.
 //!
-//! Nothing here reads a file or knows a wording: the text of the instructions and the words that tell the agent a
-//! recommendation was accepted come from templates under `prompts/harness/questions/` and are passed in.
+//! Nothing here reads a file at run time: the text of the instructions and the words that tell the agent a
+//! recommendation was accepted come from templates under `prompts/harness/questions/` and are passed in. The one
+//! exception is the correction shown for an invalid verdict of the checks: it is embedded at build time from
+//! `prompts/harness/checks/question-invalid-verdict.md`, a catalog entry (`ChecksPrompt::QuestionInvalidVerdict`),
+//! because the error that carries it is created where no template renderer is available.
+
+pub mod checks;
 
 use std::collections::HashSet;
 
@@ -336,6 +341,8 @@ pub enum AnswerProblem {
     MissingVerdict,
     /// The verdict is `ok` but the question has no recommendation to accept.
     AcceptWithoutRecommendation,
+    /// A versioned checks question needs an explicit, valid verdict.
+    ChecksVerdict(checks::InvalidChecksVerdict),
 }
 
 /// The questions of a file that cannot be answered from their verdicts, each with its problem, in file order.
@@ -476,6 +483,7 @@ impl Entry {
 
     /// The answer the verdict gives, or why it gives none.
     fn answer(&self) -> Result<Choice, AnswerProblem> {
+        self.checks_verdict().map_err(AnswerProblem::ChecksVerdict)?;
         match (self.verdict(), self.recommendation()) {
             (None, _) => Err(AnswerProblem::MissingVerdict),
             (Some(Verdict::Accept), None) => Err(AnswerProblem::AcceptWithoutRecommendation),
@@ -681,11 +689,16 @@ impl QuestionsFile {
     /// What the human answered, question by question.
     ///
     /// # Errors
-    /// [`AnswersError`] listing every question without a verdict and every `ok` without a recommendation.
+    /// [`AnswersError`] listing absent verdicts, `ok` without a recommendation, and invalid grouped checks verdicts.
     pub fn answers(&self) -> Result<Vec<Answer>, AnswersError> {
         let mut answers = Vec::with_capacity(self.entries.len());
         let mut problems = Vec::new();
+        let is_checks = self.is_checks();
         for entry in &self.entries {
+            if is_checks && entry.checks_verdict() == Ok(None) {
+                problems.push((entry.number, AnswerProblem::ChecksVerdict(checks::InvalidChecksVerdict)));
+                continue;
+            }
             match entry.answer() {
                 Ok(choice) => answers.push(Answer {
                     number: entry.number,
@@ -969,6 +982,7 @@ impl fmt::Display for AnswerProblem {
         f.write_str(match self {
             Self::MissingVerdict => "no verdict",
             Self::AcceptWithoutRecommendation => "`ok` but no recommendation to accept",
+            Self::ChecksVerdict(_) => checks::INVALID_VERDICT,
         })
     }
 }

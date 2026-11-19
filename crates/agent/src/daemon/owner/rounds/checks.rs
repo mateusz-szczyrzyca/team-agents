@@ -26,7 +26,7 @@ use super::super::start::next_number;
 use super::super::{Owner, OwnerError};
 use super::publish::{Ready, Site};
 use super::{Announcement, Lead, PublishError, Pulls};
-use crate::daemon::checks::{MAX_RELAYS, authored, decisions, named, questions, reason, team_message};
+use crate::daemon::checks::{MAX_RELAYS, authored, grouped_decisions, named, questions, reason, team_message};
 use crate::daemon::notice::{NoticeContext, NoticeKind, layout_notification};
 use crate::daemon::questions;
 use crate::daemon::team::Why;
@@ -210,7 +210,7 @@ impl Owner {
     ) -> Result<Vec<Subject>, PublishError> {
         let Site { pulls, team, lead } = site;
         let loaded = questions::read(file).await?;
-        let decided = decisions(&asked.subjects, &loaded.file);
+        let decided = grouped_decisions(&asked.subjects, &loaded.file)?;
         record.allow(&asked.items, &decided.allowed);
         record.restart_passes(&asked.items);
         record.asked = None;

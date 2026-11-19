@@ -888,4 +888,87 @@ mod git_range {
 
         assert!(matches!(failure, Err(GitError::OutputTooLong { .. })), "{failure:?}");
     }
+    #[tokio::test]
+    async fn frozen_test_checks_use_real_first_parent_diffs_and_exclude_base_updates() {
+        use agent_core::config::Checks;
+        use agent_core::decide::checks::{Issue, assess};
+        use agent_core::repo_path::PathPatterns;
+
+        for mode in ["ours", "merge-edit", "conflict", "base"] {
+            let (_tmp, repo) = repository();
+            write(&repo, "README.md", b"base\n");
+            let original = commit_all(&repo, "Base");
+            raw(&repo, &["checkout", "-q", "-b", "round"]);
+            write(&repo, "tests/frozen.txt", b"a\nb\nc\n");
+            let red = commit_all(&repo, "RED: Freeze a test");
+            raw(&repo, &["checkout", "-q", "-b", "side", original.as_str()]);
+            write(&repo, "side.txt", b"incoming\n");
+            if mode != "merge-edit" {
+                write(&repo, "tests/frozen.txt", b"a\nc\n");
+            }
+            let incoming = commit_all(
+                &repo,
+                if mode == "base" {
+                    "Base updates"
+                } else {
+                    "RED: Side test"
+                },
+            );
+            raw(&repo, &["checkout", "-q", "round"]);
+            if mode == "ours" {
+                raw(
+                    &repo,
+                    &[
+                        "merge",
+                        "-q",
+                        "--no-ff",
+                        "-s",
+                        "ours",
+                        "side",
+                        "-m",
+                        "Record the side branch",
+                    ],
+                );
+            } else {
+                let output = Command::new("git")
+                    .args(["-c", "commit.gpgsign=false", "merge", "--no-commit", "--no-ff", "side"])
+                    .current_dir(&repo)
+                    .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                    .env("GIT_CONFIG_NOSYSTEM", "1")
+                    .env("GIT_COMMITTER_NAME", "Fixture")
+                    .env("GIT_COMMITTER_EMAIL", "fixture@example.com")
+                    .output()
+                    .unwrap();
+                assert_eq!(
+                    output.status.code(),
+                    Some(i32::from(mode != "merge-edit")),
+                    "{output:?}"
+                );
+                write(&repo, "tests/frozen.txt", b"a\nc\n");
+                commit_all(&repo, "Resolve the merge");
+            }
+            let head = head_of(&repo);
+            let base = if mode == "base" { &incoming } else { &original };
+            let facts = handle(&repo).round_facts(base, &head, "").await.unwrap();
+            let rules = Checks {
+                test_paths: PathPatterns::try_from(vec!["tests/".parse().unwrap()]).unwrap(),
+                code_paths: PathPatterns::try_from(Vec::new()).unwrap(),
+                protected_paths: PathPatterns::try_from(Vec::new()).unwrap(),
+            };
+            let edits: Vec<_> = assess(&rules, &facts, &[])
+                .into_iter()
+                .filter(|issue| matches!(issue, Issue::RedTestEdited { .. }))
+                .collect();
+            let expected = if mode == "ours" || mode == "base" {
+                Vec::new()
+            } else {
+                vec![Issue::RedTestEdited {
+                    path: path("tests/frozen.txt"),
+                    red,
+                    edit: head,
+                }]
+            };
+            assert_eq!(edits, expected, "{mode}");
+        }
+    }
 }

@@ -76,6 +76,14 @@ pub(crate) enum AnswerError {
         /// What is wrong with it, with its line.
         source: ParseError,
     },
+    /// The grouped checks file has an invalid or missing verdict.
+    #[error("invalid checks verdicts in {path:?}: {}", checks_problems(source))]
+    InvalidChecks {
+        /// The questions file.
+        path: PathBuf,
+        /// Every question that needs correction.
+        source: agent_core::questions::AnswersError,
+    },
     /// The file has no answer to any question.
     #[error(
         "the file {path:?} has no answers yet: write yours after **Verdict:** (`ok` accepts the recommendation), then run `agent answer {task}` again"
@@ -296,6 +304,12 @@ async fn answers_in(path: &Path, task: &TaskId) -> Result<AnswerList, AnswerErro
         path: path.to_path_buf(),
         source,
     })?;
+    if parsed.is_checks() {
+        parsed.answers().map_err(|source| AnswerError::InvalidChecks {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    }
     let given: Vec<AnswerInput> = parsed
         .entries()
         .iter()
@@ -318,6 +332,16 @@ async fn answers_in(path: &Path, task: &TaskId) -> Result<AnswerList, AnswerErro
     })
 }
 
+/// Names every invalid checks question and its permitted answer forms.
+fn checks_problems(source: &agent_core::questions::AnswersError) -> String {
+    source
+        .problems
+        .iter()
+        .map(|(number, problem)| format!("question {number}: {problem}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Starts `editor` on `file` and waits for it to end, with the terminal of this command.
 async fn run_editor(editor: &CommandLine, file: &Path) -> Result<(), AnswerError> {
     let program = editor.program().as_path().to_path_buf();
@@ -336,3 +360,6 @@ async fn run_editor(editor: &CommandLine, file: &Path) -> Result<(), AnswerError
         Err(AnswerError::EditorFailed { program, status })
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -46,6 +46,9 @@ pub(super) enum ChecksTextError {
     /// There are more questions than a file can number.
     #[error("the checks have more questions than a file can number")]
     Count(#[from] TryFromIntError),
+    /// A grouped questions file is not completely and explicitly answered.
+    #[error("the checks questions have invalid verdicts")]
+    Answers(#[from] agent_core::questions::AnswersError),
 }
 
 /// How many digits of a commit ID name it in a text.
@@ -178,13 +181,13 @@ pub(super) fn team_message(
 /// The questions the human is asked about the issues of a round, and what each is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Questions {
-    /// The questions file: one question for each subject, in the order of the subjects.
+    /// The questions file: one question for each kind and judge, in first-seen order.
     pub(super) file: QuestionsFile,
-    /// What each question is about, in the order of the questions.
+    /// Every subject, once, in first-seen order; grouped membership is in the questions file.
     pub(super) subjects: Vec<Subject>,
 }
 
-/// The questions for the `issues` of the round of the team `team`, whose lead is `task`: one for each subject. `reason` says
+/// The questions for the `issues` of the round of the team `team`, whose lead is `task`: one for each kind and judge. `reason` says
 /// why the human is asked, and `passes` is what the team used.
 ///
 /// # Errors
@@ -197,12 +200,21 @@ pub(super) fn questions(
     reason: AskReason,
     passes: u32,
 ) -> Result<Questions, ChecksTextError> {
-    let mut grouped: Vec<(Subject, Vec<&Issue>)> = Vec::new();
+    let mut grouped: Vec<Vec<&Issue>> = Vec::new();
+    let mut subjects = Vec::new();
+    let mut seen = HashSet::new();
     for issue in issues {
         let subject = issue.subject();
-        match grouped.iter_mut().find(|(known, _)| *known == subject) {
-            Some((_, group)) => group.push(issue),
-            None => grouped.push((subject, vec![issue])),
+        if seen.insert(subject.clone()) {
+            subjects.push(subject);
+        }
+        match grouped.iter_mut().find(|group| {
+            group
+                .first()
+                .is_some_and(|known| known.kind() == issue.kind() && known.judge() == issue.judge())
+        }) {
+            Some(group) => group.push(issue),
+            None => grouped.push(vec![issue]),
         }
     }
     let why = match reason {
@@ -217,14 +229,25 @@ pub(super) fn questions(
         &Variables::new().with("refuse", REFUSE_WORD)?,
     )?;
     let mut entries = Vec::new();
-    for (position, (subject, group)) in grouped.iter().enumerate() {
+    for (position, group) in grouped.iter().enumerate() {
+        let group_subjects: Vec<Subject> = group.iter().map(|issue| issue.subject()).collect();
+        let Some(subject) = group_subjects.first() else {
+            continue;
+        };
         let number = NonZeroU32::MIN.saturating_add(u32::try_from(position)?);
-        let title = match subject {
-            Subject::Path(path) => texts.render(
-                ChecksPrompt::QuestionTitlePath,
-                &Variables::new().with("path", path.as_str())?,
-            )?,
-            Subject::NoTests => texts.render(ChecksPrompt::QuestionTitleNoTests, &Variables::new())?,
+        let title = if group_subjects.len() > 1 {
+            texts.render(
+                ChecksPrompt::QuestionTitleGroup,
+                &Variables::new().with("count", group_subjects.len().to_string())?,
+            )?
+        } else {
+            match subject {
+                Subject::Path(path) => texts.render(
+                    ChecksPrompt::QuestionTitlePath,
+                    &Variables::new().with("path", path.as_str())?,
+                )?,
+                Subject::NoTests => texts.render(ChecksPrompt::QuestionTitleNoTests, &Variables::new())?,
+            }
         };
         let body = texts.render(
             ChecksPrompt::QuestionBody,
@@ -237,7 +260,8 @@ pub(super) fn questions(
         entries.push(
             Entry::new(number, title.trim())?
                 .with_body(body.trim())?
-                .recommend(recommendation.trim())?,
+                .recommend(recommendation.trim())?
+                .with_check_subjects(&group_subjects),
         );
     }
     let title = texts.render(
@@ -246,10 +270,12 @@ pub(super) fn questions(
             .with("team", team.as_str())?
             .with("task", task.as_str())?,
     )?;
-    Ok(Questions {
-        file: QuestionsFile::new(title.trim(), entries)?,
-        subjects: grouped.into_iter().map(|(subject, _)| subject).collect(),
-    })
+    let mut file = QuestionsFile::new(title.trim(), entries)?;
+    file.set_instructions(&texts.render(
+        ChecksPrompt::QuestionsInstructions,
+        &Variables::new().with("task", task.as_str())?,
+    )?);
+    Ok(Questions { file, subjects })
 }
 
 /// What the human decided about the subjects of a questions file.
@@ -293,6 +319,26 @@ pub(super) fn decisions(subjects: &[Subject], file: &QuestionsFile) -> Decisions
         }
     }
     decided
+}
+
+/// Reads grouped explicit verdicts while preserving legacy per-file answers.
+///
+/// # Errors
+/// [`ChecksTextError::Answers`] for an invalid grouped verdict.
+pub(super) fn grouped_decisions(subjects: &[Subject], file: &QuestionsFile) -> Result<Decisions, ChecksTextError> {
+    if !file.is_checks() {
+        return Ok(decisions(subjects, file));
+    }
+    let allowed = file.allowed_check_subjects(subjects)?;
+    let mut decided = Decisions::default();
+    for subject in subjects {
+        if allowed.contains(subject) {
+            decided.allowed.push(subject.clone());
+        } else {
+            decided.refused.push(subject.clone());
+        }
+    }
+    Ok(decided)
 }
 
 /// What the team and the human wrote in the `description` of a pull request: its lines without those the harness wrote
