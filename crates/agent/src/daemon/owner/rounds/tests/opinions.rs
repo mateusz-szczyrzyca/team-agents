@@ -1062,14 +1062,18 @@ async fn cli_commands_read_round_during_and_after_second_opinions() {
     );
     assert_contains(&out_log, &round_text, "log of the round while the opinion is asked for");
 
-    rig.item_where("1.1", "done after opinions", |phase| {
-        matches!(phase, ItemPhase::Done { .. })
+    // The opinion is reported while the round is open, and every command reads it right then. The round closes when
+    // the item is done; the state is read after the commands, and a round only goes from open to closed, so a round
+    // that is still open then was open when the commands read it: status --running must print it. Once it is closed,
+    // that line only says that no round is open.
+    rig.state_where("opinion reported", |state| {
+        state.team(&team).unwrap().items()[0].findings().is_some_and(|l| {
+            l.opinions()
+                .values()
+                .any(|opinion| matches!(opinion.stage, OpinionStage::Reported { .. }))
+        })
     })
     .await;
-
-    // After the opinion is reported, status, show and log print the round. status --running prints it while the
-    // round is open; the state is read after the commands, and a round only goes from open to closed, so an open
-    // round in that later state was open when the command read it.
     let (out_after, out_running_after, out_show_after, out_log_after) =
         read_round_by_every_command(&mut conn, &rig.home.history_file(), &activity, &round_target, &log_req).await;
     let open_in_later_state = matches!(
@@ -1101,6 +1105,10 @@ async fn cli_commands_read_round_during_and_after_second_opinions() {
         );
     }
 
+    rig.item_where("1.1", "done after opinions", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
     rig.stop().await.unwrap();
 }
 
