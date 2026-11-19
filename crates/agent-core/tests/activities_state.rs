@@ -78,3 +78,33 @@ fn schema_ten_permissions_survive_activity_reconstruction() {
     assert_eq!(permissions, ["docs/*.txt"]);
     assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
 }
+
+#[test]
+fn two_reports_of_one_reviewer_for_one_item_stay_two_activities_when_their_request_times_are_equal() {
+    let state = State::from_json(include_str!("fixtures/state-before-disputes.json")).unwrap();
+    let of_codex: Vec<_> = state.teams()[0]
+        .activities()
+        .iter()
+        .filter(|activity| activity.investigator().as_str() == "inv-codex")
+        .collect();
+    assert_eq!(of_codex.len(), 2);
+    assert_eq!(of_codex[0].request(), &ActivityRequest::FirstReview);
+    assert_eq!(
+        of_codex[0].outcome(),
+        &ActivityOutcome::Finished {
+            at: "2026-11-11T19:44:00Z".parse().unwrap(),
+            end: ActivityEnd::Reported
+        }
+    );
+    assert_eq!(
+        of_codex[1].request(),
+        &ActivityRequest::Verification { pass: NonZeroU32::MIN }
+    );
+    assert_eq!(
+        of_codex[1].outcome(),
+        &ActivityOutcome::Finished {
+            at: "2026-11-11T19:50:00Z".parse().unwrap(),
+            end: ActivityEnd::Reported
+        }
+    );
+}

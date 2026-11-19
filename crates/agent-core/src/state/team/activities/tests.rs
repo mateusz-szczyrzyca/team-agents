@@ -518,3 +518,43 @@ fn a_shared_verification_is_one_activity_whichever_item_of_the_list_has_had_the_
     assert_eq!(of_reviewer[0].request(), &ActivityRequest::FirstReview);
     assert_eq!(of_reviewer[1].request(), &ActivityRequest::Verification { pass: nz(1) });
 }
+
+#[test]
+fn a_task_that_cannot_resume_fails_when_it_was_seen_and_not_with_its_earlier_sleep() {
+    for (slept_at, failed_at) in [(35, 50), (22, 30)] {
+        let mut team = team(1);
+        team.add_reviewer(member(21, inv("inv-codex"))).unwrap();
+        drive(&mut team, "1.2", PhaseKind::InReview);
+        team.item_mut("1.2".parse().unwrap())
+            .unwrap()
+            .ask_reviews(vec![review("inv-codex", 21, ReviewOutcome::Pending)])
+            .unwrap();
+        let (_, mut reviewer) = team.find_mut(&task(21)).unwrap();
+        reviewer.transition(TaskStatus::Running).unwrap();
+        reviewer.begin_run(run(1), at(slept_at - 5), None).unwrap();
+        reviewer
+            .end_run(
+                at(slept_at),
+                RunEnd::Reported {
+                    outcome: RunOutcome::Sleeping,
+                },
+            )
+            .unwrap();
+        reviewer.transition(TaskStatus::Waiting).unwrap();
+        team.record_activities(at(slept_at + 1));
+        let (_, mut reviewer) = team.find_mut(&task(21)).unwrap();
+        reviewer.transition(TaskStatus::Queued).unwrap();
+        reviewer.transition(TaskStatus::Running).unwrap();
+        reviewer.transition(TaskStatus::Failed).unwrap();
+        team.record_activities(at(failed_at));
+        assert_eq!(
+            team.activities().last().unwrap().outcome(),
+            &ActivityOutcome::Finished {
+                at: at(failed_at),
+                end: ActivityEnd::Failed {
+                    reason: Some(RunEnd::NoStatus { exit_code: None })
+                }
+            }
+        );
+    }
+}
