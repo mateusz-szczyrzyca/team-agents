@@ -1,5 +1,6 @@
 //! Best-effort worktree cleanup after all the team's rounds have merged.
 
+use std::path::Path;
 use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, RepoName};
@@ -7,6 +8,7 @@ use agent_core::ids::{AgentName, RoundId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::state::{Completion, ItemPhase};
 use agent_core::status::TaskStatus;
+use agent_runtime::disk::remove_build_directory;
 use agent_runtime::git::{RemoveMode, TreeState};
 use agent_runtime::process::error_chain;
 
@@ -25,8 +27,38 @@ enum Cleanup {
 
 impl Owner {
     /// Removes `target/` directories from all tasks of `round`.
-    pub(in crate::daemon::owner) fn cleanup_round_targets(&self, _team_id: &TeamId, _round: &RoundId) {
-        // Stub for RED: do nothing
+    pub(in crate::daemon::owner) fn cleanup_round_targets(&self, team_id: &TeamId, round: &RoundId) {
+        let Some(team) = self.parts.state.team(team_id) else {
+            return;
+        };
+        for (_role, member) in team.members_in(round) {
+            let worktree_dir = self.parts.store.home().worktree_dir(team.repo(), member.task());
+            self.remove_target(member.task(), &worktree_dir);
+        }
+    }
+
+    /// Removes the build directory of `worktree_dir` if present, logging the outcome.
+    fn remove_target(&self, task: &TaskId, worktree_dir: &Path) {
+        match remove_build_directory(self.parts.store.home(), worktree_dir) {
+            Ok(bytes) => {
+                if bytes > 0 {
+                    tracing::info!(
+                        event = LogEvent::BuildDirectoryRemoved.as_str(),
+                        task = %task,
+                        bytes = bytes,
+                        "build directory removed"
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::GitCallFailed.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "cannot remove build directory"
+                );
+            }
+        }
     }
 
     /// Releases completed workspaces only after every item is done, at least one merged, and no round is open.
@@ -74,15 +106,27 @@ impl Owner {
             };
             match result {
                 Ok(Cleanup::Removed) => {}
-                Ok(Cleanup::Dirty) => tracing::warn!(event = LogEvent::GitCallFailed.as_str(),
-                    team = %team_id, task = %member.task(),
-                    "the merged worktree is kept: uncommitted changes"),
-                Ok(Cleanup::Unpushed) => tracing::warn!(event = LogEvent::GitCallFailed.as_str(),
-                    team = %team_id, task = %member.task(),
-                    "the merged worktree is kept: commits not on origin"),
-                Err(error) => tracing::warn!(event = LogEvent::GitCallFailed.as_str(),
-                    team = %team_id, task = %member.task(), error = %error_chain(&error),
-                    "the merged worktree cannot be removed and is kept"),
+                Ok(Cleanup::Dirty) => {
+                    let worktree_dir = self.parts.store.home().worktree_dir(team.repo(), member.task());
+                    self.remove_target(member.task(), &worktree_dir);
+                    tracing::warn!(event = LogEvent::GitCallFailed.as_str(),
+                        team = %team_id, task = %member.task(),
+                        "the merged worktree is kept: uncommitted changes");
+                }
+                Ok(Cleanup::Unpushed) => {
+                    let worktree_dir = self.parts.store.home().worktree_dir(team.repo(), member.task());
+                    self.remove_target(member.task(), &worktree_dir);
+                    tracing::warn!(event = LogEvent::GitCallFailed.as_str(),
+                        team = %team_id, task = %member.task(),
+                        "the merged worktree is kept: commits not on origin");
+                }
+                Err(error) => {
+                    let worktree_dir = self.parts.store.home().worktree_dir(team.repo(), member.task());
+                    self.remove_target(member.task(), &worktree_dir);
+                    tracing::warn!(event = LogEvent::GitCallFailed.as_str(),
+                        team = %team_id, task = %member.task(), error = %error_chain(&error),
+                        "the merged worktree cannot be removed and is kept");
+                }
             }
         }
     }
