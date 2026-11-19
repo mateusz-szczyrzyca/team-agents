@@ -797,7 +797,8 @@ mod tests {
         let one = serde_json::to_value(team_of(1, 1)).unwrap();
         let same_team = serde_json::to_value(team_of(1, 11)).unwrap();
         let same_tasks = serde_json::to_value(team_of(2, 1)).unwrap();
-        let state = |teams: &[&serde_json::Value]| json!({"schema_version": 1, "teams": teams}).to_string();
+        let state =
+            |teams: &[&serde_json::Value]| json!({"schema_version": SCHEMA_VERSION, "teams": teams}).to_string();
 
         let teams = State::from_json(&state(&[&one, &same_team])).unwrap_err();
         let tasks = State::from_json(&state(&[&one, &same_tasks])).unwrap_err();
