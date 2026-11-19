@@ -346,19 +346,12 @@ async fn confirmed_continuation_lists_only_the_blocker_still_needing_a_fix() {
 
 #[tokio::test]
 async fn opinion_history_records_the_request_outcome_and_run_reason() {
-    use agent_core::history::{HistoryEvent, Record, RunWhy};
+    use agent_core::history::{HistoryEvent, RunWhy};
     use agent_runtime::history::Reader;
-    for confirmed in [false, true] {
-        let probe = if confirmed {
-            "opinion-probe:CONFIRMED"
-        } else {
-            "opinion-probe:NOT CONFIRMED"
-        };
-        let lead = if confirmed {
-            "work,opinion-ask,fix-work-pushed"
-        } else {
-            "work,opinion-ask"
-        };
+    for (confirmed, lead, probe) in [
+        (false, "work,opinion-ask", "opinion-probe:NOT CONFIRMED"),
+        (true, "work,opinion-ask,fix-work-pushed", "opinion-probe:CONFIRMED"),
+    ] {
         let mut rig = Rig::new(
             &[
                 normal("claude-1", lead),
@@ -383,24 +376,7 @@ async fn opinion_history_records_the_request_outcome_and_run_reason() {
         let state = rig.state();
         let item = &state.team(&team).unwrap().items()[0];
         let reader = Reader::open(&rig.home.history_file()).unwrap();
-        let events: Vec<_> = reader
-            .team_records(&team)
-            .unwrap()
-            .into_iter()
-            .filter_map(|row| match row.record {
-                Record::Event(event)
-                    if matches!(
-                        event.event,
-                        HistoryEvent::SecondOpinionAsked { .. }
-                            | HistoryEvent::FindingConfirmed { .. }
-                            | HistoryEvent::FindingNotConfirmed { .. }
-                    ) =>
-                {
-                    Some(event)
-                }
-                _ => None,
-            })
-            .collect();
+        let events = opinion_events(&reader, &team);
         let runs = reader.runs_of_team(&team).unwrap();
         assert_eq!(events.len(), 4);
         for (number, opinion) in item.findings().unwrap().opinions() {
@@ -575,4 +551,30 @@ async fn an_opinion_waits_for_a_free_eligible_investigator_then_uses_it() {
             .any(|review| investigators.contains(&review.reviewer))
     );
     assert_eq!(rig.github.reviews(1).len(), 2);
+}
+
+/// The three second-opinion event kinds read back from the daemon's history.
+fn opinion_events(
+    reader: &agent_runtime::history::Reader,
+    team: &agent_core::ids::TeamId,
+) -> Vec<agent_core::history::EventRecord> {
+    use agent_core::history::{HistoryEvent, Record};
+    reader
+        .team_records(team)
+        .unwrap()
+        .into_iter()
+        .filter_map(|row| match row.record {
+            Record::Event(event)
+                if matches!(
+                    event.event,
+                    HistoryEvent::SecondOpinionAsked { .. }
+                        | HistoryEvent::FindingConfirmed { .. }
+                        | HistoryEvent::FindingNotConfirmed { .. }
+                ) =>
+            {
+                Some(*event)
+            }
+            _ => None,
+        })
+        .collect()
 }
