@@ -321,6 +321,29 @@ impl Owner {
         }
         Ok(())
     }
+
+    /// Asks again, after a restart, every reviewer whose report of a pending review was not taken.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the state is inconsistent or cannot be saved.
+    pub(in crate::daemon::owner) async fn ask_unanswered_reviews(&mut self) -> Result<(), OwnerError> {
+        let asked: Vec<(TeamId, Vec<TaskId>)> = self
+            .parts
+            .state
+            .teams()
+            .iter()
+            .map(|team| (team.id().clone(), crate::daemon::merge::unanswered_reviews(team)))
+            .filter(|(_, tasks)| !tasks.is_empty())
+            .collect();
+        for (team, tasks) in asked {
+            let mut look = Look::default();
+            for task in tasks {
+                self.release(&task, Why::Review, &mut look)?;
+            }
+            self.finish_look(&team, look).await?;
+        }
+        Ok(())
+    }
 }
 
 /// A new reviewer with the worktree and the branch that were made for it.

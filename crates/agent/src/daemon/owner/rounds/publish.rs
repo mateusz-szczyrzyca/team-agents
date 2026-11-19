@@ -239,13 +239,12 @@ impl Owner {
                     self.parts
                         .state
                         .team(team_id)
-                        .and_then(|t| t.item(*id))
-                        .is_some_and(|item| {
+                        .and_then(|t| Some((t, t.item(*id)?)))
+                        .is_some_and(|(team, item)| {
+                            let passes = crate::daemon::merge::pull_passes(team, item);
                             item.findings().is_some_and(|ledger| {
-                                ledger
-                                    .disputes()
-                                    .is_some_and(|d| d.answered_pass != count(item.fix_passes().len()))
-                                    || std::num::NonZeroU32::new(count(item.fix_passes().len())).is_some_and(|pass| {
+                                ledger.disputes().is_some_and(|d| d.answered_pass != passes)
+                                    || std::num::NonZeroU32::new(passes).is_some_and(|pass| {
                                         matches!(
                                             agent_core::decide::opinion::after_opinions(
                                                 ledger,
@@ -527,10 +526,10 @@ impl Owner {
             self.parts
                 .state
                 .team(team)
-                .and_then(|t| t.item(*id))
-                .is_some_and(|item| {
+                .and_then(|t| Some((t, t.item(*id)?)))
+                .is_some_and(|(team, item)| {
                     item.findings().is_some_and(|ledger| {
-                        NonZeroU32::new(count(item.fix_passes().len()))
+                        NonZeroU32::new(crate::daemon::merge::pull_passes(team, item))
                             .is_none_or(|pass| ledger.fixed_answers(pass).is_empty())
                             && ledger
                                 .entries()

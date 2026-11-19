@@ -1,6 +1,7 @@
 //! Project the owner's queued work and the durable round state into an idle wait reason.
 
 use agent_core::decide::wait::{Activity, Obligation, Waiting, round_wait};
+use agent_core::kinds::Role;
 use agent_core::state::{ItemPhase, OpinionStage, Round, RoundLife, Team};
 use agent_core::status::TaskStatus;
 
@@ -58,12 +59,14 @@ impl Owner {
         } else {
             Activity::Idle
         };
-        let human = members.iter().any(|(_, member)| {
+        // A reviewer whose review is no longer asked — one that failed and was replaced — holds nothing of the round:
+        // only its open question waits for the human.
+        let human = members.iter().any(|(role, member)| {
             member.open_question().is_some()
-                || matches!(
+                || (matches!(
                     member.status(),
                     TaskStatus::Questions | TaskStatus::Paused | TaskStatus::Stopped | TaskStatus::Failed
-                )
+                ) && (*role != Role::Reviewer || crate::daemon::merge::review_asked(team, member.task())))
         });
         let obligation = if human || self.pulls.is_none() {
             Some(Obligation::Human)
