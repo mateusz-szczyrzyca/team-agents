@@ -54,7 +54,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
 
-/// The schema version this build writes. It also reads version 8 (without opinion attempts), version 7 (without kept fix answers), version 6 (without second opinions), version 5 (verification without disputes), version 4 (independent full reviews), version 3 (dependent reviews), version 2 (without findings) and version 1 (without rounds).
+/// The schema version this build writes, with investigator activities reconstructed from versions 1 through 10.
 pub const SCHEMA_VERSION: u32 = 11;
 
 /// Largest state text accepted, in bytes: a bound on untrusted input, far above any real state.
@@ -422,12 +422,9 @@ impl State {
     /// Reads a state from JSON text.
     ///
     /// # Errors
-    /// [`StateError`]: the text is too large, declares a schema version other than 1, 2, 3 and 4 (checked first, so that a
-    /// state of a newer version is refused as such and not as malformed), is not a valid state, or has clashing teams,
-    /// tasks or rounds.
-    ///
-    /// A state of version 1 is migrated as it is read: it comes out as the state of version 4 that stands for it, and
-    /// the same text always gives the same state.
+    /// [`StateError`]: the text is too large, declares an unsupported schema (checked first), is malformed,
+    /// or has clashing teams, tasks or rounds. Versions 1 through 10 migrate to [`SCHEMA_VERSION`], rebuilding
+    /// investigator activity history deterministically from the evidence they retain.
     pub fn from_json(text: &str) -> Result<Self, StateError> {
         if text.len() > MAX_STATE_BYTES {
             return Err(StateError::TooLarge {

@@ -1072,6 +1072,19 @@ running installation, until the cutover. Build it with `cargo build` and run `ta
 `AGENTS_HOME=/tmp/trial-home`. Its files and settings are different from the Bash version's
 ([`docs/configuration.md`](docs/configuration.md), [`docs/state.md`](docs/state.md)).
 
+The Rust daemon keeps each team's investigator activities in `state.json`: investigator, task, rounds,
+assignment time and terminal outcome. Activities distinguish `team-member` (coordinator or member), `reviewer`
+(first review, verification or second opinion), `investigator` (questions and explanations) and `task-allocator`
+(task splitting and integration). Crew membership and review work are recorded today; the latter two kinds do
+not introduce new workflows. Reports remain recorded between reviews and after the item advances; stopped and
+failed assignments retain their ending time and the reason known by the daemon.
+
+State schema `11` automatically rebuilds this history when reading schemas `1`–`10`, using retained crew,
+reviews, fix passes and second-opinion attempts. Old records without exact opinion times use the earliest task
+run for assignment and its last run ending for completion, falling back to team creation or the latest retained
+run evidence. No reviewer selection or `agent status` output changes in this version. See the
+[activity record](docs/state.md#investigator-activities).
+
 The Rust CLI provides a read-only diagnostic bundle for one team:
 
 ```sh

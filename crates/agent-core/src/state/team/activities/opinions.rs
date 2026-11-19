@@ -32,7 +32,7 @@ impl Team {
                 // Earlier schemas lack assignment times: the first run, or team creation, is the earliest evidence.
                 let asked_at = attempt
                     .asked_at
-                    .or_else(|| member.and_then(|m| m.runs().first().map(|r| r.started_at())))
+                    .or_else(|| member.and_then(|m| m.runs().first().map(crate::state::Run::started_at)))
                     .unwrap_or(self.created_at);
                 let ended_at = member
                     .and_then(|m| m.runs().last())

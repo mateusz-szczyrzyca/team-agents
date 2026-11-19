@@ -234,7 +234,7 @@ impl Team {
             }
             match item.phase() {
                 ItemPhase::InReview { reviews: current, .. } | ItemPhase::Approved { reviews: current, .. } => {
-                    reviews(current)
+                    reviews(current);
                 }
                 ItemPhase::Pending
                 | ItemPhase::InProgress { .. }

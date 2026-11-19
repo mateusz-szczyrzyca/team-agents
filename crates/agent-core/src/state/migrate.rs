@@ -1,8 +1,7 @@
-//! Reading a state of schema version 1, which this build migrates to version 2 as it reads it.
+//! Reading schemas 1 through 10 and reconstructing their investigator activity history.
 //!
-//! What changed in version 2: a team holds its rounds, a run names the rounds it works for, and the questions of a
-//! task are numbered with the key `number` where version 1 called it `round`. Nothing is written in version 1 any
-//! more: the state that is saved afterwards is version 2. The rounds a team gets are made by [`Team::from_v1`].
+//! Version 1 also gains rounds; versions before 10 preserve `Allow:` lines as brief text. The latest retained
+//! task evidence supplies deterministic activity timestamps when older opinion records lack exact times.
 
 use std::collections::HashSet;
 
@@ -31,7 +30,7 @@ struct StateV1 {
     teams: Vec<TeamV1>,
 }
 
-/// Reads `text`, a state of schema version 1, as the state of version 2 it stands for.
+/// Reads schema version 1 into the current state, including reconstructed rounds and activities.
 ///
 /// # Errors
 /// [`StateError`]: the text is not a state of version 1 (a field missing, unknown or not valid, or a team whose parts
@@ -173,7 +172,7 @@ fn rebuild_activities(teams: &mut [Team]) {
             .into_iter()
             .map(|(_, member)| member)
             .chain(team.reviewers())
-            .flat_map(|member| member.runs())
+            .flat_map(super::Member::runs)
             .map(|run| match run.state() {
                 super::RunState::Running => run.started_at(),
                 super::RunState::Ended { at, .. } => *at,
