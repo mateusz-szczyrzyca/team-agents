@@ -1209,14 +1209,20 @@ never blocks) — a rule ID and a `CHECK:` line that tells how to see whether it
 finding has no or another severity or no check, or whose verdict contradicts its findings (`APPROVE` with a `[BLOCKER]` or
 `[MAJOR]`, `REQUEST_CHANGES` with neither), goes back to its reviewer. The findings of a pull request keep their numbers over
 all review passes; a reviewer of a later pass answers for every open one (`FINDING 3: RESOLVED` or `FINDING 3: OPEN — why`).
+After RESOLVED, an optional nonempty reason may use ` — reason`, ` - reason`, or `: reason`; the saved report retains it.
 The harness keeps one comment on the pull request with the table of all findings, edited after every pass, and the fix-pass
 text names the findings that block by number. `agent status <round>` counts the open ones of each severity. Pull requests
 opened before the relevant protocol update keep their original review rules until they end.
 
 For new pull requests, the lead's fix message answers every open blocking finding before `STATUS:`:
 `FINDING 3: FIXED`, or, once for a MAJOR, `FINDING 3: EXPLAINED — why the deviation is right`.
+FIXED accepts the same optional reason separators as RESOLVED. Lines for open MINOR findings are optional;
+FIXED is recorded, and other answers for MINOR findings are ignored. Unknown finding numbers are refused.
+A correction quotes the refused line, identifies its number and mistake, and lists the allowed forms for open blockers.
 A confirmed BLOCKER requires a code fix. Missing or forbidden answers receive at most two corrections without consuming
-another fix pass; after that the human is notified and verification stays held.
+another fix pass; after that a “lead’s fix response was refused” notice gives the reason, bounce count and recovery
+commands, and verification stays held. A reviewer’s report with a verdict but an invalid finding answer receives a
+“reviewer’s report was refused” notice with the refused line instead of a missing-verdict notice.
 A fix pass that claims `FIXED` must hand over a new commit. If its tip is still the reviewed commit,
 the harness returns it to the lead to commit the fix and run `agent gate`. The same correction budget covers a
 gate record that still belongs to another commit after the harness has finished its own gate. Three automatic
@@ -1239,8 +1245,9 @@ these events while preserving existing records and search.
 
 With `[review] allow_second_opinion_on_blocker = true` (also the default when omitted), the lead may answer
 `FINDING 3: SECOND OPINION — why the blocker is false` once per open BLOCKER. Set the key to `false` to disable
-this response and remove it from fix-pass instructions. MAJOR, MINOR and repeated requests are returned for
-correction. The entire response is checked before any answer is recorded; accepted FIXED answers survive restarts.
+this response and remove it from fix-pass instructions. MAJOR and repeated BLOCKER requests are returned for
+correction; requests for open MINOR findings are ignored. The entire response is checked before any answer is recorded;
+accepted FIXED answers survive restarts.
 
 Each request waits for a free investigator outside the team who neither reported the finding nor reviewed the
 pass being answered. The investigator examines only that finding at the handed-over commit, without a bus,

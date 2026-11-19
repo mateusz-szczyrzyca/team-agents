@@ -7,3 +7,5 @@ Refused source line (empty when an answer is missing):
 
 Open blocking findings and allowed forms:
 {{forms}}
+
+After FIXED or RESOLVED, optionally add ` — reason`, ` - reason`, or `: reason`.

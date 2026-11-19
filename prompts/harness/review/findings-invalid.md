@@ -10,5 +10,5 @@ FINDINGS
 ```
 
 Use only [BLOCKER], [MAJOR], [MINOR]. Answer every supplied open finding before new findings with
-`FINDING 3: RESOLVED` or `FINDING 3: OPEN — why`. APPROVE requires no open BLOCKER or MAJOR;
+`FINDING 3: RESOLVED` or `FINDING 3: OPEN — why`. After RESOLVED, optionally add ` — reason`, ` - reason`, or `: reason`. APPROVE requires no open BLOCKER or MAJOR;
 REQUEST_CHANGES requires at least one. End with STATUS: DONE.
