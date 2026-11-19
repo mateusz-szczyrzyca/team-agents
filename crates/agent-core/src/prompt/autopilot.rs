@@ -12,17 +12,17 @@ use super::{Audience, PromptSpec};
 /// Every text of the autopilot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AutopilotPrompt {
-    /// Second-opinion protocol and evidence.
+    /// Ask an independent investigator to check one finding at the handed-over commit.
     ReviewOpinionRequest,
-    /// Second-opinion protocol and evidence.
+    /// Return an opinion report that lacks a verdict or supporting evidence.
     ReviewOpinionCorrection,
-    /// Second-opinion protocol and evidence.
+    /// Offer the permitted second-opinion answer in a fix-pass prompt.
     ReviewOpinionOffer,
-    /// Second-opinion protocol and evidence.
+    /// Show the investigator, outcome and evidence beside a finding.
     ReviewOpinionResult,
-    /// Second-opinion protocol and evidence.
+    /// Return confirmed blockers to the lead for fixes in the current pass.
     ReviewOpinionConfirmed,
-    /// Second-opinion protocol and evidence.
+    /// Describe the allowed answers for an unused blocker with permission enabled.
     ReviewResponseOpinion,
     /// The title of a pull request.
     PrTitle,
