@@ -26,6 +26,8 @@
 //! Nothing here reads a file or knows a wording: the text of the instructions and the words that tell the agent a
 //! recommendation was accepted come from templates under `prompts/harness/questions/` and are passed in.
 
+pub mod checks;
+
 use std::collections::HashSet;
 
 use std::fmt;
