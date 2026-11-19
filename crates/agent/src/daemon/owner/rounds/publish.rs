@@ -1197,3 +1197,7 @@ impl Owner {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "tests/joined_pass_readers.rs"]
+mod joined_pass_readers_tests;
