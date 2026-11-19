@@ -99,7 +99,7 @@ impl Owner {
                     .items
                     .first()
                     .and_then(|id| self.parts.state.team(&located.team)?.item(*id)?.findings())
-                    && let Err(problem) = agent_core::review_findings::parse_report(message, verdict, &ledger.open())
+                    && let Err(problem) = ledger.parse_report(message, verdict)
                 {
                     return self
                         .send_back(&pulls, task, located, &asked, &VerdictProblem::Findings(problem))
@@ -342,7 +342,7 @@ impl Owner {
             let Some(ledger) = item.findings_mut() else {
                 continue;
             };
-            let report = agent_core::review_findings::parse_report(message, verdict, &ledger.open())?;
+            let report = ledger.parse_report(message, verdict)?;
             ledger.record(task.clone(), report);
             if reviews
                 .iter()

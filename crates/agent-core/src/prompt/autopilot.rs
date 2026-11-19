@@ -60,6 +60,16 @@ pub enum AutopilotPrompt {
     ReviewVerdictRequestChanges,
     /// What the lead of a team is told when the reviewers asked for changes.
     ReviewFixPass,
+    /// The one-time explanation protocol.
+    ReviewExplanationVote,
+    /// The one-time explanation protocol.
+    ReviewExplanation,
+    /// The one-time explanation protocol.
+    ReviewDisputes,
+    /// The one-time explanation protocol.
+    ReviewResponseInvalid,
+    /// The one-time explanation protocol.
+    ReviewFixResponse,
     /// One reviewer's report among the findings the lead is given.
     ReviewFinding,
     /// What the lead is told when the fix passes are used up: to ask the human.
@@ -119,6 +129,11 @@ impl AutopilotPrompt {
         Self::ReviewVerdictApprove,
         Self::ReviewVerdictRequestChanges,
         Self::ReviewFixPass,
+        Self::ReviewExplanationVote,
+        Self::ReviewExplanation,
+        Self::ReviewDisputes,
+        Self::ReviewResponseInvalid,
+        Self::ReviewFixResponse,
         Self::ReviewFinding,
         Self::ReviewAskHuman,
         Self::ReviewVerdictMissing,
@@ -224,6 +239,14 @@ impl AutopilotPrompt {
                 "harness/review/fix-pass.md",
                 &["pr", "pass", "passes", "branch", "findings"],
             ),
+            Self::ReviewFixResponse => (
+                "harness/review/fix-response.md",
+                &["pr", "pass", "passes", "branch", "findings"],
+            ),
+            Self::ReviewResponseInvalid => ("harness/review/response-invalid.md", &["line", "number", "allowed"]),
+            Self::ReviewDisputes => ("harness/review/disputes.md", &["findings"]),
+            Self::ReviewExplanation => ("harness/review/explanation.md", &["status", "why", "votes"]),
+            Self::ReviewExplanationVote => ("harness/review/explanation-vote.md", &["reviewer", "status", "why"]),
             Self::ReviewFinding => ("harness/review/finding.md", &["reviewer", "report"]),
             Self::ReviewAskHuman => (
                 "harness/review/ask-human.md",

@@ -15,6 +15,8 @@ mod merges;
 mod prompts;
 mod publish;
 mod replace;
+mod responses;
+pub(crate) use responses::ResponseTextError;
 mod reviewers;
 mod verdicts;
 
@@ -420,6 +422,7 @@ impl Owner {
             return Ok(());
         };
         self.merge_approved(&pulls, team, look).await?;
+        self.check_fix_responses(&pulls, team, look)?;
         self.publish_branches(&pulls, team, look).await?;
         self.ask_for_reviews(team, look).await?;
         self.replace_reviewers(&pulls, team, look).await?;

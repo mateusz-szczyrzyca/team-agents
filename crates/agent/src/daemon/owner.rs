@@ -115,6 +115,9 @@ struct RunTaskFailed(#[source] JoinError);
 /// Why the owner stopped with an error: something it cannot go on without.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum OwnerError {
+    /// A fix response correction cannot be rendered.
+    #[error("cannot render fix response correction")]
+    FixResponse(#[from] rounds::ResponseTextError),
     /// The reviewed commit cannot be retained for the next verification.
     #[error(transparent)]
     ReviewedHead(#[from] rounds::ReviewedHeadError),
@@ -920,6 +923,13 @@ impl Owner {
         };
         let status = halt.map_or(status, |halt| after_halt(halt, status));
         self.move_to(task, &located.team, status, &mut events)?;
+        if matches!(located.role, Role::Solo | Role::Coordinator)
+            && let Some(pulls) = self.pulls.clone()
+        {
+            let mut look = teams::Look::default();
+            self.check_fix_responses(&pulls, &located.team, &mut look)?;
+            events.extend(look.events);
+        }
         self.commit(task, &located, now, events, notice).await?;
         if located.role == Role::Reviewer
             && matches!(

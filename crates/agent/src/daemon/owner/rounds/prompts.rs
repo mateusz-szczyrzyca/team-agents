@@ -186,6 +186,13 @@ pub(super) async fn fix_pass(
     let Some((progress, branch, pr)) = fixing else {
         return Ok(None);
     };
+    if let Some(correction) = progress
+        .findings()
+        .and_then(|l| l.disputes())
+        .and_then(|d| d.correction.as_ref())
+    {
+        return Ok(Some(correction.clone()));
+    }
     let Some(asked) = progress.fix_passes().last() else {
         return Ok(None);
     };
@@ -202,7 +209,14 @@ pub(super) async fn fix_pass(
         .with("findings", findings.join("\n\n"))?;
     Ok(Some(
         texts
-            .render(AutopilotPrompt::ReviewFixPass, &values)?
+            .render(
+                if progress.findings().is_some_and(|l| l.disputes().is_some()) {
+                    AutopilotPrompt::ReviewFixResponse
+                } else {
+                    AutopilotPrompt::ReviewFixPass
+                },
+                &values,
+            )?
             .trim_end()
             .to_owned(),
     ))
@@ -391,7 +405,14 @@ pub(super) async fn review_request(
     }
     if verification.pass > 1 && verification.findings.is_some() {
         let values = Variables::new().with("findings", super::findings::open_text(texts, verification.findings)?)?;
-        sections.push(texts.render(AutopilotPrompt::ReviewOpenFindings, &values)?);
+        sections.push(texts.render(
+            if verification.findings.is_some_and(|l| l.disputes().is_some()) {
+                AutopilotPrompt::ReviewDisputes
+            } else {
+                AutopilotPrompt::ReviewOpenFindings
+            },
+            &values,
+        )?);
     }
     let harness = PromptTexts {
         harness: ctx.texts,
