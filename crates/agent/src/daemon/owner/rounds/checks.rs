@@ -82,8 +82,8 @@ impl Owner {
             .pull_text_of(pulls, team, &lead.repo, reviewing.items, &reviewing.ready.record)
             .await?;
         Ok([
-            authored(reviewing.description, &header.body),
-            authored(&fresh.body, &header.body),
+            crate::daemon::pr::description::checks_description(&authored(reviewing.description, &header.body)),
+            crate::daemon::pr::description::checks_description(&authored(&fresh.body, &header.body)),
         ]
         .join("\n\n"))
     }

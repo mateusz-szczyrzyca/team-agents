@@ -13,6 +13,16 @@ pub(crate) const MAX_DESCRIPTION_BYTES: usize = 1 << 20;
 
 /// Removes harness-owned sections from the lead's contribution.
 pub(crate) fn lead_sections(text: &str) -> String {
+    without_sections(text, &["Size", "Gate", "Allowed beforehand"])
+}
+
+/// Excludes task permissions from marker justifications supplied by the lead or the remote description.
+pub(crate) fn checks_description(text: &str) -> String {
+    without_sections(text, &["Allowed beforehand"])
+}
+
+/// Removes only the named headings and their children, respecting fenced examples.
+fn without_sections(text: &str, names: &[&str]) -> String {
     let mut kept = Vec::new();
     let mut omitted = None;
     let mut fence = None;
@@ -35,10 +45,7 @@ pub(crate) fn lead_sections(text: &str) -> String {
                     omitted = None;
                 }
                 let title = title.trim().trim_end_matches('#').trim();
-                if title.eq_ignore_ascii_case("Size")
-                    || title.eq_ignore_ascii_case("Gate")
-                    || title.eq_ignore_ascii_case("Allowed beforehand")
-                {
+                if names.iter().any(|name| title.eq_ignore_ascii_case(name)) {
                     omitted = Some(level);
                 }
             }
