@@ -127,6 +127,16 @@ pub fn parse_report(
     verdict: ReviewVerdict,
     open: &[(NonZeroU32, Severity)],
 ) -> Result<Report, ReportError> {
+    read_report(text, verdict, open, None)
+}
+
+/// The common syntax reader; `Some` enables the explanation protocol.
+fn read_report(
+    text: &str,
+    verdict: ReviewVerdict,
+    open: &[(NonZeroU32, Severity)],
+    explained: Option<&[NonZeroU32]>,
+) -> Result<Report, ReportError> {
     let lines: Vec<&str> = text.lines().collect();
     let mut report = Report::default();
     let mut in_findings = false;
@@ -171,15 +181,13 @@ pub fn parse_report(
             if report.answers.iter().any(|(n, _)| *n == id) {
                 return Err(fail(ReportProblem::Answer));
             }
-            let answer = match value.trim() {
-                "RESOLVED" => Answer::Resolved,
-                value => match value.strip_prefix("OPEN — ").filter(|why| !why.trim().is_empty()) {
-                    Some(why) => Answer::Open {
-                        why: why.trim().to_owned(),
-                    },
-                    None => return Err(fail(ReportProblem::Answer)),
-                },
-            };
+            let severity = open
+                .iter()
+                .find(|(n, _)| *n == id)
+                .map(|(_, severity)| *severity)
+                .ok_or_else(|| fail(ReportProblem::Answer))?;
+            let answer = read_answer(value.trim(), severity, explained.map(|ids| ids.contains(&id)))
+                .ok_or_else(|| fail(ReportProblem::Answer))?;
             report.answers.push((id, answer));
         } else if in_findings && numbered(trimmed) {
             let mut finding = read_finding(trimmed).ok_or_else(|| fail(ReportProblem::Finding))?;
@@ -203,11 +211,14 @@ pub fn parse_report(
     }
     let blocking = report.findings.iter().any(|finding| finding.severity.blocks())
         || open.iter().any(|(id, severity)| {
-            severity.blocks()
-                && report
-                    .answers
-                    .iter()
-                    .any(|(n, answer)| n == id && matches!(answer, Answer::Open { .. }))
+            report.answers.iter().any(|(n, answer)| {
+                n == id
+                    && match answer {
+                        Answer::Raised { .. } => true,
+                        Answer::Open { .. } | Answer::Rejected { .. } => severity.blocks(),
+                        Answer::Resolved | Answer::Accepted { .. } => false,
+                    }
+            })
         });
     if blocking != (verdict == ReviewVerdict::RequestChanges) {
         return Err(ReportError {
@@ -229,9 +240,35 @@ pub fn parse_verification(
     text: &str,
     verdict: ReviewVerdict,
     open: &[(NonZeroU32, Severity)],
-    _explained: &[NonZeroU32],
+    explained: &[NonZeroU32],
 ) -> Result<Report, ReportError> {
-    parse_report(text, verdict, open)
+    read_report(text, verdict, open, Some(explained))
+}
+
+/// Parses one permitted verifier answer, with a nonempty evidence string.
+fn read_answer(value: &str, severity: Severity, pending: Option<bool>) -> Option<Answer> {
+    if value == "RESOLVED" && pending != Some(true) {
+        return Some(Answer::Resolved);
+    }
+    let (kind, why) = value.split_once(" — ")?;
+    let why = why.trim();
+    if why.is_empty() {
+        return None;
+    }
+    match (kind, pending) {
+        ("OPEN", None | Some(false)) => Some(Answer::Open { why: why.to_owned() }),
+        ("ACCEPTED", Some(true)) => Some(Answer::Accepted { why: why.to_owned() }),
+        ("REJECTED", Some(true)) => Some(Answer::Rejected { why: why.to_owned() }),
+        ("RAISED [BLOCKER]", Some(_)) if severity != Severity::Blocker => Some(Answer::Raised {
+            severity: Severity::Blocker,
+            why: why.to_owned(),
+        }),
+        ("RAISED [MAJOR]", Some(_)) if severity == Severity::Minor => Some(Answer::Raised {
+            severity: Severity::Major,
+            why: why.to_owned(),
+        }),
+        _ => None,
+    }
 }
 
 /// A Markdown code fence line: its character (backtick or tilde) and how many of them it has.
