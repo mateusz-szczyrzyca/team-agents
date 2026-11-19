@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::Duration;
 
 use agent_core::config::AbsolutePath;
 use agent_core::history::MaxTextBytes;
@@ -148,7 +147,7 @@ async fn queued_tasks_wait_below_min_free_space_and_resume_when_space_back() {
     assert!(notice.contains("minimum threshold of 20 GB"));
 
     // Task 1.2 should not start yet; its task is queued waiting for disk space.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // No wait is needed: while the space is below the minimum, the task cannot start.
     let state = rig.state();
     let task_1 = state.teams()[0].crew().roster()[0].1.task();
     assert_eq!(
