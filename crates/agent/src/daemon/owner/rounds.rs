@@ -357,6 +357,8 @@ pub(super) enum AutopilotNotice {
     Opinion,
     /// Branch publish failed.
     PublishFailed,
+    /// Automatic handover corrections are exhausted.
+    HandoverHeld,
     /// Team asleep.
     TeamAsleep,
     /// Standing item behind a failed member while lead is done.
@@ -380,6 +382,7 @@ impl AutopilotNotice {
             Self::NoVerdict => AutopilotPrompt::NoticeNoVerdict,
             Self::Opinion => AutopilotPrompt::NoticeOpinion,
             Self::PublishFailed => AutopilotPrompt::NoticePublishFailed,
+            Self::HandoverHeld => AutopilotPrompt::NoticeHandoverHeld,
             Self::TeamAsleep => AutopilotPrompt::NoticeTeamAsleep,
             Self::StandingItem => AutopilotPrompt::NoticeStandingItem,
             Self::Closed => AutopilotPrompt::NoticeClosed,
@@ -396,7 +399,7 @@ impl AutopilotNotice {
             Self::Decision => NoticeKind::Decision,
             Self::NoVerdict => NoticeKind::NoVerdict,
             Self::Opinion => NoticeKind::Opinion,
-            Self::PublishFailed => NoticeKind::PublishFailed,
+            Self::PublishFailed | Self::HandoverHeld => NoticeKind::PublishFailed,
             Self::TeamAsleep | Self::StandingItem => NoticeKind::TeamAsleep,
             Self::Closed => NoticeKind::Closed,
             Self::Approved => NoticeKind::Approved,

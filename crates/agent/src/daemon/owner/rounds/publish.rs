@@ -1,6 +1,7 @@
 //! Publishing: pushing the branch of the lead, opening or updating its pull request, and putting the items in review.
 
 use agent_core::config::RepoName;
+use agent_core::decide::fix::{Answers, Budget, Progress, Step, fix_step};
 use agent_core::decide::publish::{GateHold, GateStep, HarnessGate, Waiting, gate_step};
 use agent_core::decide::round::{RoundEvent, RoundPolicy, RoundState, Stage};
 use agent_core::history::HistoryEvent;
@@ -128,8 +129,14 @@ pub(super) enum Attempt {
         /// Why the gate does not count.
         hold: GateHold,
     },
-    /// The lead is done and the gate passed at `tip`, which contains the branch of none of the finished items: it is
-    /// sent back to merge them.
+    /// A fix pass claimed a fix but handed back the reviewed commit.
+    Uncommitted {
+        /// The unchanged reviewed commit.
+        tip: CommitId,
+        /// Catalog-rendered reason for the human notice.
+        reason: String,
+    },
+    /// The lead is done and the gate passed, but no finished branch was joined.
     NotJoined {
         /// The tip of its branch.
         tip: CommitId,
@@ -283,6 +290,16 @@ impl Owner {
                 }
                 Ok(Attempt::SentBack { tip, hold }) => {
                     self.send_back_for_gate(site, &publication, (&tip, &hold), now, look)?;
+                }
+                Ok(Attempt::Uncommitted { tip, reason }) => {
+                    let back = Back {
+                        prompt: AutopilotPrompt::ReviewFixNoCommit,
+                        variable: ("tip", tip.to_string()),
+                        outcome: "fix_without_commit",
+                        told: reason,
+                        undone: "a new commit",
+                    };
+                    self.send_lead_back(site, &publication, &tip, &back, now, look)?;
                 }
                 Ok(Attempt::NotJoined { tip, missing }) => {
                     self.send_back_to_join(site, &publication, (&tip, &missing), now, look)?;
@@ -482,24 +499,59 @@ impl Owner {
             .reviewed_tip(&pr.branch)
             .await?
             .unwrap_or_else(|| before.head.clone());
-        let explained = fixing.iter().any(|id| {
-            self.parts
-                .state
-                .team(team)
-                .and_then(|t| t.item(*id))
-                .is_some_and(|item| {
-                    item.findings()
-                        .and_then(agent_core::state::Findings::disputes)
-                        .is_some_and(|d| {
-                            d.answered_pass == count(item.fix_passes().len())
-                                && d.explanations
-                                    .values()
-                                    .any(|e| e.status == agent_core::state::ExplanationStatus::Pending)
+        if reviewed == ready.tip {
+            if !lead.done {
+                return Ok(Attempt::Nothing);
+            }
+            let accounted = fixing.iter().all(|id| {
+                self.parts
+                    .state
+                    .team(team)
+                    .and_then(|t| t.item(*id))
+                    .is_some_and(|item| {
+                        item.findings().is_some_and(|ledger| {
+                            !NonZeroU32::new(count(item.fix_passes().len()))
+                                .is_some_and(|pass| !ledger.fixed_answers(pass).is_empty())
+                                && ledger
+                                    .entries()
+                                    .iter()
+                                    .filter(|entry| {
+                                        entry.status == agent_core::state::FindingStatus::Open
+                                            && entry.finding.severity.blocks()
+                                    })
+                                    .all(|entry| {
+                                        ledger.disputes().is_some_and(|disputes| {
+                                            disputes.explanations.get(&entry.number).is_some_and(|explanation| {
+                                                explanation.status == agent_core::state::ExplanationStatus::Pending
+                                            })
+                                        })
+                                    })
                         })
-                })
-        });
-        if reviewed == ready.tip && joined.is_empty() && !explained {
-            return Ok(Attempt::Nothing);
+                    })
+            });
+            let answers = if accounted {
+                Answers::Accounted
+            } else {
+                Answers::Missing
+            };
+            let budget = if self.watch.gate_sent_back.get(&lead.task).copied().unwrap_or(0) < GATE_SEND_BACKS {
+                Budget::Available
+            } else {
+                Budget::Exhausted
+            };
+            match fix_step(Progress::Unchanged(answers), budget) {
+                Step::Correct(_) | Step::AskHuman(_) => {
+                    return Ok(Attempt::Uncommitted {
+                        tip: ready.tip.clone(),
+                        reason: pulls.texts.render(
+                            AutopilotPrompt::ReviewFixNoCommitReason,
+                            &Variables::new().with("tip", ready.tip.as_str())?,
+                        )?,
+                    });
+                }
+                Step::Verify => {}
+                Step::WaitGate => return Ok(Attempt::Nothing),
+            }
         }
         let mut ids = fixing.to_vec();
         ids.extend(joined.iter().copied());
@@ -901,7 +953,21 @@ impl Owner {
                     .with("team", team.as_str())
                     .and_then(|values| values.with("items", items_of(publication).join(", ")))
                     .and_then(|values| values.with("reason", &reason));
-                self.tell_human(pulls, AutopilotNotice::PublishFailed, values, lead, now);
+                let items = items_of(publication);
+                let rounds = self
+                    .parts
+                    .state
+                    .team(team)
+                    .into_iter()
+                    .flat_map(|team| team.rounds())
+                    .filter(|round| round.item().is_some_and(|item| items.contains(&item.to_string())))
+                    .map(|round| round.id().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let values = values
+                    .and_then(|v| v.with("rounds", rounds))
+                    .and_then(|v| v.with("task", lead.task.as_str()));
+                self.tell_human(pulls, AutopilotNotice::HandoverHeld, values, lead, now);
             }
             return Ok(());
         }

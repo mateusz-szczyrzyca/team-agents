@@ -14,6 +14,12 @@ use super::{Audience, PromptSpec};
 pub enum AutopilotPrompt {
     /// Ask an independent investigator to check one finding at the handed-over commit.
     ReviewOpinionRequest,
+    /// Return an unchanged fix pass that requires a commit.
+    ReviewFixNoCommit,
+    /// Explain why the unchanged fix pass cannot enter verification.
+    ReviewFixNoCommitReason,
+    /// Ask the human to recover a handover after its corrections are exhausted.
+    NoticeHandoverHeld,
     /// Return an opinion report that lacks a verdict or supporting evidence.
     ReviewOpinionCorrection,
     /// Offer the permitted second-opinion answer in a fix-pass prompt.
@@ -136,6 +142,9 @@ impl AutopilotPrompt {
     /// Every text of the catalog.
     pub const ALL: &'static [Self] = &[
         Self::ReviewOpinionRequest,
+        Self::ReviewFixNoCommit,
+        Self::ReviewFixNoCommitReason,
+        Self::NoticeHandoverHeld,
         Self::ReviewOpinionCorrection,
         Self::ReviewOpinionOffer,
         Self::ReviewOpinionResult,
@@ -202,7 +211,8 @@ impl AutopilotPrompt {
         let (path, variables) = self.definition();
         let audience = if matches!(
             self,
-            Self::NoticeTeamAsleep
+            Self::NoticeHandoverHeld
+                | Self::NoticeTeamAsleep
                 | Self::NoticeStandingItem
                 | Self::NoticeApproved
                 | Self::NoticePublishFailed
@@ -224,6 +234,12 @@ impl AutopilotPrompt {
     /// The path, audience and variables of this text.
     const fn definition(self) -> (&'static str, &'static [&'static str]) {
         match self {
+            Self::ReviewFixNoCommit => ("harness/review/fix-no-commit.md", &["branch", "tip", "sent", "limit"]),
+            Self::ReviewFixNoCommitReason => ("harness/review/fix-no-commit-reason.md", &["tip"]),
+            Self::NoticeHandoverHeld => (
+                "harness/pr/notice-handover-held.md",
+                &["team", "items", "reason", "rounds", "task"],
+            ),
             Self::ReviewOpinionRequest => ("harness/review/opinion-request.md", OPINION_REQUEST_VARIABLES),
             Self::ReviewOpinionCorrection => ("harness/review/opinion-correction.md", &[]),
             Self::ReviewOpinionOffer => ("harness/review/opinion-offer.md", &[]),
