@@ -11,7 +11,7 @@ use agent_core::ids::{InvestigatorName, TaskId, TeamId};
 use agent_core::kinds::UnknownKeyword;
 use agent_core::state::{ItemPhase, Member, Participant, ReviewOutcome, State, Team};
 use agent_core::status::{ReviewVerdict, TaskStatus};
-use rand::seq::SliceRandom;
+use rand::seq::{IteratorRandom, SliceRandom};
 use rand::{Rng, RngExt};
 
 use super::team::is_finished;
@@ -313,15 +313,9 @@ pub(super) fn choose_opinion(
     excluded: &HashSet<InvestigatorName>,
     rng: &mut impl Rng,
 ) -> Option<Reviewer> {
-    let mut eligible: Vec<_> = free
-        .into_iter()
+    free.into_iter()
         .filter(|reviewer| !excluded.contains(&reviewer.name))
-        .collect();
-    if eligible.is_empty() {
-        return None;
-    }
-    let index = rng.random_range(0..eligible.len());
-    Some(eligible.swap_remove(index))
+        .choose(rng)
 }
 
 /// The pending second opinion owned by a task, while its round is being fixed.
