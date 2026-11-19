@@ -7,7 +7,7 @@ fn allowances_match_root_paths_and_supported_globs() {
         ("Cargo.toml", "Cargo.toml", "sub/Cargo.toml"),
         ("tests/*.golden", "tests/żółć.golden", "tests/sub/a.golden"),
         ("tests/**/case?.txt", "tests/sub/case1.txt", "tests/sub/case12.txt"),
-        ("tests/**", "tests/a/b.bin", "src/a.bin"),
+        ("tests/**/*.bin", "tests/a/b.bin", "src/a.bin"),
     ] {
         let allowance = TaskAllowance::parse(pattern).unwrap();
         assert_eq!(allowance.as_str(), pattern);
