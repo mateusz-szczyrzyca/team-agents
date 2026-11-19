@@ -12,6 +12,18 @@ use super::{Audience, PromptSpec};
 /// Every text of the autopilot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AutopilotPrompt {
+    /// Second-opinion protocol and evidence.
+    ReviewOpinionRequest,
+    /// Second-opinion protocol and evidence.
+    ReviewOpinionCorrection,
+    /// Second-opinion protocol and evidence.
+    ReviewOpinionOffer,
+    /// Second-opinion protocol and evidence.
+    ReviewOpinionResult,
+    /// Second-opinion protocol and evidence.
+    ReviewOpinionConfirmed,
+    /// Second-opinion protocol and evidence.
+    ReviewResponseOpinion,
     /// The title of a pull request.
     PrTitle,
     /// The description of a pull request.
@@ -111,6 +123,12 @@ pub enum AutopilotPrompt {
 impl AutopilotPrompt {
     /// Every text of the catalog.
     pub const ALL: &'static [Self] = &[
+        Self::ReviewOpinionRequest,
+        Self::ReviewOpinionCorrection,
+        Self::ReviewOpinionOffer,
+        Self::ReviewOpinionResult,
+        Self::ReviewOpinionConfirmed,
+        Self::ReviewResponseOpinion,
         Self::PrTitle,
         Self::PrBody,
         Self::PrBodyItem,
@@ -187,6 +205,15 @@ impl AutopilotPrompt {
     /// The path, audience and variables of this text.
     const fn definition(self) -> (&'static str, &'static [&'static str]) {
         match self {
+            Self::ReviewOpinionRequest => (
+                "harness/review/opinion-request.md",
+                &["number", "severity", "rule", "place", "text", "check", "reason", "head"],
+            ),
+            Self::ReviewOpinionCorrection => ("harness/review/opinion-correction.md", &[]),
+            Self::ReviewOpinionOffer => ("harness/review/opinion-offer.md", &[]),
+            Self::ReviewOpinionResult => ("harness/review/opinion-result.md", &["reviewer", "outcome", "evidence"]),
+            Self::ReviewOpinionConfirmed => ("harness/review/opinion-confirmed.md", &["findings"]),
+            Self::ReviewResponseOpinion => ("harness/review/response-opinion.md", &[]),
             Self::PrTitle => ("harness/pr/title.md", &["item_ids", "item_titles"]),
             Self::PrBody => ("harness/pr/body.md", &["team", "repo", "gate", "items"]),
             Self::PrBodyItem => (

@@ -116,7 +116,7 @@ impl Findings {
                             super::Explanation {
                                 why: why.clone(),
                                 status: super::ExplanationStatus::Pending,
-                                votes: Default::default(),
+                                votes: std::collections::BTreeMap::default(),
                             },
                         );
                     }

@@ -233,9 +233,23 @@ impl Owner {
                         .team(team_id)
                         .and_then(|t| t.item(*id))
                         .is_some_and(|item| {
-                            item.findings()
-                                .and_then(|l| l.disputes())
-                                .is_some_and(|d| d.answered_pass != count(item.fix_passes().len()))
+                            item.findings().is_some_and(|ledger| {
+                                ledger
+                                    .disputes()
+                                    .is_some_and(|d| d.answered_pass != count(item.fix_passes().len()))
+                                    || std::num::NonZeroU32::new(count(item.fix_passes().len())).is_some_and(|pass| {
+                                        matches!(
+                                            agent_core::decide::opinion::after_opinions(
+                                                ledger,
+                                                pass,
+                                                &ledger.fixed_answers(pass),
+                                                agent_core::decide::opinion::Tip::Changed
+                                            ),
+                                            agent_core::decide::opinion::Next::AwaitOpinions
+                                                | agent_core::decide::opinion::Next::FixConfirmed(_)
+                                        )
+                                    })
+                            })
                         })
                 })
             {

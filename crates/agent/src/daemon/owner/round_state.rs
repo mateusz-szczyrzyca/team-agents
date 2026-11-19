@@ -87,6 +87,9 @@ fn requester_rounds(team: &Team, requester: &TaskId) -> Vec<RoundId> {
 
 /// The round of the pull request that the reviewer task `task` has a review pending of.
 fn reviewed_round(team: &Team, task: &TaskId) -> Option<RoundId> {
+    if let Some((id, _, _)) = crate::daemon::review::pending_opinion(team, task) {
+        return team.round_of(id).map(|round| round.id().clone());
+    }
     team.items().iter().find_map(|progress| {
         let ItemPhase::InReview { reviews, .. } = progress.phase() else {
             return None;
