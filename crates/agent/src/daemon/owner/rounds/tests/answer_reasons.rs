@@ -46,3 +46,57 @@ async fn reasoned_fixes_with_minor_lines_and_reasoned_verdicts_are_accepted_on_f
     let posted = format!("{:?}", rig.github.requests());
     assert!(posted.contains("RESOLVED — café regression checked"), "{posted}");
 }
+
+#[tokio::test]
+async fn refused_lead_response_quotes_unknown_number_in_correction_and_its_own_notice() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,fix-work:99"),
+            investigator("inv-r1", "review-reasons"),
+            investigator("inv-r2", "review-reasons"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let notice = rig.notification_with("The lead's fix response was refused").await;
+    rig.stop().await.unwrap();
+
+    let correction = rig.kept_prompt(&tasks[0], 3);
+    for text in [&notice, &correction] {
+        assert!(text.contains("FINDING 99: FIXED"), "{text}");
+        assert!(text.contains("unknown number"), "{text}");
+        assert!(text.contains("FINDING 1: FIXED or EXPLAINED"), "{text}");
+        assert!(text.contains("FINDING 3: FIXED or EXPLAINED"), "{text}");
+        assert!(!text.contains("could not be published"), "{text}");
+    }
+    assert!(notice.contains("3 times"), "{notice}");
+    assert!(notice.contains(&format!("agent resume {}", tasks[0])), "{notice}");
+    assert_eq!(rig.kept_runs(&tasks[0]), 4);
+}
+
+#[tokio::test]
+async fn refused_report_with_verdict_quotes_the_answer_instead_of_claiming_no_verdict() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nFINDING 99: RESOLVED"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let notice = rig.notification_with("The reviewer's report was refused").await;
+    rig.stop().await.unwrap();
+
+    assert!(notice.contains("FINDING 99: RESOLVED"), "{notice}");
+    assert!(notice.contains("unknown number"), "{notice}");
+    assert!(notice.contains("3 times"), "{notice}");
+    assert!(!notice.contains("gave no verdict"), "{notice}");
+    assert!(!notice.contains("could not be published"), "{notice}");
+}
