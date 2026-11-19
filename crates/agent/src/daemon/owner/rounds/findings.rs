@@ -29,7 +29,7 @@ pub(super) fn open_text(texts: &AutopilotPrompts, ledger: Option<&Findings>) -> 
 }
 
 /// Renders the selected open entries with their verification checks.
-fn selected_text(
+pub(super) fn selected_text(
     texts: &AutopilotPrompts,
     ledger: Option<&Findings>,
     selected: impl Fn(&agent_core::state::RecordedFinding) -> bool,

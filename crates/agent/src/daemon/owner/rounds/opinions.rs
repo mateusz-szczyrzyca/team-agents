@@ -384,13 +384,15 @@ impl Owner {
             let Some(pass) = NonZeroU32::new(crate::daemon::merge::count(item.fix_passes().len())) else {
                 continue;
             };
-            if let Next::FixConfirmed(_) = after_opinions(ledger, pass, &ledger.fixed_answers(pass), Tip::Unchanged)
+            if let Next::FixConfirmed(numbers) =
+                after_opinions(ledger, pass, &ledger.fixed_answers(pass), Tip::Unchanged)
                 && ledger
                     .disputes()
                     .is_some_and(|disputes| disputes.answered_pass == pass.get())
             {
                 let findings =
-                    super::findings::open_text(&pulls.texts, Some(ledger)).map_err(OpinionDaemonError::from)?;
+                    super::findings::selected_text(&pulls.texts, Some(ledger), |entry| numbers.contains(&entry.number))
+                        .map_err(OpinionDaemonError::from)?;
                 let text = pulls
                     .texts
                     .render(
