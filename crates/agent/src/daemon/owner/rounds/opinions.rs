@@ -17,7 +17,7 @@ use std::num::NonZeroU32;
 
 /// Failure to schedule, render or persist a second opinion.
 #[derive(Debug, thiserror::Error)]
-enum OpinionCause {
+pub(super) enum OpinionCause {
     /// A surviving assignment could not be inspected.
     #[error("cannot inspect second opinion worktree {path:?}")]
     Inspect {
@@ -49,7 +49,7 @@ enum OpinionCause {
 /// Context and cause of a second-opinion lifecycle failure.
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-pub(crate) struct OpinionDaemonError(#[from] OpinionCause);
+pub(crate) struct OpinionDaemonError(#[from] pub(super) OpinionCause);
 
 macro_rules! opinion_error {
     ($source:ty) => {
