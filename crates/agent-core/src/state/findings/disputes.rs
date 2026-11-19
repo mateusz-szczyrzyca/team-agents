@@ -125,44 +125,44 @@ impl Findings {
     /// # Errors
     /// [`ReportError`] for a malformed or contradictory report.
     pub fn parse_report(&self, text: &str, verdict: ReviewVerdict) -> Result<Report, ReportError> {
-        if let Some(disputes) = &self.disputes {
-            let pending: Vec<_> = disputes
-                .explanations
-                .iter()
-                .filter(|(_, e)| e.status == ExplanationStatus::Pending)
-                .map(|(n, _)| *n)
-                .collect();
-            let report = crate::review_findings::parse_verification(text, verdict, &self.open(), &pending)?;
-            for (number, answer) in &report.answers {
-                if matches!(answer, Answer::Raised { .. })
-                    && disputes
-                        .explanations
-                        .get(number)
-                        .is_some_and(|e| e.status == ExplanationStatus::Accepted)
-                    && !disputes.changed_findings.contains(number)
-                {
-                    let prefix = format!("FINDING {number}:");
-                    return Err(ReportError {
-                        line: text
-                            .lines()
-                            .position(|line| line.trim().starts_with(&prefix))
-                            .map_or(1, |i| i.saturating_add(1)),
-                        kind: crate::review_findings::ReportProblem::UnchangedExplanation,
-                        detail: crate::review_findings::AnswerDiagnostic {
-                            source_line: text
-                                .lines()
-                                .find(|line| line.trim().starts_with(&prefix))
-                                .map(str::to_owned),
-                            number: Some(*number),
-                            mistake: crate::review_findings::AnswerMistake::NotAllowed,
-                        },
-                    });
-                }
-            }
-            Ok(report)
-        } else {
-            crate::review_findings::parse_report(text, verdict, &self.open())
+        if self.disputes.is_none() {
+            return crate::review_findings::parse_report(text, verdict, &self.open());
         }
+        // What the brief offered for each finding is what is taken: the same list decides.
+        let offered = self.verifier_answers();
+        let pending: Vec<_> = offered
+            .iter()
+            .filter(|answers| answers.decision == super::Decision::Explanation)
+            .map(|answers| answers.number)
+            .collect();
+        let report = crate::review_findings::parse_verification(text, verdict, &self.open(), &pending)?;
+        for (number, answer) in &report.answers {
+            // The parser already refuses a raise that the severity does not allow; what is left is the protection of an
+            // accepted explanation whose code did not change.
+            let refused = matches!(answer, Answer::Raised { .. })
+                && offered
+                    .iter()
+                    .any(|answers| answers.number == *number && answers.raise == super::Raise::Never);
+            if refused {
+                let prefix = format!("FINDING {number}:");
+                return Err(ReportError {
+                    line: text
+                        .lines()
+                        .position(|line| line.trim().starts_with(&prefix))
+                        .map_or(1, |i| i.saturating_add(1)),
+                    kind: crate::review_findings::ReportProblem::UnchangedExplanation,
+                    detail: crate::review_findings::AnswerDiagnostic {
+                        source_line: text
+                            .lines()
+                            .find(|line| line.trim().starts_with(&prefix))
+                            .map(str::to_owned),
+                        number: Some(*number),
+                        mistake: crate::review_findings::AnswerMistake::NotAllowed,
+                    },
+                });
+            }
+        }
+        Ok(report)
     }
     /// Checks and records the lead's complete response before a verification pass.
     ///

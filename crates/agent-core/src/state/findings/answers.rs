@@ -44,10 +44,34 @@ impl Findings {
         self.entries
             .iter()
             .filter(|entry| entry.status == FindingStatus::Open)
-            .map(|entry| VerifierAnswers {
-                number: entry.number,
-                decision: Decision::Explanation,
-                raise: Raise::ToMajorOrBlocker,
+            .map(|entry| {
+                let explanation = self
+                    .disputes
+                    .as_ref()
+                    .and_then(|disputes| disputes.explanations.get(&entry.number))
+                    .map(|explanation| explanation.status);
+                let decision = if explanation == Some(ExplanationStatus::Pending) {
+                    Decision::Explanation
+                } else {
+                    Decision::Outcome
+                };
+                // An accepted explanation is protected while its code is unchanged.
+                let protected = explanation == Some(ExplanationStatus::Accepted)
+                    && !self
+                        .disputes
+                        .as_ref()
+                        .is_some_and(|disputes| disputes.changed_findings.contains(&entry.number));
+                let raise = match (&self.disputes, entry.finding.severity) {
+                    (None, _) | (Some(_), Severity::Blocker) => Raise::Never,
+                    (Some(_), _) if protected => Raise::Never,
+                    (Some(_), Severity::Major) => Raise::ToBlocker,
+                    (Some(_), Severity::Minor) => Raise::ToMajorOrBlocker,
+                };
+                VerifierAnswers {
+                    number: entry.number,
+                    decision,
+                    raise,
+                }
             })
             .collect()
     }

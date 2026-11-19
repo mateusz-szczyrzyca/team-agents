@@ -492,7 +492,10 @@ pub(super) async fn review_request(
         sections.push(texts.render(AutopilotPrompt::ReviewIndependent, &Variables::new())?);
     }
     if verification.pass > 1 && verification.findings.is_some() {
-        let values = Variables::new().with("findings", super::findings::open_text(texts, verification.findings)?)?;
+        let values = Variables::new().with(
+            "findings",
+            super::findings::verification_text(texts, verification.findings)?,
+        )?;
         sections.push(texts.render(
             if verification.findings.is_some_and(|l| l.disputes().is_some()) {
                 AutopilotPrompt::ReviewDisputes

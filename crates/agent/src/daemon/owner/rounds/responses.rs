@@ -500,42 +500,40 @@ pub(super) fn verifier_forms(
     texts: &agent_runtime::autopilot_prompts::AutopilotPrompts,
     ledger: &agent_core::state::Findings,
 ) -> Result<String, ResponseTextError> {
-    use agent_core::review_findings::Severity;
     let mut forms = String::new();
-    for entry in ledger
-        .entries()
-        .iter()
-        .filter(|entry| entry.status == agent_core::state::FindingStatus::Open)
-    {
-        let pending = ledger.disputes().is_some_and(|d| {
-            d.explanations
-                .get(&entry.number)
-                .is_some_and(|e| e.status == agent_core::state::ExplanationStatus::Pending)
-        });
-        let instruction = if pending {
-            AutopilotPrompt::ReviewVerifierPending
-        } else {
-            AutopilotPrompt::ReviewVerifierResolved
-        };
-        let mut allowed = texts.render(instruction, &Variables::new())?.trim_end().to_owned();
-        let raising = match entry.finding.severity {
-            Severity::Blocker => None,
-            Severity::Major => Some(AutopilotPrompt::ReviewRaiseBlocker),
-            Severity::Minor => Some(AutopilotPrompt::ReviewRaiseMajor),
-        };
-        if let Some(raising) = raising.filter(|_| ledger.disputes().is_some()) {
-            let raise = texts.render(raising, &Variables::new())?;
-            allowed.push(' ');
-            allowed.push_str(raise.trim_end());
-        }
+    for answers in ledger.verifier_answers() {
         forms.push_str(
             &texts.render(
                 AutopilotPrompt::ReviewResponseForm,
                 &Variables::new()
-                    .with("number", entry.number.to_string())?
-                    .with("allowed", &allowed)?,
+                    .with("number", answers.number.to_string())?
+                    .with("allowed", verifier_allowed(texts, answers)?)?,
             )?,
         );
     }
     Ok(forms)
+}
+
+/// The answers a verifier may give for one finding, as one line of the catalog's words: what [`verifier_forms`] and the
+/// brief of a verifier both name.
+pub(super) fn verifier_allowed(
+    texts: &agent_runtime::autopilot_prompts::AutopilotPrompts,
+    answers: agent_core::state::VerifierAnswers,
+) -> Result<String, ResponseTextError> {
+    use agent_core::state::{Decision, Raise};
+    let decision = match answers.decision {
+        Decision::Explanation => AutopilotPrompt::ReviewVerifierPending,
+        Decision::Outcome => AutopilotPrompt::ReviewVerifierResolved,
+    };
+    let mut allowed = texts.render(decision, &Variables::new())?.trim_end().to_owned();
+    let raise = match answers.raise {
+        Raise::Never => None,
+        Raise::ToBlocker => Some(AutopilotPrompt::ReviewRaiseBlocker),
+        Raise::ToMajorOrBlocker => Some(AutopilotPrompt::ReviewRaiseMajor),
+    };
+    if let Some(raise) = raise {
+        allowed.push(' ');
+        allowed.push_str(texts.render(raise, &Variables::new())?.trim_end());
+    }
+    Ok(allowed)
 }

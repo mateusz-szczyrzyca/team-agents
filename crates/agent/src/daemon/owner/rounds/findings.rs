@@ -21,6 +21,9 @@ pub(in crate::daemon::owner) enum TextError {
     /// A catalog template could not be rendered.
     #[error("cannot render findings text")]
     Render(#[from] RenderAutopilotTextError),
+    /// The answers a verifier may give could not be rendered.
+    #[error("cannot render the answers of a finding")]
+    Answers(#[from] super::responses::ResponseTextError),
 }
 
 /// The open findings, with permanent numbers and verification checks.
@@ -30,7 +33,23 @@ pub(super) fn open_text(texts: &AutopilotPrompts, ledger: Option<&Findings>) -> 
 
 /// The open findings for a verifier, each with the answers it may get beside it.
 pub(super) fn verification_text(texts: &AutopilotPrompts, ledger: Option<&Findings>) -> Result<String, TextError> {
-    open_text(texts, ledger)
+    let Some(ledger) = ledger else {
+        return Ok(String::new());
+    };
+    let answers = ledger.verifier_answers();
+    let mut blocks = Vec::new();
+    for offered in answers {
+        let finding = selected_text(texts, Some(ledger), |entry| entry.number == offered.number)?;
+        let allowed = super::responses::verifier_allowed(texts, offered)?;
+        let line = texts.render(
+            AutopilotPrompt::ReviewVerifierAnswer,
+            &Variables::new()
+                .with("number", offered.number.to_string())?
+                .with("allowed", allowed)?,
+        )?;
+        blocks.push(format!("{}\n{}", finding.trim_end(), line.trim_end()));
+    }
+    Ok(blocks.join("\n"))
 }
 
 /// Renders the selected open entries with their verification checks.
