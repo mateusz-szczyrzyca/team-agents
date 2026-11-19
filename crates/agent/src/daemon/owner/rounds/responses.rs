@@ -51,6 +51,7 @@ impl Owner {
             .filter(|i| matches!(i.phase(), ItemPhase::Fixing { .. }))
             .map(|i| (i.id(), i.clone()))
             .collect();
+        let mut explained = std::collections::HashSet::new();
         for (id, item) in fixing {
             let pass = crate::daemon::merge::count(item.fix_passes().len());
             let Some(mut ledger) = item.findings().cloned() else {
@@ -78,7 +79,11 @@ impl Owner {
             let response = ledger.answer_lead(&message, pass);
             let correction = match response {
                 Ok(responses) => {
-                    self.record_explanations(team_id, &item, &lead, responses);
+                    if let ItemPhase::Fixing { pr, .. } = item.phase()
+                        && explained.insert(pr.number)
+                    {
+                        self.record_explanations(team_id, &item, &lead, responses);
+                    }
                     None
                 }
                 Err(problem) => Some(response_correction(pulls, &problem)?),
@@ -129,15 +134,24 @@ impl Owner {
         lead: &super::Lead,
         responses: Vec<(std::num::NonZeroU32, agent_core::review_response::Response)>,
     ) {
-        let id = item.id();
         let pass = crate::daemon::merge::count(item.fix_passes().len());
         if let ItemPhase::Fixing { pr, .. } = item.phase() {
+            let items: Vec<_> = self
+                .parts
+                .state
+                .team(team_id)
+                .into_iter()
+                .flat_map(|team| team.items())
+                .filter(|item| matches!(item.phase(), ItemPhase::Fixing { pr: known, .. } if known.number == pr.number))
+                .map(agent_core::state::ItemProgress::id)
+                .collect();
+            let rounds = self.rounds_of_items(team_id, &items);
             for (number, response) in responses {
                 match response {
                     agent_core::review_response::Response::Fixed => {}
                     agent_core::review_response::Response::Explained(why) => self.record_event(
                         team_id,
-                        self.rounds_of_items(team_id, &[id]),
+                        rounds.clone(),
                         agent_core::history::HistoryEvent::FindingExplained {
                             pr: pr.number,
                             number,
