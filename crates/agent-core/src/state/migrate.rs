@@ -146,10 +146,16 @@ impl From<LegacyError> for StateError {
     }
 }
 
-/// Reads versions 2 through 9 with their defaulted fields; task allowances remain in the original task list.
+/// Reads versions 2 through 10; only versions before 10 keep allowances as brief text.
 pub(super) fn from_v2(text: &str) -> Result<State, StateError> {
     let mut value: Value = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
-    keep_allow_lines_in_briefs(&mut value);
+    if value
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .is_some_and(|version| version < 10)
+    {
+        keep_allow_lines_in_briefs(&mut value);
+    }
     if let Some(version) = value.get_mut("schema_version") {
         *version = Value::from(super::SCHEMA_VERSION);
     }
