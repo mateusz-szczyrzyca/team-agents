@@ -340,10 +340,10 @@ async fn a_failed_reviewer_nobody_replaces_waits_for_a_free_investigator() {
         let (mut owner, _sinks) = daemon.bare_owner().await;
         owner.watch.waits.insert(round.clone(), Obligation::FreeInvestigator);
         let team = owner.parts.state.team(&team).unwrap();
-        owner.waiting_for(team, team.round(&round).unwrap())
+        owner.stuck_obligation(team, team.round(&round).unwrap())
     };
 
-    assert_eq!(found, Some(Waiting::For(Obligation::FreeInvestigator)));
+    assert_eq!(found, Some(Obligation::FreeInvestigator));
 }
 
 #[tokio::test]
@@ -354,8 +354,8 @@ async fn a_failed_reviewer_that_is_not_yet_looked_at_for_replacement_waits_for_t
         let daemon = Daemon::new(&state, None);
         let (owner, _sinks) = daemon.bare_owner().await;
         let team = owner.parts.state.team(&team).unwrap();
-        owner.waiting_for(team, team.round(&round).unwrap())
+        owner.stuck_obligation(team, team.round(&round).unwrap())
     };
 
-    assert_eq!(found, Some(Waiting::For(Obligation::Human)));
+    assert_eq!(found, Some(Obligation::Human));
 }
