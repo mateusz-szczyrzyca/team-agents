@@ -288,6 +288,25 @@ model and the rules every item of the plan "Rewrite `bin/agent` in Rust" follows
   see in the diff.
 - The PR description: what and why, how it was tested (commands and results), compatibility notes (rule 9),
   every lint suppression, and anything the reviewer should look at first.
+- **Say what the new version brings.** A PR that raises the version adds its entry at the top of
+  [`WhatsNew.md`](WhatsNew.md), in the commit that raises the version: a heading with the version, the date and the
+  PR, then its lines under `### New features`, `### Bug fixes` and `### Enhancements` — only the headings that have
+  something under them. Write simply and briefly, for the human who restarts the daemon and wants to know what is
+  different now: what the daemon or the CLI does that it did not do before, in plain words — no rule IDs, no names
+  of functions or files, no account of how it was built; one line per change, and where it helps one example of a
+  command, a line of output or a configuration key. A new feature is something the human can now do or see; a bug
+  fix says what went wrong before; an enhancement makes something that existed better. A change the human must act
+  on (a new key, a changed command, a migration) starts with **Action:**. The example to follow:
+
+  ```markdown
+  ## 0.18.0 — 19.11.2026 — PR #133
+
+  ### New features
+  - `[build] incremental = true` in the configuration turns incremental compilation back on for agents and the gate.
+
+  ### Enhancements
+  - The build directory of a task's worktree is about three times smaller (13 GB → 4 GB after one gate).
+  ```
 
 ## Rounds
 
@@ -308,6 +327,7 @@ Check the size with `agent round-size <task>`. A PR of the Rust plan counts and 
 - [ ] Errors are typed per operation; nothing is ignored; enums instead of string literals; every declaration
       has a comment.
 - [ ] README, `config/agents.conf` and prompts updated where the change is visible to users or agents.
+- [ ] `WhatsNew.md` says, simply and briefly, what the new version brings ("Commits and pull requests").
 - [ ] Compatibility of on-disk formats, subcommand output and exit codes kept (or migrated, tested and
       documented).
 - [ ] The report and the PR description explain what was done, why, and what is left.
