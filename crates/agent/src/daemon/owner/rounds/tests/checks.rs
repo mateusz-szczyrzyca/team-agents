@@ -961,6 +961,30 @@ async fn with_both_kinds_the_human_is_asked_in_the_first_check_and_the_team_fixe
     );
 }
 
+#[tokio::test]
+async fn with_both_kinds_what_the_human_refuses_goes_back_to_the_team_with_the_refusal() {
+    let mut rig = checking_rig(
+        "script:edit-test-and-code,script:add-test,questions,done,script:restore-test",
+        2,
+        SILENT,
+        SILENT,
+    )
+    .await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 1, "refuse").await;
+    reviews_asked(&rig).await;
+    let fix = rig.prompt(&tasks[0], 4).await;
+    rig.stop().await.unwrap();
+
+    assert!(fix.contains("refused to allow"), "{fix}");
+    assert!(fix.contains("`tests/existing.txt`"), "{fix}");
+    assert_eq!(record(&rig, &tasks[0]).await.allowed_of(&["1.1".parse().unwrap()]), []);
+}
+
 // ---- the story of a round the checks held back --------------------------------------------------------------------------
 
 #[tokio::test]
