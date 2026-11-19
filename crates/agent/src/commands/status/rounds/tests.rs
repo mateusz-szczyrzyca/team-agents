@@ -404,3 +404,45 @@ fn unanswered_opinions_show_the_finding_investigator_assignment_time_and_free_wa
         0
     );
 }
+
+#[tokio::test]
+async fn idle_round_lines_and_details_say_what_the_daemon_waits_for() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = rounds_state();
+    let team = state.teams()[0].clone();
+    let round = team.round(&round_id(2)).unwrap();
+    let mut detail = RoundDetail::new(&team, round, Vec::new());
+    detail.waiting = Some("an answer of the human".to_owned());
+    let detailed = super::super::render_round(&detail);
+    let daemon = FakeDaemon::serve(&dir.path().join("agent.sock"), move |request| {
+        let reply = match &request.command {
+            Command::Status(_) => Reply::Teams {
+                teams: vec![TeamSummary::from(&team)],
+            },
+            Command::Show(_) => Reply::Round {
+                round: Box::new(detail.clone()),
+            },
+            other => panic!("unexpected status request: {other:?}"),
+        };
+        Answer::Lines(vec![
+            Frame::Response(Response::ok(request.id, reply)).to_line().unwrap(),
+        ])
+    });
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+    let mut out = Vec::new();
+    status_running(&mut connection, &Activity::new(home(dir.path()), warsaw()), &mut out)
+        .await
+        .unwrap();
+    let text = String::from_utf8(out).unwrap();
+    assert!(
+        text.lines()
+            .any(|line| line.contains(round_id(2).as_str()) && line.contains("waits for an answer of the human")),
+        "{text}"
+    );
+    assert!(
+        detailed
+            .lines()
+            .any(|line| line.contains(round_id(2).as_str()) && line.contains("waits for an answer of the human")),
+        "{detailed}"
+    );
+}
