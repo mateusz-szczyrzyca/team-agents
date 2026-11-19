@@ -17,7 +17,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Enhancements
 - [agent-core] **Action:** state files move to schema 11. Older files migrate automatically, rebuilding investigator activity history from the crew, reviews, fix passes and second opinions they retain.
->
+
 ## 0.21.0 — 19.11.2026 — PR #132
 
 ### New features
