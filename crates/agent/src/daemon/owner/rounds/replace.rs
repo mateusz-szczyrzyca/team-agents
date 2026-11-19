@@ -35,6 +35,16 @@ struct Gone {
 }
 
 impl Owner {
+    /// Replaces opinion owners after the configured interval without output.
+    pub(super) async fn replace_silent_opinions(
+        &mut self,
+        _pulls: &Pulls,
+        _team: &TeamId,
+        _now: Timestamp,
+    ) -> Result<(), OwnerError> {
+        Ok(())
+    }
+
     /// The reviews of the team `team_id` that are still to come and whose reviewers cannot work, at `now`.
     fn reviews_that_do_not_come(&self, team_id: &TeamId, now: Timestamp) -> Vec<Gone> {
         let mut found: Vec<Gone> = Vec::new();

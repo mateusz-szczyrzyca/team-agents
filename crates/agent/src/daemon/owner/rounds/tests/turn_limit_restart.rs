@@ -444,3 +444,123 @@ async fn fix_responses_do_not_read_head_until_a_new_done_response_is_selected() 
         crate::daemon::history::close(step.writer).await;
     }
 }
+
+#[tokio::test]
+async fn opinion_inactivity_uses_review_patience_and_resets_on_output() {
+    use agent_core::state::{OpinionFailure, OpinionStage, Timestamp};
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-failure:HOLD"),
+            investigator("inv-r2", "opinion-failure:HOLD"),
+            investigator("inv-r3", "opinion-failure:HOLD"),
+            investigator("inv-r4", "opinion-failure:HOLD"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[review]", "[review]\nreplace_after_minutes = 1"),
+    )
+    .unwrap();
+    rig.start().await;
+    let (team, _) = rig
+        .run(
+            &["claude-1"],
+            super::rig::ONE,
+            agent_core::state::MergeMode::Autopilot,
+            None,
+        )
+        .await;
+    let running = rig
+        .state_where("opinions running", |state| {
+            let team = state.team(&team).unwrap();
+            team.items()[0].findings().is_some_and(|ledger| {
+                ledger.opinions().len() == 2
+                    && ledger.opinions().values().all(|opinion| {
+                        let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+                            return false;
+                        };
+                        team.find(task).unwrap().1.current_run().is_some()
+                    })
+            })
+        })
+        .await;
+    rig.stop().await.unwrap();
+    let mut step = stepped(&rig).await;
+    step.owner.parts.state = running;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+    let language = step.owner.parts.settings.config.language();
+    let pulls = crate::daemon::owner::rounds::Pulls::new(
+        Arc::new(
+            agent_runtime::autopilot_prompts::AutopilotPrompts::load(&root, language)
+                .await
+                .unwrap(),
+        ),
+        Arc::new(
+            agent_runtime::checks_prompts::ChecksPrompts::load(&root, language)
+                .await
+                .unwrap(),
+        ),
+        &step.owner.parts.settings,
+    )
+    .unwrap()
+    .unwrap();
+    let now = Timestamp::now(&step.owner.parts.clock).unwrap();
+    step.owner.replace_silent_opinions(&pulls, &team, now).await.unwrap();
+    let tasks: Vec<_> = step.owner.parts.state.team(&team).unwrap().items()[0]
+        .findings()
+        .unwrap()
+        .opinions()
+        .values()
+        .map(|opinion| {
+            let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+                panic!("assigned")
+            };
+            task.clone()
+        })
+        .collect();
+    for task in &tasks {
+        let run = step
+            .owner
+            .parts
+            .state
+            .find_task(task)
+            .unwrap()
+            .member
+            .current_run()
+            .unwrap();
+        let file = rig.home.run_dir(task, run.id()).join("out.jsonl");
+        let mut text = std::fs::read_to_string(&file).unwrap();
+        text.push_str("activity\n");
+        std::fs::write(file, text).unwrap();
+    }
+    let later = Timestamp::from_utc(now.as_utc() + time::Duration::minutes(2)).unwrap();
+    step.owner.replace_silent_opinions(&pulls, &team, later).await.unwrap();
+    assert!(
+        step.owner.parts.state.team(&team).unwrap().items()[0]
+            .findings()
+            .unwrap()
+            .opinions()
+            .values()
+            .all(|o| matches!(o.stage, OpinionStage::Assigned { .. }))
+    );
+    let quiet = Timestamp::from_utc(later.as_utc() + time::Duration::minutes(1)).unwrap();
+    step.owner.replace_silent_opinions(&pulls, &team, quiet).await.unwrap();
+    let ledger = step.owner.parts.state.team(&team).unwrap().items()[0]
+        .findings()
+        .unwrap();
+    for number in ledger.opinions().keys() {
+        assert_eq!(ledger.opinions()[number].stage, OpinionStage::Waiting);
+        assert_eq!(ledger.opinion_attempts(*number).len(), 1);
+        assert_eq!(
+            ledger.opinion_attempts(*number)[0].failure,
+            Some(OpinionFailure::Silent)
+        );
+    }
+    drop(step.owner);
+    crate::daemon::history::close(step.writer).await;
+}
