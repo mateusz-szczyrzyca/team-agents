@@ -432,7 +432,8 @@ pass and all earlier investigators for this request. Its task runs at the reques
 cause with the assignment and return the request to waiting. The same free-investigator draw supplies at most
 two replacements. A lack of candidates leaves the request waiting rather than dropping it or notifying the
 human prematurely. Opinion inactivity uses the review replacement interval and resets when output changes;
-a silent run is cancelled before its request is reassigned. The third failure retains the assigned stage and
+a silent run is cancelled before its request is reassigned. Replacement stops the old queued, waiting or
+quota-paused task and removes its scheduled wake, including during startup recovery. The third failure retains the assigned stage and
 sends the catalogued human notice once, listing all assignments and causes. Late reports from replaced or
 exhausted assignments are rejected.
 
