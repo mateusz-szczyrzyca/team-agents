@@ -131,7 +131,7 @@ pub fn parse_lead(
     let mut requests = std::collections::BTreeMap::new();
     let mut normalized = String::new();
     let mut fence = None;
-    for line in text.lines() {
+    for (index, line) in text.lines().enumerate() {
         match (fence, crate::review_findings::fence_marker(line)) {
             (None, Some(marker)) => fence = Some(marker),
             (Some(marker), Some(end)) if end.closes(marker) => fence = None,
@@ -150,7 +150,7 @@ pub fn parse_lead(
             None
         };
         if let Some((number, reason)) = request {
-            requests.insert(number, reason);
+            requests.insert(number, (index.saturating_add(1), reason));
             normalized.push_str("FINDING ");
             normalized.push_str(&number.to_string());
             normalized.push_str(": FIXED");
@@ -166,18 +166,11 @@ pub fn parse_lead(
     super::parse_lead(&normalized, &legacy)?
         .into_iter()
         .map(|(number, answer)| {
-            let answer = if let Some(reason) = requests.get(&number) {
-                let eligible = open
-                    .iter()
-                    .any(|entry| entry.number == number && entry.severity == Severity::Blocker && !entry.opinion_used);
-                if permission == Permission::Disabled || !eligible {
-                    return Err(OpinionError::Forbidden {
-                        number,
-                        line: 0,
-                        reason: Refusal::KeyDisabled,
-                    });
+            let answer = if let Some(&(line, reason)) = requests.get(&number) {
+                if let Some(reason) = refusal(open, number, permission) {
+                    return Err(OpinionError::Forbidden { number, line, reason });
                 }
-                LeadAnswer::SecondOpinion((*reason).to_owned().try_into()?)
+                LeadAnswer::SecondOpinion(reason.to_owned().try_into()?)
             } else {
                 match answer {
                     super::Response::Fixed => LeadAnswer::Fixed,
@@ -187,6 +180,21 @@ pub fn parse_lead(
             Ok((number, answer))
         })
         .collect()
+}
+
+/// Why a request for the finding must be sent back, or `None` when it is allowed.
+fn refusal(open: &[OpenFinding], number: NonZeroU32, permission: Permission) -> Option<Refusal> {
+    if permission == Permission::Disabled {
+        return Some(Refusal::KeyDisabled);
+    }
+    let entry = open.iter().find(|entry| entry.number == number)?;
+    if entry.severity != Severity::Blocker {
+        Some(Refusal::NotBlocker)
+    } else if entry.opinion_used {
+        Some(Refusal::AlreadyAsked)
+    } else {
+        None
+    }
 }
 
 /// Reads an opening opinion verdict followed by nonempty evidence.
