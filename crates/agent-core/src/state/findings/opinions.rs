@@ -1,8 +1,10 @@
 //! Durable one-shot opinions, independent of daemon scheduling.
+mod attempts;
 use super::{FindingStatus, Findings, Severity};
 use crate::ids::{InvestigatorName, TaskId};
 use crate::review_response::opinion::{Evidence, OpinionReport, Outcome};
 use crate::state::CommitId;
+pub use attempts::{OpinionAttempt, OpinionFailure};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 

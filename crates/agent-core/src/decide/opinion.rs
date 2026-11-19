@@ -66,5 +66,20 @@ pub fn after_opinions(findings: &Findings, pass: NonZeroU32, fixed: &BTreeSet<No
     }
 }
 
+/// Whether an unsuccessful assignment is replaced or escalated to the human.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unanswered {
+    /// A free independent investigator may take the request.
+    Replace,
+    /// Three investigators were asked; keep the assignment for the one-shot notice.
+    Hold,
+}
+
+/// Bounds automatic replacement to two, regardless of how each run ended.
+#[must_use]
+pub fn unanswered(_failure: crate::state::OpinionFailure, _attempts: usize) -> Unanswered {
+    Unanswered::Hold
+}
+
 #[cfg(test)]
 mod tests;

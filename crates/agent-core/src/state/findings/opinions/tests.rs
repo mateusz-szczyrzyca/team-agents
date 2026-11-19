@@ -320,3 +320,73 @@ fn a_missing_opinion_reason_identifies_the_actual_response_line_atomically() {
     );
     assert_eq!(ledger, before);
 }
+
+#[test]
+fn failed_assignments_are_bounded_durable_and_reject_late_reports() {
+    let mut ledger = ledger(Severity::Blocker);
+    let number = NonZeroU32::MIN;
+    ledger.request_opinion(number, request()).unwrap();
+    let tasks: Vec<TaskId> = [
+        "task-20261111-193007-k3x9",
+        "task-20261111-193008-k3x9",
+        "task-20261111-193009-k3x9",
+    ]
+    .into_iter()
+    .map(|s| s.parse().unwrap())
+    .collect();
+    for (index, task) in tasks.iter().enumerate() {
+        let name: InvestigatorName = format!("inv-r{index}").parse().unwrap();
+        assert_eq!(
+            ledger.assign_opinion_at(
+                number,
+                name.clone(),
+                task.clone(),
+                "2026-11-19T06:00:00Z".parse().unwrap()
+            ),
+            Ok(())
+        );
+        assert_eq!(ledger.opinion_attempts(number).len(), index + 1);
+        assert_eq!(ledger.opinion_attempts(number).last().unwrap().investigator, name);
+        if index > 0 {
+            assert_eq!(
+                ledger.fail_opinion(number, &tasks[index - 1], OpinionFailure::Failed),
+                Err(OpinionStateError { number })
+            );
+            assert_eq!(
+                ledger.record_opinion(
+                    number,
+                    &tasks[index - 1],
+                    OpinionReport {
+                        outcome: Outcome::Confirmed,
+                        evidence: "late café report".to_owned().try_into().unwrap()
+                    }
+                ),
+                Err(OpinionStateError { number })
+            );
+        }
+        ledger.fail_opinion(number, task, OpinionFailure::Failed).unwrap();
+        assert_eq!(
+            ledger.fail_opinion(number, task, OpinionFailure::Failed),
+            Err(OpinionStateError { number })
+        );
+        assert_eq!(
+            serde_json::from_str::<Findings>(&serde_json::to_string(&ledger).unwrap()).unwrap(),
+            ledger
+        );
+        assert_eq!(
+            matches!(ledger.opinions()[&number].stage, OpinionStage::Waiting),
+            index < 2
+        );
+    }
+    assert_eq!(
+        ledger.assign_opinion_at(
+            number,
+            "inv-fourth".parse().unwrap(),
+            tasks[0].clone(),
+            "2026-11-19T06:00:00Z".parse().unwrap()
+        ),
+        Err(OpinionStateError { number })
+    );
+    assert_eq!(ledger.mark_opinion_notice(number), Ok(true));
+    assert_eq!(ledger.mark_opinion_notice(number), Ok(false));
+}

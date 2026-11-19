@@ -3,7 +3,7 @@
 mod disputes;
 mod opinions;
 pub use disputes::{Disputes, Explanation, ExplanationStatus, RaisedFinding};
-pub use opinions::{OpinionRequest, OpinionStage, OpinionStateError, SecondOpinion};
+pub use opinions::{OpinionAttempt, OpinionFailure, OpinionRequest, OpinionStage, OpinionStateError, SecondOpinion};
 
 use super::Review;
 use crate::ids::{InvestigatorName, TaskId};

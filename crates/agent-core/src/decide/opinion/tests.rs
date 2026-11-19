@@ -128,3 +128,23 @@ fn all_unconfirmed_with_no_code_change_decides_without_a_tip_or_verifiers() {
         Next::AwaitTip
     );
 }
+
+#[test]
+fn unsuccessful_runs_replace_the_first_two_assignments_and_hold_the_third() {
+    use crate::state::OpinionFailure;
+    for failure in [
+        OpinionFailure::Failed,
+        OpinionFailure::NoStatus,
+        OpinionFailure::MissingReport,
+        OpinionFailure::Silent,
+        OpinionFailure::Interrupted,
+    ] {
+        for (attempts, expected) in [
+            (1, Unanswered::Replace),
+            (2, Unanswered::Replace),
+            (3, Unanswered::Hold),
+        ] {
+            assert_eq!(unanswered(failure, attempts), expected, "{failure:?}, {attempts}");
+        }
+    }
+}
