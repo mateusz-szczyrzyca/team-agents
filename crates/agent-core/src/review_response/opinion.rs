@@ -64,11 +64,26 @@ pub enum OpinionError {
     #[error(transparent)]
     Response(#[from] super::ResponseError),
     /// The requested finding is not eligible for an opinion.
-    #[error("finding {number} cannot receive a second opinion")]
+    #[error("finding {number} cannot receive a second opinion at line {line}: {reason:?}")]
     Forbidden {
         /// Permanent finding number.
         number: NonZeroU32,
+        /// One-based source line of the refused request.
+        line: usize,
+        /// Why this finding cannot receive an opinion.
+        reason: Refusal,
     },
+}
+
+/// Why a request for a second opinion is sent back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// The configuration does not allow second opinions.
+    KeyDisabled,
+    /// Only a blocker can receive a second opinion.
+    NotBlocker,
+    /// The finding already had its one second opinion.
+    AlreadyAsked,
 }
 
 /// Configuration permission, kept explicit at the pure protocol boundary.
@@ -156,7 +171,11 @@ pub fn parse_lead(
                     .iter()
                     .any(|entry| entry.number == number && entry.severity == Severity::Blocker && !entry.opinion_used);
                 if permission == Permission::Disabled || !eligible {
-                    return Err(OpinionError::Forbidden { number });
+                    return Err(OpinionError::Forbidden {
+                        number,
+                        line: 0,
+                        reason: Refusal::KeyDisabled,
+                    });
                 }
                 LeadAnswer::SecondOpinion((*reason).to_owned().try_into()?)
             } else {

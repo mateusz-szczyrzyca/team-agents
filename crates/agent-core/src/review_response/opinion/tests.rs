@@ -183,3 +183,42 @@ fn markup_inside_the_keyword_line_is_ignored() {
         );
     }
 }
+
+#[test]
+fn a_refused_request_names_its_line_and_the_reason() {
+    use Permission::{Disabled, Enabled};
+    use Refusal::{AlreadyAsked, KeyDisabled, NotBlocker};
+    for (severity, used, permission, reason) in [
+        (Severity::Blocker, false, Disabled, KeyDisabled),
+        (Severity::Blocker, true, Disabled, KeyDisabled),
+        (Severity::Major, false, Disabled, KeyDisabled),
+        (Severity::Blocker, true, Enabled, AlreadyAsked),
+        (Severity::Major, false, Enabled, NotBlocker),
+        (Severity::Minor, false, Enabled, NotBlocker),
+    ] {
+        let number = NonZeroU32::new(2).unwrap();
+        let open = [
+            finding(Severity::Blocker, false),
+            OpenFinding {
+                number,
+                ..finding(severity, used)
+            },
+        ];
+
+        let result = parse_lead(
+            "FINDING 1: FIXED\nFINDING 2: SECOND OPINION — it is not so",
+            &open,
+            permission,
+        );
+
+        assert_eq!(
+            result,
+            Err(OpinionError::Forbidden {
+                number,
+                line: 2,
+                reason
+            }),
+            "{severity:?} used={used} {permission:?}"
+        );
+    }
+}
