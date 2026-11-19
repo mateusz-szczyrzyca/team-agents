@@ -911,6 +911,7 @@ fn emit_the_names_of_the_daemon_causes(daemon: &Daemon) {
         LogEvent::NotificationSent,
         LogEvent::QuestionsFileOpened,
         LogEvent::PeerGone,
+        LogEvent::BuildDirectoryRemoved,
     ] {
         daemon.clock.advance(time::Duration::seconds(1));
         match variant.level() {
