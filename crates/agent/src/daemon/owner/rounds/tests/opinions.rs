@@ -1004,3 +1004,135 @@ async fn rate_limited_opinions_are_replaced_and_their_tasks_are_stopped() {
         );
     }
 }
+
+#[tokio::test]
+async fn cli_commands_read_round_during_and_after_second_opinions() {
+    // The verification of the open findings waits for the test (verify-release), so the round stays open while the
+    // commands read it: the opinions are reported, but the item is not approved and the round is not closed.
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-probe-hold-verify:NOT CONFIRMED"),
+            investigator("inv-r2", "opinion-probe-hold-verify:NOT CONFIRMED"),
+            investigator("inv-r3", "opinion-probe-hold-verify:NOT CONFIRMED"),
+            investigator("inv-r4", "opinion-probe-hold-verify:NOT CONFIRMED"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], ONE, agent_core::state::MergeMode::NoMerge, None)
+        .await;
+
+    let state = rig
+        .state_where("opinions asked", |state| {
+            state.team(&team).unwrap().items()[0]
+                .findings()
+                .is_some_and(|l| !l.opinions().is_empty())
+        })
+        .await;
+    let round_id = state.team(&team).unwrap().rounds()[0].id().clone();
+    let round_text = round_id.to_string();
+    let round_target = agent_core::protocol::Target::Round(round_id.clone());
+    let activity = crate::commands::status::Activity::new(rig.home.clone(), time::UtcOffset::UTC);
+    let log_req = crate::commands::log::LogRequest {
+        selection: agent_core::story::Selection::Round(round_id),
+        format: crate::commands::log::Format::Text(agent_core::story::StoryOptions {
+            prompts: agent_core::story::PromptView::Preview,
+            steps: agent_core::story::StepView::LeftOut,
+        }),
+    };
+    let mut conn = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap();
+
+    // While the opinion is asked for, the round is open: every command prints it.
+    let (out, out_running, out_show, out_log) =
+        read_round_by_every_command(&mut conn, &rig.home.history_file(), &activity, &round_target, &log_req).await;
+    assert_contains(&out, &round_text, "status while the opinion is asked for");
+    assert_contains(
+        &out_running,
+        &round_text,
+        "status --running while the opinion is asked for",
+    );
+    assert_contains(
+        &out_show,
+        &round_text,
+        "show of the round while the opinion is asked for",
+    );
+    assert_contains(&out_log, &round_text, "log of the round while the opinion is asked for");
+
+    // The opinions are reported while the verification is held, so the item is in review and the round is open: every
+    // command reads the round, and no assertion depends on timing.
+    rig.state_where("opinions reported", |state| {
+        state.team(&team).unwrap().items()[0].findings().is_some_and(|l| {
+            l.opinions()
+                .values()
+                .any(|opinion| matches!(opinion.stage, OpinionStage::Reported { .. }))
+        })
+    })
+    .await;
+    let (out_after, out_running_after, out_show_after, out_log_after) =
+        read_round_by_every_command(&mut conn, &rig.home.history_file(), &activity, &round_target, &log_req).await;
+    assert_contains(&out_after, &round_text, "status after the opinion is reported");
+    assert_contains(
+        &out_running_after,
+        &round_text,
+        "status --running after the opinion is reported",
+    );
+    assert_contains(
+        &out_show_after,
+        &round_text,
+        "show of the round after the opinion is reported",
+    );
+    assert_contains(
+        &out_log_after,
+        &round_text,
+        "log of the round after the opinion is reported",
+    );
+
+    std::fs::write(rig.home.root().join("verify-release"), "ready").unwrap();
+    rig.item_where("1.1", "approved after the verification is released", |phase| {
+        matches!(phase, ItemPhase::Approved { .. })
+    })
+    .await;
+    rig.stop().await.unwrap();
+}
+
+/// Runs `status`, `status --running`, `show` of `target` and `log` of the round, and returns what each writes. Every
+/// command must succeed: the test fails on the first error, with the command that failed.
+async fn read_round_by_every_command(
+    conn: &mut crate::client::Connection,
+    history: &std::path::Path,
+    activity: &crate::commands::status::Activity,
+    target: &agent_core::protocol::Target,
+    log_req: &crate::commands::log::LogRequest,
+) -> (String, String, String, String) {
+    let mut out = Vec::new();
+    crate::commands::status::status_active(conn, None, activity, &mut out)
+        .await
+        .expect("status succeeds");
+    let mut out_running = Vec::new();
+    crate::commands::status::status_running(conn, activity, &mut out_running)
+        .await
+        .expect("status --running succeeds");
+    let mut out_show = Vec::new();
+    crate::commands::status::status_active(conn, Some(target.clone()), activity, &mut out_show)
+        .await
+        .expect("show of the round succeeds");
+    let mut out_log = Vec::new();
+    crate::commands::log::log(history, log_req, &mut out_log).expect("log of the round succeeds");
+    (
+        String::from_utf8(out).expect("status writes UTF-8"),
+        String::from_utf8(out_running).expect("status --running writes UTF-8"),
+        String::from_utf8(out_show).expect("show writes UTF-8"),
+        String::from_utf8(out_log).expect("log writes UTF-8"),
+    )
+}
+
+/// Fails with `what` when `text` does not contain `needle`.
+fn assert_contains(text: &str, needle: &str, what: &str) {
+    assert!(text.contains(needle), "{what} should print {needle:?}, got:\n{text}");
+}

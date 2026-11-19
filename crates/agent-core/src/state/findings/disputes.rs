@@ -50,12 +50,13 @@ pub struct RaisedFinding {
 #[serde(deny_unknown_fields)]
 pub struct Disputes {
     /// Commit at which each accepted explanation became minor.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::protocol::finding_map::deserialize_map")]
     pub accepted_heads: BTreeMap<NonZeroU32, crate::state::CommitId>,
     /// Accepted findings whose file differs at the current review head.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::protocol::finding_map::deserialize_set")]
     pub changed_findings: BTreeSet<NonZeroU32>,
     /// Explanations, retained after acceptance, rejection and resolution.
+    #[serde(deserialize_with = "crate::protocol::finding_map::deserialize_map")]
     pub explanations: BTreeMap<NonZeroU32, Explanation>,
     /// Upward severity changes in verification order.
     pub raised: Vec<RaisedFinding>,
