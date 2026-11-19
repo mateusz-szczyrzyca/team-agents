@@ -126,7 +126,7 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
             write!(
                 config,
                 "[tiers]\nnormal = [{}]\nworkers = [{}]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n\
-                 [repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+                 [repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n[disk]\nlow_free_gb = 0\nmin_free_gb = 0\n",
                 normals.join(", "),
                 workers.join(", "),
                 script("team-cli.sh").display(),

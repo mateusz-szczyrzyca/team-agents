@@ -65,7 +65,7 @@ pub(super) enum DiskJob {
 impl Owner {
     /// Measures the free disk space of the home, records it for `agent status`, and starts the low-space notice when the
     /// space falls below `disk.low_free_gb`. `None` when the space cannot be measured: the caller then starts nothing.
-    pub(super) async fn check_free_space(&mut self) -> Option<u64> {
+    pub(super) fn check_free_space(&mut self) -> Option<u64> {
         let free_bytes = match self.parts.free_space.free_space_bytes(self.parts.store.home().root()) {
             Ok(bytes) => bytes,
             Err(error) => {

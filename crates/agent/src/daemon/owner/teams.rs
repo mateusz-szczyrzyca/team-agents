@@ -83,8 +83,8 @@ impl Owner {
     // ---- starting a team ------------------------------------------------------------------------------------
 
     /// Refuses starting a team if free disk space is below minimum threshold.
-    async fn check_disk_for_run(&mut self) -> Result<(), Failure> {
-        let Some(free_bytes) = self.check_free_space().await else {
+    fn check_disk_for_run(&mut self) -> Result<(), Failure> {
+        let Some(free_bytes) = self.check_free_space() else {
             return Err(Failure {
                 kind: FailureKind::Refused,
                 message: format!(
@@ -113,7 +113,7 @@ impl Owner {
     /// # Errors
     /// [`OwnerError`] when the state cannot be saved.
     pub(super) async fn run_request(&mut self, request: RunRequest) -> Result<Result<Reply, Failure>, OwnerError> {
-        if let Err(refusal) = self.check_disk_for_run().await {
+        if let Err(refusal) = self.check_disk_for_run() {
             return Ok(Err(refusal));
         }
         let formed = match form(

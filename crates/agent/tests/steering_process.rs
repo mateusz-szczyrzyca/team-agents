@@ -50,7 +50,7 @@ mod steering_process {
             home.config_file(),
             format!(
                 "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{fake}\"\n\
-                 [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n"
+                 [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n[disk]\nlow_free_gb = 0\nmin_free_gb = 0\n"
             ),
         )
         .unwrap();

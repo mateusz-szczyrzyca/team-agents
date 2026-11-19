@@ -1053,6 +1053,7 @@ for items assigned to that task. Existing notification files identify the item a
 across daemon restarts; a later failed run can notify again.
 
 Build directories (`target/`) are released when a round closes, and when a reviewer finishes while free disk space is below `disk.low_free_gb` (default `100`), logging `build_directory_removed`. Only `target/` within harness worktrees is ever removed. Free disk space is continuously tracked: below `disk.low_free_gb`, a notification lists the five largest worktrees and `agent status` reports the free space; below `disk.min_free_gb` (default `20`), `agent run` is refused with cleanup guidance, open rounds wait with a single notification, and waiting rounds resume automatically once free space is restored.
+`agent status` reads the last measured free space from `AGENTS_HOME/.free_space`, a plain number of bytes that the daemon writes at each measurement; the line is absent until the daemon has measured, and shows the reason when the file or `config.toml` cannot be read. When a state file cannot be saved, the daemon first runs the notification command once with the reason as its only argument and no file is written; a failure of that try is logged and the daemon stops as before.
 
 `bin/agent` is being rewritten in Rust (the Cargo workspace in `crates/`; the plan and the layout are in
 [`docs/architecture.md`](docs/architecture.md)). The new `agent` is **not installed** by `install.sh` and is not what

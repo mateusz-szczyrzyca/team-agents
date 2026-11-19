@@ -611,7 +611,7 @@ impl Owner {
         if queued.is_empty() {
             return Ok(());
         }
-        let Some(free_bytes) = self.check_free_space().await else {
+        let Some(free_bytes) = self.check_free_space() else {
             return Ok(());
         };
         let min_limit_gb = self.parts.settings.config.disk().min_free_gb;
@@ -634,7 +634,7 @@ impl Owner {
 
     /// Starts the run of `task`, or fails the task when it cannot be made ready.
     async fn start(&mut self, task: TaskId) -> Result<(), OwnerError> {
-        self.check_free_space().await;
+        self.check_free_space();
         let why = self.reasons.remove(&task);
         // What a wake-up noted is for the run it starts, and for no other.
         let woke = self
@@ -844,7 +844,7 @@ impl Owner {
             },
             Outcome::Failed(reason) => self.failed(&task, reason).await,
         };
-        let free_bytes = self.check_free_space().await;
+        let free_bytes = self.check_free_space();
         if let Ok(located) = self.locate(&task)
             && located.role == Role::Reviewer
         {
@@ -1836,32 +1836,32 @@ impl Owner {
 
     /// Notifies the human that open rounds wait for disk space.
     pub(super) async fn notify_rounds_waiting(&mut self, free_bytes: u64, min_gb: u64) {
-        let free_gb = free_bytes / (GIBIBYTE);
+        let free_gb = free_bytes / GIBIBYTE;
         let values = match agent_core::prompt::Variables::new()
             .with("free", free_gb.to_string())
             .and_then(|v| v.with("min", min_gb.to_string()))
         {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("cannot build variables for disk wait notice: {e}");
+            Ok(values) => values,
+            Err(error) => {
+                tracing::warn!(error = %error_chain(&error), "cannot build the variables of the disk wait notice");
                 return;
             }
         };
-        if let Ok(rendered) = self
+        let rendered = match self
             .parts
             .texts
             .render(agent_core::prompt::HarnessPrompt::NoticeDiskWait, &values)
         {
-            let mut split = rendered.splitn(2, '\n');
-            let title = split.next().unwrap_or("Rounds waiting for free disk space").trim();
-            let body = split.next().unwrap_or_default().trim();
-            if let Ok(notification) = Notification::new(title, body)
-                && let Ok(now) = Timestamp::now(&self.parts.clock)
-                && let Err(e) = self.parts.notifier.notify(now, &notification).await
-            {
-                tracing::warn!(event = LogEvent::NotificationFailed.as_str(), error = %error_chain(&e), "cannot deliver disk wait notification");
+            Ok(rendered) => rendered,
+            Err(error) => {
+                tracing::warn!(error = %error_chain(&error), "cannot render the disk wait notice");
+                return;
             }
-        }
+        };
+        let mut split = rendered.splitn(2, '\n');
+        let title = split.next().unwrap_or("Rounds waiting for free disk space").trim();
+        let body = split.next().unwrap_or_default().trim();
+        self.deliver(title, body, "disk wait notice").await;
     }
 }
 
