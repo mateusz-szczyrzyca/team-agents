@@ -39,6 +39,8 @@ pub enum ChecksPrompt {
     TeamPass,
     /// The part of that message about what the human refused to allow.
     Refused,
+    /// The part of that message about findings that wait for the human.
+    WaitsHuman,
     /// What the lead is told to put the harness's questions to the human.
     AskRelay,
     /// What the lead is told when the human answered those questions.
@@ -83,6 +85,7 @@ impl ChecksPrompt {
         Self::IssueChecksUnderTest,
         Self::TeamPass,
         Self::Refused,
+        Self::WaitsHuman,
         Self::AskRelay,
         Self::Answered,
         Self::QuestionsTitle,
@@ -144,9 +147,10 @@ impl ChecksPrompt {
             Self::TeamPass => PromptSpec::new(
                 "harness/checks/team-pass.md",
                 Audience::Model,
-                &["pr", "pass", "passes", "reasons", "refused"],
+                &["pr", "pass", "passes", "reasons", "refused", "human"],
             ),
             Self::Refused => PromptSpec::new("harness/checks/refused.md", Audience::Model, &["subjects"]),
+            Self::WaitsHuman => PromptSpec::new("harness/checks/waits-human.md", Audience::Model, &[]),
             Self::AskRelay => PromptSpec::new(
                 "harness/checks/ask-relay.md",
                 Audience::Model,

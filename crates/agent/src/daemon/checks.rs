@@ -155,6 +155,7 @@ pub(super) fn team_message(
     passes: u32,
     issues: &[Issue],
     refused: &[Subject],
+    _waits_human: bool,
 ) -> Result<String, ChecksTextError> {
     let refused = if refused.is_empty() {
         String::new()
@@ -169,12 +170,14 @@ pub(super) fn team_message(
         )?;
         format!("\n{}\n", told.trim())
     };
+    let human = String::new();
     let values = Variables::new()
         .with("pr", pr.to_string())?
         .with("pass", pass.to_string())?
         .with("passes", passes.to_string())?
         .with("reasons", bullets(texts, issues)?)?
-        .with("refused", refused)?;
+        .with("refused", refused)?
+        .with("human", human)?;
     Ok(texts.render(ChecksPrompt::TeamPass, &values)?.trim_end().to_owned())
 }
 

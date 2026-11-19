@@ -160,6 +160,7 @@ impl Owner {
                     policy.check_passes,
                     &issues,
                     &refused,
+                    false,
                 )?;
                 record.set_passes(reviewing.items, pass.get());
                 record.asked = None;
