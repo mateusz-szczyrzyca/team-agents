@@ -590,6 +590,8 @@ impl Checking {
     ///
     /// - No issue: the reviews start.
     /// - An issue the human refused: back to the team.
+    /// - Both kinds of issues: the human is asked for what only they may allow, and the team goes back while passes
+    ///   remain; when passes are used up, the human is asked about everything.
     /// - An issue the team can fix: back to the team while the policy has passes left, then the human is asked.
     /// - Only issues that the human alone may allow: the human is asked.
     #[must_use]
@@ -604,14 +606,22 @@ impl Checking {
             return back;
         }
         let team_can_fix = issues.iter().any(|issue| issue.judge() == Judge::Team);
-        match (team_can_fix, self.passes < policy.check_passes) {
-            (true, true) => back,
-            (true, false) => ChecksStep::AskHuman {
+        let only_human = issues.iter().any(|issue| issue.judge() == Judge::Human);
+        match (team_can_fix, only_human, self.passes < policy.check_passes) {
+            (true, true, true) => ChecksStep::Both {
+                pass: NonZeroU32::MIN.saturating_add(self.passes),
+            },
+            (true, true, false) => ChecksStep::AskHuman {
                 reason: AskReason::PassesUsed,
             },
-            (false, _) => ChecksStep::AskHuman {
+            (true, false, true) => back,
+            (true, false, false) => ChecksStep::AskHuman {
+                reason: AskReason::PassesUsed,
+            },
+            (false, true, _) => ChecksStep::AskHuman {
                 reason: AskReason::OnlyTheHumanMayAllow,
             },
+            (false, false, _) => ChecksStep::StartReviews,
         }
     }
 }
