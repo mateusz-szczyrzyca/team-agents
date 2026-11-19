@@ -691,6 +691,10 @@ impl QuestionsFile {
         let mut answers = Vec::with_capacity(self.entries.len());
         let mut problems = Vec::new();
         for entry in &self.entries {
+            if self.is_checks() && entry.checks_verdict() == Ok(None) {
+                problems.push((entry.number, AnswerProblem::ChecksVerdict(checks::InvalidChecksVerdict)));
+                continue;
+            }
             match entry.answer() {
                 Ok(choice) => answers.push(Answer {
                     number: entry.number,

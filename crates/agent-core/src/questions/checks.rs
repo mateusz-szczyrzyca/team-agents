@@ -1,6 +1,6 @@
 //! The versioned checks-question metadata and its explicit verdict grammar.
 
-use super::{Entry, Part, Verdict};
+use super::{Entry, Part, QuestionsFile, Verdict};
 use crate::decide::checks::Subject;
 
 /// A strict verdict for a group of findings.
@@ -95,6 +95,15 @@ impl Entry {
                 Ok(Some(ChecksVerdict::Except(exceptions)))
             }
         }
+    }
+}
+
+impl QuestionsFile {
+    /// Whether this file uses the grouped checks grammar instead of legacy own answers.
+    #[must_use]
+    pub fn is_checks(&self) -> bool {
+        self.title().is_some_and(|title| title.ends_with("[checks:v1]"))
+            || self.entries().iter().any(|entry| entry.check_group().is_some())
     }
 }
 

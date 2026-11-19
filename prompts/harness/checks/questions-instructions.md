@@ -1,0 +1,1 @@
+Answer every question after **Verdict:** with `allow`, `refuse`, or `allow except <path> <path> ...`. Name only exact paths listed in that question after `except`; those paths are refused and the others allowed. Complete every verdict. Put **ANSWERED** on the last line and save, or run `agent answer {{task}}`. Keep the group membership labels unchanged.

@@ -262,7 +262,34 @@ impl FileChange {
     }
 }
 
+/// A finding's kind, independent of its path, counts and commit IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IssueKind {
+    /// Existing test changes retain the specific change kind, but not its payload.
+    TestChanged(std::mem::Discriminant<TestChange>),
+    /// A protected path was changed.
+    ProtectedChanged,
+    /// A test frozen by RED was edited.
+    RedTestEdited,
+    /// Production code lacks tests.
+    NoTests,
+    /// Each marker kind has its own question.
+    Marker(markers::Marker),
+}
+
 impl Issue {
+    /// The kind used to group questions, together with [`Self::judge`].
+    #[must_use]
+    pub fn kind(&self) -> IssueKind {
+        match self {
+            Self::TestChanged { how, .. } => IssueKind::TestChanged(std::mem::discriminant(how)),
+            Self::ProtectedChanged { .. } => IssueKind::ProtectedChanged,
+            Self::RedTestEdited { .. } => IssueKind::RedTestEdited,
+            Self::NoTests => IssueKind::NoTests,
+            Self::Marker { marker, .. } => IssueKind::Marker(*marker),
+        }
+    }
+
     /// Who can allow the issue.
     #[must_use]
     pub const fn judge(&self) -> Judge {
