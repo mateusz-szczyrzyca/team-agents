@@ -2829,3 +2829,41 @@ async fn third_invalid_fix_response_notifies_human_and_holds_publication() {
     assert_eq!(rig.notifications().len(), 1);
     assert!(rig.notifications()[0].contains("\nStatus: 📕 not published\n"));
 }
+
+#[tokio::test]
+async fn description_publication_supplies_measured_sections_without_a_lead_file() {
+    let mut rig = solo_rig().await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "reviewing", |phase| matches!(phase, ItemPhase::InReview { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    let body = &rig.github.pulls()[0].body;
+    let head = rig.remote_tip(&format!("agents/claude-1/{}-1.1", tasks[0]));
+    assert!(body.contains("## Size\n"), "{body}");
+    assert!(body.contains(&format!("Commit: `{head}`")), "{body}");
+    assert!(body.contains("The lead supplied no description."), "{body}");
+}
+
+#[tokio::test]
+async fn description_publication_refreshes_a_file_only_change_and_strips_owned_sections() {
+    let mut rig = solo_rig().await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "reviewing", |phase| matches!(phase, ItemPhase::InReview { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    let before = rig.github.pulls()[0].head.clone();
+    std::fs::write(rig.home.task_dir(&tasks[0]).join("description.md"),
+        "## What and why\n\nŻółć: file-only update.\n\n## Size\n\nInvented size.\n\n## Gate\n\nInvented gate.\n\n## Out of scope\n\nOther work.\n").unwrap();
+    rig.start().await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+    let pull = &rig.github.pulls()[0];
+    assert_eq!(pull.head, before);
+    assert!(pull.body.contains("Żółć: file-only update."), "{}", pull.body);
+    assert!(!pull.body.contains("Invented"), "{}", pull.body);
+    assert!(pull.body.contains("Other work."), "{}", pull.body);
+    assert_eq!(pull.body.matches("## Size\n").count(), 1);
+    assert_eq!(pull.body.matches("## Gate\n").count(), 1);
+}
