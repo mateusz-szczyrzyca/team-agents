@@ -150,3 +150,44 @@ fn refuses_unknown_non_blocker_and_closed_findings_and_allows_pending_replacemen
         matches!(&ledger.opinions()[&NonZeroU32::MIN].stage, OpinionStage::Assigned { investigator, .. } if investigator.as_str() == "inv-gemini")
     );
 }
+
+#[test]
+fn refuses_persisted_opinions_with_missing_findings_or_inconsistent_outcomes() {
+    let n = NonZeroU32::MIN;
+    let mut pending = ledger(Severity::Blocker);
+    pending.request_opinion(n, request()).unwrap();
+    let mut unknown = serde_json::to_value(&pending).unwrap();
+    unknown["entries"] = serde_json::json!([]);
+    let mut non_blocker = serde_json::to_value(&pending).unwrap();
+    non_blocker["entries"][0]["finding"]["severity"] = serde_json::json!("major");
+    let mut closed_pending = serde_json::to_value(&pending).unwrap();
+    closed_pending["entries"][0]["status"] = serde_json::json!("resolved");
+    let task: TaskId = "task-20261111-193007-k3x9".parse().unwrap();
+    pending
+        .assign_opinion(n, "inv-opus".parse().unwrap(), task.clone())
+        .unwrap();
+    pending
+        .record_opinion(
+            n,
+            &task,
+            OpinionReport {
+                outcome: Outcome::NotConfirmed,
+                evidence: "no defect at this head".to_owned().try_into().unwrap(),
+            },
+        )
+        .unwrap();
+    let mut open_unconfirmed = serde_json::to_value(&pending).unwrap();
+    open_unconfirmed["entries"][0]["status"] = serde_json::json!("open");
+    let mut unsupported_closure = serde_json::to_value(&pending).unwrap();
+    unsupported_closure["opinions"] = serde_json::json!({});
+    for value in [
+        unknown,
+        non_blocker,
+        closed_pending,
+        open_unconfirmed,
+        unsupported_closure,
+    ] {
+        let error = serde_json::from_value::<Findings>(value).expect_err("inconsistent opinion state must be refused");
+        assert_eq!(error.classify(), serde_json::error::Category::Data);
+    }
+}
