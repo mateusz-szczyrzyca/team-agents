@@ -422,7 +422,7 @@ pub enum HistoryEvent {
         pass: u32,
         /// The selected independent investigator.
         by: AgentName,
-        /// The lead reason for a request, or the investigator evidence for an outcome.
+        /// The lead's reason for disputing the blocker.
         why: String,
     },
     /// An independent investigator confirmed a blocker.
@@ -435,7 +435,7 @@ pub enum HistoryEvent {
         pass: u32,
         /// The selected independent investigator.
         by: AgentName,
-        /// The lead reason for a request, or the investigator evidence for an outcome.
+        /// The investigator's evidence that the blocker holds.
         why: String,
     },
     /// An independent investigator did not confirm a blocker.
@@ -448,7 +448,7 @@ pub enum HistoryEvent {
         pass: u32,
         /// The selected independent investigator.
         by: AgentName,
-        /// The lead reason for a request, or the investigator evidence for an outcome.
+        /// The investigator's evidence that the blocker does not hold.
         why: String,
     },
     /// A fix pass started: the reviews asked for changes and the team gets their findings.
