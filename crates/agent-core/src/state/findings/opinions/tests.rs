@@ -159,7 +159,7 @@ fn refuses_persisted_opinions_with_missing_findings_or_inconsistent_outcomes() {
     let mut unknown = serde_json::to_value(&pending).unwrap();
     unknown["entries"] = serde_json::json!([]);
     let mut non_blocker = serde_json::to_value(&pending).unwrap();
-    non_blocker["entries"][0]["finding"]["severity"] = serde_json::json!("major");
+    non_blocker["entries"][0]["finding"]["severity"] = serde_json::to_value(Severity::Major).unwrap();
     let mut closed_pending = serde_json::to_value(&pending).unwrap();
     closed_pending["entries"][0]["status"] = serde_json::json!("resolved");
     let task: TaskId = "task-20261111-193007-k3x9".parse().unwrap();
