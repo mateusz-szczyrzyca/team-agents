@@ -140,7 +140,16 @@ impl serde::de::Visitor<'_> for FindingKeyVisitor {
 }
 
 /// Parses a finding number string into [`FindingKey`].
+///
+/// Only the text that `serde_json` writes for a number is accepted: digits, the first of them not zero. `"+1"` and
+/// `"01"` are refused, as they are when the same map is read from the state on its own.
 fn parse_finding_number<E: serde::de::Error>(text: &str) -> Result<FindingKey, E> {
+    let canonical = text.starts_with(|c: char| ('1'..='9').contains(&c)) && text.bytes().all(|b| b.is_ascii_digit());
+    if !canonical {
+        return Err(E::custom(format!(
+            "invalid finding number {text:?}: expected a positive integer written without sign or leading zeros"
+        )));
+    }
     text.parse::<NonZeroU32>().map(FindingKey).map_err(|source| {
         E::custom(format!(
             "invalid finding number {text:?}: expected a positive integer: {source}"
