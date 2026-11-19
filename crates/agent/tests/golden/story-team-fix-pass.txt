@@ -15,8 +15,8 @@ Agents
 1. inv-lead — coordinator — named by --coordinator
 2. claude-1 — member — named on the command line
 3. glm-1 — worker — a worker, in the order of the configuration
-4. inv-r1 — reviewer — drawn at random among inv-r1, inv-r2
-5. inv-r2 — reviewer — drawn at random among inv-r1, inv-r2
+4. inv-r1 — reviewer — selected among inv-r1, inv-r2
+5. inv-r2 — reviewer — selected among inv-r1, inv-r2
 
 Story
 
@@ -307,8 +307,8 @@ STATUS: DONE
       added work-3.txt (+1 -0)
 <time>  gate for task <task-4>: passed at <commit-3> (took <duration>); output <home>/tasks/<task-4>/gate-2.log
 <time>  pull request #1: pushed <commit-3>
-<time>  review pass 2 of #1 asked of inv-r2 (task <task-12>) at <commit-3>
 <time>  review pass 2 of #1 asked of inv-r1 (task <task-11>) at <commit-3>
+<time>  review pass 2 of #1 asked of inv-r2 (task <task-12>) at <commit-3>
 <time>  run <run-16>: inv-r1 (investigator, claude) as reviewer, because a review of pull request #1, pass 2
     task <task-11>; worktree <home>/worktrees/example/<task-11>, branch agents/inv-r1/<task-11>
     took <duration>

@@ -407,11 +407,11 @@ mod story_text {
     }
 
     #[test]
-    fn an_outside_reviewer_is_listed_under_agents_with_the_candidates_it_was_drawn_from() {
+    fn an_outside_reviewer_is_listed_under_agents_with_its_selection_candidates() {
         let text = story(&solo(), PREVIEW);
 
         assert!(
-            text.contains("3. inv-c — reviewer — drawn at random among inv-c, inv-d\n"),
+            text.contains("3. inv-c — reviewer — selected among inv-c, inv-d\n"),
             "{text}"
         );
     }
