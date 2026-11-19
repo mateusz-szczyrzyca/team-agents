@@ -226,3 +226,87 @@ async fn turn_limit_without_a_session_fails_with_its_own_notice() {
     assert!(rendered.body().contains("no session ID to resume"));
     assert!(!rendered.body().contains("consecutive turn-limit endings"));
 }
+
+#[tokio::test]
+async fn one_explanation_event_links_every_item_round_of_the_pull_request() {
+    use crate::daemon::owner::rounds::Pulls;
+    use crate::daemon::owner::teams::Look;
+    use agent_core::history::{HistoryEvent, Record};
+    use agent_core::state::State;
+    use agent_runtime::autopilot_prompts::AutopilotPrompts;
+    use agent_runtime::checks_prompts::ChecksPrompts;
+
+    let mut rig = Rig::new(&[
+        normal("claude-1", "work,sleep"),
+        investigator("inv-r1", "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 work-1.txt:1 — units → document units\\n   CHECK: read work-1.txt"),
+        investigator("inv-r2", "done:VERDICT: APPROVE"),
+    ], 5, false).await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["claude-1"], super::rig::PARALLEL, MergeMode::Autopilot, None)
+        .await;
+    rig.prompt(&tasks[0], 2).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.stop().await.unwrap();
+    // Reproduce two items sharing a PR, as the coordinator's integration can produce.
+    let mut saved: serde_json::Value = serde_json::from_str(&rig.state().to_json().unwrap()).unwrap();
+    let found = &mut saved["teams"][0];
+    let mut joined = found["items"][0].clone();
+    joined["id"] = "2.1".into();
+    found["items"][1] = joined;
+    let second = found["rounds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|round| round["item"] == "2.1")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let member = &mut found["crew"]["member"];
+    member["status"] = "done".into();
+    member["runs"].as_array_mut().unwrap().last_mut().unwrap()["state"]["end"] =
+        serde_json::json!({"kind": "reported", "outcome": "DONE"});
+    let run = member["runs"].as_array_mut().unwrap().last_mut().unwrap();
+    run["started_at"] = run["state"]["at"].clone();
+    for item in found["items"].as_array_mut().unwrap() {
+        item["findings"]["verification"]["lead_message"] =
+            "FINDING 1: EXPLAINED — the units are explicit\nSTATUS: DONE".into();
+    }
+    let state = State::from_json(&saved.to_string()).unwrap();
+    let mut step = stepped(&rig).await;
+    step.owner.parts.state = state;
+    step.owner.record_round(&team, &second);
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+    let language = step.owner.parts.settings.config.language();
+    let pulls = Pulls::new(
+        Arc::new(AutopilotPrompts::load(&root, language).await.unwrap()),
+        Arc::new(ChecksPrompts::load(&root, language).await.unwrap()),
+        &step.owner.parts.settings,
+    )
+    .unwrap()
+    .unwrap();
+    step.owner
+        .check_fix_responses(&pulls, &team, &mut Look::default())
+        .unwrap();
+    let rounds = step
+        .owner
+        .rounds_of_items(&team, &["1.1".parse().unwrap(), "2.1".parse().unwrap()]);
+    drop(step.owner);
+    crate::daemon::history::close(step.writer).await;
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    for round in &rounds {
+        let explained: Vec<_> = reader
+            .round_records(round)
+            .unwrap()
+            .into_iter()
+            .filter_map(|row| match row.record {
+                Record::Event(event) if matches!(event.event, HistoryEvent::FindingExplained { .. }) => Some(event),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(explained.len(), 1, "round {round}");
+        assert_eq!(explained[0].rounds, rounds);
+    }
+}
