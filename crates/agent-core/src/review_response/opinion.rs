@@ -177,13 +177,27 @@ pub fn parse_lead(
 pub fn parse_report(text: &str) -> Result<OpinionReport, OpinionError> {
     let mut lines = text.trim().lines();
     let first = lines.next().ok_or(OpinionError::MissingVerdict)?;
-    let keyword = |line: &str| line.trim().trim_matches(['*', '`']).trim().to_owned();
+    let keyword = |line: &str| {
+        line.replace(['*', '`'], "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
     let outcome = match keyword(first).as_str() {
         "OPINION: CONFIRMED" => Outcome::Confirmed,
         "OPINION: NOT CONFIRMED" => Outcome::NotConfirmed,
         _ => return Err(OpinionError::MissingVerdict),
     };
-    let remaining: Vec<_> = lines.collect();
+    let mut remaining: Vec<_> = lines.collect();
+    // The runner appends the final status line to every message; it is not evidence.
+    let last = remaining.iter().rposition(|line| !line.trim().is_empty());
+    if let Some(last) = last.filter(|&last| {
+        remaining
+            .get(last)
+            .is_some_and(|line| line.trim().starts_with("STATUS:"))
+    }) {
+        remaining.truncate(last);
+    }
     if remaining.iter().any(|line| keyword(line).starts_with("OPINION:")) {
         return Err(OpinionError::MissingVerdict);
     }
