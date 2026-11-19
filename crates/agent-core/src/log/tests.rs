@@ -157,6 +157,11 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         (LogEvent::ReviewReportLate, "review_report_late", LogLevel::Info),
         (LogEvent::NotificationSent, "notification_sent", LogLevel::Info),
         (LogEvent::QuestionsFileOpened, "questions_file_opened", LogLevel::Info),
+        (
+            LogEvent::BuildDirectoryRemoved,
+            "build_directory_removed",
+            LogLevel::Info,
+        ),
         (LogEvent::DecisionTaken, "decision_taken", LogLevel::Debug),
         (
             LogEvent::OutsideCallCompleted,
