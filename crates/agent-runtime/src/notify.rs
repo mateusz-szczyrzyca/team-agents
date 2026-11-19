@@ -278,6 +278,37 @@ impl Notifier {
         }
         text.trim().chars().take(MAX_DIAGNOSTIC_CHARS).collect()
     }
+
+    /// Runs the notification command once with `reason` as its argument when a file cannot be written.
+    ///
+    /// # Errors
+    /// [`NotifyError::Command`] and [`NotifyError::CommandFailed`] when running the command fails.
+    pub async fn notify_emergency(&self, reason: &str) -> Result<(), NotifyError> {
+        let Some(line) = &self.command else {
+            return Ok(());
+        };
+        let mut command = Command::new(line.program().as_path());
+        command.args(line.args().as_slice()).arg(reason);
+        for (name, secret) in &self.env {
+            command.env(name.as_str(), secret.expose());
+        }
+        let limits = CaptureLimits {
+            timeout: self.command_timeout,
+            max_bytes: MAX_COMMAND_OUTPUT_BYTES,
+        };
+        let captured = capture(command, limits).await.map_err(|source| NotifyError::Command {
+            file: PathBuf::new(),
+            source,
+        })?;
+        if captured.exit.succeeded() {
+            return Ok(());
+        }
+        Err(NotifyError::CommandFailed {
+            file: PathBuf::new(),
+            exit: captured.exit,
+            stderr: self.diagnostic(&captured.stderr.bytes),
+        })
+    }
 }
 
 /// Writes `bytes` to a new file `notification-<stamp>-<n>.md` in `dir`, with the first `n` that is free, through a
@@ -644,5 +675,21 @@ mod tests {
             ),
             "{result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn notify_emergency_runs_command_with_reason_and_writes_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("emergency.log");
+        let script = dir.path().join("notify.sh");
+        std::fs::write(&script, format!("#!/bin/sh\necho \"$1\" > \"{}\"\n", log.display())).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let n = notifier(dir.path(), Some(command(&[script.to_str().unwrap()])));
+        n.notify_emergency("out of disk space").await.unwrap();
+
+        assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "out of disk space");
+        let notes_dir = dir.path().join("notes");
+        assert!(!notes_dir.exists() || files_in(&notes_dir).is_empty());
     }
 }

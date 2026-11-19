@@ -11,6 +11,7 @@ pub mod cli;
 pub mod clock;
 pub mod debug;
 mod debug_redaction;
+pub mod disk;
 pub mod editor;
 pub mod git;
 pub mod github;

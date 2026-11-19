@@ -241,8 +241,16 @@ impl Daemon {
             local_offset: time::UtcOffset::UTC,
             tick: Duration::from_millis(20),
             store,
-            settings,
+            settings: Arc::clone(&settings),
             texts,
+            notifier: agent_runtime::notify::Notifier::from_config(
+                settings.config.notifications(),
+                &self.home,
+                &settings.secrets,
+            ),
+            free_space: agent_runtime::disk::SharedFreeSpace::new(agent_runtime::disk::FakeFreeSpace::new(
+                200 * 1024 * 1024 * 1024,
+            )),
         };
         let owner = Owner::new(parts, CancellationToken::new());
         (

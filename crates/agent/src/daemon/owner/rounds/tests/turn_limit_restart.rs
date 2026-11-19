@@ -82,8 +82,14 @@ async fn stepped(rig: &Rig) -> Stepped {
         local_offset: time::UtcOffset::UTC,
         tick: Duration::from_millis(25),
         store,
-        settings,
+        settings: std::sync::Arc::clone(&settings),
         texts,
+        notifier: agent_runtime::notify::Notifier::from_config(
+            settings.config.notifications(),
+            &rig.home,
+            &settings.secrets,
+        ),
+        free_space: agent_runtime::disk::SharedFreeSpace::system(),
     };
     Stepped {
         owner: Owner::new(parts, CancellationToken::new()).with_history(opened.history),

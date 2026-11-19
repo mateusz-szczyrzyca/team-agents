@@ -163,6 +163,35 @@ async fn retained_reviewer(commit: bool) {
 }
 
 #[tokio::test]
+async fn closed_round_leaves_worktrees_without_target_including_kept_worktree() {
+    let mut rig = rig().await;
+    rig.start().await;
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let state = rig
+        .item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    let reviewer = state.team(&team).unwrap().reviewers()[0].task().clone();
+    let tree = rig.worktree(&reviewer);
+    std::fs::write(tree.join("unpublished.txt"), "keep this work\n").unwrap();
+    let target = tree.join("target");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("output.bin"), b"large build artifact\n").unwrap();
+
+    rig.github.merged_by_a_human(1);
+    rig.start().await;
+    let removed: Vec<_> = tasks(&state).into_iter().filter(|task| task != &reviewer).collect();
+    cleaned(&rig, &removed).await;
+    rig.stop().await.unwrap();
+
+    assert!(tree.join("unpublished.txt").exists(), "uncommitted work must be kept");
+    assert!(
+        !target.exists(),
+        "target/ directory must be removed even when worktree is kept"
+    );
+}
+
+#[tokio::test]
 async fn stopping_a_round_keeps_every_worktree() {
     let mut rig = rig().await;
     rig.github.answer_merges(super::fake_github::MergeAnswer::Refuse(409));
@@ -352,8 +381,14 @@ async fn stepped(rig: &Rig) -> Stepped {
         local_offset: time::UtcOffset::UTC,
         tick: Duration::from_millis(25),
         store,
-        settings,
+        settings: std::sync::Arc::clone(&settings),
         texts,
+        notifier: agent_runtime::notify::Notifier::from_config(
+            settings.config.notifications(),
+            &rig.home,
+            &settings.secrets,
+        ),
+        free_space: agent_runtime::disk::SharedFreeSpace::system(),
     };
     Stepped {
         owner: Owner::new(parts, CancellationToken::new()).with_history(opened.history),

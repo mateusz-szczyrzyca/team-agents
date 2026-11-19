@@ -1044,6 +1044,8 @@ member and resume it (`agent say <task>`, `agent resume <task>`). Resuming a tas
 for items assigned to that task. Existing notification files identify the item and the failed run, preserving suppression
 across daemon restarts; a later failed run can notify again.
 
+Build directories (`target/`) are released when a round closes, and when a reviewer finishes while free disk space is below `disk.low_free_gb` (default `100`), logging `build_directory_removed`. Only `target/` within harness worktrees is ever removed. Free disk space is continuously tracked: below `disk.low_free_gb`, a notification lists the five largest worktrees and `agent status` reports the free space; below `disk.min_free_gb` (default `20`), `agent run` is refused with cleanup guidance, open rounds wait with a single notification, and waiting rounds resume automatically once free space is restored.
+
 `bin/agent` is being rewritten in Rust (the Cargo workspace in `crates/`; the plan and the layout are in
 [`docs/architecture.md`](docs/architecture.md)). The new `agent` is **not installed** by `install.sh` and is not what
 `agent` means in the rest of this README: it runs only against a separate `AGENTS_HOME` and never touches the home of the

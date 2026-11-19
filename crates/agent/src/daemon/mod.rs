@@ -381,6 +381,7 @@ async fn run_with_rng_and_log_layer(
     // The side tasks are scoped, not only polled with the subscriber: one that is still going when the daemon ends is
     // dropped with it, and its spans close in the registry that made them.
     sides.spawn(Scoped::new(server::serve(listener, inbox, serving), dispatch.clone()));
+    let emergency_notifier = notifier.clone();
     sides.spawn(Scoped::new(
         notifier::run(deliveries, notifier, opened.history.clone()),
         dispatch.clone(),
@@ -417,6 +418,8 @@ async fn run_with_rng_and_log_layer(
             events,
             local_offset: setup.local_offset,
             tick: timings.tick,
+            notifier: emergency_notifier,
+            free_space: agent_runtime::disk::SharedFreeSpace::system(),
         },
         shutdown.clone(),
     )

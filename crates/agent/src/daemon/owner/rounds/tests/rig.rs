@@ -173,6 +173,7 @@ pub(super) struct Rig {
     shutdown: CancellationToken,
     daemon: Option<JoinHandle<Result<(), DaemonError>>>,
     clock: TickingClock,
+    pub(super) free_space: agent_runtime::disk::FakeFreeSpace,
 }
 
 impl Rig {
@@ -211,13 +212,21 @@ impl Rig {
         std::fs::set_permissions(&secrets, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
         Self {
             _dir: dir,
-            home,
+            home: home.clone(),
             repo,
             origin,
             github,
             shutdown: CancellationToken::new(),
             daemon: None,
             clock: TickingClock::new(),
+            free_space: {
+                let fs = agent_runtime::disk::FakeFreeSpace::new(200 * 1024 * 1024 * 1024);
+                agent_runtime::disk::SharedFreeSpace::register(
+                    home.root().to_path_buf(),
+                    agent_runtime::disk::SharedFreeSpace::new(fs.clone()),
+                );
+                fs
+            },
         }
     }
 
@@ -360,6 +369,7 @@ impl Rig {
 
     /// Stops the daemon and returns how it ended.
     pub(super) async fn stop(&mut self) -> Result<(), DaemonError> {
+        agent_runtime::disk::SharedFreeSpace::unregister(self.home.root());
         self.shutdown.cancel();
         let daemon = self.daemon.take().unwrap();
         tokio::time::timeout(PATIENCE, daemon).await.unwrap().unwrap()
