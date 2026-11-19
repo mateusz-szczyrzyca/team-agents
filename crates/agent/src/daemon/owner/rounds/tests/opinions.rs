@@ -769,3 +769,81 @@ async fn restart_resumes_the_same_unanswered_opinions_once_and_keeps_answers() {
         0
     );
 }
+
+#[tokio::test]
+async fn restart_replaces_opinions_whose_worktrees_have_gone() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,opinion-ask"),
+            investigator("inv-r1", "opinion-release"),
+            investigator("inv-r2", "opinion-release"),
+            investigator("inv-r3", "opinion-release"),
+            investigator("inv-r4", "opinion-release"),
+            investigator("inv-r5", "opinion-release"),
+            investigator("inv-r6", "opinion-release"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], ONE, agent_core::state::MergeMode::Autopilot, None)
+        .await;
+    let before = rig
+        .state_where("assigned opinion processes", |state| {
+            let team = state.team(&team).unwrap();
+            team.items()[0].findings().is_some_and(|ledger| {
+                ledger.opinions().len() == 2
+                    && ledger.opinions().values().all(|opinion| {
+                        let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+                            return false;
+                        };
+                        team.find(task).unwrap().1.current_run().is_some()
+                    })
+            })
+        })
+        .await;
+    let tasks: Vec<_> = before.team(&team).unwrap().items()[0]
+        .findings()
+        .unwrap()
+        .opinions()
+        .values()
+        .map(|opinion| {
+            let OpinionStage::Assigned { task, .. } = &opinion.stage else {
+                panic!("assigned")
+            };
+            task.clone()
+        })
+        .collect();
+    rig.stop().await.unwrap();
+    for task in &tasks {
+        std::fs::remove_dir_all(rig.worktree(task)).unwrap();
+    }
+    std::fs::write(rig.home.root().join("opinion-release"), "ready").unwrap();
+    rig.start().await;
+    let state = rig
+        .state_where("redrawn assignments or failed missing worktree", |state| {
+            let team = state.team(&team).unwrap();
+            let ledger = team.items()[0].findings().unwrap();
+            ledger.opinions().keys().all(|n| ledger.opinion_attempts(*n).len() == 2)
+                || tasks
+                    .iter()
+                    .any(|task| team.find(task).unwrap().1.status() == agent_core::status::TaskStatus::Failed)
+        })
+        .await;
+    let ledger = state.team(&team).unwrap().items()[0].findings().unwrap();
+    for number in ledger.opinions().keys() {
+        assert_eq!(ledger.opinion_attempts(*number).len(), 2);
+        assert_eq!(
+            ledger.opinion_attempts(*number)[0].failure,
+            Some(agent_core::state::OpinionFailure::Interrupted)
+        );
+        assert!(!tasks.contains(&ledger.opinion_attempts(*number)[1].task));
+    }
+    rig.item_where("1.1", "done after redrawing missing tasks", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+    rig.stop().await.unwrap();
+}
