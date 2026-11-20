@@ -212,6 +212,12 @@ impl Proposal {
     pub(crate) fn parts(&self) -> &[PartInput] {
         &self.parts
     }
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (PartKey, &PartInput)> {
+        super::PART_KEYS
+            .chars()
+            .zip(self.parts())
+            .map(|(letter, part)| (PartKey(letter), part))
+    }
     /// Validates the whole plan, retaining requirements with their parts.
     ///
     /// # Errors
