@@ -14,7 +14,7 @@ use crate::config::Plan as Policy;
 use crate::ids::ItemId;
 use crate::kinds::Role;
 use crate::plan::{Plan, PlanError, Step, StepState};
-use crate::state::{PlanKeeping, PlanReason, PlanStage, RunEnd};
+use crate::state::{ItemPhase, PlanKeeping, PlanReason, PlanStage, RunEnd};
 use crate::status::RunOutcome;
 
 #[cfg(test)]
@@ -75,6 +75,27 @@ pub struct PlanFacts<'a> {
     pub keeping: Option<&'a PlanKeeping>,
     /// The `[plan]` table of the configuration.
     pub policy: &'a Policy,
+}
+
+/// What the `DONE` of a run ends: the work the task's plan is about, or one turn of a coordinator whose members still
+/// work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DoneEnds {
+    /// The work the task was given, as far as its plan goes: the plan is to say so.
+    Work,
+    /// A turn of a coordinator while items wait for a member or are with one: its plan has steps for them still.
+    Turn,
+}
+
+/// What the `DONE` of a task of `role` ends, in a team whose items are in `phases`.
+///
+/// A solo agent and a member end their item with `DONE`. A coordinator also ends a turn with `DONE` after it integrated
+/// one member's branch while others work (`prompts/harness/team/bus-member-finished.md`): its `DONE` ends the work only
+/// when no item is pending or in progress — every item is in review, in a fix pass, approved or done.
+#[must_use]
+pub fn done_ends<'a>(role: Role, phases: impl IntoIterator<Item = &'a ItemPhase>) -> DoneEnds {
+    let _ = (role, phases.into_iter().count());
+    DoneEnds::Work
 }
 
 /// What happens after a run ended that reports done.

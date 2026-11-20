@@ -463,3 +463,35 @@ fn a_step_of_any_earlier_version_is_lost_once_each_in_the_order_it_first_appeare
         })
     );
 }
+
+#[test]
+fn a_coordinators_done_ends_a_turn_while_an_item_waits_or_is_with_a_member_and_the_work_otherwise() {
+    use crate::state::{Completion, ItemPhase};
+
+    let pending = ItemPhase::Pending;
+    let with_member = ItemPhase::InProgress {
+        assignee: "claude-1".parse().expect("an agent"),
+        branch: "agents/claude-1/task-20261111-153001-k3x9-1.1"
+            .parse()
+            .expect("a branch"),
+    };
+    let done = ItemPhase::Done {
+        completion: Completion::Listed,
+    };
+    let cases: &[(Role, &[&ItemPhase], DoneEnds)] = &[
+        (Role::Coordinator, &[], DoneEnds::Work),
+        (Role::Coordinator, &[&done], DoneEnds::Work),
+        (Role::Coordinator, &[&done, &pending], DoneEnds::Turn),
+        (Role::Coordinator, &[&with_member, &done], DoneEnds::Turn),
+        (Role::Member, &[&pending, &with_member], DoneEnds::Work),
+        (Role::Solo, &[&pending], DoneEnds::Work),
+    ];
+
+    for (role, phases, expected) in cases {
+        assert_eq!(
+            done_ends(*role, phases.iter().copied()),
+            *expected,
+            "{role:?} {phases:?}"
+        );
+    }
+}
