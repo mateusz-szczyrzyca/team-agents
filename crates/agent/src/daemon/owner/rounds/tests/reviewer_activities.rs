@@ -1,13 +1,15 @@
 //! `agent status` as a person reads it while a round goes through its reviews: the lines of the reviewers say what they
 //! did, from the record of the team's activities, as the daemon records them between the runs.
 
+use std::time::{Duration, Instant};
+
 use agent_core::ids::TeamId;
 use agent_core::protocol::{Client, Command, Reply, StatusRequest, TeamSummary};
-use agent_core::state::{ActivityOutcome, ItemPhase, MergeMode};
+use agent_core::state::{ActivityOutcome, ActivityRequest, ItemPhase, MergeMode};
 use agent_core::status::TaskStatus;
 use time::UtcOffset;
 
-use super::rig::{ONE, Rig, investigator, normal};
+use super::rig::{ONE, PATIENCE, Rig, investigator, normal};
 use crate::client::Connection;
 use crate::commands::status::{clock_of, render_active};
 
@@ -22,6 +24,41 @@ async fn listed(rig: &Rig) -> Vec<TeamSummary> {
         panic!("the status answers with teams: {reply:?}");
     };
     teams
+}
+
+/// The daemon's answer to a status request once the team `team` in it is as `holds` wants, asked again every few
+/// milliseconds for at most [`PATIENCE`]: the lines are then read from the very answer the condition saw, not from a later
+/// one in which the daemon has moved on.
+async fn listed_when(rig: &Rig, team: &TeamId, what: &str, holds: impl Fn(&TeamSummary) -> bool) -> Vec<TeamSummary> {
+    let deadline = Instant::now() + PATIENCE;
+    loop {
+        let teams = listed(rig).await;
+        if teams.iter().any(|listed| &listed.id == team && holds(listed)) {
+            return teams;
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for {what}: {teams:?}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// Whether `team` recorded exactly `count` reviews, and every one of them gave its report: the reviewers wait between
+/// two passes.
+fn reviews_reported(team: &TeamSummary, count: usize) -> bool {
+    let reviews: Vec<_> = team
+        .activities
+        .iter()
+        .filter(|activity| matches!(activity.request().kind(), agent_core::kinds::ActivityKind::Reviewer))
+        .collect();
+    reviews.len() == count
+        && reviews.iter().all(|activity| {
+            matches!(
+                activity.outcome(),
+                ActivityOutcome::Finished {
+                    end: agent_core::state::ActivityEnd::Reported,
+                    ..
+                }
+            )
+        })
 }
 
 /// What `agent status` says of the team `team` of `teams`, as `--running` prints it.
@@ -86,7 +123,10 @@ async fn while_a_round_goes_through_its_reviews_the_reviewers_lines_say_what_the
     let state = rig
         .item_where("1.1", "a fix pass", |phase| matches!(phase, ItemPhase::Fixing { .. }))
         .await;
-    let teams = listed(&rig).await;
+    let teams = listed_when(&rig, &team, "the two first reviews in", |listed| {
+        reviews_reported(listed, 2)
+    })
+    .await;
     rig.stop().await.unwrap();
 
     let found = state.team(&team).unwrap();
@@ -126,23 +166,6 @@ fn printed_all(teams: &[TeamSummary], team: &TeamId) -> String {
     render_active(&shown, &|_| None)
 }
 
-/// How many reports of each task of `state`'s team are in.
-fn reports(state: &agent_core::state::State, team: &TeamId) -> usize {
-    state
-        .team(team)
-        .map(|found| {
-            found
-                .activities()
-                .iter()
-                .filter(|activity| {
-                    matches!(activity.request().kind(), agent_core::kinds::ActivityKind::Reviewer)
-                        && matches!(activity.outcome(), ActivityOutcome::Finished { .. })
-                })
-                .count()
-        })
-        .unwrap_or_default()
-}
-
 // Rule: the record follows a round through its first reviews and the verification after the fix pass, and, as
 // `agent status` prints the lines, each report of each reviewer says its ordinal in the round: `done, 1st review
 // finished <t>` while the fix pass goes, `done, 2nd review finished <t>` once the verifier answered the findings.
@@ -163,13 +186,16 @@ async fn after_the_fix_pass_the_verifiers_line_says_the_second_review_finished()
     let first = rig
         .item_where("1.1", "a fix pass", |phase| matches!(phase, ItemPhase::Fixing { .. }))
         .await;
-    let first_teams = listed(&rig).await;
+    let first_teams = listed_when(&rig, &team, "the two first reviews in", |listed| {
+        reviews_reported(listed, 2)
+    })
+    .await;
     // With two investigators, the verification of the fix is the pair of the first pass again; it is in when both
-    // reports of it are.
-    let verified = rig
-        .state_where("the verification of the fix", |state| reports(state, &team) >= 4)
-        .await;
-    let later_teams = listed(&rig).await;
+    // reports of it are, and the daemon may ask for the next pass right after.
+    let later_teams = listed_when(&rig, &team, "the two reports of the verification in", |listed| {
+        reviews_reported(listed, 4)
+    })
+    .await;
     rig.stop().await.unwrap();
 
     let asked = reviewers(&first, &team);
@@ -184,23 +210,34 @@ async fn after_the_fix_pass_the_verifiers_line_says_the_second_review_finished()
         );
     }
     let later_text = printed_all(&later_teams, &team);
-    let verified_asks: Vec<String> = verified
-        .team(&team)
-        .unwrap()
-        .item("1.1".parse().unwrap())
-        .unwrap()
-        .fix_passes()
-        .last()
-        .map(|pass| pass.requested_by.iter().map(|review| review.task.to_string()).collect())
-        .unwrap_or_default();
-    assert_eq!(verified_asks.len(), 2, "{later_text}");
+    let summary = later_teams.iter().find(|listed| listed.id == team).unwrap();
+    // The investigators of the first pass: a verifier among them gives its second review of the round.
+    let first_reviewers: Vec<_> = summary
+        .activities
+        .iter()
+        .filter(|activity| matches!(activity.request(), ActivityRequest::FirstReview))
+        .map(|activity| activity.investigator().clone())
+        .collect();
+    let verifications: Vec<_> = summary
+        .activities
+        .iter()
+        .filter(|activity| matches!(activity.request(), ActivityRequest::Verification { .. }))
+        .collect();
+    assert_eq!(verifications.len(), 2, "{later_text}");
     assert!(
-        verified_asks.iter().any(|task| asked.contains(task)),
-        "the verification reuses a reviewer of the first pass: {verified_asks:?} vs {asked:?}"
+        verifications
+            .iter()
+            .any(|activity| first_reviewers.contains(activity.investigator())),
+        "the verification reuses an investigator of the first pass: {later_text}"
     );
-    for task in &verified_asks {
+    for activity in verifications {
+        let task = activity.task().as_str();
         let time = reported(&later_teams, task).unwrap_or_else(|| panic!("{task} reported"));
-        let ordinal = if asked.contains(task) { "2nd" } else { "1st" };
+        let ordinal = if first_reviewers.contains(activity.investigator()) {
+            "2nd"
+        } else {
+            "1st"
+        };
         assert_eq!(
             state_of(&later_text, task),
             format!("done, {ordinal} review finished {time}"),
