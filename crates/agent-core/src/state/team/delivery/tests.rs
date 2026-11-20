@@ -132,21 +132,23 @@ fn delivery_refuses_prs_owned_only_by_abandoned_or_approved_rounds() {
     for end in [RoundEnd::Abandoned, RoundEnd::Approved] {
         let mut team = working();
         if end == RoundEnd::Approved {
-            team.advance_item(
-                "1.2".parse().unwrap(),
-                ItemPhase::Approved {
-                    pr: pr(7),
-                    reviews: vec![crate::state::fixtures::review(
-                        "inv-codex",
-                        6,
-                        crate::state::ReviewOutcome::Submitted {
-                            verdict: crate::status::ReviewVerdict::Approve,
-                            at: at(25),
-                        },
-                    )],
-                },
+            let mut item = team.item_mut("1.2".parse().unwrap()).unwrap();
+            item.ask_reviews(vec![crate::state::fixtures::review(
+                "inv-codex",
+                6,
+                crate::state::ReviewOutcome::Pending,
+            )])
+            .unwrap();
+            item.submit_review(
+                &crate::state::fixtures::task(6),
+                crate::status::ReviewVerdict::Approve,
+                at(25),
             )
             .unwrap();
+            let ItemPhase::InReview { pr, reviews } = item.phase().clone() else {
+                panic!("in review")
+            };
+            item.advance(ItemPhase::Approved { pr, reviews }).unwrap();
         }
         team.close_round(&round_id(1), at(30), end).unwrap();
         let before = team.clone();
