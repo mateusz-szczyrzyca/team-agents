@@ -8,7 +8,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ## 0.35.0 — 20.11.2026 — PR #TBD
 
 ### New features
-- [agent] [agent-core] [agent-runtime] When GitHub refuses to merge an approved pull request because it conflicts with its base, the lead of the round is sent to merge the base into its branch, not told to you at once. The result is gated and pushed, and the merge is tried again; a change to files the task does not allow is reviewed again first. The new `[merge] conflict_passes` setting (default `3`) limits these passes per round; when they are used up, or the lead gives no result, the lead asks you in its questions file. `conflict_passes = 0` keeps the old behaviour.
+- [agent] [agent-core] [agent-runtime] When GitHub refuses to merge an approved pull request because it conflicts with its base, the lead of the round is sent to merge the base into its branch, not told to you at once. The result is gated and pushed, and the merge is tried again; a change to files the task does not allow is verified by the reviewers first, and `agent status` shows `waits for the lead's correction` while the pass is idle. The new `[merge] conflict_passes` setting (default `3`) limits these passes per round; when they are used up, or the lead gives no result, the lead asks you once in its questions file. `conflict_passes = 0` keeps the old behaviour.
 
 ### Enhancements
 - [agent-runtime] A refused merge is told apart as a conflict or another refusal from GitHub's answer; a rate limit or a failing GitHub is still retried, not told.
