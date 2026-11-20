@@ -61,11 +61,18 @@ fn approved_split_binds_first_round_and_retains_each_merged_part_until_last() {
                 reviews: vec![],
             })
             .unwrap();
-            item.advance(ItemPhase::Approved {
-                pr: pr(7),
-                reviews: vec![],
-            })
+            let reviewer = crate::state::fixtures::review("inv-codex", 21, crate::state::ReviewOutcome::Pending);
+            item.ask_reviews(vec![reviewer]).unwrap();
+            item.submit_review(
+                &crate::state::fixtures::task(21),
+                crate::status::ReviewVerdict::Approve,
+                at(40),
+            )
             .unwrap();
+            let ItemPhase::InReview { reviews, .. } = item.phase().clone() else {
+                panic!("in review")
+            };
+            item.advance(ItemPhase::Approved { pr: pr(7), reviews }).unwrap();
             item.advance(ItemPhase::Done {
                 completion: crate::state::Completion::Merged { pr: pr(7), at: at(50) },
             })
