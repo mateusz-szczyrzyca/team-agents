@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use agent_core::state::RoundLife;
 use agent_core::state::{ItemPhase, MergeMode};
 use agent_runtime::autopilot_prompts::AutopilotPrompts;
 use agent_runtime::checks_prompts::ChecksPrompts;
@@ -99,4 +100,195 @@ async fn merge_delivery_waits_for_durable_completion_and_restart_does_not_repeat
         .await
         .unwrap();
     assert!(matches!(deliveries.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn merge_completes_delivered_round_of_same_team() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(
+            &["claude-1"],
+            crate::daemon::owner::rounds::rig::PARALLEL,
+            MergeMode::NoMerge,
+            None,
+        )
+        .await;
+    let item2: agent_core::ids::ItemId = "2.1".parse().unwrap();
+    let mut state = rig
+        .state_where("round for 2.1 is open and 1.1 is approved", |state| {
+            let Some(team) = state.team(&team) else { return false };
+            let Some(item1) = team.item("1.1".parse().unwrap()) else {
+                return false;
+            };
+            matches!(item1.phase(), ItemPhase::Approved { .. })
+                && team
+                    .rounds()
+                    .iter()
+                    .any(|r| r.item() == Some(item2) && matches!(r.life(), RoundLife::Open))
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let (round2, pr, now) = {
+        let mut team_mut = state.team_mut(&team).unwrap();
+        let round = team_mut.rounds().iter().find(|r| r.item() == Some(item2)).unwrap();
+        let round2 = round.id().clone();
+        let now = Timestamp::from_utc(round.opened_at().as_utc() + time::Duration::seconds(10)).unwrap();
+        let item1 = "1.1".parse().unwrap();
+        let ItemPhase::Approved { pr, .. } = team_mut.item(item1).unwrap().phase().clone() else {
+            panic!("expected approved");
+        };
+        team_mut.deliver_round(&round2, pr.number).unwrap();
+        (round2, pr, now)
+    };
+
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let settings = Arc::new(Settings::load(&rig.home).await.unwrap());
+    let prompts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+    let language = settings.config.language();
+    let pulls = Pulls::new(
+        Arc::new(AutopilotPrompts::load(&prompts, language).await.unwrap()),
+        Arc::new(ChecksPrompts::load(&prompts, language).await.unwrap()),
+        &settings,
+    )
+    .unwrap()
+    .unwrap();
+    let lead = owner.lead_of(&team).unwrap();
+    let about = About {
+        site: Site {
+            pulls: &pulls,
+            team: &team,
+            lead: &lead,
+        },
+        pr: &pr,
+        url: "https://github.example.com/octo/example/pull/1",
+        now,
+    };
+
+    let item1 = "1.1".parse().unwrap();
+    owner.complete(&about, &[item1], &mut Look::default()).await.unwrap();
+
+    let team_after = owner.parts.state.team(&team).unwrap();
+    let round2_life = team_after.round(&round2).unwrap().life();
+    assert!(
+        matches!(
+            round2_life,
+            agent_core::state::RoundLife::Closed {
+                how: RoundEnd::Delivered,
+                ..
+            }
+        ),
+        "round2 should be closed as Delivered, got: {round2_life:?}"
+    );
+    let item2_phase = team_after.item(item2).unwrap().phase();
+    assert!(
+        matches!(
+            item2_phase,
+            ItemPhase::Done {
+                completion: Completion::Delivered { pr: delivered_pr, .. }
+            } if *delivered_pr == pr.number
+        ),
+        "item2 should be Done with Completion::Delivered, got: {item2_phase:?}"
+    );
+}
+
+#[tokio::test]
+async fn pull_request_closed_without_merge_reopens_delivered_round_and_tells_lead() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(
+            &["claude-1"],
+            crate::daemon::owner::rounds::rig::PARALLEL,
+            MergeMode::NoMerge,
+            None,
+        )
+        .await;
+    let item2: agent_core::ids::ItemId = "2.1".parse().unwrap();
+    let mut state = rig
+        .state_where("round for 2.1 is open and 1.1 is approved", |state| {
+            let Some(team) = state.team(&team) else { return false };
+            let Some(item1) = team.item("1.1".parse().unwrap()) else {
+                return false;
+            };
+            matches!(item1.phase(), ItemPhase::Approved { .. })
+                && team
+                    .rounds()
+                    .iter()
+                    .any(|r| r.item() == Some(item2) && matches!(r.life(), RoundLife::Open))
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let (round2, pr, now) = {
+        let mut team_mut = state.team_mut(&team).unwrap();
+        let round = team_mut.rounds().iter().find(|r| r.item() == Some(item2)).unwrap();
+        let round2 = round.id().clone();
+        let now = Timestamp::from_utc(round.opened_at().as_utc() + time::Duration::seconds(10)).unwrap();
+        let item1 = "1.1".parse().unwrap();
+        let ItemPhase::Approved { pr, .. } = team_mut.item(item1).unwrap().phase().clone() else {
+            panic!("expected approved");
+        };
+        team_mut.deliver_round(&round2, pr.number).unwrap();
+        (round2, pr, now)
+    };
+
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let settings = Arc::new(Settings::load(&rig.home).await.unwrap());
+    let prompts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+    let language = settings.config.language();
+    let pulls = Pulls::new(
+        Arc::new(AutopilotPrompts::load(&prompts, language).await.unwrap()),
+        Arc::new(ChecksPrompts::load(&prompts, language).await.unwrap()),
+        &settings,
+    )
+    .unwrap()
+    .unwrap();
+    let lead = owner.lead_of(&team).unwrap();
+    let about = About {
+        site: Site {
+            pulls: &pulls,
+            team: &team,
+            lead: &lead,
+        },
+        pr: &pr,
+        url: "https://github.example.com/octo/example/pull/1",
+        now,
+    };
+
+    owner.reopen_delivered_rounds(&about);
+
+    let team_after = owner.parts.state.team(&team).unwrap();
+    let round2_life = team_after.round(&round2).unwrap().life();
+    assert_eq!(round2_life, &agent_core::state::RoundLife::Open);
+
+    assert!(
+        owner.outbox.iter().any(|job| {
+            job.team == team
+                && matches!(&job.job, crate::daemon::team::BusJob::Message { to, text } if *to == lead.agent && text.contains(&pr.number.to_string()))
+        }),
+        "lead should be told about closed PR, outbox: {:?}",
+        owner.outbox
+    );
 }

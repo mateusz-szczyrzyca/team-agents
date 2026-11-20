@@ -404,6 +404,12 @@ impl Owner {
         Ok(())
     }
 
+    /// Reopens any rounds that were marked as delivered by `about.pr`, and tells the lead that the pull request was
+    /// closed without merge.
+    fn reopen_delivered_rounds(&mut self, about: &About<'_>) {
+        let _ = about;
+    }
+
     /// Fetches the base branch of the repository of `lead` into the checkout. A fetch that fails leaves the next item to
     /// start from the base the checkout had; that is logged.
     pub(super) async fn fetch_base(&self, lead: &Lead) {

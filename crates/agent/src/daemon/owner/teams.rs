@@ -46,9 +46,9 @@ const BUS_SENDER: &str = "agentbus";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Outbound {
     /// The team.
-    team: TeamId,
+    pub(super) team: TeamId,
     /// What is to be done.
-    job: BusJob,
+    pub(super) job: BusJob,
 }
 
 /// A request for a worker that is being served.
@@ -492,6 +492,13 @@ impl Owner {
                 let from: AgentName = BUS_SENDER.parse()?;
                 bus.send(&from, &Recipient::Agent(to.clone()), &message).await.map(drop)
             }
+            BusJob::Message { to, text } => {
+                let from: AgentName = BUS_SENDER.parse()?;
+                let outgoing = agent_runtime::agentbus::Outgoing::Chat { text: text.clone() };
+                bus.send(&from, &Recipient::Agent(to.clone()), &outgoing)
+                    .await
+                    .map(drop)
+            }
             BusJob::Answer { request, update } => bus.helper_set(*request, update).await,
             BusJob::Finish => bus.team_done(&outbound.team).await,
         })
@@ -847,7 +854,7 @@ impl Owner {
     }
 
     /// Keeps `job` for the bus: it is done at the next turn of the loop, and again until the bus takes it.
-    fn tell_bus(&mut self, team: &TeamId, job: BusJob) {
+    pub(in crate::daemon::owner) fn tell_bus(&mut self, team: &TeamId, job: BusJob) {
         self.outbox.push_back(Outbound {
             team: team.clone(),
             job,
@@ -930,7 +937,11 @@ impl Owner {
     // ---- the end of a team ----------------------------------------------------------------------------------
 
     /// Closes `team` when its work is over: its waiting tasks end, the bus is told, and so is the human, once.
-    fn close_if_finished(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
+    pub(in crate::daemon::owner) fn close_if_finished(
+        &mut self,
+        team_id: &TeamId,
+        look: &mut Look,
+    ) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };

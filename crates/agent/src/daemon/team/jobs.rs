@@ -22,6 +22,13 @@ pub(in crate::daemon) enum BusJob {
         /// What it is told.
         notice: BusNotice,
     },
+    /// Put a plain message on the bus for a member.
+    Message {
+        /// The member that is told.
+        to: AgentName,
+        /// What it is told.
+        text: String,
+    },
     /// Change a request for a worker.
     Answer {
         /// The request.
