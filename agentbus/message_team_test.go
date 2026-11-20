@@ -287,3 +287,33 @@ func TestAMessageFromOutsideTeamsToAnAgentInOneTeamIsBoundToIt(t *testing.T) {
 		t.Fatalf("the agent's team did not read the message:\n%s", out)
 	}
 }
+
+func TestTheNoticesOfATeamToItsMemberAreBoundToIt(t *testing.T) {
+	b := newBus(t)
+	woken := captureWakes(t)
+	twoTeams(t, b)
+	leadA := server(b, "lead-a", inTeam("A"))
+	chk(t).ok(toolResult(leadA.claimLead()))
+	*woken = (*woken)[:0]
+
+	chk(t).ok(toolResult(leadA.teamExclude("codex-1", "missed the quiz")))
+
+	for _, task := range *woken {
+		if task != "task-codex-1-a" {
+			t.Fatalf("a notice of team A woke %v, of another team", *woken)
+		}
+	}
+	mustWith(t, b, func(st *State) {
+		msgs, serr := b.messages()
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		notice := msgs[len(msgs)-2] // the excluded member's own notice, before the team's
+		if notice.Kind != KindExcludedNotice || notice.To != "codex-1" {
+			t.Fatalf("the last message but one is not the excluded member's notice: %+v", notice)
+		}
+		if notice.Team != "A" || !isForAgent(st, notice, "codex-1", "A", true) || isForAgent(st, notice, "codex-1", "B", true) {
+			t.Fatalf("the notice to the excluded member is not bound to team A: %+v", notice)
+		}
+	})
+}
