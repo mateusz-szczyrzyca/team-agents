@@ -183,7 +183,7 @@ fn rebuild_activities(teams: &mut [Team]) {
     }
 }
 
-/// Promotes schema 11 without rebuilding its durable activity history or granting base permission.
+/// Promotes schemas 11 and 12 without rebuilding activity history or inventing base permission or split plans.
 pub(super) fn from_v11(text: &str) -> Result<State, StateError> {
     let mut value: Value = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
     if let Some(version) = value.get_mut("schema_version") {

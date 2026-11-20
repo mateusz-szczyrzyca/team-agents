@@ -58,7 +58,7 @@ use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
 
 /// The schema version this build writes, with investigator activities reconstructed from versions 1 through 10.
-pub const SCHEMA_VERSION: u32 = 12;
+pub const SCHEMA_VERSION: u32 = 13;
 
 /// Largest state text accepted, in bytes: a bound on untrusted input, far above any real state.
 pub const MAX_STATE_BYTES: usize = 64 << 20;
@@ -75,7 +75,7 @@ version_type!(SchemaVersion, SCHEMA_VERSION, UnsupportedSchema);
 /// A state of a schema version this build does not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error(
-    "the state has schema version {found}; this build reads versions 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 and {SCHEMA_VERSION}"
+    "the state has schema version {found}; this build reads versions 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 and {SCHEMA_VERSION}"
 )]
 pub struct UnsupportedSchema {
     /// The version the state declares.
@@ -426,7 +426,7 @@ impl State {
     ///
     /// # Errors
     /// [`StateError`]: the text is too large, declares an unsupported schema (checked first), is malformed,
-    /// or has clashing teams, tasks or rounds. Version 11 preserves activity history and defaults unpublished-base permission to absent.
+    /// or has clashing teams, tasks or rounds. Versions 11 and 12 preserve activity history and default split plans to absent.
     /// Versions 1 through 10 migrate to [`SCHEMA_VERSION`], rebuilding
     /// investigator activity history deterministically from the evidence they retain.
     pub fn from_json(text: &str) -> Result<Self, StateError> {
@@ -443,7 +443,7 @@ impl State {
         if matches!(probe.schema_version, 2..=10) {
             return migrate::from_v2(text);
         }
-        if probe.schema_version == 11 {
+        if matches!(probe.schema_version, 11 | 12) {
             return migrate::from_v11(text);
         }
         if probe.schema_version != u64::from(SCHEMA_VERSION) {
