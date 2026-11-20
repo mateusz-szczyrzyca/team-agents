@@ -55,6 +55,7 @@ mod disputes;
 
 #[cfg(test)]
 mod opinions;
+#[cfg(test)]
 mod plans;
 #[cfg(test)]
 mod plans_before;
