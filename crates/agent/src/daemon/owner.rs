@@ -191,6 +191,14 @@ pub(crate) enum OwnerError {
         /// What the state said.
         source: CloseRoundError,
     },
+    /// A round cannot be marked as delivered.
+    #[error("the round {round} cannot be marked as delivered")]
+    DeliverRound {
+        /// The round.
+        round: RoundId,
+        /// What the state said.
+        source: agent_core::state::DeliverRoundError,
+    },
     /// An item that has started has no round.
     #[error("item {item} of team {team} has no round")]
     LostRound {
