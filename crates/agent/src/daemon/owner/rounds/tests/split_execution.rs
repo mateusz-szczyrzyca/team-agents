@@ -156,7 +156,7 @@ async fn human_merges_release_three_parts_across_restart_without_closing_on_appr
                 1 => "a",
                 2 => "b",
                 3 => "c",
-                _ => unreachable!(),
+                _ => panic!("the test opens exactly three parts"),
             }
         );
         if number == 1 {
