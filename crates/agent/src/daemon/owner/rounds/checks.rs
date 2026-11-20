@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use agent_core::decide::checks::{Issue, Subject, assess_near, markers};
+use agent_core::decide::checks::{Issue, Judge, Subject, assess_near, markers};
 use agent_core::decide::disclosure::{test_fix_section, with_section};
 use agent_core::decide::round::{AskReason, Checking, ChecksPolicy, ChecksStep};
 use agent_core::history::{CheckOutcome, HistoryEvent};
@@ -192,6 +192,10 @@ impl Owner {
                 Ok(Some(Held::WakeLead))
             }
             ChecksStep::AskHuman { reason } => {
+                let issues: Vec<_> = issues
+                    .into_iter()
+                    .filter(|issue| reason == AskReason::PassesUsed || issue.judge() == Judge::Human)
+                    .collect();
                 self.put_question(site, reviewing, &mut record, &issues, (reason, checking.passes()), now)
                     .await
             }
