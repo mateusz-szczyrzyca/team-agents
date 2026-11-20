@@ -22,7 +22,9 @@ use crate::history::error::RecordKind;
 use crate::history::schema::{LEDGER_VERSION, SESSIONS_VERSION, ledger_links, ledger_records};
 
 /// The fields of an event's payload that can be cut.
-const EVENT_CUTS: &[&str] = &["issues", "title", "body", "report", "findings", "text", "detail", "why"];
+const EVENT_CUTS: &[&str] = &[
+    "issues", "title", "body", "report", "findings", "text", "detail", "why", "reason",
+];
 
 /// What a row of the ledger is of.
 enum LedgerKind {

@@ -858,6 +858,14 @@ fn all_event_kinds(world: &World, text: &str) -> Vec<HistoryEvent> {
     let task = world.runs[0].start.task.clone();
     let num = NonZeroU32::new(1).unwrap();
     let mut events = vec![
+        HistoryEvent::SplitDecision {
+            task: task.clone(),
+            item: "1.1".parse().unwrap(),
+            decision: agent_core::history::SplitDecision::Corrected,
+            corrections: 1,
+            question: None,
+            reason: text.to_owned(),
+        },
         HistoryEvent::Gate {
             task: task.clone(),
             started_at: at(10, 0),

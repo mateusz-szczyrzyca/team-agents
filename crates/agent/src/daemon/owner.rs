@@ -17,6 +17,7 @@ mod plan;
 mod round_state;
 mod rounds;
 mod snapshots;
+mod split;
 mod start;
 mod teams;
 mod wakes;
@@ -178,6 +179,9 @@ pub(crate) enum OwnerError {
     /// An approved split cannot be activated.
     #[error("cannot activate the approved split")]
     Split(#[from] agent_core::state::ActivateSplitError),
+    /// A coordinator's split proposal could not be processed.
+    #[error("cannot process the split proposal")]
+    Proposal(#[from] split::ProposalError),
     /// Questions cannot be recorded.
     #[error("the questions of task {task} cannot be recorded")]
     Question {
@@ -751,7 +755,8 @@ impl Owner {
                         | StartProblem::Name(_)
                         | StartProblem::Branch(_)
                         | StartProblem::Session(_)
-                        | StartProblem::Autopilot(_) => {}
+                        | StartProblem::Autopilot(_)
+                        | StartProblem::Split(_) => {}
                     }
                 }
                 return self.fail_to_start(&task, error_chain(&problem)).await;
@@ -1058,7 +1063,10 @@ impl Owner {
         );
         let settled = self.solo_waits_for_its_items(located.role, &located.team, settled);
         let settled = self.reviewer_waits(located.role, &located.team, settled);
-        let (settled, held) = self.plan_at_end(task, &located, &run.classified.end, settled).await?;
+        let (settled, held) = match self.split_at_end(task, &located, run.final_message.as_deref()).await? {
+            Some(settled) => (settled, plan::PlanHeld::Yes),
+            None => self.plan_at_end(task, &located, &run.classified.end, settled).await?,
+        };
         {
             let _entered = settle_span.enter();
             log_decision(

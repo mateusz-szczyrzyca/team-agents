@@ -57,7 +57,8 @@ Teams may have an optional `split_proposals` object, keyed by original item ID. 
 `text`, the `corrections` count and `stage`: `"pending"`, `{"correction":{"fault":…}}`, or
 `{"asked":{"question":N}}` with a nonzero questions number. Raw text deliberately includes unreadable proposals
 so a restart before the decision loses no input. Resubmission preserves the correction count; a send-back counts
-once and retains its fault; the asked stage retains the existing question. No daemon action uses these entries yet.
+once and retains its fault; the asked stage retains the existing question. The daemon saves pending input before deciding. On restart it decides only pending entries; a saved correction
+is included in the next coordinator prompt without incrementing its count, and a saved question is reused.
 
 Only known, unsplit parents may have proposals. Recording or activating a complete approved split removes its
 pending proposal atomically. Missing maps mean no proposals; empty maps are omitted. Existing state files and
@@ -295,7 +296,10 @@ the `**ANSWERED**` marker, `dashboard`). **The questions and the answers are in 
 
 #### Items
 
-An item's progress is `{id, phase, fix_passes?, gate?, findings?}`. The `phase` carries exactly the data of that phase:
+An item's progress is `{id, phase, fix_passes?, gate?, findings?, merge_passes?, conflict_verifications?, conflict_approved_head?, merge_conflict?}`. `merge_conflict` is
+`{status: "merging_base", approved_head, at}` while the lead merges the base after a refused merge, or `{status: "asking_human", at}` once the human is to be asked; it is absent otherwise, and an approved item without it is merged as before. `merge_passes` counts the lead passes
+spent on a merge that GitHub refused for a conflict, compared with `[merge] conflict_passes`; it is absent while none is spent,
+so states written before it read as none spent and keep the schema version. `conflict_verifications` counts how many times an approved item was reopened for a verification review after a conflict pass or an answered conflict question (absent while zero), and `conflict_approved_head` keeps the approved head GitHub refused while a conflict pass or question is active (absent when none). The `phase` carries exactly the data of that phase:
 
 | `phase` | Data | Item status | Moves to |
 |---|---|---|---|

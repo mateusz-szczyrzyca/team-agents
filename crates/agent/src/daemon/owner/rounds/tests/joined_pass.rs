@@ -74,3 +74,51 @@ fn the_request_has_the_pass_and_the_findings_of_the_fixed_item_when_the_joined_i
     assert_eq!(verification.findings, fixed.findings());
     assert!(verification.findings.is_some());
 }
+
+#[test]
+fn an_item_reopened_for_review_after_a_merge_conflict_pass_gets_a_verification_pass_and_is_not_independent() {
+    use agent_core::config::ReviewCount;
+    use agent_core::state::{Review, ReviewOutcome};
+
+    let (mut state, _fixed, _joined) = fixed_and_joined();
+    let team_id = state.teams()[0].id().clone();
+    let item_id = "2.1".parse().unwrap();
+    let task: agent_core::ids::TaskId = "task-20261111-193008-k3x9".parse().unwrap();
+    {
+        let mut team = state.team_mut(&team_id).unwrap();
+        let pr = match team.item("1.3".parse().unwrap()).unwrap().phase() {
+            ItemPhase::Fixing { pr, .. } => pr.clone(),
+            other => panic!("unexpected phase: {other:?}"),
+        };
+        let mut item = team.item_mut(item_id).unwrap();
+        item.advance(ItemPhase::InReview {
+            pr,
+            reviews: Vec::new(),
+        })
+        .unwrap();
+        item.ask_reviews(vec![Review {
+            reviewer: "inv-codex".parse().unwrap(),
+            task: task.clone(),
+            requested_at: "2026-11-18T19:29:00Z".parse().unwrap(),
+            outcome: ReviewOutcome::Pending,
+        }])
+        .unwrap();
+        item.start_findings();
+        *item.findings_mut().unwrap() = Findings::independent(ReviewCount::TWO);
+        assert_eq!(
+            item.begin_merge_conflict(
+                "0123456789abcdef0123456789abcdef01234567".parse().unwrap(),
+                "2026-11-18T19:29:00Z".parse().unwrap(),
+            ),
+            1
+        );
+        item.end_merge_conflict();
+    }
+    let team = state.team(&team_id).unwrap();
+    let item = team.item(item_id).unwrap();
+
+    assert_eq!(item.fix_passes().len(), 0);
+    assert_eq!(item.merge_passes(), 1);
+    assert_eq!(verification_of(&[item]).pass, 2);
+    assert!(!crate::daemon::review::independent_first_review(team, &task));
+}

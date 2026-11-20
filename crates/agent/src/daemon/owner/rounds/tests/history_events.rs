@@ -341,7 +341,7 @@ async fn an_autopilot_merge_reconciled_after_a_refusal_records_its_merge_commit(
         false,
     )
     .await;
-    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.github.answer_merges(MergeAnswer::Refuse(403));
     rig.start().await;
 
     let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;

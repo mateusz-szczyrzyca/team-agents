@@ -9,7 +9,8 @@ use agent_core::ids::InvalidName;
 use agent_core::kinds::Role;
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
 use agent_core::state::{
-    CommitId, Findings, ItemPhase, ItemProgress, PrNumber, QuestionState, Review, ReviewOutcome, TaskRef, Timestamp,
+    CommitId, Findings, ItemPhase, ItemProgress, MergeConflict, PrNumber, QuestionState, Review, ReviewOutcome,
+    TaskRef, Timestamp,
 };
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextError};
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision};
@@ -33,6 +34,12 @@ pub(in crate::daemon::owner) enum SectionError {
     /// A findings text cannot be rendered.
     #[error("cannot render findings")]
     Findings(#[from] super::findings::TextError),
+    /// The repository of the team is not configured, so its base branch is not known.
+    #[error("the repository {repo} of the team is not configured")]
+    Repo {
+        /// The repository.
+        repo: agent_core::config::RepoName,
+    },
     /// A text cannot be rendered.
     #[error("cannot render a text of the autopilot")]
     Render(#[from] RenderAutopilotTextError),
@@ -181,6 +188,10 @@ async fn round_sections_for(
             Ok(Some(Addition::Append(text.clone())))
         }
         (Role::Solo | Role::Coordinator, _) => {
+            // A merge refused for a conflict comes first: the lead merges the base, or is asked to put the question.
+            if let Some(text) = merge_conflict_text(ctx, texts, found)? {
+                return Ok(Some(Addition::Append(text)));
+            }
             // What the checks before a review tell the lead comes first: it is the last thing that happened to its round.
             let text = match checks_notice(ctx, found).await? {
                 Some(text) => Some(text),
@@ -193,6 +204,64 @@ async fn round_sections_for(
         }
         (Role::Member | Role::Worker, _) => Ok(None),
     }
+}
+
+/// What the lead of `found` is told about an approved pull request that GitHub refuses to merge for a conflict: the merge of
+/// the base it is sent to make, or the question it is to put to the human once the passes are used up; `None` when no
+/// merge is in trouble.
+///
+/// # Errors
+/// [`SectionError`].
+fn merge_conflict_text(
+    ctx: &Context<'_>,
+    texts: &AutopilotPrompts,
+    found: &TaskRef<'_>,
+) -> Result<Option<String>, SectionError> {
+    let troubled = found
+        .team
+        .items()
+        .iter()
+        .find_map(|item| match (item.phase(), item.merge_conflict()) {
+            (ItemPhase::Approved { pr, .. }, Some(conflict)) => Some((pr, conflict, item.merge_passes())),
+            (ItemPhase::Approved { .. }, None)
+            | (
+                ItemPhase::Pending
+                | ItemPhase::InProgress { .. }
+                | ItemPhase::InReview { .. }
+                | ItemPhase::Fixing { .. }
+                | ItemPhase::Done { .. },
+                _,
+            ) => None,
+        });
+    let Some((pr, conflict, passes)) = troubled else {
+        return Ok(None);
+    };
+    let repo = found.team.repo();
+    let base = ctx
+        .settings
+        .config
+        .repo(repo)
+        .map(|configured| configured.base_branch.clone())
+        .ok_or_else(|| SectionError::Repo { repo: repo.clone() })?;
+    let values = Variables::new()
+        .with("pr", pr.number.to_string())?
+        .with("base", base.as_str())?
+        .with("passes", ctx.settings.config.merge().conflict_passes.to_string())?;
+    let text = match conflict {
+        MergeConflict::MergingBase { .. } => {
+            let values = values
+                .with("branch", pr.branch.as_str())?
+                .with("pass", passes.to_string())?;
+            texts.render(AutopilotPrompt::PrMergeConflict, &values)?
+        }
+        MergeConflict::AskingHuman { at } => {
+            if crate::daemon::merge::ran_since(found.member, *at) {
+                return Ok(None);
+            }
+            texts.render(AutopilotPrompt::PrMergeConflictAsk, &values)?
+        }
+    };
+    Ok(Some(text.trim_end().to_owned()))
 }
 
 /// What the checks before a review tell the lead `found` that it has not been told yet: the reasons the round goes back to
@@ -277,7 +346,7 @@ pub(super) async fn fix_pass(
         ));
     }
     // The reports of the review pass that asked for this pass were kept under the number of the passes before it.
-    let kept = count(passes.saturating_sub(1));
+    let kept = count(progress.completed_review_passes().saturating_sub(1));
     let mut findings = vec![super::findings::open_text(texts, progress.findings())?];
     if ctx.settings.config.review().second_opinion() == agent_core::review_response::opinion::Permission::Enabled {
         findings.push(texts.render(AutopilotPrompt::ReviewOpinionOffer, &Variables::new())?);
@@ -330,7 +399,7 @@ pub(super) async fn ask_human(
             continue;
         };
         findings.push(super::findings::open_text(texts, progress.findings())?);
-        let kept = count(progress.fix_passes().len());
+        let kept = count(progress.completed_review_passes());
         findings.extend(reports_of(ctx, texts, reviews, waits.pr.number, kept).await?);
     }
     let file = ctx.home.questions_file(found.member.task(), number);
@@ -409,7 +478,11 @@ pub(super) struct Verification<'a> {
 /// The pass is the one after the most fix passes of any item: an item that joined a fix pass has none of its own, and
 /// whatever the order of the task list, the report validation demands answers for the ledger that the request shows.
 pub(super) fn verification_of<'a>(items: &[&'a ItemProgress]) -> Verification<'a> {
-    let passes = items.iter().map(|item| item.fix_passes().len()).max().unwrap_or(0);
+    let passes = items
+        .iter()
+        .map(|item| item.completed_review_passes())
+        .max()
+        .unwrap_or(0);
     Verification {
         pass: passes.saturating_add(1),
         findings: items.iter().find_map(|item| item.findings()),

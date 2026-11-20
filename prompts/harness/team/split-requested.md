@@ -1,0 +1,1 @@
+{{member}} requests a split of item {{item}}. Read its proposal in `tasks/{{task}}/split-proposal-{{item}}.json` under AGENTS_HOME. Assess it, then submit the complete proposal from your own task directory using the coordinator protocol. Ask the human only through the harness's split decision.

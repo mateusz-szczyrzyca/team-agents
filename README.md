@@ -295,10 +295,16 @@ run evidence. The activity record also supplies the investigator selection order
 `agent status --investigators`. See the
 [activity record](docs/state.md#investigator-activities).
 
-The core also defines a [coordinator proposal form](docs/task-list.md#coordinator-proposal-form-core-preparation)
-with estimates, units, requested tiers and a scope declaration, configurable through
-[`[split]`](docs/configuration.md#split). Proposal parsing, approval policy and restart-safe progress storage are
-available for the next integration part. The daemon in this release continues to use explicit human approval.
+A coordinator can submit a [split proposal](docs/task-list.md#coordinator-proposal-form) by writing
+`split-proposal-<item>.json` in its task directory and reporting `SPLIT: <item>` before `STATUS: SLEEPING`.
+The daemon approves a complete valid plan without human intervention when it keeps the scope, sends faults back
+up to [`[split] corrections`](docs/configuration.md#split), and asks the human once for scope changes or exhausted
+corrections. Estimates are compared against `part_limit` in the configured `unit` (default `lines`). Members'
+requests go to their coordinator. Pending input, corrections and existing questions survive restarts.
+Decisions appear in history as `split_decision` and, at debug log level, as `decision_taken` with decision
+`split_proposal`. Existing configurations and split plans remain readable;
+history migration 15 preserves previous rows while admitting decision records. Requested tiers are retained;
+assignment enforcement follows in the next part.
 
 A coordinator can ask the human to split an item into independently deliverable parts in one questions file.
 Approve using the [explicit split verdict](docs/task-list.md#approved-split-plans-core-format); `agent answer`
@@ -482,6 +488,12 @@ waits for a free independent investigator; these permanent exclusions are never 
 
 Fewer than twice the review count outside the team produces a startup warning and does not prevent starting. A pull request keeps its review count
 even if the configuration changes. Active pull requests migrated from an older daemon retain their original review protocol.
+
+A merge GitHub refuses because the pull request conflicts with its base does not reach you at once: the lead of the round
+is sent to merge the base into its branch (at most `[merge] conflict_passes` times per round, default 3). Its change is
+gated and pushed, and the merge is tried again; a change to files the task does not allow is reviewed again first. When
+the passes are used up, or the lead gives no result, the lead asks you once in its questions file. Set
+`conflict_passes = 0` to be told at once, as before.
 
 `agent run --no-merge` stops before the merge and tells you; after `[review] fix_passes` rounds of "changes
 requested" a question reaches you like any other. Answering grants another `[review] fix_passes` allowance.

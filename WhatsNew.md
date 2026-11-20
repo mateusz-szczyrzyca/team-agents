@@ -5,15 +5,26 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.38.0 — 20.11.2026 — PR #156
+## 0.39.0 — 20.11.2026 — PR #154
 
 ### New features
-- [agent] [agent-core] [agent-runtime] A task whose session went bad goes on in a new session of the same agent: after the two retries of a run that ended without a `STATUS:` line, after the watchdog's last strike for a hung run and after the last turn-limit resume, the task is started once more in a fresh session instead of failing. Its first prompt is a briefing: why it was started anew, the task's whole prompt, the commits of its branch, the files it left uncommitted (kept in a snapshot first), its plan of steps and the messages of its team it had not read. When the new session goes bad too, the task fails as before.
-- [agent-core] The new key `[replacement] new_sessions` says how many such new sessions a task gets: `1` by default, `0` keeps the old behaviour. The count is kept in `state.json`, so a restart of the daemon does not reset it.
-- [agent] [agent-core] `agent status` says it on the task's line: `claude-1   queued, in a new session`.
+- [agent] [agent-core] [agent-runtime] When GitHub refuses to merge an approved pull request because it conflicts with its base, the lead of the round is sent to merge the base into its branch, not told to you at once. The result is gated and pushed, and the merge is tried again; a change to files the task does not allow is verified by the reviewers first, and `agent status` shows `waits for the lead's correction` while the pass is idle. The new `[merge] conflict_passes` setting (default `3`) limits these passes per round; when they are used up, or the lead gives no result, the lead asks you once in its questions file. `conflict_passes = 0` keeps the old behaviour.
 
-### Bug fixes
-- [agent] An item no longer stands behind a member the human stopped: when the lead ends `STATUS: DONE` with a passed gate, the item is published with the lead's branch.
+### Enhancements
+- [agent-runtime] A refused merge is told apart as a conflict or another refusal from GitHub's answer; a rate limit or a failing GitHub is still retried, not told.
+
+## 0.38.0 — 20.11.2026 — PR #157
+
+### New features
+- [agent] [agent-core] [agent-runtime] A coordinator now proposes a split itself: it writes `split-proposal-<item>.json` in its task directory (the parts with their checks, dependencies, an estimate and a tier, and whether the scope changes) and ends its run with the line `SPLIT: 1.1`. A proposal that reads, has checks on every part, has no dependency cycle, stays within the size limit and keeps the scope is approved at once with no questions file, and its parts are recorded whole; the round goes on as the first part.
+- [agent] [agent-core] A proposal with a fault goes back to the coordinator with its own text naming the part (does not read, a part without checks, a cycle, a part above the limit), at most `[split] corrections` times (default 2).
+- [agent] [agent-core] You are asked once, in the task's questions file, when a proposal changes the scope and when the corrections are used up; the question says which condition failed and holds the proposal as the example of the verdict. A verdict `split` with the plan, as before, still works.
+- [agent] A member that finds its item too big tells its coordinator, not you.
+- [agent-core] New key `[split] unit` (default `"lines"`): the unit the size limit `part_limit` is applied to. Use `pages` or `images` for work that is not code. **Action:** none, the default is today's behaviour.
+
+### Enhancements
+- [agent-core] [agent-runtime] The history keeps a record of every decision on a split proposal. **Action:** the history database migrates to version 15 on the next daemon start; an older `agent` cannot read it, so keep a backup from before the upgrade.
+- [agent] A restart of the daemon between a proposal and its decision, or between a correction and the next proposal, loses neither.
 
 ## 0.37.0 — 20.11.2026 — PR #155
 

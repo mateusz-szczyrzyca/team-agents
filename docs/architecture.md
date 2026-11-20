@@ -606,7 +606,15 @@ the human is asked. A reviewer that cannot give its review is replaced (above), 
 - **Merge.** In autopilot the pull request is read from GitHub and merged with a merge commit at the head it carries (a merge
   made elsewhere or by the human completes the items as well); the items are `done`, the base branch is fetched, and the next
   item starts from the remote's base when it is ahead of the checkout's, so that it builds on what was merged. A merge GitHub
-  refuses for a reason waiting does not change is told once with GitHub's reason and not tried again; a pull request closed
+  refuses for a reason waiting does not change is told once with GitHub's reason and not tried again. A refusal that names a
+  conflict with the base (a 405 saying the pull request has merge conflicts, is not mergeable, or whose base was modified) is
+  a merge conflict pass instead while `[merge] conflict_passes` allows one: the item keeps `merge_conflict` in its state
+  (`merging_base` with the approved head, or `asking_human`), the lead is woken with `harness/pr/merge-conflict.md`, and the
+  pass is judged when the lead is done: a tip that merges the base and passes the gate is pushed, the files the lead changed
+  beyond the base merge are checked against `Allow:`; the merge is tried again when they are allowed, the review is reopened
+  when they are not (a verification review of what changed since the approval), and the lead is asked to put the question
+  in its questions file (`harness/pr/merge-conflict-ask.md`) when the passes are spent or it gives no result. The pass is
+  read from the state, so a restart goes on from it; a pull request closed
   without a merge is told once. An approved pull request that waits is read again every 30 seconds.
 - **`--no-merge`.** Nothing is merged: the human is told once that the pull request is approved. The next item of the feature
   starts at the approval; what depends on the pull request waits until it is merged, which the daemon finds when it reads it.
@@ -1272,8 +1280,16 @@ than a downstream dependant, and accepts acyclic forward references. No I/O or c
 `state::split::keeping::ProposalKeeping` retains raw input, correction count and a pending/correction/asked stage;
 `Team::keep_split_proposal` checks parent membership. Optional persisted fields preserve old state loading.
 The fixture and representation are documented in [state.md](state.md#split-proposal-preparation).
-This part supplies core APIs only: the owner still acts on explicit human verdicts, with proposal-file handling,
-prompt catalog entries, decision history and log events left to the integration part.
+The owner recognizes a coordinator's standalone `SPLIT: <item>` marker and reads its bounded task-local
+`split-proposal-<item>.json`. It saves pending input before calling the pure policy with `[split] unit`.
+Approval activates the whole plan atomically; correction retains the fault and queues the coordinator;
+scope changes or exhausted corrections write one harness question using the existing human answer path.
+Member markers produce a bus notice to the coordinator, without activating a split or asking the human.
+Pending decisions are resumed before team assignment; saved corrections and asked stages are not replayed.
+Catalog entries supply each fault, the next prompt and the question. The append-only history records the outcome
+as `split_decision`, with parent, correction count and reason. At debug level the structured log uses the existing
+`decision_taken` event with decision `split_proposal`. History migration 15 preserves
+records and links while admitting the new event. Human verdicts continue through the existing atomic path.
 
 ### Execution of approved split plans
 

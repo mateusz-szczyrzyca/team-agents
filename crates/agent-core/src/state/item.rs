@@ -5,11 +5,11 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::Findings;
 use super::checked::CheckedMut;
 use super::gate::GateResult;
 use super::strict::{checked, strict_enum};
 use super::values::{PrNumber, Timestamp};
+use super::{CommitId, Findings};
 use crate::ids::{AgentName, BranchName, InvestigatorName, ItemId, TaskId};
 use crate::kinds::{Keyword, UnknownKeyword};
 use crate::status::{ItemStatus, ReviewVerdict};
@@ -425,6 +425,49 @@ pub struct ItemProgress {
     /// The numbered protocol, absent for rounds opened by an earlier daemon.
     #[serde(skip_serializing_if = "Option::is_none")]
     findings: Option<Findings>,
+    /// The lead passes spent on merging the base into the branch after GitHub refused the merge for a conflict; the
+    /// configured `[merge] conflict_passes` is what this is compared with. Absent while none is spent.
+    #[serde(skip_serializing_if = "is_zero")]
+    merge_passes: u32,
+    /// How many times the review of this item was reopened after a merge conflict resolution changed files beyond the
+    /// task's allowances; absent while zero.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    conflict_verifications: u32,
+    /// The approved head GitHub refused to merge before the current conflict pass or question, when one is in progress.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    conflict_approved_head: Option<CommitId>,
+    /// The merge conflict pass in progress, if any; absent while the merge of the approved pull request is not in
+    /// trouble.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    merge_conflict: Option<MergeConflict>,
+}
+
+/// A merge of an approved pull request that GitHub refused for a conflict, while the harness works on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MergeConflict {
+    /// The lead was sent to merge the base into the branch of the approved pull request; `approved_head` is the commit
+    /// GitHub refused to merge, and `at` is when the lead was sent.
+    MergingBase {
+        /// The head the approval is for.
+        approved_head: CommitId,
+        /// When the lead was sent.
+        at: Timestamp,
+    },
+    /// The passes are spent or the lead gave no result: the lead asks the human, once, in a questions file.
+    AskingHuman {
+        /// When the question was put to the lead.
+        at: Timestamp,
+    },
+}
+
+/// Whether a count is zero; a count of zero is not written.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes the field by reference"
+)]
+fn is_zero(count: &u32) -> bool {
+    *count == 0
 }
 
 /// How an [`ItemProgress`] is read; see [`checked!`].
@@ -444,6 +487,18 @@ struct ItemProgressWire {
     /// See [`ItemProgress`]; old rounds keep the verdict-only protocol.
     #[serde(default)]
     findings: Option<Findings>,
+    /// See [`ItemProgress`]; a state written before merge passes has none.
+    #[serde(default)]
+    merge_passes: u32,
+    /// See [`ItemProgress`]; a state written before conflict verifications has none.
+    #[serde(default)]
+    conflict_verifications: u32,
+    /// See [`ItemProgress`]; a state written without a recorded conflict head has none.
+    #[serde(default)]
+    conflict_approved_head: Option<CommitId>,
+    /// See [`ItemProgress`]; a state written before merge conflicts has none.
+    #[serde(default)]
+    merge_conflict: Option<MergeConflict>,
 }
 
 checked!(ItemProgress, ItemProgressWire, check_item_progress);
@@ -456,6 +511,34 @@ checked!(ItemProgress, ItemProgressWire, check_item_progress);
 pub type ItemMut<'a> = CheckedMut<'a, ItemProgress>;
 
 impl CheckedMut<'_, ItemProgress> {
+    /// See [`ItemProgress::begin_merge_conflict`].
+    pub fn begin_merge_conflict(&mut self, approved_head: CommitId, at: Timestamp) -> u32 {
+        self.value.begin_merge_conflict(approved_head, at)
+    }
+
+    /// See [`ItemProgress::end_merge_conflict`].
+    pub fn end_merge_conflict(&mut self) {
+        self.value.end_merge_conflict();
+    }
+
+    /// See [`ItemProgress::ask_human_about_merge_conflict`].
+    pub fn ask_human_about_merge_conflict(&mut self, at: Timestamp) {
+        self.value.ask_human_about_merge_conflict(at);
+    }
+
+    /// See [`ItemProgress::set_conflict_approved_head`].
+    pub fn set_conflict_approved_head(&mut self, approved_head: CommitId) {
+        self.value.set_conflict_approved_head(approved_head);
+    }
+
+    /// See [`ItemProgress::reopen_review_after_conflict`].
+    ///
+    /// # Errors
+    /// As [`ItemProgress::reopen_review_after_conflict`].
+    pub fn reopen_review_after_conflict(&mut self) -> Result<(), AdvanceError> {
+        self.value.reopen_review_after_conflict()
+    }
+
     /// See [`ItemProgress::advance`]. An item in review is approved only with the pull request and the reviews it has:
     /// the outcomes reach it through [`CheckedMut::submit_review`], not through the phase handed in. The pull request
     /// that was reviewed is also the one the item is fixed on and merged with.
@@ -511,7 +594,7 @@ impl CheckedMut<'_, ItemProgress> {
     /// # Errors
     /// [`AdvanceError::Transition`] unless this is a fixing item with no remaining blocker,
     /// every opinion is settled, and `head` equals the last reviewed commit.
-    pub fn complete_unconfirmed(&mut self, head: &super::CommitId, at: Timestamp) -> Result<(), AdvanceError> {
+    pub fn complete_unconfirmed(&mut self, head: &CommitId, at: Timestamp) -> Result<(), AdvanceError> {
         use crate::decide::opinion::{Next, Tip, after_opinions};
         let from = self.value.phase.kind();
         let pass = self
@@ -857,6 +940,10 @@ impl ItemProgress {
             fix_passes: Vec::new(),
             gate: None,
             findings: None,
+            merge_passes: 0,
+            conflict_verifications: 0,
+            conflict_approved_head: None,
+            merge_conflict: None,
         }
     }
 
@@ -869,6 +956,91 @@ impl ItemProgress {
     getter!("The fix passes so far, oldest first.", pub fn fix_passes(&self) -> &[FixPass] = &self.fix_passes);
 
     getter!("The findings ledger, or none for a legacy round.", pub fn findings(&self) -> Option<&Findings> = self.findings.as_ref());
+
+    /// The lead passes spent on merge conflicts so far; zero for an item that never met one.
+    #[must_use]
+    pub const fn merge_passes(&self) -> u32 {
+        self.merge_passes
+    }
+
+    /// How many review passes the item has completed before its current one: its fix passes and the merge conflict
+    /// passes or reopened conflict verifications it has spent.
+    #[must_use]
+    pub fn completed_review_passes(&self) -> usize {
+        let conflict_passes = if self.conflict_verifications > 0 {
+            self.conflict_verifications
+        } else {
+            self.merge_passes
+        };
+        self.fix_passes
+            .len()
+            .saturating_add(usize::try_from(conflict_passes).unwrap_or(usize::MAX))
+    }
+
+    /// The approved head GitHub refused to merge before the current conflict pass or question, if recorded.
+    #[must_use]
+    pub const fn conflict_approved_head(&self) -> Option<&CommitId> {
+        self.conflict_approved_head.as_ref()
+    }
+
+    /// Records the approved head GitHub refused to merge before the current conflict pass or question.
+    pub fn set_conflict_approved_head(&mut self, approved_head: CommitId) {
+        self.conflict_approved_head = Some(approved_head);
+    }
+
+    /// The merge conflict pass in progress, if any.
+    #[must_use]
+    pub const fn merge_conflict(&self) -> Option<&MergeConflict> {
+        self.merge_conflict.as_ref()
+    }
+
+    /// Sends the lead to merge the base into the branch of `approved_head`: one more pass is spent and the pass is
+    /// recorded at `at`. Returns the passes spent so far, this one included.
+    pub fn begin_merge_conflict(&mut self, approved_head: CommitId, at: Timestamp) -> u32 {
+        self.conflict_approved_head = Some(approved_head.clone());
+        self.merge_conflict = Some(MergeConflict::MergingBase { approved_head, at });
+        self.spend_merge_pass()
+    }
+
+    /// Ends the merge conflict pass in progress; the passes spent stay counted.
+    pub fn end_merge_conflict(&mut self) {
+        self.merge_conflict = None;
+        self.conflict_approved_head = None;
+    }
+
+    /// Reopens the review of an approved item whose branch the lead changed beyond the merge of the base: the reviewers
+    /// look at the pull request again and no review is kept.
+    ///
+    /// # Errors
+    /// [`AdvanceError::Transition`] unless the item is approved.
+    pub fn reopen_review_after_conflict(&mut self) -> Result<(), AdvanceError> {
+        let ItemPhase::Approved { pr, .. } = &self.phase else {
+            return Err(InvalidAdvance {
+                item: self.id,
+                from: self.phase.kind(),
+                to: PhaseKind::InReview,
+            }
+            .into());
+        };
+        self.conflict_verifications = self.conflict_verifications.saturating_add(1);
+        self.phase = ItemPhase::InReview {
+            pr: pr.clone(),
+            reviews: Vec::new(),
+        };
+        Ok(())
+    }
+
+    /// Records that the human is asked about the merge conflict at `at`, once.
+    pub fn ask_human_about_merge_conflict(&mut self, at: Timestamp) {
+        self.merge_conflict = Some(MergeConflict::AskingHuman { at });
+    }
+
+    /// Counts one more lead pass on a merge conflict and returns the number spent so far, including this one. A count
+    /// that would pass `u32::MAX` stays there: no configured limit is that large.
+    pub fn spend_merge_pass(&mut self) -> u32 {
+        self.merge_passes = self.merge_passes.saturating_add(1);
+        self.merge_passes
+    }
 
     /// Moves the item to `next`. Leaving `in_review` for `fixing` records the review pass's reviews as a fix pass.
     ///
@@ -1516,6 +1688,110 @@ mod tests {
             json!({"status": "submitted", "verdict": "REQUEST_CHANGES", "at": "2026-11-11T19:15:30Z"})
         );
         assert_eq!(serde_json::from_value::<Review>(value).unwrap(), review);
+    }
+
+    #[test]
+    fn a_new_item_has_spent_no_merge_pass_and_writes_none() {
+        let item = progress_in(PhaseKind::Approved);
+
+        assert_eq!(item.merge_passes(), 0);
+        let text = serde_json::to_string(&item).unwrap();
+        assert!(!text.contains("merge_passes"), "{text}");
+    }
+
+    #[test]
+    fn a_merge_conflict_pass_is_recorded_written_and_ended() {
+        let mut item = progress_in(PhaseKind::Approved);
+        let head: CommitId = "1111111111111111111111111111111111111111".parse().unwrap();
+        let at = at(1);
+
+        assert_eq!(item.begin_merge_conflict(head.clone(), at), 1);
+        let text = serde_json::to_string(&item).unwrap();
+        let back: ItemProgress = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            back.merge_conflict(),
+            Some(&MergeConflict::MergingBase {
+                approved_head: head,
+                at,
+            })
+        );
+        assert_eq!(back.merge_passes(), 1);
+
+        item.end_merge_conflict();
+        assert_eq!(item.merge_conflict(), None);
+        assert_eq!(item.merge_passes(), 1);
+    }
+
+    #[test]
+    fn reopening_the_review_after_a_conflict_keeps_no_review_and_needs_an_approval() {
+        let mut item = progress_in(PhaseKind::Approved);
+
+        item.reopen_review_after_conflict().unwrap();
+        assert_eq!(item.phase().kind(), PhaseKind::InReview);
+        assert!(matches!(item.phase(), ItemPhase::InReview { reviews, .. } if reviews.is_empty()));
+
+        let mut pending = progress_in(PhaseKind::InProgress);
+        assert_eq!(
+            pending.reopen_review_after_conflict(),
+            Err(AdvanceError::Transition(InvalidAdvance {
+                item: id(),
+                from: PhaseKind::InProgress,
+                to: PhaseKind::InReview,
+            }))
+        );
+    }
+
+    #[test]
+    fn asking_the_human_about_a_merge_conflict_is_recorded() {
+        let mut item = progress_in(PhaseKind::Approved);
+        let at = at(1);
+
+        item.ask_human_about_merge_conflict(at);
+
+        assert_eq!(item.merge_conflict(), Some(&MergeConflict::AskingHuman { at }));
+    }
+
+    #[test]
+    fn a_spent_merge_pass_is_written_and_read_back() {
+        let mut item = progress_in(PhaseKind::Approved);
+
+        assert_eq!(item.spend_merge_pass(), 1);
+        let text = serde_json::to_string(&item).unwrap();
+        let back: ItemProgress = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(back.merge_passes(), 1);
+    }
+
+    #[test]
+    fn completed_review_passes_counts_both_fix_passes_and_merge_conflict_passes() {
+        let mut item = progress_in(PhaseKind::Fixing);
+        assert_eq!(item.completed_review_passes(), 1);
+
+        item.spend_merge_pass();
+        assert_eq!(item.completed_review_passes(), 2);
+
+        item.spend_merge_pass();
+        assert_eq!(item.completed_review_passes(), 3);
+    }
+
+    #[test]
+    fn reopening_review_after_conflict_advances_completed_review_passes_independently_of_spent_merge_passes() {
+        let mut first = progress_in(PhaseKind::Approved);
+        first.spend_merge_pass();
+        first.spend_merge_pass();
+        first.spend_merge_pass();
+        first.reopen_review_after_conflict().unwrap();
+
+        let mut second = progress_in(PhaseKind::Approved);
+        second.spend_merge_pass();
+        second.spend_merge_pass();
+        second.spend_merge_pass();
+        second.reopen_review_after_conflict().unwrap();
+        second.phase = progress_in(PhaseKind::Approved).phase;
+        second.reopen_review_after_conflict().unwrap();
+
+        assert_eq!(first.completed_review_passes(), 1);
+        assert_eq!(second.completed_review_passes(), 2);
     }
 
     #[test]

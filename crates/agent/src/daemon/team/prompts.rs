@@ -21,6 +21,9 @@ pub(in crate::daemon) enum Why {
     Review,
     /// The reviewers asked for changes: the lead is given the fix pass; the findings are what its prompt says.
     FixPass,
+    /// GitHub refused to merge an approved pull request for a conflict: the lead is given the merge of the base or the
+    /// question, which the autopilot writes from the state of its items.
+    MergeConflict,
     /// The fix passes are used up: the lead is to ask the human; the question is what its prompt says.
     AskHuman,
     /// A reviewer's report had no verdict: it is asked for again.
@@ -107,6 +110,7 @@ pub(in crate::daemon) fn shape(
         | Some(
             Why::Review
             | Why::FixPass
+            | Why::MergeConflict
             | Why::AskHuman
             | Why::VerdictMissing
             | Why::ReviewFormat(_)

@@ -769,7 +769,7 @@ fn offered_reviews(team: &Team, task: &TaskId) -> Vec<Offered> {
                 item: progress.id(),
                 pr: pr.clone(),
                 reviewer: review.reviewer.clone(),
-                pass: progress.fix_passes().len(),
+                pass: progress.completed_review_passes(),
             });
         }
     }

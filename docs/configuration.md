@@ -45,7 +45,7 @@ Top-level key and tables:
 | `[watchdog]` | table | see below | when a silent run is hung |
 | `[limits]` | table | see below | pauses for quotas and rate limits |
 | `[review]` | table | `fix_passes = 5`, `check_passes = 2`, `replace_after_minutes = 15` | the review loop, the checks before it and the reviewers that cannot work |
-| `[split]` | table | `part_limit = 1500`, `corrections = 2` | split proposal policy; parsed now for later daemon integration |
+| `[split]` | table | `part_limit = 1500`, `corrections = 2`, `unit = "lines"` | automatic coordinator proposal policy |
 | `[plan]` | table | `roles = ["solo", "member", "coordinator"]`, `bounces = 3` | whose runs keep a plan of their task, and how often one goes back for it |
 | `[replacement]` | table | `new_sessions = 1` | how many times a task whose runs went bad is started in a new session of its agent |
 | `[git]` | table | see below | the identity of the agents' commits |
@@ -55,6 +55,7 @@ Top-level key and tables:
 | `[history]` | table | `enabled = true`, `max_text_bytes = 1048576`, `keep_days = 0` | the history database (`history.db`) |
 | `[log]` | table | `level = "info"`, `keep_days = 0` | the daemon's own log (`stderr` and `history.db`) |
 | `[snapshot]` | table | `warn_mb = 200` | the snapshots of worktrees |
+| `[merge]` | table | `conflict_passes = 3` | what happens when GitHub refuses an approved pull request for a conflict |
 | `[web]` | table | loopback, nobody let in | the dashboard |
 | `[repos.NAME]` | table | none | per repository: base branch, gate and the checks before a review |
 
@@ -158,16 +159,18 @@ its runs are never sent back.
 
 ### `[split]`
 
-These keys configure the pure split approval policy. This release defines the proposal form and durable progress;
-the daemon still uses the [explicit human verdict](task-list.md#approved-split-plans-core-format).
-It does not yet read coordinator proposal files or automatically approve them.
+These keys configure automatic coordinator proposal decisions. The daemon records the complete proposal before
+deciding and retains its corrections and human question across restarts. The
+[explicit human verdict](task-list.md#approved-split-plans-core-format) remains accepted.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `part_limit` | `1500` | maximum estimate when its unit matches the repository unit — case, surrounding spaces and a plural `s` are ignored (`Lines`, `line`); `0` disables this check. The repository unit is an argument of the decision, not a key: the daemon will supply it when it starts using proposals. Other units are retained without conversion |
+| `part_limit` | `1500` | maximum estimate when its unit matches the repository unit — case, surrounding spaces and a plural `s` are ignored (`Lines`, `line`); `0` disables this check. Other units are retained without conversion |
 | `corrections` | `2` | send-backs allowed before a faulty proposal needs a human decision; `0` asks on the first fault. A valid proposal remains eligible after the budget is exhausted |
 
-Both are nonnegative integers through `4294967295`. Missing tables or keys use the defaults; unknown keys,
+| `unit` | `"lines"` | nonblank repository unit used for the size comparison, such as `pages` or `images`; no conversion between units |
+
+`part_limit` and `corrections` are nonnegative integers through `4294967295`. Missing tables or keys use the defaults; unknown keys,
 negative values, fractional values and strings are rejected. Scope changes always require human approval once
 the proposal satisfies the structural checks. Acceptance criteria are required for every kind of deliverable.
 
@@ -298,6 +301,17 @@ prunes the snapshots yet: their commits stay under `refs/agents/snapshots/` in t
 | Key | Default | Meaning |
 |---|---|---|
 | `warn_mb` | `200` | a snapshot bigger than this megabytes is taken and logged with a warning that says its size |
+
+### `[merge]`
+
+What happens when GitHub refuses to merge an approved pull request because it conflicts with its base (a 405 that says the
+pull request has merge conflicts, is not mergeable, or whose base branch was modified). The lead of the round is sent to
+merge the base into its branch, the result is gated and pushed, and the merge is tried again. A change to files the task
+does not allow (`Allow:`) is reviewed again before the merge. Every other refusal is told to you as before.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `conflict_passes` | `3` | lead passes per round to merge the base after a conflict; when they are used up, or the lead gives no result, the lead asks you in its questions file. `0` tells you at once, as before |
 
 ## `secrets.toml`
 
