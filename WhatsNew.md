@@ -5,6 +5,15 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.35.0 — 20.11.2026 — PR #153
+
+### New features
+- [agent] [agent-core] The coordinator's prompt now tells a lead when and how to report an item as delivered by another pull request of its team: the line `DELIVERED: #N` before the final `STATUS: DONE`, what the harness checks, and what a refusal means. A member is told what it means for its item.
+- [agent] [agent-core] [agent-runtime] When the pull request named in an accepted report is closed without a merge, the item no longer waits for ever: the lead is told, the item goes back to its member in a new round and is published by its own pull request. `agent status` shows the old round as closed and the new one as open. A pull request that is closed and opened again before the daemon saw it closed is still waited for; one the daemon saw closed stays closed. A restart of the daemon at any point of this goes on from where it was.
+
+### Enhancements
+- [agent-core] [agent-runtime] A closed delivering pull request is logged with its own `delivery_closed` warning event. **Action:** the history database migrates to version 13 on the next daemon start; an older `agent` cannot read it, so keep a backup from before the upgrade.
+
 ## 0.34.0 — 20.11.2026 — PR #151
 
 ### New features
