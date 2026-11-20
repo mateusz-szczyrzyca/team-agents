@@ -325,9 +325,6 @@ pub(super) struct OwnerParts {
     pub(super) notifier: agent_runtime::notify::Notifier,
     /// Measurer of free disk space.
     pub(super) free_space: agent_runtime::disk::SharedFreeSpace,
-    /// How long the first failure of a step that calls GitHub waits before it is tried again; the pause doubles with
-    /// every further failure, up to [`agent_core::decide::retry::LONGEST_PAUSE`]. `None` takes the first pause.
-    pub(super) retry_first: Option<Duration>,
 }
 
 /// What became of a run, for the owner to apply.
