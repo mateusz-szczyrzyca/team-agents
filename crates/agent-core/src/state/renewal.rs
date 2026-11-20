@@ -31,6 +31,12 @@ impl Renewals {
         self.at
     }
 
+    /// Why the task was last started anew.
+    #[must_use]
+    pub const fn reason(&self) -> Trouble {
+        Trouble::TurnLimit
+    }
+
     /// The renewals of a task started anew for the first time, at `at`.
     pub(super) const fn first(at: Timestamp) -> Self {
         Self { used: 1, at }

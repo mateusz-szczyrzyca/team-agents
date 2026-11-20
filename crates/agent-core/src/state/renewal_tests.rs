@@ -162,3 +162,18 @@ fn a_state_saved_between_a_renewal_and_the_run_of_its_new_session_loads() {
     assert_eq!(found.member.renewals().map(Renewals::at), Some(started()));
     assert_eq!(found.member.last_session(), None, "the new session resumes nothing");
 }
+
+#[test]
+fn a_renewal_keeps_why_the_task_was_started_anew_across_a_restart() {
+    let mut state = old_state();
+    let (_, mut member) = state.find_task_mut(&task()).expect("the task");
+    member
+        .renew(Trouble::Hang, started())
+        .expect("a failed task may be started anew");
+    let saved = state.to_json().expect("the state saves");
+
+    let loaded = State::from_json(&saved).expect("a restart reads it");
+
+    let found = loaded.find_task(&task()).expect("the task");
+    assert_eq!(found.member.renewals().map(Renewals::reason), Some(Trouble::Hang));
+}
