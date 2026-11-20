@@ -471,7 +471,10 @@ impl Member {
             return Ok(false);
         };
         if last.started_at().as_utc() >= at.as_utc() {
-            return Err(renewal::RenewalError::NotAfterTheLastRun { at, started_at: at });
+            return Err(renewal::RenewalError::NotAfterTheLastRun {
+                at,
+                started_at: last.started_at(),
+            });
         }
         let mut renewals = self.renewals.unwrap_or(renewal::Renewals::first(at));
         if self.renewals.is_some() {

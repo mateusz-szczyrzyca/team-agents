@@ -126,19 +126,21 @@ pub enum RenewalError {
         /// When the task's last run started.
         started_at: Timestamp,
     },
+    /// The renewal is before every run of its task: no run went bad before it.
+    #[error("a renewal at {at} is before every run of its task")]
+    BeforeEveryRun {
+        /// When the renewal says the task was started anew.
+        at: Timestamp,
+    },
 }
 
-/// Checks that the renewal of `renewals` follows the last run of `runs`: a task is started anew after a run went bad,
-/// not between two runs of one session.
+/// Checks that the renewal of `renewals` follows a run of `runs`: a task is started anew after a run of it went bad. A
+/// renewal after the last run is the state between the ladder's decision and the run of the new session.
 pub(super) fn check_renewals(renewals: &Renewals, runs: &[Run]) -> Result<(), RenewalError> {
     let at = renewals.at();
-    match runs.last() {
-        Some(last) if last.started_at().as_utc() >= at.as_utc() => Ok(()),
-        Some(last) => Err(RenewalError::NotAfterTheLastRun {
-            at,
-            started_at: last.started_at(),
-        }),
-        None => Ok(()),
+    match runs.first() {
+        Some(first) if first.started_at().as_utc() < at.as_utc() => Ok(()),
+        Some(_) | None => Err(RenewalError::BeforeEveryRun { at }),
     }
 }
 
