@@ -134,6 +134,10 @@ impl HarnessPrompt {
 
     /// Where the text is, who reads it and which variables it uses.
     #[must_use]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one exhaustive arm per catalog text keeps the paths and variables auditable together"
+    )]
     pub const fn spec(self) -> PromptSpec {
         match self {
             Self::Context => PromptSpec::new(
