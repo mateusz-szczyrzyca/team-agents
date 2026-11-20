@@ -158,7 +158,7 @@ impl Owner {
             let mut item = team.item_mut(id).ok_or(PublishError::Lost)?;
             *item.findings_mut().ok_or(PublishError::Lost)? = ledger;
         }
-        let pass = count(self.fix_passes_of(team_id, items));
+        let pass = count(self.review_passes_of(team_id, items));
         let rounds = self.rounds_of_items(team_id, items);
         for review in &prepared.reviews {
             self.record_event(

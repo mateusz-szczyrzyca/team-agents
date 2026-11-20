@@ -488,6 +488,12 @@ waits for a free independent investigator; these permanent exclusions are never 
 Fewer than twice the review count outside the team produces a startup warning and does not prevent starting. A pull request keeps its review count
 even if the configuration changes. Active pull requests migrated from an older daemon retain their original review protocol.
 
+A merge GitHub refuses because the pull request conflicts with its base does not reach you at once: the lead of the round
+is sent to merge the base into its branch (at most `[merge] conflict_passes` times per round, default 3). Its change is
+gated and pushed, and the merge is tried again; a change to files the task does not allow is reviewed again first. When
+the passes are used up, or the lead gives no result, the lead asks you once in its questions file. Set
+`conflict_passes = 0` to be told at once, as before.
+
 `agent run --no-merge` stops before the merge and tells you; after `[review] fix_passes` rounds of "changes
 requested" a question reaches you like any other. Answering grants another `[review] fix_passes` allowance.
 The notice names the allowance and open blocking findings. How it works, and its limits, are in

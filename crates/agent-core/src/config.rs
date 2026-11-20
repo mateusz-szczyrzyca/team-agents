@@ -365,6 +365,27 @@ impl Default for Snapshot {
     }
 }
 
+/// Default number of lead passes per round on a merge conflict.
+const DEFAULT_CONFLICT_PASSES: u32 = 3;
+
+/// `[merge]`: what the harness does when GitHub refuses to merge an approved pull request for a conflict.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Merge {
+    /// Passes the lead may spend, per round, on merging the base into its branch after a conflict; zero keeps the
+    /// behaviour before the passes existed: the human is told.
+    pub conflict_passes: u32,
+}
+
+impl Default for Merge {
+    /// The default: three lead passes per round, as the item of the merge conflicts asks.
+    fn default() -> Self {
+        Self {
+            conflict_passes: DEFAULT_CONFLICT_PASSES,
+        }
+    }
+}
+
 /// `[review]`: what happens to a round that the checks or the reviewers send back.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -632,6 +653,8 @@ pub struct Config {
     disk: Disk,
     /// The snapshots of worktrees.
     snapshot: Snapshot,
+    /// The merges refused for a conflict.
+    merge: Merge,
     /// The review fix passes.
     review: Review,
     /// The identity of the agents' commits.
@@ -701,6 +724,9 @@ struct RawConfig {
     /// See [`Config::snapshot`].
     #[serde(default)]
     snapshot: Snapshot,
+    /// See [`Config::merge`].
+    #[serde(default)]
+    merge: Merge,
     /// See [`Config::review`].
     #[serde(default)]
     review: Review,
@@ -752,6 +778,7 @@ impl RawConfig {
             limits,
             disk,
             snapshot,
+            merge,
             review,
             git,
             github,
@@ -789,6 +816,7 @@ impl RawConfig {
             limits,
             disk,
             snapshot,
+            merge,
             review,
             git,
             github,
@@ -975,6 +1003,12 @@ impl Config {
     #[must_use]
     pub const fn snapshot(&self) -> &Snapshot {
         &self.snapshot
+    }
+
+    /// The merges refused for a conflict: how many lead passes a round may spend on them.
+    #[must_use]
+    pub const fn merge(&self) -> &Merge {
+        &self.merge
     }
 
     /// The review fix passes.
@@ -1610,6 +1644,21 @@ workers = ["qwen", "qwen"]"#,
         let config =
             Config::from_toml_str("[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n").unwrap();
         assert_eq!(config.snapshot().warn_mb, 200);
+    }
+
+    #[test]
+    fn configuration_without_merge_reads_three_conflict_passes() {
+        let config =
+            Config::from_toml_str("[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n").unwrap();
+        assert_eq!(config.merge().conflict_passes, 3);
+    }
+
+    #[test]
+    fn configuration_with_merge_reads_the_conflict_passes() {
+        let text =
+            "[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n\n[merge]\nconflict_passes = 2\n";
+        let config = Config::from_toml_str(text).unwrap();
+        assert_eq!(config.merge().conflict_passes, 2);
     }
 
     #[test]

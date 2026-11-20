@@ -238,7 +238,7 @@ impl Owner {
             self.undo(&git, prepared.made()).await;
             return Err(error);
         }
-        let pass = count(self.fix_passes_of(team_id, &gone.items));
+        let pass = count(self.review_passes_of(team_id, &gone.items));
         let rounds = self.rounds_of_items(team_id, &gone.items);
         for review in prepared.reviews() {
             self.record_event(

@@ -462,3 +462,36 @@ async fn delivery_marker_owns_the_wait_even_when_a_gate_is_running() {
     .await;
     assert_eq!(found, Some(Obligation::Merge));
 }
+
+#[tokio::test]
+async fn an_approved_round_merging_the_base_waits_for_the_lead_and_asking_the_human_waits_for_the_human() {
+    let pr = crate::fixtures::pr(7);
+    let phase = ItemPhase::InReview {
+        pr: pr.clone(),
+        reviews: vec![crate::fixtures::review("inv-codex", 4)],
+    };
+    let (mut state, team, round) = idle_round(phase, LEAD_DONE);
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        let mut item = found.item_mut("1.1".parse().unwrap()).unwrap();
+        item.submit_review(&task(4), agent_core::status::ReviewVerdict::Approve, at(25))
+            .unwrap();
+        let ItemPhase::InReview { reviews, .. } = item.phase().clone() else {
+            panic!("in review");
+        };
+        item.advance(ItemPhase::Approved { pr, reviews }).unwrap();
+        item.begin_merge_conflict("0123456789abcdef0123456789abcdef01234567".parse().unwrap(), at(35));
+    }
+
+    let merging = obligation_after(&state, |_, _, _| {}, &round, &team).await;
+    assert_eq!(merging, Some(Obligation::LeadCorrection));
+
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        let mut item = found.item_mut("1.1".parse().unwrap()).unwrap();
+        item.ask_human_about_merge_conflict(at(40));
+    }
+
+    let asking = obligation_after(&state, |_, _, _| {}, &round, &team).await;
+    assert_eq!(asking, Some(Obligation::Human));
+}

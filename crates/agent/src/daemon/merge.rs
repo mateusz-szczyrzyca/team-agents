@@ -329,7 +329,7 @@ pub(super) fn decision(lead: &Member, since: Timestamp) -> Decision {
 }
 
 /// Whether `member` started a run at or after `time`: what it was told then was told in that run.
-fn ran_since(member: &Member, time: Timestamp) -> bool {
+pub(super) fn ran_since(member: &Member, time: Timestamp) -> bool {
     member.runs().last().is_some_and(|run| run.started_at() >= time)
 }
 
