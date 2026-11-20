@@ -362,6 +362,7 @@ mod protocol_findings_maps {
         assert_eq!(
             serialized,
             include_str!("fixtures/state-v0-11-second-opinions-activities.json")
+                .replace("\"schema_version\": 11", "\"schema_version\": 12")
         );
 
         let item = &state.teams()[0].items()[1];

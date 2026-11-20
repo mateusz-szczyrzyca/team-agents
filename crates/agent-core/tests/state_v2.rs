@@ -46,6 +46,7 @@ mod state_v2 {
         assert_eq!(
             state.to_json().unwrap(),
             include_str!("fixtures/state-v2-activities.json")
+                .replace("\"schema_version\": 11", "\"schema_version\": 12")
         );
     }
 
@@ -126,6 +127,7 @@ mod state_v2 {
         assert_eq!(
             state.to_json().unwrap(),
             include_str!("fixtures/state-v1-activities.json")
+                .replace("\"schema_version\": 11", "\"schema_version\": 12")
         );
         assert_eq!(State::from_json(V1_AS_V2).unwrap(), state);
     }
@@ -145,7 +147,7 @@ mod state_v2 {
 
         let saved = state.to_json().unwrap();
 
-        assert!(saved.starts_with("{\n  \"schema_version\": 11,\n"));
+        assert!(saved.starts_with("{\n  \"schema_version\": 12,\n"));
         assert_eq!(State::from_json(&saved).unwrap(), state);
     }
 

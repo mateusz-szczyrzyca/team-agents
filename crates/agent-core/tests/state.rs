@@ -32,6 +32,7 @@ mod state_file {
         assert_eq!(
             state.to_json().unwrap(),
             include_str!("fixtures/state-v1-activities.json")
+                .replace("\"schema_version\": 11", "\"schema_version\": 12")
         );
     }
 
