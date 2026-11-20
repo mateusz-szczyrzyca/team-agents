@@ -269,7 +269,7 @@ configured with, `prompt.md` for a prompt too long for a command line) and `task
 
 ### Teams (`agent run` and the team's life)
 
-`agent run <agents...> "tasks" | -f file [--coordinator NAME] [--no-merge]` names the repository by the `origin` of the
+`agent run <agents...> "tasks" | -f file [--coordinator NAME] [--no-merge] [--allow-unpushed-base]` names the repository by the `origin` of the
 checkout it is run in (`[repos.NAME]` of the configuration), reads and parses the task list, and asks the daemon to
 `run` it; then it asks for the team (`show`) and prints each task with its role, agent, worktree and item. Everything the
 command can find wrong by itself (the words, the file, the parse, the repository) is refused before it looks for the daemon.
@@ -282,6 +282,18 @@ anything is made), draws the IDs, gives the first items (one to each member, `ne
 every task from the checkout's base branch — `worktrees/<repo>/<task>`, on the branch of its item
 `agents/<agent>/<task>-<item>` or else `agents/<agent>/<task>` —, creates the team on the agentbus (a solo task has none)
 and saves the state. A worktree or a bus that fails takes back what was made, and the request is refused.
+
+Before creating resources, the owner fetches the configured base branch from `origin` and compares its reachable
+commits with the local base. Missing origin preserves the existing start path; an equal or behind local base starts
+from the local branch as before. Fetch failures refuse the request with git's error. An ahead or diverged base is
+refused with the count, first unpublished commit and push/reset remedies unless the optional protocol field
+`allow_unpushed_base` is true (absent means false). The CLI exposes this as `--allow-unpushed-base`.
+
+State schema 12 adds optional per-team `unpushed_base` evidence: branch, positive commit count, first commit ID and
+subject. Schema 11 migrates without changing activities or granting permission; older migrations retain their
+existing reconstruction. The evidence is printed by `agent run` and rendered by the harness's
+`prompts/harness/pr/unpushed-base.md` in every PR header, including updates and later items. The lead contribution
+cannot replace the harness-owned `## Unpushed base` section.
 
 **Every task starts at once**, the coordinator's first. The Go bus posts a message of the team's creation that every member
 has unread, and sets a member to `waking` whenever it goes to sleep with something unread, so a member that has not read

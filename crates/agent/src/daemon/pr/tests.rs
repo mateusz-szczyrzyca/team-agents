@@ -450,3 +450,34 @@ async fn a_pull_request_for_no_item_or_an_item_the_list_does_not_have_is_refused
         "{unknown:?}"
     );
 }
+
+#[tokio::test]
+async fn every_item_description_includes_the_durable_unpushed_base_evidence() {
+    use agent_core::state::UnpushedBase;
+    use std::num::NonZeroU64;
+    let texts = texts().await;
+    let mut team = solo(LIST);
+    let gate = gate(GateOutcome::Passed);
+    for id in [item("1.1"), item("1.2")] {
+        assert!(
+            !pull_text(&texts, &team, &repo(), &[id], &gate)
+                .unwrap()
+                .body
+                .contains("## Unpushed base")
+        );
+    }
+    team.record_unpushed_base(UnpushedBase {
+        branch: branch("main"),
+        count: NonZeroU64::new(2).unwrap(),
+        first: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap(),
+        subject: "Żółć unpublished".to_owned(),
+    });
+    let team: Team = serde_json::from_value(serde_json::to_value(team).unwrap()).unwrap();
+    for id in [item("1.1"), item("1.2")] {
+        let body = pull_text(&texts, &team, &repo(), &[id], &gate).unwrap().body;
+        let section = body
+            .split_once("## Unpushed base")
+            .map(|(_, section)| format!("## Unpushed base{section}\n"));
+        assert_eq!(section.as_deref(), Some(include_str!("description/unpushed.md")));
+    }
+}

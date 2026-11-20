@@ -109,6 +109,7 @@ impl Team {
             crew,
             reviewers,
             activities: Vec::new(),
+            unpushed_base: None,
         };
         check_team(&team)?;
         Ok(team)

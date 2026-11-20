@@ -397,6 +397,7 @@ async fn record_gone_client_and_unstarted_team(observed: &mut BTreeSet<LogEvent>
             .handle(Message::Request {
                 client: Client::Cli,
                 command: Command::Run(RunRequest {
+                    allow_unpushed_base: false,
                     repo: "team-agents".parse().unwrap(),
                     checkout: abs(checkout.path()),
                     agents: AgentList::try_from(vec!["claude-1".parse::<AgentName>().unwrap()]).unwrap(),

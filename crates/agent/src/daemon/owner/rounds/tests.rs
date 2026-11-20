@@ -1941,13 +1941,19 @@ async fn a_review_that_cannot_be_posted_still_counts_and_its_report_is_kept() {
 async fn a_branch_that_cannot_be_pushed_is_told_once_and_published_when_the_remote_is_back_after_a_restart() {
     let mut rig = approving_rig().await;
     let hidden = rig.origin.with_file_name("hidden.git");
-    std::fs::rename(&rig.origin, &hidden).unwrap();
+    git(
+        &rig.repo,
+        &["remote", "set-url", "--push", "origin", hidden.to_str().unwrap()],
+    );
     rig.start().await;
 
     let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let notice = rig.notification_with("could not be published").await;
     rig.stop().await.unwrap();
-    std::fs::rename(&hidden, &rig.origin).unwrap();
+    git(
+        &rig.repo,
+        &["remote", "set-url", "--push", "origin", rig.origin.to_str().unwrap()],
+    );
     rig.start().await;
     rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
         .await;

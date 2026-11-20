@@ -5,13 +5,14 @@ use agent_core::state::{SCHEMA_VERSION, State};
 fn schema_five_active_review_retains_reviewers_and_does_not_require_lead_answers() {
     let old = include_str!("fixtures/state-before-disputes.json");
     let state = State::from_json(old).unwrap();
-    assert_eq!(SCHEMA_VERSION, 11);
+    assert_eq!(SCHEMA_VERSION, 12);
     let item = state.teams()[0].item("1.2".parse().unwrap()).unwrap();
     assert_eq!(item.findings().unwrap().disputes(), None);
     assert!(item.findings().unwrap().verification().is_some());
     assert_eq!(
         state.to_json().unwrap(),
         include_str!("fixtures/state-before-disputes-activities.json")
+            .replace("\"schema_version\": 11", "\"schema_version\": 12")
     );
     assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
 }

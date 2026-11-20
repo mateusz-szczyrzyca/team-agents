@@ -360,6 +360,7 @@ mod tests {
             RequestId(1),
             Client::Cli,
             Command::Run(RunRequest {
+                allow_unpushed_base: false,
                 repo: "team-agents".parse().unwrap(),
                 checkout: "/home/u/team-agents".parse().unwrap(),
                 agents: AgentList::try_from(vec!["codex-1".parse().unwrap()]).unwrap(),

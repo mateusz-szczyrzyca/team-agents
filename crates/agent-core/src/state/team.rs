@@ -409,6 +409,9 @@ pub struct Team {
     /// Durable assignments of investigators, including completed and replaced work.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     activities: Vec<Activity>,
+    /// Explicit permission and evidence for an unpublished base at team creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unpushed_base: Option<super::UnpushedBase>,
 }
 
 /// How a [`Team`] is read; see [`checked!`].
@@ -438,6 +441,9 @@ struct TeamWire {
     /// See [`Team`]; older states are rebuilt by the schema migration.
     #[serde(default)]
     activities: Vec<Activity>,
+    /// Older teams carry no permission to start from unpublished commits.
+    #[serde(default)]
+    unpushed_base: Option<super::UnpushedBase>,
 }
 
 checked!(Team, TeamWire, check_team);
@@ -521,6 +527,17 @@ impl Team {
         self.task_list.list().allowances()
     }
 
+    /// Evidence of the explicitly permitted unpublished base at team creation.
+    #[must_use]
+    pub const fn unpushed_base(&self) -> Option<&super::UnpushedBase> {
+        self.unpushed_base.as_ref()
+    }
+
+    /// Records the unpublished base the human explicitly allowed when starting the team.
+    pub fn record_unpushed_base(&mut self, base: super::UnpushedBase) {
+        self.unpushed_base = Some(base);
+    }
+
     /// A team that has just been formed: every item pending, except those the task list marks done.
     #[must_use]
     pub fn new(
@@ -542,6 +559,7 @@ impl Team {
             crew,
             reviewers: Vec::new(),
             activities: Vec::new(),
+            unpushed_base: None,
         };
         team.record_activities(created_at);
         team
