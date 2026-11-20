@@ -264,8 +264,7 @@ impl Owner {
                     self.watch.gate_sent_back.remove(&lead.task);
                     self.watch.own_gates.remove(&lead.task);
                     if self.record_publication(team_id, &publication, &published, look)? {
-                        self.note_reviewed(&lead, &publication.head_branch, &published.gated)
-                            .await;
+                        self.note_reviewed(&lead, &published.pr.branch, &published.gated).await;
                     }
                 }
                 Ok(Attempt::Held(held)) => {
@@ -340,7 +339,18 @@ impl Owner {
     ) -> Result<Attempt, PublishError> {
         let lead = site.lead;
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        let split = matches!(&publication.publish, Publish::Open { items } if items.iter().any(|joining| self.parts.state.team(site.team).and_then(|team| team.round_of(joining.item)).is_some_and(|round| round.part().is_some())));
+        let split = items_of(publication).iter().any(|id| {
+            self.parts
+                .state
+                .team(site.team)
+                .and_then(|team| {
+                    team.items()
+                        .iter()
+                        .find(|item| item.id().to_string() == *id)
+                        .and_then(|item| team.round_of(item.id()))
+                })
+                .is_some_and(|round| round.part().is_some())
+        });
         let source = if split {
             crate::daemon::team::task_branch(&lead.agent, &lead.task)?
         } else {
@@ -505,7 +515,7 @@ impl Owner {
         }))
     }
 
-    /// Keeps each split part on its own immutable snapshot of the integrated, gated tip.
+    /// Keeps each split part on its own branch at the integrated, gated tip.
     async fn publication_branch<'a>(
         &self,
         team: &TeamId,
@@ -523,14 +533,8 @@ impl Owner {
         if !split {
             return Ok(std::borrow::Cow::Borrowed(head));
         }
-        let published: BranchName = format!("{head}-{}", ready.tip).parse()?;
-        if ready.git.branch_tip(&published).await?.is_none() {
-            ready
-                .git
-                .branch_create(&published, &Revision::Commit(ready.tip.clone()))
-                .await?;
-        }
-        Ok(std::borrow::Cow::Owned(published))
+        ready.git.branch_point(head, &ready.tip).await?;
+        Ok(std::borrow::Cow::Borrowed(head))
     }
 
     /// Whether the update of a pull request whose items `fixing` are fixed waits: the lead's fix response to the pull
@@ -653,6 +657,7 @@ impl Owner {
         if let Some(held) = self.check_before_review(site, &reviewing, now).await? {
             return Ok(Attempt::Held(held));
         }
+        self.publication_branch(team, &ids, &pr.branch, ready).await?;
         carry(ready, &pr.branch, Some(&before.head)).await?;
         self.record_event(
             team,
