@@ -17,6 +17,7 @@ use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
+use agent_core::plan::PLAN_FILE;
 use agent_core::protocol::{EventKind, Failure, FailureKind, Reply, RunRequest, TeamSummary};
 use agent_core::state::{ItemPhase, RunEnd, Timestamp};
 use agent_core::status::{ItemStatus, TaskStatus};
@@ -27,6 +28,7 @@ use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::git::{CommitIdentity, DeleteMode, Git, GitError, RemoveMode, Revision, WorktreeBranch};
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
+use agent_runtime::run::keep_out_of_git;
 use agent_runtime::team_prompts::TeamPrompts;
 use serde_json::json;
 use tracing::Instrument;
@@ -305,6 +307,15 @@ impl Owner {
                 ));
             }
             made.push(workspace.clone());
+        }
+        // The file is shared by every worktree of the repository: once is enough, before any run could commit a plan.
+        let plan = [format!("/{PLAN_FILE}")];
+        if let Err(error) = keep_out_of_git(&lead.path, &plan).await {
+            self.remove_workspaces(request, &made).await;
+            return Err(internal(&format!(
+                "cannot keep the plan of the tasks out of git: {}",
+                error_chain(&error)
+            )));
         }
         Ok(())
     }

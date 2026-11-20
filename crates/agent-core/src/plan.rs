@@ -27,6 +27,10 @@ use crate::ids::ItemId;
 use crate::repo_path::RepoPath;
 use crate::task_list::{self, MAX_TASK_LIST_BYTES, NumberProblem};
 
+/// Where a task keeps its plan, relative to the root of its worktree: the task's working file, never part of what it
+/// delivers.
+pub const PLAN_FILE: &str = ".agent/plan.md";
+
 /// The indentation of the text lines of a step written back.
 const TEXT_INDENT: &str = "    ";
 
