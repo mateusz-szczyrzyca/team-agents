@@ -239,3 +239,68 @@ async fn split_answer_socket_reports_complete_activation_and_refusal_without_par
         rig.stop().await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn split_fix_updates_its_pull_request() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,integrate,fix-work:1"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", "structured-commit:REQUEST_CHANGES,structured-commit:APPROVE"),
+            investigator("inv-r2", "structured-commit:APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team_id, tasks) = rig.run(&["inv-lead", "claude-1"], ONE, MergeMode::NoMerge, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: n(1),
+                answers: answers(&[(1, &approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+    let state = rig
+        .state_where("the fixed part approved or handed over", |state| {
+            let team = state.team(&team_id).unwrap();
+            matches!(
+                team.item("1.1".parse().unwrap()).unwrap().phase(),
+                ItemPhase::Approved { .. }
+            ) || state.find_task(&tasks[0]).unwrap().member.status() == TaskStatus::Questions
+        })
+        .await;
+    assert!(
+        matches!(
+            state
+                .team(&team_id)
+                .unwrap()
+                .item("1.1".parse().unwrap())
+                .unwrap()
+                .phase(),
+            ItemPhase::Approved { .. }
+        ),
+        "{:?}",
+        state
+            .team(&team_id)
+            .unwrap()
+            .item("1.1".parse().unwrap())
+            .unwrap()
+            .phase()
+    );
+    let pulls = rig.github.pulls();
+    assert_eq!(pulls.len(), 1);
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&tasks[0])).unwrap()).unwrap();
+    assert_eq!(rig.remote_tip(&pulls[0].head), gate["result"]["head"].as_str().unwrap());
+    assert_eq!(rig.runs(&tasks[0]), 3);
+    rig.stop().await.unwrap();
+}
