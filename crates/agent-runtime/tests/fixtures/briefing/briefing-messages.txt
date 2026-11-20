@@ -1,0 +1,56 @@
+# A NEW SESSION ON A TASK THAT WAS ALREADY STARTED
+
+You work on task task-20261120-144101-r7q2 again, in a new session. The session before you went bad; the harness recorded why as
+`no_status`:
+
+- `no_status`: its last runs ended without a `STATUS:` line;
+- `hang`: its last runs showed no activity until the watchdog stopped them;
+- `turn_limit`: its last runs used up their turn budget.
+
+You do not have its memory; this briefing is what you need to go on without asking anybody.
+
+Go on from this state. Do not start over, and do not undo the commits below: the work in the worktree and on the
+branch is the work of the runs before yours and is yours to finish.
+
+## The task you were given
+
+Fix the parser.
+
+## The branch
+
+The work is on branch agents/deepinfra-deepseek/task-20261120-191109-qesn-1.1, forked from main. Its commits since then, oldest first (none when the list is
+empty):
+
+
+
+## What is uncommitted
+
+Everything the worktree held when the session before yours ended is kept as a snapshot, refs/agents/snapshots/round-1/task-20261120-144101-r7q2/1. The worktree
+still holds it all; none of it is on your branch until you commit it. The files that differ from the last commit (none
+when the list is empty):
+
+- notes.md
+
+## The plan of steps
+
+The steps of `.agent/plan.md` as the runs before yours left them — `[ ]` to do, `[>]` in hand, `[x]` done, `[-]` given
+up. They are what the agent declared, not evidence: check them. An empty list: the task keeps no plan, or it does not
+read.
+
+
+
+## Unread messages
+
+The messages of your team that no run of this task read, oldest first (none when the list is empty).
+
+
+- #1508 inv-opus:
+  Work on item 1.1 only.
+
+## What to do now
+
+1. Read the messages of your team first, if you have the tools of the bus (`read_messages`).
+2. Find where the work stands: the files above, the end of the branch's history and the task's own prompt.
+3. Go on with what is left of the task, in the same worktree, the same branch and the same task; follow the rules of
+   the task's prompt and do only the work of this task.
+4. End your turn with a `STATUS:` line, as the task's prompt says.

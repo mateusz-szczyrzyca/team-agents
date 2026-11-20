@@ -270,3 +270,50 @@ fn recovery_does_not_queue_a_fourth_no_status_run() {
         }
     }
 }
+
+/// Task 2 ran three runs in session `ses-1` that ended with `end`, was started anew after them, and runs one run of its
+/// new session in `ses-2`, which ended with `last` (or is going when `last` is `None`).
+fn renewed_after_three(end: &RunEnd, last: Option<RunEnd>) -> State {
+    let mut state = team_state();
+    for n in 1..=3 {
+        let (_, mut member) = state.find_task_mut(&task(2)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member
+            .begin_run(run(10 + n), at(10 * n), Some("ses-1".parse().unwrap()))
+            .unwrap();
+        member.end_run(at(10 * n + 5), end.clone()).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    state
+        .renew_task(&task(2), agent_core::decide::ladder::Trouble::NoStatus, at(40))
+        .unwrap();
+    let (_, mut member) = state.find_task_mut(&task(2)).unwrap();
+    member.transition(TaskStatus::Running).unwrap();
+    member
+        .begin_run(run(20), at(50), Some("ses-2".parse().unwrap()))
+        .unwrap();
+    if let Some(last) = last {
+        member.end_run(at(55), last).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    state
+}
+
+#[test]
+fn a_restart_counts_the_no_status_endings_of_the_new_session_only() {
+    let mut state = renewed_after_three(&RunEnd::NoStatus { exit_code: Some(0) }, None);
+
+    let recovery = recover(&mut state, at(100), &limits()).unwrap();
+
+    assert_eq!(recovery.exhausted, Vec::<TaskId>::new());
+    assert_eq!(status(&state, 2), TaskStatus::Queued);
+}
+
+#[test]
+fn a_restart_counts_the_hangs_of_the_new_session_only() {
+    let mut state = renewed_after_three(&RunEnd::Hung, Some(RunEnd::Hung));
+
+    let recovery = recover(&mut state, at(100), &limits()).unwrap();
+
+    assert_eq!(recovery.hangs, [(task(2), 1)]);
+}

@@ -112,6 +112,10 @@ async fn configured_max_turns_reaches_the_cli_process() {
 #[tokio::test]
 async fn one_resume_allows_two_turn_limits_then_fails_and_notifies_once() {
     let mut rig = rig("turn-limit", 1).await;
+    // The rung of a new session is off: this test is about the end of the resumes of the same session.
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("[replacement]\nnew_sessions = 0\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
     rig.start().await;
     let (team, tasks) = rig
         .run(&["claude-1"], "Finish the work.", MergeMode::Autopilot, None)
@@ -182,4 +186,57 @@ async fn exhausted_team_member_notifies_the_coordinator_on_the_bus() {
         messages.contains("\"to\":\"inv-coord\"") && messages.contains("claude-1"),
         "{messages}"
     );
+}
+
+// Rule: after the last turn-limit resume of its session the task goes on once in a new session.
+#[tokio::test]
+async fn after_its_last_turn_limit_resume_a_task_goes_on_in_a_new_session() {
+    let mut rig = rig("turn-limit,turn-limit,done", 1).await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["claude-1"], "Finish the work.", MergeMode::Autopilot, None)
+        .await;
+
+    done_without_failure(&rig).await;
+    let state = rig.state();
+    rig.stop().await.unwrap();
+
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    let runs = member.runs();
+    assert_eq!(runs.len(), 3, "two turn limits in the first session, then the new one");
+    assert_eq!(
+        runs[0].session(),
+        runs[1].session(),
+        "the resume continues the first session"
+    );
+    assert_ne!(runs[2].session(), runs[1].session(), "the third run is a new session");
+    let renewals = member.renewals().unwrap();
+    assert_eq!(renewals.used(), 1);
+    assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::TurnLimit);
+}
+
+// Rule: with the default configuration, the new session after the last turn-limit resume is given the briefing, and
+// the task is started anew once.
+#[tokio::test]
+async fn the_new_session_after_the_last_turn_limit_resume_is_briefed_once() {
+    let mut rig = rig("turn-limit,turn-limit,done", 1).await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["claude-1"], "Finish the work.", MergeMode::Autopilot, None)
+        .await;
+
+    let briefing = rig.prompt(&tasks[0], 3).await;
+    done_without_failure(&rig).await;
+    let state = rig.state();
+    rig.stop().await.unwrap();
+
+    assert!(
+        briefing.starts_with("# A NEW SESSION ON A TASK THAT WAS ALREADY STARTED"),
+        "{briefing}"
+    );
+    assert!(briefing.contains("recorded why as\n`turn_limit`"), "{briefing}");
+    assert!(briefing.contains("Finish the work."), "{briefing}");
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert_eq!(member.runs().len(), 3);
+    assert_eq!(member.renewals().map(agent_core::state::Renewals::used), Some(1));
 }

@@ -102,7 +102,7 @@ pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Res
         if was_going || was_running {
             recovery.interrupted.push(task.clone());
         }
-        let hangs = trailing_hangs(member.runs());
+        let hangs = trailing_hangs(member.session_runs());
         if member.status() == TaskStatus::Queued && hangs > 0 {
             recovery.hangs.push((task.clone(), hangs));
         }
@@ -123,7 +123,8 @@ pub(super) fn interrupted_status(role: Role, member: &Member) -> TaskStatus {
     // Ask the core decision at the last permitted retry to establish eligibility without changing the shutdown
     // policy of workers, reviewers or tasks without a resumable session.
     let eligible = after_no_status(role, NO_STATUS_RETRIES, member.last_session()) == AfterNoStatus::Resume;
-    if eligible && consecutive_no_status(member.runs()) > NO_STATUS_RETRIES {
+    // The retries are of the session the task is in: those before a renewal were the old session's.
+    if eligible && consecutive_no_status(member.session_runs()) > NO_STATUS_RETRIES {
         TaskStatus::Failed
     } else {
         TaskStatus::Queued

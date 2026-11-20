@@ -312,6 +312,9 @@ pub struct MemberSummary {
     /// The number of the questions that wait for the human, if there are any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_question: Option<NonZeroU32>,
+    /// How many times the ladder started the task in a new session, if it did; absent from older daemons' replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_sessions: Option<NonZeroU32>,
 }
 
 impl ItemCounts {
@@ -337,6 +340,7 @@ impl MemberSummary {
             role,
             status: member.status(),
             open_question: member.open_question().map(Question::number),
+            new_sessions: member.renewals().and_then(|renewals| NonZeroU32::new(renewals.used())),
         }
     }
 }

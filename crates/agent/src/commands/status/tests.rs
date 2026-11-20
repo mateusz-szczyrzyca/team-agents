@@ -1212,3 +1212,36 @@ fn an_ended_delivery_status_distinguishes_failure_from_waiting() {
         "round-20261111-153003-q1w2  item 1.2  open"
     );
 }
+
+#[test]
+fn a_task_the_ladder_started_anew_says_it_is_in_a_new_session() {
+    let mut state = team_state();
+    {
+        let (_, mut member) = state.find_task_mut(&task(2)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member
+            .begin_run(crate::fixtures::run(2), crate::fixtures::at(5), None)
+            .unwrap();
+        member
+            .end_run(
+                crate::fixtures::at(10),
+                agent_core::state::RunEnd::NoStatus { exit_code: Some(0) },
+            )
+            .unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    state
+        .renew_task(
+            &task(2),
+            agent_core::decide::ladder::Trouble::NoStatus,
+            crate::fixtures::at(11),
+        )
+        .unwrap();
+
+    let text = render(&[TeamSummary::from(&state.teams()[0])]);
+
+    assert!(
+        text.contains("  task-20261111-153002-k3x9  member       claude-1   queued, in a new session\n"),
+        "{text}"
+    );
+}
