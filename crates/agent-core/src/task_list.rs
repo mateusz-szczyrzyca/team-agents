@@ -120,6 +120,8 @@ pub struct TaskList {
     brief: String,
     /// The features, in the order written.
     features: Vec<Feature>,
+    /// Explicit item requirements; absent entries request normal agents.
+    tiers: HashMap<ItemId, Tier>,
 }
 
 /// An item part that a label starts: `Expected result:` or `Checks:`.
@@ -428,7 +430,8 @@ impl TaskList {
     /// Requested tier of an existing item; omission means normal, and an unknown item returns none.
     #[must_use]
     pub fn required_tier(&self, id: ItemId) -> Option<Tier> {
-        self.item(id).map(|_| Tier::Normal)
+        self.item(id)
+            .map(|_| self.tiers.get(&id).copied().unwrap_or(Tier::Normal))
     }
 
     /// The item numbered `id`, if the list has it.
@@ -697,6 +700,8 @@ struct Parser<'a> {
     brief: Vec<&'a str>,
     /// The features read so far; the last one is the current one.
     features: Vec<Feature>,
+    /// Explicit item requirements; absent entries request normal agents.
+    tiers: HashMap<ItemId, Tier>,
     /// The lines of the features' headings, by number, to refuse a repeated number.
     feature_lines: HashMap<NonZeroU16, NonZeroUsize>,
     /// The lines of the item lines, by number, to refuse a repeated number.
@@ -735,6 +740,20 @@ impl<'a> Parser<'a> {
                         source,
                     }
                 })?);
+            return Ok(());
+        }
+        if let Some(open) = &self.item
+            && let Some(value) = text.strip_prefix("Tier:")
+        {
+            let id = open.line.id;
+            if self.tiers.contains_key(&id) {
+                return Err(TaskListError::DuplicateTier { line });
+            }
+            let tier = value
+                .trim()
+                .parse()
+                .map_err(|source| TaskListError::InvalidTier { line, source })?;
+            self.tiers.insert(id, tier);
             return Ok(());
         }
         match classify(text) {
@@ -906,6 +925,7 @@ impl<'a> Parser<'a> {
             allowances: self.allowances,
             brief,
             features: self.features,
+            tiers: self.tiers,
         })
     }
 }
