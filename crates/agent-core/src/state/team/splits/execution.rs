@@ -94,5 +94,37 @@ impl CheckedMut<'_, Team> {
     }
 }
 
+/// Checks each part against its plan and only the rounds preceding it.
+pub(in crate::state::team) fn check_execution(team: &Team) -> Result<(), crate::state::RoundsError> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut merged = std::collections::BTreeSet::new();
+    for round in team.rounds() {
+        let Some(key) = round.part() else { continue };
+        let parent = round.item();
+        let definition = team
+            .splits()
+            .iter()
+            .find(|plan| Some(plan.parent()) == parent)
+            .and_then(|plan| plan.entries().find(|(id, _)| id.key() == key));
+        let valid = definition.is_some_and(|(_, part)| {
+            part.depends_on
+                .iter()
+                .all(|dependency| merged.contains(&(parent, *dependency)))
+        });
+        if !valid
+            || !seen.insert((parent, key))
+            || (round.part_pull_request().is_some() != (round.ended() == Some(crate::state::RoundEnd::Merged)))
+        {
+            return Err(crate::state::RoundsError::SplitExecution {
+                round: round.id().clone(),
+            });
+        }
+        if round.part_pull_request().is_some() {
+            merged.insert((parent, key));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests;

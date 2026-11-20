@@ -5,7 +5,7 @@ use crate::state::split::SplitPlan;
 
 use super::{CheckedMut, Team};
 
-mod execution;
+pub(super) mod execution;
 pub use execution::ActivateSplitError;
 
 /// Why an approved split cannot be attached to a team.

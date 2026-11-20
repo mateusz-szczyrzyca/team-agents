@@ -147,6 +147,12 @@ pub enum BeginRunError {
 /// What is wrong with the rounds of a team that is read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RoundsError {
+    /// A split round is inconsistent with its plan or earlier merged rounds.
+    #[error("round {round} has an invalid split execution identity")]
+    SplitExecution {
+        /// The invalid round.
+        round: RoundId,
+    },
     /// Two rounds have one ID.
     #[error("the round {round} appears twice")]
     DuplicateRound {
@@ -419,6 +425,7 @@ pub(super) fn check_rounds(team: &Team) -> Result<(), TeamError> {
 
 /// Checks the rounds of `team`, then its items for rounds, then its runs.
 fn check_round_list(team: &Team) -> Result<(), RoundsError> {
+    super::splits::execution::check_execution(team)?;
     let mut seen: HashSet<&RoundId> = HashSet::new();
     for round in &team.rounds {
         if !seen.insert(round.id()) {
