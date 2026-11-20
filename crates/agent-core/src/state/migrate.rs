@@ -1,4 +1,4 @@
-//! Reading schemas 1 through 11 and reconstructing their investigator activity history.
+//! Reading schemas 1 through 12 and reconstructing their investigator activity history.
 //!
 //! Version 1 also gains rounds; versions before 10 preserve `Allow:` lines as brief text. The latest retained
 //! task evidence supplies deterministic activity timestamps when older opinion records lack exact times.
