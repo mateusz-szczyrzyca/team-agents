@@ -284,6 +284,7 @@ use std::str::FromStr;
 
 use agent_core::ids::RoundId;
 use agent_core::protocol::{RoundDetail, RoundTask};
+use agent_core::state::PrNumber;
 use agent_core::state::{Findings, ItemPhase, NewRun, RoundEnd, State};
 
 use crate::fixtures::{at, run};
@@ -535,6 +536,30 @@ fn a_round_is_one_line_and_the_round_of_a_whole_task_list_has_no_item() {
     assert_eq!(
         round_line(&whole.rounds()[0]),
         "round-20261111-153009-q1w2  whole task list  closed, abandoned"
+    );
+}
+
+#[test]
+fn a_round_delivered_by_a_pull_request_is_rendered_in_running_teams() {
+    let mut state = team_state();
+    let pr = PrNumber::new(NonZeroU32::new(42).unwrap());
+    state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .open_round(round_id(1), Some("1.1".parse().unwrap()), at(1))
+        .unwrap();
+    state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .deliver_round(&round_id(1), pr)
+        .unwrap();
+
+    let running = running(vec![agent_core::protocol::TeamSummary::from(&state.teams()[0])]);
+    assert_eq!(running.len(), 1);
+    assert_eq!(running[0].rounds.len(), 1);
+    assert_eq!(
+        round_line(&running[0].rounds[0]),
+        "round-20261111-153001-q1w2  item 1.1  delivered by PR #42"
     );
 }
 
