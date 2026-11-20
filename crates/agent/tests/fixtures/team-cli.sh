@@ -422,6 +422,13 @@ case $action in
     result "${action#target-done:}"'\nSTATUS: DONE'
     ;;
   sleep) result 'Nothing to do now.\nSTATUS: SLEEPING' ;;
+  hold)
+    # Works until the run is stopped, as a member that the human stops while it runs; `.fake-continue` ends it.
+    while [[ ! -f .fake-continue ]]; do
+      sleep 0.05
+    done
+    result 'Nothing to do now.\nSTATUS: SLEEPING'
+    ;;
   fail) result 'I could not do it.\nSTATUS: FAILED' ;;
   nostatus) result 'I think that is all.' ;;
   nostatus-hold-2)
