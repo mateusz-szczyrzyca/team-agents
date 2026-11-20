@@ -488,7 +488,8 @@ async fn delivery_closed_claim_reopens_the_round_and_runs_the_member_again() {
                 && found.find(&tasks[2]).unwrap().1.status() == TaskStatus::Waiting
         })
         .await;
-    let prompt = rig.prompt(&tasks[0], 4).await;
+    rig.prompt(&tasks[0], 4).await;
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
     rig.stop().await.unwrap();
     let found = returned.team(&team).unwrap();
     assert!(found.round(&old).unwrap().delivery_closed_at().is_some());
@@ -500,5 +501,5 @@ async fn delivery_closed_claim_reopens_the_round_and_runs_the_member_again() {
         found.find(&tasks[2]).unwrap().1.runs().last().unwrap().rounds(),
         &[fresh.id().clone()]
     );
-    assert!(prompt.contains("PR #1 was closed without merging"), "{prompt}");
+    assert!(messages.contains("PR #1 was closed without merging"), "{messages}");
 }

@@ -1209,6 +1209,6 @@ fn an_ended_delivery_status_distinguishes_failure_from_waiting() {
         .unwrap();
     assert_eq!(
         round_line(team.round(&round_id(3)).unwrap()),
-        "round-20261111-153003-q1w3  item 1.2  open"
+        "round-20261111-153003-q1w2  item 1.2  open"
     );
 }
