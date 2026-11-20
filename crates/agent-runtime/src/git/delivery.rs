@@ -1,6 +1,6 @@
 //! Fail-closed evidence that an item branch adds no work outside a team's PR or base.
 
-use super::{Git, GitError, Revision};
+use super::{Git, GitError, Revision, TreeState};
 use agent_core::ids::BranchName;
 
 /// The evidence that could not be read.
@@ -51,11 +51,46 @@ impl Git {
     /// or the item has commits of its own.
     pub async fn verify_delivery(
         &self,
-        _item: &BranchName,
-        _pr: &BranchName,
-        _base: &Revision,
+        item: &BranchName,
+        pr: &BranchName,
+        base: &Revision,
     ) -> Result<(), DeliveryGitError> {
-        Ok(())
+        let read = |read, source| DeliveryGitError::Read { read, source };
+        if !matches!(
+            self.tree_state()
+                .await
+                .map_err(|source| read(DeliveryRead::Tree, source))?,
+            TreeState::Clean
+        ) {
+            return Err(DeliveryGitError::Dirty);
+        }
+        let head = self
+            .rev_parse(&Revision::Head)
+            .await
+            .map_err(|source| read(DeliveryRead::Head, source))?;
+        let tip = self
+            .rev_parse(&Revision::Branch(item.clone()))
+            .await
+            .map_err(|source| read(DeliveryRead::Item, source))?;
+        if head != tip {
+            return Err(DeliveryGitError::Checkout);
+        }
+        let tip = Revision::Commit(tip);
+        if self
+            .is_ancestor(&tip, base)
+            .await
+            .map_err(|source| read(DeliveryRead::Base, source))?
+        {
+            return Ok(());
+        }
+        if self
+            .is_ancestor(&tip, &Revision::Branch(pr.clone()))
+            .await
+            .map_err(|source| read(DeliveryRead::PullRequest, source))?
+        {
+            return Ok(());
+        }
+        Err(DeliveryGitError::OwnCommits)
     }
 }
 
