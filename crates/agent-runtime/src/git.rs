@@ -262,6 +262,15 @@ pub enum GitOperation {
     /// `git for-each-ref`, to count the snapshots a task has.
     #[strum(serialize = "for-each-ref")]
     ForEachRef,
+    /// `git ls-files`, to inspect the scratch index of a snapshot.
+    #[strum(serialize = "ls-files")]
+    LsFiles,
+    /// `git hash-object`, to store a worktree file's bytes without attribute filters.
+    #[strum(serialize = "hash-object")]
+    HashObject,
+    /// `git update-index`, to point a scratch index entry at its raw blob.
+    #[strum(serialize = "update-index")]
+    UpdateIndex,
 }
 
 /// Why the scratch area of a read of the uncommitted changes cannot be made.

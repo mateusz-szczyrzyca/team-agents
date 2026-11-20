@@ -263,4 +263,107 @@ mod git_snapshot {
 
         assert!(matches!(error, GitError::Failed { .. }), "{error:?}");
     }
+
+    #[tokio::test]
+    async fn a_reference_transaction_hook_does_not_run_or_touch_the_worktree() {
+        let (tmp, repo) = repository();
+        write(&repo, "changed.txt", b"before\n");
+        raw(&repo, &["add", "-A"]);
+        raw(&repo, &["commit", "-q", "-m", "base"]);
+        let marker = tmp.path().join("ref-tx-ran");
+        let hook = repo.join(".git").join("hooks").join("reference-transaction");
+        std::fs::write(
+            &hook,
+            format!(
+                "#!/bin/sh\ntouch '{}'\nprintf 'hooked\\n' > '{}/changed.txt'\n",
+                marker.display(),
+                repo.display()
+            ),
+        )
+        .expect("the reference-transaction hook");
+        let mut hook_permissions = std::fs::metadata(&hook).expect("the hook").permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut hook_permissions, 0o755);
+        std::fs::set_permissions(&hook, hook_permissions).expect("the permissions");
+        write(&repo, "changed.txt", b"after\n");
+        let files = ["changed.txt"];
+        let before = state(&repo, &files);
+
+        handle(&repo).snapshot(&round(), &task()).await.expect("a snapshot");
+
+        assert!(!marker.exists(), "reference-transaction hook must not run");
+        assert_eq!(state(&repo, &files), before);
+    }
+
+    #[tokio::test]
+    async fn snapshot_numbers_increase_monotonically_for_a_task_across_deleted_refs_and_rounds() {
+        let (_tmp, repo) = repository();
+        write(&repo, "file.txt", b"base\n");
+        raw(&repo, &["add", "-A"]);
+        raw(&repo, &["commit", "-q", "-m", "base"]);
+
+        write(&repo, "file.txt", b"first\n");
+        let first = handle(&repo).snapshot(&round(), &task()).await.expect("first snapshot");
+        write(&repo, "file.txt", b"second\n");
+        let second = handle(&repo)
+            .snapshot(&round(), &task())
+            .await
+            .expect("second snapshot");
+        assert_eq!((first.number, second.number), (1, 2));
+
+        let prefix = format!("refs/agents/snapshots/{ROUND}/{TASK}");
+        raw(&repo, &["update-ref", "-d", &format!("{prefix}/1")]);
+        write(&repo, "file.txt", b"third\n");
+        let third = handle(&repo).snapshot(&round(), &task()).await.expect("third snapshot");
+
+        assert_eq!(third.number, 3);
+        assert_eq!(
+            raw(&repo, &["rev-parse", &format!("{prefix}/2")]),
+            second.commit.to_string(),
+            "retained snapshot 2 must not be overwritten"
+        );
+        assert_eq!(
+            raw(&repo, &["rev-parse", &format!("{prefix}/3")]),
+            third.commit.to_string()
+        );
+
+        let second_round = RoundId::from_str("round-20261120-100000-r2r2").expect("a second round id");
+        let fourth = handle(&repo)
+            .snapshot(&second_round, &task())
+            .await
+            .expect("fourth snapshot in a second round");
+        assert_eq!(fourth.number, 4);
+    }
+
+    #[tokio::test]
+    async fn binary_files_keep_crlf_bytes_under_text_gitattributes_and_state_includes_binary_and_ignored_files() {
+        let (_tmp, repo) = repository();
+        write(&repo, ".gitattributes", b"*.bin text\n");
+        write(&repo, ".gitignore", b"*.log\n");
+        write(&repo, "tracked.bin", b"initial\n");
+        raw(&repo, &["add", "-A"]);
+        raw(&repo, &["commit", "-q", "-m", "base"]);
+
+        let raw_bytes: [u8; 7] = [0, 1, 13, 10, 255, 13, 10];
+        write(&repo, "tracked.bin", &raw_bytes);
+        write(&repo, "image.bin", &raw_bytes);
+        write(&repo, "build.log", b"ignored log\n");
+        let files = [".gitattributes", ".gitignore", "build.log", "tracked.bin", "image.bin"];
+        let before = state(&repo, &files);
+
+        let snapshot = handle(&repo).snapshot(&round(), &task()).await.expect("a snapshot");
+
+        assert_eq!(state(&repo, &files), before);
+        for name in ["tracked.bin", "image.bin"] {
+            let stored = Command::new("git")
+                .args(["cat-file", "blob", &format!("{}:{name}", snapshot.commit)])
+                .current_dir(&repo)
+                .output()
+                .expect("git runs");
+            assert_eq!(
+                stored.stdout.as_slice(),
+                &raw_bytes,
+                "{name} must keep exact CRLF bytes even with *.bin text"
+            );
+        }
+    }
 }
