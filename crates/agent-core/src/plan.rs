@@ -903,12 +903,11 @@ fn read_labels<'a>(body: &[(NonZeroUsize, &'a str)], narrowest: usize) -> Result
     })
 }
 
-/// The paths of a `Files:` line that is on `line`, separated by commas.
+/// The paths of a `Files:` line that is on `line`, separated by commas; an empty entry is an empty path, refused.
 fn read_paths(line: NonZeroUsize, paths: &str) -> Result<Vec<RepoPath>, PlanError> {
     paths
         .split(',')
         .map(str::trim)
-        .filter(|path| !path.is_empty())
         .map(|path| path.parse().map_err(|problem| PlanError::BadFile { line, problem }))
         .collect()
 }
