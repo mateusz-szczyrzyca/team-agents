@@ -1422,6 +1422,7 @@ impl Owner {
                             self.control_request(&client, Steer::Unpause, &request.target).await?
                         }
                         Command::Resume(request) => {
+                            self.resume_waits(&request.target);
                             self.control_request(&client, Steer::Resume, &request.target).await?
                         }
                         Command::Say(request) => self.say_request(&client, request).await?,
@@ -1567,7 +1568,12 @@ impl Owner {
                     .ok_or_else(|| not_found(format!("there is no round {round}")))?;
                 let tasks = self.round_tasks(team, round)?;
                 let mut detail = RoundDetail::new(team, found, tasks);
-                detail.waiting = self.waiting_for(team, found).map(|wait| wait.text().to_owned());
+                detail.waiting = self
+                    .watch
+                    .github_waits
+                    .line_of(team.id(), round, self.parts.local_offset)
+                    .map(|line| format!("GitHub: {line}"))
+                    .or_else(|| self.waiting_for(team, found).map(|wait| wait.text().to_owned()));
                 Ok(Reply::Round {
                     round: Box::new(detail),
                 })

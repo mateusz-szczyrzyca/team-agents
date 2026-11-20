@@ -71,6 +71,21 @@ impl Owner {
         Ok(())
     }
 
+    /// The human's `agent resume` of `target`: every step of its team that waits for GitHub or git is tried at the
+    /// next look, a refusal too. A target the state does not have resumes nothing here; the control says so.
+    pub(in crate::daemon::owner) fn resume_waits(&mut self, target: &agent_core::protocol::Target) {
+        use agent_core::protocol::Target;
+        let team = match target {
+            Target::Team(team) => Some(team.clone()),
+            Target::Task(task) => self.parts.state.find_task(task).map(|found| found.team.id().clone()),
+            Target::Round(round) => self.parts.state.find_round(round).map(|(team, _)| team.id().clone()),
+        };
+        if let Some(team) = team {
+            self.watch.github_waits.forget_team(&team);
+            self.look_at(&team);
+        }
+    }
+
     /// Records that `step` of `team` went through: a step that waited is done, logged once.
     pub(super) fn github_step_done(&mut self, step: &Step, team: &TeamId, which: WaitingStep) {
         if self.watch.github_waits.done(step, which) {

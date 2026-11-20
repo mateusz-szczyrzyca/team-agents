@@ -3,6 +3,7 @@ use super::super::teams::Look;
 use super::super::{Located, Owner, OwnerError};
 use super::reviewers::Prepared;
 use super::verdicts::Asked;
+use super::waiting::{Step, WaitingStep};
 use super::{PublishError, Pulls};
 use crate::daemon::review::{pending_opinion, select_reviewers};
 use crate::daemon::team::Why;
@@ -114,6 +115,15 @@ impl Owner {
         Ok(())
     }
 
+    /// Where the preparation of a second opinion for `items` of `team` waits when git fails it: their round, or the
+    /// team's rounds as a whole for items whose round the state cannot name.
+    fn opinion_place(&self, team: &TeamId, items: &[ItemId]) -> Step {
+        self.rounds_of_items(team, items)
+            .into_iter()
+            .next()
+            .map_or_else(|| Step::Team { team: team.clone() }, |round| Step::Round { round })
+    }
+
     /// Gives each waiting opinion its own independent free investigator, or leaves it waiting.
     pub(super) async fn ask_opinions(
         &mut self,
@@ -162,6 +172,10 @@ impl Owner {
                     continue;
                 };
                 let now = Timestamp::now(&self.parts.clock)?;
+                let place = self.opinion_place(team_id, &ids);
+                if !self.watch.github_waits.due(&place, WaitingStep::AskOpinion, now) {
+                    continue;
+                }
                 let git = self
                     .worktree_git(&lead.repo, &lead.task, &lead.agent)
                     .map_err(OpinionDaemonError::from)?;
@@ -170,9 +184,14 @@ impl Owner {
                     .prepare_reviewer(&git, &lead, reviewer, &request.head, now, &mut prepared)
                     .await
                 {
+                    // The worktree of the investigator could not be made or moved: the opinion stays waiting and is
+                    // asked again after the step's pause, or after the human's resume when git will not change its
+                    // answer; nothing of the state was changed yet.
                     self.undo(&git, prepared.made()).await;
-                    return Err(OpinionDaemonError::from(error).into());
+                    self.github_step_failed(&place, team_id, WaitingStep::AskOpinion, Some(pr.number), &error, now)?;
+                    continue;
                 }
+                self.github_step_done(&place, team_id, WaitingStep::AskOpinion);
                 let review = prepared
                     .reviews()
                     .first()

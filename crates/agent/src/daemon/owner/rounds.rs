@@ -150,7 +150,7 @@ pub(super) struct PullWatch {
     /// The pull requests whose merge GitHub refused: they are not merged again, only looked at for the human's merge.
     refused: HashSet<(TeamId, PrNumber)>,
     /// The steps that call GitHub or git and failed: what each waits for, and until when.
-    github_waits: waiting::Waits,
+    pub(super) github_waits: waiting::Waits,
 }
 
 impl PullWatch {

@@ -191,18 +191,22 @@ impl Wait {
         }
     }
 
-    /// What `agent status` says of it: `get pull request #138, tried 4 times, next try 01:07`, or for a refusal
-    /// `get pull request #138, refused: ...`.
+    /// What `agent status` says of it: `prepare a second opinion #138, tried 4 times, next try 01:07`; for a step the
+    /// human resumed `..., tried 4 times, tried again at the next look`; for a refusal `..., refused: <answer>`.
     pub(super) fn line(&self, offset: time::UtcOffset) -> String {
         let tried = self.tries.get();
-        match self.next_at {
-            Some(at) => format!(
-                "{}, tried {tried} time{}, next try {}",
+        let times = if tried == 1 { "time" } else { "times" };
+        match (self.outlook, self.next_at) {
+            (Outlook::MayPass, Some(at)) => format!(
+                "{}, tried {tried} {times}, next try {}",
                 self.operation,
-                if tried == 1 { "" } else { "s" },
                 minute_shown(at, offset)
             ),
-            None => format!("{}, refused: {}", self.operation, self.answer),
+            (Outlook::MayPass, None) => format!(
+                "{}, tried {tried} {times}, tried again at the next look",
+                self.operation
+            ),
+            (Outlook::WillNotPass, _) => format!("{}, refused: {}", self.operation, self.answer),
         }
     }
 }
@@ -257,12 +261,8 @@ pub(in crate::daemon::owner) struct Waits {
 }
 
 impl Waits {
-    /// The wait of `step` for `operation`, if it has one.
-    pub(super) fn get(&self, place: &Step, step: WaitingStep) -> Option<&Wait> {
-        self.steps.get(&(place.clone(), step))
-    }
-
     /// The wait of the round `round` for `operation`, if it has one.
+    #[cfg(test)]
     pub(super) fn for_round(&self, round: &RoundId, step: WaitingStep) -> Option<&Wait> {
         self.steps.get(&(Step::Round { round: round.clone() }, step))
     }
@@ -328,9 +328,15 @@ impl Waits {
         self.steps.len()
     }
 
-    /// Forgets every wait of `team`, so that the human's `agent resume` tries its steps at once.
+    /// Makes every wait of `team` due, so that the human's `agent resume` tries its steps at the next look.
+    ///
+    /// A wait is kept, due at once, rather than dropped: the step that then goes through is logged as going through,
+    /// and one that fails again starts to wait again, with its tries counted on.
     pub(super) fn forget_team(&mut self, team: &TeamId) {
-        self.steps.retain(|_, wait| &wait.team != team);
+        for wait in self.steps.values_mut().filter(|wait| &wait.team == team) {
+            wait.outlook = Outlook::MayPass;
+            wait.next_at = None;
+        }
     }
 
     /// What `agent status` says `round` of `team` waits for: the step of the round itself, else a step of all the
@@ -347,7 +353,7 @@ impl Waits {
             .iter()
             .filter(|((place, _), wait)| *place == own || (*place == shared && &wait.team == team))
             .map(|(_, wait)| wait)
-            .max_by_key(|wait| (wait.next_at.is_none(), wait.next_at))
+            .max_by_key(|wait| (wait.outlook == Outlook::WillNotPass, wait.next_at))
             .map(|wait| wait.line(offset))
     }
 }
