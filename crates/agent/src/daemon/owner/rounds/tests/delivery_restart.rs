@@ -383,3 +383,46 @@ pub(super) async fn record_delivery_closed_event(observed: &mut std::collections
     assert_eq!(row.fields().get("pr"), Some(&serde_json::json!("1")));
     observed.insert(LogEvent::DeliveryClosed);
 }
+
+#[tokio::test]
+async fn delivery_bus_failure_keeps_owner_running_and_retries_the_saved_notice() {
+    let (rig, team, _, old) = accepted_claim().await;
+    rig.github.closed_by_a_human(1);
+    let mut step = stepped(&rig).await;
+    let bus = rig.home.root().join("recoverable-agentbus");
+    let actual = step.owner.parts.settings.config.binaries().agentbus.clone();
+    step.owner.parts.bus = AgentBus::new(bus.to_str().unwrap().parse().unwrap(), rig.home.absolute_root().clone());
+    let shutdown = step.owner.shutdown.clone();
+    let (sender, inbox) = mpsc::channel(8);
+    let running = step.owner.run(inbox);
+    tokio::pin!(running);
+    tokio::select! {
+        result = &mut running => panic!("owner exited during a retryable bus outage: {result:?}"),
+        _ = rig.state_where("the closed claim to be saved during the bus outage", |state| {
+            state.team(&team).unwrap().round(&old).unwrap().delivery_closed_at().is_some()
+        }) => {}
+    }
+    let saved = rig.state();
+    assert_eq!(
+        saved
+            .team(&team)
+            .unwrap()
+            .round_of("2.1".parse().unwrap())
+            .unwrap()
+            .id(),
+        &old
+    );
+    std::os::unix::fs::symlink(actual.as_path(), &bus).unwrap();
+    tokio::select! {
+        result = &mut running => panic!("owner exited before retrying the saved notice: {result:?}"),
+        _ = rig.state_where("the recovered bus to let the saved claim reopen", |state| {
+            state.team(&team).unwrap().round_of("2.1".parse().unwrap()).unwrap().id() != &old
+        }) => {}
+    }
+    shutdown.cancel();
+    running.await.unwrap();
+    drop(sender);
+    crate::daemon::history::close(step.writer).await;
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
+    assert!(messages.contains("PR #1 was closed without merging"), "{messages}");
+}
