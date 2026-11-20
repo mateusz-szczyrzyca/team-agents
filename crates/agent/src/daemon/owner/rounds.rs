@@ -728,6 +728,9 @@ mod checks_tests;
 #[path = "rounds/tests/fake_github.rs"]
 mod fake_github;
 #[cfg(test)]
+#[path = "rounds/tests/github_waits.rs"]
+mod github_waits_tests;
+#[cfg(test)]
 #[path = "rounds/tests/history_events.rs"]
 mod history_events_tests;
 #[cfg(test)]

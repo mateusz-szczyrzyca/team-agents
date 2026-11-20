@@ -87,6 +87,8 @@ struct World {
     review_refusal: Option<u16>,
     /// The answer every call gets while GitHub is down: its status and message.
     outage: Option<(u16, String)>,
+    /// The calls answered with a failure while the rest are answered: method, exact target and status.
+    failing: Vec<(String, String, u16)>,
 }
 
 /// A running fake GitHub; it stops when it is dropped.
@@ -114,6 +116,7 @@ impl FakeGitHub {
             merge: MergeAnswer::Allow,
             review_refusal: None,
             outage: None,
+            failing: Vec::new(),
         }));
         let accept_loop = tokio::spawn(accept_loop(listener, Arc::clone(&world)));
         Ok(Self {
@@ -178,6 +181,21 @@ impl FakeGitHub {
     /// Makes every call fail with `status` from now on, as an API that cannot be reached or is overloaded does.
     pub(super) fn fail_every_call(&self, status: u16) {
         self.world().outage = Some((status, "Service Unavailable".to_owned()));
+    }
+
+    /// Makes every `method` call of `target` (the exact path) fail with `status` from now on, while the other calls
+    /// are answered: one call of GitHub that times out or is refused, and not the whole API.
+    pub(super) fn fail_calls_to(&self, method: &str, target: &str, status: u16) {
+        self.world()
+            .failing
+            .push((method.to_owned(), target.to_owned(), status));
+    }
+
+    /// Answers the `method` calls of `target` again.
+    pub(super) fn answer_calls_to(&self, method: &str, target: &str) {
+        self.world()
+            .failing
+            .retain(|(failing, path, _)| !(failing == method && path == target));
     }
 
     /// Answers every call again.
@@ -472,7 +490,12 @@ async fn serve_connection(mut stream: TcpStream, world: Arc<Mutex<World>>) {
             target: target.clone(),
             body: body.clone(),
         });
-        match world.outage.clone() {
+        let failing = world
+            .failing
+            .iter()
+            .find(|(failing, path, _)| *failing == method && *path == target)
+            .map(|(_, _, status)| (*status, "Service Unavailable".to_owned()));
+        match world.outage.clone().or(failing) {
             Some((status, message)) => Answer {
                 status,
                 body: json!({"message": message}),
