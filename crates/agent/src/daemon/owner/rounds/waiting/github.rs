@@ -76,10 +76,7 @@ impl Wait {
         now: Timestamp,
     ) -> Result<Self, DurationOverflow> {
         let tries = NonZeroU32::MIN;
-        let next_at = match outlook {
-            Outlook::MayPass => Some(later(now, pause(tries))?),
-            Outlook::WillNotPass => None,
-        };
+        let next_at = Some(later(now, pause(tries))?);
         Ok(Self {
             team,
             operation: named(operation, pr),
@@ -95,10 +92,7 @@ impl Wait {
         self.tries = self.tries.saturating_add(1);
         self.answer = answer;
         self.outlook = outlook;
-        self.next_at = match outlook {
-            Outlook::MayPass => Some(later(now, pause(self.tries))?),
-            Outlook::WillNotPass => None,
-        };
+        self.next_at = Some(later(now, pause(self.tries))?);
         Ok(())
     }
 
