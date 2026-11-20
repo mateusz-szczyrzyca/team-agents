@@ -120,13 +120,45 @@ fn decode<T: DeserializeOwned>(line: &str, max: usize) -> Result<T, ProtocolErro
     serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })
 }
 
+/// Removes fields unknown to protocol-three clients, retaining their ordinary frame encoding.
+fn strip_split_fields(value: &mut serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(object) => {
+            let mut changed = false;
+            for key in ["split", "splits", "part"] {
+                changed |= object.remove(key).is_some();
+            }
+            for nested in object.values_mut() {
+                changed |= strip_split_fields(nested);
+            }
+            changed
+        }
+        serde_json::Value::Array(values) => {
+            let mut changed = false;
+            for nested in values {
+                changed |= strip_split_fields(nested);
+            }
+            changed
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => false,
+    }
+}
+
 impl Frame {
     /// The frame as one line ending with a newline.
     ///
     /// # Errors
     /// [`EncodeError`] when the serializer fails.
     pub fn to_line(&self) -> Result<String, EncodeError> {
-        encode(self)
+        let mut legacy = serde_json::to_value(self).map_err(|source| EncodeError { source })?;
+        if strip_split_fields(&mut legacy) {
+            encode(&legacy)
+        } else {
+            encode(self)
+        }
     }
 
     /// Reads a line the daemon sent.
