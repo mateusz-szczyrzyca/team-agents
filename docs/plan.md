@@ -160,7 +160,7 @@ example (`prompts/harness/run/plan.md`) — when its role is in `[plan] roles` a
 for a plan where it holds runs to one.
 
 **Never sent back:** a role outside `[plan] roles` (a worker, a reviewer, an investigator — none needs a plan, and one
-it writes is recorded all the same), and a task created before the daemon first ran this version (0.34.0): its agent was
+it writes is recorded all the same), and a task created before the daemon first ran this version (0.35.0): its agent was
 never told. Such a task has no `plan` field in `state.json`; every task made since has one.
 
 **Not in the delivery.** The plan is the task's working file. When the daemon makes the worktrees of a team, it adds
