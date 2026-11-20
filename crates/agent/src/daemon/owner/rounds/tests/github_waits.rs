@@ -329,3 +329,63 @@ pub(super) async fn record_github_step_events(observed: &mut std::collections::B
         }
     }
 }
+
+#[tokio::test]
+async fn the_next_try_is_counted_from_the_end_of_the_failed_call() {
+    let mut rig = two_teams().await;
+    approved_then_failing(&mut rig, 503).await;
+    rig.wait_for("a step that waits for GitHub", || {
+        times(&rig, LogEvent::GithubStepWaiting) > 0
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    let rows = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    let waiting = rows
+        .iter()
+        .find(|row| row.event() == LogEvent::GithubStepWaiting)
+        .unwrap();
+    let last_call = rows
+        .iter()
+        .filter(|row| row.event() == LogEvent::GithubCallFailed && row.id() < waiting.id())
+        .map(agent_core::log::LogEntry::at)
+        .max()
+        .unwrap();
+    let next_try: agent_core::state::Timestamp = waiting
+        .fields()
+        .get("next_try")
+        .and_then(serde_json::Value::as_str)
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(
+        next_try.as_utc() >= last_call.as_utc() + time::Duration::seconds(30),
+        "next try {next_try} is not 30 s after the failed call that ended at {last_call}"
+    );
+}
+
+#[tokio::test]
+async fn a_refusal_after_the_step_went_through_tells_the_human_again() {
+    let mut rig = two_teams().await;
+    let first = approved_then_failing(&mut rig, 404).await;
+    rig.notification_with("GitHub refuses").await;
+    rig.github.answer_calls_to("GET", FIRST_PULL);
+    resume_team(&rig, &first).await;
+    rig.wait_for("the refused step goes through", || {
+        times(&rig, LogEvent::GithubStepResumed) == 1
+    })
+    .await;
+
+    rig.github.fail_calls_to("GET", FIRST_PULL, 403);
+    rig.wait_for("a second notice of a refusal", || {
+        rig.notifications()
+            .iter()
+            .filter(|text| text.contains("GitHub refuses"))
+            .count()
+            == 2
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(times(&rig, LogEvent::DaemonTaskFailed), 0);
+}
