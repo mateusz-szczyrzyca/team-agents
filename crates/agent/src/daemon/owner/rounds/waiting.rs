@@ -12,7 +12,7 @@ mod github;
 #[cfg(test)]
 mod tests;
 
-pub(in crate::daemon::owner) use self::github::Waits;
+pub(in crate::daemon::owner) use self::github::{Step, Waits, clock_time};
 #[cfg(test)]
 #[path = "waiting/tests/github.rs"]
 mod github_tests;
