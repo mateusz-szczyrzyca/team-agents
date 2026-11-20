@@ -29,9 +29,6 @@ pub(crate) enum DeliveryDaemonError {
     /// The recovery notification could not be rendered.
     #[error("cannot render delivery closure message")]
     TeamText(#[from] agent_runtime::team_prompts::RenderTeamTextError),
-    /// The lead could not be notified; the saved recovery remains pending.
-    #[error("cannot send delivery closure message")]
-    Bus(#[from] agent_runtime::agentbus::AgentBusError),
     /// The checked state rejected a claim.
     #[error(transparent)]
     Deliver(#[from] agent_core::state::DeliverRoundError),
@@ -343,11 +340,12 @@ impl Owner {
                 team: team.clone(),
             };
             // Sending first prevents a lost notice; a crash before saving may repeat this explanation.
-            self.parts
-                .bus
-                .send(&from, &to, &Outgoing::Chat { text })
-                .await
-                .map_err(DeliveryDaemonError::from)?;
+            if let Err(error) = self.parts.bus.send(&from, &to, &Outgoing::Chat { text }).await {
+                // The saved closure retains the unsent notice and unopened round for the next poll.
+                tracing::warn!(event = LogEvent::BusDown.as_str(), %team, %task, pr = %number,
+                    error = %error_chain(&error), "cannot notify the lead of the closed delivery; recovery will retry");
+                continue;
+            }
             self.open_round(team, Some(item), now, look)?;
             self.release(&task, Why::Assigned(item), look)?;
             // Save the fresh round and queued member together, before the scheduler can start it.
