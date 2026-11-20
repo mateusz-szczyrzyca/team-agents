@@ -360,3 +360,70 @@ async fn missing_estimate_names_its_part_in_the_correction() {
         "{prompt}"
     );
 }
+
+#[tokio::test]
+async fn exhausted_unreadable_proposal_keeps_its_parts_in_the_verdict_example() {
+    use crate::daemon::owner::fixture::n;
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "proposal:bad,proposal:bad,proposal:bad,sleep"),
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let mut value = proposal("Read first");
+    value["parts"][1].as_object_mut().unwrap().remove("estimate");
+    put(&rig, "bad", &value);
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    let state = rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    assert_eq!(state.team(&id).unwrap().splits().len(), 0);
+
+    let question = std::fs::read_to_string(rig.home.questions_file(&tasks[0], n(1))).unwrap();
+
+    rig.stop().await.unwrap();
+    let example = question.split("```json").last().unwrap();
+    assert!(example.contains("\"title\": \"First\""), "{question}");
+    assert!(example.contains("\"title\": \"Second\""), "{question}");
+    assert!(!example.contains("\"parts\": []"), "{question}");
+}
+
+#[tokio::test]
+async fn configured_unit_decides_which_estimates_the_limit_applies_to() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "proposal:bad,sleep"),
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        3,
+        true,
+    )
+    .await;
+    let mut value = proposal("Read first");
+    for part in value["parts"].as_array_mut().unwrap() {
+        part["estimate"]["unit"] = "pages".into();
+    }
+    value["parts"][1]["estimate"]["amount"] = 1501.into();
+    put(&rig, "bad", &value);
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("\n[split]\nunit = \"pages\"\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+
+    let prompt = rig.prompt(&tasks[0], 2).await;
+
+    rig.stop().await.unwrap();
+    assert!(prompt.contains("Part b estimates 1501 pages"), "{prompt}");
+    assert_eq!(rig.state().team(&id).unwrap().splits().len(), 0);
+}
