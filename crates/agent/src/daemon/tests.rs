@@ -1433,3 +1433,25 @@ async fn a_restart_after_the_ladder_started_a_task_anew_begins_its_new_session()
     assert!(!args.contains("--resume"), "{args}");
     assert_eq!(member.renewals().map(agent_core::state::Renewals::used), Some(1));
 }
+
+// Rule: after the watchdog's last strike a task goes on once in a new session; when that one hangs too, the task is hung
+// and the human is told once.
+#[tokio::test]
+async fn after_the_last_strike_the_task_goes_on_once_in_a_new_session() {
+    let mut f = Fixture::new(&solo_state(), 1, "hang");
+
+    f.start().await;
+    let state = f.status_is(TaskStatus::Failed).await;
+    f.stop().await.unwrap();
+
+    let member = member_one(&state);
+    let runs = member.runs();
+    assert_eq!(runs.len(), 2, "one hang in each session");
+    assert!(runs.iter().all(|run| end_of(run) == &RunEnd::Hung));
+    let renewals = member.renewals().unwrap();
+    assert_eq!(renewals.used(), 1);
+    assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::Hang);
+    let notes = f.notifications();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("Note: claude-1 is hung"), "{}", notes[0]);
+}
