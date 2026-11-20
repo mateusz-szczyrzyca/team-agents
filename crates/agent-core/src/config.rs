@@ -451,19 +451,11 @@ impl Default for Plan {
 }
 
 /// `[replacement]`: whether a task whose runs go bad is started in a new session, and how often.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Replacement {
     /// How many new sessions of its agent a task is started in after its runs went bad; `0` never starts one.
     new_sessions: RenewalLimit,
-}
-
-impl Default for Replacement {
-    fn default() -> Self {
-        Self {
-            new_sessions: RenewalLimit::default(),
-        }
-    }
 }
 
 impl Replacement {

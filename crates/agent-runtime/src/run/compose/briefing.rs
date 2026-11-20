@@ -37,7 +37,7 @@ pub struct BriefingMessage<'a> {
 /// The facts of the work that a new session of a task is briefed with.
 #[derive(Debug, Clone, Copy)]
 pub struct Briefing<'a> {
-    /// Why the task is started anew, as one line for the agent.
+    /// Why the task is started anew, as one paragraph for the agent.
     pub reason: &'a str,
     /// The task.
     pub task: &'a str,
@@ -59,9 +59,96 @@ pub struct Briefing<'a> {
     pub snapshot: &'a str,
 }
 
-/// The briefing of `facts`, rendered through `render`.
+/// What the briefing says of a branch with no commit yet.
+const NO_COMMITS: &str = "Nothing of the branch is committed yet: its first commit is the first thing you do.";
+
+/// What the briefing says of a worktree with no file left uncommitted.
+const NO_UNCOMMITTED: &str = "No file of the worktree is left uncommitted.";
+
+/// What the briefing says of a task that keeps no plan.
+const NO_PLAN: &str = "The task keeps no plan of steps.";
+
+/// What the briefing says of a task with no unread message.
+const NO_MESSAGES: &str = "No message of your team waits unread.";
+
+/// The title of the list of the plan's steps in the briefing.
+const PLAN_TITLE: &str = "The task's plan of steps, as it stands in `.agent/plan.md`:";
+
+/// The title of the list of the unread messages in the briefing.
+const MESSAGES_TITLE: &str = "Messages of your team that no run of this task has read:";
+
+/// The briefing of `facts`, rendered through `render`, which fills a text of the catalog with its variables.
 #[must_use]
 pub fn briefing(render: &dyn Fn(&str, &Variables) -> String, facts: &Briefing<'_>) -> String {
-    let _ = (render, facts);
-    String::new()
+    let commits = listed(
+        facts
+            .commits
+            .iter()
+            .map(|commit| format!("- {} {}", commit.id, commit.subject)),
+        None,
+        NO_COMMITS,
+    );
+    let uncommitted = listed(
+        facts.uncommitted.iter().map(|path| format!("- {path}")),
+        None,
+        NO_UNCOMMITTED,
+    );
+    let plan = facts.plan.map_or_else(
+        || NO_PLAN.to_owned(),
+        |steps| {
+            listed(
+                steps
+                    .iter()
+                    .map(|step| format!("- {} {}: {}", step.id, step.title, step.state)),
+                Some(PLAN_TITLE),
+                NO_PLAN,
+            )
+        },
+    );
+    let messages = listed(
+        facts.messages.iter().flat_map(|message| {
+            std::iter::once(format!("- #{} from {}:", message.id, message.from))
+                .chain(message.text.lines().map(|line| format!("  {line}")))
+        }),
+        Some(MESSAGES_TITLE),
+        NO_MESSAGES,
+    );
+    let pairs: [(&str, &str); 10] = [
+        ("reason", facts.reason),
+        ("task", facts.task),
+        ("prompt", facts.prompt.trim_end()),
+        ("base", facts.base),
+        ("branch", facts.branch),
+        ("commits", &commits),
+        ("uncommitted", &uncommitted),
+        ("snapshot", facts.snapshot),
+        ("plan", &plan),
+        ("messages", &messages),
+    ];
+    // The names are the catalog's own, so filling them cannot fail; a mistake of the program shows as no briefing
+    // rather than as a panic, and the run is then given the whole task again.
+    fill(render, &pairs)
+}
+
+/// Fills the briefing with `pairs` through `render`; no text when a name has no value.
+fn fill(render: &dyn Fn(&str, &Variables) -> String, pairs: &[(&str, &str)]) -> String {
+    let filled = pairs
+        .iter()
+        .try_fold(Variables::new(), |values, (name, value)| values.with(name, *value));
+    match filled {
+        Ok(values) => render("harness/run/briefing.md", &values),
+        Err(_) => String::new(),
+    }
+}
+
+/// `lines` joined, under `title` and the blank line after it when there is a title, or `empty` when there is no line.
+fn listed(lines: impl Iterator<Item = String>, title: Option<&str>, empty: &str) -> String {
+    let body = lines.collect::<Vec<_>>().join("\n");
+    if body.is_empty() {
+        return empty.to_owned();
+    }
+    match title {
+        Some(title) => format!("{title}\n\n{body}"),
+        None => body,
+    }
 }
