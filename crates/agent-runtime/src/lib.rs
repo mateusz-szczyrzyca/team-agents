@@ -23,6 +23,7 @@ pub mod prompts;
 pub mod questions_prompts;
 pub mod run;
 pub mod settings;
+pub mod snapshot;
 pub mod store;
 pub mod team_prompts;
 pub mod text_file;

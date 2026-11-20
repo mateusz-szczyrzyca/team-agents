@@ -161,6 +161,8 @@ impl<S: Store> Noting<S> {
             Record::RunEnd(end) => of_run(&end.run, Some(end.at), RecordKind::RunEnd),
             Record::Session(session) => of_run(&session.run, Some(session.at), RecordKind::Session),
             Record::Changes(changes) => of_run(&changes.run, None, RecordKind::Changes),
+            // A snapshot is not in the ledger, so there is no note of it.
+            Record::Snapshot(_) => None,
             // A note is not noted: that would never end.
             Record::Event(e) => match &e.event {
                 HistoryEvent::Lost { .. } => None,

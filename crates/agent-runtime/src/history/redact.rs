@@ -164,6 +164,12 @@ impl Redactor {
             Record::Session(session) => {
                 !self.contains(session.run.as_str()) && !self.contains(session.session.as_str())
             }
+            Record::Snapshot(snapshot) => {
+                !self.contains(snapshot.round.as_str())
+                    && !self.contains(snapshot.task.as_str())
+                    && !self.contains(snapshot.commit.as_str())
+                    && !self.contains(snapshot.head.as_str())
+            }
             Record::Event(record) => {
                 for (_, text) in record.event.texts_mut() {
                     *text = self.text(text);

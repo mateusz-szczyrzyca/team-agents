@@ -79,6 +79,7 @@ pub(super) fn render(chosen: &[&SequencedRecord], selection: &Selection, options
         | Record::RunEnd(_)
         | Record::Session(_)
         | Record::Changes(_)
+        | Record::Snapshot(_)
         | Record::Event(_) => None,
     });
     match (selection, team) {
@@ -176,6 +177,7 @@ fn round_part(page: &mut Page, chosen: &[&SequencedRecord], round: &RoundId, tea
         | Record::RunEnd(_)
         | Record::Session(_)
         | Record::Changes(_)
+        | Record::Snapshot(_)
         | Record::Event(_) => None,
     });
     let Some((stored, opening)) = opening else {
@@ -360,7 +362,7 @@ fn blocks(page: &mut Page, records: &[&SequencedRecord], options: StoryOptions) 
             Record::RunEnd(end) => Some(&end.run),
             Record::Changes(changes) => Some(&changes.run),
             Record::Session(session) => Some(&session.run),
-            Record::Team(_) | Record::Round(_) | Record::Event(_) => None,
+            Record::Team(_) | Record::Round(_) | Record::Event(_) | Record::Snapshot(_) => None,
         };
         if let Some(run) = run_of {
             let at = *index.entry(run).or_insert_with(|| {
@@ -379,7 +381,7 @@ fn blocks(page: &mut Page, records: &[&SequencedRecord], options: StoryOptions) 
                     Record::RunEnd(end) => entry.end = Some((stored, end)),
                     Record::Changes(changes) => entry.changes = Some(changes),
                     Record::Session(session) => entry.sessions.push(session),
-                    Record::Team(_) | Record::Round(_) | Record::Event(_) => {}
+                    Record::Team(_) | Record::Round(_) | Record::Event(_) | Record::Snapshot(_) => {}
                 }
             }
         } else if let Record::Event(event) = &stored.record

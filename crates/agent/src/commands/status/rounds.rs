@@ -100,6 +100,7 @@ impl Drafts {
             | Record::Step(_)
             | Record::RunEnd(_)
             | Record::Changes(_)
+            | Record::Snapshot(_)
             | Record::Session(_) => None,
         })))
     }
