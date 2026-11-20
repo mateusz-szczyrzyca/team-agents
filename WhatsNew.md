@@ -5,6 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.35.0 — 20.11.2026 — PR #TBD
+
+### New features
+- [agent-core] The new `[merge]` setting `conflict_passes` (default `3`) is read from `agents.toml`. Nothing uses it yet:
+  a merge that GitHub refuses for a conflict is still reported to you as before.
+
 ## 0.34.0 — 20.11.2026 — PR #151
 
 ### New features
