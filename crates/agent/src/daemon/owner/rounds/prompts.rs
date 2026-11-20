@@ -480,7 +480,7 @@ pub(super) struct Verification<'a> {
 pub(super) fn verification_of<'a>(items: &[&'a ItemProgress]) -> Verification<'a> {
     let passes = items
         .iter()
-        .map(|item| item.fix_passes().len().max(usize::from(item.merge_passes() > 0)))
+        .map(|item| item.completed_review_passes())
         .max()
         .unwrap_or(0);
     Verification {

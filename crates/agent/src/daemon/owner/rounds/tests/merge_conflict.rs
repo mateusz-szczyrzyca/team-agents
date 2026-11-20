@@ -275,3 +275,48 @@ fn an_old_state_with_a_round_waiting_after_a_refused_merge_loads() {
     assert_eq!(progress.merge_passes(), 0);
     assert_eq!(progress.merge_conflict(), None);
 }
+
+#[tokio::test]
+async fn a_verification_review_after_a_conflict_pass_is_recorded_and_posted_as_pass_two() {
+    use agent_core::state::PrNumber;
+    use std::num::NonZeroU32;
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,merge-base-other"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    rig.state_where("the lead is sent to merge the base", in_conflict_pass)
+        .await;
+
+    rig.github.answer_merges(MergeAnswer::Allow);
+    move_base(&rig);
+    std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let posted = rig.github.calls("POST", &format!("/repos/{SLUG}/pulls/1/reviews"));
+    assert_eq!(posted.len(), 4);
+    assert!(posted[0].body.contains("Review pass 1"), "{}", posted[0].body);
+    assert!(posted[1].body.contains("Review pass 1"), "{}", posted[1].body);
+    assert!(posted[2].body.contains("Review pass 2"), "{}", posted[2].body);
+    assert!(posted[3].body.contains("Review pass 2"), "{}", posted[3].body);
+    let pr = PrNumber::new(NonZeroU32::MIN);
+    for reviewer in state.teams()[0].reviewers() {
+        assert!(rig.home.review_report_file(reviewer.task(), pr, 0).is_file());
+        assert!(rig.home.review_report_file(reviewer.task(), pr, 1).is_file());
+    }
+}

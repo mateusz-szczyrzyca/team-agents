@@ -658,7 +658,12 @@ fn pending_review(team: &Team, task: &TaskId) -> Option<(PrNumber, u32)> {
         reviews
             .iter()
             .any(|review| review.task == *task && matches!(review.outcome, ReviewOutcome::Pending))
-            .then(|| (pr.number, fix_passes(progress)))
+            .then(|| {
+                (
+                    pr.number,
+                    u32::try_from(progress.completed_review_passes()).unwrap_or(u32::MAX),
+                )
+            })
     })
 }
 

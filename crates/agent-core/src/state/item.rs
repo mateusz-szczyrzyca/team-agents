@@ -943,6 +943,14 @@ impl ItemProgress {
         self.merge_passes
     }
 
+    /// How many review passes the item has completed before its current one: its fix passes and the merge conflict
+    /// passes it has spent.
+    #[must_use]
+    pub fn completed_review_passes(&self) -> usize {
+        // RED stub: counts only fix passes, ignoring merge conflict passes.
+        self.fix_passes.len()
+    }
+
     /// The merge conflict pass in progress, if any.
     #[must_use]
     pub const fn merge_conflict(&self) -> Option<&MergeConflict> {
@@ -1712,6 +1720,18 @@ mod tests {
         let back: ItemProgress = serde_json::from_str(&text).unwrap();
 
         assert_eq!(back.merge_passes(), 1);
+    }
+
+    #[test]
+    fn completed_review_passes_counts_both_fix_passes_and_merge_conflict_passes() {
+        let mut item = progress_in(PhaseKind::Fixing);
+        assert_eq!(item.completed_review_passes(), 1);
+
+        item.spend_merge_pass();
+        assert_eq!(item.completed_review_passes(), 2);
+
+        item.spend_merge_pass();
+        assert_eq!(item.completed_review_passes(), 3);
     }
 
     #[test]

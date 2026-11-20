@@ -853,6 +853,17 @@ impl Owner {
             .map_or(0, |progress| progress.fix_passes().len())
     }
 
+    /// How many review passes `items` of `team` have completed before their current one: their fix passes and the merge
+    /// conflict passes they have spent.
+    pub(super) fn review_passes_of(&self, team: &TeamId, items: &[ItemId]) -> usize {
+        items
+            .iter()
+            .filter_map(|id| self.parts.state.team(team).and_then(|found| found.item(*id)))
+            .map(agent_core::state::ItemProgress::completed_review_passes)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// The items of `published` for which the round machine agrees that the pull request carries the commit the gate passed
     /// on; the others are looked at again.
     fn confirmed(&self, team_id: &TeamId, publication: &Publication, published: &Published) -> Vec<ItemId> {
