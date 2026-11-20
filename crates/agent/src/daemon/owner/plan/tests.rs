@@ -13,9 +13,10 @@ const RULES: &str = "## Your plan\n\nKeep the plan of your task in `.agent/plan.
 /// [`solo_state`] whose task 1 was sent back for `reason`, which no run has been told yet.
 fn sent_back(reason: PlanReason) -> State {
     let mut state = solo_state();
-    let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
-    member.send_back(reason);
-    drop(member);
+    {
+        let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+        member.send_back(reason);
+    }
     state
 }
 
