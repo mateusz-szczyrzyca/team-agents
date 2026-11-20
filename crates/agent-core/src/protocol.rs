@@ -193,6 +193,23 @@ impl Frame {
     /// # Errors
     /// [`EncodeError`] when the serializer fails.
     pub fn to_line(&self) -> Result<String, EncodeError> {
+        if let Self::Response(Response {
+            id,
+            result: Outcome::Ok {
+                reply: Reply::Team { team },
+            },
+            ..
+        }) = self
+            && !team.splits().is_empty()
+        {
+            return encode(&Self::Response(Response::error(
+                *id,
+                Failure {
+                    kind: FailureKind::Invalid,
+                    message: "showing a split team requires protocol 4".into(),
+                },
+            )));
+        }
         let mut legacy = serde_json::to_value(self).map_err(|source| EncodeError { source })?;
         if strip_split_fields(&mut legacy) {
             encode(&legacy)
