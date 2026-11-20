@@ -57,3 +57,31 @@ fn accepts_the_numeric_boundary_and_ignores_prose_without_a_marker() {
         assert_eq!(delivery_report(message).unwrap(), None);
     }
 }
+
+#[test]
+fn delivery_binding_uses_only_the_reported_runs_rounds_and_refuses_ambiguity() {
+    use crate::state::PhaseKind;
+    use crate::state::fixtures::{at, drive, round_id, team};
+    let mut team = team(1);
+    for (id, item) in [(1, "1.2"), (2, "2.1")] {
+        team.open_round(round_id(id), Some(item.parse().unwrap()), at(1))
+            .unwrap();
+        drive(&mut team, item, PhaseKind::InProgress);
+    }
+    assert_eq!(bind_delivery(&team, &[round_id(2)]), Ok(round_id(2)));
+    assert_eq!(bind_delivery(&team, &[]), Err(DeliveryBindingError::Missing));
+    assert_eq!(
+        bind_delivery(&team, &[round_id(1), round_id(2)]),
+        Err(DeliveryBindingError::Ambiguous)
+    );
+    assert_eq!(
+        bind_delivery(&team, &[round_id(99)]),
+        Err(DeliveryBindingError::Unknown { round: round_id(99) })
+    );
+    drive(&mut team, "1.2", PhaseKind::InReview);
+    assert_eq!(bind_delivery(&team, &[round_id(1)]), Err(DeliveryBindingError::Missing));
+    assert_eq!(bind_delivery(&team, &[round_id(1), round_id(2)]), Ok(round_id(2)));
+    team.deliver_round(&round_id(2), crate::state::fixtures::pr(7).number)
+        .unwrap();
+    assert_eq!(bind_delivery(&team, &[round_id(2)]), Err(DeliveryBindingError::Missing));
+}

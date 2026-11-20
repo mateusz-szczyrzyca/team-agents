@@ -65,3 +65,31 @@ pub fn delivery_report(message: &str) -> Result<Option<PrNumber>, DeliveryReport
 
 #[cfg(test)]
 mod tests;
+
+/// Why a coordinator run does not identify exactly one working delivery round.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DeliveryBindingError {
+    /// A report cannot fall back to an unrelated team's working item.
+    #[error("the coordinator run names no open working item round")]
+    Missing,
+    /// An unqualified report cannot choose between multiple working items.
+    #[error("the coordinator run names multiple open working item rounds")]
+    Ambiguous,
+    /// Run references must belong to the team that made the report.
+    #[error("the coordinator run names unknown round {round}")]
+    Unknown {
+        /// The foreign or missing round.
+        round: crate::ids::RoundId,
+    },
+}
+
+/// Binds a report only to an open working item among the coordinator run's durable round references.
+///
+/// # Errors
+/// Returns [`DeliveryBindingError`] when the references cannot identify exactly one working item.
+pub fn bind_delivery(
+    _team: &crate::state::Team,
+    _rounds: &[crate::ids::RoundId],
+) -> Result<crate::ids::RoundId, DeliveryBindingError> {
+    Err(DeliveryBindingError::Missing)
+}
