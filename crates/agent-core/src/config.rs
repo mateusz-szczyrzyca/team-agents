@@ -340,7 +340,7 @@ pub struct Snapshot {
 }
 
 /// Default size in megabytes above which a snapshot is logged with a warning.
-const DEFAULT_SNAPSHOT_WARN_MB: u64 = 0;
+const DEFAULT_SNAPSHOT_WARN_MB: u64 = 200;
 
 impl Default for Snapshot {
     /// The default warning size: 200 megabytes.

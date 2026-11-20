@@ -175,6 +175,13 @@ keep_days = 0
 low_free_gb = 100
 min_free_gb = 20
 
+# --- Snapshots -----------------------------------------------------------------------------------------------------
+# A snapshot keeps everything in a worktree (uncommitted files included) when a run was cut; it is never refused.
+#   warn_mb   a snapshot bigger than this is taken and logged with a warning that says its size (default: 200)
+
+[snapshot]
+warn_mb = 200
+
 # --- Dashboard -----------------------------------------------------------------------------------------------------
 # It listens on a loopback address only; remote access goes through `tailscale serve`, and only the Tailscale
 # logins listed here get in.
