@@ -1228,11 +1228,15 @@ fn a_task_the_ladder_started_anew_says_it_is_in_a_new_session() {
                 agent_core::state::RunEnd::NoStatus { exit_code: Some(0) },
             )
             .unwrap();
-        member
-            .renew(agent_core::decide::ladder::Trouble::NoStatus, crate::fixtures::at(11))
-            .unwrap();
         member.transition(TaskStatus::Queued).unwrap();
     }
+    state
+        .renew_task(
+            &task(2),
+            agent_core::decide::ladder::Trouble::NoStatus,
+            crate::fixtures::at(11),
+        )
+        .unwrap();
 
     let text = render(&[TeamSummary::from(&state.teams()[0])]);
 

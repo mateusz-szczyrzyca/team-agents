@@ -1415,11 +1415,11 @@ async fn a_restart_after_the_ladder_started_a_task_anew_begins_its_new_session()
             .begin_run(run_id(1), at(5), Some("ses-1".parse().unwrap()))
             .unwrap();
         member.end_run(at(10), RunEnd::NoStatus { exit_code: Some(0) }).unwrap();
-        member
-            .renew(agent_core::decide::ladder::Trouble::NoStatus, at(11))
-            .unwrap();
         member.transition(TaskStatus::Queued).unwrap();
     }
+    state
+        .renew_task(&task(1), agent_core::decide::ladder::Trouble::NoStatus, at(11))
+        .unwrap();
     let mut f = Fixture::new(&state, 3, "done");
 
     f.start().await;
