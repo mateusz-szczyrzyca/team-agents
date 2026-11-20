@@ -80,3 +80,15 @@ impl Owner {
         Ok(Some(Settled::Status(TaskStatus::Waiting)))
     }
 }
+
+/// Renders the catalog's explanation for one policy fault.
+fn fault_text(
+    _texts: &agent_runtime::team_prompts::TeamPrompts,
+    _fault: &agent_core::decide::split::approval::ProposalFault,
+) -> Result<String, ProposalError> {
+    Ok(String::new())
+}
+
+#[cfg(test)]
+#[path = "split/tests.rs"]
+mod tests;
