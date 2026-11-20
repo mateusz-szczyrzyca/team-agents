@@ -29,7 +29,6 @@ use serde::de::{DeserializeOwned, Error as _};
 use serde_json::{Value, json};
 use tracing::Instrument;
 
-#[cfg(test)]
 mod outlook;
 
 pub use self::outlook::Outlook;

@@ -8,8 +8,14 @@ use agent_core::status::TaskStatus;
 use super::super::Owner;
 use super::publish::{GATE_SEND_BACKS, OwnGate};
 
+mod github;
 #[cfg(test)]
 mod tests;
+
+pub(in crate::daemon::owner) use self::github::Waits;
+#[cfg(test)]
+#[path = "waiting/tests/github.rs"]
+mod github_tests;
 
 impl Owner {
     /// Records an unowned idle round once, after all scheduling in a look has finished.
