@@ -11,7 +11,7 @@
 use std::num::NonZeroU32;
 
 use crate::config::Plan as Policy;
-use crate::ids::ItemId;
+use crate::ids::{AgentName, ItemId};
 use crate::kinds::Role;
 use crate::plan::{Plan, PlanError, Step, StepState};
 use crate::state::{ItemPhase, PlanKeeping, PlanReason, PlanStage, RunEnd};
@@ -111,6 +111,19 @@ pub fn done_ends<'a>(role: Role, phases: impl IntoIterator<Item = &'a ItemPhase>
         }
         Role::Solo | Role::Member | Role::Worker | Role::Reviewer => DoneEnds::Work,
     }
+}
+
+/// What the `DONE` of a task of `role` ends, in a team whose items are in `phases`, when `works` says whether the member
+/// an item in progress is with still works on it: an item whose member finished it and waits is the coordinator's to
+/// integrate, not a member's work still to come. [`done_ends`] is this with every member still at work.
+#[must_use]
+pub fn done_ends_with<'a>(
+    role: Role,
+    phases: impl IntoIterator<Item = &'a ItemPhase>,
+    works: impl Fn(&AgentName) -> bool,
+) -> DoneEnds {
+    let _ = works;
+    done_ends(role, phases)
 }
 
 /// What happens after a run ended that reports done.

@@ -495,3 +495,32 @@ fn a_coordinators_done_ends_a_turn_while_an_item_waits_or_is_with_a_member_and_t
         );
     }
 }
+
+#[test]
+fn an_item_whose_member_finished_it_is_the_coordinators_and_its_done_ends_the_work() {
+    use crate::state::ItemPhase;
+
+    let with = |name: &str| ItemPhase::InProgress {
+        assignee: name.parse().expect("an agent"),
+        branch: format!("agents/{name}/task-20261111-153001-k3x9-1.1")
+            .parse()
+            .expect("a branch"),
+    };
+    let finished = with("claude-1");
+    let working = with("claude-2");
+    let works = |agent: &crate::ids::AgentName| agent.as_str() == "claude-2";
+    let cases: &[(Role, &[&ItemPhase], DoneEnds)] = &[
+        (Role::Coordinator, &[&finished], DoneEnds::Work),
+        (Role::Coordinator, &[&finished, &working], DoneEnds::Turn),
+        (Role::Coordinator, &[&finished, &ItemPhase::Pending], DoneEnds::Turn),
+        (Role::Member, &[&working], DoneEnds::Work),
+    ];
+
+    for (role, phases, expected) in cases {
+        assert_eq!(
+            done_ends_with(*role, phases.iter().copied(), works),
+            *expected,
+            "{role:?} {phases:?}"
+        );
+    }
+}
