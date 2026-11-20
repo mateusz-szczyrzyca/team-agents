@@ -119,7 +119,9 @@ impl Team {
     /// The rounds whose accepted delivery still waits for its PR to merge: open ones, and ones abandoned by a stop of the
     /// team while their item is still in progress.
     pub fn delivery_waits(&self) -> impl Iterator<Item = &Round> {
-        std::iter::empty()
+        self.rounds
+            .iter()
+            .filter(|round| round.delivered_by().is_some() && self.item_works(round))
     }
 
     /// Records a claim after the caller verifies the item's clean git tree and ancestry.
@@ -149,14 +151,17 @@ impl Team {
     /// # Errors
     /// Returns [`CompleteDeliveryError`] for an unknown, non-working or unclaimed round, or an invalid completion time.
     pub fn complete_delivery(&mut self, id: &RoundId, at: Timestamp) -> Result<(), CompleteDeliveryError> {
-        let round = self.working_delivery_round(id)?;
+        let round = self.waiting_delivery_round(id)?;
         let pr = round
             .delivered_by()
             .cloned()
             .ok_or_else(|| CompleteDeliveryError::NotWaiting { round: id.clone() })?;
-        // Stage the fallible close before changing either the item or the durable round.
+        // Stage the fallible close before changing either the item or the durable round. A round that a stop
+        // abandoned is closed already and stays as it was: its end is recorded once.
         let mut completed = round.clone();
-        completed.close(at, RoundEnd::Merged)?;
+        if completed.is_open() {
+            completed.close(at, RoundEnd::Merged)?;
+        }
         if completed.part().is_some() {
             completed.merge_part(pr.clone());
         }
@@ -183,20 +188,34 @@ impl Team {
         Ok(())
     }
 
-    /// Restricts both operations to an open round of a working item.
+    /// Restricts a completion to a round of a working item that is open or was abandoned by a stop of the team.
+    fn waiting_delivery_round(&self, id: &RoundId) -> Result<&Round, WorkingRoundError> {
+        let round = self
+            .round(id)
+            .ok_or_else(|| WorkingRoundError::NoSuchRound(id.clone()))?;
+        if !self.item_works(round) || !(round.is_open() || round.ended() == Some(RoundEnd::Abandoned)) {
+            return Err(WorkingRoundError::NotWorking(id.clone()));
+        }
+        Ok(round)
+    }
+
+    /// Restricts a claim to an open round of a working item.
     fn working_delivery_round(&self, id: &RoundId) -> Result<&Round, WorkingRoundError> {
         let round = self
             .round(id)
             .ok_or_else(|| WorkingRoundError::NoSuchRound(id.clone()))?;
-        if !round.is_open()
-            || !round
-                .item()
-                .and_then(|item| self.item(item))
-                .is_some_and(|item| matches!(item.phase(), ItemPhase::InProgress { .. }))
-        {
+        if !self.item_works(round) || !round.is_open() {
             return Err(WorkingRoundError::NotWorking(id.clone()));
         }
         Ok(round)
+    }
+
+    /// Whether the item of `round` is in progress.
+    fn item_works(&self, round: &Round) -> bool {
+        round
+            .item()
+            .and_then(|item| self.item(item))
+            .is_some_and(|item| matches!(item.phase(), ItemPhase::InProgress { .. }))
     }
 }
 
