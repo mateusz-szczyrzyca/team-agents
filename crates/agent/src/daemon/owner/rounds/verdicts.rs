@@ -1,6 +1,7 @@
 //! The verdicts: what a reviewer's final message leads to — its report is kept and posted, its verdict recorded, and the
 //! round machine says what follows.
 
+use super::waiting::WaitingStep;
 use agent_core::config::ModelName;
 use agent_core::decide::round::{RoundError, RoundPolicy};
 use agent_core::history::HistoryEvent;
@@ -43,6 +44,16 @@ pub(super) struct Offered {
     pub(super) reviewer: agent_core::ids::InvestigatorName,
     /// The fix passes the pull request had had when the review was asked.
     pub(super) pass: usize,
+}
+
+/// What a verdict knows of the commit its verifier reviewed.
+enum Reviewed {
+    /// The pull request is not verified by rotation: no commit is kept.
+    NotRotating,
+    /// The commit the verifier reviewed.
+    Head(agent_core::state::CommitId),
+    /// Git cannot read it now: the verdict waits.
+    Held,
 }
 
 /// The review a reviewer's final message answers: the pull request, its items and when it was asked.
@@ -229,6 +240,42 @@ impl Owner {
         Ok(())
     }
 
+    /// The commit the verifier `task` reviewed for `asked`, read before anything of its verdict is recorded.
+    ///
+    /// Only a pull request that is verified by rotation keeps the reviewed head, so the protocols that started earlier
+    /// never run the Git lookup. When git cannot read it the step waits, and the verdict is held and taken again at a
+    /// later look, after the step's pause or the human's resume.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the lead or the reviewer's name cannot be found, or the clock fails.
+    async fn reviewed_head(&mut self, team_id: &TeamId, task: &TaskId, asked: &Asked) -> Result<Reviewed, OwnerError> {
+        let rotating = asked.items.iter().any(|id| {
+            self.parts
+                .state
+                .team(team_id)
+                .and_then(|team| team.item(*id))
+                .and_then(|item| item.findings())
+                .is_some_and(|ledger| ledger.verification().is_some())
+        });
+        if !rotating {
+            return Ok(Reviewed::NotRotating);
+        }
+        let agent: AgentName = asked.reviewer.as_str().parse()?;
+        let repo = self.lead_of(team_id)?.repo;
+        let place = self.place_of(team_id, &asked.items);
+        let git = self.worktree_git(&repo, task, &agent);
+        Ok(self
+            .head_of(
+                &place,
+                team_id,
+                WaitingStep::ReadReviewedHead,
+                Some(asked.pr.number),
+                git,
+            )
+            .await?
+            .map_or(Reviewed::Held, Reviewed::Head))
+    }
+
     /// Records the verdict `verdict` of the reviewer `task`, keeps and posts its report, and does what the round does next.
     pub(super) async fn take_verdict(
         &mut self,
@@ -250,6 +297,14 @@ impl Owner {
                     .await;
             }
         };
+        let reviewed = match self.reviewed_head(team_id, task, asked).await? {
+            Reviewed::NotRotating => None,
+            Reviewed::Head(head) => Some(head),
+            Reviewed::Held => {
+                self.watch.held_verdicts.insert(task.clone(), message.to_owned());
+                return Ok(());
+            }
+        };
         self.watch.bounces.remove(task);
         let now = Timestamp::now(&self.parts.clock)?;
         let report = report_text(message);
@@ -264,36 +319,13 @@ impl Owner {
             .team(team_id)
             .is_some_and(|team| crate::daemon::review::independent_first_review(team, task));
         let lead = self.lead_of(team_id)?;
-        let rotating = asked.items.iter().any(|id| {
-            self.parts
-                .state
-                .team(team_id)
-                .and_then(|team| team.item(*id))
-                .and_then(|item| item.findings())
-                .is_some_and(|ledger| ledger.verification().is_some())
-        });
         let next = self.decide(team_id, asked, verdict);
         let mut look = Look::default();
         self.record_verdict(team_id, task, asked, verdict, now, &mut look)?;
         let decisions = self.finding_decisions(team_id, &reports);
         self.record_finding_decisions(team_id, asked, decisions, now)?;
         let completed = self.record_findings(team_id, task, asked, reports)?;
-        // Only a pull request that is verified by rotation keeps the reviewed head, so the protocols that started
-        // earlier never run the Git lookup.
-        if completed && rotating {
-            let agent: AgentName = asked.reviewer.as_str().parse()?;
-            let head = self
-                .worktree_git(&lead.repo, task, &agent)
-                .map_err(|source| super::ReviewedHeadError {
-                    task: task.clone(),
-                    source,
-                })?
-                .rev_parse(&Revision::Head)
-                .await
-                .map_err(|source| super::ReviewedHeadError {
-                    task: task.clone(),
-                    source: PublishError::from(source),
-                })?;
+        if completed && let Some(head) = reviewed {
             let mut team = self
                 .parts
                 .state

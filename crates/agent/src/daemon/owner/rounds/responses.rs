@@ -1,6 +1,7 @@
 //! Durable lead-response validation, including bounded correction and restart recovery.
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
+use super::waiting::WaitingStep;
 /// Why a lead correction cannot be rendered.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ResponseTextError {
@@ -29,23 +30,32 @@ impl Owner {
         look: &mut Look,
     ) -> Result<(), OwnerError> {
         let lead = self.lead_of(team)?;
-        let rotating = self.parts.state.team(team).is_some_and(|team| {
-            response_run(team, &lead.task).is_some_and(|run| {
-                team.items().iter().any(|item| {
+        let rotating = self.parts.state.team(team).and_then(|team| {
+            let run = response_run(team, &lead.task)?;
+            team.items()
+                .iter()
+                .find(|item| {
                     needs_response(item, run, crate::daemon::merge::pull_passes(team, item))
                         && item.findings().is_some_and(|ledger| ledger.verification().is_some())
                 })
-            })
+                .map(|item| {
+                    let pr = match item.phase() {
+                        ItemPhase::InReview { pr, .. }
+                        | ItemPhase::Approved { pr, .. }
+                        | ItemPhase::Fixing { pr, .. } => Some(pr.number),
+                        ItemPhase::Pending | ItemPhase::InProgress { .. } | ItemPhase::Done { .. } => None,
+                    };
+                    (item.id(), pr)
+                })
         });
-        if !rotating {
+        let Some((item, pr)) = rotating else {
             return self.check_fix_responses(pulls, team, look);
-        }
-        let head = self
-            .worktree_git(&lead.repo, &lead.task, &lead.agent)
-            .map_err(super::OpinionDaemonError::from)?
-            .rev_parse(&agent_runtime::git::Revision::Head)
-            .await
-            .map_err(super::OpinionDaemonError::from)?;
+        };
+        let place = self.place_of(team, &[item]);
+        let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent);
+        let Some(head) = self.head_of(&place, team, WaitingStep::ReadFixHead, pr, git).await? else {
+            return Ok(());
+        };
         self.check_responses(pulls, team, look, Some(&head))
     }
 

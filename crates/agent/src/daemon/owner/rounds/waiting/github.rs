@@ -76,6 +76,12 @@ pub(in crate::daemon::owner) enum WaitingStep {
     RefreshDescriptions,
     /// Making or moving the worktree of the investigator that gives a second opinion.
     AskOpinion,
+    /// Reading the lead's commit before an approved pull request whose item is in its fix pass is merged.
+    ReadMergeHead,
+    /// Reading the lead's commit to check its fix response against.
+    ReadFixHead,
+    /// Reading the commit a verifier reviewed, before its verdict is taken.
+    ReadReviewedHead,
 }
 
 impl WaitingStep {
@@ -85,6 +91,9 @@ impl WaitingStep {
         match self {
             Self::RefreshDescriptions => "refresh the description of the pull requests",
             Self::AskOpinion => "prepare a second opinion",
+            Self::ReadMergeHead => "read the lead's commit before the merge",
+            Self::ReadFixHead => "read the lead's commit after its fix",
+            Self::ReadReviewedHead => "read the commit a reviewer verified",
         }
     }
 }
@@ -341,15 +350,26 @@ impl Waits {
         self.steps.len()
     }
 
-    /// Makes every wait of `team` due, so that the human's `agent resume` tries its steps at the next look.
+    /// Makes every wait of `team` due, so that the human's `agent resume` tries its steps at the next look; returns how
+    /// many there were.
     ///
     /// A wait is kept, due at once, rather than dropped: the step that then goes through is logged as going through,
     /// and one that fails again starts to wait again, with its tries counted on.
-    pub(super) fn forget_team(&mut self, team: &TeamId) {
+    pub(super) fn forget_team(&mut self, team: &TeamId) -> usize {
+        let mut waited = 0_usize;
         for wait in self.steps.values_mut().filter(|wait| &wait.team == team) {
             wait.outlook = Outlook::MayPass;
             wait.next_at = None;
+            waited = waited.saturating_add(1);
         }
+        waited
+    }
+
+    /// Whether a step `step` of `team` waits, in any of its rounds.
+    pub(in crate::daemon::owner) fn holds(&self, team: &TeamId, step: WaitingStep) -> bool {
+        self.steps
+            .iter()
+            .any(|((_, kept), wait)| *kept == step && &wait.team == team)
     }
 
     /// What `agent status` says `round` of `team` waits for: the step of the round itself, else a step of all the

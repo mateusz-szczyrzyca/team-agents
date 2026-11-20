@@ -125,9 +125,6 @@ pub(crate) enum OwnerError {
     /// A fix response correction cannot be rendered.
     #[error("cannot render fix response correction")]
     FixResponse(#[from] rounds::ResponseTextError),
-    /// The reviewed commit cannot be retained for the next verification.
-    #[error(transparent)]
-    ReviewedHead(#[from] rounds::ReviewedHeadError),
     /// The permanent finding numbers have been used up.
     #[error("cannot number review findings")]
     FindingNumbers(#[from] agent_core::state::FindingNumbersExhausted),
@@ -1422,8 +1419,13 @@ impl Owner {
                             self.control_request(&client, Steer::Unpause, &request.target).await?
                         }
                         Command::Resume(request) => {
-                            self.resume_waits(&request.target);
-                            self.control_request(&client, Steer::Resume, &request.target).await?
+                            if self.resume_waits(&request.target) > 0 {
+                                // The resume is for the steps that waited: they are tried at the next look, and no
+                                // task of the team is started again for it.
+                                Ok(Reply::Applied { tasks: Vec::new() })
+                            } else {
+                                self.control_request(&client, Steer::Resume, &request.target).await?
+                            }
                         }
                         Command::Say(request) => self.say_request(&client, request).await?,
                         other => self.answer(&other),

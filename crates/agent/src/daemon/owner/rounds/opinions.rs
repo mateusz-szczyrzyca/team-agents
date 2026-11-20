@@ -3,7 +3,7 @@ use super::super::teams::Look;
 use super::super::{Located, Owner, OwnerError};
 use super::reviewers::Prepared;
 use super::verdicts::Asked;
-use super::waiting::{Step, WaitingStep};
+use super::waiting::WaitingStep;
 use super::{PublishError, Pulls};
 use crate::daemon::review::{pending_opinion, select_reviewers};
 use crate::daemon::team::Why;
@@ -115,15 +115,6 @@ impl Owner {
         Ok(())
     }
 
-    /// Where the preparation of a second opinion for `items` of `team` waits when git fails it: their round, or the
-    /// team's rounds as a whole for items whose round the state cannot name.
-    fn opinion_place(&self, team: &TeamId, items: &[ItemId]) -> Step {
-        self.rounds_of_items(team, items)
-            .into_iter()
-            .next()
-            .map_or_else(|| Step::Team { team: team.clone() }, |round| Step::Round { round })
-    }
-
     /// Gives each waiting opinion its own independent free investigator, or leaves it waiting.
     pub(super) async fn ask_opinions(
         &mut self,
@@ -172,7 +163,7 @@ impl Owner {
                     continue;
                 };
                 let now = Timestamp::now(&self.parts.clock)?;
-                let place = self.opinion_place(team_id, &ids);
+                let place = self.place_of(team_id, &ids);
                 if !self.watch.github_waits.due(&place, WaitingStep::AskOpinion, now) {
                     continue;
                 }
