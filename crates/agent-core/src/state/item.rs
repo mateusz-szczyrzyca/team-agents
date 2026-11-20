@@ -826,6 +826,22 @@ fn check_item_progress(progress: &ItemProgress) -> Result<(), InvalidItemProgres
 }
 
 impl ItemProgress {
+    /// Completes only a working item after the team checked its delivery claim.
+    pub(super) fn complete_delivery(
+        &mut self,
+        round: &crate::ids::RoundId,
+        pr: PullRequest,
+        at: Timestamp,
+    ) -> Result<(), super::DeliveryError> {
+        if !matches!(self.phase, ItemPhase::InProgress { .. }) {
+            return Err(super::DeliveryError::NotWorking { round: round.clone() });
+        }
+        self.phase = ItemPhase::Done {
+            completion: Completion::Merged { pr, at },
+        };
+        Ok(())
+    }
+
     /// The progress of an item that is not started, or of one that the task list already marks done.
     #[must_use]
     pub fn new(id: ItemId, mark: ItemMark) -> Self {
