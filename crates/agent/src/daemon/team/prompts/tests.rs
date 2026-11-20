@@ -364,3 +364,5 @@ async fn a_session_that_starts_without_a_team_gets_the_answers_after_its_prompt(
 
     assert_eq!(prompt, "THE COMPOSED PROMPT\n\nTHE HUMAN ANSWERED\n");
 }
+
+mod split_scope;
