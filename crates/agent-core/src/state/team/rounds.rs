@@ -291,6 +291,7 @@ impl Team {
         if let Some(item) = item {
             let progress = self.item(item).ok_or(OpenRoundError::UnknownItem { item })?;
             if let Some(existing) = self.round_of(item)
+                && existing.delivery_closed_at().is_none()
                 && (existing.part_pull_request().is_none() || self.next_part(item).is_none())
             {
                 return Err(OpenRoundError::ItemHasRound {
@@ -444,6 +445,16 @@ pub(super) fn check_rounds(team: &Team) -> Result<(), TeamError> {
 fn check_round_list(team: &Team) -> Result<(), RoundsError> {
     super::splits::execution::check_execution(team)?;
     for round in &team.rounds {
+        if let Some(at) = round.delivery_closed_at()
+            && (round.delivered_by().is_none()
+                || round.ended() != Some(RoundEnd::Abandoned)
+                || round.part_pull_request().is_some()
+                || at < round.opened_at())
+        {
+            return Err(RoundsError::Delivery {
+                round: round.id().clone(),
+            });
+        }
         if let Some(pr) = round.delivered_by() {
             let phase = round.item().and_then(|id| team.item(id)).map(ItemProgress::phase);
             let fits = if round.is_open() {
@@ -471,7 +482,10 @@ fn check_round_list(team: &Team) -> Result<(), RoundsError> {
     }
     for progress in &team.items {
         let item = progress.id();
-        let mut rounds = team.rounds.iter().filter(|round| round.item() == Some(item));
+        let mut rounds = team
+            .rounds
+            .iter()
+            .filter(|round| round.item() == Some(item) && round.delivery_closed_at().is_none());
         let first = rounds.next();
         if let (Some(first), Some(second)) = (first, rounds.next())
             && (first.part().is_none() || second.part().is_none())
@@ -488,7 +502,11 @@ fn check_round_list(team: &Team) -> Result<(), RoundsError> {
                 completion: Completion::Listed
             }
         );
-        if first.is_none() && !listed && !matches!(progress.phase(), ItemPhase::Pending) {
+        if first.is_none()
+            && team.round_of(item).is_none()
+            && !listed
+            && !matches!(progress.phase(), ItemPhase::Pending)
+        {
             return Err(RoundsError::ItemWithoutRound {
                 item,
                 phase: progress.phase().kind(),

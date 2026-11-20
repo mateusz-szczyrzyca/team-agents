@@ -1,12 +1,16 @@
 //! Harness verification of coordinator delivery claims before publication.
 
-use agent_core::decide::delivery::{bind_delivery, delivery_report};
+use agent_core::decide::delivery::{
+    DeliveryAction, DeliveryObservation, bind_delivery, delivery_action, delivery_report,
+};
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{BranchName, RoundId, TaskId, TeamId};
 use agent_core::log::LogEvent;
-use agent_core::prompt::{AutopilotPrompt, Variables};
+use agent_core::prompt::{AutopilotPrompt, TeamPrompt, Variables};
 use agent_core::protocol::EventKind;
 use agent_core::state::{ItemPhase, PrNumber, RoundEnd, Timestamp};
+use agent_core::status::TaskStatus;
+use agent_runtime::agentbus::{Outgoing, Recipient};
 use agent_runtime::git::{DeliveryGitError, DeliveryRead, Revision};
 use agent_runtime::github::PullState;
 use agent_runtime::process::error_chain;
@@ -19,6 +23,12 @@ use crate::daemon::team::Why;
 /// Why a checked delivery cannot be retained or its correction rendered.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum DeliveryDaemonError {
+    /// The checked state rejected ending a claim.
+    #[error(transparent)]
+    End(#[from] agent_core::state::EndDeliveryError),
+    /// The recovery notification could not be rendered.
+    #[error("cannot render delivery closure message")]
+    TeamText(#[from] agent_runtime::team_prompts::RenderTeamTextError),
     /// The checked state rejected a claim.
     #[error(transparent)]
     Deliver(#[from] agent_core::state::DeliverRoundError),
@@ -214,17 +224,58 @@ impl Owner {
             }
             .await;
             match observed {
-                Ok(PullState::Merged) => {
-                    self.finish_delivery(team, &round, now, look)?;
-                    tracing::info!(event = LogEvent::RoundChanged.as_str(), %team, %round, pr = %number,
-                        change = "delivery_merged", "a delivered item completed at its PR merge");
-                }
-                Ok(PullState::Open) => {}
-                Ok(PullState::Closed) => {
-                    // Reopening and member rescheduling belong to the second part of this feature.
-                    // Preserve the accepted claim rather than falsely completing a closed, unmerged PR.
-                    tracing::warn!(event = LogEvent::RoundChanged.as_str(), %team, %round, pr = %number,
-                        change = "delivery_closed", "delivering PR closed without merging; item remains waiting");
+                Ok(state) => {
+                    let observation = match state {
+                        PullState::Merged => DeliveryObservation::Merged,
+                        PullState::Open => DeliveryObservation::Open,
+                        PullState::Closed => DeliveryObservation::Closed,
+                    };
+                    let found = self
+                        .parts
+                        .state
+                        .team(team)
+                        .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?;
+                    match delivery_action(found, &round, observation) {
+                        DeliveryAction::Complete => {
+                            self.finish_delivery(team, &round, now, look)?;
+                            tracing::info!(event = LogEvent::RoundChanged.as_str(), %team, %round, pr = %number,
+                                change = "delivery_merged", "a delivered item completed at its PR merge");
+                        }
+                        DeliveryAction::Return => {
+                            let was_open = found.round(&round).is_some_and(agent_core::state::Round::is_open);
+                            let item = found.round(&round).and_then(agent_core::state::Round::item);
+                            self.parts
+                                .state
+                                .team_mut(team)
+                                .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?
+                                .end_delivery(&round, now)
+                                .map_err(DeliveryDaemonError::from)?;
+                            // Persist the observation before notification: a later reopening cannot revive the claim.
+                            self.save().await?;
+                            if was_open {
+                                self.record_event_at(
+                                    now,
+                                    team,
+                                    vec![round.clone()],
+                                    HistoryEvent::RoundClosed {
+                                        round: round.clone(),
+                                        end: RoundEnd::Abandoned,
+                                    },
+                                );
+                                look.events.push(EventKind::RoundClosed {
+                                    team: team.clone(),
+                                    round: round.clone(),
+                                    item,
+                                    how: RoundEnd::Abandoned,
+                                });
+                            }
+                            look.changed = true;
+                            self.cleanup_round_targets(team, &round);
+                            tracing::warn!(event = LogEvent::DeliveryClosed.as_str(), %team, %round, pr = %number,
+                                "delivering PR closed without merging; the claim ended");
+                        }
+                        DeliveryAction::Ignore | DeliveryAction::Wait => {}
+                    }
                 }
                 Err(error) => {
                     // A failed observation proves no merge. Retry this durable claim at the next poll.
@@ -233,6 +284,72 @@ impl Owner {
                         "cannot observe delivering PR; item remains waiting");
                 }
             }
+        }
+        self.return_closed_deliveries(team, now, look).await?;
+        Ok(())
+    }
+
+    /// Completes durable recovery without consulting the old PR again. The latest round is the recovery marker.
+    async fn return_closed_deliveries(
+        &mut self,
+        team: &TeamId,
+        now: Timestamp,
+        look: &mut Look,
+    ) -> Result<(), OwnerError> {
+        let found = self
+            .parts
+            .state
+            .team(team)
+            .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?;
+        let pending: Vec<_> = found
+            .rounds()
+            .iter()
+            .filter_map(|round| {
+                round.delivery_closed_at()?;
+                let item = round.item()?;
+                if found.round_of(item)?.id() != round.id() {
+                    return None;
+                }
+                let ItemPhase::InProgress { assignee, .. } = found.item(item)?.phase() else {
+                    return None;
+                };
+                let task = self.task_of(team, assignee)?;
+                let status = found.find(&task)?.1.status();
+                // A stop or a pause retains the obligation; resuming the member makes it actionable.
+                if !matches!(status, TaskStatus::Waiting | TaskStatus::Queued) {
+                    return None;
+                }
+                Some((item, task, round.delivered_by()?.number))
+            })
+            .collect();
+        for (item, task, number) in pending {
+            let values = Variables::new()
+                .with("item", item.to_string())
+                .map_err(DeliveryDaemonError::from)?
+                .with("pr", number.to_string())
+                .map_err(DeliveryDaemonError::from)?;
+            let text = self
+                .parts
+                .team_texts
+                .render(TeamPrompt::DeliveryClosed, &values)
+                .map_err(DeliveryDaemonError::from)?;
+            let lead = self.lead_of(team)?;
+            let from = "agentbus".parse()?;
+            let to = Recipient::Member {
+                agent: lead.agent,
+                team: team.clone(),
+            };
+            // Sending first prevents a lost notice; a crash before saving may repeat this explanation.
+            if let Err(error) = self.parts.bus.send(&from, &to, &Outgoing::Chat { text }).await {
+                // The saved closure retains the unsent notice and unopened round for the next poll.
+                tracing::warn!(event = LogEvent::BusDown.as_str(), %team, %task, pr = %number,
+                    error = %error_chain(&error), "cannot notify the lead of the closed delivery; recovery will retry");
+                continue;
+            }
+            self.open_round(team, Some(item), now, look)?;
+            self.release(&task, Why::Assigned(item), look)?;
+            // Save the fresh round and queued member together, before the scheduler can start it.
+            self.save().await?;
         }
         Ok(())
     }

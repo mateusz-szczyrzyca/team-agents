@@ -117,7 +117,7 @@ fn a_history_of_version_11_is_migrated_and_keeps_its_records_and_takes_snapshots
     let version: u32 = raw
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("the version");
-    assert_eq!(version, 13);
+    assert_eq!(version, 14);
     let reader = Reader::open(&path).expect("the history opens");
     assert_eq!(reader.round_records(&round).expect("the records are read"), before);
     let snapshot_round = RoundId::from_str(ROUND).expect("a round ID");
@@ -163,4 +163,116 @@ fn snapshot_warnings_are_kept_in_the_daemon_log() {
             (LogEvent::SnapshotFailed, LogLevel::Warn),
         ]
     );
+}
+
+#[test]
+fn delivery_close_warning_migrates_old_history_without_losing_logs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(include_str!("fixtures/history-before-delivery-close.sql"))
+        .unwrap();
+    let warning = |event| LogRecord {
+        at: at(5, 0),
+        module: "agent::daemon::owner".to_owned(),
+        event,
+        team: None,
+        task: None,
+        message: "delivery lifecycle".to_owned(),
+        fields: BTreeMap::new(),
+        cut: Cut::default(),
+    };
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+    db.write_logs(&[warning(LogEvent::SnapshotLarge), warning(LogEvent::DeliveryClosed)])
+        .expect("both warning events are stored");
+    drop(db);
+    let logs = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    assert_eq!(
+        logs.iter()
+            .map(|entry| (entry.event(), entry.level()))
+            .collect::<Vec<_>>(),
+        vec![
+            (LogEvent::SnapshotLarge, LogLevel::Warn),
+            (LogEvent::DeliveryClosed, LogLevel::Warn)
+        ]
+    );
+}
+
+#[test]
+fn delivery_warning_migration_preserves_preexisting_rows_and_search_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.execute_batch(include_str!("fixtures/history-before-delivery-close.sql"))
+        .unwrap();
+    raw.execute_batch(
+        "INSERT INTO daemon_logs (id, first_at, at, level, module, event, message, fields, count, cut)
+         VALUES (7, '2026-04-13T09:00:00Z', '2026-04-13T09:00:00Z', 'warn', 'agent',
+                 'snapshot_large', 'historical snapshot warning', '{}', 1, '');",
+    )
+    .unwrap();
+    drop(raw);
+    let db = HistoryDb::open(&path, roomy()).unwrap();
+    drop(db);
+    let logs = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].event(), LogEvent::SnapshotLarge);
+    assert_eq!(logs[0].message(), "historical snapshot warning");
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    let search: (i64, String) = raw
+        .query_row("SELECT log, body FROM history_search WHERE rowid = -7", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .unwrap();
+    assert_eq!(search, (7, "historical snapshot warning".to_owned()));
+    let cursor: i64 = raw
+        .query_row(
+            "SELECT value FROM history_cursors WHERE name = 'daemon_logs'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(cursor, 7);
+}
+
+#[test]
+fn a_history_of_version_13_gains_the_delivery_warning_and_keeps_logs_and_plan_versions() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.execute_batch(include_str!("fixtures/history-v13-before-delivery-close.sql"))
+        .unwrap();
+    raw.execute_batch(
+        "INSERT INTO daemon_logs (id, first_at, at, level, module, event, message, fields, count, cut)
+         VALUES (3, '2026-04-13T09:00:00Z', '2026-04-13T09:00:00Z', 'warn', 'agent',
+                 'snapshot_large', 'written by 0.35.0', '{}', 1, '');",
+    )
+    .unwrap();
+    drop(raw);
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+    db.write_logs(&[LogRecord {
+        at: at(5, 0),
+        module: "agent::daemon::owner".to_owned(),
+        event: LogEvent::DeliveryClosed,
+        team: None,
+        task: None,
+        message: "closed".to_owned(),
+        fields: BTreeMap::new(),
+        cut: Cut::default(),
+    }])
+    .expect("the delivery warning is stored after the migration");
+    drop(db);
+    let logs = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    assert_eq!(
+        logs.iter().map(agent_core::log::LogEntry::event).collect::<Vec<_>>(),
+        vec![LogEvent::SnapshotLarge, LogEvent::DeliveryClosed]
+    );
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    let version: u32 = raw.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+    assert_eq!(version, 14);
+    let plans: i64 = raw
+        .query_row("SELECT count(*) FROM plan_versions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(plans, 1);
 }

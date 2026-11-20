@@ -144,6 +144,7 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         ),
         (LogEvent::TeamChanged, "team_changed", LogLevel::Info),
         (LogEvent::RoundChanged, "round_changed", LogLevel::Info),
+        (LogEvent::DeliveryClosed, "delivery_closed", LogLevel::Warn),
         (LogEvent::ItemPhaseChanged, "item_phase_changed", LogLevel::Info),
         (LogEvent::TaskStatusChanged, "task_status_changed", LogLevel::Info),
         (LogEvent::RunStarted, "run_started", LogLevel::Info),
@@ -415,4 +416,10 @@ fn log_entry_try_new_accepts_valid_parts_and_refuses_every_broken_invariant() {
             field: "prompt".to_owned(),
         })
     );
+}
+
+#[test]
+fn closed_delivery_has_its_own_warning_event() {
+    assert_eq!(LogEvent::DeliveryClosed.as_str(), "delivery_closed");
+    assert_eq!(LogEvent::DeliveryClosed.level(), LogLevel::Warn);
 }

@@ -767,3 +767,7 @@ records the same context in `second_opinion_ended`, with its one-based `attempt`
 `why`. The story calls the first two failures “second opinion replaced” and the third “second opinion
 exhausted”, naming the unsuccessful investigator and the first cause line. Confirmed and not-confirmed
 events retain the accepted investigator and evidence. Complete evidence remains below each story entry.
+
+History version 14 admits the `delivery_closed` warning. Its migration preserves existing daemon logs, round
+links, search entries and cursors from version 12. The schema-14 state remains unchanged apart from an optional
+round timestamp; see [state.md](state.md).

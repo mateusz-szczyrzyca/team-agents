@@ -49,6 +49,8 @@ pub enum TeamPrompt {
     WorkerStopped,
     /// How a worker's run that failed a request ended: the watchdog gave up on it.
     WorkerHung,
+    /// The coordinator is told that an observed unmerged close returned an item to its member.
+    DeliveryClosed,
     /// The notification that a team finished its work.
     NoticeTeamDone,
 }
@@ -56,6 +58,7 @@ pub enum TeamPrompt {
 impl TeamPrompt {
     /// Every text of the catalog.
     pub const ALL: &'static [Self] = &[
+        Self::DeliveryClosed,
         Self::Context,
         Self::Part,
         Self::Assignment,
@@ -81,6 +84,9 @@ impl TeamPrompt {
     #[must_use]
     pub const fn spec(self) -> PromptSpec {
         match self {
+            Self::DeliveryClosed => {
+                PromptSpec::new("harness/team/bus-delivery-closed.md", Audience::Model, &["item", "pr"])
+            }
             Self::Part => PromptSpec::new(
                 "harness/team/part.md",
                 Audience::Model,

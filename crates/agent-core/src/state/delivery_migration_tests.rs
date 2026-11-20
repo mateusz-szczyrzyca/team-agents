@@ -19,3 +19,17 @@ fn schema_thirteen_migrates_without_delivery_and_writes_fourteen() {
     assert_eq!(written, serde_json::from_str::<serde_json::Value>(old).unwrap());
     assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
 }
+
+#[test]
+fn schema_fourteen_from_0_34_reads_an_open_delivery_claim_unchanged() {
+    let old = include_str!("../../tests/fixtures/state-with-open-delivery-0.34.0.json");
+    let state = State::from_json(old).unwrap();
+    let waiting: Vec<_> = state.teams()[0].delivery_waits().collect();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].delivered_by().unwrap().number.get().get(), 82);
+    assert_eq!(waiting[0].delivery_closed_at(), None);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&state.to_json().unwrap()).unwrap(),
+        serde_json::from_str::<serde_json::Value>(old).unwrap()
+    );
+}

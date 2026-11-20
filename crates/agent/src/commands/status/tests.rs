@@ -1186,3 +1186,29 @@ fn a_delivery_round_abandoned_by_a_stop_still_names_the_owning_pr() {
         "round-20261111-153002-q1w2  item 1.2  closed, abandoned, delivered by PR #7"
     );
 }
+
+#[test]
+fn an_ended_delivery_status_distinguishes_failure_from_waiting() {
+    let mut state = team_with_rounds();
+    let mut team = state.team_mut(&team_id(0)).unwrap();
+    let pr = crate::fixtures::pr(7);
+    team.item_mut("1.1".parse().unwrap())
+        .unwrap()
+        .advance(ItemPhase::InReview {
+            pr: pr.clone(),
+            reviews: Vec::new(),
+        })
+        .unwrap();
+    team.deliver_round(&round_id(2), pr.number).unwrap();
+    team.end_delivery(&round_id(2), at(40)).unwrap();
+    assert_eq!(
+        round_line(team.round(&round_id(2)).unwrap()),
+        "round-20261111-153002-q1w2  item 1.2  closed, abandoned, delivery PR #7 closed without merging"
+    );
+    team.open_round(round_id(3), Some("1.2".parse().unwrap()), at(41))
+        .unwrap();
+    assert_eq!(
+        round_line(team.round(&round_id(3)).unwrap()),
+        "round-20261111-153003-q1w2  item 1.2  open"
+    );
+}

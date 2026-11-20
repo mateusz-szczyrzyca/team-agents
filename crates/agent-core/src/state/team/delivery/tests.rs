@@ -309,3 +309,110 @@ fn an_abandoned_delivery_cannot_complete_before_its_round_opened() {
     ));
     assert_eq!(team, abandoned);
 }
+
+#[test]
+fn a_closed_claim_returns_ordinary_and_split_items_to_a_fresh_round() {
+    for mut team in [working(), two_part_team()] {
+        let item = "2.1".parse().unwrap();
+        team.deliver_round(&round_id(2), pr(7).number).unwrap();
+        let part = team.round(&round_id(2)).unwrap().part();
+        let phase = team.item(item).unwrap().phase().clone();
+        team.end_delivery(&round_id(2), at(40)).unwrap();
+        let old = team.round(&round_id(2)).unwrap();
+        assert_eq!(old.delivery_closed_at(), Some(at(40)));
+        assert_eq!(old.ended(), Some(RoundEnd::Abandoned));
+        assert_eq!(old.delivered_by(), Some(&pr(7)));
+        assert_eq!(waiting_ids(&team), Vec::<RoundId>::new());
+        let mut team: Team = serde_json::from_str(&serde_json::to_string(&team).unwrap()).unwrap();
+        assert_eq!(team.open_round(round_id(3), Some(item), at(41)), Ok(()));
+        assert_eq!(team.round_of(item).unwrap().part(), part);
+        assert_eq!(team.round_of(item).unwrap().delivered_by(), None);
+        assert_eq!(team.item(item).unwrap().phase(), &phase);
+        assert_eq!(
+            serde_json::from_str::<Team>(&serde_json::to_string(&team).unwrap()).unwrap(),
+            team
+        );
+        assert_eq!(
+            team.complete_delivery(&round_id(2), at(42)),
+            Err(CompleteDeliveryError::NotWaiting { round: round_id(2) })
+        );
+    }
+}
+
+#[test]
+fn ending_a_delivery_refuses_each_invalid_transition_without_mutation() {
+    let mut team = working();
+    for (id, error) in [
+        (round_id(9), EndDeliveryError::NoSuchRound { round: round_id(9) }),
+        (round_id(1), EndDeliveryError::NotWorking { round: round_id(1) }),
+        (round_id(2), EndDeliveryError::NotWaiting { round: round_id(2) }),
+    ] {
+        let before = team.clone();
+        assert_eq!(team.end_delivery(&id, at(40)), Err(error));
+        assert_eq!(team, before);
+    }
+    team.deliver_round(&round_id(2), pr(7).number).unwrap();
+    let before = team.clone();
+    assert!(
+        matches!(team.end_delivery(&round_id(2), at(0)), Err(EndDeliveryError::BeforeOpening(ClosedBeforeOpened { at: found, .. })) if found == at(0))
+    );
+    assert_eq!(team, before);
+    team.close_round(&round_id(2), at(30), RoundEnd::Abandoned).unwrap();
+    team.end_delivery(&round_id(2), at(40)).unwrap();
+    assert_eq!(team.round(&round_id(2)).unwrap().delivery_closed_at(), Some(at(40)));
+    let before = team.clone();
+    assert_eq!(
+        team.end_delivery(&round_id(2), at(41)),
+        Err(EndDeliveryError::NotWaiting { round: round_id(2) })
+    );
+    assert_eq!(team, before);
+}
+
+#[test]
+fn persisted_ended_delivery_requires_a_claim_abandoned_round_and_valid_time() {
+    let mut team = working();
+    team.deliver_round(&round_id(2), pr(7).number).unwrap();
+    team.end_delivery(&round_id(2), at(40)).unwrap();
+    let valid = serde_json::to_value(&team).unwrap();
+    for (field, value) in [
+        ("delivery", serde_json::Value::Null),
+        ("state", serde_json::json!({"status":"open"})),
+        ("delivery_closed_at", serde_json::to_value(at(0)).unwrap()),
+    ] {
+        let mut invalid = valid.clone();
+        invalid["rounds"][1][field] = value;
+        let result = serde_json::from_value::<Team>(invalid);
+        assert_eq!(result.expect_err(field).classify(), serde_json::error::Category::Data);
+    }
+}
+
+#[test]
+fn ending_a_completed_abandoned_part_refuses_a_stale_claim_without_mutation() {
+    let mut team = two_part_team();
+    team.deliver_round(&round_id(2), pr(7).number).unwrap();
+    team.close_round(&round_id(2), at(30), RoundEnd::Abandoned).unwrap();
+    team.complete_delivery(&round_id(2), at(40)).unwrap();
+    team.open_round(round_id(3), Some("2.1".parse().unwrap()), at(60))
+        .unwrap();
+    drive(&mut team, "2.1", PhaseKind::InProgress);
+    let before = team.clone();
+    for observation in [
+        crate::decide::delivery::DeliveryObservation::Open,
+        crate::decide::delivery::DeliveryObservation::Closed,
+        crate::decide::delivery::DeliveryObservation::Merged,
+    ] {
+        assert_eq!(
+            crate::decide::delivery::delivery_action(&team, &round_id(2), observation),
+            crate::decide::delivery::DeliveryAction::Ignore
+        );
+    }
+    assert_eq!(
+        team.end_delivery(&round_id(2), at(70)),
+        Err(EndDeliveryError::NotWaiting { round: round_id(2) })
+    );
+    assert_eq!(team, before);
+    assert_eq!(
+        serde_json::from_str::<Team>(&serde_json::to_string(&team).unwrap()).unwrap(),
+        before
+    );
+}

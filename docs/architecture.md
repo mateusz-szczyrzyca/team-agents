@@ -644,8 +644,17 @@ excluded from publication and idle-work alarms. Their merge obligation survives 
 observes the delivering PR even while its owner is in review or a fix pass. A merge completes the checked item
 and round before normal team completion and worktree cleanup. A stop of the whole team abandons the round but keeps
 the claim: the item stays out of publication, the delivering PR is still polled after a resume, and its merge completes
-the item without recording the end of the round a second time. Closed, unmerged delivery recovery is deferred
-to the second part; this part logs a warning and preserves the wait.
+the item without recording the end of the round a second time. An observed unmerged close ends the claim in a
+checked transition and saves `delivery_closed_at` before notification or scheduling. The abandoned round retains
+its delivery record. Polling recovers a marked round that is still the latest for its in-progress item: notify the
+lead from the team prompt catalog, open a fresh round for the same item (or split part), and queue the member.
+The new round and queue state are saved together. Recovery retries after a restart without consulting the old PR;
+therefore a later reopening cannot revive the claim. Notification precedes the new round, so a crash after sending
+but before saving may repeat the message. A stopped member keeps the recovery pending until resumed. Publication
+and subsequent merge use the ordinary item lifecycle. A returned item publishes the integrated, gated tip on a
+branch named for its fresh round, independently of the closed PR and any other item still attached to that PR.
+A failed bus send logs `bus_down` and leaves the saved notification and reopening obligation for the next poll;
+it does not stop the owner loop.
 
 ### Snapshots (`agent-runtime`, `agent`)
 
@@ -768,7 +777,8 @@ questions of a task are numbered (`questions-<number>.md`) and the reviews asked
 |---|---|---|
 | a team starts | opens the round of every item given to a member at the start; for a list without items, the one round of the whole work | `round_opened` |
 | an item is given to a member for the first time (`assign_items`) | opens its round, then moves the item on | `round_opened`, then `item_status` |
-| an item is given again (its member left) | nothing: an item has one round, which stays | |
+| an item is given again (its member left) | keeps its existing round | |
+| a verified delivery PR is observed closed without merging | abandons the claim round, then opens a fresh round for the same item or split part and queues its member | `round_closed`, then `round_opened` |
 | the pull request of an item is merged — by the daemon or by the human | closes the round `merged`, after the item is `done` as merged | `round_closed` |
 | both reviews approve and the team does not merge by itself (`--no-merge`) | closes the round `approved`; the human's merge later completes the item and leaves the round as it is | `round_closed` |
 | a `stop` leaves every task of a team stopped, failed or done | closes the team's open rounds `abandoned` | `round_closed` |
@@ -786,12 +796,12 @@ closed (`abandoned`): the runs that go on name it. A round is kept for ever, so 
 | the coordinator | every round of its team that is open |
 | a reviewer | the round of the pull request it reviews |
 | a worker | the rounds of the run that asked for it |
-| any task, for a fix pass, the answers of the human, or a resume | the rounds its last run worked for |
+| any task, for a fix pass, the answers of the human, or a resume | the rounds its last run worked for; a member queued after an ended delivery uses its replacement round even after a restart |
 
 A run names only rounds of its own team, none twice. The daemon that restarts reads them from the state and goes on with the same rounds.
 
-**What the state checks**, by its operations and again when it is read: an ordinary item has at most one round;
-a split item has one round per started part and at most one open round. An item has a round as soon as it leaves `pending` (`Team::advance_item`; an item the list marks `[x]` has none); a round belongs to an item of its team, or is the one
+**What the state checks**, by its operations and again when it is read: an ordinary item has at most one round apart from abandoned rounds with ended delivery claims;
+a split item has one round per started part apart from ended claims, and at most one open round. An item has a round as soon as it leaves `pending` (`Team::advance_item`; an item the list marks `[x]` has none); a round belongs to an item of its team, or is the one
 round of a list without items; an ordinary round closed as `merged` belongs to an item done as merged. A merged split
 round retains its own pull request while the parent advances. An ordinary round closed as `approved` belongs to an item
 that is approved or done as merged; a round is not closed before it was opened; a run names only the rounds of its own team. The full list is

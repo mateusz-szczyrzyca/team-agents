@@ -27,3 +27,22 @@ After approval, deliver only part a in this round and keep its existing branch. 
 plan, then gives each dependency-ready later part its own round, branch and pull request through normal team
 assignment. Follow each part's prompt; other parts are outside that round. The item and team close only after all
 parts merge. A malformed form records nothing and `agent answer` explains why.
+
+If another pull request of this team already contains an item's deliverable, report it instead of creating an
+empty pull request for that item. This applies to any deliverable, including documents and images. Report only
+one current item, with no commits of its own outside that pull request or the base branch, and a clean member
+worktree. The pull request may be open or already merged. Put this exact standalone line before your final
+`STATUS: DONE`, replacing N with its number:
+
+```text
+DELIVERED: #N
+```
+
+The harness checks the current item, ownership of the pull request by another round of this team, its recorded
+branch and GitHub state, a clean member worktree, and git containment of its commits in the published pull request
+or base branch. Git or GitHub failures refuse the claim. If refused, read the reason in your next prompt, correct
+the claim or finish the item normally; do not repeat an unchecked claim. An accepted open claim waits for its
+pull request's merge; a merged claim completes the item. If the harness observes it closed without a merge, the
+claim ends permanently, the member resumes the same item in a fresh round and you receive the reason on the bus.
+Integrate the resumed work and publish its own pull request normally. Reopening that pull request later does not
+restore an ended claim.

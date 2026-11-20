@@ -1,0 +1,1 @@
+The delivery claim for item {{item}} ended: PR #{{pr}} was closed without merging. The member resumes the item in a fresh round on its branch. Integrate its work and publish the item's own pull request normally. Reopening PR #{{pr}} does not restore this claim.
