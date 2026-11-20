@@ -110,8 +110,9 @@ pub(crate) fn clock_time(at: SystemTime, offset: UtcOffset) -> String {
 }
 
 /// `at` as a time of day, `HH:MM:SS`, at `offset` from UTC: the time of a recorded activity.
-pub(crate) fn clock_of(_at: Timestamp, _offset: UtcOffset) -> String {
-    String::new()
+pub(crate) fn clock_of(at: Timestamp, offset: UtcOffset) -> String {
+    let local = at.as_utc().to_offset(offset);
+    format!("{:02}:{:02}:{:02}", local.hour(), local.minute(), local.second())
 }
 
 /// Asks the daemon for the status of `target` (every team without one) and writes it to `out`; the tasks that run say
