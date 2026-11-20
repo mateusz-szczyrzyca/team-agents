@@ -59,8 +59,9 @@ async fn the_item_of_a_member_the_human_stopped_is_published_when_its_lead_deliv
         .await;
     rig.stop().await.unwrap();
 
-    assert_eq!(rig.runs(&tasks[0]), 2, "the lead slept, was woken, and delivered");
-    assert_eq!(rig.runs(&tasks[1]), 1);
+    let lead = state.find_task(&tasks[0]).unwrap().member;
+    assert_eq!(lead.runs().len(), 2, "the lead slept, was woken, and delivered");
     let member = state.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(member.runs().len(), 1);
     assert_eq!(member.status(), TaskStatus::Stopped);
 }
