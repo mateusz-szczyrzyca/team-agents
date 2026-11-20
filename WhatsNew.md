@@ -8,9 +8,9 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ## 0.33.0 — 20.11.2026 — PR #150
 
 ### New features
-- [agent] [agent-runtime] When the daemon starts, every task whose run was cut by the restart gets a snapshot of its worktree if its round is still open: all uncommitted, staged, deleted and untracked files (binary ones too; ignored files are left out) are kept as a commit under `refs/agents/snapshots/<round>/<task>/<n>`, without changing the worktree, its index or its files.
+- [agent] [agent-runtime] When the daemon starts, every task whose run was cut by a crash or a stop of the daemon gets a snapshot of its worktree if its round is still open: all uncommitted, staged, deleted and untracked files (binary ones too; ignored files are left out) are kept as a commit under `refs/agents/snapshots/<round>/<task>/<n>`, without changing the worktree, its index or its files.
 - [agent] `agent status <round>` shows the last snapshot of each task at the end of the round view, for example `snapshot task-… number 1 at 14:05:10, 4096 bytes`.
-- [agent-core] [agent-runtime] **Action:** The new optional `[snapshot] warn_mb` setting (default `200`) sets the size in megabytes above which a snapshot is logged with a `snapshot_large` warning, and the history database migrates automatically to version 12 on the next daemon start.
+- [agent-core] [agent-runtime] The new optional `[snapshot] warn_mb` setting (default `200`) sets the size in megabytes above which a snapshot is logged with a `snapshot_large` warning, and the history database migrates automatically to version 12 on the next daemon start.
 
 ### Enhancements
 - [agent-runtime] Snapshots are recorded in the history database (`snapshots`) and can be read back by round.
