@@ -117,3 +117,51 @@ fn proposal_reader_rejects_bad_estimates_tiers_scope_and_oversized_input() {
         Err(ReadProposalError::TooLarge)
     ));
 }
+
+#[test]
+fn legacy_approvals_and_new_requirements_survive_round_trip_without_changing_legacy_output() {
+    let legacy = json!({"parent":"1.1","parts":[
+        {"title":"Draft","delivers":"Doc","checks":"Review","depends_on":[]},
+        {"title":"Publish","delivers":"Bundle","checks":"Inspect","depends_on":["a"]}
+    ]});
+    for extended in [false, true] {
+        let mut input = legacy.clone();
+        if extended {
+            input["parts"][0]["estimate"] = json!({"amount":0,"unit":"pages"});
+            input["parts"][0]["tier"] = json!("investigator");
+        }
+        let answer = crate::questions::Verdict::from_text(&format!("split\n```json\n{input}\n```"))
+            .unwrap()
+            .unwrap();
+        let plan = crate::questions::split::read_split(&answer).unwrap().unwrap();
+        let wanted = if extended {
+            Requirements {
+                estimate: Some(Estimate {
+                    amount: 0.into(),
+                    unit: "pages".into(),
+                }),
+                tier: Tier::Investigator,
+            }
+        } else {
+            Requirements::default()
+        };
+        assert_eq!(plan.requirements("a".to_owned().try_into().unwrap()), Some(wanted));
+        assert_eq!(
+            plan.requirements("b".to_owned().try_into().unwrap()),
+            Some(Requirements::default())
+        );
+        assert_eq!(plan.requirements("z".to_owned().try_into().unwrap()), None);
+        assert_eq!(serde_json::to_value(&plan).unwrap(), input);
+        let restored: SplitPlan = serde_json::from_value(input).unwrap();
+        assert_eq!(restored, plan);
+    }
+    let plan = read_proposal(&proposal().to_string()).unwrap().plan().unwrap();
+    assert_eq!(
+        plan.requirements("a".to_owned().try_into().unwrap())
+            .unwrap()
+            .estimate
+            .unwrap()
+            .unit,
+        "images"
+    );
+}

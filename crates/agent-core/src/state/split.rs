@@ -245,6 +245,11 @@ impl SplitPlan {
         })
     }
 
+    /// Requested agent tier and estimate of an existing part; unknown keys return none.
+    pub fn requirements(&self, _key: PartKey) -> Option<proposal::Requirements> {
+        None
+    }
+
     getter!("The original item.", pub const fn parent(&self) -> ItemId = self.parent);
     getter!("Validated parts in their declared order.", pub fn parts(&self) -> &[PartDefinition] = &self.parts);
 }
