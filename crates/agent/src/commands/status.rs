@@ -317,7 +317,8 @@ fn render_with(
     render_at(teams, activity, rounds, UtcOffset::UTC)
 }
 
-/// [`render_with`] with the times of the recorded activities told at `offset` from UTC.
+/// [`render_active`] with what `rounds` says of each round after its line, the times of the recorded activities told at
+/// `offset` from UTC.
 fn render_at(
     teams: &[TeamSummary],
     activity: &dyn Fn(&TaskId) -> Option<String>,
