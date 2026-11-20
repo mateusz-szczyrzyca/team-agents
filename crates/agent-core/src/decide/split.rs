@@ -28,8 +28,20 @@ pub struct UnknownMergedPart {
 ///
 /// # Errors
 /// Returns [`UnknownMergedPart`] when progress contains a key outside this plan.
-pub fn next_parts(_plan: &SplitPlan, _merged: &BTreeSet<PartKey>) -> Result<NextParts, UnknownMergedPart> {
-    Ok(NextParts::Complete)
+pub fn next_parts(plan: &SplitPlan, merged: &BTreeSet<PartKey>) -> Result<NextParts, UnknownMergedPart> {
+    let known: BTreeSet<_> = plan.entries().map(|(id, _)| id.key()).collect();
+    if let Some(part) = merged.difference(&known).next() {
+        return Err(UnknownMergedPart { part: *part });
+    }
+    if merged.len() == known.len() {
+        return Ok(NextParts::Complete);
+    }
+    let ready = plan
+        .entries()
+        .filter(|(id, part)| !merged.contains(&id.key()) && part.depends_on.iter().all(|key| merged.contains(key)))
+        .map(|(id, _)| id)
+        .collect();
+    Ok(NextParts::Ready(ready))
 }
 
 #[cfg(test)]
