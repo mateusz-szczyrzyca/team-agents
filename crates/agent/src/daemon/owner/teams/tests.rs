@@ -2240,3 +2240,70 @@ async fn a_team_that_takes_an_agent_of_another_open_team_names_it_and_its_task_t
     );
     f.stop().await.unwrap();
 }
+
+/// The line of the bus's message log that holds `text`.
+fn line_with(messages: &str, text: &str) -> String {
+    messages
+        .lines()
+        .find(|line| line.contains(text))
+        .unwrap_or_default()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn a_word_to_a_task_of_an_agent_in_two_open_teams_is_for_the_session_of_that_task() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+    ]);
+    f.start().await;
+    f.start_team(&["claude-1", "inv-opus"], PARALLEL).await;
+    let (second, tasks) = f.start_team(&["claude-2", "claude-1"], PARALLEL).await;
+    let claude_task = tasks
+        .iter()
+        .find(|task| f.state().find_task(task).unwrap().member.agent().name() == "claude-1")
+        .unwrap()
+        .clone();
+
+    let reply = f
+        .connect()
+        .await
+        .request(
+            Client::Cli,
+            Command::Say(agent_core::protocol::SayRequest {
+                target: Target::Task(claude_task),
+                text: "Only for the second team.".to_owned().try_into().unwrap(),
+            }),
+        )
+        .await;
+
+    let line = line_with(&f.messages(), "Only for the second team.");
+    f.stop().await.unwrap();
+    assert!(line.contains(&format!(r#""team":"{second}""#)), "{reply:?}: {line}");
+}
+
+#[tokio::test]
+async fn a_notice_to_a_coordinator_in_two_open_teams_is_for_its_session_in_the_team_it_is_about() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "slowdone"),
+        normal("claude-2", "sleep"),
+    ]);
+    f.start().await;
+    f.start_team(&["inv-opus", "claude-2"], PARALLEL).await;
+    let (second, _) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+
+    f.wait_for("the notice that claude-1 is done", || {
+        f.messages().contains("claude-1 reported DONE on item 1.1")
+    })
+    .await;
+
+    let line = line_with(&f.messages(), "claude-1 reported DONE on item 1.1");
+    f.stop().await.unwrap();
+    assert!(line.contains(&format!(r#""team":"{second}""#)), "{line}");
+}

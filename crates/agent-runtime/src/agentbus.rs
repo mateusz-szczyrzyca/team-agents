@@ -820,13 +820,22 @@ pub enum Recipient {
     Agent(AgentName),
     /// A team.
     Team(TeamId),
+    /// One agent, in one of its teams: an agent in several open teams has a session in each, and the message is for
+    /// the one in `team` only.
+    Member {
+        /// The agent.
+        agent: AgentName,
+        /// The team whose session of the agent the message is for.
+        team: TeamId,
+    },
 }
 
 impl fmt::Display for Recipient {
+    /// The recipient as `agentbus send --to` names it; the team of a [`Recipient::Member`] goes with `--team`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::All => f.write_str("all"),
-            Self::Agent(agent) => write!(f, "{agent}"),
+            Self::Agent(agent) | Self::Member { agent, .. } => write!(f, "{agent}"),
             Self::Team(team) => write!(f, "team:{team}"),
         }
     }
