@@ -218,8 +218,11 @@ fn estimates_and_scope_reasons_are_validated_wherever_they_are_deserialized() {
     );
     for kind in ["less", "more", "different"] {
         for reason in ["", "  "] {
-            assert!(
-                serde_json::from_value::<ScopeChange>(json!({"kind":kind,"reason":reason})).is_err(),
+            assert_eq!(
+                serde_json::from_value::<ScopeChange>(json!({"kind":kind,"reason":reason}))
+                    .expect_err("blank reason")
+                    .classify(),
+                serde_json::error::Category::Data,
                 "{kind} {reason:?}"
             );
         }
@@ -243,7 +246,13 @@ fn plans_and_human_verdicts_reject_invalid_estimates() {
         json!({"amount":7,"unit":" "}),
     ] {
         let plan = json!({"parent":"1.1","parts":[part(estimate.clone()), {"title":"Publish","delivers":"Bundle","checks":"Inspect","depends_on":["a"]}]});
-        assert!(serde_json::from_value::<SplitPlan>(plan.clone()).is_err(), "{estimate}");
+        assert_eq!(
+            serde_json::from_value::<SplitPlan>(plan.clone())
+                .expect_err("invalid estimate")
+                .classify(),
+            serde_json::error::Category::Data,
+            "{estimate}"
+        );
         let verdict = crate::questions::Verdict::from_text(&format!("split\n```json\n{plan}\n```"))
             .unwrap()
             .unwrap();
