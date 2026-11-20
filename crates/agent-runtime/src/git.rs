@@ -625,6 +625,21 @@ impl Git {
         .map(drop)
     }
 
+    /// Creates or moves a branch to a commit without changing a checked-out branch.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when the branch is checked out or the commit is unknown;
+    /// [`GitError::Run`] when Git cannot run.
+    pub async fn branch_point(&self, branch: &BranchName, commit: &CommitId) -> Result<(), GitError> {
+        self.run_ok(
+            GitOperation::BranchCreate,
+            Reach::Local,
+            &[arg("branch"), arg("-f"), arg(branch.as_str()), arg(commit.as_str())],
+        )
+        .await
+        .map(drop)
+    }
+
     /// Deletes `branch`.
     ///
     /// # Errors

@@ -1,0 +1,20 @@
+CONTEXT
+
+## Approved split: deliver part 1.1a — First
+
+This round delivers only this part. The other parts are outside your work for this round.
+Keep the existing round and branch names of the round that asked for the split.
+Each later part gets its own round, branch and pull request after its dependencies merge.
+The original item stays open until all its parts merge.
+
+### Deliverable
+
+An independent résumé
+
+### Checks
+
+Read the document
+
+### Earlier deliveries
+
+none

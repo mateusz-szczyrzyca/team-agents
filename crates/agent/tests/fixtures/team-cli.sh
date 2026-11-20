@@ -29,6 +29,7 @@
 #   mend            removes the file `gate-fails`, commits and ends with STATUS: DONE, without a gate
 #   commit          commits a file in the worktree, records no gate and ends with STATUS: DONE: the gate that was recorded
 #                   is of an older commit
+#   ask-here        writes questions-1.md in this task's directory, including on a resumed assignment
 #   ask             writes a questions file to the path the prompt names (the first `.../questions-N.md` in it) and ends
 #                   with STATUS: QUESTIONS
 #   script:NAME     runs the bash script `fake-scripts/NAME.sh` of the home the configuration names, in the worktree, then
@@ -530,6 +531,12 @@ case $action in
   stream:*)
     cat "$home/fake-scripts/${action#stream:}.jsonl"
     result 'Streamed.\nSTATUS: DONE'
+    ;;
+  ask-here)
+    file="$home/tasks/$(basename "$PWD")/questions-1.md"
+    mkdir -p "$(dirname "$file")"
+    printf '# Questions — fake\n\n## 1. Continue the part?\na) continue — finish the document\nb) stop — leave it open\n\n**Recommended:** a) — finish the independent part (fake)\n\n**Verdict:**\n' > "$file"
+    result 'I have to ask.\nSTATUS: QUESTIONS'
     ;;
   ask)
     file=$(grep -o '/[^`[:space:]]*questions-[0-9]*\.md' <<< "$prompt" | head -n 1)

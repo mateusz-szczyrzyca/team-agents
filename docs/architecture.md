@@ -763,10 +763,11 @@ closed (`abandoned`): the runs that go on name it. A round is kept for ever, so 
 
 A run names only rounds of its own team, none twice. The daemon that restarts reads them from the state and goes on with the same rounds.
 
-**What the state checks**, by its operations and again when it is read: an item has at most one round and has one as soon as it
-leaves `pending` (`Team::advance_item`; an item the list marks `[x]` has none); a round belongs to an item of its team, or is the one
-round of a list without items; a round closed as `merged` belongs to an item done as merged, one closed as `approved` to an item that is
-approved or done as merged; a round is not closed before it was opened; a run names only the rounds of its own team. The full list is
+**What the state checks**, by its operations and again when it is read: an ordinary item has at most one round;
+a split item has one round per started part and at most one open round. An item has a round as soon as it leaves `pending` (`Team::advance_item`; an item the list marks `[x]` has none); a round belongs to an item of its team, or is the one
+round of a list without items; an ordinary round closed as `merged` belongs to an item done as merged. A merged split
+round retains its own pull request while the parent advances. An ordinary round closed as `approved` belongs to an item
+that is approved or done as merged; a round is not closed before it was opened; a run names only the rounds of its own team. The full list is
 in [`state.md`](state.md).
 
 **The CLI.** `agent run` prints the round of each item it started, after the tasks; `agent status` lists the rounds of every team under
@@ -1206,6 +1207,18 @@ or free-text split answer returns no plan. `decide::split::next_parts` takes a p
 returns eligible identities in declaration order, or completion when all parts are merged. It performs no I/O;
 callers must not use it to reopen work already assigned in an active round.
 
-These APIs are not connected to the daemon in this preparatory part. Answer acknowledgement, durable per-part
-execution progress, merge handling, round/branch allocation, prompts and status rendering belong to the activation
-part. Existing item and round lifecycle decisions, including delivery through another pull request, stay unchanged.
+The daemon activation described below adds durable per-part execution to these definitions. Existing items without
+a split retain their lifecycle and names, including delivery through another pull request.
+
+### Execution of approved split plans
+
+The state owner interprets coordinator answers atomically: a malformed plan records no parts and returns its
+reason to the answer client. Valid plans bind the existing working round to part a. Optional round identities
+record each part and its merged pull request without changing schema 13 or ordinary round names. Assignment
+opens a later part only after its dependencies have merged, using a separate member branch. Publication snapshots
+the gated integration tip onto a distinct branch for each part's pull request. Intermediate merges retain their
+round history and return the parent to pending; the final merge uses the ordinary item and team closure flow.
+The prompt catalog supplies each part's deliverable, checks and earlier merged pull requests. The status protocol
+adds optional split plans, and answer responses carry an optional split acknowledgement alongside the ordinary
+`applied` reply; the CLI derives the four part states from plans and durable rounds. Recovery reads this
+same state, so neither the gap between parts nor an open part requires a separate restart mechanism.

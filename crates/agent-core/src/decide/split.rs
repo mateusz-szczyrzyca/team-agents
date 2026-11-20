@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::state::split::{PartId, PartKey, SplitPlan};
+use crate::state::split::{PartDefinition, PartId, PartKey, SplitPlan};
 
 /// The next scheduling decision, in the declaration order of the plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,12 +35,17 @@ pub fn next_parts(plan: &SplitPlan, merged: &BTreeSet<PartKey>) -> Result<NextPa
     if merged.len() == known.len() {
         return Ok(NextParts::Complete);
     }
-    let ready = plan
-        .entries()
-        .filter(|(id, part)| !merged.contains(&id.key()) && part.depends_on.iter().all(|key| merged.contains(key)))
-        .map(|(id, _)| id)
-        .collect();
+    let ready = ready_entries(plan, merged).map(|(id, _)| id).collect();
     Ok(NextParts::Ready(ready))
+}
+
+/// Lists dependency-ready definitions after the caller has checked the merged keys against the plan.
+pub(crate) fn ready_entries<'plan, 'merged>(
+    plan: &'plan SplitPlan,
+    merged: &'merged BTreeSet<PartKey>,
+) -> impl Iterator<Item = (PartId, &'plan PartDefinition)> + use<'plan, 'merged> {
+    plan.entries()
+        .filter(|(id, part)| !merged.contains(&id.key()) && part.depends_on.iter().all(|key| merged.contains(key)))
 }
 
 #[cfg(test)]

@@ -213,13 +213,19 @@ async fn send(
         answers: list,
     });
     match connection.request(Client::Cli, request).await {
-        Ok(Reply::Applied { .. }) => say(
-            out,
-            &format!(
-                "Answered questions number {} of {task}: it goes on with your answers.\n",
-                open.number
-            ),
-        ),
+        Ok(Reply::Applied { .. }) => {
+            say(
+                out,
+                &format!(
+                    "Answered questions number {} of {task}: it goes on with your answers.\n",
+                    open.number
+                ),
+            )?;
+            if let Some(split) = connection.split_acknowledgement() {
+                say(out, &format!("{split}\n"))?;
+            }
+            Ok(())
+        }
         Ok(other) => Err(AnswerError::UnexpectedReply {
             kind: kind_of(&other),
             wanted: "the task that took the answers",
@@ -363,3 +369,6 @@ async fn run_editor(editor: &CommandLine, file: &Path) -> Result<(), AnswerError
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod split_tests;

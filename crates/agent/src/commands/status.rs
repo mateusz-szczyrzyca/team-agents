@@ -228,7 +228,7 @@ async fn teams(
     target: Option<Target>,
 ) -> Result<(Vec<TeamSummary>, Option<HistoryHealth>), StatusError> {
     let reply = connection
-        .request(Client::Cli, Command::Status(StatusRequest { target }))
+        .request_split(Client::Cli, Command::Status(StatusRequest { target }))
         .await?;
     match reply {
         Reply::Teams { teams } => Ok((teams, None)),
@@ -350,6 +350,7 @@ fn render_at(
                 .iter()
                 .map(|round| format!("  {}{}", round_line(round), rounds(round))),
         );
+        lines.extend(splits::lines(team));
         for member in &team.members {
             let waiting = member.open_question.map_or_else(String::new, |number| {
                 format!(", questions number {number} wait for answers")
@@ -478,9 +479,14 @@ const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 mod investigators;
 mod reviewer;
 mod rounds;
+mod splits;
 
 #[cfg(test)]
 #[path = "status/history/tests.rs"]
 mod history_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "status/tests/splits.rs"]
+mod split_tests;

@@ -199,3 +199,17 @@ async fn a_daemon_that_never_answers_is_given_up_after_the_timeout() {
         "{error:?}"
     );
 }
+
+#[tokio::test]
+async fn split_requests_fall_back_to_a_legacy_daemon_before_sending_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = FakeDaemon::serve(&socket(&dir), |request| Answer::Lines(teams(request.id.0)));
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+    let result = connection.request_split(Client::Cli, status()).await;
+    assert!(matches!(result, Ok(Reply::Teams { teams }) if teams.is_empty()));
+    assert_eq!(daemon.requests(), [Request::new(RequestId(1), Client::Cli, status())]);
+    let result = connection.request_split(Client::Cli, status()).await;
+    assert!(matches!(result, Ok(Reply::Teams { teams }) if teams.is_empty()));
+    assert_eq!(daemon.requests().len(), 2);
+    assert_eq!(connection.split_acknowledgement(), None);
+}

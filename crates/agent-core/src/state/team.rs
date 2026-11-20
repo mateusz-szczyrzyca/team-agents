@@ -20,7 +20,7 @@ mod legacy;
 pub use activities::{Activity, ActivityEnd, ActivityOutcome, ActivityRequest};
 mod rounds;
 mod splits;
-pub use splits::RecordSplitError;
+pub use splits::{ActivateSplitError, RecordSplitError};
 
 pub(super) use self::legacy::{LegacyError, TeamV1};
 pub use self::rounds::{AdvanceItemError, BeginRunError, CloseRoundError, NewRun, OpenRoundError, RoundsError};
