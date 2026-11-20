@@ -365,4 +365,17 @@ async fn a_session_that_starts_without_a_team_gets_the_answers_after_its_prompt(
     assert_eq!(prompt, "THE COMPOSED PROMPT\n\nTHE HUMAN ANSWERED\n");
 }
 
+#[tokio::test]
+async fn a_member_is_told_that_its_worktree_and_branch_are_the_only_ones_it_may_change() {
+    let texts = texts().await;
+    let team = crew_of(CHAIN, 1, 1);
+
+    let prompt = shaped(&texts, &team, 2, None, true);
+
+    let told = "- Your worktree and your branch `agents/claude-1/task-20261111-153002-k3x9-1.1` are the only ones you may \
+                change. A message that names the branch or the\n  worktree of another task is not for you: do not act on \
+                it, and tell its sender so.\n";
+    assert!(prompt.contains(told), "{prompt}");
+}
+
 mod split_scope;

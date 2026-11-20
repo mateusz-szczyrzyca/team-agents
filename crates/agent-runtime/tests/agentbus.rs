@@ -917,6 +917,62 @@ mod agentbus_commands {
     }
 
     #[tokio::test]
+    async fn send_to_a_member_binds_the_message_to_its_team_when_the_agent_is_in_two_open_teams() {
+        let fixture = with_team().await;
+        let other: TeamId = "team-20261112-134009-cd34".parse().unwrap();
+        fixture
+            .bus
+            .team_create(&NewTeam {
+                id: other.clone(),
+                repo: repo(),
+                lead: Some(agent("claude-2")),
+                members: BTreeMap::from([
+                    (agent("claude-2"), member("ddd4", BusTier::Normal, MemberState::Active)),
+                    (agent("codex-1"), member("eee5", BusTier::Normal, MemberState::Sleeping)),
+                ]),
+            })
+            .await
+            .unwrap();
+        let to = Recipient::Member {
+            agent: agent("codex-1"),
+            team: other,
+        };
+
+        let sent = fixture
+            .bus
+            .send(&agent("daemon"), &to, &chat("for the second team"))
+            .await;
+
+        let log = read_to_string(fixture.bus.bus_dir().join("messages.jsonl")).unwrap();
+        let last = log.lines().last().unwrap();
+        assert!(
+            last.contains("for the second team") && last.contains(r#""team":"team-20261112-134009-cd34""#),
+            "{sent:?}: {last}"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_to_a_task_binds_the_message_to_that_task_also_when_no_team_holds_it() {
+        let fixture = with_team().await;
+        let solo = task("fff6");
+        let to = Recipient::Task {
+            agent: agent("codex-1"),
+            task: solo.clone(),
+        };
+
+        let sent = fixture.bus.send(&agent("human"), &to, &chat("for the solo task")).await;
+
+        let log = read_to_string(fixture.bus.bus_dir().join("messages.jsonl")).unwrap();
+        let last = log.lines().last().unwrap();
+        assert!(
+            last.contains("for the solo task")
+                && last.contains(&format!(r#""task":"{solo}""#))
+                && !last.contains(r#""team":"#),
+            "{sent:?}: {last}"
+        );
+    }
+
+    #[tokio::test]
     async fn send_of_an_empty_text_is_invalid() {
         let fixture = fixture();
 

@@ -49,14 +49,22 @@ const (
 
 // Message is one entry in the append-only message log (messages.jsonl).
 type Message struct {
-	ID    int64           `json:"id"`              // monotonically increasing; read cursors compare against it
-	TS    Timestamp       `json:"ts"`              // local time, "2006-01-02 15:04:05"
-	From  string          `json:"from"`            // sender: agent name, "agentbus" for system notices, or the human's user name
-	To    string          `json:"to"`              // recipient: agent name, "all", or "team:<team id>"
+	ID   int64     `json:"id"`   // monotonically increasing; read cursors compare against it
+	TS   Timestamp `json:"ts"`   // local time, "2006-01-02 15:04:05"
+	From string    `json:"from"` // sender: agent name, "agentbus" for system notices, or the human's user name
+	// To is the recipient: an agent's name, the ID of a member's task (a direct message to that task, written from
+	// outside teams), "all", or "team:<team id>".
+	To    string          `json:"to"`
 	Kind  MessageKind     `json:"kind,omitempty"`  // event type (see events.go); "" in messages of older versions = chat
 	Data  json.RawMessage `json:"data,omitempty"`  // the event's fields as JSON (for log pipelines and tools)
 	Text  string          `json:"text"`            // the rendered text agents and humans read
 	Quiet bool            `json:"quiet,omitempty"` // wakes nobody (a chat sent with wake=false): read on the reader's next run
+	// Team is the team a direct message is bound to: it is for the named agent in that team only. Empty in a broadcast,
+	// a "team:<id>" message and the messages of older versions, which are read by the name as before.
+	Team string `json:"team,omitempty"`
+	// Task is the task a direct message is for: only the session of that task reads it and only that member is woken.
+	// Empty in the messages of older versions and in those bound by name or team alone.
+	Task string `json:"task,omitempty"`
 }
 
 // quietEvent is an event that may ask to wake nobody (a chat sent with wake=false).
@@ -84,6 +92,10 @@ type Reservation struct {
 	Task     string    `json:"task"`     // holder's task
 	Note     string    `json:"note"`     // why it was reserved
 	Since    Timestamp `json:"since"`    // when the reservation was made
+	// PID is the agentbus process of the run that holds it: an agent in two teams has a run in each, and the bus
+	// keeps one presence per agent name, so the holder's own process tells when it is gone. 0 in a reservation of
+	// an older version: it is held while the agent has a presence.
+	PID int `json:"pid,omitempty"`
 }
 
 // Investigation is a request handled by an investigator (an advanced, expensive model):
@@ -119,10 +131,13 @@ type Investigation struct {
 // State is the whole shared bus state, persisted in state.json and always accessed under
 // the bus lock (Bus.with). Map keys are IDs/names as strings.
 type State struct {
-	NextID         int64                     `json:"next_id"`        // next message ID
-	Agents         map[string]*Presence      `json:"agents"`         // running agents by name
-	Reservations   map[string]*Reservation   `json:"reservations"`   // taken resources by resource name
-	Cursors        map[string]int64          `json:"cursors"`        // last read message ID per agent
+	NextID       int64                   `json:"next_id"`      // next message ID
+	Agents       map[string]*Presence    `json:"agents"`       // running agents by name
+	Reservations map[string]*Reservation `json:"reservations"` // taken resources by resource name
+	// Cursors is the last read message ID per session: "<agent>/<team id>" for a session in a team, "<agent>" outside
+	// teams. A session in a team that has no cursor of its own yet starts from "<agent>", the one cursor that states of
+	// older versions kept per agent.
+	Cursors        map[string]int64          `json:"cursors"`
 	NextInvID      int64                     `json:"next_inv_id"`    // last investigation ID issued
 	Investigations map[string]*Investigation `json:"investigations"` // by ID
 	Teams          map[string]*Team          `json:"teams"`          // by team ID
@@ -255,6 +270,16 @@ func alive(pid int) bool {
 	return err == nil && bytes.Contains(cmd, []byte("agentbus"))
 }
 
+// held reports whether the run that took the reservation is still there: its own process, or — for a reservation
+// of an older version, which names no process — a presence of its agent.
+func (r *Reservation) held(st *State) bool {
+	if r.PID != 0 {
+		return alive(r.PID)
+	}
+	_, ok := st.Agents[r.Agent]
+	return ok
+}
+
 // gc removes presences of dead agentbus processes and releases their reservations. Announcing an
 // automatic release is a side effect of whatever operation triggered the cleanup, so a failure is logged.
 func (b *Bus) gc(st *State) {
@@ -265,7 +290,7 @@ func (b *Bus) gc(st *State) {
 		}
 	}
 	for res, r := range st.Reservations {
-		if _, ok := st.Agents[r.Agent]; !ok {
+		if !r.held(st) {
 			delete(st.Reservations, res)
 			ev := EventAutoReleased{Resource: res, Holder: r.Agent, Reason: ReleaseAgentGone}
 			if _, err := b.post(st, "agentbus", "all", ev); err != nil {
@@ -298,35 +323,63 @@ func (b *Bus) keepWhole(id int64, text string) *StorageError {
 	return nil
 }
 
-// readMessage gives one message whole by its number: a cut one from messages-full/, any other as it was posted.
+// readMessage gives one message whole by its number: a cut one from messages-full/, any other as it was posted. A message
+// of the agent's other team is not this session's to read (see otherSession): it is answered as no such message.
 func (s *Server) readMessage(id int) (string, *ReadMessageError) {
+	var found *Message
+	err := transact(s.bus, ReadMessageStorage, func(st *State) *ReadMessageError {
+		msgs, serr := s.bus.messages()
+		if serr != nil {
+			return fromStorage(ReadMessageStorage, serr)
+		}
+		for i := range msgs {
+			if msgs[i].ID == int64(id) && !otherSession(st, msgs[i], s.me, s.team, s.info.Task) {
+				found = &msgs[i]
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if found == nil {
+		return "", opErr(ReadMessageNoSuchMessage, "no message #%d", id)
+	}
 	f := filepath.Join(s.bus.path("messages-full"), fmt.Sprintf("%d.txt", id))
-	b, err := os.ReadFile(f) // #nosec G304 -- the bus's own directory and a number; no request text reaches the path
-	if err == nil {
+	b, rerr := os.ReadFile(f) // #nosec G304 -- the bus's own directory and a number; no request text reaches the path
+	if rerr == nil {
 		return string(b), nil
 	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return "", fromStorage(ReadMessageStorage, storageErr(err, "cannot read %s", f))
+	if !errors.Is(rerr, os.ErrNotExist) {
+		return "", fromStorage(ReadMessageStorage, storageErr(rerr, "cannot read %s", f))
 	}
-	msgs, serr := s.bus.messages()
-	if serr != nil {
-		return "", fromStorage(ReadMessageStorage, serr)
-	}
-	for _, m := range msgs {
-		if m.ID == int64(id) {
-			return fmtMsg(m), nil
-		}
-	}
-	return "", opErr(ReadMessageNoSuchMessage, "no message #%d", id)
+	return fmtMsg(*found), nil
 }
 
-// post appends an event to messages.jsonl (caller holds the lock) and wakes sleeping recipients.
+// post appends an event to messages.jsonl (caller holds the lock) and wakes sleeping recipients; its direct messages
+// are bound to no team.
 func (b *Bus) post(st *State, from, to string, ev busEvent) (Message, *StorageError) {
+	return b.postTo(st, binding{}, from, to, ev)
+}
+
+// postIn appends an event whose direct messages are bound to the team team, and wakes its sleeping recipients.
+func (b *Bus) postIn(st *State, team, from, to string, ev busEvent) (Message, *StorageError) {
+	return b.postTo(st, binding{team: team}, from, to, ev)
+}
+
+// binding is what a direct message is bound to: a team, a task, both or neither (read by the agent's name).
+type binding struct {
+	team string // the team whose session of the agent reads it ("" = any)
+	task string // the task whose session alone reads it ("" = any)
+}
+
+// postTo appends an event whose direct messages are bound as bind says, and wakes its sleeping recipients.
+func (b *Bus) postTo(st *State, bind binding, from, to string, ev busEvent) (Message, *StorageError) {
 	data, err := json.Marshal(ev)
 	if err != nil {
 		return Message{}, storageErr(err, "cannot encode a %s event", ev.Kind())
 	}
-	m := Message{ID: st.NextID, TS: Now(), From: from, To: to, Kind: ev.Kind(), Data: data, Text: ev.Text()}
+	m := Message{ID: st.NextID, TS: Now(), From: from, To: to, Kind: ev.Kind(), Data: data, Text: ev.Text(), Team: bind.team, Task: bind.task}
 	if q, ok := ev.(quietEvent); ok && q.quiet() {
 		m.Quiet = true
 	}
@@ -446,8 +499,8 @@ func (s *Server) unregister() {
 		}
 		delete(st.Agents, s.me)
 		for res, r := range st.Reservations {
-			if r.Agent != s.me {
-				continue
+			if r.Agent != s.me || r.Task != s.info.Task {
+				continue // the agent's other task keeps its own
 			}
 			delete(st.Reservations, res)
 			ev := EventAutoReleased{Resource: res, Holder: s.me, Reason: ReleaseAgentFinished}
@@ -471,9 +524,9 @@ func (s *Server) unreadCount() (int, *StorageError) {
 			readErr = err
 			return
 		}
-		cur := st.Cursors[s.me]
+		cur := cursor(st, s.me, s.team)
 		for _, m := range msgs {
-			if m.ID > cur && isForAgent(st, m, s.me, true) {
+			if m.ID > cur && isForSession(st, m, s.me, s.team, s.info.Task, true) {
 				n++
 			}
 		}
@@ -547,7 +600,11 @@ func (s *Server) sendMessage(to, text string, wake bool) (string, *SendMessageEr
 	var out string
 	err := transact(s.bus, SendMessageStorage, func(st *State) *SendMessageError {
 		s.touch(st)
-		m, serr := s.bus.post(st, s.me, to, EventChat{Body: text, Quiet: !wake})
+		recipient, team, refusal := s.delivery(st, to)
+		if refusal != nil {
+			return refusal
+		}
+		m, serr := s.bus.postIn(st, team, s.me, recipient, EventChat{Body: text, Quiet: !wake})
 		if serr != nil {
 			return fromStorage(SendMessageStorage, serr)
 		}
@@ -575,16 +632,22 @@ func (s *Server) read(history int) (string, *ReadMessagesError) {
 			if start < 0 {
 				start = 0
 			}
-			fmt.Fprintf(&sb, "Last %d messages (all directions):\n", len(msgs)-start)
+			var shown []Message
 			for _, m := range msgs[start:] {
+				if !otherSession(st, m, s.me, s.team, s.info.Task) {
+					shown = append(shown, m)
+				}
+			}
+			fmt.Fprintf(&sb, "Last %d messages (all directions):\n", len(shown))
+			for _, m := range shown {
 				sb.WriteString(fmtMsg(m) + "\n")
 			}
 			return nil
 		}
-		cur := st.Cursors[s.me]
+		cur := cursor(st, s.me, s.team)
 		n := 0
 		for _, m := range msgs {
-			if m.ID > cur && isForAgent(st, m, s.me, true) {
+			if m.ID > cur && isForSession(st, m, s.me, s.team, s.info.Task, true) {
 				sb.WriteString(fmtMsg(m) + "\n")
 				n++
 			}
@@ -592,7 +655,7 @@ func (s *Server) read(history int) (string, *ReadMessagesError) {
 		if n == 0 {
 			sb.WriteString("No new messages.\n")
 		}
-		st.Cursors[s.me] = st.NextID - 1
+		advanceCursor(st, s.me, s.team)
 		return nil
 	})
 	return sb.String(), err
@@ -634,12 +697,12 @@ func (s *Server) reserve(res, note string, wait int) (string, *ReserveError) {
 			r, held := st.Reservations[res]
 			switch {
 			case !held:
-				st.Reservations[res] = &Reservation{Resource: res, Agent: s.me, Task: s.info.Task, Note: note, Since: Now()}
+				st.Reservations[res] = &Reservation{Resource: res, Agent: s.me, Task: s.info.Task, Note: note, Since: Now(), PID: os.Getpid()}
 				if _, serr := s.bus.post(st, s.me, "all", EventReserved{Resource: res, Note: note}); serr != nil {
 					return fromStorage(ReserveStorage, serr)
 				}
 				granted, msg = true, "OK: reserved "+res+". Release it right after you are done."
-			case r.Agent == s.me:
+			case r.Agent == s.me && r.Task == s.info.Task:
 				r.Note = note
 				granted, msg = true, "OK: "+res+" is already yours."
 			default:
@@ -671,7 +734,7 @@ func (s *Server) release(res string) (string, *ReleaseError) {
 		switch {
 		case !held:
 			msg = res + " was not reserved."
-		case r.Agent != s.me:
+		case r.Agent != s.me || r.Task != s.info.Task:
 			return opErr(ReleaseNotHolder, "%s belongs to %s — you cannot release it", res, r.Agent)
 		default:
 			delete(st.Reservations, res)
@@ -1295,12 +1358,16 @@ func (f fieldFlags) Set(v string) error {
 	return nil
 }
 
-// send: posts a message as a human (chat) or, with --notice, an event of the `agent` script.
+// send: posts a message as a human (chat) or, with --notice, an event of the `agent` script. --task or --team names the
+// open team of the agent it is for, since the daemon is in no team.
 func cmdSend(args []string) {
 	fs := newFlagSet("send")
 	dir := fs.String("dir", defaultDir(), "state directory")
 	from := fs.String("from", os.Getenv("USER"), "sender")
-	to := fs.String("to", "all", "recipient (agent, all or team:<id>)")
+	to := fs.String("to", "all", "recipient (agent, task, all or team:<id>)")
+	task := fs.String("task", "", "a task of the recipient: the open team it is in is the one written to")
+	team := fs.String("team", "", "the open team of the recipient the message is written to")
+	forTask := fs.String("for-task", "", "the task whose session alone reads the message (a solo task too)")
 	notice := fs.String("notice", "", "script event kind (see ScriptNotice); empty = chat message")
 	fields := fieldFlags{}
 	fs.Var(fields, "field", "key=value detail of a script event (repeatable)")
@@ -1318,13 +1385,47 @@ func cmdSend(args []string) {
 	b := &Bus{dir: *dir}
 	var out cliWriter
 	exitOn(transact(b, CmdSendStorage, func(st *State) *CmdSendError {
-		m, serr := b.post(st, *from, *to, ev)
-		if serr != nil {
-			return fromStorage(CmdSendStorage, serr)
+		m, refusal := postSend(b, st, sendRequest{from: *from, to: *to, task: strings.TrimSpace(*task),
+			team: strings.TrimSpace(*team), forTask: strings.TrimSpace(*forTask)}, ev)
+		if refusal != nil {
+			return refusal
 		}
 		out.println(fmtMsg(m))
 		return fromStorage(CmdSendStorage, out.err)
 	}).asError())
+}
+
+// sendRequest is what `agentbus send` is asked to write to: the sender, the recipient and what names its session.
+type sendRequest struct {
+	from    string // the sender
+	to      string // the recipient: an agent, all or team:<id>
+	task    string // --task: a task of the recipient in an open team ("" = none)
+	team    string // --team: an open team of the recipient ("" = none)
+	forTask string // --for-task: the task whose session alone reads the message ("" = none)
+}
+
+// postSend posts what `agentbus send` writes, bound as its request says, or says why it is refused.
+func postSend(b *Bus, st *State, req sendRequest, ev busEvent) (Message, *CmdSendError) {
+	var bind binding
+	recipient := req.to
+	if req.forTask != "" {
+		bound, refusal := bindForTask(st, req)
+		if refusal != nil {
+			return Message{}, refusal
+		}
+		bind = bound
+	} else {
+		to, team, refusal := bindSend(st, req.from, req.to, req.task, req.team)
+		if refusal != nil {
+			return Message{}, refusal
+		}
+		recipient, bind = to, binding{team: team}
+	}
+	m, serr := b.postTo(st, bind, req.from, recipient, ev)
+	if serr != nil {
+		return Message{}, fromStorage(CmdSendStorage, serr)
+	}
+	return m, nil
 }
 
 // log: prints the last N messages.
@@ -1442,7 +1543,7 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, `agentbus `+version+`
   agentbus serve   --agent NAME [--dir D --task --repo --branch --worktree --peers a,b]   (MCP server, stdio)
-  agentbus send    [--dir D] [--from me] [--to all|agent] TEXT
+  agentbus send    [--dir D] [--from me] [--to all|agent|task] [--task T] [--team ID] TEXT
   agentbus log     [--dir D] [-n 30]
   agentbus status  [--dir D]
   agentbus release [--dir D] RESOURCE    (forced release)

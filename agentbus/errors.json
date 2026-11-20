@@ -43,6 +43,16 @@
      "name": "NotInTeam",
      "class": "NotInTeam",
      "doc": "the recipient is \"team\" but the caller is not in a team"
+    },
+    {
+     "name": "NotInYourTeam",
+     "class": "NotInTeam",
+     "doc": "the recipient is no member of the caller's team, and is no recipient the bus knows outside teams"
+    },
+    {
+     "name": "AmbiguousAgent",
+     "class": "Conflict",
+     "doc": "the caller is outside teams and the agent is in more than one open team: the message needs a task"
     }
    ]
   },
@@ -651,6 +661,31 @@
      "name": "InvalidNotice",
      "class": "InvalidArgument",
      "doc": "--notice is not a known script notice"
+    },
+    {
+     "name": "NoSuchMember",
+     "class": "NotFound",
+     "doc": "--task or --team names no open team the agent is a member of with that task"
+    },
+    {
+     "name": "AmbiguousAgent",
+     "class": "Conflict",
+     "doc": "the agent is in more than one open team and neither --task nor --team names which"
+    },
+    {
+     "name": "BindingForMany",
+     "class": "InvalidArgument",
+     "doc": "--task or --team is given with --to all or team:<id>: they name the team of one agent"
+    },
+    {
+     "name": "ToSelf",
+     "class": "InvalidArgument",
+     "doc": "--task or --team is given and the sender writes to itself"
+    },
+    {
+     "name": "TwoBindings",
+     "class": "InvalidArgument",
+     "doc": "--for-task is given with --task or --team: it names the session alone"
     }
    ]
   },

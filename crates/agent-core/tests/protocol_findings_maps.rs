@@ -113,6 +113,7 @@ mod protocol_findings_maps {
             Reply::Started {
                 team: team_id.clone(),
                 tasks: vec![task(1), task(2)],
+                shared: Vec::new(),
             },
             Reply::Teams {
                 teams: vec![summary.clone()],

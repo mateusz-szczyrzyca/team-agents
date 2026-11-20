@@ -44,6 +44,16 @@ impl Participant {
         }
     }
 
+    /// The participant's name as an agent name: the configuration has one namespace for all three tiers, and the bus
+    /// addresses each of them by it.
+    #[must_use]
+    pub fn agent_name(&self) -> AgentName {
+        match self {
+            Self::Normal(name) | Self::Worker(name) => name.clone(),
+            Self::Investigator(name) => AgentName::from(name),
+        }
+    }
+
     /// The participant's name; the configuration has one namespace for all three tiers.
     #[must_use]
     pub fn name(&self) -> &str {

@@ -137,7 +137,7 @@ async fn restart_after_the_saved_turn_limit_resumes_once_and_keeps_the_budget() 
             })
             .await
             .unwrap();
-        let Reply::Started { team, tasks } = receive.await.unwrap().unwrap() else {
+        let Reply::Started { team, tasks, .. } = receive.await.unwrap().unwrap() else {
             panic!("team did not start")
         };
         step.owner.start_queued().await.unwrap();
@@ -207,7 +207,7 @@ async fn turn_limit_without_a_session_fails_with_its_own_notice() {
         })
         .await
         .unwrap();
-    let Reply::Started { team, tasks } = receive.await.unwrap().unwrap() else {
+    let Reply::Started { team, tasks, .. } = receive.await.unwrap().unwrap() else {
         panic!("team did not start")
     };
     let now = "2026-11-16T00:00:00Z".parse().unwrap();

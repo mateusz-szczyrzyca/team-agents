@@ -396,7 +396,7 @@ impl Owner {
     /// of its agents.
     fn recipients(&self, target: &Target, hearing: &[TaskId]) -> Result<Vec<Recipient>, OwnerError> {
         match target {
-            Target::Task(task) => Ok(vec![Recipient::Agent(self.agent_of(task)?)]),
+            Target::Task(task) => Ok(vec![self.recipient_of(task)?]),
             // Nobody hears a round: `aim` refused it before.
             Target::Round(_) => Ok(Vec::new()),
             Target::Team(team) => {
@@ -408,12 +408,29 @@ impl Owner {
                 if on_bus {
                     return Ok(vec![Recipient::Team(team.clone())]);
                 }
-                hearing
-                    .iter()
-                    .map(|task| self.agent_of(task).map(Recipient::Agent))
-                    .collect()
+                hearing.iter().map(|task| self.recipient_of(task)).collect()
             }
         }
+    }
+
+    /// Who a word to `task` is for: its agent, in the team of the task when that team is on the bus, else in the task
+    /// itself (a solo task) — an agent in several teams has a session in each, and the bus must not bind the words to
+    /// the agent's other team or refuse them for it.
+    fn recipient_of(&self, task: &TaskId) -> Result<Recipient, OwnerError> {
+        let agent = self.agent_of(task)?;
+        let team = self
+            .parts
+            .state
+            .find_task(task)
+            .filter(|found| found.team.crew().coordinator().is_some())
+            .map(|found| found.team.id().clone());
+        Ok(match team {
+            Some(team) => Recipient::Member { agent, team },
+            None => Recipient::Task {
+                agent,
+                task: task.clone(),
+            },
+        })
     }
 
     /// The agent of `task`.

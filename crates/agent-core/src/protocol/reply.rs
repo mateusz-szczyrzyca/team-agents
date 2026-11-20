@@ -8,7 +8,7 @@ use super::ProtocolVersion;
 use super::request::RequestId;
 use crate::config::{AbsolutePath, RepoName};
 use crate::history::HistoryHealth;
-use crate::ids::{BranchName, ItemId, TaskId, TeamId};
+use crate::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
 use crate::kinds::Role;
 use crate::state::{
     GateRecord, GateResult, ItemPhase, ItemProgress, Member, MergeMode, Participant, PullRequest, Question, Review,
@@ -57,6 +57,10 @@ pub enum Reply {
         team: TeamId,
         /// Its tasks: the coordinator's (or the solo agent's) first, then the members', then the workers'.
         tasks: Vec<TaskId>,
+        /// The agents of the team that work in another open team too, with that team and their task there; absent
+        /// from the reply of a daemon before it told them, and when no agent is shared.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        shared: Vec<SharedAgent>,
     },
     /// `status`: the teams in short.
     Teams {
@@ -168,6 +172,19 @@ pub struct TeamSummary {
     /// What the team's investigators did, absent from a daemon before it kept them and from a team that has none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub activities: Vec<crate::state::Activity>,
+}
+
+/// An agent of a team that has just started and that works in another open team too: `agent run` names it, since
+/// both of its sessions are on the bus at once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedAgent {
+    /// The agent.
+    pub agent: AgentName,
+    /// The other open team it is in.
+    pub team: TeamId,
+    /// Its task in that team.
+    pub task: TaskId,
 }
 
 /// A round in full: for `show` of a round.
@@ -729,6 +746,7 @@ mod tests {
                 Reply::Started {
                     team: team_id(1),
                     tasks: vec![task(1), task(2)],
+                    shared: Vec::new(),
                 },
                 json!({"kind": "started", "team": TEAM, "tasks": ["task-20261111-153001-k3x9", TASK]}),
             ),
@@ -856,6 +874,44 @@ mod tests {
             &json!({"protocol": 1, "id": 1, "result": {"status": "ok", "reply": {"kind": "subscribed", "teams": []}}}),
         );
         assert_refused::<Failure>(&json!({"kind": "invalid"}));
+    }
+
+    #[test]
+    fn a_started_reply_names_the_agents_that_are_in_another_open_team() {
+        let reply = Reply::Started {
+            team: team_id(1),
+            tasks: vec![task(2)],
+            shared: vec![SharedAgent {
+                agent: "codex-1".parse().unwrap(),
+                team: team_id(0),
+                task: task(1),
+            }],
+        };
+        let wire = json!({
+            "kind": "started",
+            "team": TEAM,
+            "tasks": [TASK],
+            "shared": [{"agent": "codex-1", "team": "team-20261111-153000-t5m8", "task": "task-20261111-153001-k3x9"}],
+        });
+
+        assert_eq!(serde_json::to_value(&reply).unwrap(), wire);
+        assert_eq!(serde_json::from_value::<Reply>(wire).unwrap(), reply);
+    }
+
+    #[test]
+    fn a_started_reply_of_an_older_daemon_reads_with_no_shared_agent() {
+        let wire = json!({"kind": "started", "team": TEAM, "tasks": [TASK]});
+
+        let reply = serde_json::from_value::<Reply>(wire).unwrap();
+
+        assert_eq!(
+            reply,
+            Reply::Started {
+                team: team_id(1),
+                tasks: vec![task(2)],
+                shared: Vec::new(),
+            }
+        );
     }
 }
 

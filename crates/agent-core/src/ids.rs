@@ -161,6 +161,14 @@ text_newtype!(InvestigatorName, InvalidName, |text: &str| check_name(
     text
 ));
 
+/// An investigator's name as the name of an agent, for what addresses both tiers alike (the bus, a team's crew): the
+/// two follow the same rules, so the conversion is lossless and cannot fail.
+impl From<&InvestigatorName> for AgentName {
+    fn from(name: &InvestigatorName) -> Self {
+        Self(name.0.clone())
+    }
+}
+
 /// Which kind of name a text was parsed as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NameKind {
