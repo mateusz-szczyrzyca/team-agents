@@ -27,6 +27,9 @@ use crate::ids::ItemId;
 use crate::repo_path::RepoPath;
 use crate::task_list::{self, MAX_TASK_LIST_BYTES, NumberProblem};
 
+/// The indentation of the text lines of a step written back.
+const TEXT_INDENT: &str = "    ";
+
 /// The byte order mark some editors put at the start of a file; it is not part of the text.
 const BYTE_ORDER_MARK: char = '\u{feff}';
 
@@ -82,10 +85,23 @@ impl Plan {
     pub fn steps(&self) -> impl Iterator<Item = &Step> {
         self.stages.iter().flat_map(Stage::steps)
     }
+
     /// The plan as the text of `.agent/plan.md`; [`parse_plan`] reads it back into an equal plan.
     #[must_use]
     pub fn to_text(&self) -> String {
-        String::new()
+        let mut text = String::new();
+        if !self.intent.is_empty() {
+            text.push_str(&self.intent);
+            text.push_str("\n\n");
+        }
+        for stage in &self.stages {
+            text.push_str(&stage.to_text());
+        }
+        if text.is_empty() {
+            // A plan without an intent and without a stage is read back as an empty text only: a blank line.
+            text.push('\n');
+        }
+        text
     }
 }
 
@@ -117,6 +133,15 @@ impl Stage {
     #[must_use]
     pub fn steps(&self) -> &[Step] {
         &self.steps
+    }
+
+    /// The stage as the lines of a plan: its line, then its steps.
+    fn to_text(&self) -> String {
+        let mut text = format!("{}. {}\n", self.number, self.title);
+        for step in &self.steps {
+            text.push_str(&step.to_text());
+        }
+        text
     }
 }
 
@@ -173,6 +198,38 @@ impl Step {
     pub fn note(&self) -> &str {
         &self.note
     }
+
+    /// The step as the lines of a plan: its line, then its text indented by [`TEXT_INDENT`].
+    fn to_text(&self) -> String {
+        let mark = match self.state {
+            StepState::Todo => "[ ]",
+            StepState::InHand => "[>]",
+            StepState::Done => "[x]",
+            StepState::GivenUp => "[-]",
+        };
+        let mut text = format!("{mark} {} {}\n", self.id, self.title);
+        for line in self.note.lines() {
+            text.push_str(TEXT_INDENT);
+            text.push_str(line);
+            text.push('\n');
+        }
+        if let Some(files) = self.files_line() {
+            text.push_str(&files);
+        }
+        if let Some(check) = self.check.as_ref().map(Check::to_text) {
+            text.push_str(&check);
+        }
+        text
+    }
+
+    /// The step's `Files:` line, indented, with the line's end; `None` when the step is about no path.
+    fn files_line(&self) -> Option<String> {
+        if self.files.is_empty() {
+            return None;
+        }
+        let paths: Vec<&str> = self.files.iter().map(RepoPath::as_str).collect();
+        Some(format!("{TEXT_INDENT}{FILES_PREFIX} {}\n", paths.join(", ")))
+    }
 }
 
 /// The state of a step: its mark.
@@ -197,6 +254,17 @@ pub enum Check {
     Exists(RepoPath),
     /// `reviewer`: a person judges the step done; it is never a command.
     Reviewer,
+}
+
+impl Check {
+    /// The check as a `Check:` line, indented, with the line's end.
+    fn to_text(&self) -> String {
+        match self {
+            Self::Command(command) => format!("{TEXT_INDENT}{CHECK_PREFIX} {command}\n"),
+            Self::Exists(path) => format!("{TEXT_INDENT}{CHECK_PREFIX} {EXISTS_CHECK} {}\n", path.as_str()),
+            Self::Reviewer => format!("{TEXT_INDENT}{CHECK_PREFIX} {REVIEWER_CHECK}\n"),
+        }
+    }
 }
 
 /// The part of a step's text that a label starts: `Files:` or `Check:`.
