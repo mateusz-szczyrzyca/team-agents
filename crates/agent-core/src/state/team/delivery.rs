@@ -48,9 +48,7 @@ impl Team {
     pub fn delivery_pull_request(&self, number: PrNumber) -> Option<&PullRequest> {
         self.rounds
             .iter()
-            .filter(|round| {
-                round.delivered_by().is_none() && (round.is_open() || round.ended() == Some(RoundEnd::Merged))
-            })
+            .filter(|round| round.delivered_by().is_none())
             .find_map(|round| {
                 let pr = round.part_pull_request().or_else(|| {
                     round
