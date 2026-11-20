@@ -445,7 +445,7 @@ impl State {
         if matches!(probe.schema_version, 2..=10) {
             return migrate::from_v2(text);
         }
-        if matches!(probe.schema_version, 11 | 12 | 13) {
+        if matches!(probe.schema_version, 11..=13) {
             return migrate::from_v11(text);
         }
         if probe.schema_version != u64::from(SCHEMA_VERSION) {

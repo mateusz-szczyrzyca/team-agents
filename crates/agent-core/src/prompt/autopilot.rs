@@ -564,9 +564,7 @@ impl AutopilotPrompt {
             Self::ReviewAskHuman => ASK_HUMAN_VARIABLES,
             Self::ReviewFindingsInvalid => &["line", "reason"],
             Self::ReviewOpenFinding => &["number", "severity", "rule", "place", "text", "check"],
-            Self::ReviewFindingEntry => &[
-                "number", "severity", "rule", "place", "state", "reporter", "text", "note",
-            ],
+            Self::ReviewFindingEntry => FINDING_ENTRY_VARIABLES,
             Self::ReviewFindingsList => &["blockers", "majors", "minors", "closed", "entries"],
             Self::ReviewFindingsClosed => &["count", "entries"],
             Self::OpinionAttemptFailed
@@ -619,3 +617,8 @@ const BRANCH_VARIABLES: &[&str] = &["branch", "missing", "sent", "limit"];
 
 /// Required context of this catalog entry.
 const FIX_PASS_VARIABLES: &[&str] = &["pr", "pass", "passes", "branch", "findings"];
+
+/// Context identifying and explaining one review finding.
+const FINDING_ENTRY_VARIABLES: &[&str] = &[
+    "number", "severity", "rule", "place", "state", "reporter", "text", "note",
+];
