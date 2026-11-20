@@ -92,13 +92,13 @@ impl PlanKeeping {
         self.stage
     }
 
-    /// The reason the next run of the task delivers, when one waits.
     /// The questions about the plan whose answers no run has been given yet; `None` when there are none.
     #[must_use]
     pub const fn unread_answers(&self) -> Option<NonZeroU32> {
         self.unread_answers
     }
 
+    /// The reason the next run of the task delivers, when one waits.
     #[must_use]
     pub const fn pending(&self) -> Option<&PlanReason> {
         self.pending.as_ref()
