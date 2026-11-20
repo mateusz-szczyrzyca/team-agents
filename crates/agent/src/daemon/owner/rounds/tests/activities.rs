@@ -270,3 +270,60 @@ async fn three_reviews_rotate_pairs_and_the_next_team_uses_the_oldest_global_pai
         assert_ne!(task(&first), task(&second));
     }
 }
+
+#[tokio::test]
+async fn status_investigators_shows_the_reviewers_at_work_and_the_free_ones() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+            investigator("inv-r3", "sleep"),
+            investigator("inv-r4", "sleep"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (id, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .state_where("reviews asked", |state| {
+            state.team(&id).unwrap().activities().len() == 2
+        })
+        .await;
+    let mut connection = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap();
+    let mut shown = Vec::new();
+
+    crate::commands::status::status_investigators(&mut connection, &rig.home, time::UtcOffset::UTC, &mut shown)
+        .await
+        .unwrap();
+    rig.stop().await.unwrap();
+
+    let activities = state.team(&id).unwrap().activities();
+    let working = |name: &str| {
+        let activity = activities
+            .iter()
+            .find(|activity| activity.investigator().as_str() == name)
+            .unwrap();
+        format!("{}  reviewer  {name}  for {id}  working, 1st review", activity.task())
+    };
+    let free = |name: &str| format!("{name}  free, no activity in an open team");
+    let asked: Vec<_> = activities
+        .iter()
+        .map(|activity| activity.investigator().as_str())
+        .collect();
+    let expected: Vec<String> = ["inv-r1", "inv-r2", "inv-r3", "inv-r4"]
+        .into_iter()
+        .map(|name| {
+            if asked.contains(&name) {
+                working(name)
+            } else {
+                free(name)
+            }
+        })
+        .collect();
+    assert_eq!(String::from_utf8(shown).unwrap(), format!("{}\n", expected.join("\n")));
+}
