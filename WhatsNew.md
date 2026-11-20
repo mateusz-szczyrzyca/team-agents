@@ -5,6 +5,15 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.39.0 — 20.11.2026 — PR #158
+
+### New features
+- [agent-core] A task-list item can name the kind of agent it needs with a line `Tier:` (`investigator`, `normal` or `worker`; an item without one asks for `normal`). An unknown tier is refused at its line. A list without `Tier:` lines reads as before. Nothing gives items out by tier yet.
+- [agent-core] The choice of an agent by tier exists: it never picks an agent of a lower tier than asked (investigators above normal agents above workers), prefers a fitting member, takes the coordinator only when no member fits, and says when nobody fits. The daemon does not use it yet.
+
+### Enhancements
+- [agent-core] A recorded split plan can keep who approved it, the harness or you. **Action:** a plan written with this field cannot be read by an older `agent`, so keep a backup of `state.json` from before the upgrade; plans without the field load as before.
+
 ## 0.38.0 — 20.11.2026 — PR #157
 
 ### New features
