@@ -509,16 +509,7 @@ impl Member {
         if self.runs.iter().any(|run| run.id() == &id) {
             return Err(RunError::DuplicateRun { run: id });
         }
-        let run = Run::started_for(id, at, session, rounds)?;
-        // The run that carries a renewal begins the new session: it resumes nothing.
-        let begins_a_new_session = self
-            .renewals
-            .as_ref()
-            .is_some_and(|renewals| at.as_utc() >= renewals.at().as_utc());
-        if begins_a_new_session && run.session().is_some() {
-            return Err(RunError::SessionOfANewSession);
-        }
-        self.runs.push(run);
+        self.runs.push(Run::started_for(id, at, session, rounds)?);
         Ok(())
     }
 
