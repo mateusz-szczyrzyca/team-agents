@@ -58,6 +58,7 @@ pub mod ids;
 pub mod kinds;
 pub mod log;
 pub mod notice_status;
+pub mod plan;
 pub mod prompt;
 pub mod protocol;
 pub mod questions;

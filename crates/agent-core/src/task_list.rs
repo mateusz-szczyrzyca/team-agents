@@ -472,7 +472,7 @@ fn has_item_mark(line: &str) -> bool {
 }
 
 /// Parses a feature or dependency number: ASCII digits, no leading zero, from 1 to 65535.
-fn parse_number(text: &str) -> Result<NonZeroU16, NumberProblem> {
+pub(crate) fn parse_number(text: &str) -> Result<NonZeroU16, NumberProblem> {
     // `parse` alone would also take a leading `+`.
     if !text.bytes().all(|b| b.is_ascii_digit()) || (text.len() > 1 && text.starts_with('0')) {
         return Err(NumberProblem::Shape);
@@ -522,12 +522,12 @@ fn parse_item_line(line: &str) -> Result<ItemLine, ItemProblem> {
 }
 
 /// The number of leading spaces and tabs of `line`.
-fn indentation(line: &str) -> usize {
+pub(crate) fn indentation(line: &str) -> usize {
     line.chars().take_while(|c| matches!(c, ' ' | '\t')).count()
 }
 
 /// `line` without its first `width` spaces or tabs; a blank line is empty.
-fn dedent(line: &str, width: usize) -> &str {
+pub(crate) fn dedent(line: &str, width: usize) -> &str {
     if line.trim().is_empty() {
         return "";
     }
@@ -542,7 +542,7 @@ fn dedent(line: &str, width: usize) -> &str {
 }
 
 /// The lines joined by `\n`, without blank lines at the start and the end.
-fn join_trimmed(lines: &[&str]) -> String {
+pub(crate) fn join_trimmed(lines: &[&str]) -> String {
     let mut kept: Vec<&str> = lines
         .iter()
         .skip_while(|line| line.trim().is_empty())
