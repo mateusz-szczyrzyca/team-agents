@@ -88,6 +88,17 @@ branch `agents/<agent>/<timestamp>` and a directory `~/agents/tasks/<task id>` w
 stream, the activity log and the final message. A task can have several **runs** (after answers, after an
 investigation, after being woken up); the agent CLI resumes the same session each time.
 
+The Rust `agent run` fetches the configured base branch from `origin` before creating a team, task directory or
+worktree. If the local base has unpublished commits, it refuses with their count and the first commit's short ID
+and subject. Push those commits, or review and manually run `git reset --hard origin/<base>` before trying again
+(the reset discards local changes). Fetch errors also refuse the start. A base behind origin keeps the existing
+behavior: the initial worktree starts from the local base. Repositories without `origin` keep their existing behavior.
+
+Use `agent run --allow-unpushed-base <agents...> "task"` to explicitly start with unpublished base commits.
+The CLI prints the count and first commit; the team retains that evidence across daemon restarts, and the harness
+adds it under `## Unpushed base` in every pull request description. The flag does not bypass a failed fetch.
+Older clients and saved teams grant no such permission.
+
 Every turn of an agent must end with a `STATUS:` line. The runner maps it to the task status:
 
 | Agent says | Task status | What happens |

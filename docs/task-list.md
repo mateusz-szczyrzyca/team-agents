@@ -6,6 +6,10 @@ text of `"tasks"` and the text of the file are parsed by the same function, so t
 Rust rewrite itself, [`rust-agent-plan.md`](../crates/agent-core/tests/fixtures/rust-agent-plan.md), is a task list and a
 test fixture: it must parse. The parser is [`agent-core`](../crates/agent-core/src/task_list.rs)'s `TaskList::parse`.
 
+`--allow-unpushed-base` is a separate command-line permission, not a task-list directive. It permits a team to
+start with local base commits absent from `origin`; the harness retains their count and first commit and includes
+them in every pull request. `Allow:` path allowances do not grant this permission.
+
 ## Format
 
 ```text
