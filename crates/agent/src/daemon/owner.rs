@@ -770,6 +770,10 @@ impl Owner {
                 task: task.clone(),
                 source,
             })?;
+        // The run's prompt has the reason it was sent back for its plan, if any: no later run is told it again.
+        if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
+            drop(member.take_plan_reason());
+        }
         events.push(EventKind::RunStarted {
             team: located.team.clone(),
             task: task.clone(),

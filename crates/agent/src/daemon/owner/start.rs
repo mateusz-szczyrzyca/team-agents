@@ -14,9 +14,10 @@ use agent_core::ids::{BranchName, GenerateIdError, InvalidBranchName, InvalidNam
 use agent_core::kinds::Role;
 use agent_core::kinds::{CliKind, Tier};
 use agent_core::log::LogEvent;
+use agent_core::prompt::{HarnessPrompt, Variables};
 use agent_core::state::{
-    ItemPhase, ItemProgress, Member, Participant, PrNumber, Question, ReviewOutcome, Run, RunEnd, RunState, State,
-    TaskRef, Team,
+    ItemPhase, ItemProgress, Member, Participant, PlanKeeping, PrNumber, Question, ReviewOutcome, Run, RunEnd,
+    RunState, State, TaskRef, Team,
 };
 use agent_core::status::RunOutcome;
 use agent_core::task_list::Item;
@@ -274,6 +275,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
     };
     let prompt = compose(&texts, &input)?;
     let (prompt, addition) = compose_run_prompt(ctx, &texts, &found, &working, kind, prompt).await?;
+    let prompt = with_plan(ctx, role, member, kind, prompt)?;
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
         (RunMode::Resume { session_id }, member.last_session().cloned())
@@ -306,6 +308,36 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
             mcp_servers,
         },
     })
+}
+
+/// `prompt` with what the run is told of its task's plan: the rules on a first prompt where the task's runs are held to
+/// a plan (a task this version made, of a role of `[plan] roles`, with `bounces` above 0), and the reason of a send-back
+/// that waits for a run.
+fn with_plan(
+    ctx: &Context<'_>,
+    role: Role,
+    member: &Member,
+    kind: PromptKind,
+    prompt: String,
+) -> Result<String, ComposeError> {
+    let policy = ctx.settings.config.plan();
+    let keeping = member.plan();
+    let mut sections = Vec::new();
+    if kind == PromptKind::First && keeping.is_some() && policy.bounces() > 0 && policy.roles().contains(&role) {
+        sections.push(ctx.texts.render(HarnessPrompt::Plan, &Variables::new())?);
+    }
+    if let Some(reason) = keeping.and_then(PlanKeeping::pending) {
+        sections.push(super::plan::correction(ctx.texts, reason)?);
+    }
+    if sections.is_empty() {
+        return Ok(prompt);
+    }
+    let added = sections
+        .iter()
+        .map(|section| section.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    Ok(format!("{}\n\n{added}\n", prompt.trim_end()))
 }
 
 /// The questions the human answered and no run has read since: the last questions are answered, and the latest run

@@ -10,10 +10,14 @@ use agent_core::ids::{AgentName, InvalidName, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::plan::PLAN_FILE;
+use agent_core::prompt::{HarnessPrompt, Variables};
 use agent_core::repo_path::{InvalidRepoPath, RepoPath};
+use agent_core::state::PlanReason;
 use agent_runtime::git::{CommitIdentity, Git, GitError, Untracked};
+use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
+use agent_runtime::run::compose::ComposeError;
 
 use super::{Located, Owner};
 
@@ -127,6 +131,32 @@ impl Owner {
             None => Err(OutOfDeliveryError::Worktree { path, source: None }),
         }
     }
+}
+
+/// The correction a run sent back for `reason` is told: a text of the catalog for each reason.
+///
+/// # Errors
+/// [`ComposeError`] when the text does not take its values: a mistake of the prompt files, which the daemon checks
+/// when it starts.
+pub(super) fn correction(texts: &HarnessPrompts, reason: &PlanReason) -> Result<String, ComposeError> {
+    let steps =
+        |steps: &[agent_core::ids::ItemId]| steps.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+    let text = match reason {
+        PlanReason::Missing => texts.render(HarnessPrompt::PlanMissing, &Variables::new())?,
+        PlanReason::Unreadable { detail, .. } => texts.render(
+            HarnessPrompt::PlanUnreadable,
+            &Variables::new().with("error", detail.as_str())?,
+        )?,
+        PlanReason::Unfinished { steps: ids } => texts.render(
+            HarnessPrompt::PlanUnfinished,
+            &Variables::new().with("steps", steps(ids))?,
+        )?,
+        PlanReason::LostStep { steps: ids } => texts.render(
+            HarnessPrompt::PlanLostStep,
+            &Variables::new().with("steps", steps(ids))?,
+        )?,
+    };
+    Ok(text)
 }
 
 #[cfg(test)]
