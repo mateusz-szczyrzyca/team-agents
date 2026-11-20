@@ -1071,3 +1071,73 @@ fn a_reviewers_ordinal_leaves_out_a_review_that_ended_without_its_report() {
         "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 19:15:50"
     );
 }
+
+// Rule: a first review and the verification after it may be asked of one task in the same second: the verification is
+// the later review, so the reviewer's line tells it, and it is the second review the investigator gave.
+#[test]
+fn a_verification_asked_in_the_second_of_the_first_review_is_its_second_review() {
+    let activities = vec![
+        review_activity(
+            "inv-codex",
+            4,
+            20,
+            &ActivityRequest::FirstReview,
+            &ActivityOutcome::Finished {
+                at: at(30),
+                end: ActivityEnd::Reported,
+            },
+        ),
+        review_activity(
+            "inv-codex",
+            4,
+            20,
+            &ActivityRequest::Verification { pass: NonZeroU32::MIN },
+            &ActivityOutcome::Finished {
+                at: at(40),
+                end: ActivityEnd::Reported,
+            },
+        ),
+    ];
+
+    assert_eq!(
+        reviewer_line(4, activities),
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 19:15:40"
+    );
+}
+
+// Rule: an abandoned second opinion says the reason the daemon recorded for it.
+#[test]
+fn an_abandoned_second_opinion_says_the_reason_the_daemon_recorded() {
+    use agent_core::state::OpinionFailure;
+    for (failure, reason) in [
+        (OpinionFailure::Failed, "the run failed"),
+        (OpinionFailure::NoStatus, "the run ended without a status"),
+        (
+            OpinionFailure::MissingReport,
+            "the corrections ran out without an opinion",
+        ),
+        (OpinionFailure::Silent, "the investigator stayed silent too long"),
+        (OpinionFailure::Interrupted, "the task can no longer be resumed"),
+    ] {
+        let activities = vec![review_activity(
+            "inv-codex",
+            4,
+            20,
+            &ActivityRequest::SecondOpinion {
+                pass: NonZeroU32::MIN,
+                finding: NonZeroU32::MIN,
+            },
+            &ActivityOutcome::Finished {
+                at: at(30),
+                end: ActivityEnd::OpinionFailed { reason: failure },
+            },
+        )];
+
+        assert_eq!(
+            reviewer_line(4, activities),
+            format!(
+                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: its second opinion was abandoned: {reason}"
+            )
+        );
+    }
+}

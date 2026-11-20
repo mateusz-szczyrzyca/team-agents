@@ -191,3 +191,51 @@ fn a_review_that_ended_without_its_report_is_not_counted_in_the_ordinal() {
         )
     );
 }
+
+// Rule: passes of one task asked in the same second are told in the order of their passes: the newest pass comes
+// first, and a verification that goes is shown before the reports of the earlier passes.
+#[test]
+fn passes_asked_in_one_second_are_shown_newest_pass_first() {
+    let open = team(
+        0,
+        false,
+        vec![
+            activity(
+                "inv-codex",
+                21,
+                1,
+                20,
+                &ActivityRequest::FirstReview,
+                Some((30, ActivityEnd::Reported)),
+            ),
+            activity(
+                "inv-codex",
+                21,
+                1,
+                20,
+                &ActivityRequest::Verification { pass: NonZeroU32::MIN },
+                Some((40, ActivityEnd::Reported)),
+            ),
+            activity(
+                "inv-codex",
+                21,
+                1,
+                20,
+                &ActivityRequest::Verification {
+                    pass: NonZeroU32::new(2).unwrap(),
+                },
+                None,
+            ),
+        ],
+    );
+
+    let text = render(&[open], &configured(&["inv-codex"]), UtcOffset::UTC);
+
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "task-20261111-153021-k3x9  reviewer  inv-codex  for team-20261111-153000-t5m8  working, 3rd review",
+            "task-20261111-153021-k3x9  reviewer  inv-codex  for team-20261111-153000-t5m8  done at 19:15:40, 2nd review finished",
+        ]
+    );
+}
