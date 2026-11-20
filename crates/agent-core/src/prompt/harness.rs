@@ -74,6 +74,19 @@ pub enum HarnessPrompt {
     NoticeLowDisk,
     /// The notification that open rounds wait for disk space.
     NoticeDiskWait,
+    /// How a solo agent, a member or a coordinator keeps the plan of its task in `.agent/plan.md`, and its form.
+    Plan,
+    /// What a run sent back because it ended done without a plan is told.
+    PlanMissing,
+    /// What a run sent back because its plan does not parse is told.
+    PlanUnreadable,
+    /// What a run sent back because steps of its plan are still to do or in hand is told.
+    PlanUnfinished,
+    /// What a run sent back because its plan lost a step of the version before is told.
+    PlanLostStep,
+    /// The questions file the harness writes for the human when a task was sent back for its plan as often as
+    /// `[plan] bounces` allows.
+    NoticePlanQuestion,
 }
 
 impl HarnessPrompt {
@@ -111,6 +124,12 @@ impl HarnessPrompt {
         Self::NoticeRunFailed,
         Self::NoticeLowDisk,
         Self::NoticeDiskWait,
+        Self::Plan,
+        Self::PlanMissing,
+        Self::PlanUnreadable,
+        Self::PlanUnfinished,
+        Self::PlanLostStep,
+        Self::NoticePlanQuestion,
     ];
 
     /// Where the text is, who reads it and which variables it uses.
@@ -211,6 +230,16 @@ impl HarnessPrompt {
             Self::NoticeDiskWait => {
                 PromptSpec::new("harness/run/notice-disk-wait.md", Audience::Human, &["free", "min"])
             }
+            Self::Plan => PromptSpec::new("harness/run/plan.md", Audience::Model, &[]),
+            Self::PlanMissing => PromptSpec::new("harness/run/plan-missing.md", Audience::Model, &[]),
+            Self::PlanUnreadable => PromptSpec::new("harness/run/plan-unreadable.md", Audience::Model, &["error"]),
+            Self::PlanUnfinished => PromptSpec::new("harness/run/plan-unfinished.md", Audience::Model, &["steps"]),
+            Self::PlanLostStep => PromptSpec::new("harness/run/plan-lost-step.md", Audience::Model, &["steps"]),
+            Self::NoticePlanQuestion => PromptSpec::new(
+                "harness/run/notice-plan-question.md",
+                Audience::Human,
+                &["task", "agent", "count", "reason"],
+            ),
         }
     }
 }
