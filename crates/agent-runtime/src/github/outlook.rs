@@ -26,7 +26,16 @@ impl GitHubError {
                 reason: Rejection::Server | Rejection::RateLimited,
                 ..
             } => Outlook::MayPass,
-            Self::Status { .. } => Outlook::WillNotPass,
+            Self::Status { reason, .. } => match reason {
+                Rejection::Server | Rejection::RateLimited => Outlook::MayPass,
+                Rejection::Unauthorized
+                | Rejection::Forbidden
+                | Rejection::NotFound
+                | Rejection::NotAllowed
+                | Rejection::Conflict
+                | Rejection::Invalid
+                | Rejection::Other => Outlook::WillNotPass,
+            },
             Self::Client { .. }
             | Self::ResponseTooLarge { .. }
             | Self::Decode { .. }
