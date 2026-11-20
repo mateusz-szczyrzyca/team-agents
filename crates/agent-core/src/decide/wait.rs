@@ -26,6 +26,8 @@ pub enum Obligation {
     Human,
     /// The lead must correct its handover or answer.
     LeadCorrection,
+    /// An open pull request delivering the item must be merged.
+    Merge,
 }
 
 /// What an idle open round waits for.
@@ -50,6 +52,7 @@ impl Waiting {
             Self::For(Obligation::SecondOpinion) => include_str!("../../../../prompts/harness/pr/wait-opinion.md"),
             Self::For(Obligation::Human) => include_str!("../../../../prompts/harness/pr/wait-human.md"),
             Self::For(Obligation::LeadCorrection) => include_str!("../../../../prompts/harness/pr/wait-correction.md"),
+            Self::For(Obligation::Merge) => "wrong",
             Self::Defect => include_str!("../../../../prompts/harness/pr/wait-nothing.md"),
         }
     }

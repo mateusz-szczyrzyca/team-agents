@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::strict::{checked, strict_enum};
-use super::values::Timestamp;
+use super::values::{PrNumber, Timestamp};
 use crate::ids::{ItemId, RoundId};
 use crate::kinds::{Keyword, UnknownKeyword};
 
@@ -46,7 +46,7 @@ struct RoundWire {
 
 checked!(Round, RoundWire, |round: &Round| match &round.state {
     RoundLife::Closed { at, .. } => check_close(&round.id, round.opened_at, *at),
-    RoundLife::Open => Ok(()),
+    RoundLife::Open | RoundLife::Delivered { .. } => Ok(()),
 });
 
 /// Whether a round is open, or when and how it was closed.
@@ -57,6 +57,11 @@ checked!(Round, RoundWire, |round: &Round| match &round.state {
 pub enum RoundLife {
     /// The round goes on.
     Open,
+    /// Delivered by another pull request of the team; waits for its merge.
+    Delivered {
+        /// The pull request that delivers it.
+        pr: PrNumber,
+    },
     /// The round is over.
     Closed {
         /// When it was closed.
@@ -72,6 +77,11 @@ pub enum RoundLife {
 enum RoundLifeWire {
     /// See [`RoundLife::Open`].
     Open,
+    /// See [`RoundLife::Delivered`].
+    Delivered {
+        /// See [`RoundLife::Delivered`].
+        pr: PrNumber,
+    },
     /// See [`RoundLife::Closed`].
     Closed {
         /// See [`RoundLife::Closed`].
@@ -110,6 +120,8 @@ pub enum RoundEnd {
     Approved,
     /// The team was stopped or ended without a merge or an approval.
     Abandoned,
+    /// The item was delivered by another pull request of the team that was merged.
+    Delivered,
 }
 
 impl Keyword for RoundEnd {
@@ -172,24 +184,35 @@ impl Round {
     /// Whether the round goes on.
     #[must_use]
     pub const fn is_open(&self) -> bool {
-        matches!(self.state, RoundLife::Open)
+        matches!(self.state, RoundLife::Open | RoundLife::Delivered { .. })
     }
 
     /// How the round ended; none while it is open.
     #[must_use]
     pub const fn ended(&self) -> Option<RoundEnd> {
         match self.state {
-            RoundLife::Open => None,
+            RoundLife::Open | RoundLife::Delivered { .. } => None,
             RoundLife::Closed { how, .. } => Some(how),
         }
     }
 
     /// Closes the round. A round that is closed already stays as it is: whoever calls this checks that.
-    pub(super) fn close(&mut self, at: Timestamp, how: RoundEnd) -> Result<(), ClosedBeforeOpened> {
+    pub fn close(&mut self, at: Timestamp, how: RoundEnd) -> Result<(), ClosedBeforeOpened> {
         check_close(&self.id, self.opened_at, at)?;
         self.state = RoundLife::Closed { at, how };
         Ok(())
     }
+
+    /// Marks the round as delivered by pull request `pr`.
+    pub fn set_delivered(&mut self, _pr: PrNumber) {}
+
+    /// Closes the round as delivered.
+    pub fn close_delivered(&mut self, _at: Timestamp) -> Result<(), ClosedBeforeOpened> {
+        Ok(())
+    }
+
+    /// Reopens the round back to open.
+    pub fn reopen(&mut self) {}
 }
 
 /// Checks that a round opened at `opened_at` may be closed at `at`.

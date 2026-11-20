@@ -615,6 +615,7 @@ fn render_team(team: &TeamSummaryFacts, offset: UtcOffset, out: &mut SummaryWrit
         let item_str = r.item.as_ref().map_or_else(|| "-".to_owned(), ToString::to_string);
         let status_str = match r.status {
             RoundLife::Open => "open".to_owned(),
+            RoundLife::Delivered { pr } => format!("delivered (PR #{pr})"),
             RoundLife::Closed { at, how } => format!("closed ({how}) at {}", format_time(at, offset)),
         };
         write_line(

@@ -380,7 +380,7 @@ fn end_fits(how: RoundEnd, phase: Option<&ItemPhase>) -> bool {
     match how {
         RoundEnd::Merged => merged,
         RoundEnd::Approved => merged || matches!(phase, Some(ItemPhase::Approved { .. })),
-        RoundEnd::Abandoned => true,
+        RoundEnd::Abandoned | RoundEnd::Delivered => true,
     }
 }
 

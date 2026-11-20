@@ -15,6 +15,7 @@ fn the_ways_a_round_ends_have_their_texts() {
         (RoundEnd::Merged, "merged"),
         (RoundEnd::Approved, "approved"),
         (RoundEnd::Abandoned, "abandoned"),
+        (RoundEnd::Delivered, "delivered"),
     ];
 
     assert_eq!(RoundEnd::ALL, table.iter().map(|&(how, _)| how).collect::<Vec<_>>());
@@ -97,6 +98,39 @@ fn open_and_closed_rounds_are_written_in_the_form_of_the_state_and_read_back_equ
         let value = serde_json::to_value(&round).unwrap();
         assert_eq!(serde_json::from_value::<Round>(value).unwrap(), round);
     }
+}
+
+#[test]
+fn a_round_delivered_by_a_pull_request_is_open_and_closes_as_delivered() {
+    let mut round = opened();
+    let pr12 = crate::state::PrNumber::new(std::num::NonZeroU32::new(12).unwrap());
+    round.set_delivered(pr12);
+
+    assert_eq!(round.life(), &RoundLife::Delivered { pr: pr12 });
+    assert!(round.is_open());
+    assert_eq!(round.ended(), None);
+
+    let val_open = serde_json::to_value(&round).unwrap();
+    assert_eq!(val_open["state"], json!({"status": "delivered", "pr": 12}));
+    assert_eq!(serde_json::from_value::<Round>(val_open).unwrap(), round);
+
+    round.close_delivered(at(20)).unwrap();
+    assert!(!round.is_open());
+    assert_eq!(round.ended(), Some(RoundEnd::Delivered));
+    assert_eq!(
+        round.life(),
+        &RoundLife::Closed {
+            at: at(20),
+            how: RoundEnd::Delivered,
+        }
+    );
+
+    let val = serde_json::to_value(&round).unwrap();
+    assert_eq!(
+        val["state"],
+        json!({"status": "closed", "at": "2026-11-11T19:15:20Z", "how": "delivered"})
+    );
+    assert_eq!(serde_json::from_value::<Round>(val).unwrap(), round);
 }
 
 #[test]
