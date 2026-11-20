@@ -87,10 +87,35 @@ impl Plan {
     /// reported as a [`Retitle`], not as a step added and another disappeared.
     #[must_use]
     pub fn compare(&self, newer: &Self) -> PlanChanges {
-        PlanChanges {
-            added: newer.steps().map(Step::id).collect(),
-            ..PlanChanges::default()
+        let before: HashMap<ItemId, &Step> = self.steps().map(|step| (step.id, step)).collect();
+        let after: HashMap<ItemId, &Step> = newer.steps().map(|step| (step.id, step)).collect();
+        let mut changes = PlanChanges::default();
+        for step in newer.steps() {
+            let Some(old) = before.get(&step.id) else {
+                changes.added.push(step.id);
+                continue;
+            };
+            if old.state != step.state {
+                changes.state_changed.push(StateChange {
+                    id: step.id,
+                    from: old.state,
+                    to: step.state,
+                });
+            }
+            if old.title != step.title {
+                changes.retitled.push(Retitle {
+                    id: step.id,
+                    was: old.title.clone(),
+                    now: step.title.clone(),
+                });
+            }
         }
+        changes.disappeared = self
+            .steps()
+            .map(|step| step.id)
+            .filter(|id| !after.contains_key(id))
+            .collect();
+        changes
     }
 
     /// Every step, stage by stage, in the order written.
@@ -159,13 +184,16 @@ impl PlanChanges {
     /// Whether the two versions are the same in every way a comparison reports.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        false
+        self.added.is_empty()
+            && self.state_changed.is_empty()
+            && self.disappeared.is_empty()
+            && self.retitled.is_empty()
     }
 
     /// Whether a step of the older version is missing from the newer one, or its ID now names another step.
     #[must_use]
     pub fn loses_a_step(&self) -> bool {
-        true
+        !self.disappeared.is_empty() || !self.retitled.is_empty()
     }
 }
 
