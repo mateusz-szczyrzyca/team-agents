@@ -268,3 +268,39 @@ async fn a_second_opinion_whose_worktree_git_cannot_make_waits_for_the_human_and
     assert_eq!(times(&rig, LogEvent::DaemonTaskFailed), 0);
     assert_eq!(times(&rig, LogEvent::GithubStepResumed), 1);
 }
+
+#[tokio::test]
+async fn a_github_that_answers_no_call_ends_nothing_and_the_daemon_answers_status_until_it_is_back() {
+    let mut rig = two_teams().await;
+    let first = approved_then_failing(&mut rig, 503).await;
+    rig.github.fail_every_call(503);
+    let calls = rig.github.requests().len();
+    rig.wait_for("many looks while GitHub is down", || {
+        rig.github.requests().len() >= calls + 20
+    })
+    .await;
+
+    let status = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Status(agent_core::protocol::StatusRequest { target: None }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(status, Reply::Teams { .. }), "{status:?}");
+    let waiting = waits_for(&rig, round_of(&rig, &first)).await.unwrap_or_default();
+    assert!(waiting.starts_with("GitHub: "), "{waiting}");
+    assert_eq!(times(&rig, LogEvent::DaemonTaskFailed), 0);
+
+    rig.github.answer_again();
+    rig.github.answer_calls_to("GET", FIRST_PULL);
+    rig.wait_for("the step that waited goes through", || {
+        times(&rig, LogEvent::GithubStepResumed) > 0
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(times(&rig, LogEvent::DaemonTaskFailed), 0);
+}
