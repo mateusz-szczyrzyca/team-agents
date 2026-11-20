@@ -45,6 +45,7 @@ Top-level key and tables:
 | `[watchdog]` | table | see below | when a silent run is hung |
 | `[limits]` | table | see below | pauses for quotas and rate limits |
 | `[review]` | table | `fix_passes = 5`, `check_passes = 2`, `replace_after_minutes = 15` | the review loop, the checks before it and the reviewers that cannot work |
+| `[plan]` | table | `roles = ["solo", "member", "coordinator"]`, `bounces = 3` | whose runs keep a plan of their task, and how often one goes back for it |
 | `[git]` | table | see below | the identity of the agents' commits |
 | `[github]` | table | none trusted, public API | whose words on GitHub are instructions, and where the API is |
 | `[notifications]` | table | files only | how the human is told |
@@ -136,6 +137,20 @@ Provider quota exhaustion takes precedence over a turn limit and uses the quota 
 | `fix_passes` | `5` | "changes requested" goes back to the team at most this many times; then the human is asked. `0` asks at once |
 | `check_passes` | `2` | the checks before a review ([`[repos.NAME.checks]`](#reposnamechecks)) send a round back to the team at most this many times; then the human is asked. `0` asks at once |
 | `replace_after_minutes` | `15` | a reviewer that is paused this long with its review still to come is replaced by another free investigator; one whose task failed or was stopped is replaced at once. With no investigator free the human is told |
+
+### `[plan]`
+
+A plan is the task's own record of what it is for and what is left, written by the agent at `.agent/plan.md` in its
+worktree ([`docs/plan.md`](plan.md)). The daemon reads it at the end of every run and keeps every new version in the
+history; a run of a role here that ends `STATUS: DONE` against its plan is sent back with the reason.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `roles` | `["solo", "member", "coordinator"]` | the roles whose runs are sent back for their plan. Only these three: a worker or a reviewer keeps no plan, and naming one is refused (`PlanRole`), as is a role named twice (`PlanRoleTwice`). A file without `[plan]` has these roles |
+| `bounces` | `3` | how many times a task's runs go back for its plan before the human is asked once, in a questions file. `0` never sends a run back; its plan is still recorded |
+
+A task created before the daemon first ran with plans keeps none of this: its plan, if it writes one, is recorded, and
+its runs are never sent back.
 
 ### `[git]`
 

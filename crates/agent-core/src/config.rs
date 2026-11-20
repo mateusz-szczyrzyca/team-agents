@@ -391,13 +391,25 @@ impl Review {
 }
 
 /// `[plan]`: which roles keep a plan of their task, and how often a run that ends done against it goes back.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Plan {
     /// The roles whose runs are sent back for their task's plan, in the order the file gives them.
     pub roles: Vec<Role>,
     /// How many times a task's runs go back for its plan before the human is asked; `0` never sends a run back.
     pub bounces: u32,
+}
+
+/// How many times a task's runs go back for its plan before the human is asked, by default.
+const DEFAULT_PLAN_BOUNCES: u32 = 3;
+
+impl Default for Plan {
+    fn default() -> Self {
+        Self {
+            roles: vec![Role::Solo, Role::Member, Role::Coordinator],
+            bounces: DEFAULT_PLAN_BOUNCES,
+        }
+    }
 }
 
 /// `[git]`: who the commits of the agents are by.
@@ -703,6 +715,7 @@ impl RawConfig {
             web,
             repos,
         } = self;
+        check_plan(&plan)?;
         check_list(Tier::Normal, &normal, &agents)?;
         check_list(Tier::Worker, &workers, &agents)?;
         check_tiers(&normal, &workers, &agents, &investigators)?;
@@ -738,6 +751,21 @@ impl RawConfig {
             repos,
         })
     }
+}
+
+/// Checks that `[plan] roles` names no role that keeps no plan and no role twice, in the order the file gives.
+fn check_plan(plan: &Plan) -> Result<(), ConfigError> {
+    let mut seen: HashSet<Role> = HashSet::new();
+    for role in &plan.roles {
+        match role {
+            Role::Solo | Role::Member | Role::Coordinator => {}
+            Role::Worker | Role::Reviewer => return Err(ConfigError::PlanRole { role: *role }),
+        }
+        if !seen.insert(*role) {
+            return Err(ConfigError::PlanRoleTwice { role: *role });
+        }
+    }
+    Ok(())
 }
 
 /// Checks that every name of the `list` of `names` is an agent and is named once.
@@ -805,7 +833,9 @@ impl Config {
     /// # Errors
     /// [`ConfigError::TooLarge`] for a text over [`MAX_CONFIG_BYTES`]; [`ConfigError::Parse`] for text that is not
     /// valid TOML or not the format of the file; [`ConfigError::UnknownName`], [`ConfigError::DuplicateName`],
-    /// [`ConfigError::NameInTwoLists`] and [`ConfigError::AgentInNoList`] for lists that do not fit the agents.
+    /// [`ConfigError::NameInTwoLists`] and [`ConfigError::AgentInNoList`] for lists that do not fit the agents;
+    /// [`ConfigError::PlanRole`] and [`ConfigError::PlanRoleTwice`] for a `[plan] roles` list that names a role
+    /// without a plan or a role twice.
     pub fn from_toml_str(text: &str) -> Result<Self, ConfigError> {
         if text.len() > MAX_CONFIG_BYTES {
             return Err(ConfigError::TooLarge {
