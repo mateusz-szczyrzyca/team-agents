@@ -339,7 +339,17 @@ impl Team {
                 Some(ItemPhase::Done {
                     completion: Completion::Merged { pr, .. },
                 }) => Some(pr.clone()),
-                _ => None,
+                None
+                | Some(
+                    ItemPhase::Pending
+                    | ItemPhase::InProgress { .. }
+                    | ItemPhase::InReview { .. }
+                    | ItemPhase::Fixing { .. }
+                    | ItemPhase::Approved { .. }
+                    | ItemPhase::Done {
+                        completion: Completion::Listed,
+                    },
+                ) => None,
             }
         } else {
             None

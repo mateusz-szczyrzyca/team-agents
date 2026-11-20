@@ -102,7 +102,8 @@ pub(super) fn plan_publications(team: &Team) -> Result<Vec<Publication>, PlanErr
                     team.round_of(progress.id()).and_then(agent_core::state::Round::part),
                 ) {
                     (Some(integration), Some(key)) => format!("{integration}-{}{key}", progress.id()).parse()?,
-                    _ => team_branch.clone().unwrap_or_else(|| branch.clone()),
+                    (Some(integration), None) => integration.clone(),
+                    (None, Some(_) | None) => branch.clone(),
                 };
                 with_group(&mut groups, &head, |group| {
                     group.joining.push(Joining {
