@@ -13,6 +13,30 @@ use super::{Audience, PromptSpec};
 pub enum TeamPrompt {
     /// What the first run of a team's member is told about the team: who is in it, its branch, how it talks to the others.
     Context,
+    /// The split proposal notice-question text.
+    NoticeSplitQuestion,
+    /// The split proposal correction text.
+    SplitCorrection,
+    /// The split proposal limit text.
+    SplitLimit,
+    /// The split proposal count text.
+    SplitCount,
+    /// The split proposal deliverable text.
+    SplitDeliverable,
+    /// The split proposal title text.
+    SplitTitle,
+    /// The split proposal duplicate text.
+    SplitDuplicate,
+    /// The split proposal unknown text.
+    SplitUnknown,
+    /// The split proposal first text.
+    SplitFirst,
+    /// The split proposal cycle text.
+    SplitCycle,
+    /// The split proposal checks text.
+    SplitChecks,
+    /// The split proposal unreadable text.
+    SplitUnreadable,
     /// The independent deliverable and checks of the active split part.
     Part,
     /// What a member that already has a session is told when it is given its next item.
@@ -60,6 +84,18 @@ impl TeamPrompt {
     pub const ALL: &'static [Self] = &[
         Self::DeliveryClosed,
         Self::Context,
+        Self::NoticeSplitQuestion,
+        Self::SplitCorrection,
+        Self::SplitLimit,
+        Self::SplitCount,
+        Self::SplitDeliverable,
+        Self::SplitTitle,
+        Self::SplitDuplicate,
+        Self::SplitUnknown,
+        Self::SplitFirst,
+        Self::SplitCycle,
+        Self::SplitChecks,
+        Self::SplitUnreadable,
         Self::Part,
         Self::Assignment,
         Self::Wake,
@@ -84,6 +120,48 @@ impl TeamPrompt {
     #[must_use]
     pub const fn spec(self) -> PromptSpec {
         match self {
+            Self::NoticeSplitQuestion => PromptSpec::new(
+                "harness/team/notice-split-question.md",
+                Audience::Human,
+                &["task", "item", "reason", "proposal", "example"],
+            ),
+
+            Self::SplitCorrection => {
+                PromptSpec::new("harness/team/split-correction.md", Audience::Model, &["item", "reason"])
+            }
+
+            Self::SplitLimit => PromptSpec::new(
+                "harness/team/split-limit.md",
+                Audience::Model,
+                &["part", "amount", "unit", "limit"],
+            ),
+
+            Self::SplitCount => PromptSpec::new("harness/team/split-count.md", Audience::Model, &["count"]),
+
+            Self::SplitDeliverable => PromptSpec::new("harness/team/split-deliverable.md", Audience::Model, &["part"]),
+
+            Self::SplitTitle => PromptSpec::new("harness/team/split-title.md", Audience::Model, &["part"]),
+
+            Self::SplitDuplicate => PromptSpec::new(
+                "harness/team/split-duplicate.md",
+                Audience::Model,
+                &["part", "dependency"],
+            ),
+
+            Self::SplitUnknown => PromptSpec::new(
+                "harness/team/split-unknown.md",
+                Audience::Model,
+                &["part", "dependency"],
+            ),
+
+            Self::SplitFirst => PromptSpec::new("harness/team/split-first.md", Audience::Model, &["part"]),
+
+            Self::SplitCycle => PromptSpec::new("harness/team/split-cycle.md", Audience::Model, &["part"]),
+
+            Self::SplitChecks => PromptSpec::new("harness/team/split-checks.md", Audience::Model, &["part"]),
+
+            Self::SplitUnreadable => PromptSpec::new("harness/team/split-unreadable.md", Audience::Model, &["part"]),
+
             Self::DeliveryClosed => {
                 PromptSpec::new("harness/team/bus-delivery-closed.md", Audience::Model, &["item", "pr"])
             }
@@ -103,18 +181,7 @@ impl TeamPrompt {
                 &["item_id", "branch", "base"],
             ),
             Self::Wake => PromptSpec::new("harness/team/wake.md", Audience::Model, &["team"]),
-            Self::Delegation => PromptSpec::new(
-                "harness/team/delegation.md",
-                Audience::Model,
-                &[
-                    "requester",
-                    "request_id",
-                    "requester_worktree",
-                    "requester_branch",
-                    "request",
-                    "context",
-                ],
-            ),
+            Self::Delegation => delegation_spec(),
             Self::MemberFinished => PromptSpec::new(
                 "harness/team/bus-member-finished.md",
                 Audience::Model,
@@ -165,4 +232,20 @@ impl TeamPrompt {
             ),
         }
     }
+}
+
+/// The delegation form and its complete set of model inputs.
+const fn delegation_spec() -> PromptSpec {
+    PromptSpec::new(
+        "harness/team/delegation.md",
+        Audience::Model,
+        &[
+            "requester",
+            "request_id",
+            "requester_worktree",
+            "requester_branch",
+            "request",
+            "context",
+        ],
+    )
 }

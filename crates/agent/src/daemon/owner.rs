@@ -742,7 +742,8 @@ impl Owner {
                         | StartProblem::Name(_)
                         | StartProblem::Branch(_)
                         | StartProblem::Session(_)
-                        | StartProblem::Autopilot(_) => {}
+                        | StartProblem::Autopilot(_)
+                        | StartProblem::Split(_) => {}
                     }
                 }
                 return self.fail_to_start(&task, error_chain(&problem)).await;
