@@ -757,7 +757,7 @@ mod tests {
     /// A state of schema version 1 with two teams: the fixture of the core, which must keep loading.
     const FIXTURE: &str = include_str!("../../agent-core/tests/fixtures/state-v1.json");
 
-    /// What the state of `FIXTURE` is saved as, migrated to schema version 12.
+    /// What the state of `FIXTURE` is saved as, migrated to schema version 13.
     fn saved() -> String {
         include_str!("../../agent-core/tests/fixtures/state-v1-activities.json")
             .replace("\"schema_version\": 11", "\"schema_version\": 13")
