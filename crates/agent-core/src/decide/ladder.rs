@@ -19,7 +19,8 @@ use crate::state::SessionId;
 use super::outcome::{AfterNoStatus, after_no_status};
 
 /// Why a run of a task went bad in a way the ladder carries over.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Trouble {
     /// The run ended without a `STATUS:` line.
     NoStatus,

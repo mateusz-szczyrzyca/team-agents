@@ -461,12 +461,10 @@ impl Member {
                 started_at: last.started_at(),
             });
         }
-        let mut renewals = self.renewals.unwrap_or(renewal::Renewals::first(at));
-        if self.renewals.is_some() {
-            renewals.record(at);
+        match &mut self.renewals {
+            Some(renewals) => renewals.record(at, trouble),
+            None => self.renewals = Some(renewal::Renewals::first(at, trouble)),
         }
-        let _ = trouble;
-        self.renewals = Some(renewals);
         Ok(true)
     }
 

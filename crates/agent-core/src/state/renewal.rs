@@ -16,6 +16,8 @@ pub struct Renewals {
     /// When the last renewal happened: the runs that started at or after this time belong to the new session, the
     /// session the task had before it is not resumed any more.
     at: Timestamp,
+    /// Why the task was last started anew.
+    reason: Trouble,
 }
 
 impl Renewals {
@@ -34,18 +36,19 @@ impl Renewals {
     /// Why the task was last started anew.
     #[must_use]
     pub const fn reason(&self) -> Trouble {
-        Trouble::TurnLimit
+        self.reason
     }
 
-    /// The renewals of a task started anew for the first time, at `at`.
-    pub(super) const fn first(at: Timestamp) -> Self {
-        Self { used: 1, at }
+    /// The renewals of a task started anew for the first time, at `at`, for `reason`.
+    pub(super) const fn first(at: Timestamp, reason: Trouble) -> Self {
+        Self { used: 1, at, reason }
     }
 
-    /// The renewal the member records: one more was used, at `at`.
-    pub(super) fn record(&mut self, at: Timestamp) {
+    /// The renewal the member records: one more was used, at `at`, for `reason`.
+    pub(super) fn record(&mut self, at: Timestamp, reason: Trouble) {
         self.used = self.used.saturating_add(1);
         self.at = at;
+        self.reason = reason;
     }
 }
 
