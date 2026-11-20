@@ -70,13 +70,33 @@ pub const fn rank(tier: Tier) -> u8 {
 /// always answers the team's lead, and `off` the human. A worker and a reviewer are outside this choice: the human
 /// decides.
 #[must_use]
-pub fn choose(
-    _role: Role,
-    _replaced: Tier,
-    _candidates: &[Candidate<'_>],
-    _mode: ReplacementMode,
-) -> Handover<'static> {
-    Handover::Human
+pub fn choose<'a>(role: Role, replaced: Tier, candidates: &[Candidate<'a>], mode: ReplacementMode) -> Handover<'a> {
+    match mode {
+        ReplacementMode::Off => Handover::Human,
+        ReplacementMode::Lead => lead_of(role),
+        ReplacementMode::Auto => {
+            if let Some(candidate) = first_fit(replaced, candidates) {
+                return Handover::Agent(candidate.agent);
+            }
+            lead_of(role)
+        }
+    }
+}
+
+/// The first candidate that is idle and of the same or a higher place than `replaced`.
+fn first_fit<'a, 'b>(replaced: Tier, candidates: &'b [Candidate<'a>]) -> Option<&'b Candidate<'a>> {
+    candidates
+        .iter()
+        .find(|candidate| candidate.activity == Activity::Idle && rank(candidate.tier) >= rank(replaced))
+}
+
+/// Who takes the work when no configured agent does: the lead of a member, and the human for a task that has no other
+/// lead — a solo agent's, and a coordinator's, which is its own team's lead.
+const fn lead_of(role: Role) -> Handover<'static> {
+    match role {
+        Role::Member => Handover::Lead,
+        Role::Solo | Role::Coordinator | Role::Worker | Role::Reviewer => Handover::Human,
+    }
 }
 
 #[cfg(test)]
