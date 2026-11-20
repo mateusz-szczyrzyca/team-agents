@@ -366,4 +366,51 @@ mod git_snapshot {
             );
         }
     }
+
+    #[tokio::test]
+    async fn untracked_non_utf8_filename_is_kept_verbatim_in_the_snapshot() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let (_tmp, repo) = repository();
+        write(&repo, ".gitattributes", b"* text\n");
+        raw(&repo, &["add", "-A"]);
+        raw(&repo, &["commit", "-q", "-m", "base"]);
+
+        let non_utf8_name = OsStr::from_bytes(&[114, 97, 119, 255]);
+        let non_utf8_path = repo.join(non_utf8_name);
+        let raw_bytes: [u8; 7] = [0, 1, 13, 10, 255, 13, 10];
+        std::fs::write(&non_utf8_path, raw_bytes).expect("write non-utf8 file");
+        let before_index = std::fs::read(repo.join(".git/index")).expect("index exists");
+        let before_status = raw(&repo, &["status", "--porcelain=v1", "-uall"]);
+
+        let snapshot = handle(&repo)
+            .snapshot(&round(), &task())
+            .await
+            .expect("snapshot with untracked non-UTF-8 filename succeeds");
+
+        assert_eq!(std::fs::read(&non_utf8_path).expect("non-utf8 file"), raw_bytes);
+        assert_eq!(std::fs::read(repo.join(".git/index")).expect("index"), before_index);
+        assert_eq!(raw(&repo, &["status", "--porcelain=v1", "-uall"]), before_status);
+
+        let ls_tree = Command::new("git")
+            .args(["ls-tree", "-z", &snapshot.commit.to_string()])
+            .current_dir(&repo)
+            .output()
+            .expect("git ls-tree runs");
+        assert!(ls_tree.status.success());
+        let entry = ls_tree
+            .stdout
+            .split(|byte| *byte == 0)
+            .find(|entry| entry.ends_with(&[b'\t', 114, 97, 119, 255]))
+            .expect("non-UTF-8 filename is present in the snapshot tree");
+        let meta = std::str::from_utf8(&entry[..entry.iter().position(|byte| *byte == b'\t').unwrap()]).unwrap();
+        let blob_oid = meta.split_whitespace().nth(2).expect("blob oid");
+        let stored = Command::new("git")
+            .args(["cat-file", "blob", blob_oid])
+            .current_dir(&repo)
+            .output()
+            .expect("git cat-file runs");
+        assert_eq!(stored.stdout.as_slice(), &raw_bytes);
+    }
 }
