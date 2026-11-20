@@ -363,3 +363,6 @@ async fn run_editor(editor: &CommandLine, file: &Path) -> Result<(), AnswerError
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod split_tests;
