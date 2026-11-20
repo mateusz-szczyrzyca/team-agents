@@ -58,12 +58,7 @@ mod round_checks {
     fn an_issue_the_team_can_fix_sends_the_round_back_while_passes_are_left() {
         let issues = [for_the_team()];
 
-        assert_eq!(
-            Checking::after(0).conclude(&issues, &[], TWICE),
-            ChecksStep::AskHuman {
-                reason: AskReason::OnlyTheHumanMayAllow
-            }
-        );
+        assert_eq!(Checking::after(0).conclude(&issues, &[], TWICE), pass(1));
         assert_eq!(Checking::after(1).conclude(&issues, &[], TWICE), pass(2));
     }
 
@@ -115,7 +110,12 @@ mod round_checks {
     fn with_both_kinds_the_human_goes_first_and_all_are_asked_when_passes_are_used() {
         let issues = [for_the_human(), for_the_team()];
 
-        assert_eq!(Checking::after(0).conclude(&issues, &[], TWICE), pass(1));
+        assert_eq!(
+            Checking::after(0).conclude(&issues, &[], TWICE),
+            ChecksStep::AskHuman {
+                reason: AskReason::OnlyTheHumanMayAllow
+            }
+        );
         assert_eq!(
             Checking::after(2).conclude(&issues, &[], TWICE),
             ChecksStep::AskHuman {
