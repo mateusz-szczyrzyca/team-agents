@@ -74,9 +74,12 @@ item:  pending -> in_progress -> in_review -> approved -> done (final)
 | `config` | `Config` (read from `agents.toml`) with its `AgentConfig`, `InvestigatorConfig`, `RepoConfig` and sections; `Secrets` (from `secrets.toml`) with `Secret`; the typed values (`Language`, `Program`, `AbsolutePath`, `CommandLine`, `Minutes`, `LoopbackAddr`, ...); `ConfigError`, `SecretsError`, `InvalidValue`. See [`configuration.md`](configuration.md) |
 | `task_list` | `TaskList`, `Feature`, `Item` (title, description, expected result, checks) and `TaskListError`, whose every variant but two carries its line. See [`task-list.md`](task-list.md) |
 | `repo_path` | `RepoPath` (a path inside a repository as git prints it), `PathPattern` (a glob over such paths: `*`, `?`, `**`, `dir/`, a bare name at any depth) and `PathPatterns` (at most 256 of them): what the `[repos.NAME.checks]` table lists. See [`configuration.md`](configuration.md) |
+| `plan` | `Plan`, `Stage`, `Step`, `StepState` (`[ ]`, `[>]`, `[x]`, `[-]`), `Check` (a command, `exists <path>` or `reviewer`) and `PlanError`, whose every variant but two carries its line; the comparison of two versions (`Plan::compare` → `PlanChanges`: added, state changed, disappeared, retitled, by step ID only) and the text back (`Plan::to_text`). See [`plan.md`](plan.md) |
 
-Both `Config` and `TaskList` take text, not paths: reading `agents.toml`, `secrets.toml` (and the file mode `Secrets::parse` needs) and a
-`-f` task list is the runtime's job, so the core stays free of I/O.
+`Config`, `TaskList` and `Plan` take text, not paths: reading `agents.toml`, `secrets.toml` (and the file mode `Secrets::parse` needs) and a
+`-f` task list is the runtime's job, so the core stays free of I/O. A plan of steps is text too: `parse_plan` reads `.agent/plan.md`
+in the task list's format read in a plan mode and shares the task list's number, indentation and size helpers; it keeps nothing on
+disk, and the daemon that reads and writes the file of a task is a later item.
 
 ### State, protocol and questions files (`agent-core`)
 
