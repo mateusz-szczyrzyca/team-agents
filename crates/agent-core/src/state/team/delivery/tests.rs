@@ -163,3 +163,39 @@ fn delivery_round_details_show_the_owning_pr_while_the_item_is_working() {
     let detail = crate::protocol::RoundDetail::new(&team, team.round(&round_id(2)).unwrap(), Vec::new());
     assert_eq!(detail.pr, Some(pr(7)));
 }
+
+#[test]
+fn split_delivery_keeps_parent_pending_until_its_last_delivered_part() {
+    let mut team = working();
+    let parent = "2.1".parse().unwrap();
+    let plan = crate::state::split::SplitPlan::new(
+        parent,
+        ["Résumé draft", "Publish résumé"]
+            .into_iter()
+            .map(|title| crate::state::split::PartDefinition {
+                title: title.into(),
+                delivers: "A useful document".into(),
+                checks: "Read the document".into(),
+                depends_on: Vec::new(),
+            })
+            .collect(),
+    )
+    .unwrap();
+    team.activate_split(plan).unwrap();
+    for (number, at_end, expected) in [(2, 40, PhaseKind::Pending), (3, 80, PhaseKind::Done)] {
+        if number == 3 {
+            team.open_round(round_id(number), Some(parent), at(60)).unwrap();
+            drive(&mut team, "2.1", PhaseKind::InProgress);
+        }
+        team.deliver_round(&round_id(number), pr(7).number).unwrap();
+        team.complete_delivery(&round_id(number), at(at_end)).unwrap();
+        let round = team.round(&round_id(number)).unwrap();
+        assert_eq!(round.part_pull_request(), Some(&pr(7)));
+        assert_eq!(round.delivered_by(), Some(&pr(7)));
+        assert_eq!(team.item(parent).unwrap().phase().kind(), expected);
+        assert_eq!(
+            serde_json::from_str::<Team>(&serde_json::to_string(&team).unwrap()).unwrap(),
+            team
+        );
+    }
+}
