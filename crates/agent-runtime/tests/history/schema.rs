@@ -62,6 +62,7 @@ fn the_pinned_file_is_the_version_of_the_last_migration_and_every_table_of_it_is
             "history_search_idx",
             "launches",
             "plan",
+            "plan_versions",
             "rounds",
             "run_changes",
             "run_ends",

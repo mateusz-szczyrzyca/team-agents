@@ -404,6 +404,10 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
     },
     Migration {
         version: 13,
-        sql: include_str!("013-delivery-closed.sql"),
+        sql: include_str!("013-plan-versions.sql"),
+    },
+    Migration {
+        version: 14,
+        sql: include_str!("014-delivery-closed.sql"),
     },
 ];

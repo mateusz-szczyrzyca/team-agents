@@ -7,6 +7,7 @@ use std::num::NonZeroU32;
 use serde::{Deserialize, Serialize};
 
 use super::checked::CheckedMut;
+use super::plan::{PlanKeeping, PlanReason};
 use super::question::{AnswerBeforeQuestion, AnsweredVia, Question};
 use super::run::{Run, RunEnd, RunError};
 use super::strict::checked;
@@ -81,6 +82,9 @@ pub struct Member {
     runs: Vec<Run>,
     /// Its rounds of questions, oldest first.
     questions: Vec<Question>,
+    /// What the daemon keeps of the task's plan; `None` for a task created before plans.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan: Option<PlanKeeping>,
 }
 
 /// How a [`Member`] is read; see [`checked!`].
@@ -99,6 +103,9 @@ struct MemberWire {
     /// See [`Member`]; a member written without questions has none.
     #[serde(default)]
     questions: Vec<Question>,
+    /// See [`Member`].
+    #[serde(default)]
+    plan: Option<PlanKeeping>,
 }
 
 checked!(Member, MemberWire, check_member);
@@ -164,6 +171,41 @@ impl CheckedMut<'_, Member> {
         via: AnsweredVia,
     ) -> Result<(), QuestionError> {
         self.value.answer_question(number, at, via)
+    }
+
+    /// See [`Member::send_back`].
+    pub fn send_back(&mut self, reason: PlanReason) {
+        self.value.send_back(reason);
+    }
+
+    /// See [`Member::plan_asked`].
+    pub fn plan_asked(&mut self, question: NonZeroU32) {
+        self.value.plan_asked(question);
+    }
+
+    /// See [`Member::take_plan_reason`].
+    pub fn take_plan_reason(&mut self) -> Option<PlanReason> {
+        self.value.take_plan_reason()
+    }
+
+    /// See [`Member::send_back_once_more`].
+    pub fn send_back_once_more(&mut self) {
+        self.value.send_back_once_more();
+    }
+
+    /// See [`Member::plan_answered`].
+    pub fn plan_answered(&mut self, question: NonZeroU32) {
+        self.value.plan_answered(question);
+    }
+
+    /// See [`Member::take_unread_plan_answers`].
+    pub fn take_unread_plan_answers(&mut self) -> Option<NonZeroU32> {
+        self.value.take_unread_plan_answers()
+    }
+
+    /// See [`Member::release_plan`].
+    pub fn release_plan(&mut self) {
+        self.value.release_plan();
     }
 }
 
@@ -237,15 +279,29 @@ pub enum MemberError {
 }
 
 impl Member {
-    /// A member whose task is queued and has no runs yet.
+    /// A member whose task is queued and has no runs yet, created by this version: it keeps a plan.
     #[must_use]
-    pub const fn new(task: TaskId, agent: Participant) -> Self {
+    pub fn new(task: TaskId, agent: Participant) -> Self {
         Self {
             task,
             agent,
             status: TaskStatus::Queued,
             runs: Vec::new(),
             questions: Vec::new(),
+            plan: Some(PlanKeeping::default()),
+        }
+    }
+
+    /// A member of a task created before this version kept plans: its runs are never sent back for a plan.
+    #[must_use]
+    pub const fn without_plan(task: TaskId, agent: Participant) -> Self {
+        Self {
+            task,
+            agent,
+            status: TaskStatus::Queued,
+            runs: Vec::new(),
+            questions: Vec::new(),
+            plan: None,
         }
     }
 
@@ -270,6 +326,70 @@ impl Member {
         "The session of the latest run that has one: the one a new run resumes.",
         pub fn last_session(&self) -> Option<&SessionId> = self.runs.iter().rev().find_map(Run::session)
     );
+
+    getter!(
+        "What the task keeps of its plan; `None` for a task created before plans.",
+        pub const fn plan(&self) -> Option<&PlanKeeping> = self.plan.as_ref()
+    );
+
+    /// Counts a send-back of the task for its plan, which its next run delivers with `reason`; nothing for a task
+    /// created before plans.
+    pub fn send_back(&mut self, reason: PlanReason) {
+        if let Some(keeping) = &mut self.plan {
+            keeping.send_back(reason);
+        }
+    }
+
+    /// Records that the human was asked about the task's plan in questions `question`; nothing for a task created
+    /// before plans.
+    pub fn plan_asked(&mut self, question: NonZeroU32) {
+        if let Some(keeping) = &mut self.plan {
+            keeping.asked(question);
+        }
+    }
+
+    /// Counts one send-back the human granted beyond `[plan] bounces`; nothing for a task created before plans.
+    pub fn grant_another_send_back(&mut self) {
+        if let Some(keeping) = &mut self.plan {
+            keeping.grant_another();
+        }
+    }
+
+    /// The reason of the send-back that waits for the next run, taken out: the run that starts is told it, and no later
+    /// run is. `None` when nothing waits, and for a task created before plans.
+    pub fn take_plan_reason(&mut self) -> Option<PlanReason> {
+        self.plan.as_mut().and_then(PlanKeeping::take_pending)
+    }
+
+    /// The human said to send the run back once more: one more send-back is granted and counted, and the plan's
+    /// stage is open again, so that a run that still ends against the plan asks the human anew; nothing for a task
+    /// created before plans.
+    pub fn send_back_once_more(&mut self) {
+        if let Some(keeping) = &mut self.plan {
+            keeping.once_more();
+        }
+    }
+
+    /// The human answered questions `question` about the task's plan: the next run is to be given the answers, which
+    /// no run asked for; nothing for a task created before plans.
+    pub fn plan_answered(&mut self, question: NonZeroU32) {
+        if let Some(keeping) = &mut self.plan {
+            keeping.answered(question);
+        }
+    }
+
+    /// The questions about the plan whose answers no run has been given yet, taken out: the run that starts is given
+    /// them, and no later run is.
+    pub fn take_unread_plan_answers(&mut self) -> Option<NonZeroU32> {
+        self.plan.as_mut().and_then(PlanKeeping::take_unread_answers)
+    }
+
+    /// The human said to go on as it is: no run of the task is sent back for its plan again.
+    pub fn release_plan(&mut self) {
+        if let Some(keeping) = &mut self.plan {
+            keeping.release();
+        }
+    }
 
     /// Changes the task's status.
     ///
@@ -439,8 +559,8 @@ mod tests {
 
     use super::*;
     use crate::kinds::tests::assert_keywords;
-    use crate::state::QuestionState;
-    use crate::state::fixtures::{assert_refused, at, inv, member, normal, nz, path, run, task, worker};
+    use crate::state::fixtures::{assert_refused, at, inv, item, member, normal, nz, path, run, task, worker};
+    use crate::state::{PlanStage, QuestionState};
     use crate::status::RunOutcome;
 
     /// A member's serialized shape, used to construct states that the public constructors refuse.
@@ -459,6 +579,9 @@ mod tests {
         /// See [`Member`].
         #[serde(default)]
         questions: Vec<Question>,
+        /// See [`Member`].
+        #[serde(default)]
+        plan: Option<PlanKeeping>,
     }
 
     impl TryFrom<MemberWire> for Member {
@@ -471,6 +594,7 @@ mod tests {
                 status: wire.status,
                 runs: wire.runs,
                 questions: wire.questions,
+                plan: wire.plan,
             };
             check_member(&member)?;
             Ok(member)
@@ -833,13 +957,196 @@ mod tests {
         let value = serde_json::to_value(&member).unwrap();
         let without = json!({"task": "task-20261111-153001-k3x9", "agent": {"tier": "normal", "name": "codex-1"}, "status": "queued"});
 
-        assert_eq!(serde_json::from_value::<Member>(without).unwrap(), member);
+        // A member written before plans keeps none; the one written now keeps theirs.
+        assert_eq!(
+            serde_json::from_value::<Member>(without).unwrap(),
+            Member::without_plan(task(1), normal("codex-1"))
+        );
         assert_eq!(serde_json::from_value::<Member>(value).unwrap(), member);
     }
 
     /// The member of `busy`, as JSON, to be spoiled.
     fn busy_json() -> serde_json::Value {
         serde_json::to_value(busy()).unwrap()
+    }
+
+    #[test]
+    fn the_answers_about_a_plan_wait_for_one_run_and_survive_json() {
+        let mut member = Member::new(task(1), normal("codex-1"));
+
+        member.plan_answered(nz(3));
+
+        assert_eq!(member.plan().and_then(PlanKeeping::unread_answers), Some(nz(3)));
+        let value = serde_json::to_value(&member).unwrap();
+        let mut read: Member = serde_json::from_value(value).unwrap();
+        assert_eq!(read, member);
+        assert_eq!(read.take_unread_plan_answers(), Some(nz(3)));
+        assert_eq!(read.take_unread_plan_answers(), None);
+    }
+
+    #[test]
+    fn a_task_created_before_plans_has_no_unread_answers_about_one() {
+        let mut member = Member::without_plan(task(1), normal("codex-1"));
+
+        member.plan_answered(nz(3));
+
+        assert_eq!(member.take_unread_plan_answers(), None);
+    }
+
+    #[test]
+    fn the_reason_that_waits_is_taken_by_one_run_only() {
+        let mut member = Member::new(task(1), normal("codex-1"));
+        member.send_back(PlanReason::Unfinished {
+            steps: vec![item("1.2")],
+        });
+
+        let first = member.take_plan_reason();
+        let second = member.take_plan_reason();
+
+        assert_eq!(
+            first,
+            Some(PlanReason::Unfinished {
+                steps: vec![item("1.2")]
+            })
+        );
+        assert_eq!(second, None);
+        assert_eq!(member.plan().map(PlanKeeping::sent_back), Some(1));
+    }
+
+    #[test]
+    fn sending_back_once_more_grants_and_counts_one_send_back_and_opens_the_plan_again() {
+        let mut member = Member::new(task(1), normal("codex-1"));
+        member.send_back(PlanReason::Missing);
+        assert_eq!(member.take_plan_reason(), Some(PlanReason::Missing));
+        member.plan_asked(nz(2));
+
+        member.send_back_once_more();
+
+        let keeping = member.plan().expect("the member keeps its plan");
+        assert_eq!(
+            (
+                keeping.sent_back(),
+                keeping.granted(),
+                keeping.stage(),
+                keeping.pending()
+            ),
+            (2, 1, PlanStage::Open, None)
+        );
+    }
+
+    #[test]
+    fn a_task_created_before_plans_has_no_reason_and_nothing_to_send_back_once_more() {
+        let mut member = Member::without_plan(task(1), normal("codex-1"));
+
+        member.send_back_once_more();
+
+        assert_eq!(member.take_plan_reason(), None);
+        assert_eq!(member.plan(), None);
+    }
+
+    #[test]
+    fn a_member_written_before_the_plans_keeps_none_and_loads() {
+        let wire = json!({"task": "task-20261111-153001-k3x9", "agent": {"tier": "normal", "name": "codex-1"}, "status": "queued"});
+
+        let member: Member = serde_json::from_value(wire).unwrap();
+
+        assert_eq!(member.plan(), None);
+    }
+
+    #[test]
+    fn a_new_member_keeps_its_plan_with_nothing_sent_back_and_writes_it_with_the_member() {
+        let member = Member::new(task(1), normal("codex-1"));
+
+        let value = serde_json::to_value(&member).unwrap();
+
+        assert_eq!(value["plan"], json!({"sent_back": 0, "granted": 0, "stage": "open"}));
+        assert_eq!(serde_json::from_value::<Member>(value).unwrap(), member);
+    }
+
+    #[test]
+    fn a_member_sent_back_keeps_the_count_and_the_reason_until_a_run_takes_it() {
+        let mut member = Member::new(task(1), normal("codex-1"));
+        let reason = PlanReason::Missing;
+
+        member.send_back(reason.clone());
+
+        let keeping = member.plan().expect("the member keeps its plan");
+        assert_eq!(keeping.sent_back(), 1);
+        assert_eq!(keeping.stage(), PlanStage::Open);
+        assert_eq!(keeping.pending(), Some(&reason));
+        let value = serde_json::to_value(&member).unwrap();
+        assert_eq!(serde_json::from_value::<Member>(value).unwrap(), member);
+    }
+
+    #[test]
+    fn a_task_created_before_plans_never_keeps_one() {
+        let mut member = Member::without_plan(task(1), normal("codex-1"));
+
+        member.send_back(PlanReason::Missing);
+        member.plan_asked(nz(1));
+        member.grant_another_send_back();
+        member.release_plan();
+
+        assert_eq!(member.plan(), None);
+    }
+
+    #[test]
+    fn the_human_gives_back_one_more_send_back_and_releases_the_plan_for_good() {
+        let mut member = Member::new(task(1), normal("codex-1"));
+        member.ask_question(asked(1, 10)).unwrap();
+
+        member.grant_another_send_back();
+        let keeping = member.plan().expect("the member keeps its plan");
+        assert_eq!(keeping.granted(), 1);
+        assert_eq!(keeping.stage(), PlanStage::Open);
+
+        member.answer_question(nz(1), at(20), AnsweredVia::Command).unwrap();
+        member.release_plan();
+        let keeping = member.plan().expect("the member keeps its plan");
+        assert_eq!(keeping.stage(), PlanStage::Released);
+        assert_eq!(keeping.pending(), None);
+    }
+
+    #[test]
+    fn a_question_about_a_plan_moves_the_stage_while_it_waits() {
+        let mut member = Member::new(task(1), normal("codex-1"));
+
+        member.plan_asked(nz(4));
+
+        assert_eq!(
+            member.plan().map(PlanKeeping::stage),
+            Some(PlanStage::Asked { question: nz(4) })
+        );
+        let reason = PlanReason::Missing;
+        member.send_back(reason.clone());
+        assert_eq!(member.plan().and_then(PlanKeeping::pending), Some(&reason));
+    }
+
+    #[test]
+    fn the_reason_that_waits_for_a_run_survives_json() {
+        for reason in [
+            PlanReason::Missing,
+            PlanReason::Unreadable {
+                line: Some(nz(3)),
+                detail: "invalid stage number".to_owned(),
+            },
+            PlanReason::Unfinished {
+                steps: vec![item("2.1")],
+            },
+            PlanReason::LostStep {
+                steps: vec![item("1.1")],
+            },
+        ] {
+            let mut member = Member::new(task(1), normal("codex-1"));
+            member.send_back(reason.clone());
+            member.plan_asked(nz(2));
+
+            let text = serde_json::to_string(&member).unwrap();
+            let back: Member = serde_json::from_str(&text).unwrap();
+
+            assert_eq!(back, member, "{text}");
+            assert_eq!(back.plan().and_then(PlanKeeping::pending), Some(&reason));
+        }
     }
 
     #[test]

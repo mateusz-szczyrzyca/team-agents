@@ -166,7 +166,7 @@ impl Daemon {
         let bus_line = bus.map_or_else(String::new, |bus| format!("agentbus = \"{}\"\n", bus.display()));
         let config = format!(
             "[agents.claude-1]\ncli = \"claude\"\n[agents.claude-2]\ncli = \"claude\"\n\
-             [investigators.inv-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\", \"claude-2\"]\n[binaries]\nclaude = \"{}\"\n{bus_line}\
+             [investigators.inv-1]\ncli = \"claude\"\n[plan]\nbounces = 0\n[tiers]\nnormal = [\"claude-1\", \"claude-2\"]\n[binaries]\nclaude = \"{}\"\n{bus_line}\
              [watchdog]\nhang_minutes = 1\nhang_strikes = 3\n\
              [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
             fake_cli()

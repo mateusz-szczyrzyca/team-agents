@@ -1,0 +1,5 @@
+## Your plan is not finished
+
+You ended your turn with `STATUS: DONE`, but steps of `.agent/plan.md` are still to do or in hand: 1.2, 2.1. Finish each of them
+and mark it done (`[x]`), or give it up (`[-]`) with its reason on the line below when it is not to be done. Then end
+your turn as before.

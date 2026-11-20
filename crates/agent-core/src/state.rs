@@ -17,6 +17,7 @@ mod gate;
 mod item;
 mod member;
 mod migrate;
+mod plan;
 mod question;
 mod round;
 mod run;
@@ -41,6 +42,7 @@ pub use item::{
     SubmitReviewError,
 };
 pub use member::{Member, MemberError, MemberMut, Participant, QuestionError};
+pub use plan::{PlanKeeping, PlanReason, PlanStage};
 pub use question::{AnswerBeforeQuestion, AnsweredVia, Question, QuestionState};
 pub use round::{ClosedBeforeOpened, Round, RoundEnd, RoundLife};
 pub use run::{Run, RunEnd, RunError, RunState};

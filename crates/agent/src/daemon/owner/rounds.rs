@@ -880,5 +880,9 @@ mod split_execution_tests;
 mod delivery_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/plan_round.rs"]
+mod plan_round_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/delivery_restart.rs"]
 mod delivery_restart_tests;

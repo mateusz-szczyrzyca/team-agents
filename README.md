@@ -245,6 +245,16 @@ of its continuation. This build supports legacy socket protocol `3` and split-aw
 state schema `2`, and migrates history to schema `8`. See [configuration](docs/configuration.md) and
 [state compatibility](docs/state.md#turn-limit-compatibility-item-88).
 
+**The plan of a task.** A solo agent, a member and a coordinator keep the plan of their task in `.agent/plan.md` of
+their worktree: its stages and steps, each marked to do, in hand, done or given up ([`docs/plan.md`](docs/plan.md)).
+The daemon reads the file at the end of every run and keeps each new version in the history. A run of a role in
+`[plan] roles` that ends `STATUS: DONE` while its plan is missing, does not parse, has a step still to do or in hand,
+or lost a step of its last version goes back to the same agent with the reason, at most `[plan] bounces` times per task
+(default 3; `0` only records); after that you are asked once, in the task's questions file, whether to go on as it is
+or send it back once more. Tasks created before this version are never sent back. The plan is kept out of git and out of
+the pull request: a plan an agent commits by mistake is taken out of its branch by a commit "Keep the plan out of the
+delivery". See [configuration](docs/configuration.md#plan).
+
 A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt
 (`prompts/harness/run/resume-no-status.md`), up to twice in a row; a third failure in a row marks the task failed and
 notifies the coordinator (or human). Automatic retries apply only to resumable tasks with a session (solo tasks,
@@ -561,8 +571,8 @@ restores that claim. A stopped team resumes this recovery when its member is res
 State schema 14 remains readable, including open claims written by 0.34.0. The optional
 `delivery_closed_at` field retains the observed closure on the abandoned round; no migration is needed for those
 states. Older binaries cannot read states containing the new field: keep a state backup before upgrading.
-History schema 13 adds the `delivery_closed` warning and migrates existing logs, search entries and cursors.
-Keep a backup of `history.db` before upgrading too: older agents cannot read history schema 13.
+History schema 14 adds the `delivery_closed` warning and migrates existing logs, search entries and cursors.
+Keep a backup of `history.db` before upgrading too: older agents cannot read history schema 14.
 
 A step of a round that GitHub or git fails does not stop the daemon: the round says `waits for GitHub: refresh the
 description of the pull requests, tried 4 times, next try 01:07` and the step is tried again by itself, after 30

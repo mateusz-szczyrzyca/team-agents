@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use agent_core::config::{AbsolutePath, EnvName, GitIdentity, InvalidValue};
 use agent_core::ids::{AgentName, BranchName};
-use agent_core::repo_path::InvalidRepoPath;
+use agent_core::repo_path::{InvalidRepoPath, RepoPath};
 use agent_core::state::{CommitId, InvalidCommitId};
 use tokio::process::Command;
 use tracing::Instrument;
@@ -264,7 +264,7 @@ pub enum GitOperation {
     /// `git for-each-ref`, to count the snapshots a task has.
     #[strum(serialize = "for-each-ref")]
     ForEachRef,
-    /// `git ls-files`, to inspect the scratch index of a snapshot.
+    /// `git ls-files`, to inspect the scratch index of a snapshot, or to see whether git tracks a path.
     #[strum(serialize = "ls-files")]
     LsFiles,
     /// `git hash-object`, to store a worktree file's bytes without attribute filters.
@@ -273,6 +273,12 @@ pub enum GitOperation {
     /// `git update-index`, to point a scratch index entry at its raw blob.
     #[strum(serialize = "update-index")]
     UpdateIndex,
+    /// `git rm --cached`, to take a path out of the index and keep its file.
+    #[strum(serialize = "rm --cached")]
+    RmCached,
+    /// `git commit`, of a change the harness makes itself.
+    #[strum(serialize = "commit")]
+    Commit,
 }
 
 /// Why the scratch area of a read of the uncommitted changes cannot be made.
@@ -484,6 +490,22 @@ pub struct StatusEntry {
     pub worktree: char,
     /// The path, relative to the root of the checkout; for a rename, the new one.
     pub path: PathBuf,
+}
+
+/// What [`Git::untrack`] did with a path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Untracked {
+    /// Git does not track the path: nothing was done.
+    NotTracked,
+    /// The path was in the index only: it was taken out of it, and no commit was needed.
+    Unstaged,
+    /// The path was committed: this commit, now `HEAD`, removes it from the branch; the file stays.
+    Removed {
+        /// The commit that removes the path.
+        commit: CommitId,
+    },
+    /// Other changes are staged beside the path: nothing was done, so that no commit of the harness takes them.
+    OtherChangesStaged,
 }
 
 /// Whether a checkout has changes.
@@ -986,6 +1008,101 @@ impl Git {
         let printed = text(operation, &captured.stdout)?;
         // In the main checkout git prints the path relative to the directory it ran in; `join` keeps an absolute one.
         Ok(self.dir.as_path().join(printed.trim_end()))
+    }
+
+    /// Whether the commit `revision` names has `path` in its tree.
+    ///
+    /// # Errors
+    /// [`GitError::UnknownRevision`] when `revision` names no commit; [`GitError::Run`], [`GitError::Failed`],
+    /// [`GitError::OutputTooLong`] and [`GitError::NotUtf8`].
+    pub async fn tracks(&self, revision: &Revision, path: &RepoPath) -> Result<bool, GitError> {
+        let commit = self.rev_parse(revision).await?.to_string();
+        let operation = GitOperation::LsTree;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[arg("ls-tree"), arg("-z"), arg(&commit), arg("--"), arg(path.as_str())],
+            )
+            .await?;
+        let printed = text(operation, &captured.stdout)?;
+        // `mode type object<TAB>path`, one entry for the path: a file is a blob, a directory a tree.
+        Ok(printed
+            .split('\0')
+            .filter_map(|entry| entry.split_once('\t'))
+            .any(|(head, name)| name == path.as_str() && head.split(' ').nth(1) == Some("blob")))
+    }
+
+    /// Takes `path` out of git in this checkout and keeps its file: out of the index, and out of the branch with a
+    /// commit of `message` when the path was committed. A checkout with other changes staged is left as it is.
+    ///
+    /// # Errors
+    /// [`GitError::EmptyMessage`]; [`GitError::Failed`] when git refuses (no repository, a commit that cannot be
+    /// made); [`GitError::Run`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and the errors of
+    /// [`Git::rev_parse`].
+    pub async fn untrack(&self, path: &RepoPath, message: &str) -> Result<Untracked, GitError> {
+        if message.trim().is_empty() {
+            return Err(GitError::EmptyMessage);
+        }
+        // A literal pathspec: a `*` or `?` in the path is a character of the name, not a pattern.
+        let spec = format!(":(literal){}", path.as_str());
+        let listed = self
+            .names(
+                GitOperation::LsFiles,
+                &[arg("ls-files"), arg("-z"), arg("--cached"), arg("--"), arg(&spec)],
+            )
+            .await?;
+        if listed.is_empty() {
+            return Ok(Untracked::NotTracked);
+        }
+        let staged = self.staged_names().await?;
+        if staged.iter().any(|name| name != path.as_str()) {
+            return Ok(Untracked::OtherChangesStaged);
+        }
+        self.run_ok(
+            GitOperation::RmCached,
+            Reach::Local,
+            &[arg("rm"), arg("--cached"), arg("--quiet"), arg("--"), arg(&spec)],
+        )
+        .await?;
+        // What is staged now is the path's removal from `HEAD`: nothing when it was in the index only.
+        if self.staged_names().await?.is_empty() {
+            return Ok(Untracked::Unstaged);
+        }
+        self.run_ok(
+            GitOperation::Commit,
+            Reach::Local,
+            &[
+                arg("commit"),
+                arg("--quiet"),
+                arg("--no-verify"),
+                arg("-m"),
+                arg(message),
+            ],
+        )
+        .await?;
+        let commit = self.rev_parse(&Revision::Head).await?;
+        Ok(Untracked::Removed { commit })
+    }
+
+    /// The paths of the index that differ from `HEAD`.
+    async fn staged_names(&self) -> Result<Vec<String>, GitError> {
+        self.names(
+            GitOperation::Diff,
+            &[arg("diff"), arg("--cached"), arg("--name-only"), arg("-z")],
+        )
+        .await
+    }
+
+    /// The NUL-separated names `args` print.
+    async fn names(&self, operation: GitOperation, args: &[&OsStr]) -> Result<Vec<String>, GitError> {
+        let captured = self.run_ok(operation, Reach::Local, args).await?;
+        let printed = text(operation, &captured.stdout)?;
+        Ok(printed
+            .split('\0')
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect())
     }
 
     /// The root directory of the checkout this handle runs in, from whatever directory of it.

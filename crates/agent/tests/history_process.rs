@@ -76,7 +76,7 @@ mod history_process {
             }
             write!(
                 config,
-                "[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{}\"\n[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+                "[plan]\nbounces = 0\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{}\"\n[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
                 script("team-cli.sh").display(),
             )
             .unwrap();
@@ -710,5 +710,41 @@ mod history_process {
         assert!(history.contains("Finished the work."), "{history}");
         assert!(summary.contains("Finished the work."), "{summary}");
         world.end(Signal::TERM);
+    }
+
+    #[test]
+    fn with_the_defaults_a_run_without_a_plan_goes_back_three_times_and_then_the_human_is_asked() {
+        let mut world = World::new("done");
+        let config = std::fs::read_to_string(world.home.join("agents.toml")).unwrap();
+        std::fs::write(
+            world.home.join("agents.toml"),
+            config.replace("[plan]\nbounces = 0\n", ""),
+        )
+        .unwrap();
+        world.start();
+
+        let output = world.agent(&["run", "claude-1", "Fix the typo in the README."]);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let task = first_task(&output);
+        world.status_where("the task to wait for the human", |status| status.contains("questions"));
+        world.end(Signal::TERM);
+
+        assert_eq!(world.runs(&task), 4);
+        let questions = std::fs::read_to_string(world.home.join("tasks").join(&task).join("questions-1.md")).unwrap();
+        assert!(questions.contains("> ## Your plan is missing"), "{questions}");
+        let member = world.state();
+        let keeping = member
+            .find_task(&task.parse().unwrap())
+            .unwrap()
+            .member
+            .plan()
+            .unwrap()
+            .clone();
+        assert_eq!(keeping.sent_back(), 3);
+        let kept = Reader::open(&world.home.join("history.db"))
+            .unwrap()
+            .plan_versions(&task.parse().unwrap())
+            .unwrap();
+        assert_eq!(kept.len(), 1, "an unchanged missing plan is one record: {kept:?}");
     }
 }
