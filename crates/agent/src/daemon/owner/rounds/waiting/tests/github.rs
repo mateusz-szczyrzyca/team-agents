@@ -244,3 +244,53 @@ fn a_git_failure_waits_only_when_it_reaches_github() {
 
     assert_eq!(outlook_of(&publish), Outlook::WillNotPass);
 }
+
+#[test]
+fn a_next_try_on_a_whole_minute_is_shown_at_that_minute() {
+    let mut waits = Waits::default();
+    let (_, wait) = waits
+        .failed(
+            &round(),
+            &team(),
+            OPINION,
+            Some(PrNumber::new(NonZeroU32::new(138).unwrap())),
+            "timed out".to_owned(),
+            Outlook::MayPass,
+            at("2026-11-20T00:04:30Z"),
+        )
+        .unwrap();
+
+    assert_eq!(wait.next_at, Some(at("2026-11-20T00:05:00Z")));
+    assert_eq!(
+        wait.line(time::UtcOffset::UTC),
+        "prepare a second opinion #138, tried 1 time, next try 00:05"
+    );
+}
+
+#[test]
+fn a_refusal_that_waits_for_the_human_is_never_given_up_for_a_new_wait() {
+    let mut waits = Waits::default();
+    let refused = |index: usize| Step::Round {
+        round: format!("round-20261120-070000-{index:04}").parse().unwrap(),
+    };
+    for index in 0..=MAX_WAITS {
+        waits
+            .failed(
+                &refused(index),
+                &team(),
+                OPINION,
+                None,
+                "refused with status 404".to_owned(),
+                Outlook::WillNotPass,
+                at("2026-11-20T00:00:00Z"),
+            )
+            .unwrap();
+    }
+
+    for index in [0, MAX_WAITS] {
+        assert!(
+            !waits.due(&refused(index), OPINION, at("2027-11-20T00:00:00Z")),
+            "refusal {index} is tried without the human's resume"
+        );
+    }
+}
