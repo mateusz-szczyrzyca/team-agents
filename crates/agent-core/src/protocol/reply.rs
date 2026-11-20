@@ -331,18 +331,20 @@ impl RoundDetail {
     #[must_use]
     pub fn new(team: &Team, round: &Round, tasks: Vec<RoundTask>) -> Self {
         let progress = round.item().and_then(|item| team.item(item));
-        let pr = progress.and_then(|progress| match progress.phase() {
-            ItemPhase::InReview { pr, .. }
-            | ItemPhase::Fixing { pr, .. }
-            | ItemPhase::Approved { pr, .. }
-            | ItemPhase::Done {
-                completion: crate::state::Completion::Merged { pr, .. },
-            } => Some(pr.clone()),
-            ItemPhase::Pending
-            | ItemPhase::InProgress { .. }
-            | ItemPhase::Done {
-                completion: crate::state::Completion::Listed,
-            } => None,
+        let pr = round.part_pull_request().cloned().or_else(|| {
+            progress.and_then(|progress| match progress.phase() {
+                ItemPhase::InReview { pr, .. }
+                | ItemPhase::Fixing { pr, .. }
+                | ItemPhase::Approved { pr, .. }
+                | ItemPhase::Done {
+                    completion: crate::state::Completion::Merged { pr, .. },
+                } => Some(pr.clone()),
+                ItemPhase::Pending
+                | ItemPhase::InProgress { .. }
+                | ItemPhase::Done {
+                    completion: crate::state::Completion::Listed,
+                } => None,
+            })
         });
         let mut review_passes: Vec<ReviewPass> = progress
             .map(|progress| {
