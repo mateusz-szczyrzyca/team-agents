@@ -483,8 +483,14 @@ impl Member {
         Ok(true)
     }
 
-    /// Gives the task to `holder` at `at`, keeping the agent that held it as one of its past holders.
-    pub fn held_task(&mut self, _holder: Participant, _at: Timestamp) {}
+    /// Gives the task to `holder` at `at`, keeping the agent that held it as one of its past and no longer its own.
+    pub fn held_task(&mut self, holder: Participant, at: Timestamp) {
+        let before = std::mem::replace(&mut self.agent, holder);
+        self.past_holders.push(holding::Holding {
+            agent: before,
+            until: at,
+        });
+    }
 
     /// Records that a run has started.
     ///
