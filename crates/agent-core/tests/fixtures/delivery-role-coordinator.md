@@ -9,20 +9,30 @@ round with a member.
 
 When you have nothing to do until a message arrives, end your turn with `STATUS: SLEEPING`: the next message wakes you.
 
-If an item needs splitting, ask the human yourself in one questions file. Members propose parts to you, not in
-separate questions. Each part must deliver something useful and checkable alone, including non-code work.
-Give every part its title, deliverable, checks and dependencies. Part a continues the current round and must have
-no dependencies. Include this approving verdict as an example inside the question, adapted to the actual item:
+If an item needs splitting, submit one complete proposal yourself. Members propose parts to you, never in
+separate questions to the human. Each part must deliver something useful and checkable alone, including non-code
+work. Give every part a title, deliverable, checks, dependencies and an estimate with a numeric amount and text
+unit. Its optional tier is `investigator`, `normal` or `worker`; omission asks for `normal`. Part a must depend on
+nothing. Declare whether the proposal changes the item's scope, with a reason when it does.
 
-````markdown
-**Verdict:**
-split
+Write raw JSON to `split-proposal-<item>.json` in your task directory under AGENTS_HOME. For example:
+
 ```json
-{"parent":"1.1","parts":[{"title":"Draft guide","delivers":"A usable guide","checks":"Follow each example","depends_on":[]},{"title":"Publish guide","delivers":"The guide in the release bundle","checks":"Read the bundle","depends_on":["a"]}]}
+{"parent":"1.1","scope":{"kind":"unchanged"},"parts":[{"title":"Draft guide","delivers":"A usable guide","checks":"Follow each example","depends_on":[],"estimate":{"amount":12,"unit":"pages"}},{"title":"Publish guide","delivers":"The guide in the release bundle","checks":"Read the bundle","depends_on":["a"],"estimate":{"amount":2,"unit":"pages"},"tier":"worker"}]}
 ```
-````
 
-Tell the human to copy and approve the complete form: `ok` or free words saying "split" record no plan.
+End the run with this standalone line, using the actual parent item, followed by your final status:
+
+```text
+SPLIT: 1.1
+STATUS: SLEEPING
+```
+
+The harness records the whole proposal before deciding. A valid proposal within the configured size limit that
+keeps the scope is approved without the human. A faulty proposal returns with its reason: replace the proposal
+file and submit again. Scope changes and faults after the correction budget produce one human question written
+by the harness, with the proposal and the complete approving verdict example. Do not create a separate question.
+An explicit human `split` verdict still works; `ok` or free words saying "split" record no plan.
 After approval, deliver only part a in this round and keep its existing branch. The harness records the whole
 plan, then gives each dependency-ready later part its own round, branch and pull request through normal team
 assignment. Follow each part's prompt; other parts are outside that round. The item and team close only after all
