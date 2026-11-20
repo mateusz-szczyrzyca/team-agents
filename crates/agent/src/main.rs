@@ -217,7 +217,7 @@ struct RunArgs {
     #[arg(long)]
     no_merge: bool,
     /// Permit unpublished commits on the base branch.
-    #[arg(skip)]
+    #[arg(long)]
     allow_unpushed_base: bool,
 }
 

@@ -128,7 +128,7 @@ pub enum Target {
 #[serde(deny_unknown_fields)]
 pub struct RunRequest {
     /// Explicit permission to start despite local base commits absent from origin.
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_unpushed_base: bool,
     /// The repository, as `[repos.NAME]` of the configuration.
     pub repo: RepoName,

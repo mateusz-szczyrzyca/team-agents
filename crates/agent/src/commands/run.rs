@@ -286,7 +286,7 @@ pub(crate) async fn prepare(directory: &Path, input: RunInput) -> Result<RunRequ
     let task_list = TaskListText::new(text)?;
     let (checkout, repo) = repository(directory).await?;
     Ok(RunRequest {
-        allow_unpushed_base: false,
+        allow_unpushed_base: input.allow_unpushed_base,
         repo,
         checkout,
         agents,
