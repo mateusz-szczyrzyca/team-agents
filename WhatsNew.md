@@ -5,6 +5,14 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.29.0 — 20.11.2026 — PR #146
+
+### Enhancements
+- [agent-core] Team state can retain complete split plans with lettered parts, deliverables, checks and dependencies.
+  Automatic execution of those parts will follow in the next part; answers do not activate splits yet.
+- [agent-core] **Action:** State files now use schema 13 and older states migrate automatically without changing
+  their history. Keep a backup before upgrading: older binaries cannot read the upgraded state.
+
 ## 0.28.0 — 20.11.2026 — PR #145
 
 ### Bug fixes

@@ -110,6 +110,7 @@ impl Team {
             reviewers,
             activities: Vec::new(),
             unpushed_base: None,
+            splits: Vec::new(),
         };
         check_team(&team)?;
         Ok(team)

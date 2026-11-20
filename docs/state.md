@@ -23,13 +23,31 @@ activity files are left alone. See [history retention](history.md#retention-and-
 
 ## State
 
+### Approved split definitions
+
+Schema 13 adds optional per-team `splits`, a list of whole validated plans in approval order. Each plan has
+`parent` (the original two-number item ID) and `parts`; each part has `title`, `delivers`, `checks` and `depends_on`.
+The [verdict format](task-list.md#approved-split-plans-core-format) uses the same fields. A team's plans must name
+its original items and cannot repeat a parent. Part keys are stable lowercase letters assigned by position;
+`1.1a` is a separate part identity, not a newly accepted task-list ID. Plans cannot be replaced in place.
+
+A missing `splits` field means no plans and an empty list is omitted when saving. Schema 12 migrates without
+changing existing items, branch names, rounds, activities, runs or wake-up history. The pre-change schema-12 fixture
+is [state-before-splits.json](../crates/agent-core/tests/fixtures/state-before-splits.json); its test compares the
+whole saved document with the fixture after adjusting only the schema number. Versions 1–11 retain their previous
+migrations and default to no split plans. Older binaries refuse schema 13, so keep a backup before upgrading.
+
+This is a preparatory state API: the daemon does not yet record split verdicts or open part rounds, and there is no
+per-part execution history in this schema addition. The following part connects these definitions and the pure
+next-part decision to answer handling, rounds and status. Loading a definition alone changes no item phase.
+
 ### The file
 
 The state is one JSON document, written indented with a newline at the end, the schema version first:
 
 ```json
 {
-  "schema_version": 12,
+  "schema_version": 13,
   "teams": [ { "id": "team-20261111-193000-a1b2", "...": "..." } ]
 }
 ```
@@ -145,8 +163,8 @@ Older daemons cannot read a state saved with schema 12.
   as one that was built through the API. There is one way to read a value, the `Deserialize` trait: the field-by-field
   reading that serde derives lives on a private mirror type (`remote`), so no public `T::deserialize` skips the checks.
 - **Versioned.** `State::from_json` reads `schema_version` **first**. A state of another version is refused with
-  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 12,
-  migrates versions 1 through 11 as it reads them (see "Version 1" below); any other version is
+  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 13,
+  migrates versions 1 through 12 as it reads them (see "Version 1" below); any other version is
   refused. Version 2 is read as it is: its items have no `findings`, so a round that was open when the daemon was
   updated ends by the rules it started with (verdicts only), and the numbered findings hold for pull requests opened
   after the update. A change that old files do not satisfy raises the version and comes with a migration, a fixture of the old

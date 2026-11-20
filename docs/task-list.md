@@ -120,3 +120,48 @@ Item     { id: ItemId, title, mark: Open | Done, description, expected_result: O
 `TaskList` is made only by `parse`, so its parts are consistent: unique numbers, every item in its feature, dependencies
 only on earlier features. It does not know which features are merged — that is progress, kept in the state (item 2.2) —
 and it is not persisted: the state stores what it needs from it.
+
+## Approved split plans: core format
+
+The core library defines the following explicit human verdict for approving a whole split. Daemon recording,
+part rounds, prompts and status output are a follow-up; **this version does not activate splits from answers**.
+An ordinary `ok` or free-text answer remains an ordinary answer. Do not rely on the format to schedule work yet.
+
+Inside `**Verdict:**`, write `split` on its own line immediately followed by one fenced `json` object:
+
+````markdown
+**Verdict:**
+split
+```json
+{
+  "parent": "1.1",
+  "parts": [
+    {
+      "title": "Draft the guide",
+      "delivers": "A guide with worked examples",
+      "checks": "A reviewer follows each example",
+      "depends_on": []
+    },
+    {
+      "title": "Publish the guide",
+      "delivers": "The reviewed guide in the release bundle",
+      "checks": "The release bundle contains the guide",
+      "depends_on": ["a"]
+    }
+  ]
+}
+```
+````
+
+All fields are required; additional fields are errors. There must be 2–26 parts, each with a nonblank title,
+deliverable and checks. Checks are criteria for any independently deliverable work, not necessarily code or tests.
+Keys are assigned in declaration order: the example's parts are `1.1a` and `1.1b`. Dependencies name single lowercase
+letters within that plan. Forward references are allowed; duplicate dependencies, unknown parts and cycles are errors.
+The reader rejects the whole invalid plan and retains its cause; it never returns some of its parts.
+Only the exact marker and JSON fence begin an explicit approval. A free answer such as `split` or
+`please split into two parts` carries no recorded plan. `ok` does not copy a proposal from the recommendation.
+
+The task-list parser still accepts only two-number item IDs such as `1.1`; lettered part identities belong to the
+stored split plan. Existing items, branch names, rounds and histories keep their identities. The pure core decision
+returns unmerged parts whose dependencies have all merged, in declaration order; only all parts merged permits
+completion of the parent. Assignment and one-open-team-per-agent rules remain the daemon's responsibility.
