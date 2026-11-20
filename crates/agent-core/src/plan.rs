@@ -82,6 +82,11 @@ impl Plan {
     pub fn steps(&self) -> impl Iterator<Item = &Step> {
         self.stages.iter().flat_map(Stage::steps)
     }
+    /// The plan as the text of `.agent/plan.md`; [`parse_plan`] reads it back into an equal plan.
+    #[must_use]
+    pub fn to_text(&self) -> String {
+        String::new()
+    }
 }
 
 /// A stage of a plan: a numbered group of steps.

@@ -1,4 +1,7 @@
 //! The states of a step, the `Files:` and `Check:` lines of its text, and the line of every refused form.
+use rand::rngs::Xoshiro256PlusPlus;
+use rand::{RngExt, SeedableRng};
+
 use super::*;
 use crate::repo_path::PathRule;
 use crate::task_list::NumberProblem;
@@ -460,4 +463,174 @@ fn a_step_given_up_with_only_its_files_and_check_has_no_reason() {
     let text = "1. S\n[ ] 1.1 a\n[-] 1.2 b\n    Files: a.rs\n    Check: reviewer\n";
 
     assert_eq!(failure(text), PlanError::GivenUpWithoutReason { line: line!(3) });
+}
+
+/// A plan written back is the text a task keeps, and reading it again gives the same plan.
+#[test]
+fn a_plan_written_back_reads_as_the_same_plan() {
+    let text = "\
+Make the guide readable.
+
+1. Draft
+[ ] 1.1 Write the outline
+    Start with the audience.
+    Files: docs/plan.md, crates/agent-core/src/plan.rs
+    Check: exists docs/plan.md
+[>] 1.2 Write the first draft
+2. Publish
+[x] 2.1 Add the guide to the release
+    Check: cargo test -p guide
+[-] 2.2 Translate it
+    Nobody asked for it.
+    Check: reviewer
+";
+    let plan = parsed(text);
+
+    let written = plan.to_text();
+
+    assert_eq!(parsed(&written), plan);
+    assert_eq!(
+        written,
+        "\
+Make the guide readable.
+
+1. Draft
+[ ] 1.1 Write the outline
+    Start with the audience.
+    Files: docs/plan.md, crates/agent-core/src/plan.rs
+    Check: exists docs/plan.md
+[>] 1.2 Write the first draft
+2. Publish
+[x] 2.1 Add the guide to the release
+    Check: cargo test -p guide
+[-] 2.2 Translate it
+    Nobody asked for it.
+    Check: reviewer
+"
+    );
+}
+
+/// A plan without an intent, with an empty stage and a step of a title and no text, is written and read back.
+#[test]
+fn a_plan_of_edges_written_back_reads_as_the_same_plan() {
+    for text in [
+        "1. S\n",
+        "\n\n1. S\n[ ] 1.1 a\n2. Empty\n",
+        "Only the intent.\n\nWith two paragraphs.",
+        "[?] not a step: intent\n",
+    ] {
+        let plan = parsed(text);
+        assert_eq!(parsed(&plan.to_text()), plan, "{text:?}");
+    }
+}
+
+/// Lines a generated plan's intent and notes are made of: none starts a stage, a step or a label.
+const PROSE: [&str; 6] = [
+    "Make the guide readable.",
+    "Zażółć gęślą jaźń — 日本語 too.",
+    "- a bullet, not a step",
+    "  indented two more",
+    "",
+    "3 steps, not a stage",
+];
+
+/// Titles a generated plan's stages and steps take.
+const TITLES: [&str; 4] = ["Draft", "Write the outline", "Przetłumacz to", "Check [x] marks"];
+
+/// Paths a generated step's `Files:` line or `exists` check names.
+const PATHS: [&str; 4] = [
+    "Cargo.toml",
+    "docs/plan.md",
+    "crates/agent-core/src/plan.rs",
+    "docs/zażółć jaźń.md",
+];
+
+/// Commands a generated step's `Check:` line runs.
+const COMMANDS: [&str; 4] = [
+    "cargo test -p agent-core plan",
+    "make gate",
+    "reviewer says ok",
+    "test -s docs/plan.md",
+];
+
+/// One of `items`, drawn from `rng`.
+fn pick<'a>(rng: &mut Xoshiro256PlusPlus, items: &[&'a str]) -> &'a str {
+    items[rng.random_range(0..items.len())]
+}
+
+/// Up to `max` lines of [`PROSE`], joined as the parser keeps them: no blank line at the start or the end, and no
+/// indentation common to all of them.
+fn prose(rng: &mut Xoshiro256PlusPlus, max: usize) -> String {
+    let count = rng.random_range(0..=max);
+    let lines: Vec<&str> = (0..count).map(|_| pick(rng, &PROSE)).collect();
+    let text = task_list::join_trimmed(&lines);
+    if text.lines().all(|line| line.trim().is_empty() || line.starts_with(' ')) {
+        return String::new();
+    }
+    text
+}
+
+/// A plan drawn from `rng`: up to four stages of up to four steps, every state, every kind of check, `Files:` lines
+/// and notes, with at most one step in hand and a note on every step given up.
+fn generated_plan(rng: &mut Xoshiro256PlusPlus) -> Plan {
+    let mut in_hand = false;
+    let mut stages = Vec::new();
+    let mut number = 0u16;
+    for _ in 0..rng.random_range(1..=4) {
+        number += rng.random_range(1..=3);
+        let stage_number = NonZeroU16::new(number).unwrap();
+        let mut steps = Vec::new();
+        let mut step_number = 0u16;
+        for _ in 0..rng.random_range(0..=4) {
+            step_number += rng.random_range(1..=2);
+            let mut state =
+                [StepState::Todo, StepState::InHand, StepState::Done, StepState::GivenUp][rng.random_range(0..4)];
+            if state == StepState::InHand && std::mem::replace(&mut in_hand, true) {
+                state = StepState::Done;
+            }
+            let mut note = prose(rng, 3);
+            if state == StepState::GivenUp && note.is_empty() {
+                note = "Nobody asked for it.".to_owned();
+            }
+            let files = (0..rng.random_range(0..=3))
+                .map(|_| pick(rng, &PATHS).parse().unwrap())
+                .collect();
+            let check = match rng.random_range(0..4) {
+                0 => None,
+                1 => Some(Check::Reviewer),
+                2 => Some(Check::Exists(pick(rng, &PATHS).parse().unwrap())),
+                _ => Some(Check::Command(pick(rng, &COMMANDS).to_owned())),
+            };
+            steps.push(Step {
+                id: format!("{number}.{step_number}").parse().unwrap(),
+                title: pick(rng, &TITLES).to_owned(),
+                state,
+                files,
+                check,
+                note,
+            });
+        }
+        stages.push(Stage {
+            number: stage_number,
+            title: pick(rng, &TITLES).to_owned(),
+            steps,
+        });
+    }
+    Plan {
+        intent: prose(rng, 4),
+        stages,
+    }
+}
+
+/// Any plan written back reads as the same plan: a property over plans drawn from a seeded source.
+#[test]
+fn every_generated_plan_written_back_reads_as_the_same_plan() {
+    for seed in 0..500 {
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+        let plan = generated_plan(&mut rng);
+
+        let text = plan.to_text();
+
+        assert_eq!(parse_plan(&text), Ok(plan), "seed {seed}:\n{text}");
+    }
 }
