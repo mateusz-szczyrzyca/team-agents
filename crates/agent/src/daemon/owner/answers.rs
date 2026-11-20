@@ -6,6 +6,8 @@
 //! through which channel. What the next run is told is made from the file when that run is made ready (`start.rs`), so
 //! it survives a restart of the daemon.
 
+mod splits;
+
 use std::path::Path;
 
 use agent_core::history::HistoryEvent;
@@ -164,7 +166,7 @@ impl Owner {
         &mut self,
         client: &Client,
         request: AnswerRequest,
-    ) -> Result<Result<Reply, Failure>, OwnerError> {
+    ) -> Result<Result<(Reply, Option<String>), Failure>, OwnerError> {
         let AnswerRequest { task, number, answers } = request;
         let open = match self.waiting_questions(&task) {
             Ok(open) => open,
@@ -206,8 +208,8 @@ impl Owner {
             Client::Cli => AnsweredVia::Command,
             Client::Dashboard { .. } => AnsweredVia::Dashboard,
         };
-        self.record_answer(&task, &open, via).await?;
-        Ok(Ok(Reply::Applied { tasks: vec![task] }))
+        let split = self.record_answer(&task, &open, via, &answered).await?;
+        Ok(Ok((Reply::Applied { tasks: vec![task] }, split)))
     }
 
     /// The questions `task` waits for answers to, or why there are none.
@@ -275,7 +277,10 @@ impl Owner {
         };
         match questions::judge(&loaded.file) {
             Judgement::NotYet => Ok(()),
-            Judgement::Answered => self.record_answer(&saved.task, &open, AnsweredVia::SavedFile).await,
+            Judgement::Answered => self
+                .record_answer(&saved.task, &open, AnsweredVia::SavedFile, &loaded.file)
+                .await
+                .map(drop),
             Judgement::Incomplete { problems } => {
                 let text = questions::describe(&loaded.file, &problems);
                 {
@@ -344,7 +349,30 @@ impl Owner {
         task: &TaskId,
         open: &WaitingQuestions,
         via: AnsweredVia,
-    ) -> Result<(), OwnerError> {
+        file: &agent_core::questions::QuestionsFile,
+    ) -> Result<Option<String>, OwnerError> {
+        let decision = {
+            let team = self
+                .parts
+                .state
+                .team(&open.located.team)
+                .ok_or_else(|| OwnerError::LostTeam {
+                    team: open.located.team.clone(),
+                })?;
+            splits::prepare(team, open.located.role, file)
+        };
+        if let Some(plan) = decision.plan {
+            self.parts
+                .state
+                .team_mut(&open.located.team)
+                .ok_or_else(|| OwnerError::LostTeam {
+                    team: open.located.team.clone(),
+                })?
+                .activate_split(plan)?;
+        }
+        if let Some(acknowledgement) = &decision.acknowledgement {
+            tracing::info!(event = LogEvent::QuestionsAnswered.as_str(), task = %task, %acknowledgement, "the split answer was interpreted");
+        }
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
         {
@@ -401,7 +429,7 @@ impl Owner {
             "the questions are answered"
         );
         self.look_at(&open.located.team);
-        Ok(())
+        Ok(decision.acknowledgement)
     }
 }
 

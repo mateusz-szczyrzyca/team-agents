@@ -377,3 +377,5 @@ async fn a_member_is_told_that_its_worktree_and_branch_are_the_only_ones_it_may_
                 it, and tell its sender so.\n";
     assert!(prompt.contains(told), "{prompt}");
 }
+
+mod split_scope;

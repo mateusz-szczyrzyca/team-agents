@@ -2,9 +2,9 @@
 //! its Unix socket (see `docs/state.md`).
 //!
 //! A client sends one [`Request`] per line; the daemon answers each with a [`Response`] and, to a client that
-//! subscribed, sends [`Event`]s as the state changes — a [`Frame`] is either. Every line carries `"protocol": 3`
-//! ([`PROTOCOL_VERSION`]); a line of another version is refused with [`ProtocolError::UnsupportedVersion`] before
-//! anything else of it is read, so a client and a daemon of different versions say so and do not misread each other.
+//! subscribed, sends [`Event`]s as the state changes — a [`Frame`] is either. The strict legacy APIs use
+//! [`PROTOCOL_VERSION`]; negotiated APIs also accept [`SPLIT_PROTOCOL_VERSION`] for split-aware clients.
+//! Unsupported tags are refused before the message body is decoded.
 //! The types here only describe lines and read and write them; the socket is the daemon's.
 
 mod event;
@@ -28,8 +28,20 @@ pub use request::{
     SayRequest, SayText, ShowRequest, StatusRequest, SubscribeRequest, Target,
 };
 
-/// The protocol version that this build speaks.
+/// The legacy protocol version, retained for strict clients predating split execution.
 pub const PROTOCOL_VERSION: u32 = 3;
+
+/// The negotiated protocol version carrying split plans, acknowledgements and part round identities.
+pub const SPLIT_PROTOCOL_VERSION: u32 = 4;
+
+/// Wire format requested by a client; version four includes approved split details.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyFormat {
+    /// Version three, readable by clients predating split execution.
+    Legacy,
+    /// Version four, including split acknowledgements, plans and round identities.
+    Split,
+}
 
 /// Longest line a client may send, in bytes: a task list (1 MiB at most) with room for the rest of the request.
 pub const MAX_REQUEST_BYTES: usize = 2 << 20;
@@ -120,13 +132,114 @@ fn decode<T: DeserializeOwned>(line: &str, max: usize) -> Result<T, ProtocolErro
     serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })
 }
 
+/// Serializes one of the protocol's object-shaped messages with the split-aware version tag.
+fn encode_split<T: Serialize>(message: &T) -> Result<String, EncodeError> {
+    let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    if let Some(protocol) = value.get_mut("protocol") {
+        *protocol = serde_json::Value::from(SPLIT_PROTOCOL_VERSION);
+    }
+    encode(&value)
+}
+
+/// Checks the wire boundary before decoding either supported format into the shared domain types.
+fn decode_negotiated<T: DeserializeOwned>(line: &str, max: usize) -> Result<(T, ReplyFormat), ProtocolError> {
+    if line.len() > max {
+        return Err(ProtocolError::TooLong { len: line.len(), max });
+    }
+    let probe: VersionProbe = serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
+    match probe.protocol {
+        version if version == u64::from(PROTOCOL_VERSION) => {
+            decode(line, max).map(|message| (message, ReplyFormat::Legacy))
+        }
+        version if version == u64::from(SPLIT_PROTOCOL_VERSION) => {
+            let mut value: serde_json::Value =
+                serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
+            if let Some(protocol) = value.get_mut("protocol") {
+                *protocol = serde_json::Value::from(PROTOCOL_VERSION);
+            }
+            serde_json::from_value(value)
+                .map(|message| (message, ReplyFormat::Split))
+                .map_err(|source| ProtocolError::Malformed { source })
+        }
+        found => Err(UnsupportedVersion { found }.into()),
+    }
+}
+
+/// Removes fields unknown to protocol-three clients, retaining their ordinary frame encoding.
+fn strip_split_fields(value: &mut serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(object) => {
+            let mut changed = false;
+            for key in ["split", "splits", "part"] {
+                changed |= object.remove(key).is_some();
+            }
+            for nested in object.values_mut() {
+                changed |= strip_split_fields(nested);
+            }
+            changed
+        }
+        serde_json::Value::Array(values) => {
+            let mut changed = false;
+            for nested in values {
+                changed |= strip_split_fields(nested);
+            }
+            changed
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => false,
+    }
+}
+
 impl Frame {
     /// The frame as one line ending with a newline.
     ///
     /// # Errors
     /// [`EncodeError`] when the serializer fails.
     pub fn to_line(&self) -> Result<String, EncodeError> {
-        encode(self)
+        if let Self::Response(Response {
+            id,
+            result: Outcome::Ok {
+                reply: Reply::Team { team },
+            },
+            ..
+        }) = self
+            && !team.splits().is_empty()
+        {
+            return encode(&Self::Response(Response::error(
+                *id,
+                Failure {
+                    kind: FailureKind::Invalid,
+                    message: "showing a split team requires protocol 4".into(),
+                },
+            )));
+        }
+        let mut legacy = serde_json::to_value(self).map_err(|source| EncodeError { source })?;
+        if strip_split_fields(&mut legacy) {
+            encode(&legacy)
+        } else {
+            encode(self)
+        }
+    }
+
+    /// Encodes a frame in the format requested by its recipient.
+    ///
+    /// # Errors
+    /// [`EncodeError`] when serialization fails.
+    pub fn to_line_for(&self, format: ReplyFormat) -> Result<String, EncodeError> {
+        match format {
+            ReplyFormat::Legacy => self.to_line(),
+            ReplyFormat::Split => encode_split(self),
+        }
+    }
+
+    /// Reads a frame from a daemon supporting either legacy or split-aware clients.
+    ///
+    /// # Errors
+    /// [`ProtocolError`] for an oversized, malformed or unsupported frame.
+    pub fn from_line_negotiated(line: &str) -> Result<Self, ProtocolError> {
+        decode_negotiated(line, MAX_FRAME_BYTES).map(|(frame, _format)| frame)
     }
 
     /// Reads a line the daemon sent.

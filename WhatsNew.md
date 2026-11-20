@@ -5,11 +5,23 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.31.0 — 20.11.2026 — PR #149
+## 0.32.0 — 20.11.2026 — PR #149
 
 ### Enhancements
 - [agent-core] The core can now read, write back and compare the plan of steps a task will keep in its worktree;
   nothing the daemon or the CLI does changes yet.
+
+## 0.31.0 — 20.11.2026 — PR #148
+
+### New features
+- [agent] [agent-core] An explicit split approval records every part together. Each part gets its own round and pull
+  request when its dependencies have merged; the item stays open until its last part merges, also after a restart.
+- [agent] [agent-core] `agent answer` reports which split parts were recorded or why approval was refused, and
+  `agent status` shows each part as done, in progress, waiting for a dependency, or to do.
+
+### Enhancements
+- [agent] [agent-core] The CLI negotiates socket protocol 4 for split details. Older clients keep protocol 3, and
+  the new CLI falls back to protocol 3 when talking to an older daemon.
 
 ## 0.30.0 — 20.11.2026 — PR #147
 

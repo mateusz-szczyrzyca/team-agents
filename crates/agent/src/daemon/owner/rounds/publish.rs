@@ -264,8 +264,7 @@ impl Owner {
                     self.watch.gate_sent_back.remove(&lead.task);
                     self.watch.own_gates.remove(&lead.task);
                     if self.record_publication(team_id, &publication, &published, look)? {
-                        self.note_reviewed(&lead, &publication.head_branch, &published.gated)
-                            .await;
+                        self.note_reviewed(&lead, &published.pr.branch, &published.gated).await;
                     }
                 }
                 Ok(Attempt::Held(held)) => {
@@ -340,7 +339,24 @@ impl Owner {
     ) -> Result<Attempt, PublishError> {
         let lead = site.lead;
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        let Some(tip) = git.branch_tip(&publication.head_branch).await? else {
+        let split = items_of(publication).iter().any(|id| {
+            self.parts
+                .state
+                .team(site.team)
+                .and_then(|team| {
+                    team.items()
+                        .iter()
+                        .find(|item| item.id().to_string() == *id)
+                        .and_then(|item| team.round_of(item.id()))
+                })
+                .is_some_and(|round| round.part().is_some())
+        });
+        let source = if split {
+            crate::daemon::team::task_branch(&lead.agent, &lead.task)?
+        } else {
+            publication.head_branch.clone()
+        };
+        let Some(tip) = git.branch_tip(&source).await? else {
             return Ok(Attempt::Nothing);
         };
         // A gate of the harness that still runs decides nothing yet; the record is read after it, so that it is not older.
@@ -411,6 +427,8 @@ impl Owner {
                 Attempt::Nothing
             });
         }
+        let published_branch = self.publication_branch(team, &ids, head_branch, ready).await?;
+        let head_branch = published_branch.as_ref();
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
         let existing = github.find_open_pull_request(head_branch).await?;
         carry(ready, head_branch, existing.as_ref().map(|found| &found.head)).await?;
@@ -495,6 +513,28 @@ impl Owner {
             carried: remote.head,
             items: ids,
         }))
+    }
+
+    /// Keeps each split part on its own branch at the integrated, gated tip.
+    async fn publication_branch<'a>(
+        &self,
+        team: &TeamId,
+        ids: &[ItemId],
+        head: &'a BranchName,
+        ready: &Ready,
+    ) -> Result<std::borrow::Cow<'a, BranchName>, PublishError> {
+        let split = ids.iter().any(|id| {
+            self.parts
+                .state
+                .team(team)
+                .and_then(|team| team.round_of(*id))
+                .is_some_and(|round| round.part().is_some())
+        });
+        if !split {
+            return Ok(std::borrow::Cow::Borrowed(head));
+        }
+        ready.git.branch_point(head, &ready.tip).await?;
+        Ok(std::borrow::Cow::Borrowed(head))
     }
 
     /// Whether the update of a pull request whose items `fixing` are fixed waits: the lead's fix response to the pull
@@ -617,6 +657,7 @@ impl Owner {
         if let Some(held) = self.check_before_review(site, &reviewing, now).await? {
             return Ok(Attempt::Held(held));
         }
+        self.publication_branch(team, &ids, &pr.branch, ready).await?;
         carry(ready, &pr.branch, Some(&before.head)).await?;
         self.record_event(
             team,

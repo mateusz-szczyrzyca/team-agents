@@ -147,6 +147,12 @@ pub enum BeginRunError {
 /// What is wrong with the rounds of a team that is read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RoundsError {
+    /// A split round is inconsistent with its plan or earlier merged rounds.
+    #[error("round {round} has an invalid split execution identity")]
+    SplitExecution {
+        /// The invalid round.
+        round: RoundId,
+    },
     /// Two rounds have one ID.
     #[error("the round {round} appears twice")]
     DuplicateRound {
@@ -245,7 +251,7 @@ impl Team {
     /// The round of item `item`; none for an item that has not started.
     #[must_use]
     pub fn round_of(&self, item: ItemId) -> Option<&Round> {
-        self.rounds.iter().find(|round| round.item() == Some(item))
+        self.rounds.iter().rev().find(|round| round.item() == Some(item))
     }
 
     /// The rounds that are open, oldest first.
@@ -278,7 +284,9 @@ impl Team {
         }
         if let Some(item) = item {
             let progress = self.item(item).ok_or(OpenRoundError::UnknownItem { item })?;
-            if let Some(existing) = self.round_of(item) {
+            if let Some(existing) = self.round_of(item)
+                && (existing.part_pull_request().is_none() || self.next_part(item).is_none())
+            {
                 return Err(OpenRoundError::ItemHasRound {
                     item,
                     round: existing.id().clone(),
@@ -297,7 +305,12 @@ impl Team {
                 });
             }
         }
-        self.rounds.push(Round::opened(id, item, at));
+        let part = item.and_then(|item| self.next_part(item).map(|(id, _)| id.key()));
+        let mut round = Round::opened(id, item, at);
+        if let Some(part) = part {
+            round.bind_part(part);
+        }
+        self.rounds.push(round);
         Ok(())
     }
 
@@ -321,11 +334,40 @@ impl Team {
                 item: phase.map(ItemPhase::kind),
             });
         }
-        self.rounds
-            .iter_mut()
-            .find(|round| round.id() == id)
-            .ok_or_else(|| CloseRoundError::NoSuchRound { round: id.clone() })?
-            .close(at, how)?;
+        let merged_part = if how == RoundEnd::Merged && round.part().is_some() {
+            match phase {
+                Some(ItemPhase::Done {
+                    completion: Completion::Merged { pr, .. },
+                }) => Some(pr.clone()),
+                None
+                | Some(
+                    ItemPhase::Pending
+                    | ItemPhase::InProgress { .. }
+                    | ItemPhase::InReview { .. }
+                    | ItemPhase::Fixing { .. }
+                    | ItemPhase::Approved { .. }
+                    | ItemPhase::Done {
+                        completion: Completion::Listed,
+                    },
+                ) => None,
+            }
+        } else {
+            None
+        };
+        let parent = round.item();
+        let target = self.rounds.iter_mut().find(|round| round.id() == id);
+        let target = target.ok_or_else(|| CloseRoundError::NoSuchRound { round: id.clone() })?;
+        target.close(at, how)?;
+        if let Some(pr) = merged_part {
+            target.merge_part(pr);
+        }
+        if how == RoundEnd::Merged
+            && let Some(parent) = parent
+            && self.next_part(parent).is_some()
+            && let Some(progress) = self.items.iter_mut().find(|progress| progress.id() == parent)
+        {
+            *progress = ItemProgress::new(parent, crate::task_list::ItemMark::Open);
+        }
         Ok(())
     }
 
@@ -394,6 +436,7 @@ pub(super) fn check_rounds(team: &Team) -> Result<(), TeamError> {
 
 /// Checks the rounds of `team`, then its items for rounds, then its runs.
 fn check_round_list(team: &Team) -> Result<(), RoundsError> {
+    super::splits::execution::check_execution(team)?;
     let mut seen: HashSet<&RoundId> = HashSet::new();
     for round in &team.rounds {
         if !seen.insert(round.id()) {
@@ -407,7 +450,9 @@ fn check_round_list(team: &Team) -> Result<(), RoundsError> {
         let item = progress.id();
         let mut rounds = team.rounds.iter().filter(|round| round.item() == Some(item));
         let first = rounds.next();
-        if let (Some(first), Some(second)) = (first, rounds.next()) {
+        if let (Some(first), Some(second)) = (first, rounds.next())
+            && (first.part().is_none() || second.part().is_none())
+        {
             return Err(RoundsError::ItemWithTwoRounds {
                 item,
                 first: first.id().clone(),
@@ -462,6 +507,9 @@ fn check_round(team: &Team, round: &Round) -> Result<(), RoundsError> {
             round: round.id().clone(),
             item,
         });
+    }
+    if round.part_pull_request().is_some() && round.ended() == Some(RoundEnd::Merged) {
+        return Ok(());
     }
     check_end(round, Some(progress.phase()))
 }

@@ -1,0 +1,4 @@
+    1.1a  done  Résumé
+    1.1b  in progress  Second
+    1.1c  waiting for 1.1b  Third
+    1.1d  to do  Fourth

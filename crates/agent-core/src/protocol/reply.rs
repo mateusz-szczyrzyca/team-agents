@@ -26,6 +26,9 @@ pub struct Response {
     pub id: RequestId,
     /// What came of it.
     pub result: Outcome,
+    /// Which split parts an answer recorded, or why it recorded none; absent for ordinary answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split: Option<String>,
 }
 
 /// What came of a request.
@@ -161,6 +164,9 @@ pub struct TeamSummary {
     /// The rounds of the team, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rounds: Vec<Round>,
+    /// Approved split plans, absent from replies written before split execution.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub splits: Vec<crate::state::split::SplitPlan>,
     /// The crew and the reviewers.
     pub members: Vec<MemberSummary>,
     /// What the team's investigators did, absent from a daemon before it kept them and from a team that has none.
@@ -342,18 +348,20 @@ impl RoundDetail {
     #[must_use]
     pub fn new(team: &Team, round: &Round, tasks: Vec<RoundTask>) -> Self {
         let progress = round.item().and_then(|item| team.item(item));
-        let pr = progress.and_then(|progress| match progress.phase() {
-            ItemPhase::InReview { pr, .. }
-            | ItemPhase::Fixing { pr, .. }
-            | ItemPhase::Approved { pr, .. }
-            | ItemPhase::Done {
-                completion: crate::state::Completion::Merged { pr, .. },
-            } => Some(pr.clone()),
-            ItemPhase::Pending
-            | ItemPhase::InProgress { .. }
-            | ItemPhase::Done {
-                completion: crate::state::Completion::Listed,
-            } => None,
+        let pr = round.part_pull_request().cloned().or_else(|| {
+            progress.and_then(|progress| match progress.phase() {
+                ItemPhase::InReview { pr, .. }
+                | ItemPhase::Fixing { pr, .. }
+                | ItemPhase::Approved { pr, .. }
+                | ItemPhase::Done {
+                    completion: crate::state::Completion::Merged { pr, .. },
+                } => Some(pr.clone()),
+                ItemPhase::Pending
+                | ItemPhase::InProgress { .. }
+                | ItemPhase::Done {
+                    completion: crate::state::Completion::Listed,
+                } => None,
+            })
         });
         let mut review_passes: Vec<ReviewPass> = progress
             .map(|progress| {
@@ -432,6 +440,7 @@ impl From<&Team> for TeamSummary {
             merge: team.merge(),
             items,
             rounds: team.rounds().to_vec(),
+            splits: team.splits().to_vec(),
             members: crew
                 .chain(reviewers)
                 .map(|(role, member)| MemberSummary::of(role, member))
@@ -449,6 +458,7 @@ impl Response {
             protocol: ProtocolVersion,
             id,
             result: Outcome::Ok { reply },
+            split: None,
         }
     }
 
@@ -459,6 +469,7 @@ impl Response {
             protocol: ProtocolVersion,
             id,
             result: Outcome::Error { error },
+            split: None,
         }
     }
 }
@@ -903,3 +914,9 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod split_tests;
+
+#[cfg(test)]
+mod legacy_split_tests;

@@ -28,6 +28,9 @@ pub struct Round {
     opened_at: Timestamp,
     /// Whether it is open, or when and how it was closed.
     state: RoundLife,
+    /// Split execution identity; absent in schema 13 rounds written before activation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    part: Option<PartRound>,
 }
 
 /// How a [`Round`] is read; see [`checked!`].
@@ -42,6 +45,9 @@ struct RoundWire {
     opened_at: Timestamp,
     /// See [`Round`].
     state: RoundLife,
+    /// Optional execution identity of a split part.
+    #[serde(default)]
+    part: Option<PartRound>,
 }
 
 checked!(Round, RoundWire, |round: &Round| match &round.state {
@@ -148,6 +154,36 @@ pub struct ClosedBeforeOpened {
 }
 
 impl Round {
+    /// The approved split part delivered by this round, absent for ordinary rounds.
+    #[must_use]
+    pub const fn part(&self) -> Option<super::split::PartKey> {
+        match &self.part {
+            Some(PartRound::Working { key } | PartRound::Merged { key, .. }) => Some(*key),
+            None => None,
+        }
+    }
+
+    /// The pull request delivered by a merged split part.
+    #[must_use]
+    pub const fn part_pull_request(&self) -> Option<&super::PullRequest> {
+        match &self.part {
+            Some(PartRound::Merged { pr, .. }) => Some(pr),
+            Some(PartRound::Working { .. }) | None => None,
+        }
+    }
+
+    /// Binds a validated part identity before this round starts delivering it.
+    pub(super) fn bind_part(&mut self, key: super::split::PartKey) {
+        self.part = Some(PartRound::Working { key });
+    }
+
+    /// Retains a completed part independently of its parent's next phase.
+    pub(super) fn merge_part(&mut self, pr: super::PullRequest) {
+        if let Some(key) = self.part() {
+            self.part = Some(PartRound::Merged { key, pr });
+        }
+    }
+
     /// A round that has just been opened.
     pub(super) const fn opened(id: RoundId, item: Option<ItemId>, opened_at: Timestamp) -> Self {
         Self {
@@ -155,6 +191,7 @@ impl Round {
             item,
             opened_at,
             state: RoundLife::Open,
+            part: None,
         }
     }
 
@@ -206,3 +243,21 @@ fn check_close(id: &RoundId, opened_at: Timestamp, at: Timestamp) -> Result<(), 
 
 #[cfg(test)]
 mod tests;
+
+/// A part's round retains its delivered pull request after the parent moves on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+enum PartRound {
+    /// A part whose pull request has not merged.
+    Working {
+        /// Permanent letter within the approved plan.
+        key: super::split::PartKey,
+    },
+    /// A completed part, with its independently merged pull request.
+    Merged {
+        /// Permanent letter within the approved plan.
+        key: super::split::PartKey,
+        /// The pull request delivering this part.
+        pr: super::PullRequest,
+    },
+}

@@ -37,9 +37,15 @@ is [state-before-splits.json](../crates/agent-core/tests/fixtures/state-before-s
 whole saved document with the fixture after adjusting only the schema number. Versions 1–11 retain their previous
 migrations and default to no split plans. Older binaries refuse schema 13, so keep a backup before upgrading.
 
-This is a preparatory state API: the daemon does not yet record split verdicts or open part rounds, and there is no
-per-part execution history in this schema addition. The following part connects these definitions and the pure
-next-part decision to answer handling, rounds and status. Loading a definition alone changes no item phase.
+Split execution adds an optional round `part`: `{"status":"working","key":"a"}` while active, or
+`{"status":"merged","key":"a","pr":…}` after merge, with the ordinary pull-request record in `pr`.
+Schema stays 13; states written by 0.29.0 omit this field and retain their meaning. The pre-execution fixture is
+[state-v0-29-before-part-rounds.json](../crates/agent-core/tests/fixtures/state-v0-29-before-part-rounds.json).
+Loading a stored definition alone activates nothing. An explicit coordinator answer records the whole plan and
+binds its working round to part a. Later rounds retain the parent item ID and carry their distinct letter.
+An intermediate merge records its pull request permanently and resets the parent to pending for the next
+ready part; only the last merge completes the parent. Split rounds remain open on review approval in `--no-merge`.
+Deserialization checks part membership, uniqueness and previously merged dependencies.
 
 ### The file
 
@@ -338,12 +344,13 @@ A run names the rounds it works for (`rounds`, above). Invariants, checked by th
 `advance_item`, `begin_run`, and `State::open_round`, `close_round`, `begin_run` for what needs the whole state) and again when the
 state is read:
 
-- an item has at most one round, and has one as soon as it leaves `pending`; an item the task list marks `[x]` has none, and a
+- an ordinary item has at most one round; an activated split has one per started part, and only a merged part permits its next round;
+  an item has a round as soon as it leaves `pending`; an item the task list marks `[x]` has none, and a
   round is not opened for an item that is done;
 - a round without an item exists only in a team whose task list has no items, and there is one at most;
 - a round ID is used once in the whole state;
-- a closed round is never opened again: closing it again is refused, and so is a second round for its item. A round closed as
-  `merged` belongs to an item `done` as merged; one closed as `approved` to an item that is `approved` or `done` as merged;
+- a closed round is never opened again: closing it again is refused, and so is a second ordinary round for its item. An ordinary round closed as
+  `merged` belongs to an item `done` as merged; a merged part retains its own pull request while its parent advances; one closed as `approved` to an item that is `approved` or `done` as merged;
   `abandoned` fits any item (a round of a whole list can end in no other way, since nothing merges it); it is not closed before it
   was opened;
 - a run names only rounds of its own team, none twice.
@@ -426,11 +433,22 @@ activity of a control (who paused, who answered).
 
 ### Versions
 
-Every line carries `"protocol": 3`. A reader looks at **the version first** and refuses a line of another version with
-`ProtocolError::UnsupportedVersion { found }`, whatever else the line says: a client of version 4 that sends a request
-this daemon does not know gets that answer and not a parse error, and so does a line of version 1 or 2. A line without a usable
-version, or not JSON, is `Malformed` (with the parser's reason); a line over the limit is `TooLong`. A change to a message that
-old peers cannot read raises the version.
+Legacy APIs and clients use `"protocol":3`. Split-aware clients send `"protocol":4`; the daemon answers in the
+request's version and retains it for subscription events. Version 4 adds split acknowledgements (`Response.split`),
+plans in team summaries (`TeamSummary.splits`) and part identities in rounds (`Round.part`). All are omitted from
+version-3 replies and events. A version-3 `show` of a full split team returns an `invalid` refusal explaining that
+protocol 4 is required: removing part identities would make historical rounds invalid. Ordinary version-3 frames
+retain their existing encoding. State schema 13 is unchanged.
+
+The CLI negotiates before sending split-aware commands: it sends a read-only version-4 `status` probe, then sends
+the intended command in version 4. If an older daemon rejects the probe or closes the connection, it reconnects
+once and uses version 3 instead; no mutating command is retried. The choice is cached on that connection. Older
+clients continue to send version 3 directly.
+
+A reader checks the version before decoding the message body. Strict legacy `Request::from_line` and
+`Frame::from_line` retain version-3-only behavior; their negotiated counterparts accept 3 and 4. Other versions
+return `ProtocolError::UnsupportedVersion`. A line without a usable version, or invalid JSON, is `Malformed`;
+a line over the direction's limit is `TooLong`. A message change that old peers cannot read raises the version.
 
 Version 2 added the round — the target `{"round":"round-…"}`, the rounds in a team's summary, the reply `round`, the events
 `round_opened` and `round_closed`, and the round in the events about an item or a run — and renamed the `round` of the questions

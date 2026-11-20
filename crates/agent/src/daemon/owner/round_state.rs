@@ -136,14 +136,15 @@ impl Owner {
         now: Timestamp,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
-        let has_round = self
+        let found = self
             .parts
             .state
             .team(team)
-            .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?
+            .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?;
+        if found
             .round_of(item)
-            .is_some();
-        if has_round {
+            .is_some_and(|round| round.is_open() || found.next_part(item).is_none())
+        {
             return Ok(());
         }
         self.open_round(team, Some(item), now, look)
@@ -220,6 +221,7 @@ impl Owner {
             .team(team)
             .and_then(|found| found.round_of(item))
             .filter(|round| round.is_open())
+            .filter(|round| how != RoundEnd::Approved || round.part().is_none())
             .map(|round| round.id().clone());
         match open {
             Some(round) => self.close_round(team, &round, Some(item), how, now, look),

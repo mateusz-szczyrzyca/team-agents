@@ -359,14 +359,24 @@ impl Owner {
                 source,
             })?;
             let round = self.round_of_item(site.team, *id)?;
+            self.close_item_round(site.team, *id, RoundEnd::Merged, now, look)?;
+            let status = self
+                .parts
+                .state
+                .team(site.team)
+                .and_then(|team| team.item(*id))
+                .ok_or_else(|| OwnerError::LostItem {
+                    team: site.team.clone(),
+                    item: *id,
+                })?
+                .status();
             look.events.push(EventKind::ItemStatus {
                 team: site.team.clone(),
                 item: *id,
                 round: round.clone(),
-                status: agent_core::status::ItemStatus::Done,
+                status,
             });
             look.changed = true;
-            self.close_item_round(site.team, *id, RoundEnd::Merged, now, look)?;
             let span = tracing::error_span!("round", team = %site.team, rounds = %round);
             let _entered = span.enter();
             tracing::info!(
