@@ -227,3 +227,98 @@ async fn delivery_open_claim_survives_restart_and_closes_on_its_pr_merge() {
     assert_eq!(rig.github.pulls().len(), 1);
     assert!(!rig.worktree(&tasks[2]).exists());
 }
+
+#[tokio::test]
+async fn delivery_waits_through_a_stop_and_resume_and_closes_at_its_pr_merge_with_one_pr() {
+    use agent_core::protocol::{Client, Command, ControlRequest, Reply, Target};
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,integrate,done:DELIVERED: #1,sleep"),
+            normal("claude-1", "commit-clean"),
+            normal("codex-1", "delivery-held"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(
+            &["inv-lead", "claude-1", "codex-1"],
+            super::rig::PARALLEL,
+            MergeMode::NoMerge,
+            Some("inv-lead"),
+        )
+        .await;
+    rig.item_where("1.1", "the owning PR to be approved", |phase| {
+        matches!(phase, ItemPhase::Approved { .. })
+    })
+    .await;
+    std::fs::write(rig.home.root().join("delivery-release"), "release").unwrap();
+    rig.state_where("the open claim to be accepted", |state| {
+        state
+            .team(&team)
+            .unwrap()
+            .round_of("2.1".parse().unwrap())
+            .unwrap()
+            .delivered_by()
+            .is_some()
+    })
+    .await;
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Stop(ControlRequest {
+                target: Target::Team(team.clone()),
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+    let stopped = rig
+        .state_where("the stop to abandon the delivered round", |state| {
+            !state
+                .team(&team)
+                .unwrap()
+                .round_of("2.1".parse().unwrap())
+                .unwrap()
+                .is_open()
+        })
+        .await;
+    let round = stopped.team(&team).unwrap().round_of("2.1".parse().unwrap()).unwrap();
+    assert_eq!(round.delivered_by().map(|pr| pr.number.get().get()), Some(1));
+    for task in &tasks {
+        rig.resume(task).await;
+    }
+    rig.github.merged_by_a_human(1);
+    rig.item_where("2.1", "the delivering PR's merge to close the item", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+    let done = rig.state();
+    rig.stop().await.unwrap();
+    let found = done.team(&team).unwrap();
+    let item = found.item("2.1".parse().unwrap()).unwrap();
+    assert!(
+        matches!(item.phase(), ItemPhase::Done { completion: Completion::Merged { pr, .. } } if pr.number.get().get() == 1),
+        "{:?}",
+        item.phase()
+    );
+    assert_eq!(
+        rig.github.pulls().len(),
+        1,
+        "the delivered item must not publish a second PR"
+    );
+    assert_eq!(
+        found
+            .rounds()
+            .iter()
+            .filter(|round| round.item() == Some("2.1".parse().unwrap()))
+            .count(),
+        1
+    );
+}
