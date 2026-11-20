@@ -291,6 +291,7 @@ impl Team {
         if let Some(item) = item {
             let progress = self.item(item).ok_or(OpenRoundError::UnknownItem { item })?;
             if let Some(existing) = self.round_of(item)
+                && existing.delivery_closed_at().is_none()
                 && (existing.part_pull_request().is_none() || self.next_part(item).is_none())
             {
                 return Err(OpenRoundError::ItemHasRound {
@@ -471,7 +472,10 @@ fn check_round_list(team: &Team) -> Result<(), RoundsError> {
     }
     for progress in &team.items {
         let item = progress.id();
-        let mut rounds = team.rounds.iter().filter(|round| round.item() == Some(item));
+        let mut rounds = team
+            .rounds
+            .iter()
+            .filter(|round| round.item() == Some(item) && round.delivery_closed_at().is_none());
         let first = rounds.next();
         if let (Some(first), Some(second)) = (first, rounds.next())
             && (first.part().is_none() || second.part().is_none())
@@ -488,7 +492,11 @@ fn check_round_list(team: &Team) -> Result<(), RoundsError> {
                 completion: Completion::Listed
             }
         );
-        if first.is_none() && !listed && !matches!(progress.phase(), ItemPhase::Pending) {
+        if first.is_none()
+            && team.round_of(item).is_none()
+            && !listed
+            && !matches!(progress.phase(), ItemPhase::Pending)
+        {
             return Err(RoundsError::ItemWithoutRound {
                 item,
                 phase: progress.phase().kind(),

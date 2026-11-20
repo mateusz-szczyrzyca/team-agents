@@ -117,7 +117,26 @@ impl Team {
     ///
     /// # Errors
     /// Returns [`EndDeliveryError`] without mutation for an unknown, non-working or non-waiting round, or an early time.
-    pub fn end_delivery(&mut self, _id: &RoundId, _at: Timestamp) -> Result<(), EndDeliveryError> {
+    pub fn end_delivery(&mut self, id: &RoundId, at: Timestamp) -> Result<(), EndDeliveryError> {
+        let round = self.waiting_delivery_round(id).map_err(|error| match error {
+            WorkingRoundError::NoSuchRound(round) => EndDeliveryError::NoSuchRound { round },
+            WorkingRoundError::NotWorking(round) => EndDeliveryError::NotWorking { round },
+        })?;
+        if round.delivered_by().is_none() || round.delivery_closed_at().is_some() {
+            return Err(EndDeliveryError::NotWaiting { round: id.clone() });
+        }
+        let mut ended = round.clone();
+        ended.check_completion_at(at)?;
+        if ended.is_open() {
+            ended.close(at, RoundEnd::Abandoned)?;
+        }
+        ended.end_delivery(at);
+        let target = self
+            .rounds
+            .iter_mut()
+            .find(|round| round.id() == id)
+            .ok_or_else(|| EndDeliveryError::NoSuchRound { round: id.clone() })?;
+        *target = ended;
         Ok(())
     }
 
@@ -155,6 +174,7 @@ impl Team {
     pub fn delivery_waits(&self) -> impl Iterator<Item = &Round> {
         self.rounds.iter().filter(|round| {
             round.delivered_by().is_some()
+                    && round.delivery_closed_at().is_none()
                     && self.item_works(round)
                     // A part that completed is followed by the round of the next part, which is the one that works.
                     && round
@@ -194,6 +214,7 @@ impl Team {
         let round = self.waiting_delivery_round(id)?;
         let pr = round
             .delivered_by()
+            .filter(|_| round.delivery_closed_at().is_none())
             .cloned()
             .ok_or_else(|| CompleteDeliveryError::NotWaiting { round: id.clone() })?;
         // Stage the fallible close before changing either the item or the durable round. A round that a stop

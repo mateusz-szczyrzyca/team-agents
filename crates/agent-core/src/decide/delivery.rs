@@ -92,8 +92,15 @@ pub enum DeliveryAction {
 
 /// Decides only for a currently waiting claim; ended claims and completed items cannot be revived.
 #[must_use]
-pub fn delivery_action(_team: &Team, _round: &RoundId, _observed: DeliveryObservation) -> DeliveryAction {
-    DeliveryAction::Ignore
+pub fn delivery_action(team: &Team, round: &RoundId, observed: DeliveryObservation) -> DeliveryAction {
+    if !team.delivery_waits().any(|waiting| waiting.id() == round) {
+        return DeliveryAction::Ignore;
+    }
+    match observed {
+        DeliveryObservation::Open => DeliveryAction::Wait,
+        DeliveryObservation::Closed => DeliveryAction::Return,
+        DeliveryObservation::Merged => DeliveryAction::Complete,
+    }
 }
 
 #[cfg(test)]
