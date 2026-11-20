@@ -161,3 +161,22 @@ fn persisted_part_rounds_require_a_plan_known_unique_keys_and_merged_dependencie
         assert!(matches!(read, Err(error) if error.is_data()));
     }
 }
+
+#[test]
+fn persisted_active_split_cannot_lose_a_later_rounds_part_identity() {
+    let mut found = working();
+    found.activate_split(plan(&[&[], &["a"], &["b"]])).unwrap();
+    let mut wire = serde_json::to_value(found).unwrap();
+    let mut first = wire["rounds"][0].clone();
+    first["state"] = serde_json::json!({"status":"closed", "at":at(2), "how":"merged"});
+    first["part"] = serde_json::json!({"status":"merged", "key":"a", "pr":pr(1)});
+    let mut second = first.clone();
+    second["id"] = serde_json::to_value(round_id(2)).unwrap();
+    second["part"] = serde_json::json!({"status":"merged", "key":"b", "pr":pr(2)});
+    let mut third = wire["rounds"][0].clone();
+    third["id"] = serde_json::to_value(round_id(3)).unwrap();
+    third.as_object_mut().unwrap().remove("part");
+    wire["rounds"] = serde_json::json!([first, second, third]);
+    let read = serde_json::from_value::<Team>(wire);
+    assert!(matches!(read, Err(error) if error.is_data()));
+}
