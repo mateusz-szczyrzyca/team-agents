@@ -136,7 +136,14 @@ fn delivery_refuses_prs_owned_only_by_abandoned_or_approved_rounds() {
                 "1.2".parse().unwrap(),
                 ItemPhase::Approved {
                     pr: pr(7),
-                    reviews: Vec::new(),
+                    reviews: vec![crate::state::fixtures::review(
+                        "inv-codex",
+                        6,
+                        crate::state::ReviewOutcome::Submitted {
+                            verdict: crate::status::ReviewVerdict::Approve,
+                            at: at(25),
+                        },
+                    )],
                 },
             )
             .unwrap();
