@@ -197,7 +197,7 @@ fn config(agents: &[Agent], agentbus: &Path, home: &Home) -> String {
     }
     write!(
         text,
-        "[tiers]\nnormal = [{}]\nworkers = [{}]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n\
+        "[plan]\nbounces = 0\n[tiers]\nnormal = [{}]\nworkers = [{}]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n\
          [watchdog]\nhang_minutes = 1\nhang_strikes = 3\n\
          [repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
         normals.join(", "),

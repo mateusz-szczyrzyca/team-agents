@@ -1179,7 +1179,7 @@ async fn record_config_and_storage_failure_events(dir: &Path) {
     let missing_cfg_daemon = Daemon::new(&pair_state(), None);
     std::fs::write(
         missing_cfg_daemon.home.config_file(),
-        "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n\
+        "[agents.claude-1]\ncli = \"claude\"\n[plan]\nbounces = 0\n[tiers]\nnormal = [\"claude-1\"]\n\
          [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
     )
     .unwrap();
@@ -1190,7 +1190,7 @@ async fn record_config_and_storage_failure_events(dir: &Path) {
     missing_repo_daemon.scenario(1, "done");
     std::fs::write(
         missing_repo_daemon.home.config_file(),
-        "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n\
+        "[agents.claude-1]\ncli = \"claude\"\n[plan]\nbounces = 0\n[tiers]\nnormal = [\"claude-1\"]\n\
          [repos.other-repo]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
     )
     .unwrap();
