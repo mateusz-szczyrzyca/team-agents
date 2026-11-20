@@ -5,11 +5,11 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::Findings;
 use super::checked::CheckedMut;
 use super::gate::GateResult;
 use super::strict::{checked, strict_enum};
 use super::values::{PrNumber, Timestamp};
+use super::{CommitId, Findings};
 use crate::ids::{AgentName, BranchName, InvestigatorName, ItemId, TaskId};
 use crate::kinds::{Keyword, UnknownKeyword};
 use crate::status::{ItemStatus, ReviewVerdict};
@@ -429,6 +429,29 @@ pub struct ItemProgress {
     /// configured `[merge] conflict_passes` is what this is compared with. Absent while none is spent.
     #[serde(skip_serializing_if = "is_zero")]
     merge_passes: u32,
+    /// The merge conflict pass in progress, if any; absent while the merge of the approved pull request is not in
+    /// trouble.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    merge_conflict: Option<MergeConflict>,
+}
+
+/// A merge of an approved pull request that GitHub refused for a conflict, while the harness works on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MergeConflict {
+    /// The lead was sent to merge the base into the branch of the approved pull request; `approved_head` is the commit
+    /// GitHub refused to merge, and `at` is when the lead was sent.
+    MergingBase {
+        /// The head the approval is for.
+        approved_head: CommitId,
+        /// When the lead was sent.
+        at: Timestamp,
+    },
+    /// The passes are spent or the lead gave no result: the lead asks the human, once, in a questions file.
+    AskingHuman {
+        /// When the question was put to the lead.
+        at: Timestamp,
+    },
 }
 
 /// Whether a count is zero; a count of zero is not written.
@@ -460,6 +483,9 @@ struct ItemProgressWire {
     /// See [`ItemProgress`]; a state written before merge passes has none.
     #[serde(default)]
     merge_passes: u32,
+    /// See [`ItemProgress`]; a state written before merge conflicts has none.
+    #[serde(default)]
+    merge_conflict: Option<MergeConflict>,
 }
 
 checked!(ItemProgress, ItemProgressWire, check_item_progress);
@@ -527,7 +553,7 @@ impl CheckedMut<'_, ItemProgress> {
     /// # Errors
     /// [`AdvanceError::Transition`] unless this is a fixing item with no remaining blocker,
     /// every opinion is settled, and `head` equals the last reviewed commit.
-    pub fn complete_unconfirmed(&mut self, head: &super::CommitId, at: Timestamp) -> Result<(), AdvanceError> {
+    pub fn complete_unconfirmed(&mut self, head: &CommitId, at: Timestamp) -> Result<(), AdvanceError> {
         use crate::decide::opinion::{Next, Tip, after_opinions};
         let from = self.value.phase.kind();
         let pass = self
@@ -874,6 +900,7 @@ impl ItemProgress {
             gate: None,
             findings: None,
             merge_passes: 0,
+            merge_conflict: None,
         }
     }
 
@@ -891,6 +918,31 @@ impl ItemProgress {
     #[must_use]
     pub const fn merge_passes(&self) -> u32 {
         self.merge_passes
+    }
+
+    /// The merge conflict pass in progress, if any.
+    #[must_use]
+    pub const fn merge_conflict(&self) -> Option<&MergeConflict> {
+        self.merge_conflict.as_ref()
+    }
+
+    /// Sends the lead to merge the base into the branch of `approved_head`: one more pass is spent and the pass is
+    /// recorded at `at`. Returns the passes spent so far, this one included.
+    pub fn begin_merge_conflict(&mut self, approved_head: CommitId, at: Timestamp) -> u32 {
+        // RED stub: nothing is recorded.
+        let _ = (approved_head, at);
+        self.merge_passes
+    }
+
+    /// Ends the merge conflict pass in progress; the passes spent stay counted.
+    pub fn end_merge_conflict(&mut self) {
+        // RED stub: the pass in progress stays.
+    }
+
+    /// Records that the human is asked about the merge conflict at `at`, once.
+    pub fn ask_human_about_merge_conflict(&mut self, at: Timestamp) {
+        // RED stub: nothing is recorded.
+        let _ = at;
     }
 
     /// Counts one more lead pass on a merge conflict and returns the number spent so far, including this one. A count
@@ -1555,6 +1607,39 @@ mod tests {
         assert_eq!(item.merge_passes(), 0);
         let text = serde_json::to_string(&item).unwrap();
         assert!(!text.contains("merge_passes"), "{text}");
+    }
+
+    #[test]
+    fn a_merge_conflict_pass_is_recorded_written_and_ended() {
+        let mut item = progress_in(PhaseKind::Approved);
+        let head: CommitId = "1111111111111111111111111111111111111111".parse().unwrap();
+        let at = at(1);
+
+        assert_eq!(item.begin_merge_conflict(head.clone(), at), 1);
+        let text = serde_json::to_string(&item).unwrap();
+        let back: ItemProgress = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            back.merge_conflict(),
+            Some(&MergeConflict::MergingBase {
+                approved_head: head,
+                at,
+            })
+        );
+        assert_eq!(back.merge_passes(), 1);
+
+        item.end_merge_conflict();
+        assert_eq!(item.merge_conflict(), None);
+        assert_eq!(item.merge_passes(), 1);
+    }
+
+    #[test]
+    fn asking_the_human_about_a_merge_conflict_is_recorded() {
+        let mut item = progress_in(PhaseKind::Approved);
+        let at = at(1);
+
+        item.ask_human_about_merge_conflict(at);
+
+        assert_eq!(item.merge_conflict(), Some(&MergeConflict::AskingHuman { at }));
     }
 
     #[test]
