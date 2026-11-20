@@ -1,14 +1,12 @@
 //! Recovery on start: what a restart left half done in the state.
 
 use agent_core::config::Limits;
-
 use agent_core::decide::outcome::{
     AfterNoStatus, ClassifyError, NO_STATUS_RETRIES, after_no_status, consecutive_no_status,
 };
 use agent_core::ids::TaskId;
 use agent_core::kinds::Role;
 use agent_core::state::{Member, Run, RunEnd, RunError, RunState, State, Timestamp};
-
 use agent_core::status::{InvalidTransition, TaskStatus};
 
 use super::settle::wake_time;
@@ -119,12 +117,6 @@ pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Res
     }
     Ok(recovery)
 }
-
-/// The ladder's step after a run of `member` went bad with `trouble` at `at`, its renewal recorded when the step starts
-/// a new session.
-///
-/// # Errors
-/// [`agent_core::state::RenewalError`] when the renewal is not after the run that went bad.
 
 /// Keeps interruption recovery queued except when an eligible session has used its entire no-status budget.
 pub(super) fn interrupted_status(role: Role, member: &Member) -> TaskStatus {

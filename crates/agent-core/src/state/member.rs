@@ -15,7 +15,7 @@ use super::strict::checked;
 use super::values::{SessionId, Timestamp};
 use crate::decide::ladder;
 use crate::ids::{AgentName, InvestigatorName, RoundId, RunId, TaskId};
-use crate::kinds::{Role, Tier};
+use crate::kinds::Tier;
 use crate::status::{InvalidTransition, StatusMachine, TaskStatus};
 
 /// Who works in a task: a normal agent, a worker or an investigator, by the tier of the configuration they are in.
@@ -149,21 +149,6 @@ impl CheckedMut<'_, Member> {
     /// [`RenewalError::NotAfterTheLastRun`] when no run of the task started before `at`.
     pub fn renew(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
         self.value.renew(trouble, at)
-    }
-
-    /// See [`Member::renew_after`].
-    ///
-    /// # Errors
-    /// [`RenewalError::NotAfterTheLastRun`] when no run of the task started before `at`.
-    pub fn renew_after(
-        &mut self,
-        trouble: ladder::Trouble,
-        at: Timestamp,
-        renewals: ladder::Renewals,
-        watchdog: &crate::config::Watchdog,
-        limits: &crate::config::Limits,
-    ) -> Result<ladder::LadderStep, renewal::RenewalError> {
-        self.value.renew_after(trouble, at, renewals, watchdog, limits)
     }
 
     /// See [`Member::attach_session`].
@@ -534,38 +519,6 @@ impl Member {
         self.current_run_mut()?.end(at, end)
     }
 
-    /// See [`Member::renew_after`].
-    ///
-    /// # Errors
-    /// [`RenewalError::NotAfterTheLastRun`] when no run of the task started before `at`.
-    pub fn renew_after(
-        &mut self,
-        trouble: ladder::Trouble,
-        at: Timestamp,
-        renewals: ladder::Renewals,
-        watchdog: &crate::config::Watchdog,
-        limits: &crate::config::Limits,
-    ) -> Result<ladder::LadderStep, renewal::RenewalError> {
-        let used = self.renewals.map_or(0, |renewals| renewals.used());
-        let renewals = ladder::Renewals {
-            used,
-            allowed: renewals.allowed,
-        };
-        let step = ladder::next_step(
-            role_of(self.agent.tier()),
-            trouble,
-            self.bad_runs_since_renewal(),
-            self.last_session(),
-            renewals,
-            watchdog,
-            limits,
-        );
-        if step == ladder::LadderStep::NewSession && self.renew(trouble, at)? {
-            return Ok(ladder::LadderStep::NewSession);
-        }
-        Ok(step)
-    }
-
     /// See [`Member::renew`], and how many of the latest runs went bad in a row since the task was started anew.
     #[must_use]
     pub fn bad_runs_since_renewal(&self) -> u32 {
@@ -676,15 +629,6 @@ fn check_questions(task: &TaskId, questions: &[Question]) -> Result<(), MemberEr
         previous = Some(question);
     }
     Ok(())
-}
-
-/// The place of an agent of `tier` in its task: a worker works, and an investigator leads or reviews.
-const fn role_of(tier: Tier) -> Role {
-    match tier {
-        Tier::Normal => Role::Member,
-        Tier::Worker => Role::Worker,
-        Tier::Investigator => Role::Coordinator,
-    }
 }
 
 /// Checks the run, question and renewal invariants of a complete member.
