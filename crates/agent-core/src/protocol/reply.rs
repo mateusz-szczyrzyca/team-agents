@@ -419,7 +419,7 @@ impl From<&Team> for TeamSummary {
                 .chain(reviewers)
                 .map(|(role, member)| MemberSummary::of(role, member))
                 .collect(),
-            activities: Vec::new(),
+            activities: team.activities().to_vec(),
         }
     }
 }
