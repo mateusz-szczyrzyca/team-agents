@@ -154,6 +154,12 @@ pub struct ClosedBeforeOpened {
 }
 
 impl Round {
+    /// The verified team pull request delivering this round, retained after completion.
+    #[must_use]
+    pub const fn delivered_by(&self) -> Option<&super::PullRequest> {
+        None
+    }
+
     /// The approved split part delivered by this round, absent for ordinary rounds.
     #[must_use]
     pub const fn part(&self) -> Option<super::split::PartKey> {
