@@ -75,8 +75,8 @@ fn delivery_binding_uses_only_the_reported_runs_rounds_and_refuses_ambiguity() {
         Err(DeliveryBindingError::Ambiguous)
     );
     assert_eq!(
-        bind_delivery(&team, &[round_id(99)]),
-        Err(DeliveryBindingError::Unknown { round: round_id(99) })
+        bind_delivery(&team, &[round_id(9)]),
+        Err(DeliveryBindingError::Unknown { round: round_id(9) })
     );
     drive(&mut team, "1.2", PhaseKind::InReview);
     assert_eq!(bind_delivery(&team, &[round_id(1)]), Err(DeliveryBindingError::Missing));
