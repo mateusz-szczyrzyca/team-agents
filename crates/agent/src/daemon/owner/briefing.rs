@@ -10,10 +10,10 @@ use agent_core::history::{CommitRecord, Record};
 use agent_core::ids::{AgentName, BranchName, InvalidName, RoundId, TaskId};
 use agent_core::log::LogEvent;
 use agent_core::plan::{PLAN_FILE, StepState, parse_plan};
-use agent_core::prompt::HarnessPrompt;
+use agent_core::prompt::{HarnessPrompt, Variables};
 use agent_core::state::{InvalidTimestamp, Timestamp};
 use agent_core::task_list::MAX_TASK_LIST_BYTES;
-use agent_runtime::agentbus::{Reader, UnreadMessage, UnreadMessagesError};
+use agent_runtime::agentbus::{Completeness, Reader, UnreadMessage, UnreadMessagesError};
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision};
 use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::process::error_chain;
@@ -46,6 +46,8 @@ pub(super) struct BriefingFacts {
     plan: Option<Vec<(String, String, &'static str)>>,
     /// The messages of its team that no run of the task read.
     messages: Vec<UnreadMessage>,
+    /// Whether [`BriefingFacts::messages`] are all of them or only the newest.
+    completeness: Completeness,
     /// The reference of the snapshot taken of the worktree.
     snapshot: String,
 }
@@ -154,7 +156,7 @@ impl Owner {
             .map(|change| change.path.to_string())
             .collect();
         let plan = read_steps(&worktree, task).await;
-        let messages = self
+        let unread = self
             .parts
             .bus
             .unread_messages(Reader {
@@ -162,8 +164,7 @@ impl Owner {
                 team: &reader.1,
                 task,
             })
-            .await?
-            .shown;
+            .await?;
         Ok(Some(BriefingFacts {
             reason,
             base,
@@ -171,7 +172,8 @@ impl Owner {
             commits,
             uncommitted,
             plan,
-            messages,
+            messages: unread.shown,
+            completeness: unread.completeness,
             snapshot,
         }))
     }
@@ -226,8 +228,12 @@ impl BriefingFacts {
                 text: &message.text,
             })
             .collect();
+        let left_out = match self.completeness {
+            Completeness::All => None,
+            Completeness::Newest => Some(texts.render(HarnessPrompt::BriefingMessagesLeftOut, &Variables::new())?),
+        };
         let facts = Briefing {
-            reason: reason_text(self.reason),
+            reason: reason_word(self.reason),
             task: task.as_str(),
             prompt,
             base: self.base.as_str(),
@@ -236,7 +242,7 @@ impl BriefingFacts {
             uncommitted: &uncommitted,
             plan: steps.as_deref(),
             messages: &messages,
-            left_out: None,
+            left_out: left_out.as_deref(),
             snapshot: &self.snapshot,
         };
         let values = briefing_variables(&facts)?;
@@ -244,12 +250,12 @@ impl BriefingFacts {
     }
 }
 
-/// Why the session before went bad, in the words of the briefing.
-const fn reason_text(reason: Trouble) -> &'static str {
+/// Why the session before went bad, as the state records it; the briefing's text says what each word means.
+const fn reason_word(reason: Trouble) -> &'static str {
     match reason {
-        Trouble::NoStatus => "its last runs ended without a `STATUS:` line",
-        Trouble::Hang => "its last runs showed no activity until the watchdog stopped them",
-        Trouble::TurnLimit => "its last runs used up their turn budget",
+        Trouble::NoStatus => "no_status",
+        Trouble::Hang => "hang",
+        Trouble::TurnLimit => "turn_limit",
     }
 }
 
@@ -280,12 +286,12 @@ async fn read_steps(worktree: &AbsolutePath, task: &TaskId) -> Option<Vec<(Strin
     }
 }
 
-/// The state of a step, in the words of the briefing.
+/// The mark of a step in the plan's own syntax; the briefing's text says what each mark means.
 const fn state_text(state: StepState) -> &'static str {
     match state {
-        StepState::Todo => "to do",
-        StepState::InHand => "in hand",
-        StepState::Done => "done (declared by the agent)",
-        StepState::GivenUp => "given up",
+        StepState::Todo => "[ ]",
+        StepState::InHand => "[>]",
+        StepState::Done => "[x]",
+        StepState::GivenUp => "[-]",
     }
 }

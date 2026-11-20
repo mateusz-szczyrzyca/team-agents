@@ -527,7 +527,7 @@ impl Member {
             .is_some_and(|renewals| renewals.awaits_run(self.runs.len()))
     }
 
-    /// See [`Member::renew`], and how many of the latest runs went bad in a row since the task was started anew.
+    /// How many of the latest runs went bad in a row since the task was started anew.
     #[must_use]
     pub fn bad_runs_since_renewal(&self) -> u32 {
         let Some(end) = self.runs.last().and_then(|run| match run.state() {

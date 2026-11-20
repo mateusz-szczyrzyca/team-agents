@@ -317,8 +317,9 @@ impl State {
         self.teams.iter_mut().find_map(|team| team.find_mut(task))
     }
 
-    /// Starts `task` anew in a new session after `trouble`, at `at` ([`Member::renew`]): only a task of a solo agent, a
-    /// coordinator or a member is. Returns whether the task was started anew.
+    /// Starts `task` anew in a new session after `trouble`, at `at`: the runs after now are the new session's, and no
+    /// session before it is resumed. Only a task of a solo agent, a coordinator or a member is started anew, and only
+    /// after a run of it. Returns whether the task was started anew.
     ///
     /// # Errors
     /// [`RenewTaskError`] when the task is not in the state, is of a worker or a reviewer, or the renewal does not fit

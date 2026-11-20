@@ -19,7 +19,7 @@ pub struct BriefingStep<'a> {
     pub id: &'a str,
     /// The rest of the step's line.
     pub title: &'a str,
-    /// The step's state, as the plan writes it: `to do`, `in hand`, `done` or `given up`.
+    /// The step's mark, as the plan writes it: `[ ]`, `[>]`, `[x]` or `[-]`.
     pub state: &'a str,
 }
 
@@ -37,7 +37,7 @@ pub struct BriefingMessage<'a> {
 /// The facts of the work that a new session of a task is briefed with.
 #[derive(Debug, Clone, Copy)]
 pub struct Briefing<'a> {
-    /// Why the task is started anew, as one paragraph for the agent.
+    /// Why the task is started anew, as the state records it: `no_status`, `hang` or `turn_limit`.
     pub reason: &'a str,
     /// The task.
     pub task: &'a str,
@@ -61,63 +61,31 @@ pub struct Briefing<'a> {
     pub snapshot: &'a str,
 }
 
-/// What the briefing says of a branch with no commit yet.
-const NO_COMMITS: &str = "The branch has no commit of its own yet.";
-
-/// What the briefing says of a worktree with no file left uncommitted.
-const NO_UNCOMMITTED: &str = "No file of the worktree is left uncommitted.";
-
-/// What the briefing says of a task that keeps no plan.
-const NO_PLAN: &str = "The task keeps no plan of steps.";
-
-/// What the briefing says of a task with no unread message.
-const NO_MESSAGES: &str = "No message of your team waits unread.";
-
-/// The title of the list of the plan's steps in the briefing.
-const PLAN_TITLE: &str = "The task's plan of steps, as it stands in `.agent/plan.md`:";
-
-/// The title of the list of the unread messages in the briefing.
-const MESSAGES_TITLE: &str = "Messages of your team that no run of this task has read:";
-
-/// The values of the variables of `harness/run/briefing.md` for `facts`.
+/// The values of the variables of `harness/run/briefing.md` for `facts`. A list with nothing in it is empty: the text
+/// of the briefing says what that means.
 ///
 /// # Errors
 /// [`VariablesError`] when a value cannot be given to its variable.
 pub fn briefing_variables(facts: &Briefing<'_>) -> Result<Variables, VariablesError> {
-    let commits = listed(
+    let commits = lines(
         facts
             .commits
             .iter()
             .map(|commit| format!("- {} {}", commit.id, commit.subject)),
-        None,
-        NO_COMMITS,
     );
-    let uncommitted = listed(
-        facts.uncommitted.iter().map(|path| format!("- {path}")),
-        None,
-        NO_UNCOMMITTED,
+    let uncommitted = lines(facts.uncommitted.iter().map(|path| format!("- {path}")));
+    let plan = lines(
+        facts
+            .plan
+            .unwrap_or_default()
+            .iter()
+            .map(|step| format!("- {} {} {}", step.state, step.id, step.title)),
     );
-    let plan = facts.plan.map_or_else(
-        || NO_PLAN.to_owned(),
-        |steps| {
-            listed(
-                steps
-                    .iter()
-                    .map(|step| format!("- {} {}: {}", step.id, step.title, step.state)),
-                Some(PLAN_TITLE),
-                NO_PLAN,
-            )
-        },
-    );
-    let messages = listed(
-        facts.messages.iter().flat_map(|message| {
-            std::iter::once(format!("- #{} from {}:", message.id, message.from))
-                .chain(message.text.lines().map(|line| format!("  {line}")))
-        }),
-        Some(MESSAGES_TITLE),
-        NO_MESSAGES,
-    );
-    let pairs: [(&str, &str); 10] = [
+    let messages = lines(facts.messages.iter().flat_map(|message| {
+        std::iter::once(format!("- #{} {}:", message.id, message.from))
+            .chain(message.text.lines().map(|line| format!("  {line}")))
+    }));
+    let pairs: [(&str, &str); 11] = [
         ("reason", facts.reason),
         ("task", facts.task),
         ("prompt", facts.prompt.trim_end()),
@@ -127,6 +95,7 @@ pub fn briefing_variables(facts: &Briefing<'_>) -> Result<Variables, VariablesEr
         ("uncommitted", &uncommitted),
         ("snapshot", facts.snapshot),
         ("plan", &plan),
+        ("left_out", facts.left_out.unwrap_or_default().trim_end()),
         ("messages", &messages),
     ];
     pairs
@@ -134,14 +103,7 @@ pub fn briefing_variables(facts: &Briefing<'_>) -> Result<Variables, VariablesEr
         .try_fold(Variables::new(), |values, (name, value)| values.with(name, *value))
 }
 
-/// `lines` joined, under `title` and the blank line after it when there is a title, or `empty` when there is no line.
-fn listed(lines: impl Iterator<Item = String>, title: Option<&str>, empty: &str) -> String {
-    let body = lines.collect::<Vec<_>>().join("\n");
-    if body.is_empty() {
-        return empty.to_owned();
-    }
-    match title {
-        Some(title) => format!("{title}\n\n{body}"),
-        None => body,
-    }
+/// `lines`, one under the other.
+fn lines(lines: impl Iterator<Item = String>) -> String {
+    lines.collect::<Vec<_>>().join("\n")
 }

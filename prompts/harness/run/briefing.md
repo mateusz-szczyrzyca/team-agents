@@ -1,8 +1,11 @@
 # A NEW SESSION ON A TASK THAT WAS ALREADY STARTED
 
-You work on task {{task}} again, in a new session. The session before you went bad:
+You work on task {{task}} again, in a new session. The session before you went bad; the harness recorded why as
+`{{reason}}`:
 
-{{reason}}
+- `no_status`: its last runs ended without a `STATUS:` line;
+- `hang`: its last runs showed no activity until the watchdog stopped them;
+- `turn_limit`: its last runs used up their turn budget.
 
 You do not have its memory; this briefing is what you need to go on without asking anybody.
 
@@ -15,18 +18,31 @@ branch is the work of the runs before yours and is yours to finish.
 
 ## The branch
 
-The work is on branch {{branch}}, forked from {{base}}.
+The work is on branch {{branch}}, forked from {{base}}. Its commits since then, oldest first (none when the list is
+empty):
 
 {{commits}}
 
 ## What is uncommitted
 
 Everything the worktree held when the session before yours ended is kept as a snapshot, {{snapshot}}. The worktree
-still holds it all; none of it is on your branch until you commit it.
+still holds it all; none of it is on your branch until you commit it. The files that differ from the last commit (none
+when the list is empty):
 
 {{uncommitted}}
 
+## The plan of steps
+
+The steps of `.agent/plan.md` as the runs before yours left them — `[ ]` to do, `[>]` in hand, `[x]` done, `[-]` given
+up. They are what the agent declared, not evidence: check them. An empty list: the task keeps no plan, or it does not
+read.
+
 {{plan}}
+
+## Unread messages
+
+The messages of your team that no run of this task read, oldest first (none when the list is empty).
+{{left_out}}
 
 {{messages}}
 

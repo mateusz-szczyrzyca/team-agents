@@ -8,7 +8,7 @@ use crate::decide::ladder::Trouble;
 use crate::ids::TaskId;
 use crate::kinds::Role;
 
-/// Renewals of one task, recorded by [`Member::renew`](super::Member::renew): how many times it was started in a new
+/// Renewals of one task, recorded by [`State::renew_task`](super::State::renew_task): how many times it was started in a new
 /// session after its runs went bad, and when the last renewal happened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
