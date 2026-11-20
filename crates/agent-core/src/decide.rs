@@ -9,6 +9,7 @@
 pub mod asleep;
 pub mod assign;
 pub mod checks;
+pub mod delivery;
 pub mod disclosure;
 pub mod fix;
 pub mod merge_refusal;

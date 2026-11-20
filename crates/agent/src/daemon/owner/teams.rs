@@ -573,7 +573,7 @@ impl Owner {
     }
 
     /// The task of the member named `agent` in `team`.
-    fn task_of(&self, team: &TeamId, agent: &AgentName) -> Option<TaskId> {
+    pub(super) fn task_of(&self, team: &TeamId, agent: &AgentName) -> Option<TaskId> {
         self.parts.state.team(team).and_then(|found| {
             found
                 .crew()

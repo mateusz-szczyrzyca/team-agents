@@ -368,6 +368,30 @@ case $action in
     fi
     result "$report"'\nSTATUS: DONE'
     ;;
+  delivery-held)
+    hide_own_files
+    : > .fake-delivery-ready
+    while [[ ! -f $home/delivery-release ]]; do sleep 0.02; done
+    result 'Already delivered.\nSTATUS: DONE'
+    ;;
+  adopt-held)
+    # Takes over the commit of the item branch `1.1` once it has one, as an item whose work is in another item's branch,
+    # then holds until the test releases it.
+    hide_own_files
+    while :; do
+      other=$(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-1.1' | head -n 1)
+      if [[ -n $other ]] && (($(git rev-list --count "HEAD..$other") > 0)); then break; fi
+      sleep 0.02
+    done
+    git "${GIT_FIXTURE[@]}" merge --ff-only "$other" > /dev/null
+    while [[ ! -f $home/delivery-release ]]; do sleep 0.02; done
+    result 'Already delivered.\nSTATUS: DONE'
+    ;;
+  dirty-done)
+    hide_own_files
+    printf 'uncommitted delivery work\n' > delivery-uncommitted.txt
+    result 'Delivery still has local changes.\nSTATUS: DONE'
+    ;;
   done:*) result "${action#done:}"'\nSTATUS: DONE' ;;
   target-done:*)
     # Leaves the build directory a build would leave in the worktree, then finishes with the text after the colon.

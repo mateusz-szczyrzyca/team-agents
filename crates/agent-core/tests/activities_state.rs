@@ -55,7 +55,7 @@ fn previous_schema_rebuilds_crew_first_review_verification_and_second_opinion() 
         assert_eq!(entry.rounds(), &["round-20261111-193000-a1b4".parse().unwrap()]);
     }
     let mut written: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
-    assert_eq!(written["schema_version"], 13);
+    assert_eq!(written["schema_version"], 14);
     written["schema_version"] = serde_json::json!(10);
     written["teams"][0].as_object_mut().unwrap().remove("activities");
     assert_eq!(written, serde_json::from_str::<serde_json::Value>(old).unwrap());

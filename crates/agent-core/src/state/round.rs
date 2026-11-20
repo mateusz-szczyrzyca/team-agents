@@ -31,6 +31,9 @@ pub struct Round {
     /// Split execution identity; absent in schema 13 rounds written before activation.
     #[serde(skip_serializing_if = "Option::is_none")]
     part: Option<PartRound>,
+    /// Another round's verified PR; retained after its merge closes this round.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    delivery: Option<super::PullRequest>,
 }
 
 /// How a [`Round`] is read; see [`checked!`].
@@ -48,6 +51,9 @@ struct RoundWire {
     /// Optional execution identity of a split part.
     #[serde(default)]
     part: Option<PartRound>,
+    /// Optional delivery claim; absent before schema 14.
+    #[serde(default)]
+    delivery: Option<super::PullRequest>,
 }
 
 checked!(Round, RoundWire, |round: &Round| match &round.state {
@@ -154,6 +160,17 @@ pub struct ClosedBeforeOpened {
 }
 
 impl Round {
+    /// The verified team pull request delivering this round, retained after completion.
+    #[must_use]
+    pub const fn delivered_by(&self) -> Option<&super::PullRequest> {
+        self.delivery.as_ref()
+    }
+
+    /// Stores a team-validated delivery claim.
+    pub(super) fn deliver(&mut self, pr: super::PullRequest) {
+        self.delivery = Some(pr);
+    }
+
     /// The approved split part delivered by this round, absent for ordinary rounds.
     #[must_use]
     pub const fn part(&self) -> Option<super::split::PartKey> {
@@ -184,6 +201,11 @@ impl Round {
         }
     }
 
+    /// Checks that the completion of this round's delivery may be recorded at `at`, also when a stop closed the round.
+    pub(super) fn check_completion_at(&self, at: Timestamp) -> Result<(), ClosedBeforeOpened> {
+        check_close(&self.id, self.opened_at, at)
+    }
+
     /// A round that has just been opened.
     pub(super) const fn opened(id: RoundId, item: Option<ItemId>, opened_at: Timestamp) -> Self {
         Self {
@@ -192,6 +214,7 @@ impl Round {
             opened_at,
             state: RoundLife::Open,
             part: None,
+            delivery: None,
         }
     }
 

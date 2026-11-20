@@ -6,7 +6,10 @@ use agent_core::state::State;
 fn schema_13_before_part_rounds_keeps_its_complete_saved_document() {
     let text = include_str!("fixtures/state-v0-29-before-part-rounds.json");
     let state = State::from_json(text).unwrap();
-    assert_eq!(state.to_json().unwrap(), text);
+    assert_eq!(
+        state.to_json().unwrap(),
+        text.replacen("\"schema_version\": 13", "\"schema_version\": 14", 1)
+    );
     assert!(state.teams().iter().all(|team| team.splits().is_empty()));
     assert!(
         state

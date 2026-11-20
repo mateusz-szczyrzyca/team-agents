@@ -9,7 +9,7 @@ fn schema_twelve_keeps_all_history_and_defaults_to_no_splits_before_writing_thir
     let mut state = State::from_json(old).expect("schema 12 loads");
     assert!(state.teams().iter().all(|team| team.splits().is_empty()));
     let mut written: serde_json::Value = serde_json::from_str(&state.to_json().expect("save")).expect("json");
-    assert_eq!(written["schema_version"], 13);
+    assert_eq!(written["schema_version"], 14);
     written["schema_version"] = serde_json::json!(12);
     assert_eq!(
         written,

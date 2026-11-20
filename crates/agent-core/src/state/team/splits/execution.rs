@@ -92,6 +92,18 @@ impl CheckedMut<'_, Team> {
     }
 }
 
+/// Whether `round` ended as the merge of its part's PR: merged, or abandoned by a stop after a delivery claim whose PR then
+/// merged (the end of such a round was recorded once, at the stop, and is not recorded again).
+fn completed_part(round: &crate::state::Round) -> bool {
+    match round.ended() {
+        Some(crate::state::RoundEnd::Merged) => true,
+        Some(crate::state::RoundEnd::Abandoned) => {
+            round.delivered_by().is_some() && round.part_pull_request() == round.delivered_by()
+        }
+        Some(crate::state::RoundEnd::Approved) | None => false,
+    }
+}
+
 /// Checks each part against its plan and only the rounds preceding it.
 pub(in crate::state::team) fn check_execution(team: &Team) -> Result<(), crate::state::RoundsError> {
     let active: std::collections::BTreeSet<_> = team
@@ -126,7 +138,7 @@ pub(in crate::state::team) fn check_execution(team: &Team) -> Result<(), crate::
         if !valid
             || (round.is_open() && !open.insert(parent))
             || !seen.insert((parent, key))
-            || (round.part_pull_request().is_some() != (round.ended() == Some(crate::state::RoundEnd::Merged)))
+            || (round.part_pull_request().is_some() != completed_part(round))
         {
             return Err(crate::state::RoundsError::SplitExecution {
                 round: round.id().clone(),
