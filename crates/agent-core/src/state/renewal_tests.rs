@@ -190,3 +190,26 @@ fn a_task_whose_bad_run_started_at_the_instant_of_the_renewal_starts_a_new_sessi
     assert_eq!(member.last_session(), None, "the bad run's session is not resumed");
     assert_eq!(member.bad_runs_since_renewal(), 0);
 }
+
+#[test]
+fn the_runs_of_the_session_are_those_since_the_task_was_last_started_anew() {
+    let mut state = old_state();
+    let (_, mut member) = state.find_task_mut(&task()).expect("the task");
+    assert_eq!(
+        member.session_runs().len(),
+        7,
+        "without a renewal every run is of the session"
+    );
+    let last_start = member.runs().last().expect("a run").started_at();
+    member.renew(Trouble::NoStatus, last_start).expect("renewed");
+    assert_eq!(member.session_runs().len(), 0);
+    member.transition(TaskStatus::Queued).expect("queued");
+    member.transition(TaskStatus::Running).expect("runs");
+    member
+        .begin_run("run-20261120-200101-n3n3".parse().unwrap(), started(), None)
+        .expect("a run starts");
+
+    let runs: Vec<_> = member.session_runs().iter().map(|run| run.id().to_string()).collect();
+
+    assert_eq!(runs, ["run-20261120-200101-n3n3"]);
+}

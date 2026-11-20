@@ -515,6 +515,12 @@ impl Member {
         self.current_run_mut()?.end(at, end)
     }
 
+    /// The runs of the session the task is in: those since it was last started anew, or all of them.
+    #[must_use]
+    pub fn session_runs(&self) -> &[Run] {
+        &self.runs
+    }
+
     /// Whether the task was started anew and the run of its new session has not begun: that run is briefed.
     #[must_use]
     pub fn awaits_new_session(&self) -> bool {
