@@ -147,6 +147,12 @@ pub enum BeginRunError {
 /// What is wrong with the rounds of a team that is read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RoundsError {
+    /// A delivery reference disagrees with its owning team PR or working/completed item.
+    #[error("round {round} has inconsistent delivery metadata")]
+    Delivery {
+        /// The round carrying the invalid claim.
+        round: RoundId,
+    },
     /// A split round is inconsistent with its plan or earlier merged rounds.
     #[error("round {round} has an invalid split execution identity")]
     SplitExecution {
@@ -437,6 +443,23 @@ pub(super) fn check_rounds(team: &Team) -> Result<(), TeamError> {
 /// Checks the rounds of `team`, then its items for rounds, then its runs.
 fn check_round_list(team: &Team) -> Result<(), RoundsError> {
     super::splits::execution::check_execution(team)?;
+    for round in &team.rounds {
+        if let Some(pr) = round.delivered_by() {
+            let phase = round.item().and_then(|id| team.item(id)).map(ItemProgress::phase);
+            let fits = if round.is_open() {
+                matches!(phase, Some(ItemPhase::InProgress { .. }))
+            } else {
+                round.part_pull_request() == Some(pr)
+                    || matches!(phase, Some(ItemPhase::Done { completion: Completion::Merged { pr: actual, .. } }) if actual == pr)
+                    || round.ended() == Some(RoundEnd::Abandoned)
+            };
+            if !fits || team.delivery_pull_request(pr.number) != Some(pr) {
+                return Err(RoundsError::Delivery {
+                    round: round.id().clone(),
+                });
+            }
+        }
+    }
     let mut seen: HashSet<&RoundId> = HashSet::new();
     for round in &team.rounds {
         if !seen.insert(round.id()) {

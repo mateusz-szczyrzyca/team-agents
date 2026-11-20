@@ -16,6 +16,8 @@ use crate::kinds::{Keyword, Role, Tier, UnknownKeyword};
 use crate::task_list::{AllowLines, ItemMark, TaskList, TaskListError};
 
 mod activities;
+mod delivery;
+pub use delivery::{CompleteDeliveryError, DeliverRoundError};
 mod legacy;
 pub use activities::{Activity, ActivityEnd, ActivityOutcome, ActivityRequest};
 mod rounds;

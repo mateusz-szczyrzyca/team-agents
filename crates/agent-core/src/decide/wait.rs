@@ -14,6 +14,8 @@ pub enum Activity {
 /// An outstanding action with an owner that can advance a round.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Obligation {
+    /// The PR delivering this item must merge before its round can finish.
+    Merge,
     /// A harness gate is queued, running, or scheduled for retry.
     Gate,
     /// Reviewers or the publication scheduler must advance the review.
@@ -42,6 +44,7 @@ impl Waiting {
     #[must_use]
     pub const fn text(self) -> &'static str {
         match self {
+            Self::For(Obligation::Merge) => include_str!("../../../../prompts/harness/pr/wait-merge.md"),
             Self::For(Obligation::Gate) => include_str!("../../../../prompts/harness/pr/wait-gate.md"),
             Self::For(Obligation::Review) => include_str!("../../../../prompts/harness/pr/wait-review.md"),
             Self::For(Obligation::FreeInvestigator) => {
