@@ -189,7 +189,7 @@ impl Git {
 
     /// Disable every configured filter, the filesystem monitor and repository hooks for this scratch snapshot. The
     /// snapshot records worktree bytes, not the output of arbitrary programs from repository or user configuration.
-    async fn capture_overrides(&self, hooks: &str) -> Result<Vec<OsString>, GitError> {
+    pub(super) async fn capture_overrides(&self, hooks: &str) -> Result<Vec<OsString>, GitError> {
         let operation = GitOperation::Config;
         let captured = self
             .run(
@@ -227,7 +227,7 @@ impl Git {
     }
 
     /// Run a scratch-index command with the same extension overrides on every operation.
-    async fn run_scratch(
+    pub(super) async fn run_scratch(
         &self,
         operation: GitOperation,
         overrides: &[OsString],
@@ -243,7 +243,7 @@ impl Git {
 }
 
 /// Creates the temporary scratch directory with its empty object store and hooks directory on the blocking pool.
-async fn make_scratch() -> Result<tempfile::TempDir, GitError> {
+pub(super) async fn make_scratch() -> Result<tempfile::TempDir, GitError> {
     tokio::task::spawn_blocking(|| {
         let scratch = tempfile::tempdir()?;
         std::fs::create_dir(scratch.path().join("objects"))?;
@@ -258,7 +258,7 @@ async fn make_scratch() -> Result<tempfile::TempDir, GitError> {
 }
 
 /// Removes the temporary scratch directory on the blocking pool so recursive cleanup never blocks a runtime worker.
-async fn close_scratch(scratch: tempfile::TempDir) {
+pub(super) async fn close_scratch(scratch: tempfile::TempDir) {
     // The scratch directory is in the temporary directory of the machine and holds nothing that matters: a
     // failure to remove it must not lose what was read.
     match tokio::task::spawn_blocking(move || scratch.close()).await {
