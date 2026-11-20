@@ -595,3 +595,70 @@ fn an_observed_closed_delivery_waits_for_its_replacement_round_before_publicatio
     team.end_delivery(&waiting, at(20)).unwrap();
     assert_eq!(plan_publications(&team).unwrap(), Vec::new());
 }
+
+/// Task `n` ran once, ended with `STATUS: DONE`, and waits.
+fn reports_done(team: &mut Team, n: u32) {
+    use agent_core::state::RunEnd;
+    use agent_core::status::RunOutcome;
+    let (_, mut found) = team.find_mut(&task(n)).unwrap();
+    found.transition(TaskStatus::Running).unwrap();
+    found.begin_run(crate::fixtures::run(n), at(10), None).unwrap();
+    found
+        .end_run(
+            at(11),
+            RunEnd::Reported {
+                outcome: RunOutcome::Done,
+            },
+        )
+        .unwrap();
+    found.transition(TaskStatus::Waiting).unwrap();
+}
+
+/// The publication of the coordinator's branch with item 1.1 of `claude-1`.
+fn first_item_of_the_coordinator() -> Vec<Publication> {
+    vec![Publication {
+        head_branch: branch(&format!("agents/inv-opus/{}", task(1))),
+        publish: Publish::Open {
+            items: vec![joining("1.1", "agents/claude-1/task-2-1.1")],
+        },
+    }]
+}
+
+#[test]
+fn the_item_of_a_stopped_member_joins_when_the_coordinator_reported_done() {
+    let mut team = led(LIST);
+    start(&mut team, "1.1", "claude-1", "agents/claude-1/task-2-1.1");
+    go(&mut team, 2, &[TaskStatus::Running, TaskStatus::Stopped]);
+    reports_done(&mut team, 1);
+
+    assert_eq!(plan_publications(&team).unwrap(), first_item_of_the_coordinator());
+}
+
+#[test]
+fn the_item_of_a_stopped_member_waits_while_the_coordinator_has_not_reported_done() {
+    let mut team = led(LIST);
+    start(&mut team, "1.1", "claude-1", "agents/claude-1/task-2-1.1");
+    go(&mut team, 2, &[TaskStatus::Running, TaskStatus::Stopped]);
+    waits(&mut team, 1);
+
+    assert_eq!(plan_publications(&team).unwrap(), []);
+}
+
+#[test]
+fn the_item_of_an_agent_no_longer_in_the_crew_joins_when_the_coordinator_reported_done() {
+    let mut team = led(LIST);
+    start(&mut team, "1.1", "claude-9", "agents/claude-1/task-2-1.1");
+    reports_done(&mut team, 1);
+
+    assert_eq!(plan_publications(&team).unwrap(), first_item_of_the_coordinator());
+}
+
+#[test]
+fn the_item_of_a_failed_member_waits_even_when_the_coordinator_reported_done() {
+    let mut team = led(LIST);
+    start(&mut team, "1.1", "claude-1", "agents/claude-1/task-2-1.1");
+    go(&mut team, 2, &[TaskStatus::Running, TaskStatus::Failed]);
+    reports_done(&mut team, 1);
+
+    assert_eq!(plan_publications(&team).unwrap(), []);
+}

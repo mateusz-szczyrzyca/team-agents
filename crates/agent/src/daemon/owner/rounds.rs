@@ -782,6 +782,14 @@ mod tests;
 mod handover_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/member_gone.rs"]
+mod member_gone_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/new_session.rs"]
+mod new_session_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/history_failures.rs"]
 mod history_failures_tests;
 

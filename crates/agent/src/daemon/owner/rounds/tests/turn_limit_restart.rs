@@ -119,7 +119,12 @@ async fn restart_after_the_saved_turn_limit_resumes_once_and_keeps_the_budget() 
         rig.pin_turn_limit_clock();
         let path = rig.home.config_file();
         let config = std::fs::read_to_string(&path).unwrap();
-        std::fs::write(path, format!("{config}\n[limits]\nturn_limit_resumes = 1\n")).unwrap();
+        // The rung of a new session is off: this test is about the budget of the same session.
+        std::fs::write(
+            path,
+            format!("{config}\n[limits]\nturn_limit_resumes = 1\n[replacement]\nnew_sessions = 0\n"),
+        )
+        .unwrap();
         let mut step = stepped(&rig).await;
         let (reply, receive) = oneshot::channel();
         step.owner

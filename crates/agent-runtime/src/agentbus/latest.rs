@@ -1,7 +1,7 @@
 //! The newest message the bus holds for an agent, read from the end of the message log: what the daemon names when it
 //! wakes the agent for a message.
 //!
-//! This is the one place the daemon reads a file of the bus itself; every other fact it takes from a command. The read
+//! Here and in `unread` the daemon reads files of the bus itself; every other fact it takes from a command. The read
 //! is bounded, takes no lock and changes nothing: the log is append-only, and a line that was being written when it was
 //! read is the last one, and is reported as the failure it is.
 

@@ -5,6 +5,8 @@
 //! refused (`deny_unknown_fields`), every value is parsed into its type (the newtypes of this module), and the lists of agents are
 //! checked against each other. The type does no I/O; whoever reads the file passes its text in.
 
+#[cfg(test)]
+mod replacement_tests;
 mod split;
 pub use split::Split;
 mod review_count;
@@ -24,6 +26,7 @@ use crate::kinds::{CliKind, Keyword, Role, Tier, UnknownKeyword};
 use crate::log::LogLevel;
 use crate::repo_path::PathPatterns;
 use crate::review_response::opinion::Permission;
+use crate::state::RenewalLimit;
 
 pub use secrets::{InvalidSecret, MAX_SECRETS_BYTES, Position, Secret, Secrets, SecretsError};
 pub use values::{
@@ -470,6 +473,22 @@ impl Default for Plan {
     }
 }
 
+/// `[replacement]`: whether a task whose runs go bad is started in a new session, and how often.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Replacement {
+    /// How many new sessions of its agent a task is started in after its runs went bad; `0` never starts one.
+    new_sessions: RenewalLimit,
+}
+
+impl Replacement {
+    /// How many new sessions of its agent a task is started in after its runs went bad; `0` never starts one.
+    #[must_use]
+    pub const fn new_sessions(&self) -> RenewalLimit {
+        self.new_sessions
+    }
+}
+
 /// `[git]`: who the commits of the agents are by.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -667,6 +686,8 @@ pub struct Config {
     questions: Questions,
     /// The plans of tasks.
     plan: Plan,
+    /// The replacement of a task whose session went bad.
+    replacement: Replacement,
     /// Split approval policy, defaulted for older configurations.
     split: split::Settings,
     /// The history.
@@ -745,6 +766,9 @@ struct RawConfig {
     /// See [`Config::plan`].
     #[serde(default)]
     plan: Plan,
+    /// See [`Config::replacement`].
+    #[serde(default)]
+    replacement: Replacement,
     /// Split approval policy, defaulted for older configurations.
     #[serde(default)]
     split: split::Settings,
@@ -785,6 +809,7 @@ impl RawConfig {
             notifications,
             questions,
             plan,
+            replacement,
             split,
             history,
             log,
@@ -823,6 +848,7 @@ impl RawConfig {
             notifications,
             questions,
             plan,
+            replacement,
             split,
             history,
             log,
@@ -1057,6 +1083,12 @@ impl Config {
     #[must_use]
     pub fn plan(&self) -> &Plan {
         &self.plan
+    }
+
+    /// Whether a task whose runs go bad is started in a new session, and how often.
+    #[must_use]
+    pub fn replacement(&self) -> Replacement {
+        self.replacement.clone()
     }
 
     /// Policy the daemon applies to a coordinator's split proposal: its size limit and how many corrections it gets.

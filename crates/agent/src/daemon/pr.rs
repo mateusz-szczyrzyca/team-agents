@@ -10,8 +10,8 @@ use agent_core::config::RepoName;
 use agent_core::ids::{BranchName, InvalidBranchName, InvalidName, ItemId};
 use agent_core::kinds::Role;
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
-use agent_core::state::{GateRecord, ItemPhase, Member, PullRequest, Team};
-use agent_core::status::TaskStatus;
+use agent_core::state::{GateRecord, ItemPhase, Member, PullRequest, RunEnd, RunState, Team};
+use agent_core::status::{RunOutcome, TaskStatus};
 use agent_core::task_list::Item;
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextError};
 
@@ -71,7 +71,8 @@ pub(crate) enum PlanError {
 /// The branches of `team` that are ready to be published: the lead has finished (its task waits) and has something to
 /// publish.
 ///
-/// - A finished item (its member waits) with no pull request opens one. A branch has one pull request at a time: while
+/// - A finished item (its member waits, or its member is stopped or gone and the lead ended with `STATUS: DONE`) with
+///   no pull request opens one. A branch has one pull request at a time: while
 ///   an item of the team is in review or approved on it, the finished items wait, except that a team's items that the
 ///   head of an update contains join it.
 /// - An item that is being fixed, when its lead waits, updates its pull request.
@@ -104,7 +105,7 @@ pub(super) fn plan_publications(team: &Team) -> Result<Vec<Publication>, PlanErr
             continue;
         }
         match progress.phase() {
-            ItemPhase::InProgress { assignee, branch } if finished(&roster, assignee.as_str()) => {
+            ItemPhase::InProgress { assignee, branch } if joins(&roster, assignee.as_str(), lead) => {
                 let head = match (team_branch.as_ref(), team.round_of(progress.id())) {
                     (Some(integration), Some(round)) if returned_delivery(team, progress.id()) => {
                         format!("{integration}-{}-{}", progress.id(), round.id()).parse()?
@@ -192,11 +193,39 @@ fn with_group(groups: &mut Vec<Group>, head: &BranchName, change: impl FnOnce(&m
     groups.push(group);
 }
 
-/// Whether the member of the crew called `name` has finished: its task waits.
-fn finished(roster: &[(Role, &Member)], name: &str) -> bool {
-    roster
-        .iter()
-        .any(|(_, member)| member.agent().name() == name && member.status() == TaskStatus::Waiting)
+/// Whether the item in progress with the member of the crew called `name` joins a publication of the branch of `lead`:
+/// its member has finished (its task waits), or the member's task is stopped or no longer in the crew and the lead's
+/// last run ended with `STATUS: DONE`. The item follows its task, not the agent that started it: a lead that delivered
+/// the work of a member that is gone publishes it.
+fn joins(roster: &[(Role, &Member)], name: &str, lead: &Member) -> bool {
+    let holder = roster.iter().find(|(_, member)| member.agent().name() == name);
+    match holder.map(|(_, member)| member.status()) {
+        Some(TaskStatus::Waiting) => true,
+        Some(TaskStatus::Stopped) | None => reported_done(lead),
+        Some(
+            TaskStatus::Queued
+            | TaskStatus::Running
+            | TaskStatus::Questions
+            | TaskStatus::Paused
+            | TaskStatus::Done
+            | TaskStatus::Failed,
+        ) => false,
+    }
+}
+
+/// Whether the last run of `member` ended with `STATUS: DONE`.
+fn reported_done(member: &Member) -> bool {
+    member.runs().last().is_some_and(|run| {
+        matches!(
+            run.state(),
+            RunState::Ended {
+                end: RunEnd::Reported {
+                    outcome: RunOutcome::Done
+                },
+                ..
+            }
+        )
+    })
 }
 
 /// The title and the description of a pull request.

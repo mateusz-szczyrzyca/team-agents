@@ -357,6 +357,10 @@ async fn a_hung_run_is_resumed_in_its_session() {
 async fn after_the_configured_strikes_the_task_is_hung_and_the_human_is_told() {
     let mut f = Fixture::new(&solo_state(), 2, "hang");
 
+    // The rung of a new session is off: this test is about the retries of the same session.
+    let mut config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    config.push_str("[replacement]\nnew_sessions = 0\n");
+    std::fs::write(f.home.config_file(), config).unwrap();
     f.start().await;
     let state = f.status_is(TaskStatus::Failed).await;
     f.stop().await.unwrap();
@@ -515,6 +519,10 @@ fn hung_once_state() -> State {
 async fn a_restart_keeps_the_strikes_of_the_watchdog() {
     let mut f = Fixture::new(&hung_once_state(), 2, "hang");
 
+    // The rung of a new session is off: this test is about the retries of the same session.
+    let mut config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    config.push_str("[replacement]\nnew_sessions = 0\n");
+    std::fs::write(f.home.config_file(), config).unwrap();
     f.start().await;
     let state = f.status_is(TaskStatus::Failed).await;
     f.stop().await.unwrap();
@@ -1239,6 +1247,10 @@ async fn a_clock_set_back_during_a_run_records_its_clamped_end_without_losing_re
     .unwrap();
     drop(db);
 
+    // The rung of a new session is off: this test is about the retries of the same session.
+    let mut config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    config.push_str("[replacement]\nnew_sessions = 0\n");
+    std::fs::write(f.home.config_file(), config).unwrap();
     f.start().await;
     let state = f.status_is(TaskStatus::Running).await;
     let started_at = member_one(&state).runs()[0].started_at();
@@ -1389,4 +1401,96 @@ fn resolve_agent_binary_dir_fails_when_parent_dir_is_not_valid_utf8() {
         matches!(err, ExecutableError::InvalidPath { source: None, .. }),
         "{err:?}"
     );
+}
+
+// Rule: a restart between the ladder's decision to start a task anew and the run of its new session begins that new
+// session: the renewal is in the state, and the session before it is not resumed.
+#[tokio::test]
+async fn a_restart_after_the_ladder_started_a_task_anew_begins_its_new_session() {
+    let mut state = solo_state();
+    {
+        let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member
+            .begin_run(run_id(1), at(5), Some("ses-1".parse().unwrap()))
+            .unwrap();
+        member.end_run(at(10), RunEnd::NoStatus { exit_code: Some(0) }).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    state
+        .renew_task(&task(1), agent_core::decide::ladder::Trouble::NoStatus, at(11))
+        .unwrap();
+    let mut f = Fixture::new(&state, 3, "done");
+
+    f.start().await;
+    let state = f.status_is(TaskStatus::Done).await;
+    f.stop().await.unwrap();
+
+    let member = member_one(&state);
+    assert_eq!(member.runs().len(), 2);
+    assert_ne!(member.runs()[1].session(), member.runs()[0].session());
+    let args = f.recorded(".fake-args");
+    assert!(!args.contains("--resume"), "{args}");
+    assert_eq!(member.renewals().map(agent_core::state::Renewals::used), Some(1));
+}
+
+// Rule: after the watchdog's last strike a task goes on once in a new session; when that one hangs too, the task is hung
+// and the human is told once.
+#[tokio::test]
+async fn after_the_last_strike_the_task_goes_on_once_in_a_new_session() {
+    let mut f = Fixture::new(&solo_state(), 1, "hang");
+
+    f.start().await;
+    let state = f.status_is(TaskStatus::Failed).await;
+    f.stop().await.unwrap();
+
+    let member = member_one(&state);
+    let runs = member.runs();
+    assert_eq!(runs.len(), 2, "one hang in each session");
+    assert!(runs.iter().all(|run| end_of(run) == &RunEnd::Hung));
+    let renewals = member.renewals().unwrap();
+    assert_eq!(renewals.used(), 1);
+    assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::Hang);
+    let notes = f.notifications();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("Note: claude-1 is hung"), "{}", notes[0]);
+}
+
+// Rule: a restart that ends the third run after two endings without a status goes up the ladder: the task is started
+// anew in a new session when the default configuration allows one, instead of failing.
+#[tokio::test]
+async fn a_restart_that_exhausts_the_retries_of_a_session_starts_the_task_in_a_new_session() {
+    let mut state = solo_state();
+    {
+        let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+        for n in 1..=2 {
+            member.transition(TaskStatus::Running).unwrap();
+            member
+                .begin_run(run_id(n), at(10 * n), Some("ses-1".parse().unwrap()))
+                .unwrap();
+            member
+                .end_run(at(10 * n + 5), RunEnd::NoStatus { exit_code: Some(0) })
+                .unwrap();
+            member.transition(TaskStatus::Queued).unwrap();
+        }
+        member.transition(TaskStatus::Running).unwrap();
+        member
+            .begin_run(run_id(3), at(30), Some("ses-1".parse().unwrap()))
+            .unwrap();
+    }
+    let mut f = Fixture::new(&state, 3, "done");
+
+    f.start().await;
+    let state = f.status_is(TaskStatus::Done).await;
+    f.stop().await.unwrap();
+
+    let member = member_one(&state);
+    assert_eq!(
+        member.runs().len(),
+        4,
+        "three runs of the first session, then the new one"
+    );
+    assert_ne!(member.runs()[3].session(), member.runs()[2].session());
+    assert_eq!(member.renewals().map(agent_core::state::Renewals::used), Some(1));
+    assert_eq!(f.notifications(), Vec::<String>::new());
 }

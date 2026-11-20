@@ -1,7 +1,9 @@
 //! `agentbus` as a library: the commands the daemon uses, with typed arguments, typed results and typed errors.
 //!
 //! `agentbus` (Go, `agentbus/`) owns the shared bus: the teams, their board, the queue of requests for workers, the
-//! checkpoints and the messages, all in one directory under a lock. The daemon does not read those files; it runs
+//! checkpoints and the messages, all in one directory under a lock. The daemon does not read those files — except the
+//! message log and the read cursors, read-only, for the messages that wake an agent and those a session has not read
+//! (`latest`, `unread`); it runs
 //! `agentbus` subcommands — one process per call, with an argument vector and never a shell — and reads what they
 //! print. An exit status says why a command failed (see [`FailureClass`]), and the daemon acts on the class, not on
 //! the message.
@@ -30,8 +32,12 @@ use serde_json::json;
 use tracing::Instrument;
 
 mod latest;
+mod unread;
 
 pub use latest::{LatestMessageError, MessageNote};
+pub use unread::{
+    Completeness, MAX_MESSAGES, MAX_TEXT_CHARS, Reader, UnreadMessage, UnreadMessages, UnreadMessagesError,
+};
 
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, capture, capture_with_input};
 

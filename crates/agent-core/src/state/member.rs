@@ -9,9 +9,11 @@ use serde::{Deserialize, Serialize};
 use super::checked::CheckedMut;
 use super::plan::{PlanKeeping, PlanReason};
 use super::question::{AnswerBeforeQuestion, AnsweredVia, Question};
-use super::run::{Run, RunEnd, RunError};
+use super::renewal;
+use super::run::{Run, RunEnd, RunError, RunState};
 use super::strict::checked;
 use super::values::{SessionId, Timestamp};
+use crate::decide::ladder;
 use crate::ids::{AgentName, InvestigatorName, RoundId, RunId, TaskId};
 use crate::kinds::Tier;
 use crate::status::{InvalidTransition, StatusMachine, TaskStatus};
@@ -85,6 +87,10 @@ pub struct Member {
     /// What the daemon keeps of the task's plan; `None` for a task created before plans.
     #[serde(skip_serializing_if = "Option::is_none")]
     plan: Option<PlanKeeping>,
+    /// How many times the task was started in a new session again; `None` until it is, and for a task of a state
+    /// written before renewals existed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    renewals: Option<renewal::Renewals>,
 }
 
 /// How a [`Member`] is read; see [`checked!`].
@@ -106,6 +112,9 @@ struct MemberWire {
     /// See [`Member`].
     #[serde(default)]
     plan: Option<PlanKeeping>,
+    /// See [`Member`]; a member written before renewals existed has none.
+    #[serde(default)]
+    renewals: Option<renewal::Renewals>,
 }
 
 checked!(Member, MemberWire, check_member);
@@ -132,6 +141,14 @@ impl CheckedMut<'_, Member> {
     /// this ID.
     pub fn begin_run(&mut self, id: RunId, at: Timestamp, session: Option<SessionId>) -> Result<(), RunError> {
         self.value.begin_run(id, at, session)
+    }
+
+    /// See [`Member::renew`].
+    ///
+    /// # Errors
+    /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
+    pub(crate) fn renew(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
+        self.value.renew(trouble, at)
     }
 
     /// See [`Member::attach_session`].
@@ -276,6 +293,15 @@ pub enum MemberError {
         /// What is wrong.
         source: QuestionError,
     },
+    /// The renewals do not fit the runs.
+    #[error("task {task}: its renewals do not fit its runs")]
+    Renewal {
+        /// The task.
+        task: TaskId,
+        /// What is wrong.
+        #[source]
+        source: renewal::RenewalError,
+    },
 }
 
 impl Member {
@@ -289,6 +315,7 @@ impl Member {
             runs: Vec::new(),
             questions: Vec::new(),
             plan: Some(PlanKeeping::default()),
+            renewals: None,
         }
     }
 
@@ -302,6 +329,7 @@ impl Member {
             runs: Vec::new(),
             questions: Vec::new(),
             plan: None,
+            renewals: None,
         }
     }
 
@@ -313,6 +341,11 @@ impl Member {
 
     getter!("The runs, oldest first.", pub fn runs(&self) -> &[Run] = &self.runs);
 
+    getter!(
+        "How many times the task was started in a new session again; `None` until it was.",
+        pub const fn renewals(&self) -> Option<&renewal::Renewals> = self.renewals.as_ref()
+    );
+
     getter!("The questions asked, oldest first.", pub fn questions(&self) -> &[Question] = &self.questions);
 
     getter!("The run that is going, if one is.", pub fn current_run(&self) -> Option<&Run> = self.runs.last().filter(|run| run.is_running()));
@@ -323,8 +356,12 @@ impl Member {
     );
 
     getter!(
-        "The session of the latest run that has one: the one a new run resumes.",
-        pub fn last_session(&self) -> Option<&SessionId> = self.runs.iter().rev().find_map(Run::session)
+        "The session of the latest run since the task was last started anew that has one: the one a new run resumes. \
+         No session of a run before that renewal is resumed.",
+        pub fn last_session(&self) -> Option<&SessionId> = renewal::runs_since(&self.runs, self.renewals.as_ref())
+        .iter()
+        .rev()
+        .find_map(Run::session)
     );
 
     getter!(
@@ -400,6 +437,33 @@ impl Member {
         Ok(())
     }
 
+    /// Records that the task is started anew, in a new session, after `trouble` made the runs of the session it had go
+    /// bad: the runs before the new one are not counted or resumed any more, and the new session's run starts in no
+    /// session. A task with no run to have gone bad is not started anew. Only [`State::renew_task`](super::State::renew_task)
+    /// calls it, after it refused the roles that are never started anew (a worker, a reviewer).
+    ///
+    /// Returns whether the task was started anew: `false` when nothing changed.
+    ///
+    /// # Errors
+    /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
+    pub(crate) fn renew(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
+        let Some(last) = self.runs.last() else {
+            return Ok(false);
+        };
+        if last.started_at().as_utc() > at.as_utc() {
+            return Err(renewal::RenewalError::NotAfterTheLastRun {
+                at,
+                started_at: last.started_at(),
+            });
+        }
+        let after_runs = self.runs.len();
+        match &mut self.renewals {
+            Some(renewals) => renewals.record(at, trouble, after_runs),
+            None => self.renewals = Some(renewal::Renewals::first(at, trouble, after_runs)),
+        }
+        Ok(true)
+    }
+
     /// Records that a run has started.
     ///
     /// # Errors
@@ -447,6 +511,34 @@ impl Member {
     /// started.
     pub fn end_run(&mut self, at: Timestamp, end: RunEnd) -> Result<(), RunError> {
         self.current_run_mut()?.end(at, end)
+    }
+
+    /// The runs of the session the task is in: those since it was last started anew, or all of them.
+    #[must_use]
+    pub fn session_runs(&self) -> &[Run] {
+        renewal::runs_since(&self.runs, self.renewals.as_ref())
+    }
+
+    /// Whether the task was started anew and the run of its new session has not begun: that run is briefed.
+    #[must_use]
+    pub fn awaits_new_session(&self) -> bool {
+        self.renewals
+            .as_ref()
+            .is_some_and(|renewals| renewals.awaits_run(self.runs.len()))
+    }
+
+    /// How many of the latest runs went bad in a row since the task was started anew.
+    #[must_use]
+    pub fn bad_runs_since_renewal(&self) -> u32 {
+        let Some(end) = self.runs.last().and_then(|run| match run.state() {
+            RunState::Ended { end, .. } => Some(end),
+            RunState::Running => None,
+        }) else {
+            return 0;
+        };
+        renewal::trouble_of(end).map_or(0, |trouble| {
+            renewal::bad_runs_in_a_row(&self.runs, self.renewals.as_ref(), trouble)
+        })
     }
 
     /// The run that is going, to change it.
@@ -547,10 +639,17 @@ fn check_questions(task: &TaskId, questions: &[Question]) -> Result<(), MemberEr
     Ok(())
 }
 
-/// Checks the run and question invariants of a complete member.
+/// Checks the run, question and renewal invariants of a complete member.
 fn check_member(member: &Member) -> Result<(), MemberError> {
     check_runs(&member.task, &member.runs)?;
-    check_questions(&member.task, &member.questions)
+    check_questions(&member.task, &member.questions)?;
+    if let Some(renewals) = &member.renewals {
+        renewal::check_renewals(renewals, &member.runs).map_err(|source| MemberError::Renewal {
+            task: member.task.clone(),
+            source,
+        })?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -595,6 +694,7 @@ mod tests {
                 runs: wire.runs,
                 questions: wire.questions,
                 plan: wire.plan,
+                renewals: None,
             };
             check_member(&member)?;
             Ok(member)

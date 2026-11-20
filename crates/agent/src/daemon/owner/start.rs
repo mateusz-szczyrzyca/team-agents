@@ -38,6 +38,7 @@ use agent_runtime::store::Home;
 use agent_runtime::team_prompts::TeamPrompts;
 use rand::{Rng, RngExt};
 
+use super::briefing::BriefingFacts;
 use super::rounds::{Addition, SectionError, sections_for};
 use crate::daemon::questions::{self, QuestionsProblem, TextError};
 use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape_with_answers, task_branch};
@@ -221,11 +222,16 @@ async fn compose_run_prompt(
     }
 }
 
-/// Makes the run of `task` ready.
+/// Makes the run of `task` ready; the first run of a new session the ladder started it in is given `briefing`.
 ///
 /// # Errors
 /// [`StartProblem`].
-pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -> Result<Plan, StartProblem> {
+pub(super) async fn plan(
+    ctx: &Context<'_>,
+    rng: &mut impl Rng,
+    task: &TaskId,
+    briefing: Option<&BriefingFacts>,
+) -> Result<Plan, StartProblem> {
     let found = ctx
         .state
         .find_task(task)
@@ -280,6 +286,10 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
     let (prompt, addition) = compose_run_prompt(ctx, &texts, &found, &working, kind, prompt).await?;
     let prompt = with_plan(ctx, role, member, kind, prompt)?;
     let prompt = super::split::with_correction(ctx.team_texts, team, role, prompt)?;
+    let prompt = match briefing {
+        Some(facts) => facts.render(ctx.texts, task, &prompt)?,
+        None => prompt,
+    };
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
         (RunMode::Resume { session_id }, member.last_session().cloned())
