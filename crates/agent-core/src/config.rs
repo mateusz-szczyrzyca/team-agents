@@ -1025,7 +1025,7 @@ impl Config {
         &self.plan
     }
 
-    /// Policy for approval of split proposals; daemon use is added separately.
+    /// Policy the daemon applies to a coordinator's split proposal: its size limit and how many corrections it gets.
     #[must_use]
     pub fn split(&self) -> Split {
         self.split.policy()
