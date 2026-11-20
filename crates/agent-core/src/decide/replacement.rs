@@ -18,6 +18,9 @@ pub enum Activity {
 }
 
 /// An agent the configuration names in `[replacement] agents`, in the order it names them.
+///
+/// The agent that holds the task now is left out of `candidates`: the choice does not know its name, and an agent is
+/// never asked to take over its own task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Candidate<'a> {
     /// The agent.
@@ -63,7 +66,7 @@ pub const fn rank(tier: Tier) -> u8 {
 }
 
 /// Who takes over the task of `role`, whose agent had the tier `replaced`, under `mode`: `candidates` are the agents of
-/// `[replacement] agents`, in the order the configuration names them.
+/// `[replacement] agents`, in the order the configuration names them, without the agent that holds the task now.
 ///
 /// The answer is the first candidate that is idle and of the same or a higher place than `replaced`; when there is none,
 /// a member's work goes to its team's lead, and everything else to the human. `[replacement] mode` narrows that: `lead`
