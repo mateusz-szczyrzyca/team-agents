@@ -13,8 +13,9 @@ use std::num::NonZeroU32;
 use crate::config::Plan as Policy;
 use crate::ids::ItemId;
 use crate::kinds::Role;
-use crate::plan::{Plan, PlanError};
-use crate::state::{PlanKeeping, PlanReason, RunEnd};
+use crate::plan::{Plan, PlanError, Step, StepState};
+use crate::state::{PlanKeeping, PlanReason, PlanStage, RunEnd};
+use crate::status::RunOutcome;
 
 #[cfg(test)]
 mod tests;
@@ -98,36 +99,73 @@ pub enum PlanVerdict {
 /// 5. a plan without a fault is accepted;
 /// 6. a step of the version before that is gone is a `LostStep`, before a step still to do (`Unfinished`);
 /// 7. a send-back below `[plan] bounces` plus what the human granted is a `SendBack`;
-/// 8. otherwise the human is asked — once, for a task that is not asked already.
+/// 8. otherwise the human is asked — `AskHuman` for a task that is not asked already, and for one that is, the same
+///    answer: the task waits for the human's reply either way.
 #[must_use]
 pub fn decide_plan(facts: PlanFacts<'_>) -> PlanVerdict {
-    let _reason = fault(facts.read, facts.previous, facts.keeping);
-    PlanVerdict::Accept
-}
-
-/// Why the plan a task keeps has a fault, the first of them being the one reported; `None` when it has none.
-fn fault(read: &PlanRead, previous: Option<&Plan>, keeping: Option<&PlanKeeping>) -> Option<PlanReason> {
-    let parsed = read.plan();
-    let steps = parsed.map(unfinished).is_none_or(|steps| steps.is_empty());
-    let lost_steps = parsed
-        .zip(previous)
-        .map(|(newer, older)| lost(older, newer))
-        .is_none_or(|steps| steps.is_empty());
-    let asked = keeping.is_some_and(|keeping| !matches!(keeping.stage(), crate::state::PlanStage::Open));
-    if steps && lost_steps && !asked {
-        return None;
+    if !matches!(
+        facts.end,
+        RunEnd::Reported {
+            outcome: RunOutcome::Done
+        }
+    ) || !facts.policy.roles().contains(&facts.role)
+    {
+        return PlanVerdict::Accept;
     }
-    Some(PlanReason::Missing)
+    let Some(keeping) = facts.keeping else {
+        return PlanVerdict::Accept;
+    };
+    if keeping.stage() == PlanStage::Released {
+        return PlanVerdict::Accept;
+    }
+    let limit = facts.policy.bounces().saturating_add(keeping.granted());
+    if limit == 0 {
+        return PlanVerdict::Accept;
+    }
+    let Some(reason) = fault(facts.read, facts.previous) else {
+        return PlanVerdict::Accept;
+    };
+    if keeping.sent_back() < limit {
+        PlanVerdict::SendBack(reason)
+    } else {
+        PlanVerdict::AskHuman(reason)
+    }
 }
 
-/// The steps of `plan` that are still to do or in hand, in the order of the plan.
-fn unfinished(plan: &Plan) -> Vec<ItemId> {
-    let _ = plan;
-    Vec::new()
+/// Why the plan a task read has a fault, the first of them being the one reported; `None` when it has none.
+fn fault(read: &PlanRead, previous: Option<&Plan>) -> Option<PlanReason> {
+    match read {
+        PlanRead::Missing => Some(PlanReason::Missing),
+        PlanRead::Unreadable { line, detail } => Some(PlanReason::Unreadable {
+            line: *line,
+            detail: detail.clone(),
+        }),
+        PlanRead::Parsed(plan) => match previous {
+            Some(previous) => lost(previous, plan).or_else(|| unfinished(plan)),
+            None => unfinished(plan),
+        },
+    }
 }
 
-/// The steps of `previous` that `newer` no longer has, or uses for another title, in the order of `previous`.
-fn lost(previous: &Plan, newer: &Plan) -> Vec<ItemId> {
-    let _ = (previous, newer);
-    Vec::new()
+/// The steps of `plan` that are still to do or in hand, in the order of the plan; `None` when none is.
+fn unfinished(plan: &Plan) -> Option<PlanReason> {
+    let steps: Vec<ItemId> = plan
+        .steps()
+        .filter(|step| matches!(step.state(), StepState::Todo | StepState::InHand))
+        .map(Step::id)
+        .collect();
+    (!steps.is_empty()).then_some(PlanReason::Unfinished { steps })
+}
+
+/// The steps of `previous` that `newer` no longer has, or uses for another title, in the order of `previous`; `None`
+/// when it loses none.
+fn lost(previous: &Plan, newer: &Plan) -> Option<PlanReason> {
+    // A lost step and a renamed one are both reported by `loses_a_step`, and the lost ones come first.
+    let changes = previous.compare(newer);
+    let steps: Vec<ItemId> = changes
+        .disappeared
+        .into_iter()
+        .chain(changes.retitled.into_iter().map(|retitle| retitle.id))
+        .collect();
+    (!steps.is_empty()).then_some(PlanReason::LostStep { steps })
 }
