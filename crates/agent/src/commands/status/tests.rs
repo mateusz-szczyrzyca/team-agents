@@ -1141,3 +1141,27 @@ fn an_abandoned_second_opinion_says_the_reason_the_daemon_recorded() {
         );
     }
 }
+
+#[test]
+fn delivery_round_status_names_the_owning_pr_while_waiting_and_after_completion() {
+    let mut state = team_with_rounds();
+    let mut team = state.team_mut(&team_id(0)).unwrap();
+    let pr = crate::fixtures::pr(7);
+    team.item_mut("1.1".parse().unwrap())
+        .unwrap()
+        .advance(ItemPhase::InReview {
+            pr: pr.clone(),
+            reviews: Vec::new(),
+        })
+        .unwrap();
+    team.deliver_round(&round_id(2), pr.number).unwrap();
+    assert_eq!(
+        round_line(team.round(&round_id(2)).unwrap()),
+        "round-20261111-153002-q1w2  item 1.2  delivered by PR #7, waits for its merge"
+    );
+    team.complete_delivery(&round_id(2), at(40)).unwrap();
+    assert_eq!(
+        round_line(team.round(&round_id(2)).unwrap()),
+        "round-20261111-153002-q1w2  item 1.2  done, delivered by PR #7"
+    );
+}
