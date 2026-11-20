@@ -81,6 +81,18 @@ impl Plan {
         &self.stages
     }
 
+    /// What changed from this plan to `newer`.
+    ///
+    /// Steps are compared by ID only: a step whose ID both versions have is the same step, and a title it took on is
+    /// reported as a [`Retitle`], not as a step added and another disappeared.
+    #[must_use]
+    pub fn compare(&self, newer: &Self) -> PlanChanges {
+        PlanChanges {
+            added: newer.steps().map(Step::id).collect(),
+            ..PlanChanges::default()
+        }
+    }
+
     /// Every step, stage by stage, in the order written.
     pub fn steps(&self) -> impl Iterator<Item = &Step> {
         self.stages.iter().flat_map(Stage::steps)
@@ -102,6 +114,58 @@ impl Plan {
             text.push('\n');
         }
         text
+    }
+}
+
+/// What changed from one version of a plan to the next.
+///
+/// The versions are compared step by step by ID, never by their text: a step that keeps its ID keeps its identity,
+/// whatever its title says.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlanChanges {
+    /// The steps the newer version has and the older one did not, in the newer version's order.
+    pub added: Vec<ItemId>,
+    /// The steps in both versions whose state is not the same, in the newer version's order.
+    pub state_changed: Vec<StateChange>,
+    /// The steps of the older version that the newer one no longer has, in the older version's order.
+    pub disappeared: Vec<ItemId>,
+    /// The steps in both versions whose ID the newer version uses for another title, in the newer version's order.
+    pub retitled: Vec<Retitle>,
+}
+
+/// A step whose state changed between two versions of a plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StateChange {
+    /// The step.
+    pub id: ItemId,
+    /// Its state in the older version.
+    pub from: StepState,
+    /// Its state in the newer version.
+    pub to: StepState,
+}
+
+/// A step whose ID the newer version of a plan uses for another title.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Retitle {
+    /// The step.
+    pub id: ItemId,
+    /// Its title in the older version.
+    pub was: String,
+    /// Its title in the newer version.
+    pub now: String,
+}
+
+impl PlanChanges {
+    /// Whether the two versions are the same in every way a comparison reports.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    /// Whether a step of the older version is missing from the newer one, or its ID now names another step.
+    #[must_use]
+    pub fn loses_a_step(&self) -> bool {
+        true
     }
 }
 

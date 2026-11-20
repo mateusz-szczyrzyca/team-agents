@@ -634,3 +634,134 @@ fn every_generated_plan_written_back_reads_as_the_same_plan() {
         assert_eq!(parse_plan(&text), Ok(plan), "seed {seed}:\n{text}");
     }
 }
+
+/// The IDs of `steps` as text.
+fn ids(steps: &[ItemId]) -> Vec<String> {
+    steps.iter().map(ToString::to_string).collect()
+}
+
+/// A plan with steps in a known state, read from its text.
+fn version(text: &str) -> Plan {
+    parsed(text)
+}
+
+/// The older version's steps in the newer one are added; the one in both keeps its ID.
+#[test]
+fn a_comparison_reports_the_added_steps() {
+    let old = version("1. S\n[x] 1.1 a\n");
+    let new = version("1. S\n[x] 1.1 a\n[ ] 1.2 b\n2. T\n[ ] 2.1 c\n");
+
+    let changes = old.compare(&new);
+
+    assert_eq!(ids(&changes.added), ["1.2", "2.1"]);
+    assert_eq!(changes.state_changed, []);
+    assert_eq!(changes.disappeared, []);
+    assert_eq!(changes.retitled, []);
+    assert!(!changes.is_empty());
+}
+
+/// A step whose mark changed is reported with its state before and after.
+#[test]
+fn a_comparison_reports_the_steps_that_changed_their_state() {
+    let old = version("1. S\n[ ] 1.1 a\n[>] 1.2 b\n[ ] 1.3 c\n");
+    let new = version("1. S\n[x] 1.1 a\n[x] 1.2 b\n[ ] 1.3 c\n");
+
+    let changes = old.compare(&new);
+
+    assert_eq!(
+        changes.state_changed,
+        [
+            StateChange {
+                id: "1.1".parse().unwrap(),
+                from: StepState::Todo,
+                to: StepState::Done,
+            },
+            StateChange {
+                id: "1.2".parse().unwrap(),
+                from: StepState::InHand,
+                to: StepState::Done,
+            },
+        ]
+    );
+    assert_eq!(changes.added, []);
+}
+
+/// A step of the older version that the newer one no longer has disappeared.
+#[test]
+fn a_comparison_reports_the_steps_that_disappeared() {
+    let old = version("1. S\n[ ] 1.1 a\n[x] 1.2 b\n[-] 1.3 c\n    Dropped.\n2. T\n[ ] 2.1 d\n");
+    let new = version("1. S\n[ ] 1.1 a\n2. T\n[ ] 2.1 d\n");
+
+    let changes = old.compare(&new);
+
+    assert_eq!(ids(&changes.disappeared), ["1.2", "1.3"]);
+    assert_eq!(changes.added, []);
+    assert_eq!(changes.state_changed, []);
+}
+
+/// A step whose ID the newer version uses for another title is reported with both titles.
+#[test]
+fn a_comparison_reports_an_id_used_for_another_step() {
+    let old = version("1. S\n[ ] 1.1 Write the outline\n[ ] 1.2 Read it aloud\n");
+    let new = version("1. S\n[ ] 1.1 Write the outline again\n[ ] 1.2 Read it aloud\n");
+
+    let changes = old.compare(&new);
+
+    assert_eq!(
+        changes.retitled,
+        [Retitle {
+            id: "1.1".parse().unwrap(),
+            was: "Write the outline".to_owned(),
+            now: "Write the outline again".to_owned(),
+        }]
+    );
+    assert!(!changes.is_empty());
+}
+
+/// A plan compared with itself has nothing to report.
+#[test]
+fn a_plan_compared_with_itself_has_no_changes() {
+    let plan = version("1. S\n[x] 1.1 a\n[>] 1.2 b\n[-] 1.3 c\n    Dropped.\n");
+
+    let changes = plan.compare(&plan.clone());
+
+    assert_eq!(changes, PlanChanges::default());
+    assert!(changes.is_empty());
+    assert!(!changes.loses_a_step());
+}
+
+/// One comparison of two versions finds every kind of change at once.
+#[test]
+fn a_comparison_of_two_versions_finds_every_kind_of_change() {
+    let old = version(
+        "1. S\n[ ] 1.1 kept\n[ ] 1.2 state\n[ ] 1.3 gone\n[ ] 1.4 same\n[ ] 1.5 retitled\n2. T\n[x] 2.1 kept\n",
+    );
+    let new = version(
+        "1. S\n[ ] 1.1 kept\n[>] 1.2 state\n[ ] 1.4 same\n[ ] 1.5 retitled now\n[ ] 1.6 added\n2. T\n[x] 2.1 kept\n[ ] 2.2 added later\n",
+    );
+
+    let changes = old.compare(&new);
+
+    assert_eq!(
+        changes,
+        PlanChanges {
+            added: vec!["1.6".parse().unwrap(), "2.2".parse().unwrap()],
+            state_changed: vec![StateChange {
+                id: "1.2".parse().unwrap(),
+                from: StepState::Todo,
+                to: StepState::InHand,
+            }],
+            disappeared: vec!["1.3".parse().unwrap()],
+            retitled: vec![Retitle {
+                id: "1.5".parse().unwrap(),
+                was: "retitled".to_owned(),
+                now: "retitled now".to_owned(),
+            }],
+        }
+    );
+    assert!(changes.loses_a_step());
+    // The newer version compared with the older one reports the other direction.
+    let back = new.compare(&old);
+    assert_eq!(ids(&back.added), ["1.3"]);
+    assert_eq!(ids(&back.disappeared), ["1.6", "2.2"]);
+}
