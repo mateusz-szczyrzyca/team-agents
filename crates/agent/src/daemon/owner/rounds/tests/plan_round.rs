@@ -1,7 +1,7 @@
 //! The plan of a solo agent through a round: a run that ends done with a step to do goes back, one that then loses a
 //! step goes back again, and the run that settles its plan goes on; every version is kept.
 
-use agent_core::state::{ItemPhase, MergeMode, PlanStage};
+use agent_core::state::{ItemPhase, MergeMode, PlanKeeping, PlanStage};
 use agent_core::status::TaskStatus;
 use agent_runtime::history::{PlanRead, Reader};
 
@@ -314,4 +314,73 @@ async fn a_coordinators_done_after_it_integrated_the_last_member_is_sent_back_fo
         third.contains("are still to do or in hand: 1.2. Finish each"),
         "{third}"
     );
+}
+
+/// A rig whose solo agent runs `lead` and whose two reviewers approve, holding runs to their plan three times.
+async fn approved_round(lead: &'static str) -> Rig {
+    let rig = Rig::new(
+        &[
+            normal("claude-1", lead),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 3\n"),
+    )
+    .unwrap();
+    rig
+}
+
+#[tokio::test]
+async fn reviewers_that_write_no_plan_are_not_sent_back() {
+    let mut rig = approved_round("script:first").await;
+    committing_plan_script(&rig, "first", "Do one.\n\n1. Work\n[x] 1.1 Write it\n", "one.txt");
+    rig.start().await;
+
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let reviewers = state.team(&team).unwrap().reviewers();
+    assert_eq!(reviewers.len(), 2);
+    for reviewer in reviewers {
+        assert_eq!(reviewer.runs().len(), 1, "{:?}", reviewer.task());
+        assert_eq!(reviewer.plan().map(PlanKeeping::sent_back).unwrap_or_default(), 0);
+    }
+}
+
+#[tokio::test]
+async fn a_plan_committed_by_mistake_is_not_in_the_published_branch() {
+    let mut rig = approved_round("script:mistake,work").await;
+    let dir = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("mistake.sh"),
+        "set -eu\nmkdir -p .agent\nprintf 'Do one.\\n\\n1. Work\\n[x] 1.1 Write it\\n' > .agent/plan.md\n\
+         echo one > one.txt\ngit add one.txt\ngit add -f .agent/plan.md\n\
+         git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q -m 'Work, and the plan by mistake'\n",
+    )
+    .unwrap();
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let branch = format!("agents/claude-1/{}-1.1", tasks[0]);
+    let published = super::rig::git(
+        &rig.origin,
+        &["ls-tree", "-r", "--name-only", &format!("refs/heads/{branch}")],
+    );
+    assert!(published.lines().any(|path| path == "one.txt"), "{published}");
+    assert!(!published.contains(".agent"), "{published}");
 }
