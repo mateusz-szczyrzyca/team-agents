@@ -53,9 +53,10 @@ async fn waits_for(rig: &Rig, round: RoundId) -> Option<String> {
     round.waiting
 }
 
-/// Asks the daemon to resume `team`, as `agent resume <team>` does; whatever it answers about the team's tasks.
+/// Asks the daemon to resume `team`, as `agent resume <team>` does; whatever it answers about the team's tasks: one whose
+/// tasks all run is refused for them, and its steps that wait for GitHub are tried again all the same.
 async fn resume_team(rig: &Rig, team: &TeamId) {
-    crate::client::Connection::connect(&rig.home.socket_file())
+    let answer = crate::client::Connection::connect(&rig.home.socket_file())
         .await
         .unwrap()
         .request(
@@ -64,8 +65,14 @@ async fn resume_team(rig: &Rig, team: &TeamId) {
                 target: Target::Team(team.clone()),
             }),
         )
-        .await
-        .unwrap();
+        .await;
+    assert!(
+        matches!(
+            answer,
+            Ok(Reply::Applied { .. }) | Err(crate::client::ClientError::Refused(_))
+        ),
+        "{answer:?}"
+    );
 }
 
 /// The round of the first item of `team`.
