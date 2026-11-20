@@ -833,6 +833,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
 
         // warn (14)
         for variant in [
+            LogEvent::DeliveryClosed,
             LogEvent::CliOutputUnreadable,
             LogEvent::RunEndedWithoutStatus,
             LogEvent::RunHung,
