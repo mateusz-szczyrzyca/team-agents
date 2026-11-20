@@ -714,7 +714,11 @@ impl<'a> Parser<'a> {
             LineKind::Stage { digits, title } => self.stage(line, digits, title)?,
             LineKind::Step => self.step_line(line, text)?,
             LineKind::Text if self.stages.is_empty() => self.intent.push(text),
-            LineKind::Text => return Err(PlanError::UnexpectedLine { line }),
+            LineKind::Text => {
+                // The open step's text is above this line: its faults come first.
+                self.close_step()?;
+                return Err(PlanError::UnexpectedLine { line });
+            }
         }
         Ok(())
     }
