@@ -22,7 +22,7 @@ pub enum ProposalRead<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProposalFault {
-    /// Syntax or other form requirements, including blocked first parts.
+    /// The proposal did not read in its form, or a cycle has no part to name.
     Unreadable {
         /// Part with the fault, if identifiable.
         part: Option<PartKey>,
@@ -118,14 +118,14 @@ pub fn decide_proposal(read: ProposalRead<'_>, policy: Split, unit: &str, correc
     if let Some((id, first)) = plan.entries().next()
         && !first.depends_on.is_empty()
     {
-        return fault(ProposalFault::Unreadable { part: Some(id.key()) }, policy, corrections);
+        return fault(ProposalFault::FirstPartDepends { part: id.key() }, policy, corrections);
     }
     for (key, part) in proposal.entries() {
         if let Some(estimate) = &part.estimate
             && policy.part_limit != 0
-            && estimate.unit == unit
+            && same_unit(estimate.unit(), unit)
             && estimate
-                .amount
+                .amount()
                 .as_f64()
                 .is_some_and(|amount| amount > f64::from(policy.part_limit))
         {
@@ -148,6 +148,15 @@ pub fn decide_proposal(read: ProposalRead<'_>, policy: Split, unit: &str, correc
     }
 }
 
+/// Whether two units name the same thing: case, surrounding spaces and a plural `s` do not matter.
+fn same_unit(left: &str, right: &str) -> bool {
+    fn normal(unit: &str) -> String {
+        let lower = unit.trim().to_lowercase();
+        lower.strip_suffix('s').unwrap_or(&lower).to_owned()
+    }
+    normal(left) == normal(right)
+}
+
 fn fault(fault: ProposalFault, policy: Split, corrections: u32) -> ProposalDecision {
     if corrections < policy.corrections {
         ProposalDecision::SendBack(fault)
@@ -158,17 +167,27 @@ fn fault(fault: ProposalFault, policy: Split, corrections: u32) -> ProposalDecis
 
 fn plan_fault(proposal: &Proposal, error: &SplitError) -> ProposalFault {
     match error {
-        SplitError::Count { .. } => ProposalFault::Unreadable { part: None },
+        SplitError::Count { count } => ProposalFault::PartCount { count: *count },
         SplitError::Empty {
             part,
             field: PartField::Checks,
         } => ProposalFault::MissingChecks { part: *part },
         SplitError::Empty {
             part,
-            field: PartField::Title | PartField::Deliverable,
-        }
-        | SplitError::UnknownDependency { part, .. }
-        | SplitError::DuplicateDependency { part, .. } => ProposalFault::Unreadable { part: Some(*part) },
+            field: PartField::Title,
+        } => ProposalFault::EmptyTitle { part: *part },
+        SplitError::Empty {
+            part,
+            field: PartField::Deliverable,
+        } => ProposalFault::EmptyDeliverable { part: *part },
+        SplitError::UnknownDependency { part, dependency } => ProposalFault::UnknownDependency {
+            part: *part,
+            dependency: *dependency,
+        },
+        SplitError::DuplicateDependency { part, dependency } => ProposalFault::DuplicateDependency {
+            part: *part,
+            dependency: *dependency,
+        },
         SplitError::Cycle => match cycle_member(proposal) {
             Some(part) => ProposalFault::Cycle { part },
             // Preserve rejection even if a future plan validator reports a cycle with no witness.

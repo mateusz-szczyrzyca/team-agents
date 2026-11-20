@@ -6,13 +6,33 @@ use crate::kinds::Tier;
 use serde::{Deserialize, Serialize};
 
 /// An amount in an author's explicit unit, independent of the kind of deliverable.
+///
+/// Every value has a nonnegative amount and a nonblank unit: the fields are private and
+/// deserialization goes through [`Estimate::new`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "EstimateWire")]
 pub struct Estimate {
-    /// Nonnegative JSON number; validated when the proposal is read.
-    pub amount: serde_json::Number,
-    /// Unit such as lines, pages or images.
-    pub unit: String,
+    /// Nonnegative JSON number.
+    amount: serde_json::Number,
+    /// Unit such as lines, pages or images; never blank.
+    unit: String,
+}
+
+/// Serialized estimate before its checks; strict about unknown fields.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EstimateWire {
+    /// Amount as written.
+    amount: serde_json::Number,
+    /// Unit as written.
+    unit: String,
+}
+
+impl TryFrom<EstimateWire> for Estimate {
+    type Error = EstimateError;
+    fn try_from(wire: EstimateWire) -> Result<Self, Self::Error> {
+        Self::new(wire.amount, wire.unit)
+    }
 }
 
 /// Why an estimate cannot be accepted.
@@ -32,6 +52,12 @@ impl Estimate {
     /// # Errors
     /// [`EstimateError::Amount`] for a negative amount, [`EstimateError::Unit`] for a blank unit.
     pub fn new(amount: serde_json::Number, unit: String) -> Result<Self, EstimateError> {
+        if !amount.as_f64().is_some_and(|value| value >= 0.0) {
+            return Err(EstimateError::Amount);
+        }
+        if unit.trim().is_empty() {
+            return Err(EstimateError::Unit);
+        }
         Ok(Self { amount, unit })
     }
 
@@ -81,7 +107,7 @@ impl Default for Requirements {
 
 /// An explicit declaration of how the split relates to the original item.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "ScopeWire", tag = "kind", rename_all = "snake_case")]
+#[serde(try_from = "ScopeWire", tag = "kind", rename_all = "snake_case")]
 pub enum ScopeChange {
     /// All of the original scope is retained.
     Unchanged,
@@ -124,14 +150,39 @@ enum ScopeWire {
         reason: String,
     },
 }
-impl From<ScopeWire> for ScopeChange {
-    fn from(wire: ScopeWire) -> Self {
+
+/// Why a scope declaration cannot be accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ScopeError {
+    /// A scope change must say what changes.
+    #[error("a scope change needs a nonblank reason")]
+    BlankReason,
+}
+
+impl TryFrom<ScopeWire> for ScopeChange {
+    type Error = ScopeError;
+    fn try_from(wire: ScopeWire) -> Result<Self, Self::Error> {
         match wire {
-            ScopeWire::Unchanged {} => Self::Unchanged,
-            ScopeWire::Less { reason } => Self::Less { reason },
-            ScopeWire::More { reason } => Self::More { reason },
-            ScopeWire::Different { reason } => Self::Different { reason },
+            ScopeWire::Unchanged {} => Ok(Self::Unchanged),
+            ScopeWire::Less { reason } => Ok(Self::Less {
+                reason: nonblank(reason)?,
+            }),
+            ScopeWire::More { reason } => Ok(Self::More {
+                reason: nonblank(reason)?,
+            }),
+            ScopeWire::Different { reason } => Ok(Self::Different {
+                reason: nonblank(reason)?,
+            }),
         }
+    }
+}
+
+/// The reason of a scope change, if it says anything.
+fn nonblank(reason: String) -> Result<String, ScopeError> {
+    if reason.trim().is_empty() {
+        Err(ScopeError::BlankReason)
+    } else {
+        Ok(reason)
     }
 }
 
@@ -221,21 +272,18 @@ pub enum ReadProposalError {
         /// Original parser error, including its location.
         source: serde_json::Error,
     },
-    /// A required estimate is absent, negative, or has a blank unit.
-    #[error("part {part} needs a nonnegative estimate and a nonblank unit")]
+    /// A part has no estimate.
+    #[error("part {part} needs an estimate")]
     Estimate {
         /// One-based position when a malformed plan has more than 26 parts.
         part: usize,
     },
-    /// A scope change must explain what changes.
-    #[error("a scope change needs a nonblank reason")]
-    ScopeReason,
 }
 
 /// Reads bounded raw JSON; semantic faults are left for the approval decision.
 ///
 /// # Errors
-/// Returns [`ReadProposalError`] for invalid structure or incomplete estimate/scope fields.
+/// Returns [`ReadProposalError`] for invalid structure, an invalid estimate or scope reason, or a missing estimate.
 pub fn read_proposal(text: &str) -> Result<Proposal, ReadProposalError> {
     if text.len() > crate::questions::MAX_QUESTIONS_BYTES {
         return Err(ReadProposalError::TooLarge);
@@ -245,24 +293,13 @@ pub fn read_proposal(text: &str) -> Result<Proposal, ReadProposalError> {
 }
 
 impl Proposal {
-    /// Validate fields once so deserialization cannot construct incomplete proposal input.
+    /// Every part of a proposal carries an estimate; its value and the scope reason are checked by their own types.
     fn check_fields(&self) -> Result<(), ReadProposalError> {
         for (index, part) in self.parts.iter().enumerate() {
-            let valid = part.estimate.as_ref().is_some_and(|estimate| {
-                !estimate.unit.trim().is_empty() && estimate.amount.as_f64().is_some_and(|amount| amount >= 0.0)
-            });
-            if !valid {
+            if part.estimate.is_none() {
                 return Err(ReadProposalError::Estimate {
                     part: index.saturating_add(1),
                 });
-            }
-        }
-        match &self.scope {
-            ScopeChange::Unchanged => {}
-            ScopeChange::Less { reason } | ScopeChange::More { reason } | ScopeChange::Different { reason } => {
-                if reason.trim().is_empty() {
-                    return Err(ReadProposalError::ScopeReason);
-                }
             }
         }
         Ok(())
