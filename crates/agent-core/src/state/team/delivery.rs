@@ -122,7 +122,14 @@ impl Team {
             WorkingRoundError::NoSuchRound(round) => EndDeliveryError::NoSuchRound { round },
             WorkingRoundError::NotWorking(round) => EndDeliveryError::NotWorking { round },
         })?;
-        if round.delivered_by().is_none() || round.delivery_closed_at().is_some() {
+        if round.delivered_by().is_none()
+            || round.delivery_closed_at().is_some()
+            || round.part_pull_request().is_some()
+            || !round
+                .item()
+                .and_then(|item| self.round_of(item))
+                .is_some_and(|latest| latest.id() == id)
+        {
             return Err(EndDeliveryError::NotWaiting { round: id.clone() });
         }
         let mut ended = round.clone();
