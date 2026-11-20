@@ -8,6 +8,8 @@
 mod base;
 mod checked;
 mod checks;
+#[cfg(test)]
+mod delivery_migration_tests;
 mod findings;
 #[cfg(test)]
 pub(crate) mod fixtures;

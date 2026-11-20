@@ -108,3 +108,21 @@ fn delivery_does_not_repurpose_pending_listed_or_closed_rounds() {
     );
     assert_eq!(team, closed);
 }
+
+#[test]
+fn delivery_metadata_cannot_forge_team_ownership_or_item_phase_when_read() {
+    let mut team = working();
+    team.deliver_round(&round_id(2), pr(7).number).unwrap();
+    let valid = serde_json::to_value(&team).unwrap();
+    for (field, replacement) in [
+        ("number", serde_json::json!(99)),
+        ("branch", serde_json::json!("forged")),
+    ] {
+        let mut value = valid.clone();
+        value["rounds"][1]["delivery"][field] = replacement;
+        crate::state::fixtures::assert_refused::<Team>(&value);
+    }
+    let mut value = valid;
+    value["items"][2]["phase"] = serde_json::json!({"phase": "pending"});
+    crate::state::fixtures::assert_refused::<Team>(&value);
+}
