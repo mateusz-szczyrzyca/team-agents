@@ -91,3 +91,52 @@ fn delivery_binding_uses_only_the_reported_runs_rounds_and_refuses_ambiguity() {
         .unwrap();
     assert_eq!(bind_delivery(&team, &[round_id(2)]), Err(DeliveryBindingError::Missing));
 }
+
+#[test]
+fn observations_act_only_on_the_current_waiting_claim() {
+    use crate::state::PhaseKind;
+    use crate::state::fixtures::{at, drive, pr, round_id, team};
+    let mut waiting = team(1);
+    for (id, item, phase) in [(1, "1.2", PhaseKind::InReview), (2, "2.1", PhaseKind::InProgress)] {
+        waiting
+            .open_round(round_id(id), Some(item.parse().unwrap()), at(1))
+            .unwrap();
+        drive(&mut waiting, item, phase);
+    }
+    waiting.deliver_round(&round_id(2), pr(7).number).unwrap();
+    let mut ended = waiting.clone();
+    ended.end_delivery(&round_id(2), at(40)).unwrap();
+    let mut done = waiting.clone();
+    done.complete_delivery(&round_id(2), at(40)).unwrap();
+    for (name, team, observation, expected) in [
+        (
+            "merged",
+            &waiting,
+            DeliveryObservation::Merged,
+            DeliveryAction::Complete,
+        ),
+        ("open", &waiting, DeliveryObservation::Open, DeliveryAction::Wait),
+        ("closed", &waiting, DeliveryObservation::Closed, DeliveryAction::Return),
+        (
+            "closed and seen",
+            &ended,
+            DeliveryObservation::Closed,
+            DeliveryAction::Ignore,
+        ),
+        (
+            "reopened after seen",
+            &ended,
+            DeliveryObservation::Open,
+            DeliveryAction::Ignore,
+        ),
+        (
+            "reopened before seen",
+            &waiting,
+            DeliveryObservation::Open,
+            DeliveryAction::Wait,
+        ),
+        ("item done", &done, DeliveryObservation::Merged, DeliveryAction::Ignore),
+    ] {
+        assert_eq!(delivery_action(team, &round_id(2), observation), expected, "{name}");
+    }
+}

@@ -309,3 +309,61 @@ fn an_abandoned_delivery_cannot_complete_before_its_round_opened() {
     ));
     assert_eq!(team, abandoned);
 }
+
+#[test]
+fn a_closed_claim_returns_ordinary_and_split_items_to_a_fresh_round() {
+    for mut team in [working(), two_part_team()] {
+        let item = "2.1".parse().unwrap();
+        team.deliver_round(&round_id(2), pr(7).number).unwrap();
+        let part = team.round(&round_id(2)).unwrap().part();
+        let phase = team.item(item).unwrap().phase().clone();
+        team.end_delivery(&round_id(2), at(40)).unwrap();
+        let old = team.round(&round_id(2)).unwrap();
+        assert_eq!(old.delivery_closed_at(), Some(at(40)));
+        assert_eq!(old.ended(), Some(RoundEnd::Abandoned));
+        assert_eq!(old.delivered_by(), Some(&pr(7)));
+        assert_eq!(waiting_ids(&team), Vec::<RoundId>::new());
+        let mut team: Team = serde_json::from_str(&serde_json::to_string(&team).unwrap()).unwrap();
+        assert_eq!(team.open_round(round_id(3), Some(item), at(41)), Ok(()));
+        assert_eq!(team.round_of(item).unwrap().part(), part);
+        assert_eq!(team.round_of(item).unwrap().delivered_by(), None);
+        assert_eq!(team.item(item).unwrap().phase(), &phase);
+        assert_eq!(
+            serde_json::from_str::<Team>(&serde_json::to_string(&team).unwrap()).unwrap(),
+            team
+        );
+        assert_eq!(
+            team.complete_delivery(&round_id(2), at(42)),
+            Err(CompleteDeliveryError::NotWaiting { round: round_id(2) })
+        );
+    }
+}
+
+#[test]
+fn ending_a_delivery_refuses_each_invalid_transition_without_mutation() {
+    let mut team = working();
+    for (id, error) in [
+        (round_id(9), EndDeliveryError::NoSuchRound { round: round_id(9) }),
+        (round_id(1), EndDeliveryError::NotWorking { round: round_id(1) }),
+        (round_id(2), EndDeliveryError::NotWaiting { round: round_id(2) }),
+    ] {
+        let before = team.clone();
+        assert_eq!(team.end_delivery(&id, at(40)), Err(error));
+        assert_eq!(team, before);
+    }
+    team.deliver_round(&round_id(2), pr(7).number).unwrap();
+    let before = team.clone();
+    assert!(
+        matches!(team.end_delivery(&round_id(2), at(0)), Err(EndDeliveryError::BeforeOpening(ClosedBeforeOpened { at: found, .. })) if found == at(0))
+    );
+    assert_eq!(team, before);
+    team.close_round(&round_id(2), at(30), RoundEnd::Abandoned).unwrap();
+    team.end_delivery(&round_id(2), at(40)).unwrap();
+    assert_eq!(team.round(&round_id(2)).unwrap().delivery_closed_at(), Some(at(40)));
+    let before = team.clone();
+    assert_eq!(
+        team.end_delivery(&round_id(2), at(41)),
+        Err(EndDeliveryError::NotWaiting { round: round_id(2) })
+    );
+    assert_eq!(team, before);
+}

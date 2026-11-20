@@ -166,6 +166,12 @@ impl Round {
         self.delivery.as_ref()
     }
 
+    /// When the delivering PR was observed closed without merging; absent for active or merged claims.
+    #[must_use]
+    pub const fn delivery_closed_at(&self) -> Option<Timestamp> {
+        None
+    }
+
     /// Stores a team-validated delivery claim.
     pub(super) fn deliver(&mut self, pr: super::PullRequest) {
         self.delivery = Some(pr);

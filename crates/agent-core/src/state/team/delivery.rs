@@ -86,7 +86,41 @@ impl From<WorkingRoundError> for CompleteDeliveryError {
     }
 }
 
+/// Why an observed closed delivery claim cannot be ended atomically.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EndDeliveryError {
+    /// The requested round is not in this team.
+    #[error("no such round {round}")]
+    NoSuchRound {
+        /// The requested round.
+        round: RoundId,
+    },
+    /// Only the latest round of an item in progress can return to work.
+    #[error("round {round} is not a working item")]
+    NotWorking {
+        /// The requested round.
+        round: RoundId,
+    },
+    /// The claim is absent or has already ended.
+    #[error("round {round} has no waiting delivery claim")]
+    NotWaiting {
+        /// The requested round.
+        round: RoundId,
+    },
+    /// The observation cannot predate the opening.
+    #[error(transparent)]
+    BeforeOpening(#[from] ClosedBeforeOpened),
+}
+
 impl Team {
+    /// Ends a delivery claim after its PR is observed closed without merging.
+    ///
+    /// # Errors
+    /// Returns [`EndDeliveryError`] without mutation for an unknown, non-working or non-waiting round, or an early time.
+    pub fn end_delivery(&mut self, _id: &RoundId, _at: Timestamp) -> Result<(), EndDeliveryError> {
+        Ok(())
+    }
+
     /// Finds a PR owned by an ordinary or split-part round of this team.
     #[must_use]
     pub fn delivery_pull_request(&self, number: PrNumber) -> Option<&PullRequest> {
@@ -228,6 +262,14 @@ impl Team {
 }
 
 impl CheckedMut<'_, Team> {
+    /// See [`Team::end_delivery`].
+    ///
+    /// # Errors
+    /// Returns [`EndDeliveryError`] if the claim cannot be ended.
+    pub fn end_delivery(&mut self, round: &RoundId, at: Timestamp) -> Result<(), EndDeliveryError> {
+        self.value.end_delivery(round, at)
+    }
+
     /// See [`Team::deliver_round`].
     ///
     /// # Errors

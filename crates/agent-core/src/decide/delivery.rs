@@ -2,6 +2,9 @@
 
 use crate::state::PrNumber;
 
+use crate::ids::RoundId;
+use crate::state::Team;
+
 /// Why a delivery report cannot be interpreted.
 #[derive(Debug, thiserror::Error)]
 pub enum DeliveryReportError {
@@ -61,6 +64,36 @@ pub fn delivery_report(message: &str) -> Result<Option<PrNumber>, DeliveryReport
         return Err(DeliveryReportError::NotDone);
     }
     Ok(report)
+}
+
+/// The observed state of a verified delivering pull request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryObservation {
+    /// Still open, including a reopening before the daemon observed a close.
+    Open,
+    /// Closed without merging.
+    Closed,
+    /// Merged into its base.
+    Merged,
+}
+
+/// The action required by an observation of an accepted claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryAction {
+    /// No current claim remains to act on.
+    Ignore,
+    /// Continue waiting for the same PR.
+    Wait,
+    /// Complete the item through the verified PR.
+    Complete,
+    /// End the claim and return the item to its member.
+    Return,
+}
+
+/// Decides only for a currently waiting claim; ended claims and completed items cannot be revived.
+#[must_use]
+pub fn delivery_action(_team: &Team, _round: &RoundId, _observed: DeliveryObservation) -> DeliveryAction {
+    DeliveryAction::Ignore
 }
 
 #[cfg(test)]
