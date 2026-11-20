@@ -924,7 +924,7 @@ fn a_review_that_ended_without_a_report_says_when_and_why_it_stopped() {
             ActivityEnd::OpinionFailed {
                 reason: agent_core::state::OpinionFailure::MissingReport,
             },
-            "its second opinion was abandoned",
+            "its second opinion was abandoned: the corrections ran out without an opinion",
         ),
         (ActivityEnd::Failed { reason: None }, "it failed"),
     ] {
