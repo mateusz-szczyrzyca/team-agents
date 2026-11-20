@@ -116,4 +116,16 @@ impl PlanKeeping {
         self.stage = PlanStage::Released;
         self.pending = None;
     }
+
+    /// The reason that waits for the next run, taken out.
+    pub(super) fn take_pending(&mut self) -> Option<PlanReason> {
+        self.pending.take()
+    }
+
+    /// One more send-back, granted and counted, with the stage open again.
+    pub(super) fn once_more(&mut self) {
+        self.granted = self.granted.saturating_add(1);
+        self.sent_back = self.sent_back.saturating_add(1);
+        self.stage = PlanStage::Open;
+    }
 }

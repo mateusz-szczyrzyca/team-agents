@@ -323,13 +323,17 @@ impl Member {
     /// The reason of the send-back that waits for the next run, taken out: the run that starts is told it, and no later
     /// run is. `None` when nothing waits, and for a task created before plans.
     pub fn take_plan_reason(&mut self) -> Option<PlanReason> {
-        Some(PlanReason::Missing)
+        self.plan.as_mut().and_then(PlanKeeping::take_pending)
     }
 
     /// The human said to send the run back once more: one more send-back is granted and counted, and the plan's
     /// stage is open again, so that a run that still ends against the plan asks the human anew; nothing for a task
     /// created before plans.
-    pub fn send_back_once_more(&mut self) {}
+    pub fn send_back_once_more(&mut self) {
+        if let Some(keeping) = &mut self.plan {
+            keeping.once_more();
+        }
+    }
 
     /// The human said to go on as it is: no run of the task is sent back for its plan again.
     pub fn release_plan(&mut self) {
