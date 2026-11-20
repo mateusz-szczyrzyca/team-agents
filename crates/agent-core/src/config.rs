@@ -1031,6 +1031,12 @@ impl Config {
         self.split
     }
 
+    /// Unit used when applying the split estimate limit.
+    #[must_use]
+    pub fn split_unit(&self) -> &str {
+        "lines"
+    }
+
     /// The dashboard's address and logins.
     #[must_use]
     pub fn web(&self) -> &Web {
