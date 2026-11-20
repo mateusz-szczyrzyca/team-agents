@@ -159,6 +159,9 @@ pub struct TeamSummary {
     pub rounds: Vec<Round>,
     /// The crew and the reviewers.
     pub members: Vec<MemberSummary>,
+    /// What the team's investigators did, absent from a daemon before it kept them and from a team that has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub activities: Vec<crate::state::Activity>,
 }
 
 /// A round in full: for `show` of a round.
@@ -416,6 +419,7 @@ impl From<&Team> for TeamSummary {
                 .chain(reviewers)
                 .map(|(role, member)| MemberSummary::of(role, member))
                 .collect(),
+            activities: Vec::new(),
         }
     }
 }
@@ -447,7 +451,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::state::PhaseKind;
     use crate::state::fixtures::{assert_refused, at, inv, member, nz, path, task, team, team_id};
+    use crate::state::fixtures::{drive, round_id};
     use crate::state::{AnsweredVia, ItemPhase, Question, State};
 
     /// The sample task and team of these tests, as the text of their IDs.
@@ -595,6 +601,104 @@ mod tests {
         );
         assert_eq!(value["members"][1]["role"], json!("member"));
         assert_eq!(serde_json::from_value::<TeamSummary>(value).unwrap(), summary);
+    }
+
+    // ---- investigator activities --------------------------------------------------------------------------------
+
+    #[test]
+    fn a_team_summary_carries_what_its_investigators_did_and_reads_it_back() {
+        let mut recorded = team(1);
+        recorded
+            .open_round(round_id(1), Some("1.2".parse().unwrap()), at(1))
+            .unwrap();
+        drive(&mut recorded, "1.2", PhaseKind::InReview);
+        recorded.record_activities(at(21));
+        let mut state = State::new();
+        state.insert_team(recorded).unwrap();
+        let team = state.team(&team_id(1)).unwrap();
+
+        let summary = TeamSummary::from(team);
+
+        assert_eq!(summary.activities, team.activities());
+        assert_eq!(
+            summary.activities.len(),
+            1,
+            "the coordinator, whose crew work is recorded"
+        );
+        let written = serde_json::to_value(&summary).unwrap();
+        assert_eq!(written["activities"].as_array().map(Vec::len), Some(1), "{written}");
+        assert_eq!(serde_json::from_value::<TeamSummary>(written).unwrap(), summary);
+    }
+
+    #[test]
+    fn an_activity_read_from_a_team_summary_keeps_when_it_was_asked_and_how_it_ended() {
+        let value = json!({
+            "investigator": "inv-codex",
+            "task": TASK,
+            "rounds": ["round-20261111-153001-q1w2"],
+            "request": {"kind": "first_review"},
+            "asked_at": "2026-11-11T19:15:20Z",
+            "outcome": {
+                "status": "finished",
+                "at": "2026-11-11T19:15:40Z",
+                "end": {"kind": "reported"},
+            },
+        });
+
+        let activity = serde_json::from_value::<crate::state::Activity>(value.clone()).unwrap();
+
+        assert_eq!(activity.investigator().as_str(), "inv-codex");
+        assert_eq!(activity.task(), &task(2));
+        assert_eq!(activity.request(), &crate::state::ActivityRequest::FirstReview);
+        assert_eq!(activity.asked_at(), at(20));
+        assert_eq!(
+            activity.outcome(),
+            &crate::state::ActivityOutcome::Finished {
+                at: at(40),
+                end: crate::state::ActivityEnd::Reported,
+            }
+        );
+        let mut early = value;
+        early["outcome"]["at"] = json!("2026-11-11T19:15:00Z");
+        assert_refused::<crate::state::Activity>(&early);
+    }
+
+    #[test]
+    fn a_team_summary_without_activities_is_written_exactly_as_before() {
+        let recorded = state();
+        assert_ne!(recorded.team(&team_id(1)).unwrap().activities(), []);
+
+        let mut summary = TeamSummary::from(recorded.team(&team_id(1)).unwrap());
+        let with = serde_json::to_value(&summary).unwrap();
+        assert!(with.get("activities").is_some(), "{with}");
+        summary.activities.clear();
+
+        let value = serde_json::to_value(&summary).unwrap();
+
+        // A team that says nothing about its investigators writes no `activities`: the answer is that of a daemon
+        // before them.
+        assert!(value.get("activities").is_none(), "{value}");
+    }
+
+    #[test]
+    fn the_answer_of_a_daemon_before_activities_still_reads() {
+        let line = include_str!("../../tests/fixtures/protocol-v3-round-frames.jsonl")
+            .lines()
+            .find(|line| line.contains("\"kind\":\"teams\""))
+            .expect("the fixture has an answer of teams");
+
+        let frame = crate::protocol::Frame::from_line(line).expect("the old answer reads");
+
+        let crate::protocol::Frame::Response(response) = frame else {
+            panic!("the fixture is an answer, not an event");
+        };
+        let Outcome::Ok { reply } = response.result else {
+            panic!("the fixture answers with a reply");
+        };
+        let Reply::Teams { teams } = reply else {
+            panic!("the fixture answers teams: {reply:?}");
+        };
+        assert!(teams.iter().all(|team| team.activities.is_empty()));
     }
 
     // ---- the replies --------------------------------------------------------------------------------------------
