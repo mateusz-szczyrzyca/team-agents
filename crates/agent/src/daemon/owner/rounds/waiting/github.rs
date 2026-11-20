@@ -11,11 +11,53 @@ use std::num::NonZeroU32;
 use agent_core::decide::retry::pause;
 use agent_core::ids::{RoundId, TeamId};
 use agent_core::state::{PrNumber, Timestamp};
+use agent_runtime::git::{GitError, GitOperation};
 use agent_runtime::github::Outlook;
 use time::Duration;
-
 /// How many steps may wait for GitHub at once; beyond it the oldest wait gives way, as a loop with no memory would.
 pub(in crate::daemon::owner) const MAX_WAITS: usize = 256;
+
+/// Whether a failed step may pass at a later try, from what it failed with: a GitHub failure says so itself, and a
+/// git call that reaches GitHub (a fetch, a push, a branch read on the remote) may, while git's own refusals (a lock, a
+/// missing branch of the checkout, a rejected configuration) will not.
+pub(in crate::daemon::owner) fn outlook_of(error: &super::super::PublishError) -> Outlook {
+    use super::super::PublishError;
+    match error {
+        PublishError::GitHub(error) => error.outlook(),
+        PublishError::Git(GitError::Run { operation, .. } | GitError::Failed { operation, .. })
+            if matches!(
+                operation,
+                GitOperation::Fetch | GitOperation::Push | GitOperation::RemoteContains
+            ) =>
+        {
+            Outlook::MayPass
+        }
+        PublishError::Git(_) => Outlook::WillNotPass,
+        PublishError::Inspect(_) => Outlook::WillNotPass,
+        PublishError::Findings(_)
+        | PublishError::Path { .. }
+        | PublishError::Description { .. }
+        | PublishError::Origin(_)
+        | PublishError::Store(_)
+        | PublishError::Text(_)
+        | PublishError::Render(_)
+        | PublishError::Variable(_)
+        | PublishError::Round(_)
+        | PublishError::RepoGone { .. }
+        | PublishError::Id(_)
+        | PublishError::Name(_)
+        | PublishError::Branch(_)
+        | PublishError::Notification(_)
+        | PublishError::Checks(_)
+        | PublishError::Questions(_)
+        | PublishError::Write(_)
+        | PublishError::QuestionNumbers
+        | PublishError::Reviewer(_)
+        | PublishError::Asking(_)
+        | PublishError::Replacing(_)
+        | PublishError::Lost => Outlook::WillNotPass,
+    }
+}
 
 /// The time of day `time` as a reader of the local clock sees it, `HH:MM`.
 #[must_use]
@@ -92,7 +134,10 @@ impl Wait {
         self.tries = self.tries.saturating_add(1);
         self.answer = answer;
         self.outlook = outlook;
-        self.next_at = Some(later(now, pause(self.tries))?);
+        self.next_at = match outlook {
+            Outlook::MayPass => Some(later(now, pause(self.tries))?),
+            Outlook::WillNotPass => None,
+        };
         Ok(())
     }
 
@@ -114,7 +159,7 @@ impl Wait {
                 "{}, tried {tried} time{}, next try {}",
                 self.operation,
                 if tried == 1 { "" } else { "s" },
-                clock_time(at, offset)
+                minute_shown(at, offset)
             ),
             None => format!("{}, refused: {}", self.operation, self.answer),
         }
@@ -129,6 +174,13 @@ fn named(operation: String, pr: Option<PrNumber>) -> String {
     }
 }
 
+/// The minute a time shows, rounded up: 25 seconds past 00:04 shows 00:05, as the human reads a time in the log.
+fn minute_shown(at: Timestamp, offset: time::UtcOffset) -> String {
+    let local = at.as_utc().to_offset(offset);
+    let ahead = time::Duration::seconds(60 - i64::from(local.second()));
+    let shown = local + ahead;
+    format!("{:02}:{:02}", shown.hour(), shown.minute())
+}
 /// `now` plus `span`.
 ///
 /// # Errors
@@ -137,16 +189,38 @@ fn later(now: Timestamp, span: Duration) -> Result<Timestamp, DurationOverflow> 
     Timestamp::from_utc(now.as_utc().saturating_add(span)).map_err(|_| DurationOverflow)
 }
 
+/// What a failure did to the wait of its step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::daemon::owner) enum Failure {
+    /// The step starts to wait: its first failure.
+    First,
+    /// It waited for a pause that is over and failed again: the pause grows.
+    Again,
+    /// It stopped being worth trying: it waits for the human now.
+    Starts,
+    /// It waits for the human, as it did.
+    RefusedAgain,
+}
+
 /// The pause carries the time past the last year a [`Timestamp`] records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("the time after the pause cannot be recorded")]
 pub(in crate::daemon::owner) struct DurationOverflow;
 
+impl DurationOverflow {
+    /// The error the owner answers with: a clock whose pause ends past the last year a time records is broken, and
+    /// the daemon ends on a broken clock as it does on any time it cannot record.
+    pub(in crate::daemon::owner) fn owner_error(self) -> super::super::OwnerError {
+        use agent_core::state::InvalidTimestamp;
+        super::super::OwnerError::Clock(InvalidTimestamp::YearOutOfRange { year: 10000 })
+    }
+}
+
 /// The steps that failed and wait, by round and by operation.
 #[derive(Debug, Default)]
 pub(in crate::daemon::owner) struct Waits {
     /// The waits of each round, and of each team's rounds as a whole, by operation.
-    pub(super) steps: BTreeMap<(Step, String), Wait>,
+    steps: BTreeMap<(Step, String), Wait>,
 }
 
 impl Waits {
@@ -162,7 +236,7 @@ impl Waits {
     }
 
     /// Whether `step` is to be tried now: it has not failed, its pause is over, or it waits for the human.
-    pub(super) fn due(&self, step: &Step, operation: &str, now: Timestamp) -> bool {
+    pub(in crate::daemon::owner) fn due(&self, step: &Step, operation: &str, now: Timestamp) -> bool {
         match self.steps.get(&(step.clone(), operation.to_owned())) {
             Some(wait) => wait.due(now),
             None => true,
@@ -170,7 +244,7 @@ impl Waits {
     }
 
     /// Records that `step` failed at `now` with `answer`: the first failure starts the wait, a further one grows the
-    /// pause. Returns `Some` when the step starts to wait and `None` when it already waited: one event per wait.
+    /// pause. Returns what the failure did to the wait, and the wait as it is now.
     ///
     /// # Errors
     /// [`DurationOverflow`] when the next try cannot be recorded.
@@ -183,31 +257,62 @@ impl Waits {
         answer: String,
         outlook: Outlook,
         now: Timestamp,
-    ) -> Result<Option<&Wait>, DurationOverflow> {
+    ) -> Result<(Failure, Wait), DurationOverflow> {
         let key = (step.clone(), operation.to_owned());
-        let (starts, kept) = match self.steps.remove(&key) {
+        let failure = match self.steps.get(&key).map(|wait| wait.outlook) {
+            Some(Outlook::MayPass) if outlook == Outlook::MayPass => Failure::Again,
+            Some(Outlook::WillNotPass) if outlook == Outlook::WillNotPass => Failure::RefusedAgain,
+            Some(Outlook::MayPass | Outlook::WillNotPass) => Failure::Starts,
+            None => Failure::First,
+        };
+        let wait = match self.steps.remove(&key) {
             Some(mut wait) => {
-                let starts = wait.outlook != outlook;
                 wait.again(answer, outlook, now)?;
-                (starts, wait)
+                wait
             }
-            None => {
-                let wait = Wait::first(team.clone(), operation.to_owned(), pr, answer, outlook, now)?;
-                (true, wait)
-            }
+            None => Wait::first(team.clone(), operation.to_owned(), pr, answer, outlook, now)?,
         };
         if self.steps.len() >= MAX_WAITS
             && let Some(oldest) = self.steps.keys().next().cloned()
         {
             self.steps.remove(&oldest);
         }
-        self.steps.insert(key.clone(), kept);
-        Ok(starts.then(|| self.steps.get(&key)).flatten())
+        self.steps.insert(key, wait.clone());
+        Ok((failure, wait))
     }
 
     /// Forgets the wait of `step` for `operation`, which is done; `true` when it waited and is no longer.
     pub(super) fn done(&mut self, step: &Step, operation: &str) -> bool {
         self.steps.remove(&(step.clone(), operation.to_owned())).is_some()
+    }
+
+    /// How many waits it keeps.
+    #[cfg(test)]
+    pub(super) fn kept(&self) -> usize {
+        self.steps.len()
+    }
+
+    /// When the step of `round` that is to be tried last is due, among those of `operations`: the round is looked at
+    /// again then, and so is the daemon. None when none of them waits, when one waits for the human (who is told), or
+    /// when the pauses are all over and the next look tries them.
+    pub(in crate::daemon::owner) fn next_due(
+        &self,
+        round: &RoundId,
+        operations: &[&str],
+        now: Timestamp,
+    ) -> Option<Timestamp> {
+        let waits: Vec<&Wait> = operations
+            .iter()
+            .filter_map(|operation| self.for_round(round, operation))
+            .collect();
+        if waits.iter().any(|wait| wait.next_at.is_none()) {
+            return None;
+        }
+        waits
+            .iter()
+            .filter_map(|wait| wait.next_at)
+            .max()
+            .filter(|at| *at > now)
     }
 
     /// Forgets every wait of `team`, so that the human's `agent resume` tries its steps at once.

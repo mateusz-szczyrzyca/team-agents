@@ -1,23 +1,110 @@
 //! Project the owner's queued work and the durable round state into an idle wait reason.
 
 use agent_core::decide::wait::{Activity, Obligation, Waiting, round_wait};
+use agent_core::ids::TeamId;
 use agent_core::kinds::Role;
-use agent_core::state::{ItemPhase, OpinionStage, Round, RoundLife, Team};
+use agent_core::log::LogEvent;
+use agent_core::prompt::Variables;
+use agent_core::state::{ItemPhase, OpinionStage, PrNumber, Round, RoundLife, Team, Timestamp};
 use agent_core::status::TaskStatus;
+use agent_runtime::github::Outlook;
+use agent_runtime::process::error_chain;
 
-use super::super::Owner;
+use super::super::{Owner, OwnerError};
 use super::publish::{GATE_SEND_BACKS, OwnGate};
+use super::{Announcement, AutopilotNotice, PublishError};
 
 mod github;
 #[cfg(test)]
 mod tests;
 
-pub(in crate::daemon::owner) use self::github::{Step, Waits, clock_time};
+pub(in crate::daemon::owner) use self::github::{Failure, Step, Wait, Waits, outlook_of};
 #[cfg(test)]
 #[path = "waiting/tests/github.rs"]
 mod github_tests;
 
 impl Owner {
+    /// Records that `step` of `team` failed with `error` and waits: the round loses nothing, the daemon goes on with
+    /// its other rounds, and the step is tried again after its pause -- at once, for a refusal, on `agent resume`.
+    ///
+    /// One warning is logged when the step starts to wait and none per try; a refusal that will not pass is told to
+    /// the human once.
+    ///
+    /// # Errors
+    /// [`OwnerError::Clock`] when the pause would pass the last year a time records.
+    pub(in crate::daemon::owner) fn github_step_failed(
+        &mut self,
+        step: &Step,
+        team: &TeamId,
+        operation: &str,
+        pr: Option<PrNumber>,
+        error: &PublishError,
+        now: Timestamp,
+    ) -> Result<(), OwnerError> {
+        let outlook = outlook_of(error);
+        let offset = self.parts.local_offset;
+        let (failure, wait) = self
+            .watch
+            .github_waits
+            .failed(step, team, operation, pr, error_chain(error), outlook, now)
+            .map_err(|missed| missed.owner_error())?;
+        let starts = matches!(failure, Failure::First | Failure::Starts);
+        if starts {
+            tracing::warn!(
+                event = LogEvent::GithubStepWaiting.as_str(),
+                team = %team,
+                operation,
+                pr = pr.map_or_else(String::new, |number| number.to_string()),
+                outlook = match outlook {
+                    Outlook::MayPass => "may_pass",
+                    Outlook::WillNotPass => "will_not_pass",
+                },
+                next_try = wait.next_at.map_or_else(String::new, |at| at.to_string()),
+                detail = %wait.line(offset),
+                error = %error_chain(error),
+                "a step of the round failed and waits for GitHub: {}",
+                wait.line(offset)
+            );
+        }
+        if outlook == Outlook::WillNotPass && starts {
+            self.tell_refused(team, operation, &wait, now)?;
+        }
+        Ok(())
+    }
+
+    /// Records that `step` of `team` went through: a step that waited is done, logged once.
+    pub(in crate::daemon::owner) fn github_step_done(&mut self, step: &Step, team: &TeamId, operation: &str) {
+        if self.watch.github_waits.done(step, operation) {
+            tracing::info!(
+                event = LogEvent::GithubStepResumed.as_str(),
+                team = %team,
+                operation,
+                "the step of the round that waited for GitHub went through"
+            );
+        }
+    }
+
+    /// Tells the lead of `team` that GitHub refuses a step of its round, once for the step, and how to try again.
+    fn tell_refused(&mut self, team: &TeamId, operation: &str, wait: &Wait, now: Timestamp) -> Result<(), OwnerError> {
+        let Some(pulls) = self.pulls.clone() else {
+            return Ok(());
+        };
+        let announcement = Announcement::GithubRefused {
+            team: team.clone(),
+            operation: operation.to_owned(),
+        };
+        if !self.watch.announced.insert(announcement) {
+            return Ok(());
+        }
+        let lead = self.lead_of(team)?;
+        let values = Variables::new()
+            .with("team", team.as_str())
+            .and_then(|values| values.with("operation", operation))
+            .and_then(|values| values.with("answer", wait.answer.as_str()));
+        self.tell_human(&pulls, AutopilotNotice::GithubRefused, values, &lead, now);
+        Ok(())
+    }
+
     /// Records an unowned idle round once, after all scheduling in a look has finished.
     pub(in crate::daemon::owner) fn observe_wait(
         &mut self,
