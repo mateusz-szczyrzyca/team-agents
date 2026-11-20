@@ -765,3 +765,22 @@ fn a_comparison_of_two_versions_finds_every_kind_of_change() {
     assert_eq!(ids(&back.added), ["1.3"]);
     assert_eq!(ids(&back.disappeared), ["1.6", "2.2"]);
 }
+
+/// A fault in a step's text is reported before the text at column 0 that ends the step, as the first fault is.
+#[test]
+fn a_fault_in_a_step_text_comes_before_the_stray_line_after_it() {
+    let bad_file = failure("1. S\n[ ] 1.1 a\n    Files: ../a\nstray\n");
+    assert!(
+        matches!(&bad_file, PlanError::BadFile { line, problem } if *line == line!(3) && problem.rule == PathRule::DotSegment),
+        "{bad_file:?}"
+    );
+    let bad_check = failure("1. S\n[ ] 1.1 a\n    Check: exists /etc/passwd\nstray\n");
+    assert!(
+        matches!(&bad_check, PlanError::BadCheck { line, problem } if *line == line!(3) && problem.rule == PathRule::Absolute),
+        "{bad_check:?}"
+    );
+    assert_eq!(
+        failure("1. S\n[-] 1.1 a\nstray\n"),
+        PlanError::GivenUpWithoutReason { line: line!(2) }
+    );
+}
