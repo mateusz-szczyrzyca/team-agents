@@ -14,6 +14,7 @@ use agent_core::status::TaskStatus;
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::process::error_chain;
 use agent_runtime::run::activity::last_activity;
+use agent_runtime::settings::SettingsError;
 use agent_runtime::store::Home;
 use time::UtcOffset;
 
@@ -31,6 +32,9 @@ pub(crate) enum StatusError {
         /// What it answered.
         kind: &'static str,
     },
+    /// The settings of the home, which name the investigators, cannot be read.
+    #[error("cannot read the settings of the home")]
+    Settings(#[source] SettingsError),
     /// The output cannot be written.
     #[error("cannot write the status")]
     Output(#[source] io::Error),
@@ -157,6 +161,21 @@ pub(crate) async fn status(
     }
     let (teams, history) = teams(connection, target).await?;
     write(out, &render(&teams), history.as_ref(), None)
+}
+
+/// Asks the daemon for every team and writes to `out` what `investigators::render` says of the investigators configured in
+/// `home`: for each of them its last two activities in the teams that are not closed, and the one that has none as free.
+///
+/// # Errors
+/// [`StatusError`]: the settings of `home` cannot be read, the daemon cannot be asked or answers with something else
+/// than a list of teams, or the output cannot be written.
+pub(crate) async fn status_investigators(
+    _connection: &mut Connection,
+    _home: &Home,
+    _offset: UtcOffset,
+    _out: &mut impl Write,
+) -> Result<(), StatusError> {
+    Ok(())
 }
 
 /// Asks the daemon for every team and writes to `out` those that have a round that goes on, with those rounds only:
@@ -449,6 +468,7 @@ const NO_TEAMS: &str = "no teams\n";
 /// What `agent status --running` writes when no round goes on.
 const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 
+mod investigators;
 mod reviewer;
 mod rounds;
 

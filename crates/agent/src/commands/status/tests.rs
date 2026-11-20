@@ -58,6 +58,33 @@ fn teams_are_separated_by_nothing_but_their_own_lines() {
     assert_eq!(text.lines().count(), 10);
 }
 
+/// The answer of the daemon: the sample team `n` with a round of item 1.1, opened at 1 second, that `close` closes as
+/// abandoned at 90 seconds or leaves open, and with `activities`.
+pub(super) fn team(n: u32, close: bool, activities: Vec<agent_core::state::Activity>) -> TeamSummary {
+    let state = team_state();
+    let mut round = state.teams()[0].clone();
+    round
+        .open_round(
+            "round-20261111-153001-q1w2".parse().unwrap(),
+            Some("1.1".parse().unwrap()),
+            at(1),
+        )
+        .unwrap();
+    if close {
+        round
+            .close_round(
+                &"round-20261111-153001-q1w2".parse().unwrap(),
+                at(90),
+                RoundEnd::Abandoned,
+            )
+            .unwrap();
+    }
+    let mut summary = TeamSummary::from(&round);
+    summary.id = format!("team-20261111-1530{n:02}-t5m8").parse().unwrap();
+    summary.activities = activities;
+    summary
+}
+
 fn socket(dir: &tempfile::TempDir) -> std::path::PathBuf {
     dir.path().join("agent.sock")
 }
@@ -177,6 +204,77 @@ async fn a_closed_output_is_an_error_not_a_panic() {
         matches!(&error, StatusError::Output(e) if e.kind() == io::ErrorKind::BrokenPipe),
         "{error:?}"
     );
+}
+
+// ---- investigators -------------------------------------------------------------------------------------------------
+
+/// A home in `dir` whose `agents.toml` configures the investigators `inv-gemini` and `inv-codex`, and a daemon on its socket
+/// that answers `reply` to anything.
+fn investigators_home(dir: &std::path::Path, reply: Reply) -> FakeDaemon {
+    std::fs::write(
+        dir.join("agents.toml"),
+        "[agents.claude-1]\ncli = \"claude\"\n\n[investigators.inv-gemini]\ncli = \"claude\"\n\n\
+         [investigators.inv-codex]\ncli = \"codex\"\n\n[tiers]\nnormal = [\"claude-1\"]\nworkers = []\n\
+         [binaries]\nclaude = \"claude\"\ncodex = \"codex\"\nagentbus = \"agentbus\"\n",
+    )
+    .unwrap();
+    FakeDaemon::serve(&dir.join("agent.sock"), move |request| {
+        Answer::Lines(vec![
+            Frame::Response(Response::ok(request.id, reply.clone()))
+                .to_line()
+                .unwrap(),
+        ])
+    })
+}
+
+// Rule: `--investigators` lists the configured investigators with what the daemon answers a status request for the teams.
+#[tokio::test]
+async fn the_investigator_view_asks_the_daemon_and_lists_the_configured_investigators() {
+    let dir = tempfile::tempdir().unwrap();
+    let listed = vec![team(1, true, Vec::new()), team(0, false, Vec::new())];
+    let daemon = investigators_home(dir.path(), Reply::Teams { teams: listed.clone() });
+    let home = Home::new(&AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap());
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+    let mut out = Vec::new();
+
+    status_investigators(&mut connection, &home, UtcOffset::UTC, &mut out)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        investigators::render(
+            &listed,
+            &["inv-codex".parse().unwrap(), "inv-gemini".parse().unwrap()],
+            UtcOffset::UTC
+        )
+    );
+    assert_eq!(
+        daemon.requests()[0].command,
+        Command::Status(StatusRequest { target: None })
+    );
+}
+
+// Rule: a home whose configuration cannot be read cannot tell which investigators to show, and says so.
+#[tokio::test]
+async fn the_investigator_view_says_why_a_configuration_it_cannot_read_lists_nobody() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = FakeDaemon::serve(&socket(&dir), |request| {
+        Answer::Lines(vec![
+            Frame::Response(Response::ok(request.id, Reply::Teams { teams: Vec::new() }))
+                .to_line()
+                .unwrap(),
+        ])
+    });
+    let home = Home::new(&AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap());
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+
+    let error = status_investigators(&mut connection, &home, UtcOffset::UTC, &mut Vec::new())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, StatusError::Settings(_)), "{error:?}");
+    assert!(daemon.requests().is_empty(), "the daemon is not asked");
 }
 
 // ---- rounds --------------------------------------------------------------------------------------------------------

@@ -352,6 +352,9 @@ struct StatusArgs {
     /// Only the teams that have a round that goes on, with those rounds: what is being worked on now.
     #[arg(long, conflicts_with = "target")]
     running: bool,
+    /// What every configured investigator is doing: its last two activities in the teams that are not closed.
+    #[arg(long, conflicts_with = "target")]
+    investigators: bool,
 }
 
 /// Why a text is neither a team nor a task.
