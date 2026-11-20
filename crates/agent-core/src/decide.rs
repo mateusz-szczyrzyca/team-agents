@@ -11,6 +11,7 @@ pub mod assign;
 pub mod checks;
 pub mod disclosure;
 pub mod fix;
+pub mod merge_refusal;
 pub mod opinion;
 pub mod outcome;
 pub mod publish;
