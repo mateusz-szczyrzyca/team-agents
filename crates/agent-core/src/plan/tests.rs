@@ -833,3 +833,21 @@ fn a_plan_whose_text_written_back_is_over_the_limit_is_refused() {
         }
     );
 }
+
+/// Each kind of change alone makes a comparison not empty; a step lost or retitled alone loses a step, a step added
+/// or a state changed alone does not.
+#[test]
+fn each_kind_of_change_alone_counts() {
+    let old = version("1. S\n[ ] 1.1 a\n[ ] 1.2 b\n");
+    for (newer, loses) in [
+        ("1. S\n[ ] 1.1 a\n[ ] 1.2 b\n[ ] 1.3 c\n", false),
+        ("1. S\n[x] 1.1 a\n[ ] 1.2 b\n", false),
+        ("1. S\n[ ] 1.1 a\n", true),
+        ("1. S\n[ ] 1.1 a\n[ ] 1.2 another\n", true),
+    ] {
+        let changes = old.compare(&version(newer));
+
+        assert!(!changes.is_empty(), "{newer:?}");
+        assert_eq!(changes.loses_a_step(), loses, "{newer:?}");
+    }
+}
