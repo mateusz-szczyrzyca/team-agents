@@ -164,6 +164,9 @@ pub struct TeamSummary {
     /// The rounds of the team, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rounds: Vec<Round>,
+    /// Approved split plans, absent from replies written before split execution.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub splits: Vec<crate::state::split::SplitPlan>,
     /// The crew and the reviewers.
     pub members: Vec<MemberSummary>,
     /// What the team's investigators did, absent from a daemon before it kept them and from a team that has none.
@@ -422,6 +425,7 @@ impl From<&Team> for TeamSummary {
             merge: team.merge(),
             items,
             rounds: team.rounds().to_vec(),
+            splits: team.splits().to_vec(),
             members: crew
                 .chain(reviewers)
                 .map(|(role, member)| MemberSummary::of(role, member))
