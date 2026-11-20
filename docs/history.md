@@ -373,9 +373,11 @@ the same as the last one is not written again.
 | `at` | TEXT | when it was read |
 | `kind` | `version` \| `missing` \| `unreadable` | a plan as written, a task with no `.agent/plan.md`, or a file that does not parse |
 | `text` | TEXT, nullable | the plan as written, for `version` |
+| `line` | INTEGER ≥ 1, nullable | the line of the fault, counted from 1, for an `unreadable` plan whose reader names one; `NULL` for a fault of the whole text, and for every other kind |
 | `detail` | TEXT, nullable | what is wrong, in a line, for `unreadable` |
 
-`(kind = 'version')` is exactly `text` not `NULL`, and `(kind = 'unreadable')` is exactly `detail` not `NULL`.
+`(kind = 'version')` is exactly `text` not `NULL`, and `(kind = 'unreadable')` is exactly `detail` not `NULL`; only an
+`unreadable` row has a `line`.
 
 ## Indexes
 

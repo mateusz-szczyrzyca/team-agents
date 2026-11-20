@@ -11,6 +11,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::codec::{parse_time, time_text};
 use super::error::{ReadError, RecordKind, WriteError};
+use super::reader::Row_;
 use agent_core::ids::{RunId, TaskId, TeamId};
 use agent_core::state::Timestamp;
 
@@ -70,19 +71,39 @@ fn sql(source: rusqlite::Error) -> WriteError {
 /// [`WriteError`]: a row of a task that is not in the history, or a refusal of the database.
 pub(super) fn insert(tx: &Transaction<'_>, records: &[PlanRecord]) -> Result<(), WriteError> {
     for record in records {
-        let previous = last(tx, &record.task, None).map_err(sql)?;
-        if previous.as_ref().is_some_and(|last| last.read == record.read) {
+        let (kind, text, line, detail) = match &record.read {
+            PlanRead::Version { text } => (VERSION, Some(text.as_str()), None, None),
+            PlanRead::Missing => (MISSING, None, None, None),
+            PlanRead::Unreadable { line, detail } => {
+                (UNREADABLE, None, line.map(NonZeroU32::get), Some(detail.as_str()))
+            }
+        };
+        // The last row as it is stored: the same read again is not kept a second time.
+        let previous = tx
+            .query_row(
+                "SELECT kind, text, line, detail FROM plan_versions WHERE task = ?1 ORDER BY id DESC LIMIT 1",
+                params![record.task.as_str()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(sql)?;
+        let line = line.map(i64::from);
+        if previous.is_some_and(|(last_kind, last_text, last_line, last_detail)| {
+            last_kind == kind && last_text.as_deref() == text && last_line == line && last_detail.as_deref() == detail
+        }) {
             continue;
         }
-        let (kind, text, detail) = match &record.read {
-            PlanRead::Version { text } => (VERSION, Some(text.as_str()), None),
-            PlanRead::Missing => (MISSING, None, None),
-            PlanRead::Unreadable { detail, .. } => (UNREADABLE, None, Some(detail.as_str())),
-        };
         let added = tx
             .execute(
-                "INSERT INTO plan_versions (task, team, run, at, kind, text, detail) \
-                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 FROM runs WHERE task = ?1 LIMIT 1",
+                "INSERT INTO plan_versions (task, team, run, at, kind, text, line, detail) \
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 FROM runs WHERE task = ?1 LIMIT 1",
                 params![
                     record.task.as_str(),
                     record.team.as_str(),
@@ -90,6 +111,7 @@ pub(super) fn insert(tx: &Transaction<'_>, records: &[PlanRecord]) -> Result<(),
                     time_text(record.at),
                     kind,
                     text,
+                    line,
                     detail
                 ],
             )
@@ -113,7 +135,10 @@ pub(super) fn read(snapshot: &Transaction<'_>, task: &TaskId) -> Result<Vec<Plan
         return Ok(Vec::new());
     }
     let mut statement = snapshot
-        .prepare("SELECT task, team, run, at, kind, text, detail, id FROM plan_versions WHERE task = ?1 ORDER BY id")
+        .prepare(
+            "SELECT task, team, run, at, kind, text, line, detail, id FROM plan_versions \
+         WHERE task = ?1 ORDER BY id",
+        )
         .map_err(query)?;
     let mut rows = statement.query(params![task.as_str()]).map_err(query)?;
     let mut records = Vec::new();
@@ -136,38 +161,24 @@ pub(super) fn last_before(
     if !has_table(snapshot)? {
         return Ok(None);
     }
-    last(snapshot, task, exclude).map_err(|source| ReadError::Query {
-        table: "plan_versions",
-        source,
-    })
+    last(snapshot, task, exclude)
 }
 
-/// The last row of `task` whose run is not `exclude`.
-fn last(
-    snapshot: &Transaction<'_>,
-    task: &TaskId,
-    exclude: Option<&RunId>,
-) -> Result<Option<PlanRecord>, rusqlite::Error> {
-    let row = snapshot
-        .query_row(
-            "SELECT task, team, run, at, kind, text, detail, id FROM plan_versions \
+/// The last row of `task` whose run is not `exclude`, checked as [`read`] checks its rows.
+fn last(snapshot: &Transaction<'_>, task: &TaskId, exclude: Option<&RunId>) -> Result<Option<PlanRecord>, ReadError> {
+    let mut statement = snapshot
+        .prepare(
+            "SELECT task, team, run, at, kind, text, line, detail, id FROM plan_versions \
              WHERE task = ?1 AND (?2 IS NULL OR run IS NULL OR run <> ?2) ORDER BY id DESC LIMIT 1",
-            params![task.as_str(), exclude.map(RunId::as_str)],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                    row.get::<_, Option<String>>(6)?,
-                    row.get::<_, i64>(7)?,
-                ))
-            },
         )
-        .optional()?;
-    row.map(decode_parts).transpose()
+        .map_err(query)?;
+    let mut rows = statement
+        .query(params![task.as_str(), exclude.map(RunId::as_str)])
+        .map_err(query)?;
+    let Some(row) = rows.next().map_err(query)? else {
+        return Ok(None);
+    };
+    decode(row).map(Some)
 }
 
 /// Whether the database has `plan_versions`: a file written before migration 12 has none.
@@ -190,61 +201,39 @@ fn query(source: rusqlite::Error) -> ReadError {
     }
 }
 
-/// The row `row` as a plan record.
+/// The row `row` as a plan record, checked against the rules of its columns and of its kind.
 fn decode(row: &rusqlite::Row<'_>) -> Result<PlanRecord, ReadError> {
-    let id: i64 = row.get(7).map_err(query)?;
-    let parts = (
-        row.get::<_, String>(0).map_err(query)?,
-        row.get::<_, String>(1).map_err(query)?,
-        row.get::<_, Option<String>>(2).map_err(query)?,
-        row.get::<_, String>(3).map_err(query)?,
-        row.get::<_, String>(4).map_err(query)?,
-        row.get::<_, Option<String>>(5).map_err(query)?,
-        row.get::<_, Option<String>>(6).map_err(query)?,
-        id,
-    );
-    decode_parts(parts).map_err(|source| ReadError::Query {
-        table: "plan_versions",
-        source,
-    })
-}
-
-/// The columns of a row of `plan_versions` as a plan record, checked against the rules of its kind.
-fn decode_parts(
-    (task, team, run, at, kind, text, detail, id): (
-        String,
-        String,
-        Option<String>,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        i64,
-    ),
-) -> Result<PlanRecord, rusqlite::Error> {
-    let key = format!("plan_versions {id}");
-    let refuse = |column: &'static str, rule: &str| {
-        rusqlite::Error::InvalidParameterName(format!("the {column} of {key} {rule}"))
-    };
-    let task = task
-        .parse::<TaskId>()
-        .map_err(|_| rusqlite::Error::InvalidParameterName(format!("task of {key}")))?;
-    let team = team
-        .parse::<TeamId>()
-        .map_err(|_| rusqlite::Error::InvalidParameterName(format!("team of {key}")))?;
-    let run = run
-        .map(|run| run.parse::<RunId>())
-        .transpose()
-        .map_err(|_| rusqlite::Error::InvalidParameterName(format!("run of {key}")))?;
-    let at = parse_time(&at).map_err(|_| rusqlite::Error::InvalidParameterName(format!("at of {key}")))?;
-    let read = match (kind.as_str(), text, detail) {
-        (VERSION, Some(text), None) => PlanRead::Version { text },
-        (MISSING, None, None) => PlanRead::Missing,
-        (UNREADABLE, None, Some(detail)) => PlanRead::Unreadable { line: None, detail },
-        (VERSION | MISSING | UNREADABLE, _, _) => {
-            return Err(refuse("kind", "does not fit its text and detail"));
+    let id: i64 = row.get(8).map_err(query)?;
+    let here = Row_::of("plan_versions", id.to_string());
+    let task = here.value("task", row.get::<_, String>(0).map_err(query)?.parse::<TaskId>())?;
+    let team = here.value("team", row.get::<_, String>(1).map_err(query)?.parse::<TeamId>())?;
+    let run = row
+        .get::<_, Option<String>>(2)
+        .map_err(query)?
+        .map(|run| here.value("run", run.parse::<RunId>()))
+        .transpose()?;
+    let at = here.value("at", parse_time(&row.get::<_, String>(3).map_err(query)?))?;
+    let kind = row.get::<_, String>(4).map_err(query)?;
+    let text = row.get::<_, Option<String>>(5).map_err(query)?;
+    let line = row
+        .get::<_, Option<i64>>(6)
+        .map_err(query)?
+        .map(|line| {
+            u32::try_from(line)
+                .ok()
+                .and_then(NonZeroU32::new)
+                .ok_or_else(|| here.rule("line", "is not a line number"))
+        })
+        .transpose()?;
+    let detail = row.get::<_, Option<String>>(7).map_err(query)?;
+    let read = match (kind.as_str(), text, line, detail) {
+        (VERSION, Some(text), None, None) => PlanRead::Version { text },
+        (MISSING, None, None, None) => PlanRead::Missing,
+        (UNREADABLE, None, line, Some(detail)) => PlanRead::Unreadable { line, detail },
+        (VERSION | MISSING | UNREADABLE, _, _, _) => {
+            return Err(here.rule("kind", "does not fit its text, its line and its detail"));
         }
-        (other, _, _) => return Err(refuse("kind", other)),
+        (_, _, _, _) => return Err(here.rule("kind", "does not fit its text, its line and its detail")),
     };
     Ok(PlanRecord {
         task,

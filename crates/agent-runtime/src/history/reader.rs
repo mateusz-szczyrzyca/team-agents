@@ -86,7 +86,7 @@ pub struct Reader {
 }
 
 /// Which row is being read, for the error of a value that is not valid.
-struct Row_ {
+pub(super) struct Row_ {
     /// The table.
     table: &'static str,
     /// The key of the row, as text.
@@ -95,12 +95,12 @@ struct Row_ {
 
 impl Row_ {
     /// A row of `table` with the key `key`.
-    fn of(table: &'static str, key: impl Into<String>) -> Self {
+    pub(super) fn of(table: &'static str, key: impl Into<String>) -> Self {
         Self { table, key: key.into() }
     }
 
     /// The value a column holds, or the error that names this row and `column`.
-    fn value<T, E>(&self, column: &'static str, parsed: Result<T, E>) -> Result<T, ReadError>
+    pub(super) fn value<T, E>(&self, column: &'static str, parsed: Result<T, E>) -> Result<T, ReadError>
     where
         ValueProblem: From<E>,
     {
@@ -108,7 +108,7 @@ impl Row_ {
     }
 
     /// The error of a column of this row.
-    fn problem(&self, column: &'static str, source: ValueProblem) -> ReadError {
+    pub(super) fn problem(&self, column: &'static str, source: ValueProblem) -> ReadError {
         ReadError::Value {
             table: self.table,
             column,
@@ -118,7 +118,7 @@ impl Row_ {
     }
 
     /// The error of a rule of this row's record that `column` breaks.
-    fn rule(&self, column: &'static str, rule: &'static str) -> ReadError {
+    pub(super) fn rule(&self, column: &'static str, rule: &'static str) -> ReadError {
         self.problem(column, ValueProblem::Rule { rule })
     }
 

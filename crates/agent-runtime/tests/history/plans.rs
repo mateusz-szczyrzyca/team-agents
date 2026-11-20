@@ -9,19 +9,19 @@ use agent_runtime::history::{HistoryDb, PlanRead, PlanRecord, Reader, Store};
 
 use super::support::{at, database, world};
 
-/// Task 2 of the sample world: the member's task.
+/// The task of the first run of the sample world.
 fn task() -> TaskId {
-    world(1).runs[1].start.task.clone()
+    world(1).runs[0].start.task.clone()
 }
 
-/// The team of task 2.
+/// The team of the first run of the sample world.
 fn team() -> TeamId {
-    world(1).runs[1].start.team.clone()
+    world(1).runs[0].start.team.clone()
 }
 
-/// Run 2 of the sample world: the member's run.
+/// The first run of the sample world.
 fn run() -> RunId {
-    world(1).runs[1].start.run.clone()
+    world(1).runs[0].start.run.clone()
 }
 
 /// A record of a plan `text` read at `seconds` at the end of `run` of `task` in `team`.
