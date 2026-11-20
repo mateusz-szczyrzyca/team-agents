@@ -179,3 +179,37 @@ func readOutput(t *testing.T, b *Bus, name, team string) string {
 	})
 	return out
 }
+
+func TestEachTeamReadsByItsOwnCursor(t *testing.T) {
+	b := newBus(t)
+	captureWakes(t)
+	twoTeams(t, b)
+	chk(t).ok(toolResult(server(b, "lead-a", inTeam("A")).send("codex-1", "take item 1.1 of team A")))
+	chk(t).ok(toolResult(server(b, "lead-b", inTeam("B")).send("codex-1", "take item 1.2 of team B")))
+
+	if out := readOutput(t, b, "codex-1", "A"); !strings.Contains(out, "take item 1.1 of team A") {
+		t.Fatalf("the session of team A did not read its message:\n%s", out)
+	}
+	if out := readOutput(t, b, "codex-1", "B"); !strings.Contains(out, "take item 1.2 of team B") {
+		t.Fatalf("reading in team A marked the message of team B read:\n%s", out)
+	}
+}
+
+func TestAWokenMemberReadsTheMessagesOfItsTeamAndNotTheOldCursor(t *testing.T) {
+	b := legacyBus(t)
+	captureWakes(t)
+
+	// the member has not read anything: it reads its lead's direct message and the team's notices, once, and its
+	// cursor is kept for its team
+	if out := readOutput(t, b, "member", "T"); !strings.Contains(out, "please take B1") {
+		t.Fatalf("the member did not read the direct message of its lead:\n%s", out)
+	}
+	if out := readOutput(t, b, "member", "T"); !strings.Contains(out, "No new messages") {
+		t.Fatalf("the member read its messages twice:\n%s", out)
+	}
+	mustWith(t, b, func(st *State) {
+		if cur, ok := st.Cursors[messageCursor("member", "T")]; !ok || cur == 0 {
+			t.Fatalf("the cursor of the member in its team was not kept: %v", st.Cursors)
+		}
+	})
+}
