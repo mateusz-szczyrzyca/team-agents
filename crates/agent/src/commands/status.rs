@@ -398,6 +398,13 @@ pub(crate) fn round_line(round: &Round) -> String {
                 ..
             },
         ) => format!("done, delivered by PR #{}", pr.number),
+        (
+            Some(pr),
+            RoundLife::Closed {
+                how: agent_core::state::RoundEnd::Abandoned,
+                ..
+            },
+        ) => format!("closed, abandoned, delivered by PR #{}", pr.number),
         (Some(_) | None, life) => match life {
             RoundLife::Open => "open".to_owned(),
             RoundLife::Closed { how, .. } => format!("closed, {how}"),
