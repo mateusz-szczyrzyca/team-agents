@@ -243,3 +243,34 @@ fn a_reviewer_and_a_worker_are_never_started_anew_and_a_member_is() {
     let found = state.find_task(&reviewer).expect("the reviewer");
     assert_eq!(found.member.renewals(), None);
 }
+
+#[test]
+fn a_task_that_is_not_in_the_state_is_not_started_anew() {
+    let mut state = old_state();
+    let unknown: TaskId = "task-20261120-000000-zzzz".parse().unwrap();
+
+    let refused = state.renew_task(&unknown, Trouble::NoStatus, started());
+
+    assert_eq!(refused, Err(RenewTaskError::NoTask { task: unknown }));
+}
+
+#[test]
+fn a_renewal_before_the_last_run_started_is_refused_with_the_task_and_its_cause() {
+    let mut state = old_state();
+    let before_the_last_run: Timestamp = "2026-11-20T14:45:59Z".parse().unwrap();
+
+    let refused = state.renew_task(&task(), Trouble::Hang, before_the_last_run);
+
+    assert_eq!(
+        refused,
+        Err(RenewTaskError::Renewal {
+            task: task(),
+            source: RenewalError::NotAfterTheLastRun {
+                at: before_the_last_run,
+                started_at: "2026-11-20T14:46:00Z".parse().unwrap(),
+            },
+        })
+    );
+    let found = state.find_task(&task()).expect("the task");
+    assert_eq!(found.member.renewals(), None, "nothing is recorded");
+}
