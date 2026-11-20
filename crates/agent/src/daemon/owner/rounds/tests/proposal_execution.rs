@@ -281,6 +281,9 @@ async fn decisions_and_rejections_are_recorded_in_history() {
         .await;
         put(&rig, "bad", &value);
         put(&rig, "good", &proposal("Read first"));
+        let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+        config.push_str("\n[log]\nlevel = \"debug\"\n");
+        std::fs::write(rig.home.config_file(), config).unwrap();
         rig.start().await;
         let (id, tasks) = rig
             .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
@@ -297,7 +300,8 @@ async fn decisions_and_rejections_are_recorded_in_history() {
         rig.stop().await.unwrap();
         let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
         assert!(
-            logs.iter().any(|row| row.event().as_str() == "split_decision"),
+            logs.iter().any(|row| row.event().as_str() == "decision_taken"
+                && row.fields().get("decision") == Some(&serde_json::json!("split_proposal"))),
             "missing split decision log: {name}"
         );
         let events: Vec<_> = Reader::open(&rig.home.history_file())
