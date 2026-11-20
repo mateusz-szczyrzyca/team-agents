@@ -248,3 +248,64 @@ fn an_abandoned_round_without_a_claim_cannot_complete_a_delivery() {
     );
     assert_eq!(team, abandoned);
 }
+
+/// A team whose item 2.1 is split in two parts without dependencies; round 2 is the round of part a.
+fn two_part_team() -> Team {
+    let mut team = working();
+    let plan = crate::state::split::SplitPlan::new(
+        "2.1".parse().unwrap(),
+        ["First part", "Second part"]
+            .into_iter()
+            .map(|title| crate::state::split::PartDefinition {
+                title: title.into(),
+                delivers: "A useful document".into(),
+                checks: "Read the document".into(),
+                depends_on: Vec::new(),
+            })
+            .collect(),
+    )
+    .unwrap();
+    team.activate_split(plan).unwrap();
+    team
+}
+
+#[test]
+fn a_completed_part_delivery_does_not_wait_again_when_the_next_part_starts() {
+    let mut team = two_part_team();
+    let parent = "2.1".parse().unwrap();
+    team.deliver_round(&round_id(2), pr(7).number).unwrap();
+    team.complete_delivery(&round_id(2), at(40)).unwrap();
+    team.open_round(round_id(3), Some(parent), at(60)).unwrap();
+    drive(&mut team, "2.1", PhaseKind::InProgress);
+    assert_eq!(waiting_ids(&team), Vec::<RoundId>::new());
+    team.deliver_round(&round_id(3), pr(7).number).unwrap();
+    assert_eq!(waiting_ids(&team), vec![round_id(3)]);
+}
+
+#[test]
+fn an_abandoned_part_delivery_completes_into_a_state_that_reads_back() {
+    let mut team = two_part_team();
+    team.deliver_round(&round_id(2), pr(7).number).unwrap();
+    team.close_round(&round_id(2), at(30), RoundEnd::Abandoned).unwrap();
+    team.complete_delivery(&round_id(2), at(40)).unwrap();
+    let round = team.round(&round_id(2)).unwrap();
+    assert_eq!(round.part_pull_request(), Some(&pr(7)));
+    assert_eq!(round.ended(), Some(RoundEnd::Abandoned));
+    assert_eq!(
+        serde_json::from_str::<Team>(&serde_json::to_string(&team).unwrap()).unwrap(),
+        team
+    );
+}
+
+#[test]
+fn an_abandoned_delivery_cannot_complete_before_its_round_opened() {
+    let mut team = working();
+    team.deliver_round(&round_id(2), pr(7).number).unwrap();
+    team.close_round(&round_id(2), at(30), RoundEnd::Abandoned).unwrap();
+    let abandoned = team.clone();
+    assert!(matches!(
+        team.complete_delivery(&round_id(2), at(0)),
+        Err(CompleteDeliveryError::BeforeOpening(ClosedBeforeOpened { at: found, .. })) if found == at(0)
+    ));
+    assert_eq!(team, abandoned);
+}
