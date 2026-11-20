@@ -1300,7 +1300,8 @@ An unchanged tip can still enter verification when every blocker is explained or
 Legacy unanswered blockers require a committed fix too.
 
 An idle open round's line in `agent status` and `agent status <round>` names what it waits for: a harness gate,
-a review, a second opinion, the human's answer, or the lead's correction. `nothing: this is a defect` means the
+a review, a free independent investigator (for a review, a second opinion or the replacement of a reviewer that cannot
+work, when none is free), a second opinion that an investigator is giving, the human's answer, or the lead's correction. `nothing: this is a defect` means the
 harness has lost its next action; it logs one `daemon_task_failed` error for that round with `operation=round_wait`.
 
 Verifiers answer a pending explanation with `FINDING 3: ACCEPTED — why` or `FINDING 3: REJECTED — why`.
