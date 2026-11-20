@@ -86,5 +86,14 @@ pub fn after_lead(end: &LeadEnd, allowances: &[TaskAllowance]) -> AfterLead {
     }
 }
 
+/// The files the lead changed after the merge of the base, given the files changed since the approval (`since_approved`),
+/// the files the approved branch changed itself (`on_branch`) and the files where the merged result differs from the new
+/// base (`vs_base`): a file that only the merge of the base brought in is in none of the last two and is not counted.
+#[must_use]
+pub fn changed_by_lead(since_approved: &[RepoPath], on_branch: &[RepoPath], vs_base: &[RepoPath]) -> Vec<RepoPath> {
+    let _ = (since_approved, on_branch, vs_base);
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests;

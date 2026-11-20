@@ -95,3 +95,38 @@ fn a_lead_without_a_result_asks_the_human() {
         AfterLead::AskHuman
     );
 }
+
+#[test]
+fn a_file_only_the_merge_of_the_base_brought_in_is_not_a_change_of_the_lead() {
+    let since = vec![path("crates/base_only.rs")];
+
+    assert_eq!(changed_by_lead(&since, &[], &[]), Vec::<RepoPath>::new());
+}
+
+#[test]
+fn a_file_the_approved_branch_changed_is_a_change_of_the_lead_when_it_changed_again() {
+    let since = vec![path("crates/a.rs")];
+    let on_branch = vec![path("crates/a.rs")];
+
+    assert_eq!(changed_by_lead(&since, &on_branch, &[]), vec![path("crates/a.rs")]);
+}
+
+#[test]
+fn a_file_the_merged_result_differs_in_from_the_new_base_is_a_change_of_the_lead() {
+    let since = vec![path("Cargo.toml")];
+    let vs_base = vec![path("Cargo.toml")];
+
+    assert_eq!(changed_by_lead(&since, &[], &vs_base), vec![path("Cargo.toml")]);
+}
+
+#[test]
+fn only_the_changed_files_of_the_lead_are_listed_in_their_order() {
+    let since = vec![path("a.rs"), path("base_only.rs"), path("c.rs")];
+    let on_branch = vec![path("c.rs")];
+    let vs_base = vec![path("a.rs")];
+
+    assert_eq!(
+        changed_by_lead(&since, &on_branch, &vs_base),
+        vec![path("a.rs"), path("c.rs")]
+    );
+}
