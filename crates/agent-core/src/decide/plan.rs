@@ -94,8 +94,23 @@ pub enum DoneEnds {
 /// when no item is pending or in progress — every item is in review, in a fix pass, approved or done.
 #[must_use]
 pub fn done_ends<'a>(role: Role, phases: impl IntoIterator<Item = &'a ItemPhase>) -> DoneEnds {
-    let _ = (role, phases.into_iter().count());
-    DoneEnds::Work
+    match role {
+        Role::Coordinator => {
+            let mut phases = phases.into_iter();
+            if phases.any(|phase| match phase {
+                ItemPhase::Pending | ItemPhase::InProgress { .. } => true,
+                ItemPhase::InReview { .. }
+                | ItemPhase::Fixing { .. }
+                | ItemPhase::Approved { .. }
+                | ItemPhase::Done { .. } => false,
+            }) {
+                DoneEnds::Turn
+            } else {
+                DoneEnds::Work
+            }
+        }
+        Role::Solo | Role::Member | Role::Worker | Role::Reviewer => DoneEnds::Work,
+    }
 }
 
 /// What happens after a run ended that reports done.
