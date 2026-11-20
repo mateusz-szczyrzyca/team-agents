@@ -188,7 +188,7 @@ impl Owner {
                     // asked again after the step's pause, or after the human's resume when git will not change its
                     // answer; nothing of the state was changed yet.
                     self.undo(&git, prepared.made()).await;
-                    self.github_step_failed(&place, team_id, WaitingStep::AskOpinion, Some(pr.number), &error, now)?;
+                    self.github_step_failed(&place, team_id, WaitingStep::AskOpinion, Some(pr.number), &error)?;
                     continue;
                 }
                 self.github_step_done(&place, team_id, WaitingStep::AskOpinion);

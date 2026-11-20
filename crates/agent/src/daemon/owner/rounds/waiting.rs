@@ -27,11 +27,13 @@ impl Owner {
     /// Records that `step` of `team` failed with `error` and waits: the round loses nothing, the daemon goes on with
     /// its other rounds, and the step is tried again after its pause -- at once, for a refusal, on `agent resume`.
     ///
-    /// One warning is logged when the step starts to wait and none per try; a refusal that will not pass is told to
-    /// the human once.
+    /// The pause counts from now, after the failed call: the quick retries inside the call do not shorten it. One
+    /// warning is logged when the step starts to wait and none per try; a refusal that will not pass is told to the
+    /// human once while it waits.
     ///
     /// # Errors
-    /// [`OwnerError::Clock`] when the pause would pass the last year a time records.
+    /// [`OwnerError::Clock`] when the clock gives a time that cannot be recorded or the pause would pass the last year
+    /// a time records.
     pub(super) fn github_step_failed(
         &mut self,
         step: &Step,
@@ -39,8 +41,8 @@ impl Owner {
         which: WaitingStep,
         pr: Option<PrNumber>,
         error: &PublishError,
-        now: Timestamp,
     ) -> Result<(), OwnerError> {
+        let now = Timestamp::now(&self.parts.clock)?;
         let outlook = outlook_of(error);
         let offset = self.parts.local_offset;
         let (failure, wait) =
@@ -66,7 +68,7 @@ impl Owner {
             );
         }
         if outlook == Outlook::WillNotPass && starts {
-            self.tell_refused(team, which, &wait, now)?;
+            self.tell_refused(step, team, which, &wait, now)?;
         }
         Ok(())
     }
@@ -86,9 +88,15 @@ impl Owner {
         }
     }
 
-    /// Records that `step` of `team` went through: a step that waited is done, logged once.
+    /// Records that `step` of `team` went through: a step that waited is done, logged once, and a refusal of it later
+    /// is told to the human again.
     pub(super) fn github_step_done(&mut self, step: &Step, team: &TeamId, which: WaitingStep) {
         if self.watch.github_waits.done(step, which) {
+            self.watch.announced.remove(&Announcement::GithubRefused {
+                team: team.clone(),
+                place: step.clone(),
+                operation: which,
+            });
             tracing::info!(
                 event = LogEvent::GithubStepResumed.as_str(),
                 team = %team,
@@ -98,9 +106,10 @@ impl Owner {
         }
     }
 
-    /// Tells the lead of `team` that GitHub refuses a step of its round, once for the step, and how to try again.
+    /// Tells the lead of `team` that GitHub refuses `step` of its round, once while the step waits, and how to try again.
     fn tell_refused(
         &mut self,
+        step: &Step,
         team: &TeamId,
         which: WaitingStep,
         wait: &Wait,
@@ -111,6 +120,7 @@ impl Owner {
         };
         let announcement = Announcement::GithubRefused {
             team: team.clone(),
+            place: step.clone(),
             operation: which,
         };
         if !self.watch.announced.insert(announcement) {

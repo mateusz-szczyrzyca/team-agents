@@ -262,6 +262,8 @@ pub(super) enum Announcement {
     GithubRefused {
         /// The team.
         team: TeamId,
+        /// The round, or the team's rounds as a whole, the step belongs to.
+        place: Step,
         /// The step.
         operation: WaitingStep,
     },
@@ -473,7 +475,7 @@ impl Owner {
         {
             match self.refresh_descriptions(&pulls, team).await {
                 Err(error) => {
-                    self.github_step_failed(&refresh, team, WaitingStep::RefreshDescriptions, None, &error, now)?;
+                    self.github_step_failed(&refresh, team, WaitingStep::RefreshDescriptions, None, &error)?;
                 }
                 Ok(()) => self.github_step_done(&refresh, team, WaitingStep::RefreshDescriptions),
             }
