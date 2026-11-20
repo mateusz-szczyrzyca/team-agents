@@ -14,6 +14,9 @@ mod findings;
 #[cfg(test)]
 pub(crate) mod fixtures;
 mod gate;
+mod holding;
+#[cfg(test)]
+mod holding_tests;
 mod item;
 mod member;
 mod migrate;
@@ -39,6 +42,7 @@ pub use findings::{
     RaisedFinding, Reconciled, RecordedFinding, SecondOpinion, Verification, VerifierAnswers, reconcile,
 };
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
+pub use holding::Holding;
 pub use item::{
     AdvanceError, AskReviewsError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut,
     ItemPhase, ItemProgress, MergeConflict, NotWorkedOn, PhaseKind, PullRequest, ReplaceReviewError, Review,

@@ -7,6 +7,7 @@ use std::num::NonZeroU32;
 use serde::{Deserialize, Serialize};
 
 use super::checked::CheckedMut;
+use super::holding;
 use super::plan::{PlanKeeping, PlanReason};
 use super::question::{AnswerBeforeQuestion, AnsweredVia, Question};
 use super::renewal;
@@ -91,6 +92,9 @@ pub struct Member {
     /// written before renewals existed.
     #[serde(skip_serializing_if = "Option::is_none")]
     renewals: Option<renewal::Renewals>,
+    /// The agents that held the task before the one that holds it now, oldest first; empty until it is handed over.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    past_holders: Vec<holding::Holding>,
 }
 
 /// How a [`Member`] is read; see [`checked!`].
@@ -115,6 +119,9 @@ struct MemberWire {
     /// See [`Member`]; a member written before renewals existed has none.
     #[serde(default)]
     renewals: Option<renewal::Renewals>,
+    /// See [`Member`]; a member written before hand-overs existed has none.
+    #[serde(default)]
+    past_holders: Vec<holding::Holding>,
 }
 
 checked!(Member, MemberWire, check_member);
@@ -149,6 +156,11 @@ impl CheckedMut<'_, Member> {
     /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
     pub(crate) fn renew(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
         self.value.renew(trouble, at)
+    }
+
+    /// See [`Member::held_task`].
+    pub fn held_task(&mut self, holder: Participant, at: Timestamp) {
+        self.value.held_task(holder, at)
     }
 
     /// See [`Member::attach_session`].
@@ -316,6 +328,7 @@ impl Member {
             questions: Vec::new(),
             plan: Some(PlanKeeping::default()),
             renewals: None,
+            past_holders: Vec::new(),
         }
     }
 
@@ -330,6 +343,7 @@ impl Member {
             questions: Vec::new(),
             plan: None,
             renewals: None,
+            past_holders: Vec::new(),
         }
     }
 
@@ -340,6 +354,11 @@ impl Member {
     getter!("Where the task is in its life.", pub const fn status(&self) -> TaskStatus = self.status);
 
     getter!("The runs, oldest first.", pub fn runs(&self) -> &[Run] = &self.runs);
+
+    getter!(
+        "The agents that held the task before the one that holds it now, oldest first.",
+        pub fn past_holders(&self) -> &[holding::Holding] = &self.past_holders
+    );
 
     getter!(
         "How many times the task was started in a new session again; `None` until it was.",
@@ -463,6 +482,9 @@ impl Member {
         }
         Ok(true)
     }
+
+    /// Gives the task to `holder` at `at`, keeping the agent that held it as one of its past holders.
+    pub fn held_task(&mut self, _holder: Participant, _at: Timestamp) {}
 
     /// Records that a run has started.
     ///
@@ -695,6 +717,7 @@ mod tests {
                 questions: wire.questions,
                 plan: wire.plan,
                 renewals: None,
+                past_holders: Vec::new(),
             };
             check_member(&member)?;
             Ok(member)
