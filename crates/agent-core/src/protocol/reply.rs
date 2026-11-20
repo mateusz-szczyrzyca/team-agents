@@ -856,3 +856,6 @@ mod tests {
         assert_refused::<Failure>(&json!({"kind": "invalid"}));
     }
 }
+
+#[cfg(test)]
+mod split_tests;
