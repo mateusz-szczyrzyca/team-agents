@@ -111,6 +111,7 @@ impl Team {
             activities: Vec::new(),
             unpushed_base: None,
             splits: Vec::new(),
+            split_proposals: std::collections::BTreeMap::new(),
         };
         check_team(&team)?;
         Ok(team)
