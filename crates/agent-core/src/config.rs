@@ -5,6 +5,8 @@
 //! refused (`deny_unknown_fields`), every value is parsed into its type (the newtypes of this module), and the lists of agents are
 //! checked against each other. The type does no I/O; whoever reads the file passes its text in.
 
+mod split;
+pub use split::Split;
 mod review_count;
 mod secrets;
 mod values;
@@ -642,6 +644,8 @@ pub struct Config {
     questions: Questions,
     /// The plans of tasks.
     plan: Plan,
+    /// Split approval policy, defaulted for older configurations.
+    split: Split,
     /// The history.
     history: History,
     /// The daemon's own log.
@@ -715,6 +719,9 @@ struct RawConfig {
     /// See [`Config::plan`].
     #[serde(default)]
     plan: Plan,
+    /// Split approval policy, defaulted for older configurations.
+    #[serde(default)]
+    split: Split,
     /// See [`Config::history`].
     #[serde(default)]
     history: History,
@@ -751,6 +758,7 @@ impl RawConfig {
             notifications,
             questions,
             plan,
+            split,
             history,
             log,
             web,
@@ -787,6 +795,7 @@ impl RawConfig {
             notifications,
             questions,
             plan,
+            split,
             history,
             log,
             web,
@@ -1014,6 +1023,12 @@ impl Config {
     #[must_use]
     pub fn plan(&self) -> &Plan {
         &self.plan
+    }
+
+    /// Policy for approval of split proposals; daemon use is added separately.
+    #[must_use]
+    pub fn split(&self) -> Split {
+        self.split
     }
 
     /// The dashboard's address and logins.
