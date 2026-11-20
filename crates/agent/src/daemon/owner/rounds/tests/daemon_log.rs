@@ -1040,7 +1040,7 @@ async fn record_autopilot_round_events(observed: &mut BTreeSet<LogEvent>) {
         false,
     )
     .await;
-    rig.github.answer_merges(super::fake_github::MergeAnswer::Refuse(405));
+    rig.github.answer_merges(super::fake_github::MergeAnswer::Refuse(403));
     let mut cfg = std::fs::read_to_string(rig.home.config_file()).unwrap();
     cfg.push_str("\n[log]\nlevel = \"debug\"\n");
     std::fs::write(rig.home.config_file(), cfg).unwrap();

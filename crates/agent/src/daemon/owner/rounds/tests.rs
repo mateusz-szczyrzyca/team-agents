@@ -1662,7 +1662,7 @@ async fn the_item_is_done_and_the_team_ends_when_the_human_merges_the_approved_p
 #[tokio::test]
 async fn a_merge_that_github_refuses_is_told_to_the_human_once_and_is_not_tried_again() {
     let mut rig = approving_rig().await;
-    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.github.answer_merges(MergeAnswer::Refuse(403));
     rig.start().await;
 
     rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
@@ -1692,7 +1692,7 @@ async fn a_merge_that_github_refuses_is_told_to_the_human_once_and_is_not_tried_
 #[tokio::test]
 async fn an_approved_pull_request_that_the_human_merged_after_a_refusal_completes_the_item() {
     let mut rig = approving_rig().await;
-    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.github.answer_merges(MergeAnswer::Refuse(403));
     rig.start().await;
 
     rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
@@ -1711,7 +1711,7 @@ async fn an_approved_pull_request_that_the_human_merged_after_a_refusal_complete
 #[tokio::test]
 async fn a_pull_request_the_human_closed_without_merging_is_told_once_and_the_item_waits() {
     let mut rig = approving_rig().await;
-    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.github.answer_merges(MergeAnswer::Refuse(403));
     rig.start().await;
 
     rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
