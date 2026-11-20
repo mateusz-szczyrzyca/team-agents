@@ -195,7 +195,7 @@ impl Owner {
             .state
             .team(team)
             .into_iter()
-            .flat_map(agent_core::state::Team::open_rounds)
+            .flat_map(agent_core::state::Team::delivery_waits)
             .filter_map(|round| round.delivered_by().map(|pr| (round.id().clone(), pr.number)))
             .filter(|(round, _)| {
                 self.watch
@@ -254,6 +254,8 @@ impl Owner {
             .round(round)
             .and_then(agent_core::state::Round::item)
             .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?;
+        // A stop abandoned the round while the claim waited: its end was recorded then and is not recorded again.
+        let was_open = found.round(round).is_some_and(agent_core::state::Round::is_open);
         self.parts
             .state
             .team_mut(team)
@@ -270,21 +272,23 @@ impl Owner {
                 item,
             })?
             .status();
-        self.record_event_at(
-            now,
-            team,
-            vec![round.clone()],
-            HistoryEvent::RoundClosed {
+        if was_open {
+            self.record_event_at(
+                now,
+                team,
+                vec![round.clone()],
+                HistoryEvent::RoundClosed {
+                    round: round.clone(),
+                    end: RoundEnd::Merged,
+                },
+            );
+            look.events.push(EventKind::RoundClosed {
+                team: team.clone(),
                 round: round.clone(),
-                end: RoundEnd::Merged,
-            },
-        );
-        look.events.push(EventKind::RoundClosed {
-            team: team.clone(),
-            round: round.clone(),
-            item: Some(item),
-            how: RoundEnd::Merged,
-        });
+                item: Some(item),
+                how: RoundEnd::Merged,
+            });
+        }
         look.events.push(EventKind::ItemStatus {
             team: team.clone(),
             item,
