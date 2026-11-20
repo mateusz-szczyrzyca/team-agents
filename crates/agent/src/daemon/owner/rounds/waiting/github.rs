@@ -66,6 +66,39 @@ pub(in crate::daemon::owner) fn clock_time(time: Timestamp, offset: time::UtcOff
     format!("{:02}:{:02}", local.hour(), local.minute())
 }
 
+/// Which step of a round that calls GitHub waits: its key in the waits, its words in the status and the log, and the
+/// notice of its refusal. One variant per place that waits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(in crate::daemon::owner) enum WaitingStep {
+    /// Rewriting the description of the open pull requests of a team.
+    RefreshDescriptions,
+    /// Giving the opinion of an investigator gone silent to another investigator.
+    ReplaceSilent,
+    /// Reading the pull request before a second opinion's worktree is made.
+    AskOpinion,
+    /// Reading the reviewed commit at the end of a second opinion.
+    OpinionEnded,
+}
+
+impl WaitingStep {
+    /// The step's words, for the status line and the log.
+    #[must_use]
+    pub(in crate::daemon::owner) const fn operation(self) -> &'static str {
+        match self {
+            Self::RefreshDescriptions => "refresh the description of the pull requests",
+            Self::ReplaceSilent => "replace a silent investigator",
+            Self::AskOpinion => "prepare a second opinion",
+            Self::OpinionEnded => "read the commit a second opinion reviewed",
+        }
+    }
+}
+
+impl std::fmt::Display for WaitingStep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.operation())
+    }
+}
+
 /// What a step of the owner was doing when it failed, for the status and the log.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(in crate::daemon::owner) enum Step {
@@ -95,7 +128,9 @@ impl std::fmt::Display for Step {
 pub(in crate::daemon::owner) struct Wait {
     /// The team whose rounds it holds.
     pub(super) team: TeamId,
-    /// What the step does, in the words of `agent status`: `get pull request #138`.
+    /// Which step it is.
+    pub(super) step: WaitingStep,
+    /// What the step does with its pull request, in the words of `agent status`: `prepare a second opinion #138`.
     pub(super) operation: String,
     /// What GitHub or git answered, with its cause chain.
     pub(super) answer: String,
@@ -111,7 +146,7 @@ impl Wait {
     /// The first failure of `operation`, at `now`, answered with `answer`; `pr` when the step is about a pull request.
     fn first(
         team: TeamId,
-        operation: String,
+        step: WaitingStep,
         pr: Option<PrNumber>,
         answer: String,
         outlook: Outlook,
@@ -125,7 +160,8 @@ impl Wait {
         };
         Ok(Self {
             team,
-            operation: named(operation, pr),
+            operation: named(step, pr),
+            step,
             answer,
             outlook,
             tries,
@@ -167,20 +203,20 @@ impl Wait {
         match self.next_at {
             Some(at) => format!(
                 "{}, tried {tried} time{}, next try {}",
-                self.operation,
+                self.step,
                 if tried == 1 { "" } else { "s" },
                 minute_shown(at, offset)
             ),
-            None => format!("{}, refused: {}", self.operation, self.answer),
+            None => format!("{}, refused: {}", self.step, self.answer),
         }
     }
 }
 
 /// `operation #pr`, or `operation` for a step that is about no one pull request.
-fn named(operation: String, pr: Option<PrNumber>) -> String {
+fn named(step: WaitingStep, pr: Option<PrNumber>) -> String {
     match pr {
-        Some(number) => format!("{operation} #{number}"),
-        None => operation,
+        Some(number) => format!("{} #{number}", step.operation()),
+        None => step.operation().to_owned(),
     }
 }
 
@@ -226,11 +262,11 @@ impl DurationOverflow {
     }
 }
 
-/// The steps that failed and wait, by round and by operation.
+/// The steps that failed and wait, by round and by step.
 #[derive(Debug, Default)]
 pub(in crate::daemon::owner) struct Waits {
-    /// The waits of each round, and of each team's rounds as a whole, by operation.
-    steps: BTreeMap<(Step, String), Wait>,
+    /// The waits of each round, and of each team's rounds as a whole, by step.
+    steps: BTreeMap<(Step, WaitingStep), Wait>,
     /// The pause before the first try of a step; none for [`agent_core::decide::retry::FIRST_PAUSE`].
     first: Option<Duration>,
 }
@@ -261,19 +297,18 @@ impl Waits {
     }
 
     /// The wait of `step` for `operation`, if it has one.
-    pub(super) fn get(&self, step: &Step, operation: &str) -> Option<&Wait> {
-        self.steps.get(&(step.clone(), operation.to_owned()))
+    pub(super) fn get(&self, place: &Step, step: WaitingStep) -> Option<&Wait> {
+        self.steps.get(&(place.clone(), step))
     }
 
     /// The wait of the round `round` for `operation`, if it has one.
-    pub(super) fn for_round<'a>(&'a self, round: &RoundId, operation: &str) -> Option<&'a Wait> {
-        self.steps
-            .get(&(Step::Round { round: round.clone() }, operation.to_owned()))
+    pub(super) fn for_round(&self, round: &RoundId, step: WaitingStep) -> Option<&Wait> {
+        self.steps.get(&(Step::Round { round: round.clone() }, step))
     }
 
     /// Whether `step` is to be tried now: it has not failed, its pause is over, or it waits for the human.
-    pub(in crate::daemon::owner) fn due(&self, step: &Step, operation: &str, now: Timestamp) -> bool {
-        match self.steps.get(&(step.clone(), operation.to_owned())) {
+    pub(in crate::daemon::owner) fn due(&self, place: &Step, step: WaitingStep, now: Timestamp) -> bool {
+        match self.steps.get(&(place.clone(), step)) {
             Some(wait) => wait.due(now),
             None => true,
         }
@@ -286,15 +321,15 @@ impl Waits {
     /// [`DurationOverflow`] when the next try cannot be recorded.
     pub(super) fn failed(
         &mut self,
-        step: &Step,
+        place: &Step,
         team: &TeamId,
-        operation: &str,
+        step: WaitingStep,
         pr: Option<PrNumber>,
         answer: String,
         outlook: Outlook,
         now: Timestamp,
     ) -> Result<(Failure, Wait), DurationOverflow> {
-        let key = (step.clone(), operation.to_owned());
+        let key = (place.clone(), step);
         let failure = match self.steps.get(&key).map(|wait| wait.outlook) {
             Some(Outlook::MayPass) if outlook == Outlook::MayPass => Failure::Again,
             Some(Outlook::WillNotPass) if outlook == Outlook::WillNotPass => Failure::RefusedAgain,
@@ -308,7 +343,7 @@ impl Waits {
             }
             None => Wait::first(
                 team.clone(),
-                operation.to_owned(),
+                step,
                 pr,
                 answer,
                 outlook,
@@ -326,8 +361,8 @@ impl Waits {
     }
 
     /// Forgets the wait of `step` for `operation`, which is done; `true` when it waited and is no longer.
-    pub(super) fn done(&mut self, step: &Step, operation: &str) -> bool {
-        self.steps.remove(&(step.clone(), operation.to_owned())).is_some()
+    pub(super) fn done(&mut self, place: &Step, step: WaitingStep) -> bool {
+        self.steps.remove(&(place.clone(), step)).is_some()
     }
 
     /// How many waits it keeps.
@@ -342,13 +377,10 @@ impl Waits {
     pub(in crate::daemon::owner) fn next_due(
         &self,
         round: &RoundId,
-        operations: &[&str],
+        steps: &[WaitingStep],
         now: Timestamp,
     ) -> Option<Timestamp> {
-        let waits: Vec<&Wait> = operations
-            .iter()
-            .filter_map(|operation| self.for_round(round, operation))
-            .collect();
+        let waits: Vec<&Wait> = steps.iter().filter_map(|step| self.for_round(round, *step)).collect();
         if waits.iter().any(|wait| wait.next_at.is_none()) {
             return None;
         }
