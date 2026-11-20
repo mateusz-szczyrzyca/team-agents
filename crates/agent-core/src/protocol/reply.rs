@@ -340,7 +340,7 @@ impl MemberSummary {
             role,
             status: member.status(),
             open_question: member.open_question().map(Question::number),
-            new_sessions: None,
+            new_sessions: member.renewals().and_then(|renewals| NonZeroU32::new(renewals.used())),
         }
     }
 }
