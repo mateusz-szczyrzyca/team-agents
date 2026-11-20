@@ -13,6 +13,8 @@ use super::{Audience, PromptSpec};
 pub enum TeamPrompt {
     /// What the first run of a team's member is told about the team: who is in it, its branch, how it talks to the others.
     Context,
+    /// The independent deliverable and checks of the active split part.
+    Part,
     /// What a member that already has a session is told when it is given its next item.
     Assignment,
     /// What a member whose sleep a message ended is told.
@@ -55,6 +57,7 @@ impl TeamPrompt {
     /// Every text of the catalog.
     pub const ALL: &'static [Self] = &[
         Self::Context,
+        Self::Part,
         Self::Assignment,
         Self::Wake,
         Self::Delegation,
@@ -78,6 +81,11 @@ impl TeamPrompt {
     #[must_use]
     pub const fn spec(self) -> PromptSpec {
         match self {
+            Self::Part => PromptSpec::new(
+                "harness/team/part.md",
+                Audience::Model,
+                &["part", "title", "delivers", "checks", "previous"],
+            ),
             Self::Context => PromptSpec::new(
                 "harness/team/context.md",
                 Audience::Model,

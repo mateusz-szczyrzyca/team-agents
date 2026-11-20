@@ -208,7 +208,7 @@ impl Owner {
             Client::Cli => AnsweredVia::Command,
             Client::Dashboard { .. } => AnsweredVia::Dashboard,
         };
-        self.record_answer(&task, &open, via).await?;
+        self.record_answer(&task, &open, via, &answered).await?;
         Ok(Ok(Reply::Applied { tasks: vec![task] }))
     }
 
@@ -277,7 +277,10 @@ impl Owner {
         };
         match questions::judge(&loaded.file) {
             Judgement::NotYet => Ok(()),
-            Judgement::Answered => self.record_answer(&saved.task, &open, AnsweredVia::SavedFile).await,
+            Judgement::Answered => {
+                self.record_answer(&saved.task, &open, AnsweredVia::SavedFile, &loaded.file)
+                    .await
+            }
             Judgement::Incomplete { problems } => {
                 let text = questions::describe(&loaded.file, &problems);
                 {
@@ -346,7 +349,30 @@ impl Owner {
         task: &TaskId,
         open: &WaitingQuestions,
         via: AnsweredVia,
+        file: &agent_core::questions::QuestionsFile,
     ) -> Result<(), OwnerError> {
+        let decision = {
+            let team = self
+                .parts
+                .state
+                .team(&open.located.team)
+                .ok_or_else(|| OwnerError::LostTeam {
+                    team: open.located.team.clone(),
+                })?;
+            splits::prepare(team, open.located.role, file)
+        };
+        if let Some(plan) = decision.plan {
+            self.parts
+                .state
+                .team_mut(&open.located.team)
+                .ok_or_else(|| OwnerError::LostTeam {
+                    team: open.located.team.clone(),
+                })?
+                .activate_split(plan)?;
+        }
+        if let Some(acknowledgement) = decision.acknowledgement {
+            tracing::info!(event = LogEvent::QuestionsAnswered.as_str(), task = %task, %acknowledgement, "the split answer was interpreted");
+        }
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
         {

@@ -159,6 +159,9 @@ pub(crate) enum OwnerError {
         /// What the state said.
         source: RunError,
     },
+    /// An approved split cannot be activated.
+    #[error("cannot activate the approved split")]
+    Split(#[from] agent_core::state::ActivateSplitError),
     /// Questions cannot be recorded.
     #[error("the questions of task {task} cannot be recorded")]
     Question {

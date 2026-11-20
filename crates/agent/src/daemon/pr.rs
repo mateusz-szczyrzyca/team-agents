@@ -97,7 +97,13 @@ pub(super) fn plan_publications(team: &Team) -> Result<Vec<Publication>, PlanErr
     for progress in team.items() {
         match progress.phase() {
             ItemPhase::InProgress { assignee, branch } if finished(&roster, assignee.as_str()) => {
-                let head = team_branch.clone().unwrap_or_else(|| branch.clone());
+                let head = match (
+                    team_branch.as_ref(),
+                    team.round_of(progress.id()).and_then(agent_core::state::Round::part),
+                ) {
+                    (Some(integration), Some(key)) => format!("{integration}-{}{key}", progress.id()).parse()?,
+                    _ => team_branch.clone().unwrap_or_else(|| branch.clone()),
+                };
                 with_group(&mut groups, &head, |group| {
                     group.joining.push(Joining {
                         item: progress.id(),

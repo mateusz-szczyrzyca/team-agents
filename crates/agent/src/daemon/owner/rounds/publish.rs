@@ -340,7 +340,13 @@ impl Owner {
     ) -> Result<Attempt, PublishError> {
         let lead = site.lead;
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        let Some(tip) = git.branch_tip(&publication.head_branch).await? else {
+        let split = matches!(&publication.publish, Publish::Open { items } if items.iter().any(|joining| self.parts.state.team(site.team).and_then(|team| team.round_of(joining.item)).is_some_and(|round| round.part().is_some())));
+        let source = if split {
+            crate::daemon::team::task_branch(&lead.agent, &lead.task)?
+        } else {
+            publication.head_branch.clone()
+        };
+        let Some(tip) = git.branch_tip(&source).await? else {
             return Ok(Attempt::Nothing);
         };
         // A gate of the harness that still runs decides nothing yet; the record is read after it, so that it is not older.
@@ -411,6 +417,27 @@ impl Owner {
                 Attempt::Nothing
             });
         }
+        let split = ids.iter().any(|id| {
+            self.parts
+                .state
+                .team(team)
+                .and_then(|team| team.round_of(*id))
+                .is_some_and(|round| round.part().is_some())
+        });
+        let published_branch;
+        let head_branch = if split {
+            // Keep each reviewed part on an immutable snapshot of the integrated, gated tip.
+            published_branch = format!("{head_branch}-{}", ready.tip).parse()?;
+            if ready.git.branch_tip(&published_branch).await?.is_none() {
+                ready
+                    .git
+                    .branch_create(&published_branch, &Revision::Commit(ready.tip.clone()))
+                    .await?;
+            }
+            &published_branch
+        } else {
+            head_branch
+        };
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
         let existing = github.find_open_pull_request(head_branch).await?;
         carry(ready, head_branch, existing.as_ref().map(|found| &found.head)).await?;

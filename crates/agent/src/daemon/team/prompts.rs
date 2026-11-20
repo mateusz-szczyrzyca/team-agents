@@ -154,14 +154,66 @@ pub(in crate::daemon) fn shape_with_answers(
     answers: Option<&str>,
 ) -> Result<String, TeamPromptError> {
     let Some(answers) = answers else {
-        return shape(texts, harness, run, composed);
+        let shaped = shape(texts, harness, run, composed)?;
+        return with_part(texts, run, shaped);
     };
     if run.new_session {
         let shaped = shape(texts, harness, run, composed)?;
-        return Ok(join_sections(&shaped, answers));
+        return with_part(texts, run, join_sections(&shaped, answers));
     }
     let reason = shape(texts, harness, run, String::new())?;
-    Ok(join_sections(answers, &reason))
+    with_part(texts, run, join_sections(answers, &reason))
+}
+
+/// Adds the approved part scope even when the session resumes with only an answer or assignment.
+fn with_part(texts: &TeamPrompts, run: &TeamRun<'_>, mut prompt: String) -> Result<String, TeamPromptError> {
+    for round in run.team.open_rounds() {
+        let (Some(parent), Some(key)) = (round.item(), round.part()) else {
+            continue;
+        };
+        let assigned = run.team.item(parent).is_some_and(|item| match item.phase() {
+            agent_core::state::ItemPhase::InProgress { branch, .. }
+            | agent_core::state::ItemPhase::Fixing { branch, .. } => branch == run.branch,
+            agent_core::state::ItemPhase::Pending
+            | agent_core::state::ItemPhase::InReview { .. }
+            | agent_core::state::ItemPhase::Approved { .. }
+            | agent_core::state::ItemPhase::Done { .. } => false,
+        });
+        if run.role != Role::Coordinator && !assigned {
+            continue;
+        }
+        let Some(plan) = run.team.splits().iter().find(|plan| plan.parent() == parent) else {
+            continue;
+        };
+        let Some((id, part)) = plan.entries().find(|(id, _)| id.key() == key) else {
+            continue;
+        };
+        let previous = run
+            .team
+            .rounds()
+            .iter()
+            .filter(|earlier| earlier.item() == Some(parent))
+            .filter_map(|earlier| {
+                Some(format!(
+                    "- {}{}: pull request #{} (/pull/{}; branch `{}`)",
+                    parent,
+                    earlier.part()?,
+                    earlier.part_pull_request()?.number,
+                    earlier.part_pull_request()?.number,
+                    earlier.part_pull_request()?.branch
+                ))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let values = Variables::new()
+            .with("part", id.to_string())?
+            .with("title", &part.title)?
+            .with("delivers", &part.delivers)?
+            .with("checks", &part.checks)?
+            .with("previous", if previous.is_empty() { "none" } else { &previous })?;
+        prompt = join_sections(&prompt, &texts.render(TeamPrompt::Part, &values)?);
+    }
+    Ok(prompt)
 }
 
 /// `first` and `second` as two sections of a prompt; an empty one leaves the other as it is.
