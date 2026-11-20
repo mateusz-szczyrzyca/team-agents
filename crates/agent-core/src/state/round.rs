@@ -31,9 +31,12 @@ pub struct Round {
     /// Split execution identity; absent in schema 13 rounds written before activation.
     #[serde(skip_serializing_if = "Option::is_none")]
     part: Option<PartRound>,
-    /// Another round's verified PR; retained after its merge closes this round.
+    /// Another round's verified PR; retained after completion or an observed unmerged closure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     delivery: Option<super::PullRequest>,
+    /// Observed unmerged close; ends the claim and allows a fresh round, including after a restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    delivery_closed_at: Option<Timestamp>,
 }
 
 /// How a [`Round`] is read; see [`checked!`].
@@ -54,6 +57,9 @@ struct RoundWire {
     /// Optional delivery claim; absent before schema 14.
     #[serde(default)]
     delivery: Option<super::PullRequest>,
+    /// Absent in states written by 0.34.0; an absent marker keeps the claim active.
+    #[serde(default)]
+    delivery_closed_at: Option<Timestamp>,
 }
 
 checked!(Round, RoundWire, |round: &Round| match &round.state {
@@ -166,6 +172,17 @@ impl Round {
         self.delivery.as_ref()
     }
 
+    /// When the delivering PR was observed closed without merging; absent for active or merged claims.
+    #[must_use]
+    pub const fn delivery_closed_at(&self) -> Option<Timestamp> {
+        self.delivery_closed_at
+    }
+
+    /// Retains an observed close after the team has checked the claim and observation time.
+    pub(super) fn end_delivery(&mut self, at: Timestamp) {
+        self.delivery_closed_at = Some(at);
+    }
+
     /// Stores a team-validated delivery claim.
     pub(super) fn deliver(&mut self, pr: super::PullRequest) {
         self.delivery = Some(pr);
@@ -215,6 +232,7 @@ impl Round {
             state: RoundLife::Open,
             part: None,
             delivery: None,
+            delivery_closed_at: None,
         }
     }
 

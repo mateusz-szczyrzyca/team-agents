@@ -8,7 +8,7 @@ use agent_core::cli::{OutputParser, RunRequest};
 use agent_core::config::{AbsolutePath, EnvName};
 use agent_core::prompt::{HarnessPrompt, Variables};
 
-use super::{EngineParts, MAX_PROMPT_ARGUMENT_BYTES, RunError, RunJob};
+use super::{EngineParts, ExcludeCause, MAX_PROMPT_ARGUMENT_BYTES, RunError, RunJob};
 use crate::cli::adapter_for;
 use crate::git::{CommitIdentity, Git};
 use crate::process::ProcessSpec;
@@ -129,7 +129,12 @@ pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch,
     for file in &spec.files {
         write_file(file.path.as_path(), &file.content).await?;
     }
-    keep_out_of_git(&spec.working_dir, &spec.worktree_excludes).await?;
+    keep_out_of_git(&spec.working_dir, &spec.worktree_excludes)
+        .await
+        .map_err(|source| RunError::Exclude {
+            worktree: spec.working_dir.as_path().to_path_buf(),
+            source,
+        })?;
     let mut env = BTreeMap::new();
     for (name, secret) in parts.secrets.agent_env() {
         env.insert(name.clone(), secret.expose().to_owned());
@@ -209,25 +214,21 @@ pub(super) fn lookup_git(worktree: &AbsolutePath) -> Git {
     )
 }
 
-/// Adds the `patterns` to the file that keeps paths out of git for the worktree, those it does not have yet.
-async fn keep_out_of_git(worktree: &AbsolutePath, patterns: &[String]) -> Result<(), RunError> {
+/// Adds the `patterns` to the file that keeps paths out of git for the worktree (`info/exclude`, shared by every
+/// worktree of its repository), those it does not have yet.
+///
+/// # Errors
+/// [`ExcludeCause::Git`] when git cannot say where the file is (the directory is no repository);
+/// [`ExcludeCause::Io`] when the file cannot be read or written.
+pub async fn keep_out_of_git(worktree: &AbsolutePath, patterns: &[String]) -> Result<(), ExcludeCause> {
     if patterns.is_empty() {
         return Ok(());
     }
-    let exclude_error = |source| RunError::Exclude {
-        worktree: worktree.as_path().to_path_buf(),
-        source,
-    };
     let git = lookup_git(worktree);
-    let file = git
-        .info_exclude_file()
-        .await
-        .map_err(|source| exclude_error(super::ExcludeCause::Git(source)))?;
-    let io_error = |source| {
-        exclude_error(super::ExcludeCause::Io {
-            path: file.clone(),
-            source,
-        })
+    let file = git.info_exclude_file().await?;
+    let io_error = |source| ExcludeCause::Io {
+        path: file.clone(),
+        source,
     };
     let present = match tokio::fs::read_to_string(&file).await {
         Ok(text) => text,

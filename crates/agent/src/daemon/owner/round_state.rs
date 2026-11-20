@@ -49,6 +49,14 @@ pub(super) fn rounds_for(state: &State, task: &TaskId, why: Option<&Why>) -> Res
         None if role == Role::Reviewer && !goes_on => RunStart::Review {
             round: reviewed.as_ref(),
         },
+        // A saved recovery queues fresh work; its in-memory Assigned reason does not survive a restart.
+        None if previous.iter().any(|round| {
+            team.round(round)
+                .is_some_and(|round| round.delivery_closed_at().is_some())
+        }) =>
+        {
+            RunStart::Work
+        }
         Some(
             Why::FixPass
             | Why::MergeConflict

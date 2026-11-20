@@ -86,7 +86,67 @@ impl From<WorkingRoundError> for CompleteDeliveryError {
     }
 }
 
+/// Why an observed closed delivery claim cannot be ended atomically.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EndDeliveryError {
+    /// The requested round is not in this team.
+    #[error("no such round {round}")]
+    NoSuchRound {
+        /// The requested round.
+        round: RoundId,
+    },
+    /// Only the latest round of an item in progress can return to work.
+    #[error("round {round} is not a working item")]
+    NotWorking {
+        /// The requested round.
+        round: RoundId,
+    },
+    /// The claim is absent or has already ended.
+    #[error("round {round} has no waiting delivery claim")]
+    NotWaiting {
+        /// The requested round.
+        round: RoundId,
+    },
+    /// The observation cannot predate the opening.
+    #[error(transparent)]
+    BeforeOpening(#[from] ClosedBeforeOpened),
+}
+
 impl Team {
+    /// Ends a delivery claim after its PR is observed closed without merging.
+    ///
+    /// # Errors
+    /// Returns [`EndDeliveryError`] without mutation for an unknown, non-working or non-waiting round, or an early time.
+    pub fn end_delivery(&mut self, id: &RoundId, at: Timestamp) -> Result<(), EndDeliveryError> {
+        let round = self.waiting_delivery_round(id).map_err(|error| match error {
+            WorkingRoundError::NoSuchRound(round) => EndDeliveryError::NoSuchRound { round },
+            WorkingRoundError::NotWorking(round) => EndDeliveryError::NotWorking { round },
+        })?;
+        if round.delivered_by().is_none()
+            || round.delivery_closed_at().is_some()
+            || round.part_pull_request().is_some()
+            || round
+                .item()
+                .and_then(|item| self.round_of(item))
+                .is_none_or(|latest| latest.id() != id)
+        {
+            return Err(EndDeliveryError::NotWaiting { round: id.clone() });
+        }
+        let mut ended = round.clone();
+        ended.check_completion_at(at)?;
+        if ended.is_open() {
+            ended.close(at, RoundEnd::Abandoned)?;
+        }
+        ended.end_delivery(at);
+        let target = self
+            .rounds
+            .iter_mut()
+            .find(|round| round.id() == id)
+            .ok_or_else(|| EndDeliveryError::NoSuchRound { round: id.clone() })?;
+        *target = ended;
+        Ok(())
+    }
+
     /// Finds a PR owned by an ordinary or split-part round of this team.
     #[must_use]
     pub fn delivery_pull_request(&self, number: PrNumber) -> Option<&PullRequest> {
@@ -121,6 +181,7 @@ impl Team {
     pub fn delivery_waits(&self) -> impl Iterator<Item = &Round> {
         self.rounds.iter().filter(|round| {
             round.delivered_by().is_some()
+                    && round.delivery_closed_at().is_none()
                     && self.item_works(round)
                     // A part that completed is followed by the round of the next part, which is the one that works.
                     && round
@@ -160,6 +221,7 @@ impl Team {
         let round = self.waiting_delivery_round(id)?;
         let pr = round
             .delivered_by()
+            .filter(|_| round.delivery_closed_at().is_none())
             .cloned()
             .ok_or_else(|| CompleteDeliveryError::NotWaiting { round: id.clone() })?;
         // Stage the fallible close before changing either the item or the durable round. A round that a stop
@@ -228,6 +290,14 @@ impl Team {
 }
 
 impl CheckedMut<'_, Team> {
+    /// See [`Team::end_delivery`].
+    ///
+    /// # Errors
+    /// Returns [`EndDeliveryError`] if the claim cannot be ended.
+    pub fn end_delivery(&mut self, round: &RoundId, at: Timestamp) -> Result<(), EndDeliveryError> {
+        self.value.end_delivery(round, at)
+    }
+
     /// See [`Team::deliver_round`].
     ///
     /// # Errors

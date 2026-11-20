@@ -390,6 +390,7 @@ impl Owner {
             number: open.number,
             via,
         });
+        self.apply_plan_answer(task, open.number, file)?;
         self.move_to(task, &open.located.team, TaskStatus::Queued, &mut events)?;
         self.unwatch_task(task);
         self.commit(task, &open.located, now, events, None).await?;

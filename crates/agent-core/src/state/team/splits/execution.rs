@@ -137,7 +137,7 @@ pub(in crate::state::team) fn check_execution(team: &Team) -> Result<(), crate::
         });
         if !valid
             || (round.is_open() && !open.insert(parent))
-            || !seen.insert((parent, key))
+            || (round.delivery_closed_at().is_none() && !seen.insert((parent, key)))
             || (round.part_pull_request().is_some() != completed_part(round))
         {
             return Err(crate::state::RoundsError::SplitExecution {

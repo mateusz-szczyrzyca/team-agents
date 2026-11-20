@@ -62,7 +62,7 @@ fn version_six_upgrade_keeps_records_links_search_and_foreign_keys() {
         );
         let raw = Connection::open(&path).unwrap();
         let version: u32 = raw.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 12, "seed {seed}");
+        assert_eq!(version, 14, "seed {seed}");
         let violations: i64 = raw
             .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))
             .unwrap();

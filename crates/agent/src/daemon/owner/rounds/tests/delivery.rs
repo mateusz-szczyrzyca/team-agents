@@ -433,3 +433,113 @@ async fn delivery_refuses_work_that_the_pr_has_on_no_published_commit() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn delivery_closed_claim_reopens_the_round_and_runs_the_member_again() {
+    let mut rig = Rig::new(
+        &[
+            investigator(
+                "inv-lead",
+                "sleep,integrate,done:DELIVERED: #1,delivery-return-lead,sleep",
+            ),
+            normal("claude-1", "commit-clean"),
+            normal("codex-1", "delivery-held,delivery-return-work"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(
+            &["inv-lead", "claude-1", "codex-1"],
+            super::rig::PARALLEL,
+            MergeMode::NoMerge,
+            Some("inv-lead"),
+        )
+        .await;
+    rig.item_where("1.1", "the first PR to be approved", |phase| {
+        matches!(phase, ItemPhase::Approved { .. })
+    })
+    .await;
+    std::fs::write(rig.home.root().join("delivery-release"), "release").unwrap();
+    let accepted = rig
+        .state_where("the delivery to be accepted", |state| {
+            state
+                .team(&team)
+                .unwrap()
+                .round_of("2.1".parse().unwrap())
+                .unwrap()
+                .delivered_by()
+                .is_some()
+        })
+        .await;
+    let old = accepted
+        .team(&team)
+        .unwrap()
+        .round_of("2.1".parse().unwrap())
+        .unwrap()
+        .id()
+        .clone();
+    rig.github.closed_by_a_human(1);
+    let returned = rig
+        .state_where("the returned member to complete its next run", |state| {
+            let found = state.team(&team).unwrap();
+            found.find(&tasks[2]).unwrap().1.runs().len() >= 2
+                && found.find(&tasks[2]).unwrap().1.status() == TaskStatus::Waiting
+        })
+        .await;
+    rig.prompt(&tasks[0], 4).await;
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
+    let found = returned.team(&team).unwrap();
+    assert!(found.round(&old).unwrap().delivery_closed_at().is_some());
+    let fresh = found.round_of("2.1".parse().unwrap()).unwrap();
+    assert_ne!(fresh.id(), &old);
+    assert_eq!(fresh.delivered_by(), None);
+    assert!(fresh.is_open());
+    assert_eq!(
+        found.find(&tasks[2]).unwrap().1.runs().last().unwrap().rounds(),
+        &[fresh.id().clone()]
+    );
+    assert!(messages.contains("PR #1 was closed without merging"), "{messages}");
+    rig.item_where("2.1", "the returned item's independent PR to be approved", |phase| {
+        matches!(phase, ItemPhase::Approved { .. })
+    })
+    .await;
+    assert_eq!(rig.github.pulls().len(), 2);
+    rig.github.merged_by_a_human(2);
+    rig.item_where(
+        "2.1",
+        "the returned item to finish while its old PR stays closed",
+        |phase| matches!(phase, ItemPhase::Done { .. }),
+    )
+    .await;
+    push_integrated_owning_pr(&rig, &team, &tasks[0]);
+    rig.github.reopened_by_a_human(1);
+    rig.github.merged_by_a_human(1);
+    let done = rig
+        .state_where("the team to finish after both independent merges", |state| {
+            state.team(&team).unwrap().find(&tasks[0]).unwrap().1.status() == TaskStatus::Done
+        })
+        .await;
+    rig.stop().await.unwrap();
+    assert!(
+        done.team(&team)
+            .unwrap()
+            .items()
+            .iter()
+            .all(|item| matches!(item.phase(), ItemPhase::Done { .. }))
+    );
+    assert!(done.team(&team).unwrap().rounds().iter().all(|round| !round.is_open()));
+}
+
+/// Updates the unrelated PR only after the returned item's independent merge.
+fn push_integrated_owning_pr(rig: &Rig, team: &agent_core::ids::TeamId, lead: &agent_core::ids::TaskId) {
+    let state = rig.state();
+    let ItemPhase::Approved { pr, .. } = state.team(team).unwrap().item("1.1".parse().unwrap()).unwrap().phase() else {
+        panic!("the unrelated owning PR still waits")
+    };
+    super::rig::git(&rig.worktree(lead), &["push", "origin", pr.branch.as_str()]);
+}

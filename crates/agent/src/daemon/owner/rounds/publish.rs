@@ -21,7 +21,7 @@ use tokio::sync::oneshot;
 use crate::daemon::team::Why;
 
 use super::super::teams::Look;
-use crate::daemon::pr::{Joining, Publication, Publish, plan_publications, pull_text};
+use crate::daemon::pr::{Joining, Publication, Publish, plan_publications, pull_text, returned_delivery};
 
 use super::super::{Owner, OwnerError};
 use crate::daemon::merge::count;
@@ -339,19 +339,18 @@ impl Owner {
     ) -> Result<Attempt, PublishError> {
         let lead = site.lead;
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        let split = items_of(publication).iter().any(|id| {
-            self.parts
-                .state
-                .team(site.team)
-                .and_then(|team| {
-                    team.items()
-                        .iter()
-                        .find(|item| item.id().to_string() == *id)
-                        .and_then(|item| team.round_of(item.id()))
-                })
-                .is_some_and(|round| round.part().is_some())
+        let independent = items_of(publication).iter().any(|id| {
+            self.parts.state.team(site.team).is_some_and(|team| {
+                team.items()
+                    .iter()
+                    .find(|item| item.id().to_string() == *id)
+                    .is_some_and(|item| {
+                        returned_delivery(team, item.id())
+                            || team.round_of(item.id()).is_some_and(|round| round.part().is_some())
+                    })
+            })
         });
-        let source = if split {
+        let source = if independent {
             crate::daemon::team::task_branch(&lead.agent, &lead.task)?
         } else {
             publication.head_branch.clone()
@@ -515,7 +514,7 @@ impl Owner {
         }))
     }
 
-    /// Keeps each split part on its own branch at the integrated, gated tip.
+    /// Keeps split parts and returned deliveries on independent branches at the integrated, gated tip.
     async fn publication_branch<'a>(
         &self,
         team: &TeamId,
@@ -523,14 +522,12 @@ impl Owner {
         head: &'a BranchName,
         ready: &Ready,
     ) -> Result<std::borrow::Cow<'a, BranchName>, PublishError> {
-        let split = ids.iter().any(|id| {
-            self.parts
-                .state
-                .team(team)
-                .and_then(|team| team.round_of(*id))
-                .is_some_and(|round| round.part().is_some())
+        let independent = ids.iter().any(|id| {
+            self.parts.state.team(team).is_some_and(|team| {
+                returned_delivery(team, *id) || team.round_of(*id).is_some_and(|round| round.part().is_some())
+            })
         });
-        if !split {
+        if !independent {
             return Ok(std::borrow::Cow::Borrowed(head));
         }
         ready.git.branch_point(head, &ready.tip).await?;

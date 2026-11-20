@@ -162,6 +162,7 @@ engine relies on:
 | `decide::team` | `plan_team`: from the agents named, the configuration, the coordinator asked for (`--coordinator`, then the task list's `Coordinator:` line) and a random source, a `TeamPlan` — solo, or a team with its coordinator, members and workers — or a `TeamPlanError`: unknown agent, a worker as coordinator, a coordinator that was not named, only workers, no member besides the coordinator, and too many (or too few) investigators for the configured outside reviewers |
 | `decide::assign` | `next_assignments`: which item goes to which member next — one item per member, the items of a feature in order (the next starts when the previous is merged, with `--no-merge` approved), features in parallel once the features they depend on are merged; `first_free_worker` for `delegate` |
 | `decide::checks` | `assess`: from the facts of a round's diff (its files, the files whose mode changed, its commits with their parents, the lines it added, the description of its pull request) and the repository's `checks` lists, the `Issue`s — an existing test file that loses lines or is removed or renamed and a protected file that changes (only the human may allow them); a test of a `RED:` commit edited by a later commit unless a named `TEST-FIX:`; production code with no added test line and no `Test-First: not possible — <reason>`; an added line that skips a test, suppresses a lint or asks whether the code runs under test, in a file the description does not name (the built-in `markers` table per extension). See "Round checks before the review" |
+| `decide::plan` | `decide_plan`: from the role, how the run ended, the plan read at its end (`PlanRead`: missing, unreadable with its error, or the plan), the version kept from an earlier run, what the task keeps of its plan in the state and `[plan]`, the `PlanVerdict` — accept, send the run back with a `PlanReason` (missing, unreadable, a lost step, an unfinished step, in this order), or ask the human once the task was sent back `bounces` times (plus what the human granted). A role outside `[plan] roles`, another end than `DONE`, a task created before plans and a plan the human released are accepted. See [`plan.md`](plan.md) |
 | `decide::round` | `RoundState`, `RoundEvent` and `RoundState::transition`: member work, integration, gate green at the head, pull request published for that head, the configured reviews, merge or hand-over to the human, item done; "changes requested" starts a fix pass until `[review] fix_passes`, then the human is asked, and the answer grants one more pass. Each transition says what the daemon does next (`RoundAction`); `Checking` is the phase before the reviews are asked: what the issues of the checks come to — the reviews start, the round goes back to the team (at most `[review] check_passes` times) or the human is asked |
 | `decide::round::rounds_of_run` | `rounds_of_run`: from the role of a task, why its run starts (`RunStart`: its own work, a request for a worker, a review, a continuation) and what the state says of its team's rounds (`TaskRounds`), the rounds the run works for. See "Rounds" |
 | `decide::outcome` | `classify_outcome`: from the final message, the exit status, the error tail and who ended the run, the `RunEnd` to record — reported status, no status, quota exhausted (with the reset time when the CLI gives one), rate limited, turn limit, hung, stopped — and the `Pause` it implies; `after_hang` for the watchdog's strikes; `after_turn_limit` for bounded same-session continuation. The CLIs' outputs are fixtures in `crates/agent-core/tests/fixtures/cli-outputs/` |
@@ -177,7 +178,7 @@ the network. The order of the checks and the rules each follows are in the docum
 |---|---|
 | `agent_runtime::run` | `RunEngine::run`: one run of a model CLI, from its files to its classified end; touches no state (`run_held`: the same with a `WatchdogHold`, see "The gate"). The run's environment has `AGENTS_HOME`. `run::compose` makes its prompt: context, role, the rules of the tier, brief, item, checkpoint — or, for a resumed session, what interrupted it |
 | `agent_runtime::{settings, harness_prompts, autopilot_prompts, checks_prompts, text_file, clock}` | `agents.toml` and `secrets.toml` read from the home; the second prompt catalog (`HarnessPrompt`, `prompts/harness/run/`: the run prompts and the notifications) and the fourth and fifth (`AutopilotPrompts`, `ChecksPrompts`); a bounded text file; the system clock |
-| `agent::daemon` | `owner` (the state), `server` (the socket), `notifier`, `opener`, `settle` (what a run's end does), `recovery` (on start), `team` (the team's life as decisions), `owner/teams` (what carries them out), `questions` (the questions file) and `control` (what a control does to a task), with `owner/answers` and `owner/controls`, and the autopilot: `pr`, `review`, `merge` and `checks` (its decisions) with `owner/rounds` (what carries them out) |
+| `agent::daemon` | `owner` (the state), `owner/plan` (the plan of a task at a run's end and start, the question about it and its answer, the plan kept out of the delivery), `server` (the socket), `notifier`, `opener`, `settle` (what a run's end does), `recovery` (on start), `team` (the team's life as decisions), `owner/teams` (what carries them out), `questions` (the questions file) and `control` (what a control does to a task), with `owner/answers` and `owner/controls`, and the autopilot: `pr`, `review`, `merge` and `checks` (its decisions) with `owner/rounds` (what carries them out) |
 | `agent_runtime::history`, `agent_core::history`, `agent::daemon::{history, owner/history}` | the history: a database of what happened and what every run did; see "The history" |
 | `agent::{client, commands}` | the socket client, `agent status`, `agent daemon`, `agent run`, `agent answer`, `stop`, `pause`, `unpause`, `resume`, `say` |
 
@@ -249,6 +250,7 @@ end does (`settle.rs`):
 | The run ended | The task goes to | And |
 |---|---|---|
 | `STATUS: DONE` | `done` for a solo task and a review, `waiting` for a coordinator, member or worker | |
+| `STATUS: DONE` against its plan | `queued`, sent back with the reason; after `[plan] bounces` send-backs `questions`, in a questions file the daemon writes | only for the roles of `[plan] roles` and tasks this version made; see [`plan.md`](plan.md#the-daemon-and-the-plan) |
 | `STATUS: QUESTIONS` | `questions`, when `tasks/<task>/questions-<number>.md` is there and parses | the questions are recorded and the human told; a missing or unreadable file fails the task and says why |
 | `STATUS: FAILED` | `failed` | the coordinator (or human) is told |
 | no `STATUS:` line | `queued`: resumed in the same session with a short prompt (`harness/run/resume-no-status.md`) | at most 2 consecutive automatic resumes for resumable tasks with a session (solo, coordinator, member; excluding workers serving requests, reviewers, tasks without a session, or failures during startup/execution); the 3rd fails and notifies. Runs ending without a status line upon daemon shutdown/interruption (exit code `None`) count toward the streak so restarts remain bounded. Any other end resets the count. Settle records `Settled::NoStatus` so human pause or stop overrules retry |
@@ -650,8 +652,17 @@ excluded from publication and idle-work alarms. Their merge obligation survives 
 observes the delivering PR even while its owner is in review or a fix pass. A merge completes the checked item
 and round before normal team completion and worktree cleanup. A stop of the whole team abandons the round but keeps
 the claim: the item stays out of publication, the delivering PR is still polled after a resume, and its merge completes
-the item without recording the end of the round a second time. Closed, unmerged delivery recovery is deferred
-to the second part; this part logs a warning and preserves the wait.
+the item without recording the end of the round a second time. An observed unmerged close ends the claim in a
+checked transition and saves `delivery_closed_at` before notification or scheduling. The abandoned round retains
+its delivery record. Polling recovers a marked round that is still the latest for its in-progress item: notify the
+lead from the team prompt catalog, open a fresh round for the same item (or split part), and queue the member.
+The new round and queue state are saved together. Recovery retries after a restart without consulting the old PR;
+therefore a later reopening cannot revive the claim. Notification precedes the new round, so a crash after sending
+but before saving may repeat the message. A stopped member keeps the recovery pending until resumed. Publication
+and subsequent merge use the ordinary item lifecycle. A returned item publishes the integrated, gated tip on a
+branch named for its fresh round, independently of the closed PR and any other item still attached to that PR.
+A failed bus send logs `bus_down` and leaves the saved notification and reopening obligation for the next poll;
+it does not stop the owner loop.
 
 ### Snapshots (`agent-runtime`, `agent`)
 
@@ -774,7 +785,8 @@ questions of a task are numbered (`questions-<number>.md`) and the reviews asked
 |---|---|---|
 | a team starts | opens the round of every item given to a member at the start; for a list without items, the one round of the whole work | `round_opened` |
 | an item is given to a member for the first time (`assign_items`) | opens its round, then moves the item on | `round_opened`, then `item_status` |
-| an item is given again (its member left) | nothing: an item has one round, which stays | |
+| an item is given again (its member left) | keeps its existing round | |
+| a verified delivery PR is observed closed without merging | abandons the claim round, then opens a fresh round for the same item or split part and queues its member | `round_closed`, then `round_opened` |
 | the pull request of an item is merged — by the daemon or by the human | closes the round `merged`, after the item is `done` as merged | `round_closed` |
 | both reviews approve and the team does not merge by itself (`--no-merge`) | closes the round `approved`; the human's merge later completes the item and leaves the round as it is | `round_closed` |
 | a `stop` leaves every task of a team stopped, failed or done | closes the team's open rounds `abandoned` | `round_closed` |
@@ -792,12 +804,12 @@ closed (`abandoned`): the runs that go on name it. A round is kept for ever, so 
 | the coordinator | every round of its team that is open |
 | a reviewer | the round of the pull request it reviews |
 | a worker | the rounds of the run that asked for it |
-| any task, for a fix pass, the answers of the human, or a resume | the rounds its last run worked for |
+| any task, for a fix pass, the answers of the human, or a resume | the rounds its last run worked for; a member queued after an ended delivery uses its replacement round even after a restart |
 
 A run names only rounds of its own team, none twice. The daemon that restarts reads them from the state and goes on with the same rounds.
 
-**What the state checks**, by its operations and again when it is read: an ordinary item has at most one round;
-a split item has one round per started part and at most one open round. An item has a round as soon as it leaves `pending` (`Team::advance_item`; an item the list marks `[x]` has none); a round belongs to an item of its team, or is the one
+**What the state checks**, by its operations and again when it is read: an ordinary item has at most one round apart from abandoned rounds with ended delivery claims;
+a split item has one round per started part apart from ended claims, and at most one open round. An item has a round as soon as it leaves `pending` (`Team::advance_item`; an item the list marks `[x]` has none); a round belongs to an item of its team, or is the one
 round of a list without items; an ordinary round closed as `merged` belongs to an item done as merged. A merged split
 round retains its own pull request while the parent advances. An ordinary round closed as `approved` belongs to an item
 that is approved or done as merged; a round is not closed before it was opened; a run names only the rounds of its own team. The full list is

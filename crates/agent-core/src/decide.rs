@@ -1,6 +1,7 @@
 //! The decisions of the harness: who is in a team and who coordinates it ([`team`]), which item goes to which member
 //! ([`assign`]), what the checks before a review find in a round ([`checks`]), what happens next in the round of one
-//! item ([`round`]), how a finished run is told apart ([`outcome`]), whether the branch of a lead that waits is
+//! item ([`round`]), how a finished run is told apart ([`outcome`]), whether a run that ends done goes back for its
+//! task's plan ([`plan`]), whether the branch of a lead that waits is
 //! published, gated or sent back ([`publish`]) and how long a failed step waits before it is tried again ([`retry`]).
 //!
 //! Every decision is a pure function of its arguments — the clock and the random source included — and returns
@@ -15,6 +16,7 @@ pub mod fix;
 pub mod merge_refusal;
 pub mod opinion;
 pub mod outcome;
+pub mod plan;
 pub mod publish;
 pub mod retry;
 pub mod reviewer;

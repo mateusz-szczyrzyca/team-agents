@@ -43,6 +43,8 @@ pub enum RecordKind {
     Snapshot,
     /// An event of a round: a gate, a pull request, a question and the like.
     Event,
+    /// A read of a task's plan, kept in `plan_versions`.
+    Plan,
 }
 
 impl Keyword for RecordKind {
@@ -87,7 +89,7 @@ impl FromStr for LostKind {
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         match RecordKind::from_str(text) {
-            Ok(RecordKind::Event) => return Err(UnknownKeyword::of::<RecordKind>(text)),
+            Ok(RecordKind::Event | RecordKind::Plan) => return Err(UnknownKeyword::of::<RecordKind>(text)),
             Ok(kind) => return Ok(Self::Record(kind)),
             Err(_) => {}
         }

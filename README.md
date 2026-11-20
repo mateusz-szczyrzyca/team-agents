@@ -245,6 +245,16 @@ of its continuation. This build supports legacy socket protocol `3` and split-aw
 state schema `2`, and migrates history to schema `8`. See [configuration](docs/configuration.md) and
 [state compatibility](docs/state.md#turn-limit-compatibility-item-88).
 
+**The plan of a task.** A solo agent, a member and a coordinator keep the plan of their task in `.agent/plan.md` of
+their worktree: its stages and steps, each marked to do, in hand, done or given up ([`docs/plan.md`](docs/plan.md)).
+The daemon reads the file at the end of every run and keeps each new version in the history. A run of a role in
+`[plan] roles` that ends `STATUS: DONE` while its plan is missing, does not parse, has a step still to do or in hand,
+or lost a step of its last version goes back to the same agent with the reason, at most `[plan] bounces` times per task
+(default 3; `0` only records); after that you are asked once, in the task's questions file, whether to go on as it is
+or send it back once more. Tasks created before this version are never sent back. The plan is kept out of git and out of
+the pull request: a plan an agent commits by mistake is taken out of its branch by a commit "Keep the plan out of the
+delivery". See [configuration](docs/configuration.md#plan).
+
 A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt
 (`prompts/harness/run/resume-no-status.md`), up to twice in a row; a third failure in a row marks the task failed and
 notifies the coordinator (or human). Automatic retries apply only to resumable tasks with a session (solo tasks,
@@ -546,12 +556,29 @@ a review, a free independent investigator (for a review, a second opinion or the
 work, when none is free), a second opinion that an investigator is giving, the human's answer, or the lead's correction. `nothing: this is a defect` means the
 harness has lost its next action; it logs one `daemon_task_failed` error for that round with `operation=round_wait`.
 
-A verified item delivered through another team PR says `delivered by PR #N, waits for its merge`; after that
-PR merges it says `done, delivered by PR #N`. It opens no separate PR and keeps waiting across daemon restarts.
-This release includes the checked delivery lifecycle; the coordinator instructions and automatic return to work
-when the delivering PR closes without merging follow in the next part. Until then, such an item remains waiting
-and the daemon logs a warning. The state format advances to schema 14, which reads existing state through schema
-13; older binaries need a state backup from before the upgrade.
+When another pull request of the same team already contains an item's deliverable (code, documents, images or
+anything else), the coordinator can report it instead of creating an empty pull request. It writes the standalone
+line `DELIVERED: #N` before its final `STATUS: DONE`. The harness checks that the report identifies one current
+item, the PR belongs to another round of this team and uses its recorded branch, the member's worktree is clean,
+and the item has no commits outside the published PR or base branch. Git or GitHub failures refuse the claim and
+the coordinator receives a correction with the reason in its next prompt; the item stays in progress.
+
+An accepted open claim says `delivered by PR #N, waits for its merge` in `agent status` and
+`agent status <round>`. It creates no separate PR and keeps waiting across daemon restarts. An already merged PR
+completes it immediately; after the merge the line says `done, delivered by PR #N`.
+If the daemon observes the PR closed without merging, the old round says
+`closed, abandoned, delivery PR #N closed without merging`. The coordinator receives the reason on the bus, and
+the member resumes the same item on its branch in a fresh round whose status says `open`. The item then gets its
+own PR on a separate publication branch through the usual gate, review and merge process, even while the old PR
+stays closed. This return survives a daemon restart at either step.
+Reopening a PR before the daemon observes its closure preserves the claim; reopening it after observation never
+restores that claim. A stopped team resumes this recovery when its member is resumed.
+
+State schema 14 remains readable, including open claims written by 0.34.0. The optional
+`delivery_closed_at` field retains the observed closure on the abandoned round; no migration is needed for those
+states. Older binaries cannot read states containing the new field: keep a state backup before upgrading.
+History schema 14 adds the `delivery_closed` warning and migrates existing logs, search entries and cursors.
+Keep a backup of `history.db` before upgrading too: older agents cannot read history schema 14.
 
 A step of a round that GitHub or git fails does not stop the daemon: the round says `waits for GitHub: refresh the
 description of the pull requests, tried 4 times, next try 01:07` and the step is tried again by itself, after 30

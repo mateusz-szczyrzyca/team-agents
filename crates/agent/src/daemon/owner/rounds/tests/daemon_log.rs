@@ -903,6 +903,7 @@ fn emit_the_names_of_the_daemon_causes(daemon: &Daemon) {
         );
     }
     for variant in [
+        LogEvent::DeliveryClosed,
         LogEvent::DaemonTaskFailed,
         LogEvent::TeamNotStarted,
         LogEvent::NotificationFailed,
@@ -1187,7 +1188,7 @@ async fn record_config_and_storage_failure_events(dir: &Path) {
     let missing_cfg_daemon = Daemon::new(&pair_state(), None);
     std::fs::write(
         missing_cfg_daemon.home.config_file(),
-        "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n\
+        "[agents.claude-1]\ncli = \"claude\"\n[plan]\nbounces = 0\n[tiers]\nnormal = [\"claude-1\"]\n\
          [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
     )
     .unwrap();
@@ -1198,7 +1199,7 @@ async fn record_config_and_storage_failure_events(dir: &Path) {
     missing_repo_daemon.scenario(1, "done");
     std::fs::write(
         missing_repo_daemon.home.config_file(),
-        "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n\
+        "[agents.claude-1]\ncli = \"claude\"\n[plan]\nbounces = 0\n[tiers]\nnormal = [\"claude-1\"]\n\
          [repos.other-repo]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
     )
     .unwrap();
@@ -1426,6 +1427,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::daemon_log_cause_tests::record_named_daemon_causes(&mut observed).await;
     super::disk_tests::record_build_directory_removed(&mut observed).await;
     super::github_waits_tests::record_github_step_events(&mut observed).await;
+    super::delivery_restart_tests::record_delivery_closed_event(&mut observed).await;
     super::turn_limit_restart_tests::record_snapshot_events(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();

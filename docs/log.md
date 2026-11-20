@@ -203,7 +203,11 @@ At `level = "debug"`:
 - `decision_taken` is emitted whenever a pure decision function in `agent_core::decide` takes action (forming a team,
   assigning an item, starting or advancing a round, acting on a run outcome, scheduling a retry or pause, evaluating
   round checks, or choosing a merge or merge-conflict action). Its `fields` carry `decision`, `input`, and `result`. A decision check on
-  an idle team or task that produces no action logs nothing.
+  an idle team or task that produces no action logs nothing. The plan of a task ([`plan.md`](plan.md)) has three:
+  `plan` (a run that ended accepted, sent back or asked about), `plan_answer` (what the human's answer about a plan
+  did) and `plan_out_of_delivery` (whether a plan committed by mistake was taken out of the branch). A plan that cannot
+  be taken out of the branch is a `git_call_failed` warning; a question about a plan that cannot be written, a
+  `questions_file_invalid` warning.
 - `outside_call_completed` is emitted whenever an external call (`git`, `agentbus`, the GitHub API, or a model CLI
   process) finishes, with `tool`, `operation`, `duration_ms`, `outcome`, and, when available, `exit_code` in `fields`.
   For a GitHub call, `exit_code` is the actual HTTP response status.
@@ -272,7 +276,8 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `notification_failed` | `error` | A notification for the human cannot be made, timed, queued or delivered. |
 | `history_record_incomplete` | `warn` | A record of the history cannot be made as it should: it is left out, counted as lost, or made with a fallback (such as a run's reason recorded as a continuation). |
 | `team_changed` | `info` | A team is started or closed. |
-| `round_changed` | `info` | A round is opened or closed. Checked delivery changes carry `change=delivery_accepted` or `delivery_merged` at `info`, and `delivery_refused`, `delivery_closed` or `delivery_poll_failed` as a `warn` record of the same event. Records name `team`, the known `round` and `pr`, and an `error` cause chain for failed checks or observations. |
+| `round_changed` | `info` | A round is opened or closed. Checked delivery changes carry `change=delivery_accepted` or `delivery_merged` at `info`, and `delivery_refused` or `delivery_poll_failed` as a `warn` record of the same event. Records name `team`, the known `round` and `pr`, and an `error` cause chain for failed checks or observations. |
+| `delivery_closed` | `warn` | An accepted delivery PR was observed closed without merging; the claim ends and the item returns to its member. Fields: `team`, `round`, `pr`. |
 | `item_phase_changed` | `info` | An item's phase changes. |
 | `task_status_changed` | `info` | A task's status changes. |
 | `run_started` | `info` | A model CLI run starts. A run that the bus's wake-up starts also has `why` (`wake_up`), `message_id`, `from` and `wake_ups` (the number of this wake-up for that message). |

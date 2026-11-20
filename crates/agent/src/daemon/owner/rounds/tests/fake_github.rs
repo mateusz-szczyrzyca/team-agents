@@ -215,6 +215,14 @@ impl FakeGitHub {
         }
     }
 
+    /// Reopens an unmerged pull request without changing its head or published work.
+    pub(super) fn reopened_by_a_human(&self, number: u32) {
+        let mut world = self.world();
+        let pull = world.pulls.iter_mut().find(|pull| pull.number == number).unwrap();
+        assert!(!pull.merged);
+        pull.closed = false;
+    }
+
     /// The human points pull request `number` at another head branch of the remote.
     pub(super) fn head_changed_by_a_human(&self, number: u32, head: &str) {
         if let Some(pull) = self.world().pulls.iter_mut().find(|pull| pull.number == number) {

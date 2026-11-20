@@ -371,6 +371,29 @@ case $action in
     fi
     result "$report"'\nSTATUS: DONE'
     ;;
+  delivery-from-prompt)
+    # A coordinator uses only a protocol supplied in its first prompt.
+    if [[ $(<.fake-prompt-1) != *'DELIVERED: #N'* ]]; then
+      result 'The delivery protocol is missing.\nSTATUS: FAILED'
+    else
+      result 'DELIVERED: #1\nSTATUS: DONE'
+    fi
+    ;;
+  delivery-return-work)
+    hide_own_files
+    commit_work
+    : > "$home/delivery-return-ready"
+    result 'Finished the returned item.\nSTATUS: DONE'
+    ;;
+  delivery-return-lead)
+    while [[ ! -f $home/delivery-return-ready ]]; do sleep 0.02; done
+    current=$(git rev-parse --abbrev-ref HEAD)
+    for other in $(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-*.*'); do
+      [[ $other == "$current" ]] || git "${GIT_FIXTURE[@]}" merge --no-edit "$other" > /dev/null
+    done
+    record_gate
+    result 'Integrated the returned item.\nSTATUS: DONE'
+    ;;
   delivery-held)
     hide_own_files
     : > .fake-delivery-ready

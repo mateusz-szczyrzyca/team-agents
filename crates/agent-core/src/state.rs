@@ -17,6 +17,7 @@ mod gate;
 mod item;
 mod member;
 mod migrate;
+mod plan;
 mod question;
 mod round;
 mod run;
@@ -41,13 +42,14 @@ pub use item::{
     ReviewOutcome, SubmitReviewError,
 };
 pub use member::{Member, MemberError, MemberMut, Participant, QuestionError};
+pub use plan::{PlanKeeping, PlanReason, PlanStage};
 pub use question::{AnswerBeforeQuestion, AnsweredVia, Question, QuestionState};
 pub use round::{ClosedBeforeOpened, Round, RoundEnd, RoundLife};
 pub use run::{Run, RunEnd, RunError, RunState};
 pub use team::{
     ActivateSplitError, Activity, ActivityEnd, ActivityOutcome, ActivityRequest, AdvanceItemError, BeginRunError,
-    CloseRoundError, CompleteDeliveryError, Crew, CrewError, CrewMut, DeliverRoundError, MergeMode, NewRun,
-    OpenRoundError, RecordSplitError, ReviewerProblem, RoundsError, TaskListText, Team, TeamError, TeamMembers,
+    CloseRoundError, CompleteDeliveryError, Crew, CrewError, CrewMut, DeliverRoundError, EndDeliveryError, MergeMode,
+    NewRun, OpenRoundError, RecordSplitError, ReviewerProblem, RoundsError, TaskListText, Team, TeamError, TeamMembers,
     TeamMut,
 };
 pub use values::{CommitId, InvalidCommitId, InvalidTimestamp, PrNumber, SessionId, Timestamp};

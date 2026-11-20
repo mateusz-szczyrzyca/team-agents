@@ -1,4 +1,4 @@
-PRAGMA user_version = 12;
+PRAGMA user_version = 14;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -294,6 +294,25 @@ CREATE TABLE snapshots (
     PRIMARY KEY (round, task, n)
 ) STRICT;
 
+CREATE TABLE plan_versions (
+    id INTEGER PRIMARY KEY,
+    task TEXT NOT NULL,
+    team TEXT NOT NULL,
+    run TEXT,
+    at TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('version', 'missing', 'unreadable')),
+    text TEXT,
+    line INTEGER CHECK (line IS NULL OR line >= 1),
+    detail TEXT,
+    CHECK ((kind = 'version') = (text IS NOT NULL)),
+    CHECK ((kind = 'unreadable') = (detail IS NOT NULL)),
+    CHECK ((kind = 'unreadable') OR line IS NULL)
+) STRICT;
+
+CREATE INDEX plan_versions_by_task ON plan_versions (task, id);
+
+CREATE INDEX plan_versions_by_team ON plan_versions (team, id);
+
 CREATE TABLE daemon_logs (
     id INTEGER PRIMARY KEY,
     first_at TEXT NOT NULL,
@@ -309,7 +328,7 @@ CREATE TABLE daemon_logs (
         'run_started', 'run_ended', 'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated',
         'questions_answered', 'control_used', 'checks_decided', 'reviews_requested', 'review_report_late',
         'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken',
-        'outside_call_completed', 'peer_gone', 'github_step_waiting', 'github_step_resumed', 'snapshot_failed', 'snapshot_large'
+        'outside_call_completed', 'peer_gone', 'github_step_waiting', 'github_step_resumed', 'snapshot_failed', 'snapshot_large', 'delivery_closed'
     )),
     team TEXT,
     task TEXT,
@@ -329,7 +348,7 @@ CREATE TABLE daemon_logs (
             'cli_output_unreadable', 'run_ended_without_status', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
             'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out',
             'gate_dirty_tree', 'questions_file_invalid', 'restart_corrected', 'request_refused',
-            'history_record_incomplete', 'github_step_waiting', 'snapshot_failed', 'snapshot_large'
+            'history_record_incomplete', 'github_step_waiting', 'snapshot_failed', 'snapshot_large', 'delivery_closed'
         ))
         OR (level = 'info' AND event IN (
             'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',

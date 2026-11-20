@@ -43,7 +43,7 @@ use crate::run::output::{OutputTail, read_end};
 
 use crate::store::StateStore;
 pub use hold::{HoldGuard, WatchdogHold};
-pub use launch::agent_path_directories;
+pub use launch::{agent_path_directories, keep_out_of_git};
 
 /// One best-effort history boundary may spend two seconds collecting Git data, plus bounded child cleanup.
 const HISTORY_CAPTURE_BUDGET: Duration = Duration::from_secs(2);

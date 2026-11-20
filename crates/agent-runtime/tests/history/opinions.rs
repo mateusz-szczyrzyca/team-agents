@@ -48,7 +48,7 @@ fn migrates_schema_eight_with_records_links_and_search() {
     assert_eq!(
         raw.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
             .unwrap(),
-        12
+        14
     );
     assert_eq!(
         raw.query_row::<i64, _, _>("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))
@@ -205,7 +205,7 @@ fn migrates_schema_nine_preserving_existing_opinion_requests_and_search() {
     assert_eq!(
         raw.pragma_query_value::<u32, _>(None, "user_version", |row| row.get(0))
             .unwrap(),
-        12
+        14
     );
     assert_eq!(
         Reader::open(&path)
