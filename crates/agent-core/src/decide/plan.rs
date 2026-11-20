@@ -94,11 +94,24 @@ pub enum DoneEnds {
 /// when no item is pending or in progress — every item is in review, in a fix pass, approved or done.
 #[must_use]
 pub fn done_ends<'a>(role: Role, phases: impl IntoIterator<Item = &'a ItemPhase>) -> DoneEnds {
+    done_ends_with(role, phases, |_| true)
+}
+
+/// What the `DONE` of a task of `role` ends, in a team whose items are in `phases`, when `works` says whether the member
+/// an item in progress is with still works on it: an item whose member finished it and waits is the coordinator's to
+/// integrate, not a member's work still to come. [`done_ends`] is this with every member still at work.
+#[must_use]
+pub fn done_ends_with<'a>(
+    role: Role,
+    phases: impl IntoIterator<Item = &'a ItemPhase>,
+    works: impl Fn(&AgentName) -> bool,
+) -> DoneEnds {
     match role {
         Role::Coordinator => {
             let mut phases = phases.into_iter();
             if phases.any(|phase| match phase {
-                ItemPhase::Pending | ItemPhase::InProgress { .. } => true,
+                ItemPhase::Pending => true,
+                ItemPhase::InProgress { assignee, .. } => works(assignee),
                 ItemPhase::InReview { .. }
                 | ItemPhase::Fixing { .. }
                 | ItemPhase::Approved { .. }
@@ -111,19 +124,6 @@ pub fn done_ends<'a>(role: Role, phases: impl IntoIterator<Item = &'a ItemPhase>
         }
         Role::Solo | Role::Member | Role::Worker | Role::Reviewer => DoneEnds::Work,
     }
-}
-
-/// What the `DONE` of a task of `role` ends, in a team whose items are in `phases`, when `works` says whether the member
-/// an item in progress is with still works on it: an item whose member finished it and waits is the coordinator's to
-/// integrate, not a member's work still to come. [`done_ends`] is this with every member still at work.
-#[must_use]
-pub fn done_ends_with<'a>(
-    role: Role,
-    phases: impl IntoIterator<Item = &'a ItemPhase>,
-    works: impl Fn(&AgentName) -> bool,
-) -> DoneEnds {
-    let _ = works;
-    done_ends(role, phases)
 }
 
 /// What happens after a run ended that reports done.
