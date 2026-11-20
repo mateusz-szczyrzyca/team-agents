@@ -198,3 +198,64 @@ fn serde_cannot_bypass_the_proposal_field_invariants() {
         );
     }
 }
+
+#[test]
+fn estimates_and_scope_reasons_are_validated_wherever_they_are_deserialized() {
+    for bad in [
+        json!({"amount":-1,"unit":"lines"}),
+        json!({"amount":-0.5,"unit":"lines"}),
+        json!({"amount":3,"unit":""}),
+        json!({"amount":3,"unit":" \t"}),
+    ] {
+        assert_eq!(
+            serde_json::from_value::<Estimate>(bad.clone())
+                .expect_err("invalid estimate")
+                .classify(),
+            serde_json::error::Category::Data,
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        serde_json::from_value::<Estimate>(json!({"amount":2.5,"unit":"pages"})).unwrap(),
+        Estimate::new(serde_json::Number::from_f64(2.5).unwrap(), "pages".into()).unwrap()
+    );
+    for kind in ["less", "more", "different"] {
+        for reason in ["", "  "] {
+            assert!(
+                serde_json::from_value::<ScopeChange>(json!({"kind":kind,"reason":reason})).is_err(),
+                "{kind} {reason:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn estimate_constructor_names_what_is_wrong() {
+    assert_eq!(Estimate::new((-1).into(), "lines".into()), Err(EstimateError::Amount));
+    assert_eq!(Estimate::new(1.into(), "  ".into()), Err(EstimateError::Unit));
+    let ok = Estimate::new(0.into(), "images".into()).unwrap();
+    assert_eq!((ok.amount(), ok.unit()), (&0.into(), "images"));
+}
+
+#[test]
+fn plans_and_human_verdicts_reject_invalid_estimates() {
+    let part = |estimate: Value| json!({"title":"Draft","delivers":"Doc","checks":"Review","depends_on":[],"estimate":estimate});
+    for estimate in [
+        json!({"amount":-7,"unit":"  "}),
+        json!({"amount":-7,"unit":"lines"}),
+        json!({"amount":7,"unit":" "}),
+    ] {
+        let plan = json!({"parent":"1.1","parts":[part(estimate.clone()), {"title":"Publish","delivers":"Bundle","checks":"Inspect","depends_on":["a"]}]});
+        assert!(serde_json::from_value::<SplitPlan>(plan.clone()).is_err(), "{estimate}");
+        let verdict = crate::questions::Verdict::from_text(&format!("split\n```json\n{plan}\n```"))
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(
+                crate::questions::split::read_split(&verdict),
+                Err(crate::questions::split::ReadSplitError::Json { .. })
+            ),
+            "{estimate}"
+        );
+    }
+}

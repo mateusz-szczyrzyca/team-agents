@@ -27,6 +27,40 @@ pub enum ProposalFault {
         /// Part with the fault, if identifiable.
         part: Option<PartKey>,
     },
+    /// The first part depends on another part, so nothing can start the split.
+    FirstPartDepends {
+        /// The first part.
+        part: PartKey,
+    },
+    /// A part depends on a part that is not in the proposal.
+    UnknownDependency {
+        /// Part naming the dependency.
+        part: PartKey,
+        /// The part that does not exist.
+        dependency: PartKey,
+    },
+    /// A part names the same dependency twice.
+    DuplicateDependency {
+        /// Part naming the dependency.
+        part: PartKey,
+        /// The repeated dependency.
+        dependency: PartKey,
+    },
+    /// A part has no title.
+    EmptyTitle {
+        /// Part without a title.
+        part: PartKey,
+    },
+    /// A part does not say what it delivers.
+    EmptyDeliverable {
+        /// Part without a deliverable.
+        part: PartKey,
+    },
+    /// The proposal has fewer than two or more than 26 parts.
+    PartCount {
+        /// Number of parts the proposal has.
+        count: usize,
+    },
     /// A part has no acceptance criteria.
     MissingChecks {
         /// Part requiring criteria.

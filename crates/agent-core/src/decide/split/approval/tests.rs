@@ -193,3 +193,28 @@ fn invalid_whole_plans_never_approve_and_name_parts_where_possible() {
         );
     }
 }
+
+#[test]
+fn units_match_the_repository_unit_ignoring_case_spaces_and_a_plural() {
+    for unit in ["lines", "Lines", " lines ", "LINES\t", "line", "Line "] {
+        let mut value = input(&[&[], &["a"]]);
+        value["parts"][1]["estimate"] = json!({"amount":9000,"unit":unit});
+        assert_eq!(
+            decision(&value, Split::default(), 0),
+            ProposalDecision::SendBack(ProposalFault::AboveLimit {
+                part: key("b"),
+                estimate: Estimate::new(9000.into(), unit.into()).unwrap(),
+                limit: 1500,
+            }),
+            "{unit:?}"
+        );
+    }
+    for unit in ["pages", "lineage", "li nes", "linesx"] {
+        let mut value = input(&[&[], &["a"]]);
+        value["parts"][1]["estimate"] = json!({"amount":9000,"unit":unit});
+        assert!(
+            matches!(decision(&value, Split::default(), 0), ProposalDecision::Approve(_)),
+            "{unit:?}"
+        );
+    }
+}

@@ -15,6 +15,39 @@ pub struct Estimate {
     pub unit: String,
 }
 
+/// Why an estimate cannot be accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum EstimateError {
+    /// The amount is not a nonnegative number.
+    #[error("an estimate amount must be a nonnegative number")]
+    Amount,
+    /// The unit is empty or only spaces.
+    #[error("an estimate unit must not be blank")]
+    Unit,
+}
+
+impl Estimate {
+    /// Builds an estimate of `amount` in `unit`.
+    ///
+    /// # Errors
+    /// [`EstimateError::Amount`] for a negative amount, [`EstimateError::Unit`] for a blank unit.
+    pub fn new(amount: serde_json::Number, unit: String) -> Result<Self, EstimateError> {
+        Ok(Self { amount, unit })
+    }
+
+    /// The amount, in [`Estimate::unit`].
+    #[must_use]
+    pub const fn amount(&self) -> &serde_json::Number {
+        &self.amount
+    }
+
+    /// The author's unit, as written.
+    #[must_use]
+    pub fn unit(&self) -> &str {
+        &self.unit
+    }
+}
+
 /// Optional requirements of a part; old plans request a normal agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
