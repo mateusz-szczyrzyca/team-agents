@@ -60,15 +60,30 @@ pub enum AfterLead {
 #[must_use]
 /// What follows a refused merge, given the refusal and the conflict passes the round has left.
 pub fn after_refusal(refusal: Refusal, budget: ConflictBudget) -> AfterRefusal {
-    let _ = (refusal, budget);
-    AfterRefusal::TellHuman
+    match refusal {
+        Refusal::Other => AfterRefusal::TellHuman,
+        Refusal::Conflict if budget.limit == 0 => AfterRefusal::TellHuman,
+        Refusal::Conflict if budget.spent >= budget.limit => AfterRefusal::AskHuman,
+        Refusal::Conflict => AfterRefusal::LeadMergesBase,
+    }
 }
 
 #[must_use]
 /// What follows the lead's pass, given what the run changed and the files the task allows.
 pub fn after_lead(end: &LeadEnd, allowances: &[TaskAllowance]) -> AfterLead {
-    let _ = (end, allowances);
-    AfterLead::VerifyFirst
+    match end {
+        LeadEnd::NoResult => AfterLead::AskHuman,
+        LeadEnd::Result { changed } => {
+            let allowed = changed
+                .iter()
+                .all(|path| allowances.iter().any(|allowance| allowance.matches(path)));
+            if allowed {
+                AfterLead::RetryMerge
+            } else {
+                AfterLead::VerifyFirst
+            }
+        }
+    }
 }
 
 #[cfg(test)]
