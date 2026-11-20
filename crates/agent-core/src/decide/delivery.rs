@@ -34,8 +34,33 @@ pub enum DeliveryReportError {
 ///
 /// # Errors
 /// Returns [`DeliveryReportError`] for a malformed delivery marker.
-pub fn delivery_report(_message: &str) -> Result<Option<PrNumber>, DeliveryReportError> {
-    Ok(None)
+pub fn delivery_report(message: &str) -> Result<Option<PrNumber>, DeliveryReportError> {
+    let mut report = None;
+    for (index, text) in message.lines().enumerate() {
+        let Some(value) = text.strip_prefix("DELIVERED:") else {
+            continue;
+        };
+        if report.is_some() {
+            return Err(DeliveryReportError::Duplicate);
+        }
+        let line = index.saturating_add(1);
+        let number = value.strip_prefix(" #").ok_or(DeliveryReportError::Syntax { line })?;
+        if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(DeliveryReportError::Syntax { line });
+        }
+        let number = number
+            .parse::<std::num::NonZeroU32>()
+            .map_err(|source| DeliveryReportError::Number { line, source })?;
+        report = Some(PrNumber::new(number));
+    }
+    if report.is_some()
+        && (message.lines().rev().find(|line| !line.trim().is_empty()) != Some("STATUS: DONE")
+            || super::outcome::parse_status_line(message)
+                != super::outcome::StatusLine::Reported(crate::status::RunOutcome::Done))
+    {
+        return Err(DeliveryReportError::NotDone);
+    }
+    Ok(report)
 }
 
 #[cfg(test)]
