@@ -178,11 +178,13 @@ open until every part merges, including with `--no-merge`. Plans and part progre
 Assignment and one-open-team-per-agent rules remain unchanged.
 
 
-### Coordinator proposal form: core preparation
+### Coordinator proposal form
 
-This release adds the reader, policy and durable storage for coordinator proposals. The daemon does not yet
-consume proposal files; continue using the questions-file approval above. Members report an oversized item to
-their coordinator, who alone requests its split.
+The coordinator writes `split-proposal-<item>.json` in its task directory under `AGENTS_HOME`, then ends its run
+with a standalone `SPLIT: <item>` before the final `STATUS: SLEEPING`. Only the coordinator submits a proposal for
+approval. A member using this file and marker protocol sends its request to the coordinator through the bus;
+no human question is created for that request. Members may also send their complete proposal directly to the
+coordinator. All paths use one proposal and one decision, rather than separate member and coordinator questions.
 
 A proposal is a raw JSON object with `parent`, `scope` and `parts`. Parts have the same fields as an approving
 verdict, plus a required `estimate` and an optional `tier`:
@@ -213,4 +215,14 @@ deliverable, the wrong number of parts, missing checks, a cycle, an estimate abo
 read — naming the affected part and, where there is one, the dependency. Units are compared ignoring case, spaces and
 a plural `s`. A fault is sent back while corrections
 remain; otherwise a human decision is requested. A structurally valid scope change also needs a human decision.
-The daemon wiring and correction/question prompts follow in the next part of this change.
+The daemon approves an unchanged valid proposal without a human question and records all parts atomically.
+It queues the coordinator to deliver part a in the existing round. A faulty proposal queues a correction prompt
+naming the fault and affected part; replace the file and submit again. `[split] corrections` limits these
+send-backs, with zero asking immediately. A valid resubmission can still be approved after the budget is used.
+`[split] unit` supplies the repository unit, defaulting to `lines`; `[split] part_limit = 0` disables comparison.
+
+A valid scope change, or a fault after the budget, writes one questions file with the failed condition, the
+submitted proposal and an approving `split` verdict example. The example omits the proposal-only `scope` field.
+The human can approve the complete plan or answer with instructions, using the existing answer workflow.
+Saved pending input is decided after a restart; corrections are not counted again and an existing question is
+not duplicated. Each outcome is recorded as `split_decision` in history and the daemon log.

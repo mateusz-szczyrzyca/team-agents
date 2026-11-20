@@ -118,10 +118,11 @@ replace_after_minutes = 15
 roles = ["solo", "member", "coordinator"]
 bounces = 3
 
-# Split proposal policy. The core validates these keys now; daemon proposal handling is added separately.
+# Coordinator proposals are approved whole when valid and unchanged in scope.
 # Estimates are compared only when their unit matches the repository unit (case, spaces and a plural s are ignored).
-# The daemon will name that unit when it starts using proposals; it is not a key yet.
+# Other units are kept without conversion; checks are required for every deliverable.
 [split]
+unit = "lines"   # nonblank repository unit; use pages, images, etc. for other deliverables
 part_limit = 1500 # 0 disables the size check
 corrections = 2   # 0 asks the human at the first invalid proposal
 

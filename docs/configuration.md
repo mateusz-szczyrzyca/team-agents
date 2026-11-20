@@ -45,7 +45,7 @@ Top-level key and tables:
 | `[watchdog]` | table | see below | when a silent run is hung |
 | `[limits]` | table | see below | pauses for quotas and rate limits |
 | `[review]` | table | `fix_passes = 5`, `check_passes = 2`, `replace_after_minutes = 15` | the review loop, the checks before it and the reviewers that cannot work |
-| `[split]` | table | `part_limit = 1500`, `corrections = 2` | split proposal policy; parsed now for later daemon integration |
+| `[split]` | table | `part_limit = 1500`, `corrections = 2`, `unit = "lines"` | automatic coordinator proposal policy |
 | `[plan]` | table | `roles = ["solo", "member", "coordinator"]`, `bounces = 3` | whose runs keep a plan of their task, and how often one goes back for it |
 | `[git]` | table | see below | the identity of the agents' commits |
 | `[github]` | table | none trusted, public API | whose words on GitHub are instructions, and where the API is |
@@ -156,16 +156,18 @@ its runs are never sent back.
 
 ### `[split]`
 
-These keys configure the pure split approval policy. This release defines the proposal form and durable progress;
-the daemon still uses the [explicit human verdict](task-list.md#approved-split-plans-core-format).
-It does not yet read coordinator proposal files or automatically approve them.
+These keys configure automatic coordinator proposal decisions. The daemon records the complete proposal before
+deciding and retains its corrections and human question across restarts. The
+[explicit human verdict](task-list.md#approved-split-plans-core-format) remains accepted.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `part_limit` | `1500` | maximum estimate when its unit matches the repository unit — case, surrounding spaces and a plural `s` are ignored (`Lines`, `line`); `0` disables this check. The repository unit is an argument of the decision, not a key: the daemon will supply it when it starts using proposals. Other units are retained without conversion |
+| `part_limit` | `1500` | maximum estimate when its unit matches the repository unit — case, surrounding spaces and a plural `s` are ignored (`Lines`, `line`); `0` disables this check. Other units are retained without conversion |
 | `corrections` | `2` | send-backs allowed before a faulty proposal needs a human decision; `0` asks on the first fault. A valid proposal remains eligible after the budget is exhausted |
 
-Both are nonnegative integers through `4294967295`. Missing tables or keys use the defaults; unknown keys,
+| `unit` | `"lines"` | nonblank repository unit used for the size comparison, such as `pages` or `images`; no conversion between units |
+
+`part_limit` and `corrections` are nonnegative integers through `4294967295`. Missing tables or keys use the defaults; unknown keys,
 negative values, fractional values and strings are rejected. Scope changes always require human approval once
 the proposal satisfies the structural checks. Acceptance criteria are required for every kind of deliverable.
 

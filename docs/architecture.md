@@ -1261,8 +1261,15 @@ than a downstream dependant, and accepts acyclic forward references. No I/O or c
 `state::split::keeping::ProposalKeeping` retains raw input, correction count and a pending/correction/asked stage;
 `Team::keep_split_proposal` checks parent membership. Optional persisted fields preserve old state loading.
 The fixture and representation are documented in [state.md](state.md#split-proposal-preparation).
-This part supplies core APIs only: the owner still acts on explicit human verdicts, with proposal-file handling,
-prompt catalog entries, decision history and log events left to the integration part.
+The owner recognizes a coordinator's standalone `SPLIT: <item>` marker and reads its bounded task-local
+`split-proposal-<item>.json`. It saves pending input before calling the pure policy with `[split] unit`.
+Approval activates the whole plan atomically; correction retains the fault and queues the coordinator;
+scope changes or exhausted corrections write one harness question using the existing human answer path.
+Member markers produce a bus notice to the coordinator, without activating a split or asking the human.
+Pending decisions are resumed before team assignment; saved corrections and asked stages are not replayed.
+Catalog entries supply each fault, the next prompt and the question. The append-only history and structured log
+record the outcome as `split_decision`, with parent, correction count and reason. History migration 15 preserves
+records and links while admitting the new event. Human verdicts continue through the existing atomic path.
 
 ### Execution of approved split plans
 

@@ -289,10 +289,15 @@ run evidence. The activity record also supplies the investigator selection order
 `agent status --investigators`. See the
 [activity record](docs/state.md#investigator-activities).
 
-The core also defines a [coordinator proposal form](docs/task-list.md#coordinator-proposal-form-core-preparation)
-with estimates, units, requested tiers and a scope declaration, configurable through
-[`[split]`](docs/configuration.md#split). Proposal parsing, approval policy and restart-safe progress storage are
-available for the next integration part. The daemon in this release continues to use explicit human approval.
+A coordinator can submit a [split proposal](docs/task-list.md#coordinator-proposal-form) by writing
+`split-proposal-<item>.json` in its task directory and reporting `SPLIT: <item>` before `STATUS: SLEEPING`.
+The daemon approves a complete valid plan without human intervention when it keeps the scope, sends faults back
+up to [`[split] corrections`](docs/configuration.md#split), and asks the human once for scope changes or exhausted
+corrections. Estimates are compared against `part_limit` in the configured `unit` (default `lines`). Members'
+requests go to their coordinator. Pending input, corrections and existing questions survive restarts.
+Decisions appear in history and logs as `split_decision`. Existing configurations and split plans remain readable;
+history migration 15 preserves previous rows while admitting decision records. Requested tiers are retained;
+assignment enforcement follows in the next part.
 
 A coordinator can ask the human to split an item into independently deliverable parts in one questions file.
 Approve using the [explicit split verdict](docs/task-list.md#approved-split-plans-core-format); `agent answer`

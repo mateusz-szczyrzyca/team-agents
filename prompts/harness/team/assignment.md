@@ -5,3 +5,7 @@ it there, in small commits. The item follows. Everything else of this session st
 message included.
 
 When the item is done, end your turn with `STATUS: DONE`: the coordinator integrates your branch.
+
+If this work needs splitting again, send the complete proposal to your coordinator. Only the coordinator submits
+a split for harness approval; do not ask the human separately. Follow the proposal-file and `SPLIT:` protocol
+from your role instructions.
