@@ -8,7 +8,7 @@ fn unpushed_base_roundtrips_and_schema_eleven_migrates_without_granting_permissi
     let state = State::from_json(old).unwrap();
     assert!(state.teams().iter().all(|team| team.unpushed_base().is_none()));
     let mut written: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
-    assert_eq!(written["schema_version"], 12);
+    assert_eq!(written["schema_version"], 13);
     written["schema_version"] = serde_json::json!(11);
     assert_eq!(written, serde_json::from_str::<serde_json::Value>(old).unwrap());
     let mut team = state.teams()[0].clone();

@@ -33,7 +33,7 @@ fn state_written_before_wake_delivery_loads_without_inventing_a_delivery() {
         stored,
         serde_json::from_str::<serde_json::Value>(
             &include_str!("fixtures/state-before-wake-delivery-activities.json")
-                .replace("\"schema_version\": 11", "\"schema_version\": 12")
+                .replace("\"schema_version\": 11", "\"schema_version\": 13")
         )
         .unwrap()
     );
