@@ -1402,3 +1402,34 @@ fn resolve_agent_binary_dir_fails_when_parent_dir_is_not_valid_utf8() {
         "{err:?}"
     );
 }
+
+// Rule: a restart between the ladder's decision to start a task anew and the run of its new session begins that new
+// session: the renewal is in the state, and the session before it is not resumed.
+#[tokio::test]
+async fn a_restart_after_the_ladder_started_a_task_anew_begins_its_new_session() {
+    let mut state = solo_state();
+    {
+        let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member
+            .begin_run(run_id(1), at(5), Some("ses-1".parse().unwrap()))
+            .unwrap();
+        member.end_run(at(10), RunEnd::NoStatus { exit_code: Some(0) }).unwrap();
+        member
+            .renew(agent_core::decide::ladder::Trouble::NoStatus, at(11))
+            .unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    let mut f = Fixture::new(&state, 3, "done");
+
+    f.start().await;
+    let state = f.status_is(TaskStatus::Done).await;
+    f.stop().await.unwrap();
+
+    let member = member_one(&state);
+    assert_eq!(member.runs().len(), 2);
+    assert_ne!(member.runs()[1].session(), member.runs()[0].session());
+    let args = f.recorded(".fake-args");
+    assert!(!args.contains("--resume"), "{args}");
+    assert_eq!(member.renewals().map(agent_core::state::Renewals::used), Some(1));
+}
