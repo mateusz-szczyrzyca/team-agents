@@ -249,3 +249,14 @@ async fn a_run_asks_the_daemon_for_the_team_and_prints_what_started() {
         Some("inv-opus".to_owned())
     );
 }
+
+#[test]
+fn run_accepts_the_explicit_unpushed_base_permission() {
+    let run = parsed(&["run", "--allow-unpushed-base", "codex-1", "Fix the typo."]);
+    assert!(matches!(run, Ok(run) if run.allow_unpushed_base));
+    assert!(
+        !parsed(&["run", "codex-1", "Fix the typo."])
+            .unwrap()
+            .allow_unpushed_base
+    );
+}

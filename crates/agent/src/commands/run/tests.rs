@@ -544,3 +544,12 @@ fn started_team_prints_each_task_allowance() {
         "{text}"
     );
 }
+
+#[tokio::test]
+async fn explicit_unpushed_base_permission_is_forwarded_to_the_daemon() {
+    let (_dir, repo) = checkout(Some("https://example.com/org/example.git"));
+    let mut input = input(&["claude-1", "Fix it."], None);
+    input.allow_unpushed_base = true;
+    let request = prepare(&repo, input).await.unwrap();
+    assert!(request.allow_unpushed_base);
+}
