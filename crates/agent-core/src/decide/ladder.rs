@@ -9,14 +9,14 @@
 //!    watchdog's strikes for a hang ([`AfterNoStatus`] and [`AfterHang`] of [`super::outcome`]).
 //! 2. A new session of the same agent, up to `[replacement] new_sessions` times per task, with a briefing that says what
 //!    the previous sessions did.
-//! 3. Give up: the task fails and the human decides. Replacing the agent with another one, and asking the human, are the
-//!    limps of a later part of the ladder.
+//! 3. Give up: the task fails and the human decides. Replacing the agent with another one, and asking the human, are
+//!    later rungs of the ladder, which this module does not decide yet.
 
+use crate::config::{Limits, Watchdog};
 use crate::kinds::Role;
+use crate::state::SessionId;
 
-use super::outcome::{
-    AfterHang, AfterNoStatus, NO_STATUS_RETRIES, after_hang, after_no_status, after_turn_limit, consecutive_no_status,
-};
+use super::outcome::{AfterNoStatus, NO_STATUS_RETRIES, after_no_status};
 
 /// Why a run of a task went bad in a way the ladder carries over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,27 +52,35 @@ pub enum LadderStep {
 
 /// The step a task takes after a run that went bad.
 ///
-/// # Errors
-/// None.
-pub fn _stub_next_step(
-    _role: Role,
-    _trouble: Trouble,
-    _count: u32,
-    _session: Option<&str>,
-    _renewals: Renewals,
-    _hang_strikes: u32,
-    _turn_limit_resumes: u32,
+/// `session` is the session the task started its last run in, absent when it had none.
+#[must_use]
+pub fn next_step(
+    role: Role,
+    trouble: Trouble,
+    count: u32,
+    session: Option<&SessionId>,
+    renewals: Renewals,
+    watchdog: &Watchdog,
+    limits: &Limits,
 ) -> LadderStep {
-    _ = (
-        _role,
-        _trouble,
-        _count,
-        _session,
-        _renewals,
-        _hang_strikes,
-        _turn_limit_resumes,
-    );
-    LadderStep::GiveUp
+    // The first rung is the retry each trouble had before the ladder, decided by the same functions: a new session is
+    // only started where the session itself is no longer wanted.
+    let retried = match trouble {
+        Trouble::NoStatus => after_no_status(role, u64::from(count), session) == AfterNoStatus::Resume,
+        // `after_hang` reads only whether there is a session to resume; the one a task has is the one it resumes.
+        Trouble::Hang => session.is_some() && count < watchdog.hang_strikes.get(),
+        Trouble::TurnLimit => session.is_some() && u64::from(count) <= u64::from(limits.turn_limit_resumes),
+    };
+    if retried {
+        return LadderStep::SameSession;
+    }
+    if renewals.allowed == 0 || renewals.used >= renewals.allowed {
+        return LadderStep::GiveUp;
+    }
+    match role {
+        Role::Solo | Role::Coordinator | Role::Member => LadderStep::NewSession,
+        Role::Worker | Role::Reviewer => LadderStep::GiveUp,
+    }
 }
 
 #[cfg(test)]
