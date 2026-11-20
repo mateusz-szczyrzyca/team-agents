@@ -68,6 +68,9 @@ pub struct PlanKeeping {
     /// The reason of a send-back the next run of the task delivers; `None` when none waits, and not written then.
     #[serde(skip_serializing_if = "Option::is_none")]
     pending: Option<PlanReason>,
+    /// The questions about the plan the human answered and no run has been given yet; `None` when there are none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unread_answers: Option<NonZeroU32>,
 }
 
 impl PlanKeeping {
@@ -93,7 +96,7 @@ impl PlanKeeping {
     /// The questions about the plan whose answers no run has been given yet; `None` when there are none.
     #[must_use]
     pub const fn unread_answers(&self) -> Option<NonZeroU32> {
-        None
+        self.unread_answers
     }
 
     #[must_use]
@@ -133,5 +136,15 @@ impl PlanKeeping {
         self.granted = self.granted.saturating_add(1);
         self.sent_back = self.sent_back.saturating_add(1);
         self.stage = PlanStage::Open;
+    }
+
+    /// The human answered questions `question` about the plan: the next run is given them.
+    pub(super) fn answered(&mut self, question: NonZeroU32) {
+        self.unread_answers = Some(question);
+    }
+
+    /// The answered questions no run has been given yet, taken out.
+    pub(super) fn take_unread_answers(&mut self) -> Option<NonZeroU32> {
+        self.unread_answers.take()
     }
 }

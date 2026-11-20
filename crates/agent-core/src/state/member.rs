@@ -373,13 +373,15 @@ impl Member {
     /// The human answered questions `question` about the task's plan: the next run is to be given the answers, which
     /// no run asked for; nothing for a task created before plans.
     pub fn plan_answered(&mut self, question: NonZeroU32) {
-        let _ = question;
+        if let Some(keeping) = &mut self.plan {
+            keeping.answered(question);
+        }
     }
 
     /// The questions about the plan whose answers no run has been given yet, taken out: the run that starts is given
     /// them, and no later run is.
     pub fn take_unread_plan_answers(&mut self) -> Option<NonZeroU32> {
-        NonZeroU32::new(1)
+        self.plan.as_mut().and_then(PlanKeeping::take_unread_answers)
     }
 
     /// The human said to go on as it is: no run of the task is sent back for its plan again.
