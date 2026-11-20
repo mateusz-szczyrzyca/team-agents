@@ -760,7 +760,7 @@ mod tests {
     /// What the state of `FIXTURE` is saved as, migrated to schema version 13.
     fn saved() -> String {
         include_str!("../../agent-core/tests/fixtures/state-v1-activities.json")
-            .replace("\"schema_version\": 11", "\"schema_version\": 13")
+            .replace("\"schema_version\": 11", "\"schema_version\": 14")
     }
 
     /// The longest state file the core reads.
