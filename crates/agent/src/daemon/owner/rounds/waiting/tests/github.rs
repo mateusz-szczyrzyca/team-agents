@@ -294,3 +294,35 @@ fn a_refusal_that_waits_for_the_human_is_never_given_up_for_a_new_wait() {
         );
     }
 }
+
+#[test]
+fn the_waits_of_a_round_that_closed_or_a_team_that_is_gone_are_dropped() {
+    let mut waits = Waits::default();
+    let open = round();
+    let closed = Step::Round {
+        round: "round-20261120-070000-gone".parse().unwrap(),
+    };
+    let gone = Step::Team {
+        team: "team-20261120-070000-gone".parse().unwrap(),
+    };
+    for place in [&open, &closed, &gone] {
+        waits
+            .failed(
+                place,
+                &team(),
+                OPINION,
+                None,
+                "refused with status 404".to_owned(),
+                Outlook::WillNotPass,
+                at("2026-11-20T00:00:00Z"),
+            )
+            .unwrap();
+    }
+
+    waits.keep(|place| *place == open);
+
+    assert_eq!(waits.kept(), 1);
+    assert!(!waits.due(&open, OPINION, at("2027-11-20T00:00:00Z")));
+    assert!(waits.due(&closed, OPINION, at("2026-11-20T00:00:00Z")));
+    assert!(waits.due(&gone, OPINION, at("2026-11-20T00:00:00Z")));
+}

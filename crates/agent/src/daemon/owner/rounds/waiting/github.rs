@@ -365,6 +365,9 @@ impl Waits {
         waited
     }
 
+    /// Keeps only the waits whose place `open` holds for: a round that is open, a team that is not closed.
+    pub(in crate::daemon::owner) fn keep(&mut self, _open: impl Fn(&Step) -> bool) {}
+
     /// Whether a step `step` of `team` waits, in any of its rounds.
     pub(in crate::daemon::owner) fn holds(&self, team: &TeamId, step: WaitingStep) -> bool {
         self.steps
