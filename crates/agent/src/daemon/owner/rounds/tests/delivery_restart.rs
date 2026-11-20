@@ -391,14 +391,15 @@ pub(super) async fn record_delivery_closed_event(observed: &mut std::collections
 
 #[tokio::test]
 async fn delivery_bus_failure_keeps_owner_running_and_retries_the_saved_notice() {
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::layer::SubscriberExt;
+
     let (rig, team, _, old) = accepted_claim().await;
     rig.github.closed_by_a_human(1);
     let mut step = stepped(&rig).await;
     let bus = rig.home.root().join("recoverable-agentbus");
     let actual = step.owner.parts.settings.config.binaries().agentbus.clone();
     step.owner.parts.bus = AgentBus::new(bus.to_str().unwrap().parse().unwrap(), rig.home.absolute_root().clone());
-    use tracing::instrument::WithSubscriber;
-    use tracing_subscriber::layer::SubscriberExt;
     let layer = agent_runtime::history::HistoryLayer::new(
         agent_core::log::LogLevel::Info,
         rig.history_test_clock(),
@@ -413,7 +414,7 @@ async fn delivery_bus_failure_keeps_owner_running_and_retries_the_saved_notice()
     tokio::pin!(running);
     tokio::select! {
         result = &mut running => panic!("owner exited during a retryable bus outage: {result:?}"),
-        _ = rig.wait_for("the saved claim notice to fail on the unavailable bus", || {
+        () = rig.wait_for("the saved claim notice to fail on the unavailable bus", || {
             agent_runtime::history::Reader::open(&rig.home.history_file())
                 .unwrap()
                 .daemon_logs()
