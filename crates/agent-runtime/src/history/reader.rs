@@ -35,6 +35,7 @@ mod stats;
 use super::codec::parse_time;
 use super::error::{ReadError, ValueProblem};
 use super::migrate::{latest, version_of};
+use super::plans::PlanRecord;
 use super::schema::{DAEMON_LOGS_VERSION, MIGRATIONS};
 
 /// How long a reader waits for the lock of a database that is being checkpointed.
@@ -434,6 +435,29 @@ impl Reader {
     pub fn changes(&self, run: &RunId) -> Result<Option<Stored<RunChanges>>, ReadError> {
         let snapshot = self.snapshot("run_changes")?;
         read_changes(&snapshot, run)
+    }
+
+    /// The plan versions of `task`, oldest first; empty for a database written before plans.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn plan_versions(&self, task: &TaskId) -> Result<Vec<PlanRecord>, ReadError> {
+        let snapshot = self.snapshot("plan_versions")?;
+        super::plans::read(&snapshot, task)
+    }
+
+    /// The last plan version of `task` kept at the end of a run other than `exclude`; `None` when there is none, which
+    /// is the first version the daemon keeps of the task, and when the database was written before plans.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn last_plan_version_before(
+        &self,
+        task: &TaskId,
+        exclude: Option<&RunId>,
+    ) -> Result<Option<PlanRecord>, ReadError> {
+        let snapshot = self.snapshot("plan_versions")?;
+        super::plans::last_before(&snapshot, task, exclude)
     }
 
     /// Every record of `team` in the order it was written: the stories of its rounds are made of them.

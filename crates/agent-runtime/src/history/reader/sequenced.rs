@@ -375,6 +375,8 @@ fn record_of(
             Ok((Record::Session(Box::new(value)), Cut::default()))
         }
         RecordKind::Event => Err(here.rule("kind", "an event is kept under the keyword of its kind")),
+        // A plan is the state of a task, kept in `plan_versions`, not in the ledger of what happened.
+        RecordKind::Plan => Err(here.rule("kind", "a plan is not kept in the ledger")),
     }
 }
 

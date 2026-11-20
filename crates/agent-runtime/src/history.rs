@@ -12,6 +12,7 @@ mod ledger;
 pub mod log;
 pub mod migrate;
 mod notes;
+mod plans;
 mod reader;
 mod redact;
 mod retention;
@@ -26,6 +27,7 @@ pub use handle::{
 pub use log::{HistoryLayer, Scoped, ensure_scoped_callsites, install_panic_hook, log_decision, log_outside_call};
 pub use migrate::Migration;
 pub use notes::Noting;
+pub use plans::{PlanRead, PlanRecord};
 pub use reader::{Reader, RoundPrompt, RunRow, Stored};
 
 pub use reader::query::{LogFilter, LogWindow};

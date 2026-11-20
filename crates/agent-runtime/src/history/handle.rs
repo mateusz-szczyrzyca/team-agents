@@ -127,6 +127,8 @@ enum Job {
     Record(Record),
     /// A daemon log entry to write.
     Log(LogRecord),
+    /// Reads of a task's plan to write.
+    Plans(Vec<super::plans::PlanRecord>),
     /// The writer is to answer on this channel when everything before it is written.
     Flush(SyncSender<()>),
     /// The writer is to stop.
@@ -591,6 +593,34 @@ impl History {
         }
     }
 
+    /// Hands the plan `records` to the writer unless they are the task's last ones; never waits.
+    pub fn write_plans(&self, records: Vec<super::plans::PlanRecord>) {
+        if records.is_empty() {
+            return;
+        }
+        let Some(queue) = &self.queue else {
+            self.shared.lose(records.len() as u64);
+            return;
+        };
+        match queue.try_send(Job::Plans(records)) {
+            Ok(()) => {}
+            Err(TrySendError::Full(Job::Plans(records))) => {
+                self.shared.lose(records.len() as u64);
+                self.shared.report(Cause::QueueFull, || {
+                    "the writer of the history is slower than the work: plan versions are dropped while its queue is full"
+                        .to_owned()
+                });
+            }
+            Err(TrySendError::Disconnected(Job::Plans(records))) => {
+                self.shared.lose(records.len() as u64);
+                self.stopped();
+            }
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                // Only this variant of the job is sent here.
+            }
+        }
+    }
+
     /// Waits until everything handed in before is written or lost.
     pub fn flush(&self) {
         let Some(queue) = &self.queue else {
@@ -656,6 +686,10 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
                         });
                     }
                 }
+                Job::Plans(plans) => {
+                    write_plans(&mut store, shared, plans);
+                    continue;
+                }
                 Job::Retain(request) => {
                     write_batch(&mut store, shared, std::mem::take(&mut batch));
                     write_log_batch(&mut store, shared, std::mem::take(&mut log_batch));
@@ -698,8 +732,20 @@ fn count_what_is_left(jobs: &Receiver<Job>, shared: &Shared) {
                 }
             }
             Job::Retain(_) => shared.report(Cause::Retention, || "writer stopped before retention".to_owned()),
+            Job::Plans(plans) => shared.lose(plans.len() as u64),
             Job::Log(_) | Job::Close => {}
         }
+    }
+}
+
+/// Writes `plans`; when they cannot be written, each that failed is counted as lost.
+fn write_plans(store: &mut impl Store, shared: &Shared, plans: Vec<super::plans::PlanRecord>) {
+    if plans.is_empty() {
+        return;
+    }
+    if let Err(error) = store.write_plans(&plans) {
+        shared.lose(plans.len() as u64);
+        shared.report(Cause::Write(error.kind()), || error_chain(&error));
     }
 }
 
