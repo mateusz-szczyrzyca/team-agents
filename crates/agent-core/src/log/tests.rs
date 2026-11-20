@@ -119,8 +119,6 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         (LogEvent::BusDown, "bus_down", LogLevel::Warn),
         (LogEvent::GitCallFailed, "git_call_failed", LogLevel::Warn),
         (LogEvent::GithubCallFailed, "github_call_failed", LogLevel::Warn),
-        (LogEvent::GithubStepWaiting, "github_step_waiting", LogLevel::Warn),
-        (LogEvent::GithubStepResumed, "github_step_resumed", LogLevel::Info),
         (LogEvent::GateCannotStart, "gate_cannot_start", LogLevel::Warn),
         (LogEvent::GateTimedOut, "gate_timed_out", LogLevel::Warn),
         (LogEvent::GateDirtyTree, "gate_dirty_tree", LogLevel::Warn),
@@ -171,6 +169,8 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
             LogLevel::Debug,
         ),
         (LogEvent::PeerGone, "peer_gone", LogLevel::Debug),
+        (LogEvent::GithubStepWaiting, "github_step_waiting", LogLevel::Warn),
+        (LogEvent::GithubStepResumed, "github_step_resumed", LogLevel::Info),
     ];
 
     assert_eq!(LogEvent::ALL.len(), expected.len());
