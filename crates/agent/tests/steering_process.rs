@@ -54,7 +54,7 @@ mod steering_process {
             ),
         )
         .unwrap();
-        let member = Member::new(task(), Participant::Normal("claude-1".parse().unwrap()));
+        let member = Member::without_plan(task(), Participant::Normal("claude-1".parse().unwrap()));
         let team = Team::new(
             TeamId::from_str("team-20261111-153000-t5m8").unwrap(),
             repo(),
