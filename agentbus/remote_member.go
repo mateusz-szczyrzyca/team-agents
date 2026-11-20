@@ -452,7 +452,7 @@ func (a *leadAPI) memberBack(m RemoteMember) *LeadHeartbeatError {
 		} else {
 			body = fmt.Sprintf("TEAM: your node %s restarted under your last run. Your board items are still yours (%s): finish them.", m.Node, mine)
 		}
-		_, serr := a.bus.post(st, "agentbus", m.Member, EventScript{Notice: NoticeMemberBack, Body: body,
+		_, serr := a.bus.postIn(st, m.Team, "agentbus", m.Member, EventScript{Notice: NoticeMemberBack, Body: body,
 			Fields: map[string]string{"agent": m.Member, "team": m.Team, "node": m.Node}})
 		return fromStorage(CmdTeamSetStorage, serr)
 	})

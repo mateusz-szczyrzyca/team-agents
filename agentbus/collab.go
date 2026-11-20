@@ -329,7 +329,7 @@ func (s *Server) teamExclude(agent, reason string) (string, *TeamExcludeError) {
 		}
 		m.State = MemberExcluded
 		t.releaseItemsOf(agent)
-		if _, serr := s.bus.post(st, s.me, agent, EventExcludedNotice{Team: t.ID, Reason: reason}); serr != nil {
+		if _, serr := s.bus.postIn(st, t.ID, s.me, agent, EventExcludedNotice{Team: t.ID, Reason: reason}); serr != nil {
 			return fromStorage(TeamExcludeStorage, serr)
 		}
 		_, serr := s.bus.post(st, "agentbus", teamRecipient(t.ID), EventMemberExcluded{Member: agent, Reason: reason})
@@ -597,7 +597,7 @@ func (s *Server) boardDoneWith(id, result, gateException string) (string, *Board
 		if it.Creator == s.me {
 			return nil
 		}
-		_, serr := s.bus.post(st, s.me, it.Creator, EventBoardResult{ID: it.ID, Title: it.Title, Result: result})
+		_, serr := s.bus.postIn(st, s.team, s.me, it.Creator, EventBoardResult{ID: it.ID, Title: it.Title, Result: result})
 		return fromStorage(BoardDoneStorage, serr)
 	})
 	if err != nil {
@@ -674,7 +674,7 @@ func (s *Server) boardRelease(id, note string) (string, *BoardReleaseError) {
 			it.Details += "\n[returned by " + s.me + ": " + note + "]"
 		}
 		released = it.ID
-		_, serr := s.bus.post(st, s.me, it.Creator, EventBoardReturned{ID: it.ID, Title: it.Title, Note: note})
+		_, serr := s.bus.postIn(st, s.team, s.me, it.Creator, EventBoardReturned{ID: it.ID, Title: it.Title, Note: note})
 		return fromStorage(BoardReleaseStorage, serr)
 	})
 	if err != nil {

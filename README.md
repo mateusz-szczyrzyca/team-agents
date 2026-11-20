@@ -219,6 +219,10 @@ agent debug --team <team>         a diagnostic bundle with a summary that names 
 `agent <command> --help` has the options of each. The next section describes what the daemon does with a team, in
 the order the features were built.
 
+`agent run` starts a team even when one of its agents works in another open team, and after the tasks it prints a line
+for each such agent: `  codex-1 is also in the open team team-20261119-165451-kfek (task task-20261119-165451-uv0g): its
+messages there do not reach this team`.
+
 `agent run` fetches the configured base branch from `origin` before creating a team, task directory or
 worktree. If the local base has unpublished commits, it refuses with their count and the first commit's short ID
 and subject. Push those commits, or review and manually run `git reset --hard origin/<base>` before trying again
@@ -360,7 +364,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent stop <task\|team>` | ends the run; nothing of it starts until it is resumed |
 | `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
 | `agent resume <task\|team>` | starts a stopped, failed or waiting task again; when steps of the team wait for GitHub or git, it tries those at once and starts no task |
-| `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus |
+| `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus; a word to a task reaches the agent's session in that task's team only |
 | `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now |
 | `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed |
 
@@ -649,6 +653,21 @@ failure, a timeout and a refusal. The command says first where the result is rec
 | `quiz_start`, `quiz_answer`, `quiz_results`, `team_exclude` | the qualification quiz |
 | `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item) |
 | `consult_start`, `consult_reply`, `consult_results` | ask the other normal members with a time limit (e.g. for recommendations); silence is shown as NO ANSWER |
+
+**An agent in two teams.** An agent may be a member of several open teams at once, with a task, a worktree and a
+session in each. A direct message (`send_message` to a name) sent from a session in a team is for the agent's session
+in that team only: it wakes only that task, and only that session reads it. Each session of an agent has its own read
+cursor, so reading in one team does not mark the other team's messages as read. A message to a name that is not a
+member of the sender's team is refused, and the refusal lists the members. The exceptions are the human, `agentbus`, a
+running or configured agent, and the worker of one of the sender's open requests, as long as that name is in no open
+team. A session outside any team (a solo task among them), and `agentbus send`, write to an agent in one open team in
+that team; to an agent in several open teams they must name the task (`send_message` with the task ID in `to`,
+`agentbus send --task <task>` or `--team <id>`), otherwise the message is refused with the tasks to choose from — also
+when the agent runs or is configured. `agentbus send --for-task <task>` writes to the session of that task alone, a
+solo task too; `agent say <task>` uses it. The history of `read_messages` and `read_message` by number do not show a
+session the messages of the agent's other teams or tasks. Messages to `team` and to `all` are delivered as before.
+Messages written before 0.30.0 name no team or task and are read as before. A reservation belongs to the agent's task
+that took it: the agent's run in another team cannot release it, and it is freed when the run that holds it ends.
 
 ## Development and tests
 

@@ -115,7 +115,8 @@ func (b *Bus) wakeFor(st *State, m Message) {
 			if mem.State != MemberSleeping || name == m.From {
 				continue
 			}
-			if m.To == name || m.To == teamRecipient(t.ID) {
+			direct := (m.To == name || m.To == mem.Task) && (m.Team == "" || m.Team == t.ID) && (m.Task == "" || m.Task == mem.Task)
+			if direct || m.To == teamRecipient(t.ID) {
 				mem.State = MemberWaking
 				logInfo(LogMemberWokenBy, "team", t.ID, "member", name, "cause", "message", "message_id", m.ID, "kind", m.Kind, "from", m.From)
 				wakeFn(t, mem.Task)
@@ -124,22 +125,301 @@ func (b *Bus) wakeFor(st *State, m Message) {
 	}
 }
 
-// isForAgent reports whether a message is for the agent (direct, to its team, or — optionally — to all).
-func isForAgent(st *State, m Message, agent string, broadcast bool) bool {
+// taskOf is the task of the agent in the team ("" outside the team).
+func taskOf(st *State, agent, team string) string {
+	if t := st.Teams[team]; t != nil && t.Members[agent] != nil {
+		return t.Members[agent].Task
+	}
+	return ""
+}
+
+// knowsOutside reports whether the bus knows name outside teams: the human, the agentbus, a running agent or a configured
+// one, and the worker of an open request the agent sent. It is asked only for a name that is in no open team: a member
+// of an open team is written to in its team, whatever else the bus knows of it.
+func knowsOutside(st *State, peers []string, agent, name string) bool {
+	if name == "human" || name == "agentbus" || st.Agents[name] != nil {
+		return true
+	}
+	for _, p := range peers {
+		if p == name {
+			return true
+		}
+	}
+	for _, h := range st.Helpers {
+		if h.From == agent && h.Worker == name && h.Status.Open() {
+			return true
+		}
+	}
+	return false
+}
+
+// delivery finds where a direct message of this session to "to" goes: the recipient it is posted to — the agent's name,
+// or the ID of a task for an outside sender — and the team it is bound to. A session of a team on the bus writes to a
+// member of its team, by name or by task, and to a recipient the bus knows outside teams that is in no open team. A
+// session outside teams (or of a team the bus does not hold, as a solo task's) writes to a task it names, to the task of
+// an open request it serves, to the one open team of the agent, or to anyone in no open team. Anything else is refused
+// with what to send.
+func (s *Server) delivery(st *State, to string) (recipient, team string, refusal *SendMessageError) {
+	if to == "all" || strings.HasPrefix(to, "team:") {
+		return to, "", nil // a broadcast and a team are for every task of their readers
+	}
+	if t := s.myTeam(st); t != nil {
+		return s.deliveryInTeam(st, t, to)
+	}
+	if to == s.me {
+		return "", "", opErr(SendMessageToSelf, "do not send messages to yourself")
+	}
+	if team := memberOfTask(st, to); team != "" {
+		return to, team, nil // a task of an agent, in the team it is in
+	}
+	// a helper run writes to the member whose request it serves: the request names that member's task, so its message is
+	// for the member in that task's team, also when the member is in another open team too
+	if team := requestedTeam(st, s.me, to); team != "" {
+		return to, team, nil
+	}
+	tasks := tasksOf(st, to)
+	switch len(tasks) {
+	case 0:
+		return to, "", nil
+	case 1:
+		return to, tasks[0].team, nil
+	}
+	pairs := make([]string, 0, len(tasks))
+	for _, of := range tasks {
+		pairs = append(pairs, "task "+of.task+" (team "+of.team+")")
+	}
+	return "", "", opErr(SendMessageAmbiguousAgent, "%s is in %d open teams: %s — put one of its task IDs in to", to, len(tasks), strings.Join(pairs, ", "))
+}
+
+// deliveryInTeam is the delivery of a direct message from a session of the team t (see delivery).
+func (s *Server) deliveryInTeam(st *State, t *Team, to string) (recipient, team string, refusal *SendMessageError) {
+	switch {
+	case to == s.me || to == taskOf(st, s.me, t.ID):
+		return "", "", opErr(SendMessageToSelf, "do not send messages to yourself")
+	case t.Members[to] != nil:
+		return to, t.ID, nil
+	}
+	for name, m := range t.Members {
+		if m.Task == to {
+			return name, t.ID, nil
+		}
+	}
+	if len(tasksOf(st, to)) == 0 && knowsOutside(st, s.peers, s.me, to) {
+		return to, "", nil
+	}
+	return "", "", opErr(SendMessageNotInYourTeam, "%s is not in your team (%s) — send to one of its members, by name or task, to team, to all, or to the human", to, strings.Join(t.names(), ", "))
+}
+
+// bindSend finds where `agentbus send` posts a message: the recipient and the team it is bound to, or why it is refused.
+// The daemon is in no team; it names the team with a task of the member or with --team, and without them a member of one
+// open team is written to in it.
+func bindSend(st *State, from, to, task, team string) (string, string, *CmdSendError) {
+	if to == "all" || strings.HasPrefix(to, "team:") {
+		if task != "" || team != "" {
+			return "", "", opErr(CmdSendBindingForMany, "--task and --team name the team of one agent, not of %s", to)
+		}
+		return to, "", nil
+	}
+	if to == from && (task != "" || team != "") {
+		return "", "", opErr(CmdSendToSelf, "%s writes to itself", to)
+	}
+	if task != "" || team != "" {
+		for _, of := range tasksOf(st, to) {
+			if task != "" && of.task != task {
+				continue
+			}
+			if team != "" && of.team != team {
+				continue
+			}
+			return to, of.team, nil
+		}
+		return "", "", opErr(CmdSendNoSuchMember, "%s is in no open team with %s", to, named(task, team))
+	}
+	switch tasks := tasksOf(st, to); len(tasks) {
+	case 0:
+		return to, "", nil
+	case 1:
+		return to, tasks[0].team, nil
+	default:
+		pairs := make([]string, 0, len(tasks))
+		for _, of := range tasks {
+			pairs = append(pairs, "task "+of.task+" (team "+of.team+")")
+		}
+		return "", "", opErr(CmdSendAmbiguousAgent, "%s is in %d open teams: %s — name one with --task or --team", to, len(tasks), strings.Join(pairs, ", "))
+	}
+}
+
+// named says which task or team a refusal was about.
+func named(task, team string) string {
+	switch {
+	case task != "" && team != "":
+		return "task " + task + " in team " + team
+	case task != "":
+		return "task " + task
+	default:
+		return "team " + team
+	}
+}
+
+// requestedTeam is the team of the task from which helper wrote to member: the task of the member's open request the
+// helper serves, when that member is the one written to ("" when it is no such request).
+func requestedTeam(st *State, helper, member string) string {
+	for _, h := range st.Helpers {
+		if h.Worker == helper && h.From == member && h.Status.Open() {
+			if team := teamOfTask(st, h.FromTask); team != "" {
+				return team
+			}
+		}
+	}
+	return ""
+}
+
+// teamOfTask is the team whose member has the task ("" when none): the team a result for that task is bound to.
+func teamOfTask(st *State, task string) string {
+	if task == "" {
+		return ""
+	}
+	return memberOfTask(st, task)
+}
+
+// memberOfTask finds the open team the task is the task of a member in ("" when no member has it).
+func memberOfTask(st *State, task string) string {
+	ids := make([]string, 0, len(st.Teams))
+	for id := range st.Teams {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		t := st.Teams[id]
+		if t.Done {
+			continue
+		}
+		for _, m := range t.Members {
+			if m.Task == task {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+// taskRef is a task of an agent and the team it is in.
+type taskRef struct {
+	task string // the task ID
+	team string // its team
+}
+
+// tasksOf lists the tasks of the agent in the open teams, oldest team first.
+func tasksOf(st *State, agent string) []taskRef {
+	ids := make([]string, 0, len(st.Teams))
+	for id := range st.Teams {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var out []taskRef
+	for _, id := range ids {
+		t := st.Teams[id]
+		if t.Done {
+			continue
+		}
+		if m := t.Members[agent]; m != nil {
+			out = append(out, taskRef{task: m.Task, team: id})
+		}
+	}
+	return out
+}
+
+// isForAgent reports whether a message is for the agent in the team team ("" outside teams): a direct message — the
+// agent's name, or the ID of its task in that team —, a message to that team, or — optionally — to all. A direct message
+// bound to a team is for the agent in that team only.
+func isForAgent(st *State, m Message, agent, team string, broadcast bool) bool {
 	if m.From == agent {
 		return false
 	}
-	if m.To == agent {
-		return true
+	if m.To == agent || (team != "" && m.To == taskOf(st, agent, team)) {
+		return m.Team == "" || m.Team == team
 	}
 	if strings.HasPrefix(m.To, "team:") {
-		t := st.Teams[strings.TrimPrefix(m.To, "team:")]
+		id := strings.TrimPrefix(m.To, "team:")
+		if team != "" {
+			return id == team
+		}
+		t := st.Teams[id]
 		return t != nil && t.Members[agent] != nil
 	}
 	return broadcast && m.To == "all"
 }
 
 // ---------------------------------------------------------------- MCP tools: team
+
+// otherSession reports whether a message belongs to another session of the agent than the one of task in team ("" outside
+// teams): it is a direct message bound to another task of the agent, or it is bound to a team (a direct message of a team, or one to "team:<id>") that is not team and that the agent is a
+// member of. The reads of a session — its history and read_message by number — do not show such a message; messages of
+// teams the agent is not in, and messages bound to no team, stay visible as before.
+func otherSession(st *State, m Message, agent, team, task string) bool {
+	if m.Task != "" && m.Task != task && (m.To == agent || m.From == agent) {
+		return true // a direct message for another task of the agent, or written by one
+	}
+	bound := m.Team
+	if strings.HasPrefix(m.To, "team:") {
+		bound = strings.TrimPrefix(m.To, "team:")
+	}
+	if bound == "" || bound == team {
+		return false
+	}
+	t := st.Teams[bound]
+	return t != nil && t.Members[agent] != nil
+}
+
+// isForSession reports whether a message is for the session of the agent with the task task in the team team: what
+// isForAgent says, and for a direct message bound to a task, that this is its task.
+func isForSession(st *State, m Message, agent, team, task string, broadcast bool) bool {
+	return isForAgent(st, m, agent, team, broadcast) && (m.Task == "" || m.Task == task)
+}
+
+// bindForTask finds where `agentbus send --for-task` posts a message: to the session of the task alone, in the open team
+// that holds it as a task of the recipient, or in no team when none holds it (a solo task). The task of another member,
+// and --for-task with --task, --team or a recipient that is not one agent, are refused.
+func bindForTask(st *State, req sendRequest) (binding, *CmdSendError) {
+	if req.task != "" || req.team != "" || req.to == "all" || strings.HasPrefix(req.to, "team:") {
+		return binding{}, opErr(CmdSendTwoBindings, "--for-task names the session of one task of one agent: give it alone, with --to <agent>")
+	}
+	team := memberOfTask(st, req.forTask)
+	if team == "" {
+		return binding{task: req.forTask}, nil
+	}
+	if taskOf(st, req.to, team) != req.forTask {
+		return binding{}, opErr(CmdSendNoSuchMember, "%s is not a task of %s in team %s", req.forTask, req.to, team)
+	}
+	return binding{team: team, task: req.forTask}, nil
+}
+
+// messageCursor is the key of an agent's unread cursor in a team: the agent and the team, so that no two teams share
+// one; "" outside teams for the agent's single cursor.
+func messageCursor(agent, team string) string {
+	if team == "" {
+		return agent
+	}
+	return agent + "/" + team
+}
+
+// cursor is the last message ID the member agent of team team has read. A team that has no cursor of its own, as in a
+// state written before teams kept one, reads by the agent's single cursor.
+func cursor(st *State, agent, team string) int64 {
+	if team != "" {
+		if cur, read := st.Cursors[messageCursor(agent, team)]; read {
+			return cur
+		}
+	}
+	return st.Cursors[agent]
+}
+
+// advanceCursor marks the messages up to the last one read by the agent in the team, on the team's own cursor (the
+// agent's single one outside teams). A read in a team leaves the single cursor alone: the agent's session in another
+// team starts from it until it has read once, and must not lose its team's messages to this read.
+func advanceCursor(st *State, agent, team string) {
+	st.Cursors[messageCursor(agent, team)] = st.NextID - 1
+}
 
 // myTeam returns this agent's team (nil outside team mode).
 func (s *Server) myTeam(st *State) *Team {
@@ -302,9 +582,9 @@ func (s *Server) waitForMessage(from string, timeout int, broadcast bool) (strin
 			if serr != nil {
 				return fromStorage(WaitForMessageStorage, serr)
 			}
-			cur := st.Cursors[s.me]
+			cur := cursor(st, s.me, s.team)
 			for _, m := range msgs {
-				if m.ID > cur && isForAgent(st, m, s.me, broadcast) && (from == "" || m.From == from) {
+				if m.ID > cur && isForSession(st, m, s.me, s.team, s.info.Task, broadcast) && (from == "" || m.From == from) {
 					found = true
 					break
 				}
@@ -313,11 +593,11 @@ func (s *Server) waitForMessage(from string, timeout int, broadcast bool) (strin
 				return nil
 			}
 			for _, m := range msgs {
-				if m.ID > cur && isForAgent(st, m, s.me, true) {
+				if m.ID > cur && isForSession(st, m, s.me, s.team, s.info.Task, true) {
 					sb.WriteString(fmtMsg(m) + "\n")
 				}
 			}
-			st.Cursors[s.me] = st.NextID - 1
+			advanceCursor(st, s.me, s.team)
 			return nil
 		})
 		if err != nil {
@@ -739,9 +1019,9 @@ func setMemberState(b *Bus, st *State, team, agent string, newState MemberState)
 	if serr != nil {
 		return "", fromStorage(CmdTeamSetStorage, serr)
 	}
-	cur := st.Cursors[agent]
+	cur := cursor(st, agent, team)
 	for _, msg := range msgs {
-		if msg.ID > cur && !msg.Quiet && isForAgent(st, msg, agent, false) {
+		if msg.ID > cur && !msg.Quiet && isForSession(st, msg, agent, team, m.Task, false) {
 			m.State = MemberWaking
 			logInfo(LogMemberWokenBy, "team", t.ID, "member", agent, "cause", "unread", "message_id", msg.ID, "kind", msg.Kind, "from", msg.From)
 			wakeFn(t, m.Task)

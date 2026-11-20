@@ -403,7 +403,7 @@ impl Rig {
             .request(Client::Cli, Command::Run(request))
             .await
             .unwrap();
-        let Reply::Started { team, tasks } = reply else {
+        let Reply::Started { team, tasks, .. } = reply else {
             panic!("a team was expected to start: {reply:?}")
         };
         (team, tasks)

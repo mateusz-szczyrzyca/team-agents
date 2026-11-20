@@ -1,0 +1,3 @@
+{"id":1,"ts":"2026-11-19 10:00:01","from":"agentbus","to":"team:T","kind":"team_created","data":{"team":"T","members":["lead","member"]},"text":"TEAM T: lead, member — same task, agree on a coordinator (claim_lead)"}
+{"id":2,"ts":"2026-11-19 10:00:02","from":"lead","to":"team:T","kind":"coordinator_claimed","data":{"coordinator":"lead"},"text":"COORDINATOR: lead takes over team coordination"}
+{"id":3,"ts":"2026-11-19 10:01:00","from":"lead","to":"member","kind":"chat","data":{"body":"please take B1"},"text":"please take B1"}

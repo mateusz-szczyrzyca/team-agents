@@ -11,7 +11,9 @@ use std::str::FromStr;
 use agent_core::config::{AbsolutePath, Config, ConfigError, InvalidValue, MAX_CONFIG_BYTES, RepoName};
 use agent_core::ids::{AgentName, InvalidName};
 use agent_core::prompt::{AutopilotPrompt, PromptError, Variables, VariablesError};
-use agent_core::protocol::{AgentList, AgentListError, Client, Command, Reply, RunRequest, ShowRequest, Target};
+use agent_core::protocol::{
+    AgentList, AgentListError, Client, Command, Reply, RunRequest, SharedAgent, ShowRequest, Target,
+};
 use agent_core::state::{ItemPhase, MergeMode, TaskListText, Team};
 use agent_core::task_list::{MAX_TASK_LIST_BYTES, TaskListError};
 use agent_runtime::git::{CommitIdentity, Git, GitError};
@@ -281,6 +283,21 @@ pub(crate) fn render_started(home: &Home, team: &Team) -> String {
     lines.concat()
 }
 
+/// A line for each agent of a team that has just started that is in another open team too: its messages there are not
+/// for its session here, and `agent say` to it names the task.
+fn render_shared(shared: &[SharedAgent]) -> String {
+    let lines: Vec<String> = shared
+        .iter()
+        .map(|found| {
+            format!(
+                "  {} is also in the open team {} (task {}): its messages there do not reach this team\n",
+                found.agent, found.team, found.task
+            )
+        })
+        .collect();
+    lines.concat()
+}
+
 /// The request that starts what `input` says in the repository `directory` is in: nothing is asked of the daemon yet.
 ///
 /// # Errors
@@ -322,7 +339,7 @@ pub(crate) async fn start(
     let reply = connection
         .request_until_answered(Client::Cli, Command::Run(request))
         .await?;
-    let Reply::Started { team, .. } = reply else {
+    let Reply::Started { team, shared, .. } = reply else {
         return Err(RunError::UnexpectedReply { kind: kind_of(&reply) });
     };
     let shown = connection
@@ -337,6 +354,8 @@ pub(crate) async fn start(
         return Err(RunError::UnexpectedReply { kind: kind_of(&shown) });
     };
     out.write_all(render_started(home, &team).as_bytes())
+        .map_err(RunError::Output)?;
+    out.write_all(render_shared(&shared).as_bytes())
         .map_err(RunError::Output)?;
     if let Some(warning) = warning {
         out.write_all(warning.as_bytes()).map_err(RunError::Output)?;

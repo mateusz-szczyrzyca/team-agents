@@ -820,13 +820,30 @@ pub enum Recipient {
     Agent(AgentName),
     /// A team.
     Team(TeamId),
+    /// One agent, in one of its teams: an agent in several open teams has a session in each, and the message is for
+    /// the one in `team` only.
+    Member {
+        /// The agent.
+        agent: AgentName,
+        /// The team whose session of the agent the message is for.
+        team: TeamId,
+    },
+    /// One agent, in one of its tasks: the message is for the session of `task` alone, also for a solo task, which no
+    /// team of the bus holds.
+    Task {
+        /// The agent.
+        agent: AgentName,
+        /// The task whose session the message is for.
+        task: TaskId,
+    },
 }
 
 impl fmt::Display for Recipient {
+    /// The recipient as `agentbus send --to` names it; the team of a [`Recipient::Member`] goes with `--team`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::All => f.write_str("all"),
-            Self::Agent(agent) => write!(f, "{agent}"),
+            Self::Agent(agent) | Self::Member { agent, .. } | Self::Task { agent, .. } => write!(f, "{agent}"),
             Self::Team(team) => write!(f, "team:{team}"),
         }
     }
@@ -1205,6 +1222,11 @@ impl AgentBus {
         message: &Outgoing,
     ) -> Result<SentMessage, AgentBusError> {
         let mut args = Args::new().flag("--from", from.as_str()).flag("--to", to.to_string());
+        match to {
+            Recipient::Member { team, .. } => args = args.flag("--team", team.to_string()),
+            Recipient::Task { task, .. } => args = args.flag("--for-task", task.to_string()),
+            Recipient::All | Recipient::Agent(_) | Recipient::Team(_) => {}
+        }
         let text = match message {
             Outgoing::Chat { text } => text,
             Outgoing::Notice { kind, fields, text } => {

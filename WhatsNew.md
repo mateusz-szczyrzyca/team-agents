@@ -5,6 +5,25 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.30.0 — 20.11.2026 — PR #147
+
+### Bug fixes
+- [agent] [agent-runtime] [agentbus] An agent that works in two open teams gets a message from a team, and wakes for
+  it, only in that team: its session in the other team no longer reads it and acts on it, and reading in one team
+  no longer marks the other team's messages as read. A running or configured agent is no exception.
+- [agent] [agent-runtime] [agentbus] `agent say <task>` to a solo task reaches that task's session only, also when the
+  agent is in an open team.
+- [agentbus] A reservation belongs to the task that took it: the same agent's run in another team can no longer
+  release it or free it when that run ends.
+
+### Enhancements
+- [agent] [agent-core] `agent run` says which of its agents are also in another open team, for example
+  `codex-1 is also in the open team team-… (task task-…): its messages there do not reach this team`.
+- [agent] [agentbus] A message from a team to a name that is not in that team is refused with the list of the team's
+  members. The history of `read_messages` and `read_message` show a session nothing of the agent's other teams.
+- [agent] Team members are told that only their own worktree and branch are theirs to change, and that a message
+  naming another task's branch is not for them.
+
 ## 0.29.0 — 20.11.2026 — PR #146
 
 ### Enhancements

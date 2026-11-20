@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use agent_core::config::{AbsolutePath, Program};
 use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::log::LogEvent;
-use agent_core::protocol::{AgentList, Client, Command, FailureKind, Reply, RunRequest, StatusRequest, Target};
+use agent_core::protocol::{
+    AgentList, Client, Command, FailureKind, Reply, RunRequest, SharedAgent, StatusRequest, Target,
+};
 use agent_core::state::{ItemPhase, MergeMode, PrNumber, PullRequest, State, TaskListText, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{
@@ -350,7 +352,7 @@ impl Fixture {
     /// Starts a team and returns its ID and tasks.
     async fn start_team(&self, agents: &[&str], list: &str) -> (TeamId, Vec<TaskId>) {
         let reply = self.run(agents, list, None).await.unwrap();
-        let Reply::Started { team, tasks } = reply else {
+        let Reply::Started { team, tasks, .. } = reply else {
             panic!("a team was expected to start: {reply:?}")
         };
         (team, tasks)
@@ -2104,7 +2106,7 @@ async fn allowed_unpushed_base_is_reported_and_survives_daemon_restart() {
     f.start().await;
     let mut request = f.request(&["claude-1"], PLAIN, None);
     request.allow_unpushed_base = true;
-    let Reply::Started { team, tasks } = f.run_request(request).await.unwrap() else {
+    let Reply::Started { team, tasks, .. } = f.run_request(request).await.unwrap() else {
         panic!("expected started")
     };
     f.stop().await.unwrap();
@@ -2196,4 +2198,145 @@ async fn base_fetch_failure_is_refused_even_when_unpushed_commits_are_allowed() 
     );
     assert_nothing_started(&f);
     assert_eq!(std::fs::read_dir(f.home.tasks_dir()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn a_team_that_takes_an_agent_of_another_open_team_names_it_and_its_task_there() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+    ]);
+    f.start().await;
+    let (first, _) = f.start_team(&["claude-1", "inv-opus"], PARALLEL).await;
+    let claude_task = f
+        .state()
+        .team(&first)
+        .unwrap()
+        .crew()
+        .roster()
+        .into_iter()
+        .find(|(_, member)| member.agent().name() == "claude-1")
+        .map(|(_, member)| member.task().clone())
+        .unwrap();
+
+    let reply = f
+        .run(&["claude-1", "claude-2"], PARALLEL, Some("claude-2"))
+        .await
+        .unwrap();
+
+    let Reply::Started { shared, .. } = reply else {
+        panic!("{reply:?}")
+    };
+    assert_eq!(
+        shared,
+        vec![SharedAgent {
+            agent: "claude-1".parse().unwrap(),
+            team: first,
+            task: claude_task,
+        }]
+    );
+    f.stop().await.unwrap();
+}
+
+/// The line of the bus's message log that holds `text`.
+fn line_with(messages: &str, text: &str) -> String {
+    messages
+        .lines()
+        .find(|line| line.contains(text))
+        .unwrap_or_default()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn a_word_to_a_task_of_an_agent_in_two_open_teams_is_for_the_session_of_that_task() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+    ]);
+    f.start().await;
+    f.start_team(&["claude-1", "inv-opus"], PARALLEL).await;
+    let (second, tasks) = f.start_team(&["claude-2", "claude-1"], PARALLEL).await;
+    let claude_task = tasks
+        .iter()
+        .find(|task| f.state().find_task(task).unwrap().member.agent().name() == "claude-1")
+        .unwrap()
+        .clone();
+
+    let reply = f
+        .connect()
+        .await
+        .request(
+            Client::Cli,
+            Command::Say(agent_core::protocol::SayRequest {
+                target: Target::Task(claude_task),
+                text: "Only for the second team.".to_owned().try_into().unwrap(),
+            }),
+        )
+        .await;
+
+    let line = line_with(&f.messages(), "Only for the second team.");
+    f.stop().await.unwrap();
+    assert!(line.contains(&format!(r#""team":"{second}""#)), "{reply:?}: {line}");
+}
+
+#[tokio::test]
+async fn a_notice_to_a_coordinator_in_two_open_teams_is_for_its_session_in_the_team_it_is_about() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "slowdone"),
+        normal("claude-2", "sleep"),
+    ]);
+    f.start().await;
+    f.start_team(&["inv-opus", "claude-2"], PARALLEL).await;
+    let (second, _) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+
+    f.wait_for("the notice that claude-1 is done", || {
+        f.messages().contains("claude-1 reported DONE on item 1.1")
+    })
+    .await;
+
+    let line = line_with(&f.messages(), "claude-1 reported DONE on item 1.1");
+    f.stop().await.unwrap();
+    assert!(line.contains(&format!(r#""team":"{second}""#)), "{line}");
+}
+
+#[tokio::test]
+async fn a_word_to_a_solo_task_of_an_agent_in_an_open_team_is_for_the_solo_session_alone() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    f.start_team(&["claude-1", "inv-opus"], PARALLEL).await;
+    let (_, tasks) = f.start_team(&["claude-1"], PLAIN).await;
+    let solo = tasks.first().unwrap().clone();
+
+    let reply = f
+        .connect()
+        .await
+        .request(
+            Client::Cli,
+            Command::Say(agent_core::protocol::SayRequest {
+                target: Target::Task(solo.clone()),
+                text: "Only for the solo task.".to_owned().try_into().unwrap(),
+            }),
+        )
+        .await;
+
+    let line = line_with(&f.messages(), "Only for the solo task.");
+    f.stop().await.unwrap();
+    assert!(
+        line.contains(&format!(r#""task":"{solo}""#)) && !line.contains(r#""team":"#),
+        "{reply:?}: {line}"
+    );
 }

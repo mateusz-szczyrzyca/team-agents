@@ -1,0 +1,19 @@
+{
+  "next_id": 5,
+  "agents": {
+    "lead": {"agent": "lead", "task": "task-lead", "repo": "repo", "branch": "agents/lead",
+      "worktree": "/tmp/wt-lead", "status": "", "started": "2026-11-19 10:00:00", "last_seen": "2026-11-19 10:05:00", "pid": 4242},
+    "member": {"agent": "member", "task": "task-member", "repo": "repo", "branch": "agents/member",
+      "worktree": "/tmp/wt-member", "status": "", "started": "2026-11-19 10:00:00", "last_seen": "2026-11-19 10:05:00", "pid": 4243}
+  },
+  "reservations": {},
+  "cursors": {"lead": 2},
+  "teams": {
+    "T": {"id": "T", "repo": "repo", "lead": "lead", "wake_cmd": "/tmp/agent",
+      "home": "/tmp/agents", "done": false, "created": "2026-11-19 10:00:00",
+      "members": {
+        "lead": {"agent": "lead", "task": "task-lead", "branch": "agents/lead", "worktree": "/tmp/wt-lead", "state": "active", "tier": "normal"},
+        "member": {"agent": "member", "task": "task-member", "branch": "agents/member", "worktree": "/tmp/wt-member", "state": "sleeping", "tier": "normal"}
+      }}
+  }
+}

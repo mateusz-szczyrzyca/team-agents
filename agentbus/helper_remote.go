@@ -178,7 +178,7 @@ func finishRemoteHelper(b *Bus, id int64, result remoteHelperResult) *HelperRemo
 			}
 		}
 		if !delivered {
-			_, serr = b.post(st, "agentbus", h.From, EventScript{Notice: NoticeHelperResult, Body: summary, Fields: map[string]string{"request": fmt.Sprintf("H%d", id), "requesting_task": h.FromTask, "status": label, "node": result.Node, "branch": result.Branch}})
+			_, serr = b.postIn(st, teamOfTask(st, h.FromTask), "agentbus", h.From, EventScript{Notice: NoticeHelperResult, Body: summary, Fields: map[string]string{"request": fmt.Sprintf("H%d", id), "requesting_task": h.FromTask, "status": label, "node": result.Node, "branch": result.Branch}})
 			if serr != nil {
 				return fromStorage(HelperRemoteFinishStorage, serr)
 			}

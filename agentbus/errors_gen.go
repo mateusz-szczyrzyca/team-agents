@@ -65,6 +65,8 @@ const (
 	SendMessageMissingArgument SendMessageCause = iota // to or text is missing [InvalidArgument]
 	SendMessageToSelf                                  // the recipient is the caller itself [InvalidArgument]
 	SendMessageNotInTeam                               // the recipient is "team" but the caller is not in a team [NotInTeam]
+	SendMessageNotInYourTeam                           // the recipient is no member of the caller's team, and is no recipient the bus knows outside teams [NotInTeam]
+	SendMessageAmbiguousAgent                          // the caller is outside teams and the agent is in more than one open team: the message needs a task [Conflict]
 	SendMessageStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -76,6 +78,8 @@ var sendMessageCauses = [...]causeInfo{
 	{"MissingArgument", ClassInvalidArgument},
 	{"ToSelf", ClassInvalidArgument},
 	{"NotInTeam", ClassNotInTeam},
+	{"NotInYourTeam", ClassNotInTeam},
+	{"AmbiguousAgent", ClassConflict},
 	{"Storage", ClassStorage},
 }
 
@@ -1050,9 +1054,14 @@ func (c CmdServeCause) String() string { return c.info().name }
 type CmdSendCause int
 
 const (
-	CmdSendMissingText   CmdSendCause = iota // the message text is missing [InvalidArgument]
-	CmdSendInvalidNotice                     // --notice is not a known script notice [InvalidArgument]
-	CmdSendStorage                           // the shared state or a file could not be read or written [Storage]
+	CmdSendMissingText    CmdSendCause = iota // the message text is missing [InvalidArgument]
+	CmdSendInvalidNotice                      // --notice is not a known script notice [InvalidArgument]
+	CmdSendNoSuchMember                       // --task or --team names no open team the agent is a member of with that task [NotFound]
+	CmdSendAmbiguousAgent                     // the agent is in more than one open team and neither --task nor --team names which [Conflict]
+	CmdSendBindingForMany                     // --task or --team is given with --to all or team:<id>: they name the team of one agent [InvalidArgument]
+	CmdSendToSelf                             // --task or --team is given and the sender writes to itself [InvalidArgument]
+	CmdSendTwoBindings                        // --for-task is given with --task or --team: it names the session alone [InvalidArgument]
+	CmdSendStorage                            // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdSendError is the error of the subcommand send.
@@ -1062,6 +1071,11 @@ type CmdSendError = OpError[CmdSendCause]
 var cmdSendCauses = [...]causeInfo{
 	{"MissingText", ClassInvalidArgument},
 	{"InvalidNotice", ClassInvalidArgument},
+	{"NoSuchMember", ClassNotFound},
+	{"AmbiguousAgent", ClassConflict},
+	{"BindingForMany", ClassInvalidArgument},
+	{"ToSelf", ClassInvalidArgument},
+	{"TwoBindings", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
 
