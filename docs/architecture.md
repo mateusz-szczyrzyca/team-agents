@@ -631,6 +631,17 @@ catalog text to both status views. After scheduling each team's work, an unowned
 `daemon_task_failed` with `operation=round_wait` and its round ID. Deduplication lasts for the daemon's lifetime.
 No wait label or publication correction counter is added to `state.json`.
 
+### Snapshots (`agent-runtime`, `agent`)
+
+A snapshot keeps what a worktree holds when its run was cut, so that nobody else can lose it. The daemon takes one of
+every task whose run did not end when it starts, when the round that run worked for is still open. The snapshot is a
+commit of everything in the worktree (modified, staged, deleted, untracked and binary files; ignored files are left out),
+made in a scratch index with the repository's filters, hooks and filesystem monitor switched off: the worktree, its index
+and its files are not changed. The commit is kept under `refs/agents/snapshots/<round>/<task>/<n>`, `n` counted from 1,
+and its parent is the head; the history records it ([`history.md`](history.md), `snapshots`). A snapshot above
+`[snapshot] warn_mb` is still taken and logged as `snapshot_large`; a failure is logged as `snapshot_failed` and the daemon
+goes on. Nothing prunes the snapshots yet, and nothing pushes them. `agent status <round>` shows the last snapshot of each task.
+
 ### The history
 
 The state file says what is; the history says what happened. It is one SQLite database, `history.db` in the home, written
