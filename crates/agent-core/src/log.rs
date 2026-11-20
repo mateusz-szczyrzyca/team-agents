@@ -108,8 +108,6 @@ impl TryFrom<String> for LogLevel {
     parse_err_fn = UnknownKeyword::of::<LogEvent>,
 )]
 pub enum LogEvent {
-    /// A coordinator proposal was approved, sent back or referred to the human.
-    SplitDecision,
     /// A line of a model CLI's output cannot be read as its event format.
     CliOutputUnreadable,
     /// A model CLI run cannot start, ends without reporting a status or a reviewer's verdict, or fails.
@@ -249,8 +247,7 @@ impl LogEvent {
             | Self::RequestRefused
             | Self::DeliveryClosed
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
-            Self::SplitDecision
-            | Self::TeamChanged
+            Self::TeamChanged
             | Self::RoundChanged
             | Self::ItemPhaseChanged
             | Self::TaskStatusChanged

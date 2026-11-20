@@ -208,6 +208,8 @@ At `level = "debug"`:
   did) and `plan_out_of_delivery` (whether a plan committed by mistake was taken out of the branch). A plan that cannot
   be taken out of the branch is a `git_call_failed` warning; a question about a plan that cannot be written, a
   `questions_file_invalid` warning.
+  Split proposal approval emits `split_proposal`, with task, item and correction count as input, and the
+  approved, corrected or asked outcome and its reason as result.
 - `outside_call_completed` is emitted whenever an external call (`git`, `agentbus`, the GitHub API, or a model CLI
   process) finishes, with `tool`, `operation`, `duration_ms`, `outcome`, and, when available, `exit_code` in `fields`.
   For a GitHub call, `exit_code` is the actual HTTP response status.
@@ -277,7 +279,6 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `history_record_incomplete` | `warn` | A record of the history cannot be made as it should: it is left out, counted as lost, or made with a fallback (such as a run's reason recorded as a continuation). |
 | `team_changed` | `info` | A team is started or closed. |
 | `round_changed` | `info` | A round is opened or closed. Checked delivery changes carry `change=delivery_accepted` or `delivery_merged` at `info`, and `delivery_refused` or `delivery_poll_failed` as a `warn` record of the same event. Records name `team`, the known `round` and `pr`, and an `error` cause chain for failed checks or observations. |
-| `split_decision` | `info` | A coordinator proposal was approved, corrected or referred to the human. Fields: `task`, `item`, `decision`, `corrections`, `reason`. |
 | `delivery_closed` | `warn` | An accepted delivery PR was observed closed without merging; the claim ends and the item returns to its member. Fields: `team`, `round`, `pr`. |
 | `item_phase_changed` | `info` | An item's phase changes. |
 | `task_status_changed` | `info` | A task's status changes. |

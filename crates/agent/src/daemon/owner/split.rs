@@ -4,7 +4,6 @@ use agent_core::decide::split::approval::{AskReason, ProposalDecision, ProposalF
 use agent_core::history::{HistoryEvent, SplitDecision};
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
-use agent_core::log::LogEvent;
 use agent_core::prompt::{TeamPrompt, Variables, VariablesError};
 use agent_core::questions::{MAX_QUESTIONS_BYTES, quote};
 use agent_core::state::split::keeping::{ProposalKeeping, ProposalStage};
@@ -205,7 +204,11 @@ impl Owner {
         decision: SplitDecision,
         reason: String,
     ) {
-        tracing::info!(event = LogEvent::SplitDecision.as_str(), task = %task, item = %item, %decision, corrections = keeping.corrections(), %reason, "split proposal decided");
+        agent_runtime::history::log_decision(
+            "split_proposal",
+            &serde_json::json!({"task": task, "item": item, "corrections": keeping.corrections()}),
+            &serde_json::json!({"decision": decision, "reason": reason}),
+        );
         let question = match keeping.stage() {
             ProposalStage::Asked { question } => Some(*question),
             ProposalStage::Pending | ProposalStage::Correction { .. } => None,

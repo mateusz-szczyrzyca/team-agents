@@ -1267,8 +1267,9 @@ Approval activates the whole plan atomically; correction retains the fault and q
 scope changes or exhausted corrections write one harness question using the existing human answer path.
 Member markers produce a bus notice to the coordinator, without activating a split or asking the human.
 Pending decisions are resumed before team assignment; saved corrections and asked stages are not replayed.
-Catalog entries supply each fault, the next prompt and the question. The append-only history and structured log
-record the outcome as `split_decision`, with parent, correction count and reason. History migration 15 preserves
+Catalog entries supply each fault, the next prompt and the question. The append-only history records the outcome
+as `split_decision`, with parent, correction count and reason. At debug level the structured log uses the existing
+`decision_taken` event with decision `split_proposal`. History migration 15 preserves
 records and links while admitting the new event. Human verdicts continue through the existing atomic path.
 
 ### Execution of approved split plans

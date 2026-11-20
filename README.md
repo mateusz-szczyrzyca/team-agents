@@ -295,7 +295,8 @@ The daemon approves a complete valid plan without human intervention when it kee
 up to [`[split] corrections`](docs/configuration.md#split), and asks the human once for scope changes or exhausted
 corrections. Estimates are compared against `part_limit` in the configured `unit` (default `lines`). Members'
 requests go to their coordinator. Pending input, corrections and existing questions survive restarts.
-Decisions appear in history and logs as `split_decision`. Existing configurations and split plans remain readable;
+Decisions appear in history as `split_decision` and, at debug log level, as `decision_taken` with decision
+`split_proposal`. Existing configurations and split plans remain readable;
 history migration 15 preserves previous rows while admitting decision records. Requested tiers are retained;
 assignment enforcement follows in the next part.
 

@@ -772,7 +772,7 @@ History version 14 admits the `delivery_closed` warning. Its migration preserves
 links, search entries and cursors from version 12. The schema-14 state remains unchanged apart from an optional
 round timestamp; see [state.md](state.md).
 
-History version 15 admits `split_decision` event records and info log rows. The migration preserves existing
+History version 15 admits `split_decision` event records. The migration preserves existing
 records, round links, search entries and log cursors. The event keeps the task, parent item, outcome
 (`approved`, `corrected`, `asked`), correction count, optional question number and reason. The previous schema
 is retained as `crates/agent-runtime/tests/fixtures/history-before-split-decisions.sql` and tested on upgrade.
