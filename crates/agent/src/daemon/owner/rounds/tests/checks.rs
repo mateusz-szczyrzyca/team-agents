@@ -1281,3 +1281,51 @@ async fn task_allowances_cover_version_and_golden_changes_in_successive_rounds()
         assert!(!rig.home.questions_file(&task, NonZeroU32::MIN).exists());
     }
 }
+
+#[tokio::test]
+async fn a_mixed_first_check_asks_only_the_human_part_before_the_team_fixes_the_rest() {
+    let mut rig = checking_rig("script:mixed-first,questions,done,script:add-test", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    script(
+        &rig,
+        "mixed-first",
+        "sed -i 2d tests/existing.txt\necho 'fn a() {}' > src/a.txt\ngit add tests/existing.txt src/a.txt\ncommit -m 'Change the existing test and add code'\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.prompt(&tasks[0], 2).await;
+    let before = record(&rig, &tasks[0]).await;
+    assert_eq!(before.passes_of(&["1.1".parse().unwrap()]), 0);
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let file = questions_of(&rig, &tasks[0], 1);
+    assert_eq!(
+        before.asked.as_ref().unwrap().subjects,
+        [Subject::Path("tests/existing.txt".parse().unwrap())],
+    );
+    assert_eq!(file.entries().len(), 1);
+    assert!(file.title().unwrap().contains("[checks:v1]"));
+    assert_eq!(rig.github.calls("POST", "/graphql").len(), 0);
+
+    rig.stop().await.unwrap();
+    rig.start().await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    let team_pass = rig.prompt(&tasks[0], 4).await;
+    let after = record(&rig, &tasks[0]).await;
+    let member = rig.state().find_task(&tasks[0]).unwrap().member.clone();
+    rig.stop().await.unwrap();
+
+    assert!(team_pass.contains("THE ROUND IS NOT READY FOR ITS REVIEW (pull request #1, check 1)"));
+    assert!(team_pass.contains("Test-First: not possible"));
+    assert!(!team_pass.contains("`tests/existing.txt`"));
+    assert_eq!(after.passes_of(&["1.1".parse().unwrap()]), 1);
+    assert_eq!(
+        after.allowed_of(&["1.1".parse().unwrap()]),
+        [Subject::Path("tests/existing.txt".parse().unwrap())]
+    );
+    assert_eq!(after.asked, None);
+    assert_eq!(member.questions().len(), 1);
+    assert_eq!(rig.runs(&tasks[0]), 4);
+    assert_eq!(rig.github.calls("POST", "/graphql").len(), 1);
+}
