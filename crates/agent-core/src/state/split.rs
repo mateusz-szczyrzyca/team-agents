@@ -94,6 +94,16 @@ pub struct PartDefinition {
     pub depends_on: Vec<PartKey>,
 }
 
+/// The authority that approved a complete split plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SplitApproval {
+    /// The harness approved an unchanged, valid proposal under the configured policy.
+    Harness,
+    /// The human approved a split through a verdict.
+    Human,
+}
+
 /// A whole validated split, with stable keys assigned in the given order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "SplitWire", into = "SplitWire")]
@@ -250,6 +260,18 @@ impl SplitPlan {
         Ok(plan)
     }
 
+    /// Recorded approval authority; none for plans whose provenance was not stored.
+    #[must_use]
+    pub fn approved_by(&self) -> Option<SplitApproval> {
+        None
+    }
+
+    /// Attaches the approval authority when the caller records an approved plan.
+    #[must_use]
+    pub fn with_approval(self, _approval: SplitApproval) -> Self {
+        self
+    }
+
     /// Resolves at most 26 nodes iteratively; forward references are allowed but cycles never are.
     fn check_acyclic(&self) -> Result<(), SplitError> {
         let mut resolved = BTreeSet::new();
@@ -309,3 +331,6 @@ impl SplitPlan {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod approval_tests;
