@@ -26,7 +26,7 @@ impl Team {
     /// Whole approved plans, in the order recorded; empty for older teams.
     #[must_use]
     pub fn splits(&self) -> &[SplitPlan] {
-        &[]
+        &self.splits
     }
 
     /// Attaches a whole validated plan without changing the item or its round.
@@ -34,7 +34,12 @@ impl Team {
     /// # Errors
     /// Returns [`RecordSplitError`] if the item is absent or already has a split.
     pub fn record_split(&mut self, plan: SplitPlan) -> Result<(), RecordSplitError> {
-        Err(RecordSplitError::UnknownItem { item: plan.parent() })
+        check_parent(self, plan.parent())?;
+        if self.splits.iter().any(|old| old.parent() == plan.parent()) {
+            return Err(RecordSplitError::AlreadySplit { item: plan.parent() });
+        }
+        self.splits.push(plan);
+        Ok(())
     }
 }
 
@@ -46,6 +51,34 @@ impl CheckedMut<'_, Team> {
     pub fn record_split(&mut self, plan: SplitPlan) -> Result<(), RecordSplitError> {
         self.value.record_split(plan)
     }
+}
+
+/// Validates membership and uniqueness without changing the persisted order.
+pub(super) fn check_splits(team: &Team) -> Result<(), super::TeamError> {
+    let mut parents = std::collections::BTreeSet::new();
+    for plan in &team.splits {
+        check_parent(team, plan.parent())
+            .and_then(|()| {
+                if parents.insert(plan.parent()) {
+                    Ok(())
+                } else {
+                    Err(RecordSplitError::AlreadySplit { item: plan.parent() })
+                }
+            })
+            .map_err(|source| super::TeamError::Split {
+                team: team.id.clone(),
+                source,
+            })?;
+    }
+    Ok(())
+}
+
+/// A stored plan must name one of the team's original task-list items.
+fn check_parent(team: &Team, item: ItemId) -> Result<(), RecordSplitError> {
+    if team.item(item).is_none() {
+        return Err(RecordSplitError::UnknownItem { item });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

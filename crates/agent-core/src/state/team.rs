@@ -414,6 +414,9 @@ pub struct Team {
     /// Explicit permission and evidence for an unpublished base at team creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     unpushed_base: Option<super::UnpushedBase>,
+    /// Whole approved splits; absent in older state files.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    splits: Vec<super::split::SplitPlan>,
 }
 
 /// How a [`Team`] is read; see [`checked!`].
@@ -446,6 +449,9 @@ struct TeamWire {
     /// Older teams carry no permission to start from unpublished commits.
     #[serde(default)]
     unpushed_base: Option<super::UnpushedBase>,
+    /// Older teams have no approved splits.
+    #[serde(default)]
+    splits: Vec<super::split::SplitPlan>,
 }
 
 checked!(Team, TeamWire, check_team);
@@ -453,6 +459,14 @@ checked!(Team, TeamWire, check_team);
 /// Why a team's parts do not fit together.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TeamError {
+    /// A stored split does not belong to this team or repeats an original item.
+    #[error("team {team} has an invalid split")]
+    Split {
+        /// The team owning the plan.
+        team: TeamId,
+        /// The membership or uniqueness violation.
+        source: RecordSplitError,
+    },
     /// The progress is not one entry for each item of the task list, in order.
     #[error("team {team}: the progress at position {position} is for {found:?}, the task list has {expected:?} there")]
     ItemsMismatch {
@@ -562,6 +576,7 @@ impl Team {
             reviewers: Vec::new(),
             activities: Vec::new(),
             unpushed_base: None,
+            splits: Vec::new(),
         };
         team.record_activities(created_at);
         team
@@ -772,6 +787,7 @@ fn check_reviewer(crew: &Crew, reviewers: &[Member], member: &Member) -> Result<
 fn check_team(team: &Team) -> Result<(), TeamError> {
     check_items(&team.id, &team.task_list, &team.items)?;
     rounds::check_rounds(team)?;
+    splits::check_splits(team)?;
     for (index, reviewer) in team.reviewers.iter().enumerate() {
         let previous = team.reviewers.get(..index).unwrap_or_default();
         check_reviewer(&team.crew, previous, reviewer).map_err(|reason| TeamError::Reviewer {
