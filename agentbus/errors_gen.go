@@ -1054,9 +1054,11 @@ func (c CmdServeCause) String() string { return c.info().name }
 type CmdSendCause int
 
 const (
-	CmdSendMissingText   CmdSendCause = iota // the message text is missing [InvalidArgument]
-	CmdSendInvalidNotice                     // --notice is not a known script notice [InvalidArgument]
-	CmdSendStorage                           // the shared state or a file could not be read or written [Storage]
+	CmdSendMissingText    CmdSendCause = iota // the message text is missing [InvalidArgument]
+	CmdSendInvalidNotice                      // --notice is not a known script notice [InvalidArgument]
+	CmdSendNoSuchMember                       // --task or --team names no open team the agent is a member of with that task [NotFound]
+	CmdSendAmbiguousAgent                     // the agent is in more than one open team and neither --task nor --team names which [Conflict]
+	CmdSendStorage                            // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdSendError is the error of the subcommand send.
@@ -1066,6 +1068,8 @@ type CmdSendError = OpError[CmdSendCause]
 var cmdSendCauses = [...]causeInfo{
 	{"MissingText", ClassInvalidArgument},
 	{"InvalidNotice", ClassInvalidArgument},
+	{"NoSuchMember", ClassNotFound},
+	{"AmbiguousAgent", ClassConflict},
 	{"Storage", ClassStorage},
 }
 

@@ -661,6 +661,16 @@
      "name": "InvalidNotice",
      "class": "InvalidArgument",
      "doc": "--notice is not a known script notice"
+    },
+    {
+     "name": "NoSuchMember",
+     "class": "NotFound",
+     "doc": "--task or --team names no open team the agent is a member of with that task"
+    },
+    {
+     "name": "AmbiguousAgent",
+     "class": "Conflict",
+     "doc": "the agent is in more than one open team and neither --task nor --team names which"
     }
    ]
   },

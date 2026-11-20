@@ -210,6 +210,13 @@ func (s *Server) delivery(st *State, to string) (recipient, team string, refusal
 	return "", "", opErr(SendMessageAmbiguousAgent, "%s is in %d open teams: %s — put one of its task IDs in to", to, len(tasks), strings.Join(pairs, ", "))
 }
 
+// bindSend finds where `agentbus send` posts a message: the recipient — the agent, or a task — and the team it is bound
+// to, or why it is refused. The daemon is in no team; it names the team with a task of the member or with --team, and
+// without them a member of one open team is written to in it (a stub of this commit: it binds nothing).
+func bindSend(_ *State, _, to, _, _ string) (string, string, *CmdSendError) {
+	return to, "", nil
+}
+
 // requestedTeam is the team of the task from which helper wrote to member: the task of the member's request the helper
 // serves, when that member is the one written to ("" when it is no such request).
 func requestedTeam(st *State, helper, member string) string {
