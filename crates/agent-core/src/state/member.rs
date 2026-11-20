@@ -542,11 +542,6 @@ mod tests {
         member(1, normal("codex-1"))
     }
 
-    /// The plan `member` keeps.
-    fn plan(member: &Member) -> &PlanKeeping {
-        member.plan().expect("the member keeps its plan")
-    }
-
     /// Questions number `number` asked at `seconds`.
     fn asked(number: u32, seconds: u32) -> Question {
         Question::new(
