@@ -640,7 +640,9 @@ The daemon binds a claim to the coordinator run's round references, checks the c
 fresh base and published PR commits, and refuses unverifiable claims before publication. Accepted claims are
 excluded from publication and idle-work alarms. Their merge obligation survives restart, and separate polling
 observes the delivering PR even while its owner is in review or a fix pass. A merge completes the checked item
-and round before normal team completion and worktree cleanup. Closed, unmerged delivery recovery is deferred
+and round before normal team completion and worktree cleanup. A stop of the whole team abandons the round but keeps
+the claim: the item stays out of publication, the delivering PR is still polled after a resume, and its merge completes
+the item without recording the end of the round a second time. Closed, unmerged delivery recovery is deferred
 to the second part; this part logs a warning and preserves the wait.
 
 ### The history
