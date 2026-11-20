@@ -733,3 +733,84 @@ async fn an_answered_conflict_question_after_a_conflict_verification_review_runs
         assert!(rig.home.review_report_file(reviewer.task(), pr, 2).is_file());
     }
 }
+
+#[tokio::test]
+async fn reopening_review_after_allowed_only_conflict_passes_and_an_answered_question_advances_each_pass_identity() {
+    use agent_core::protocol::{AnswerInput, AnswerList, AnswerRequest, Client, Command, Reply};
+    use agent_core::questions::Verdict;
+    use agent_core::state::{MergeConflict, PrNumber};
+    use agent_core::status::TaskStatus;
+    use std::num::NonZeroU32;
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,merge-base,merge-base,merge-base-other,ask-here,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    for pass in 1..=3 {
+        rig.state_where(&format!("conflict pass {pass} to begin"), |state| {
+            state.teams()[0].item("1.1".parse().unwrap()).is_some_and(|item| {
+                item.merge_passes() == pass && matches!(item.merge_conflict(), Some(MergeConflict::MergingBase { .. }))
+            })
+        })
+        .await;
+        std::fs::write(rig.repo.join("base-file.txt"), format!("moved {pass}\n")).unwrap();
+        git(&rig.repo, &["add", "base-file.txt"]);
+        git(&rig.repo, &["commit", "-q", "-m", &format!("Move the base {pass}")]);
+        let origin = rig.origin.to_str().unwrap();
+        git(&rig.repo, &["push", "-q", origin, "HEAD:refs/heads/main"]);
+        std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+    }
+
+    rig.status_is(&task, TaskStatus::Questions).await;
+    rig.github.answer_merges(MergeAnswer::Allow);
+    let answers = AnswerList::try_from(vec![AnswerInput {
+        question: NonZeroU32::MIN,
+        verdict: Verdict::from_text("ok").unwrap().unwrap(),
+    }])
+    .unwrap();
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: NonZeroU32::MIN,
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let posted = rig.github.calls("POST", &format!("/repos/{SLUG}/pulls/1/reviews"));
+    assert_eq!(posted.len(), 6);
+    assert!(posted[0].body.contains("Review pass 1"), "{}", posted[0].body);
+    assert!(posted[1].body.contains("Review pass 1"), "{}", posted[1].body);
+    assert!(posted[2].body.contains("Review pass 2"), "{}", posted[2].body);
+    assert!(posted[3].body.contains("Review pass 2"), "{}", posted[3].body);
+    assert!(posted[4].body.contains("Review pass 3"), "{}", posted[4].body);
+    assert!(posted[5].body.contains("Review pass 3"), "{}", posted[5].body);
+    let pr = PrNumber::new(NonZeroU32::MIN);
+    for reviewer in state.teams()[0].reviewers() {
+        assert!(rig.home.review_report_file(reviewer.task(), pr, 0).is_file());
+        assert!(rig.home.review_report_file(reviewer.task(), pr, 1).is_file());
+        assert!(rig.home.review_report_file(reviewer.task(), pr, 2).is_file());
+    }
+}

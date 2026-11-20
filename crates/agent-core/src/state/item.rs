@@ -1771,6 +1771,26 @@ mod tests {
     }
 
     #[test]
+    fn reopening_review_after_conflict_advances_completed_review_passes_independently_of_spent_merge_passes() {
+        let mut first = progress_in(PhaseKind::Approved);
+        first.spend_merge_pass();
+        first.spend_merge_pass();
+        first.spend_merge_pass();
+        first.reopen_review_after_conflict().unwrap();
+
+        let mut second = progress_in(PhaseKind::Approved);
+        second.spend_merge_pass();
+        second.spend_merge_pass();
+        second.spend_merge_pass();
+        second.reopen_review_after_conflict().unwrap();
+        second.phase = progress_in(PhaseKind::Approved).phase;
+        second.reopen_review_after_conflict().unwrap();
+
+        assert_eq!(first.completed_review_passes(), 1);
+        assert_eq!(second.completed_review_passes(), 2);
+    }
+
+    #[test]
     fn fix_passes_and_the_gate_result_are_written_when_there_are_some_and_read_back() {
         let mut item = progress_in(PhaseKind::Fixing);
         item.gate = Some(GateResult {
