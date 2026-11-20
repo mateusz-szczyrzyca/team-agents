@@ -1,58 +1,60 @@
-//! How many times a run went bad, and whether the task was started in a new session again through the ladder: the
-//! numbers the ladder decides from, kept by the member so that they survive a restart of the daemon.
+//! A task started again in a new session: what the state keeps of it, and how it reads a state written before it.
 
 use serde::{Deserialize, Serialize};
 
-use super::run::Run;
+use super::run::{Run, RunEnd, RunState};
 use super::values::Timestamp;
 use crate::decide::ladder::{self, Trouble};
 
-/// Whether a task was started in a new session again, by [`Member::renew`](super::Member::renew).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, default)]
+/// Renewals of one task, recorded by [`Member::renew`](super::Member::renew): how many times it was started in a new
+/// session after its runs went bad, and when the last renewal happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Renewals {
-    /// How many times the task was started anew after its runs went bad.
+    /// How many times the task was started in a new session again.
     used: u32,
-    /// Whether the renewal's run started; [`renewals`] says what it took from the task when it did.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    started: Option<Timestamp>,
+    /// When the last renewal happened: the runs that started at or after this time belong to the new session, the
+    /// session the task had before it is not resumed any more.
+    at: Timestamp,
 }
 
 impl Renewals {
-    /// How many times the task was started anew after its runs went bad.
+    /// How many times the task was started in a new session again.
     #[must_use]
     pub const fn used(&self) -> u32 {
         self.used
     }
 
-    /// When the last renewal's run started, if the task was started anew and its run has not begun; a renewal counts
-    /// from the run that carries it.
+    /// When the last renewal happened.
     #[must_use]
-    pub const fn started(&self) -> Option<Timestamp> {
-        self.started
+    pub const fn at(&self) -> Timestamp {
+        self.at
     }
 
-    /// The renewal the member records: one more was used, and its run has not started yet.
-    pub(super) fn record(&mut self) {
+    /// The renewals of a task started anew for the first time, at `at`.
+    pub(super) const fn first(at: Timestamp) -> Self {
+        Self { used: 1, at }
+    }
+
+    /// The renewal the member records: one more was used, at `at`.
+    pub(super) fn record(&mut self, at: Timestamp) {
         self.used = self.used.saturating_add(1);
-        self.started = None;
-    }
-
-    /// Records that the run of a renewal that waits starts at `at`; `false` when none waits.
-    pub(super) fn start(&mut self, at: Timestamp) -> bool {
-        _ = at;
-        true
+        self.at = at;
     }
 }
 
-/// The number of runs since `since`, or all of them when `since` is none.
+/// The runs from the first that started at or after `since`, or all of them when `since` is none: the run that carries
+/// a renewal starts at its time and belongs to the new session.
 pub(super) fn runs_since(runs: &[Run], since: Option<Timestamp>) -> &[Run] {
     match since {
         None => runs,
-        Some(since) => match runs.iter().position(|run| run.started_at() > since) {
-            Some(first) => runs.get(first..).unwrap_or(&[]),
-            None => &[],
-        },
+        Some(since) => {
+            let first = runs
+                .iter()
+                .position(|run| run.started_at().as_utc() >= since.as_utc())
+                .unwrap_or(runs.len());
+            runs.get(first..).unwrap_or(&[])
+        }
     }
 }
 
@@ -90,15 +92,6 @@ impl RenewalLimit {
     pub const fn get(self) -> u32 {
         self.0
     }
-
-    /// The same limit as the ladder reads it.
-    #[must_use]
-    pub const fn as_ladder(self) -> ladder::Renewals {
-        ladder::Renewals {
-            used: 0,
-            allowed: self.0,
-        }
-    }
 }
 
 impl TryFrom<u32> for RenewalLimit {
@@ -122,44 +115,40 @@ impl Default for RenewalLimit {
     }
 }
 
-/// Why a renewal was refused by a state that is read.
+/// Why a renewal was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum RenewalError {
-    /// The renewal is not after the run that made it: it is of a state that was changed by hand or by a mistake.
+    /// The renewal is not after the task's last run: it is of a state that was changed by hand or by a mistake.
     #[error("a renewal at {at} does not follow the run that started at {started_at}")]
     NotAfterTheLastRun {
-        /// When the renewal happened.
+        /// When the renewal was asked for.
         at: Timestamp,
-        /// When the run that was to follow started.
+        /// When the task's last run started.
         started_at: Timestamp,
     },
 }
 
-/// Whether the last renewal's run started, checked over the runs of task `task`.
+/// Checks that the renewal of `renewals` follows the last run of `runs`: a task is started anew after a run went bad,
+/// not between two runs of one session.
 pub(super) fn check_renewals(renewals: &Renewals, runs: &[Run]) -> Result<(), RenewalError> {
-    let Some(at) = renewals.started() else {
-        return Ok(());
-    };
+    let at = renewals.at();
     match runs.last() {
-        Some(last) if last.started_at() > at => Ok(()),
+        Some(last) if last.started_at().as_utc() >= at.as_utc() => Ok(()),
         Some(last) => Err(RenewalError::NotAfterTheLastRun {
             at,
             started_at: last.started_at(),
         }),
-        None => Err(RenewalError::NotAfterTheLastRun { at, started_at: at }),
+        None => Ok(()),
     }
 }
 
-/// The trouble whose retries the ladder decides from the runs of a task that ended.
-pub(super) fn trouble_of(end: &super::run::RunEnd) -> Option<Trouble> {
+/// The trouble whose retries the ladder decides from the run of a task that ended.
+pub(super) fn trouble_of(end: &RunEnd) -> Option<Trouble> {
     match end {
-        super::run::RunEnd::NoStatus { .. } => Some(Trouble::NoStatus),
-        super::run::RunEnd::Hung => Some(Trouble::Hang),
-        super::run::RunEnd::TurnLimit => Some(Trouble::TurnLimit),
-        super::run::RunEnd::Reported { .. }
-        | super::run::RunEnd::QuotaExhausted { .. }
-        | super::run::RunEnd::RateLimited
-        | super::run::RunEnd::Stopped => None,
+        RunEnd::NoStatus { .. } => Some(Trouble::NoStatus),
+        RunEnd::Hung => Some(Trouble::Hang),
+        RunEnd::TurnLimit => Some(Trouble::TurnLimit),
+        RunEnd::Reported { .. } | RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited | RunEnd::Stopped => None,
     }
 }
 
@@ -169,9 +158,17 @@ pub(super) fn bad_runs_in_a_row(runs: &[Run], since: Option<Timestamp>, trouble:
         .iter()
         .rev()
         .take_while(|run| match run.state() {
-            super::run::RunState::Ended { end, .. } => trouble_of(end) == Some(trouble),
-            super::run::RunState::Running => false,
+            RunState::Ended { end, .. } => trouble_of(end) == Some(trouble),
+            RunState::Running => false,
         })
         .count();
     u32::try_from(count).unwrap_or(u32::MAX)
+}
+
+/// The renewals as the ladder reads them, with the configured limit.
+pub(super) fn as_ladder(renewals: Option<&Renewals>, limit: ladder::Renewals) -> ladder::Renewals {
+    ladder::Renewals {
+        used: renewals.map_or(0, Renewals::used),
+        allowed: limit.allowed,
+    }
 }

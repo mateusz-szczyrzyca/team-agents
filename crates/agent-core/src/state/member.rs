@@ -360,7 +360,7 @@ impl Member {
          No session of a run before that renewal is resumed.",
         pub fn last_session(&self) -> Option<&SessionId> = renewal::runs_since(
             &self.runs,
-            self.renewals.as_ref().and_then(renewal::Renewals::started)
+            self.renewals.as_ref().map(renewal::Renewals::at)
         )
         .iter()
         .rev()
@@ -455,14 +455,15 @@ impl Member {
         let Some(last) = self.runs.last() else {
             return Ok(false);
         };
-        if last.started_at() >= at {
-            return Err(renewal::RenewalError::NotAfterTheLastRun {
-                at,
-                started_at: last.started_at(),
-            });
+        if last.started_at().as_utc() >= at.as_utc() {
+            return Err(renewal::RenewalError::NotAfterTheLastRun { at, started_at: at });
+        }
+        let mut renewals = self.renewals.unwrap_or(renewal::Renewals::first(at));
+        if self.renewals.is_some() {
+            renewals.record(at);
         }
         let _ = trouble;
-        self.renewals.get_or_insert_with(renewal::Renewals::default).record();
+        self.renewals = Some(renewals);
         Ok(true)
     }
 
@@ -493,7 +494,16 @@ impl Member {
         if self.runs.iter().any(|run| run.id() == &id) {
             return Err(RunError::DuplicateRun { run: id });
         }
-        self.runs.push(Run::started_for(id, at, session, rounds)?);
+        let run = Run::started_for(id, at, session, rounds)?;
+        // The run that carries a renewal begins the new session: it resumes nothing.
+        let begins_a_new_session = self
+            .renewals
+            .as_ref()
+            .is_some_and(|renewals| at.as_utc() >= renewals.at().as_utc());
+        if begins_a_new_session && run.session().is_some() {
+            return Err(RunError::SessionOfANewSession);
+        }
+        self.runs.push(run);
         Ok(())
     }
 
@@ -525,11 +535,7 @@ impl Member {
             return 0;
         };
         renewal::trouble_of(end).map_or(0, |trouble| {
-            renewal::bad_runs_in_a_row(
-                &self.runs,
-                self.renewals.as_ref().and_then(renewal::Renewals::started),
-                trouble,
-            )
+            renewal::bad_runs_in_a_row(&self.runs, self.renewals.as_ref().map(renewal::Renewals::at), trouble)
         })
     }
 
@@ -635,6 +641,12 @@ fn check_questions(task: &TaskId, questions: &[Question]) -> Result<(), MemberEr
 fn check_member(member: &Member) -> Result<(), MemberError> {
     check_runs(&member.task, &member.runs)?;
     check_questions(&member.task, &member.questions)?;
+    if let Some(renewals) = &member.renewals {
+        renewal::check_renewals(renewals, &member.runs).map_err(|source| MemberError::Renewal {
+            task: member.task.clone(),
+            source,
+        })?;
+    }
     Ok(())
 }
 
