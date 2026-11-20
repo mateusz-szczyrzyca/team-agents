@@ -111,11 +111,15 @@ fn a_state_whose_renewal_does_not_follow_its_run_is_refused() {
     let members = crew.get_mut("members").expect("the members");
     let member = members.get_mut(0).expect("the member");
     let renewals = member.get_mut("renewals").expect("the renewals");
-    *renewals.get_mut("at").expect("the renewal's time") = serde_json::Value::from("2026-11-20T20:00:30Z");
+    // Before the first run of the task: no run went bad before it.
+    *renewals.get_mut("at").expect("the renewal's time") = serde_json::Value::from("2026-11-20T14:00:00Z");
 
     let refused = State::from_json(&written.to_string());
 
-    assert!(refused.is_err(), "the renewal precedes the run: {refused:?}");
+    assert!(
+        matches!(&refused, Err(StateError::Malformed { .. })),
+        "the renewal precedes every run: {refused:?}"
+    );
 }
 
 /// The old state's failed task, started anew at `renewed_at`: the ladder's decision, before its new run begins.
