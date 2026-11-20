@@ -1,7 +1,7 @@
 //! The briefing of a task started in a new session: the facts of the work the runs before it left behind, as the text
 //! of [`HarnessPrompt::Briefing`](agent_core::prompt::HarnessPrompt::Briefing).
 
-use agent_core::prompt::Variables;
+use agent_core::prompt::{Variables, VariablesError};
 
 /// A commit of the task's branch since its base.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,9 +77,11 @@ const PLAN_TITLE: &str = "The task's plan of steps, as it stands in `.agent/plan
 /// The title of the list of the unread messages in the briefing.
 const MESSAGES_TITLE: &str = "Messages of your team that no run of this task has read:";
 
-/// The briefing of `facts`, rendered through `render`, which fills a text of the catalog with its variables.
-#[must_use]
-pub fn briefing(render: &dyn Fn(&str, &Variables) -> String, facts: &Briefing<'_>) -> String {
+/// The values of the variables of `harness/run/briefing.md` for `facts`.
+///
+/// # Errors
+/// [`VariablesError`] when a value cannot be given to its variable.
+pub fn briefing_variables(facts: &Briefing<'_>) -> Result<Variables, VariablesError> {
     let commits = listed(
         facts
             .commits
@@ -125,17 +127,15 @@ pub fn briefing(render: &dyn Fn(&str, &Variables) -> String, facts: &Briefing<'_
         ("plan", &plan),
         ("messages", &messages),
     ];
-    // The names are the catalog's own, so filling them cannot fail; a mistake of the program shows as no briefing
-    // rather than as a panic, and the run is then given the whole task again.
-    fill(render, &pairs)
+    pairs
+        .iter()
+        .try_fold(Variables::new(), |values, (name, value)| values.with(name, *value))
 }
 
-/// Fills the briefing with `pairs` through `render`; no text when a name has no value.
-fn fill(render: &dyn Fn(&str, &Variables) -> String, pairs: &[(&str, &str)]) -> String {
-    let filled = pairs
-        .iter()
-        .try_fold(Variables::new(), |values, (name, value)| values.with(name, *value));
-    match filled {
+/// The briefing of `facts`, rendered through `render`, which fills a text of the catalog with its variables.
+#[must_use]
+pub fn briefing(render: &dyn Fn(&str, &Variables) -> String, facts: &Briefing<'_>) -> String {
+    match briefing_variables(facts) {
         Ok(values) => render("harness/run/briefing.md", &values),
         Err(_) => String::new(),
     }

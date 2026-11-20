@@ -19,7 +19,7 @@ use crate::prompts::{PromptLoader, RenderPromptError};
 
 mod briefing;
 
-pub use briefing::{Briefing, BriefingCommit, BriefingMessage, BriefingStep, briefing};
+pub use briefing::{Briefing, BriefingCommit, BriefingMessage, BriefingStep, briefing, briefing_variables};
 
 /// Why a run is resumed instead of started: what its prompt tells the agent about the interruption.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
