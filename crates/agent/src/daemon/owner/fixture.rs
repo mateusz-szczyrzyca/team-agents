@@ -150,6 +150,9 @@ pub(super) struct Daemon {
     _dir: tempfile::TempDir,
     pub(super) home: Home,
     pub(super) clock: ManualClock,
+    /// How long the first failure of a step waits for GitHub in the owners this daemon makes; `None` for the pause
+    /// of the configuration.
+    pub(super) retry_first: Option<Duration>,
     shutdown: CancellationToken,
     running: Option<JoinHandle<Result<(), DaemonError>>>,
     /// Where the daemon looks for VS Code: directories of the temporary home, never the machine's.
@@ -193,6 +196,7 @@ impl Daemon {
             _dir: dir,
             home,
             clock: ManualClock::new(at(0)),
+            retry_first: None,
             shutdown: CancellationToken::new(),
             running: None,
             surroundings,
@@ -254,8 +258,13 @@ impl Daemon {
             free_space: agent_runtime::disk::SharedFreeSpace::new(agent_runtime::disk::FakeFreeSpace::new(
                 200 * 1024 * 1024 * 1024,
             )),
+            retry_first: self.retry_first,
         };
         let owner = Owner::new(parts, CancellationToken::new());
+        let owner = match self.retry_first {
+            Some(first) => owner.with_retry_first(first),
+            None => owner,
+        };
         (
             owner,
             Sinks {

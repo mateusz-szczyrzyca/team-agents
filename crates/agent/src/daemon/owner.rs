@@ -325,6 +325,9 @@ pub(super) struct OwnerParts {
     pub(super) notifier: agent_runtime::notify::Notifier,
     /// Measurer of free disk space.
     pub(super) free_space: agent_runtime::disk::SharedFreeSpace,
+    /// How long the first failure of a step that calls GitHub waits before it is tried again; the pause doubles with
+    /// every further failure, up to [`agent_core::decide::retry::LONGEST_PAUSE`]. `None` takes the first pause.
+    pub(super) retry_first: Option<Duration>,
 }
 
 /// What became of a run, for the owner to apply.
@@ -501,6 +504,15 @@ impl Owner {
     /// The same, recording what happens in `history`.
     pub(super) fn with_history(mut self, history: History) -> Self {
         self.history = history;
+        self
+    }
+
+    /// The same, whose first failure of a step that calls GitHub waits `first`.
+    #[cfg(test)]
+    pub(super) fn with_retry_first(mut self, first: Duration) -> Self {
+        self.watch = self.watch.with_retry_first(time::Duration::seconds(
+            i64::try_from(first.as_secs()).unwrap_or(i64::MAX),
+        ));
         self
     }
 
