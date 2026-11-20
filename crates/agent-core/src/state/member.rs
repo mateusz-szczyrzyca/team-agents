@@ -160,7 +160,7 @@ impl CheckedMut<'_, Member> {
 
     /// See [`Member::held_task`].
     pub fn held_task(&mut self, holder: Participant, at: Timestamp) {
-        self.value.held_task(holder, at)
+        self.value.held_task(holder, at);
     }
 
     /// See [`Member::attach_session`].
