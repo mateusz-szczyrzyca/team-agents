@@ -395,9 +395,24 @@ impl Review {
 #[serde(deny_unknown_fields, default)]
 pub struct Plan {
     /// The roles whose runs are sent back for their task's plan, in the order the file gives them.
-    pub roles: Vec<Role>,
+    roles: Vec<Role>,
     /// How many times a task's runs go back for its plan before the human is asked; `0` never sends a run back.
-    pub bounces: u32,
+    bounces: u32,
+}
+
+impl Plan {
+    /// The roles whose runs are sent back for their task's plan, in the order the file gives them: only [`Role::Solo`],
+    /// [`Role::Member`] and [`Role::Coordinator`], each once, and read through a configuration.
+    #[must_use]
+    pub fn roles(&self) -> &[Role] {
+        &self.roles
+    }
+
+    /// How many times a task's runs go back for its plan before the human is asked; `0` never sends a run back.
+    #[must_use]
+    pub const fn bounces(&self) -> u32 {
+        self.bounces
+    }
 }
 
 /// How many times a task's runs go back for its plan before the human is asked, by default.
