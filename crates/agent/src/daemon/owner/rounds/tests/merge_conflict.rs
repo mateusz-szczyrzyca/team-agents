@@ -72,3 +72,48 @@ async fn a_conflict_refusal_sends_the_lead_to_merge_the_base_and_the_merge_is_tr
         .collect();
     assert!(told.is_empty(), "{told:?}");
 }
+
+#[tokio::test]
+async fn a_conflict_pass_that_changes_another_file_is_reviewed_again_before_the_merge() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,merge-base-other"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    rig.state_where("the lead is sent to merge the base", in_conflict_pass)
+        .await;
+
+    rig.github.answer_merges(MergeAnswer::Allow);
+    move_base(&rig);
+    std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    assert!(matches!(
+        state.teams()[0].item("1.1".parse().unwrap()).unwrap().phase(),
+        ItemPhase::Done { .. }
+    ));
+    // The change to `resolved.txt` is reviewed: the reviewers approve the pull request a second time.
+    let reviews = rig
+        .github
+        .calls("POST", &format!("/repos/{SLUG}/pulls/1/reviews"))
+        .len();
+    assert!(reviews > 2, "reviews asked again after the conflict pass: {reviews}");
+    assert_eq!(
+        rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")).len(),
+        2
+    );
+}
