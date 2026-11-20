@@ -24,7 +24,7 @@ pub fn pause(tries: NonZeroU32) -> Duration {
     let mut pause = FIRST_PAUSE;
     for _ in 0..doublings {
         if pause >= LONGEST_PAUSE {
-            return LONGEST_PAUSE;
+            break;
         }
         pause = pause.saturating_mul(2);
     }
