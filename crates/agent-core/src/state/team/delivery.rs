@@ -117,11 +117,17 @@ impl Team {
     }
 
     /// The rounds whose accepted delivery still waits for its PR to merge: open ones, and ones abandoned by a stop of the
-    /// team while their item is still in progress.
+    /// team, while their item is in progress and they are its latest round.
     pub fn delivery_waits(&self) -> impl Iterator<Item = &Round> {
-        self.rounds
-            .iter()
-            .filter(|round| round.delivered_by().is_some() && self.item_works(round))
+        self.rounds.iter().filter(|round| {
+            round.delivered_by().is_some()
+                    && self.item_works(round)
+                    // A part that completed is followed by the round of the next part, which is the one that works.
+                    && round
+                        .item()
+                        .and_then(|item| self.round_of(item))
+                        .is_some_and(|latest| latest.id() == round.id())
+        })
     }
 
     /// Records a claim after the caller verifies the item's clean git tree and ancestry.
@@ -161,6 +167,8 @@ impl Team {
         let mut completed = round.clone();
         if completed.is_open() {
             completed.close(at, RoundEnd::Merged)?;
+        } else {
+            completed.check_completion_at(at)?;
         }
         if completed.part().is_some() {
             completed.merge_part(pr.clone());

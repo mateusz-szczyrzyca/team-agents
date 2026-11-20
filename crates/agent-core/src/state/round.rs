@@ -201,6 +201,11 @@ impl Round {
         }
     }
 
+    /// Checks that the completion of this round's delivery may be recorded at `at`, also when a stop closed the round.
+    pub(super) fn check_completion_at(&self, at: Timestamp) -> Result<(), ClosedBeforeOpened> {
+        check_close(&self.id, self.opened_at, at)
+    }
+
     /// A round that has just been opened.
     pub(super) const fn opened(id: RoundId, item: Option<ItemId>, opened_at: Timestamp) -> Self {
         Self {
