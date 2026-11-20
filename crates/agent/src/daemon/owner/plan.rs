@@ -6,10 +6,10 @@ use std::str::FromStr;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
-use agent_core::config::{AbsolutePath, InvalidValue};
+use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
 use agent_core::decide::plan::{DoneEnds, PlanFacts, PlanRead, PlanVerdict, decide_plan, done_ends};
 use agent_core::ids::RunId;
-use agent_core::ids::{AgentName, InvalidName, TaskId, TeamId};
+use agent_core::ids::{AgentName, BranchName, InvalidName, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::plan::{PLAN_FILE, Plan, PlanError, parse_plan};
@@ -20,7 +20,7 @@ use agent_core::state::{ItemProgress, PlanKeeping, PlanReason, PlanStage};
 use agent_core::state::{RunEnd, Timestamp};
 use agent_core::status::{RunOutcome, TaskStatus};
 use agent_core::task_list::MAX_TASK_LIST_BYTES;
-use agent_runtime::git::{CommitIdentity, Git, GitError, Untracked};
+use agent_runtime::git::{CommitIdentity, Git, GitError, Revision, Untracked};
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
 use agent_runtime::history::{PlanRead as HistoryPlanRead, PlanRecord, Reader, log_decision};
 use agent_runtime::process::error_chain;
@@ -68,9 +68,24 @@ enum OutOfDeliveryError {
         /// What the operating system said.
         source: std::io::Error,
     },
+    /// The task's repository is not in the configuration.
+    #[error("the repository {repo} is not in the configuration")]
+    RepoGone {
+        /// The repository.
+        repo: RepoName,
+    },
     /// Git failed.
     #[error("git cannot take the plan out of the branch")]
     Git(#[source] GitError),
+}
+
+/// What became of a plan at the end of a run, as far as its branch goes.
+#[derive(Debug)]
+enum Kept {
+    /// What git did with it: nothing, or out of the index, or out of the branch.
+    Untracked(Untracked),
+    /// The repository's base branch tracks the plan: it is left as it is.
+    OnTheBase,
 }
 
 /// The subject of the commit that takes a plan committed by mistake out of a task's branch.
@@ -89,7 +104,14 @@ impl Owner {
             Role::Worker | Role::Reviewer => return,
         }
         match self.untrack_plan(task, located).await {
-            Ok(untracked) => log_decision("plan_out_of_delivery", &task.as_str(), &format!("{untracked:?}")),
+            Ok(Kept::Untracked(untracked)) => {
+                log_decision("plan_out_of_delivery", &task.as_str(), &format!("{untracked:?}"));
+            }
+            Ok(Kept::OnTheBase) => log_decision(
+                "plan_out_of_delivery",
+                &task.as_str(),
+                "left on the branch: the base branch tracks the plan",
+            ),
             Err(error) => tracing::warn!(
                 event = LogEvent::GitCallFailed.as_str(),
                 task = %task,
@@ -101,12 +123,12 @@ impl Owner {
 
     /// Takes the plan of `task` out of git in its worktree. A worktree without the file is not asked: a plan the agent
     /// committed is in the worktree, and one it deleted since is not what its branch delivers as it is.
-    async fn untrack_plan(&self, task: &TaskId, located: &Located) -> Result<Untracked, OutOfDeliveryError> {
+    async fn untrack_plan(&self, task: &TaskId, located: &Located) -> Result<Kept, OutOfDeliveryError> {
         let worktree = self.worktree_of(task, located)?;
         let file = worktree.as_path().join(PLAN_FILE);
         match tokio::fs::try_exists(&file).await {
             Ok(true) => {}
-            Ok(false) => return Ok(Untracked::NotTracked),
+            Ok(false) => return Ok(Kept::Untracked(Untracked::NotTracked)),
             Err(source) => return Err(OutOfDeliveryError::Look { path: file, source }),
         }
         let plan = RepoPath::from_str(PLAN_FILE).map_err(OutOfDeliveryError::PlanPath)?;
@@ -114,13 +136,42 @@ impl Owner {
             name: located.agent.clone(),
             source,
         })?;
-        Git::new(
+        let git = Git::new(
             worktree,
             CommitIdentity::for_agent(self.parts.settings.config.git(), &agent),
-        )
-        .untrack(&plan, OUT_OF_DELIVERY)
-        .await
-        .map_err(OutOfDeliveryError::Git)
+        );
+        let base = self.base_of(located)?;
+        if git
+            .tracks(&Revision::Branch(base), &plan)
+            .await
+            .map_err(OutOfDeliveryError::Git)?
+        {
+            // The repository keeps a plan of its own on its base: a change of it is the repository's, not the harness's.
+            return Ok(Kept::OnTheBase);
+        }
+        git.untrack(&plan, OUT_OF_DELIVERY)
+            .await
+            .map(Kept::Untracked)
+            .map_err(OutOfDeliveryError::Git)
+    }
+
+    /// The base branch of the repository of the team of `located`.
+    fn base_of(&self, located: &Located) -> Result<BranchName, OutOfDeliveryError> {
+        let team = self
+            .parts
+            .state
+            .team(&located.team)
+            .ok_or_else(|| OutOfDeliveryError::TeamGone {
+                team: located.team.clone(),
+            })?;
+        self.parts
+            .settings
+            .config
+            .repo(team.repo())
+            .map(|repo| repo.base_branch.clone())
+            .ok_or_else(|| OutOfDeliveryError::RepoGone {
+                repo: team.repo().clone(),
+            })
     }
 
     /// The worktree of `task`.
