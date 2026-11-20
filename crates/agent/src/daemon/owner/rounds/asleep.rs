@@ -145,10 +145,12 @@ impl Owner {
             .items()
             .iter()
             .filter(|progress| {
-                matches!(
-                    progress.phase(),
-                    ItemPhase::InProgress { .. } | ItemPhase::Fixing { .. }
-                )
+                team.round_of(progress.id())
+                    .is_none_or(|round| round.delivered_by().is_none())
+                    && matches!(
+                        progress.phase(),
+                        ItemPhase::InProgress { .. } | ItemPhase::Fixing { .. }
+                    )
             })
             .map(|progress| progress.id().to_string())
             .collect();
@@ -164,6 +166,12 @@ impl Owner {
             .items()
             .iter()
             .filter_map(|progress| {
+                if team
+                    .round_of(progress.id())
+                    .is_some_and(|round| round.delivered_by().is_some())
+                {
+                    return None;
+                }
                 let (ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }) = progress.phase()
                 else {
                     return None;
