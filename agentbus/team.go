@@ -205,6 +205,14 @@ func (s *Server) delivery(st *State, to string) (recipient, team string, refusal
 	return "", "", opErr(SendMessageAmbiguousAgent, "%s is in %d open teams: %s — put one of its task IDs in to", to, len(tasks), strings.Join(pairs, ", "))
 }
 
+// teamOfTask is the team whose member has the task ("" when none): the team a result for that task is bound to.
+func teamOfTask(st *State, task string) string {
+	if task == "" {
+		return ""
+	}
+	return memberOfTask(st, task)
+}
+
 // memberOfTask finds the open team the task is the task of a member in ("" when no member has it).
 func memberOfTask(st *State, task string) string {
 	ids := make([]string, 0, len(st.Teams))

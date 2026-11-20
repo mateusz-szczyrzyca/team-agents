@@ -95,7 +95,7 @@ func (s *Server) consultStart(text string, minutes int) (string, *ConsultStartEr
 		t.Consults[c.ID] = c
 		for _, n := range asked {
 			ev := EventConsultRequest{ID: c.ID, From: s.me, Question: text, Deadline: c.Deadline.Format("15:04")}
-			if _, serr := s.bus.post(st, s.me, n, ev); serr != nil {
+			if _, serr := s.bus.postIn(st, s.team, s.me, n, ev); serr != nil {
 				return fromStorage(ConsultStartStorage, serr)
 			}
 		}
@@ -140,7 +140,7 @@ func (s *Server) consultReply(id, text string) (string, *ConsultReplyError) {
 			c.Replies = map[string]*ConsultReply{} // an empty map is not stored (omitempty): it is nil after a reload
 		}
 		c.Replies[s.me] = &ConsultReply{Text: text, At: now, Late: late}
-		_, serr := s.bus.post(st, s.me, c.From, EventConsultReply{ID: id, From: s.me, Answer: text, Late: late})
+		_, serr := s.bus.postIn(st, s.team, s.me, c.From, EventConsultReply{ID: id, From: s.me, Answer: text, Late: late})
 		return fromStorage(ConsultReplyStorage, serr)
 	})
 	if err != nil {
