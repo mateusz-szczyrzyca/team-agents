@@ -14,6 +14,10 @@ fn decision(value: &Value, policy: Split, corrections: u32) -> ProposalDecision 
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table compares all approval outcomes and correction boundaries"
+)]
 fn approval_table_covers_good_scope_faults_limits_and_correction_budgets() {
     let good = input(&[&[], &["a"]]);
     let proposal = read_proposal(&good.to_string()).unwrap();

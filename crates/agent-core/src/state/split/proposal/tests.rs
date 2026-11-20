@@ -53,7 +53,7 @@ fn proposal_reader_rejects_each_missing_field_and_unknown_fields() {
             "part" => value["parts"][0]["extra"] = json!(true),
             "estimate" => value["parts"][0]["estimate"]["extra"] = json!(true),
             "scope" => value["scope"]["extra"] = json!(true),
-            _ => unreachable!(),
+            _ => panic!("unexpected test path {path}"),
         }
         assert!(
             matches!(read_proposal(&value.to_string()), Err(ReadProposalError::Json { .. })),
