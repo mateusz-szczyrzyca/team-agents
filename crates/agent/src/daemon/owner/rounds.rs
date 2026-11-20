@@ -886,3 +886,7 @@ mod plan_round_tests;
 #[cfg(test)]
 #[path = "rounds/tests/delivery_restart.rs"]
 mod delivery_restart_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/proposal_execution.rs"]
+mod proposal_execution_tests;

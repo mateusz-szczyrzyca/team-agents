@@ -645,7 +645,7 @@ pub struct Config {
     /// The plans of tasks.
     plan: Plan,
     /// Split approval policy, defaulted for older configurations.
-    split: Split,
+    split: split::Settings,
     /// The history.
     history: History,
     /// The daemon's own log.
@@ -721,7 +721,7 @@ struct RawConfig {
     plan: Plan,
     /// Split approval policy, defaulted for older configurations.
     #[serde(default)]
-    split: Split,
+    split: split::Settings,
     /// See [`Config::history`].
     #[serde(default)]
     history: History,
@@ -1025,10 +1025,16 @@ impl Config {
         &self.plan
     }
 
-    /// Policy for approval of split proposals; daemon use is added separately.
+    /// Policy the daemon applies to a coordinator's split proposal: its size limit and how many corrections it gets.
     #[must_use]
     pub fn split(&self) -> Split {
-        self.split
+        self.split.policy()
+    }
+
+    /// Unit used when applying the split estimate limit.
+    #[must_use]
+    pub fn split_unit(&self) -> &str {
+        self.split.unit()
     }
 
     /// The dashboard's address and logins.

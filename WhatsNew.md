@@ -5,6 +5,19 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.38.0 — 20.11.2026 — PR #157
+
+### New features
+- [agent] [agent-core] [agent-runtime] A coordinator now proposes a split itself: it writes `split-proposal-<item>.json` in its task directory (the parts with their checks, dependencies, an estimate and a tier, and whether the scope changes) and ends its run with the line `SPLIT: 1.1`. A proposal that reads, has checks on every part, has no dependency cycle, stays within the size limit and keeps the scope is approved at once with no questions file, and its parts are recorded whole; the round goes on as the first part.
+- [agent] [agent-core] A proposal with a fault goes back to the coordinator with its own text naming the part (does not read, a part without checks, a cycle, a part above the limit), at most `[split] corrections` times (default 2).
+- [agent] [agent-core] You are asked once, in the task's questions file, when a proposal changes the scope and when the corrections are used up; the question says which condition failed and holds the proposal as the example of the verdict. A verdict `split` with the plan, as before, still works.
+- [agent] A member that finds its item too big tells its coordinator, not you.
+- [agent-core] New key `[split] unit` (default `"lines"`): the unit the size limit `part_limit` is applied to. Use `pages` or `images` for work that is not code. **Action:** none, the default is today's behaviour.
+
+### Enhancements
+- [agent-core] [agent-runtime] The history keeps a record of every decision on a split proposal. **Action:** the history database migrates to version 15 on the next daemon start; an older `agent` cannot read it, so keep a backup from before the upgrade.
+- [agent] A restart of the daemon between a proposal and its decision, or between a correction and the next proposal, loses neither.
+
 ## 0.37.0 — 20.11.2026 — PR #155
 
 ### New features

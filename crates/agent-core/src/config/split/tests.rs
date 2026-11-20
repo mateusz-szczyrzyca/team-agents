@@ -62,3 +62,23 @@ fn split_configuration_rejects_unknown_negative_fractional_and_overflowing_value
         Err(crate::config::ConfigError::Parse(_))
     ));
 }
+
+#[test]
+fn split_estimate_unit_defaults_and_accepts_non_code_units_but_rejects_blank_text() {
+    for text in ["", "[split]", include_str!("../../../../../config/agents.example.toml")] {
+        assert_eq!(Config::from_toml_str(text).unwrap().split_unit(), "lines");
+    }
+    for unit in ["pages", "images", "страницы"] {
+        let config = Config::from_toml_str(&format!("[split]\nunit={unit:?}"));
+        assert!(
+            matches!(config, Ok(ref parsed) if parsed.split_unit() == unit),
+            "{config:?}"
+        );
+    }
+    for text in ["[split]\nunit=''", "[split]\nunit='  '", "[split]\nunit=42"] {
+        assert!(matches!(
+            Config::from_toml_str(text),
+            Err(crate::config::ConfigError::Parse(_))
+        ));
+    }
+}

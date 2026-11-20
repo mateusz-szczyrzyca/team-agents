@@ -745,6 +745,21 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
             by,
             tasks,
         } => controlled(page, at, *action, target, by, tasks),
+        HistoryEvent::SplitDecision {
+            task,
+            item,
+            decision,
+            corrections,
+            reason,
+            ..
+        } => {
+            entry(
+                page,
+                at,
+                &format!("task {task}: split of item {item} {decision} after {corrections} corrections"),
+            );
+            page.raw(2, "decision reason", reason);
+        }
         HistoryEvent::QuestionAsked { task, number, text } => {
             entry(page, at, &format!("task {task} asked the human (questions {number})"));
             page.raw(2, "questions", text);
@@ -911,6 +926,7 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
         | HistoryEvent::PullMerged { .. }
         | HistoryEvent::PullHandedOver { .. }
         | HistoryEvent::PullClosed { .. }
+        | HistoryEvent::SplitDecision { .. }
         | HistoryEvent::Gate { .. }
         | HistoryEvent::Checked { .. }
         | HistoryEvent::QuestionAsked { .. }
@@ -991,6 +1007,7 @@ fn pull_lifecycle_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
         | HistoryEvent::SecondOpinionEnded { .. }
         | HistoryEvent::FindingConfirmed { .. }
         | HistoryEvent::FindingNotConfirmed { .. }
+        | HistoryEvent::SplitDecision { .. }
         | HistoryEvent::Gate { .. }
         | HistoryEvent::Checked { .. }
         | HistoryEvent::QuestionAsked { .. }

@@ -88,6 +88,9 @@ pub(super) enum StartProblem {
     /// The question rounds of the task are used up.
     #[error("the task has no number of questions left")]
     NumbersExhausted,
+    /// A saved split correction cannot be rendered.
+    #[error("cannot render the split correction")]
+    Split(#[from] super::split::ProposalError),
     /// The prompt cannot be composed.
     #[error("cannot compose the prompt")]
     Prompt(#[from] ComposeError),
@@ -276,6 +279,7 @@ pub(super) async fn plan(ctx: &Context<'_>, rng: &mut impl Rng, task: &TaskId) -
     let prompt = compose(&texts, &input)?;
     let (prompt, addition) = compose_run_prompt(ctx, &texts, &found, &working, kind, prompt).await?;
     let prompt = with_plan(ctx, role, member, kind, prompt)?;
+    let prompt = super::split::with_correction(ctx.team_texts, team, role, prompt)?;
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
         (RunMode::Resume { session_id }, member.last_session().cloned())
@@ -383,7 +387,14 @@ fn answered_questions(member: &Member) -> Option<&Question> {
 /// What the human answered to the questions the last run asked, the way the run is told; `None` when there are no
 /// such questions.
 async fn answers_text(ctx: &Context<'_>, member: &Member) -> Result<Option<String>, StartProblem> {
-    let Some(question) = answered_questions(member) else {
+    let pending_split = ctx.state.find_task(member.task()).and_then(|found| {
+        let question = member.questions().last().filter(|q| !q.is_open())?;
+        let unread = member.runs().last().is_some_and(|run| run.started_at() <= question.asked_at());
+        (unread && found.team.items().iter().any(|item| {
+            found.team.split_proposal(item.id()).is_some_and(|saved| matches!(saved.stage(), agent_core::state::split::keeping::ProposalStage::Asked { question: number } if *number == question.number()))
+        })).then_some(question)
+    });
+    let Some(question) = answered_questions(member).or(pending_split) else {
         return Ok(None);
     };
     let loaded = questions::read(question.file().as_path()).await?;

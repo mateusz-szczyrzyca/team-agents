@@ -18,5 +18,53 @@ impl Default for Split {
     }
 }
 
+/// Configuration boundary retaining the unit separately from the copyable policy.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct Settings {
+    /// Maximum amount in the configured unit; zero disables comparison.
+    part_limit: u32,
+    /// Maximum send-backs before consulting the human.
+    corrections: u32,
+    /// Nonblank unit, validated once by the deserializer.
+    #[serde(deserialize_with = "read_unit")]
+    unit: String,
+}
+impl Default for Settings {
+    fn default() -> Self {
+        let policy = Split::default();
+        Self {
+            part_limit: policy.part_limit,
+            corrections: policy.corrections,
+            unit: "lines".to_owned(),
+        }
+    }
+}
+impl Settings {
+    /// Returns the numeric limits used by the pure decision.
+    pub(super) fn policy(&self) -> Split {
+        Split {
+            part_limit: self.part_limit,
+            corrections: self.corrections,
+        }
+    }
+    /// Borrows the validated repository unit.
+    pub(super) fn unit(&self) -> &str {
+        &self.unit
+    }
+}
+/// Rejects blank units at the configuration boundary while allowing non-ASCII names.
+fn read_unit<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let unit = <String as serde::Deserialize>::deserialize(deserializer)?;
+    if unit.trim().is_empty() {
+        return Err(serde::de::Error::custom(super::InvalidValue {
+            what: "split unit",
+            value: unit,
+            rule: super::ValueRule::Empty,
+        }));
+    }
+    Ok(unit)
+}
+
 #[cfg(test)]
 mod tests;

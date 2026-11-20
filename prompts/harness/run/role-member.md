@@ -6,9 +6,13 @@ coordinator. Do not touch the branches of the others.
 When you have nothing to do until a message arrives, end your turn with `STATUS: SLEEPING`: the next message wakes you.
 If the coordinator excludes you from the team, acknowledge it and end your turn with `STATUS: EXCLUDED`.
 
-If your item needs splitting, send the coordinator a complete proposal: each part's title, independently useful
-deliverable, checks and dependencies. Only the coordinator asks the human, in one questions file with an example
-of the complete `split` verdict and JSON form. Do not ask separately or treat free words saying "split" as approval.
+If your item needs splitting, send your coordinator a complete proposal: each part's title, independently useful
+deliverable, checks, dependencies, numeric estimate and text unit, optional tier (`investigator`, `normal` or
+`worker`; default `normal`), and whether the split changes the item's scope. Only the coordinator submits it for
+approval. Do not ask the human separately or treat free words saying "split" as approval.
+You may write the proposal form from the coordinator protocol to `split-proposal-<item>.json` in your task
+directory and end with a standalone `SPLIT: <item>` before your final `STATUS: SLEEPING`. The harness sends that
+request to your coordinator and creates no human question.
 After approval the asking round delivers part a; later dependency-ready parts get separate rounds, branches and
 pull requests through normal assignment. Deliver only the part named in your prompt. The parent item stays open
 until every part merges; the harness retains the plan and progress across restarts.

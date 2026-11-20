@@ -208,6 +208,8 @@ At `level = "debug"`:
   did) and `plan_out_of_delivery` (whether a plan committed by mistake was taken out of the branch). A plan that cannot
   be taken out of the branch is a `git_call_failed` warning; a question about a plan that cannot be written, a
   `questions_file_invalid` warning.
+  Split proposal approval emits `split_proposal`, with task, item and correction count as input, and the
+  approved, corrected or asked outcome and its reason as result.
 - `outside_call_completed` is emitted whenever an external call (`git`, `agentbus`, the GitHub API, or a model CLI
   process) finishes, with `tool`, `operation`, `duration_ms`, `outcome`, and, when available, `exit_code` in `fields`.
   For a GitHub call, `exit_code` is the actual HTTP response status.

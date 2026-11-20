@@ -428,6 +428,7 @@ impl Owner {
         }
         let span = tracing::error_span!("team", team = %team);
         async {
+            self.resume_split_proposals(team).await?;
             let mut look = Look::default();
             self.reconcile_bus(team, &mut look).await?;
             self.pull_requests(team, &mut look).await?;
