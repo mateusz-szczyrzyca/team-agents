@@ -398,6 +398,9 @@ pub(crate) fn round_line(round: &Round) -> String {
         .item()
         .map_or_else(|| "whole task list".to_owned(), |item| format!("item {item}"));
     let state = match (round.delivered_by(), round.life()) {
+        (Some(pr), _) if round.delivery_closed_at().is_some() => {
+            format!("closed, abandoned, delivery PR #{} closed without merging", pr.number)
+        }
         (Some(pr), RoundLife::Open) => format!("delivered by PR #{}, waits for its merge", pr.number),
         (
             Some(pr),

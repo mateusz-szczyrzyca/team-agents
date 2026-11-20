@@ -346,13 +346,14 @@ its approval) — or the whole work of a team whose list has no items. One round
 "Round" means this and nothing else here: the numbered questions of a task are its `number`, and the reviews asked for one head
 of a pull request are a review pass.
 
-A round is `{id, item?, opened_at, state, part?, delivery?}`:
+A round is `{id, item?, opened_at, state, part?, delivery?, delivery_closed_at?}`:
 
 | Field | Meaning |
 |---|---|
 | `id` | `round-YYYYMMDD-HHMMSS-xxxx`, generated like the other IDs; unique in the whole state |
 | `item` | the item the round is for; absent for the whole work of a team whose task list has no items |
-| `delivery` | optional PR record belonging to another round of this team; retained while waiting and after completion |
+| `delivery` | optional PR record belonging to another round of this team; retained while waiting, after completion and after an observed unmerged closure |
+| `delivery_closed_at` | optional timestamp of an observed unmerged close; requires a delivery and an abandoned round; absent in 0.34.0, whose open claims still load unchanged |
 | `opened_at` | when the daemon opened it: when the item was first given to a member, or when the team started |
 | `state` | `{"status":"open"}`, or `{"status":"closed","at":…,"how":…}` with `how` one of `merged`, `approved` (`--no-merge`: both reviews approved, the pull request is the human's) and `abandoned` (the team was stopped or ended without a merge or an approval) |
 
@@ -360,12 +361,12 @@ A run names the rounds it works for (`rounds`, above). Invariants, checked by th
 `advance_item`, `begin_run`, and `State::open_round`, `close_round`, `begin_run` for what needs the whole state) and again when the
 state is read:
 
-- an ordinary item has at most one round; an activated split has one per started part, and only a merged part permits its next round;
+- an ordinary item has at most one round excluding abandoned rounds with an ended delivery claim; an activated split has one per started part, and a merged part or an ended claim permits its next round;
   an item has a round as soon as it leaves `pending`; an item the task list marks `[x]` has none, and a
   round is not opened for an item that is done;
 - a round without an item exists only in a team whose task list has no items, and there is one at most;
 - a round ID is used once in the whole state;
-- a closed round is never opened again: closing it again is refused, and so is a second ordinary round for its item. An ordinary round closed as
+- a closed round is never opened again: closing it again is refused, and so is a second ordinary round for its item unless the old round has an ended delivery claim. An ordinary round closed as
   `merged` belongs to an item `done` as merged; a merged part retains its own pull request while its parent advances; one closed as `approved` to an item that is `approved` or `done` as merged;
   `abandoned` fits any item (a round of a whole list can end in no other way, since nothing merges it); it is not closed before it
   was opened;
@@ -716,3 +717,8 @@ Protocol `3` adds the `turn_limit` end in run events and status details. Both pe
 version `1` and `2` fixtures are retained unchanged and are rejected before their payload is parsed. This follows
 the protocol rule for messages old peers cannot read. History schema `7` migrates the closed keyword constraints
 for run endings and reasons while preserving existing rows and references. A newer history is refused untouched.
+
+An observed delivery closure is saved on the abandoned round before recovery. While that round remains the latest
+for its in-progress item, the daemon still owes the member a fresh round. After opening it and queuing the member,
+that new round makes recovery complete. Restarting at either boundary preserves the obligation and never revives
+the ended claim, even if GitHub reopens its PR. The marker timestamp cannot precede the opening of the round.

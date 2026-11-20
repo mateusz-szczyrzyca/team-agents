@@ -245,9 +245,9 @@ impl LogEvent {
             | Self::SnapshotFailed
             | Self::SnapshotLarge
             | Self::RequestRefused
+            | Self::DeliveryClosed
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
-            | Self::DeliveryClosed
             | Self::RoundChanged
             | Self::ItemPhaseChanged
             | Self::TaskStatusChanged

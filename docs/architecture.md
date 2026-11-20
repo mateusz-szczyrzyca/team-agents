@@ -642,8 +642,14 @@ excluded from publication and idle-work alarms. Their merge obligation survives 
 observes the delivering PR even while its owner is in review or a fix pass. A merge completes the checked item
 and round before normal team completion and worktree cleanup. A stop of the whole team abandons the round but keeps
 the claim: the item stays out of publication, the delivering PR is still polled after a resume, and its merge completes
-the item without recording the end of the round a second time. Closed, unmerged delivery recovery is deferred
-to the second part; this part logs a warning and preserves the wait.
+the item without recording the end of the round a second time. An observed unmerged close ends the claim in a
+checked transition and saves `delivery_closed_at` before notification or scheduling. The abandoned round retains
+its delivery record. Polling recovers a marked round that is still the latest for its in-progress item: notify the
+lead from the team prompt catalog, open a fresh round for the same item (or split part), and queue the member.
+The new round and queue state are saved together. Recovery retries after a restart without consulting the old PR;
+therefore a later reopening cannot revive the claim. Notification precedes the new round, so a crash after sending
+but before saving may repeat the message. A stopped member keeps the recovery pending until resumed. Publication
+and subsequent merge use the ordinary item lifecycle.
 
 ### Snapshots (`agent-runtime`, `agent`)
 
