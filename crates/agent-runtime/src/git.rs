@@ -2505,4 +2505,35 @@ mod tests {
             "{result:?}"
         );
     }
+
+    #[tokio::test]
+    async fn base_preflight_reads_a_signed_unpublished_commit_while_git_shows_signatures() {
+        let fixture = Fixture::new();
+        with_origin(&fixture);
+        raw(&fixture.repo, &["push", "-q", "origin", "main"]);
+        let key = fixture.sibling("signing_key");
+        let generated = Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", ""])
+            .arg("-f")
+            .arg(&key)
+            .status()
+            .unwrap();
+        assert!(generated.success());
+        raw(&fixture.repo, &["config", "gpg.format", "ssh"]);
+        raw(&fixture.repo, &["config", "user.signingkey", key.to_str().unwrap()]);
+        raw(&fixture.repo, &["config", "log.showSignature", "true"]);
+        std::fs::write(fixture.repo.join("signed.txt"), "signed\n").unwrap();
+        raw(&fixture.repo, &["add", "signed.txt"]);
+        raw(&fixture.repo, &["commit", "-q", "-S", "-m", "Signed unpublished"]);
+        let expected = agent_core::state::UnpushedBase {
+            branch: branch("main"),
+            count: std::num::NonZeroU64::new(1).unwrap(),
+            first: fixture.head(),
+            subject: "Signed unpublished".to_owned(),
+        };
+
+        let found = fixture.git().unpushed_base(&branch("main")).await;
+
+        assert_eq!(found.unwrap(), Some(expected));
+    }
 }
