@@ -173,7 +173,10 @@ async fn a_refusal_of_github_tells_the_human_once_and_agent_resume_of_the_team_t
         waiting.starts_with("GitHub: refresh the description of the pull requests, refused: "),
         "{waiting}"
     );
-    assert_eq!(times(&rig, LogEvent::GithubStepWaiting), 1);
+    rig.wait_for("the one event of the refused step in the history", || {
+        times(&rig, LogEvent::GithubStepWaiting) == 1
+    })
+    .await;
 
     resume_team(&rig, &first).await;
     rig.wait_for("the refused step tried again", || {
