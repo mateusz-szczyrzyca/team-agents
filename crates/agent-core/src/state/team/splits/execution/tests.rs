@@ -32,10 +32,10 @@ fn working() -> Team {
     found
 }
 
-fn round_trip(found: Team) -> Team {
-    let text = serde_json::to_string(&found).unwrap();
+fn round_trip(found: &Team) -> Team {
+    let text = serde_json::to_string(found).unwrap();
     let read: Team = serde_json::from_str(&text).unwrap();
-    assert_eq!(read, found);
+    assert_eq!(&read, found);
     read
 }
 
@@ -47,7 +47,7 @@ fn approved_split_binds_first_round_and_retains_each_merged_part_until_last() {
     assert_eq!(found.activate_split(approved.clone()), Ok(()));
     assert_eq!(found.splits(), &[approved]);
     assert_eq!(found.round_of(parent).unwrap().part().unwrap().to_string(), "a");
-    found = round_trip(found);
+    found = round_trip(&found);
     for (number, key) in [(1, "a"), (2, "b"), (3, "c")] {
         if number > 1 {
             found.open_round(round_id(number), Some(parent), at(60)).unwrap();
@@ -91,7 +91,7 @@ fn approved_split_binds_first_round_and_retains_each_merged_part_until_last() {
                 PhaseKind::Pending
             }
         );
-        found = round_trip(found);
+        found = round_trip(&found);
     }
     assert_eq!(found.rounds().len(), 3);
 }
