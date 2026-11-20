@@ -104,7 +104,7 @@ mod gate_process {
             }
             write!(
                 config,
-                "[tiers]\nnormal = [\"claude-1\", \"claude-2\"]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n\
+                "[plan]\nbounces = 0\n[tiers]\nnormal = [\"claude-1\", \"claude-2\"]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n\
                  [repos.example]\nbase_branch = \"main\"\ngate = [\"{}\", \"{}\"]\n",
                 script("team-cli.sh").display(),
                 agentbus_binary().display(),

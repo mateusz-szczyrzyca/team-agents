@@ -197,7 +197,7 @@ fn config(agents: &[Agent], agentbus: &Path, home: &Home) -> String {
     }
     write!(
         text,
-        "[tiers]\nnormal = [{}]\nworkers = [{}]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n\
+        "[plan]\nbounces = 0\n[tiers]\nnormal = [{}]\nworkers = [{}]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n\
          [watchdog]\nhang_minutes = 1\nhang_strikes = 3\n\
          [repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
         normals.join(", "),
@@ -2338,5 +2338,69 @@ async fn a_word_to_a_solo_task_of_an_agent_in_an_open_team_is_for_the_solo_sessi
     assert!(
         line.contains(&format!(r#""task":"{solo}""#)) && !line.contains(r#""team":"#),
         "{reply:?}: {line}"
+    );
+}
+
+// ---- the plan is kept out of git --------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_worktrees_of_a_new_team_keep_the_plan_out_of_git() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    f.stop().await.unwrap();
+
+    for task in &tasks {
+        let worktree = f.worktree(task);
+        std::fs::create_dir_all(worktree.join(".agent")).unwrap();
+        std::fs::write(worktree.join(".agent/plan.md"), "Plan — zażółć.\n").unwrap();
+        let ignored = Process::new("git")
+            .args(["check-ignore", "--quiet", ".agent/plan.md"])
+            .current_dir(&worktree)
+            .status()
+            .unwrap();
+        assert_eq!(ignored.code(), Some(0), "{task}: git does not ignore the plan");
+        let listed = git(&worktree, &["status", "--porcelain", "--", ".agent"]);
+        assert_eq!(listed, "", "{task}");
+    }
+}
+
+#[tokio::test]
+async fn a_plan_committed_by_mistake_leaves_the_branch_keeps_its_file_and_the_task_ends_done() {
+    let mut f = Fixture::new(&[
+        normal("claude-1", "script:commit-plan"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+    ]);
+    let scripts = f.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("commit-plan.sh"),
+        "mkdir -p .agent\nprintf 'Plan — zażółć.\\n' > .agent/plan.md\ngit add -f .agent/plan.md\n\
+         git commit -q -m 'Commit the plan by mistake'\n",
+    )
+    .unwrap();
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["claude-1"], PLAIN).await;
+    f.status_is(&tasks[0], TaskStatus::Done).await;
+    f.stop().await.unwrap();
+
+    let worktree = f.worktree(&tasks[0]);
+    assert_eq!(git(&worktree, &["ls-tree", "--name-only", "HEAD", "--", ".agent"]), "");
+    assert_eq!(git(&worktree, &["ls-files", "--", ".agent"]), "");
+    assert_eq!(
+        git(&worktree, &["log", "-2", "--format=%s"]),
+        "Keep the plan out of the delivery\nCommit the plan by mistake"
+    );
+    assert_eq!(
+        std::fs::read_to_string(worktree.join(".agent/plan.md")).unwrap(),
+        "Plan — zażółć.\n"
     );
 }

@@ -47,7 +47,7 @@ mod daemon_process {
         std::fs::write(
             home.config_file(),
             format!(
-                "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{fake}\"\n\
+                "[agents.claude-1]\ncli = \"claude\"\n[plan]\nbounces = 0\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{fake}\"\n\
                  [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n"
             ),
         )

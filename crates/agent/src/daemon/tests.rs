@@ -33,7 +33,7 @@ fn fake_cli() -> String {
 
 fn config(hang_strikes: u32) -> String {
     format!(
-        "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{}\"\n\
+        "[agents.claude-1]\ncli = \"claude\"\n[plan]\nbounces = 0\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{}\"\n\
          [watchdog]\nhang_minutes = 1\nhang_strikes = {hang_strikes}\n\
          [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
         fake_cli()
