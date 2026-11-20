@@ -25,7 +25,7 @@ mod wake_delivery;
 
 pub use base::UnpushedBase;
 pub use checked::CheckedMut;
-pub use checks::{Asked, ChecksRecord, ItemChecks, Sent};
+pub use checks::{Asked, Basis, ChecksRecord, Covers, ItemChecks, Sent};
 pub use findings::{
     Decision, Disputes, Explanation, ExplanationStatus, FindingNumbersExhausted, FindingStatus, Findings,
     InvalidFindingNumbers, OpinionAttempt, OpinionFailure, OpinionRequest, OpinionStage, OpinionStateError, Raise,

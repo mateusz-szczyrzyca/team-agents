@@ -16,7 +16,7 @@ use agent_core::history::{CheckOutcome, HistoryEvent};
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::prompt::Variables;
 use agent_core::repo_path::RepoPath;
-use agent_core::state::{Asked, ChecksRecord, PrNumber, Sent, Timestamp};
+use agent_core::state::{Asked, Basis, ChecksRecord, Covers, PrNumber, Sent, Timestamp};
 use agent_runtime::git::Revision;
 use agent_runtime::history::log_decision;
 use agent_runtime::notify::Notification;
@@ -135,6 +135,7 @@ impl Owner {
                 }
             }
         }
+        self.revoke_changed_allowances(site, reviewing, &mut record).await?;
         let written = self.written_description(site, reviewing).await?;
         let issues = self.round_issues(lead, reviewing, &written, &rules, &record).await?;
         let policy = ChecksPolicy::new(self.parts.settings.config.review());
@@ -161,8 +162,7 @@ impl Owner {
                     &issues,
                     &refused,
                 )?;
-                record.set_passes(reviewing.items, pass.get());
-                record.asked = None;
+                record.send_back(reviewing.items, pass.get());
                 record.sent = Some(Sent {
                     at: now,
                     pass: pass.get(),
@@ -211,9 +211,7 @@ impl Owner {
         let Site { pulls, team, lead } = site;
         let loaded = questions::read(file).await?;
         let decided = grouped_decisions(&asked.subjects, &loaded.file)?;
-        record.allow(&asked.items, &decided.allowed);
-        record.restart_passes(&asked.items);
-        record.asked = None;
+        record.answer(&asked.items, &decided.allowed);
         self.parts.store.save_checks_record(&lead.task, record).await?;
         tracing::info!(
             event = agent_core::log::LogEvent::ChecksDecided.as_str(),
@@ -251,11 +249,20 @@ impl Owner {
             .find_task(&lead.task)
             .and_then(|found| next_number(found.member))
             .ok_or(PublishError::QuestionNumbers)?;
-        issues.retain(|issue| reason == AskReason::PassesUsed || issue.judge() == Judge::Human);
+        let covers = if reason == AskReason::PassesUsed || issues.iter().all(|issue| issue.judge() == Judge::Human) {
+            Covers::Everything
+        } else {
+            Covers::HumanPart
+        };
+        issues.retain(|issue| covers == Covers::Everything || issue.judge() == Judge::Human);
         let asked = questions(pulls.checks(), team, &lead.task, &issues, reason, passes)?;
         let file = self.parts.store.home().questions_file(&lead.task, number);
         replace_text_file(&file, &asked.file.render(), QUESTIONS_FILE_MODE).await?;
         record.sent = None;
+        record.basis = Some(Basis {
+            head: reviewing.ready.tip.clone(),
+            covers,
+        });
         record.asked = Some(Asked {
             number,
             at: now,
@@ -349,12 +356,74 @@ impl Owner {
         edited.dedup();
         let unchanged = git.range_unchanged_lines(&merge_base, tip, &edited).await?;
         let team = self.parts.state.find_task(&lead.task).ok_or(PublishError::Lost)?.team;
-        Ok(
-            assess_near(rules, &facts, &unchanged, &record.allowed_of(reviewing.items))
-                .into_iter()
-                .filter(|issue| issue.allowed_beforehand(team.allowances()).is_none())
-                .collect(),
-        )
+        let human_only = record.human_only_of(reviewing.items);
+        let allowed_for_all: Vec<Subject> = record
+            .allowed_of(reviewing.items)
+            .into_iter()
+            .filter(|subject| !human_only.contains(subject))
+            .collect();
+        Ok(assess_near(rules, &facts, &unchanged, &allowed_for_all)
+            .into_iter()
+            // An allowance given to a question about the human's part covers the issues the human alone may allow.
+            .filter(|issue| !(issue.judge() == Judge::Human && human_only.contains(&issue.subject())))
+            .filter(|issue| issue.allowed_beforehand(team.allowances()).is_none())
+            .collect())
+    }
+
+    /// Takes back the allowances for files that the round changed after the human allowed them: the checks ask about them
+    /// again. An allowance with no head is one an earlier daemon recorded, and holds.
+    async fn revoke_changed_allowances(
+        &self,
+        site: Site<'_>,
+        reviewing: &Reviewing<'_>,
+        record: &mut ChecksRecord,
+    ) -> Result<(), PublishError> {
+        let at_heads = record.allowed_at_of(reviewing.items);
+        let tip = &reviewing.ready.tip;
+        let mut stale: Vec<Subject> = Vec::new();
+        let mut heads: Vec<&agent_core::state::CommitId> = Vec::new();
+        for head in at_heads.values() {
+            if head != tip && !heads.contains(&head) {
+                heads.push(head);
+            }
+        }
+        for head in heads {
+            let changed = match reviewing.ready.git.range_changes(head, tip).await {
+                Ok(files) => Some(files),
+                Err(error) => {
+                    // What changed since cannot be told (the head may be gone after a rebase): the allowances of that head
+                    // are taken back and asked about again, which is the safe side.
+                    tracing::warn!(
+                        event = agent_core::log::LogEvent::ChecksDecided.as_str(),
+                        outcome = "allowance_head_unreadable",
+                        %head,
+                        error = %agent_runtime::process::error_chain(&error),
+                        "the checks cannot tell what changed since the human allowed"
+                    );
+                    None
+                }
+            };
+            for (path, granted) in &at_heads {
+                if granted != head {
+                    continue;
+                }
+                let touched = changed.as_ref().is_none_or(|files| {
+                    files.iter().any(|file| {
+                        file.path == *path
+                            || matches!(&file.change, agent_core::decide::checks::Change::Renamed { from } if from == path)
+                    })
+                });
+                if touched {
+                    stale.push(Subject::Path(path.clone()));
+                }
+            }
+        }
+        if stale.is_empty() {
+            return Ok(());
+        }
+        record.revoke(reviewing.items, &stale);
+        self.parts.store.save_checks_record(&site.lead.task, record).await?;
+        Ok(())
     }
 
     /// Where the question `asked` of the lead `task` is.
