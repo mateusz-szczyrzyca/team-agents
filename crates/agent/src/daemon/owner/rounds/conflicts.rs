@@ -41,6 +41,18 @@ enum Judgement {
     Tip(CommitId),
 }
 
+/// An approved pull request whose merge conflict pass or answered conflict question is in progress.
+struct ConflictPass {
+    /// The pull request.
+    pr: PullRequest,
+    /// The head GitHub refused to merge.
+    approved_head: CommitId,
+    /// When the pass or the human's answer began.
+    at: Timestamp,
+    /// The items of the pull request.
+    items: Vec<ItemId>,
+}
+
 impl Owner {
     /// Sends the lead of `team` to merge the base, or asks the human, and records that on `items`: `head` is the head
     /// GitHub refused, and the pass is recorded before the lead is woken so that a restart sends it again.
@@ -59,6 +71,7 @@ impl Owner {
         self.each_item(team, items, |item| {
             match step {
                 ConflictStep::AskHuman => {
+                    item.set_conflict_approved_head(head.clone());
                     if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
                         context.reviewed_head = Some(head.clone());
                     }
@@ -112,8 +125,14 @@ impl Owner {
         look: &mut Look,
         now: Timestamp,
     ) -> Result<(), OwnerError> {
-        let Some((pr, approved_head, at, items)) = self.conflict_in_progress(team) else {
-            return self.wake_unasked_conflict_lead(team, look);
+        let Some(ConflictPass {
+            pr,
+            approved_head,
+            at,
+            items,
+        }) = self.conflict_in_progress(team)?
+        else {
+            return self.wake_unasked_conflict_lead(team, look).await;
         };
         let lead = self.lead_of(team)?;
         let member = self
@@ -190,9 +209,10 @@ impl Owner {
             .await
     }
 
-    /// Wakes the lead of `team` once when a merge conflict pass needs the human and the lead has not run since.
-    fn wake_unasked_conflict_lead(&mut self, team: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
-        let Some(at) = self.conflict_asking_human(team) else {
+    /// Wakes the lead of `team` once when a merge conflict pass needs the human and the lead has not run since, or
+    /// clears a legacy conflict question without a recorded approved head once the human's answer has been acted on.
+    async fn wake_unasked_conflict_lead(&mut self, team: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
+        let Some((pr, at, items)) = self.conflict_asking_human(team) else {
             return Ok(());
         };
         let lead = self.lead_of(team)?;
@@ -204,8 +224,26 @@ impl Owner {
             .ok_or_else(|| OwnerError::LostTask {
                 task: lead.task.clone(),
             })?;
-        if matches!(member.status(), TaskStatus::Waiting | TaskStatus::Failed) && !ran_since(member, at) {
-            return self.release_conflict_lead(&lead.task, look);
+        if !ran_since(member, at) {
+            if matches!(member.status(), TaskStatus::Waiting | TaskStatus::Failed) {
+                return self.release_conflict_lead(&lead.task, look);
+            }
+            return Ok(());
+        }
+        let answered_at = member
+            .questions()
+            .iter()
+            .filter_map(|question| match question.state() {
+                QuestionState::Answered { at: answered_at, .. } if *answered_at >= at => Some(*answered_at),
+                QuestionState::Answered { .. } | QuestionState::Open => None,
+            })
+            .max();
+        if let Some(answered_at) = answered_at
+            && member.status() == TaskStatus::Waiting
+            && ran_since(member, answered_at)
+        {
+            self.end_pass(team, &items, pr.number)?;
+            self.save().await?;
         }
         Ok(())
     }
@@ -265,13 +303,15 @@ impl Owner {
     }
 
     /// When an approved pull request of `team` asked the human about a merge conflict, if one did.
-    fn conflict_asking_human(&self, team: &TeamId) -> Option<Timestamp> {
+    fn conflict_asking_human(&self, team: &TeamId) -> Option<(PullRequest, Timestamp, Vec<ItemId>)> {
         let found = self.parts.state.team(team)?;
         found
             .items()
             .iter()
             .find_map(|item| match (item.phase(), item.merge_conflict()) {
-                (ItemPhase::Approved { .. }, Some(MergeConflict::AskingHuman { at })) => Some(*at),
+                (ItemPhase::Approved { pr, .. }, Some(MergeConflict::AskingHuman { at })) => {
+                    Some((pr.clone(), *at, items_of(found, pr.number)))
+                }
                 (ItemPhase::Approved { .. }, Some(MergeConflict::MergingBase { .. }) | None)
                 | (
                     ItemPhase::Pending
@@ -286,23 +326,33 @@ impl Owner {
 
     /// The approved pull request of `team` whose merge conflict pass is in progress, with the head the pass is for, when
     /// the pass began and its items.
-    fn conflict_in_progress(&self, team: &TeamId) -> Option<(PullRequest, CommitId, Timestamp, Vec<ItemId>)> {
-        let found = self.parts.state.team(team)?;
-        let answered = self.lead_of(team).ok().and_then(|lead| {
-            self.parts
-                .state
-                .find_task(&lead.task)
-                .map(|task| task.member.questions())
-        });
-        found
+    fn conflict_in_progress(&self, team: &TeamId) -> Result<Option<ConflictPass>, OwnerError> {
+        let Some(found) = self.parts.state.team(team) else {
+            return Ok(None);
+        };
+        let lead = self.lead_of(team)?;
+        let questions = self
+            .parts
+            .state
+            .find_task(&lead.task)
+            .map(|task| task.member.questions())
+            .ok_or_else(|| OwnerError::LostTask {
+                task: lead.task.clone(),
+            })?;
+        Ok(found
             .items()
             .iter()
             .find_map(|item| match (item.phase(), item.merge_conflict()) {
                 (ItemPhase::Approved { pr, .. }, Some(MergeConflict::MergingBase { approved_head, at })) => {
-                    Some((pr.clone(), approved_head.clone(), *at, items_of(found, pr.number)))
+                    Some(ConflictPass {
+                        pr: pr.clone(),
+                        approved_head: approved_head.clone(),
+                        at: *at,
+                        items: items_of(found, pr.number),
+                    })
                 }
                 (ItemPhase::Approved { pr, .. }, Some(MergeConflict::AskingHuman { at })) => {
-                    let answered_at = answered?
+                    let answered_at = questions
                         .iter()
                         .filter_map(|question| match question.state() {
                             QuestionState::Answered { at: answered_at, .. } if *answered_at >= *at => {
@@ -311,11 +361,17 @@ impl Owner {
                             QuestionState::Answered { .. } | QuestionState::Open => None,
                         })
                         .max()?;
-                    let approved_head = item
-                        .findings()
-                        .and_then(|ledger| ledger.verification())
-                        .and_then(|context| context.reviewed_head.clone())?;
-                    Some((pr.clone(), approved_head, answered_at, items_of(found, pr.number)))
+                    let approved_head = item.conflict_approved_head().cloned().or_else(|| {
+                        item.findings()
+                            .and_then(|ledger| ledger.verification())
+                            .and_then(|context| context.reviewed_head.clone())
+                    })?;
+                    Some(ConflictPass {
+                        pr: pr.clone(),
+                        approved_head,
+                        at: answered_at,
+                        items: items_of(found, pr.number),
+                    })
                 }
                 (ItemPhase::Approved { .. }, None)
                 | (
@@ -326,7 +382,7 @@ impl Owner {
                     | ItemPhase::Done { .. },
                     _,
                 ) => None,
-            })
+            }))
     }
 
     /// Whether the lead's tip of `pr` is the commit to push: it merged the base, and the gate of the harness or of the
