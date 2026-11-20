@@ -71,21 +71,7 @@ impl Owner {
         now: Timestamp,
     ) -> Result<(), OwnerError> {
         let Some((pr, approved_head, at, items)) = self.conflict_in_progress(team) else {
-            if let Some(at) = self.conflict_asking_human(team) {
-                let lead = self.lead_of(team)?;
-                let member = self
-                    .parts
-                    .state
-                    .find_task(&lead.task)
-                    .map(|found| found.member)
-                    .ok_or_else(|| OwnerError::LostTask {
-                        task: lead.task.clone(),
-                    })?;
-                if member.status() == TaskStatus::Waiting && !ran_since(member, at) {
-                    return self.release(&lead.task, Why::MergeConflict, look);
-                }
-            }
-            return Ok(());
+            return self.wake_unasked_conflict_lead(team, look);
         };
         let lead = self.lead_of(team)?;
         let member = self
@@ -103,13 +89,7 @@ impl Owner {
             return self.release(&lead.task, Why::MergeConflict, look);
         }
         if !lead.done {
-            let allowances = self
-                .parts
-                .state
-                .team(team)
-                .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?
-                .allowances()
-                .to_vec();
+            let allowances = self.team_allowances(team)?;
             let decided = after_lead(&LeadEnd::NoResult, &allowances);
             log_decision(
                 "after_lead",
@@ -164,28 +144,68 @@ impl Owner {
                 head: tip,
             },
         );
-        let allowances = self
+        self.apply_lead_change(team, &items, pr.number, &approved_head, changed, now, look)
+            .await
+    }
+
+    /// Wakes the lead of `team` once when a merge conflict pass needs the human and the lead has not run since.
+    fn wake_unasked_conflict_lead(&mut self, team: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
+        let Some(at) = self.conflict_asking_human(team) else {
+            return Ok(());
+        };
+        let lead = self.lead_of(team)?;
+        let member = self
+            .parts
+            .state
+            .find_task(&lead.task)
+            .map(|found| found.member)
+            .ok_or_else(|| OwnerError::LostTask {
+                task: lead.task.clone(),
+            })?;
+        if member.status() == TaskStatus::Waiting && !ran_since(member, at) {
+            return self.release(&lead.task, Why::MergeConflict, look);
+        }
+        Ok(())
+    }
+
+    /// The task allowances of `team`.
+    fn team_allowances(&self, team: &TeamId) -> Result<Vec<agent_core::task_allowance::TaskAllowance>, OwnerError> {
+        Ok(self
             .parts
             .state
             .team(team)
             .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?
             .allowances()
-            .to_vec();
+            .to_vec())
+    }
+
+    /// Acts on the `changed` files pushed by the lead's conflict pass for `pr` of `team`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the team, its items, the pull request, the approved head, the changed files and the look are distinct inputs of the step"
+    )]
+    async fn apply_lead_change(
+        &mut self,
+        team: &TeamId,
+        items: &[ItemId],
+        pr: agent_core::state::PrNumber,
+        approved_head: &CommitId,
+        changed: Vec<RepoPath>,
+        now: Timestamp,
+        look: &mut Look,
+    ) -> Result<(), OwnerError> {
+        let allowances = self.team_allowances(team)?;
         let end = LeadEnd::Result { changed };
         let decided = after_lead(&end, &allowances);
-        log_decision(
-            "after_lead",
-            &format!("pr={}, end={end:?}", pr.number),
-            &format!("{decided:?}"),
-        );
+        log_decision("after_lead", &format!("pr={pr}, end={end:?}"), &format!("{decided:?}"));
         match decided {
             AfterLead::RetryMerge => {
-                self.end_pass(team, &items, pr.number)?;
+                self.end_pass(team, items, pr)?;
                 self.save().await?;
             }
             AfterLead::VerifyFirst => {
-                self.end_pass(team, &items, pr.number)?;
-                self.each_item(team, &items, |item: &mut ItemMut<'_>| {
+                self.end_pass(team, items, pr)?;
+                self.each_item(team, items, |item: &mut ItemMut<'_>| {
                     if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
                         context.reviewed_head = Some(approved_head.clone());
                     }
@@ -195,7 +215,7 @@ impl Owner {
             }
             AfterLead::AskHuman => {
                 return self
-                    .start_merge_conflict(team, &items, true, &approved_head, now, look)
+                    .start_merge_conflict(team, items, true, approved_head, now, look)
                     .await;
             }
         }
