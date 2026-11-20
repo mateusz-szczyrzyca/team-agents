@@ -149,3 +149,16 @@ fn the_run_of_a_new_session_records_the_session_the_harness_named_for_it() {
     assert_eq!(begun, Ok(()));
     assert_eq!(member.last_session(), Some(&named));
 }
+
+#[test]
+fn a_state_saved_between_a_renewal_and_the_run_of_its_new_session_loads() {
+    let mut state = old_state();
+    renewed_at(&mut state, started());
+    let saved = state.to_json().expect("the state saves");
+
+    let loaded = State::from_json(&saved).expect("a restart reads it");
+
+    let found = loaded.find_task(&task()).expect("the task");
+    assert_eq!(found.member.renewals().map(Renewals::at), Some(started()));
+    assert_eq!(found.member.last_session(), None, "the new session resumes nothing");
+}
