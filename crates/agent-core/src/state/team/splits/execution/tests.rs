@@ -132,3 +132,32 @@ fn activation_refuses_nonworking_duplicate_unknown_and_blocked_first_atomically(
     );
     assert_eq!(found, snapshot);
 }
+
+#[test]
+fn persisted_part_rounds_require_a_plan_known_unique_keys_and_merged_dependencies() {
+    let mut found = working();
+    found.activate_split(plan(&[&[], &["a"]])).unwrap();
+    let original = serde_json::to_value(&found).unwrap();
+    let mut cases = Vec::new();
+    let mut no_plan = original.clone();
+    no_plan["splits"] = serde_json::json!([]);
+    cases.push(no_plan);
+    let mut unknown = original.clone();
+    unknown["rounds"][0]["part"]["key"] = serde_json::json!("z");
+    cases.push(unknown);
+    let mut blocked = original.clone();
+    blocked["rounds"][0]["part"]["key"] = serde_json::json!("b");
+    cases.push(blocked);
+    let mut premature = original.clone();
+    premature["rounds"][0]["part"] = serde_json::json!({"status":"merged", "key":"a", "pr":pr(7)});
+    cases.push(premature);
+    let mut duplicate = original;
+    let mut second = duplicate["rounds"][0].clone();
+    second["id"] = serde_json::to_value(round_id(2)).unwrap();
+    duplicate["rounds"].as_array_mut().unwrap().push(second);
+    cases.push(duplicate);
+    for value in cases {
+        let read = serde_json::from_value::<Team>(value);
+        assert!(matches!(read, Err(error) if error.is_data()));
+    }
+}
