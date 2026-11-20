@@ -872,8 +872,10 @@ record and scheduled answer resume across a daemon restart without rewriting the
 the grammar; `QuestionsFile::allowed_check_subjects` projects the validated group verdicts, and the daemon returns the
 same per-subject `Decisions` used by the owner.
 
-- *Allowed* — the subjects are recorded for the items (it is not asked again for the same file), and the count of passes
-  starts again. The lead, resumed with the answers, is told to change nothing and end with `STATUS: DONE`. The checks run
+- *Allowed* — the subjects are recorded for the items with the head they were allowed at (it is not asked again for the same
+  file, but it is when the round changes that file again), and the count of passes starts again, except after a question about
+  the human's part alone, which leaves it as it is; such an allowance does not cover an issue of the team's about the same file,
+  for example a lint suppression added to an allowed protected file. The lead, resumed with the answers, is told to change nothing and end with `STATUS: DONE`. The checks run
   again: the review starts when nothing remains, otherwise the team receives its remaining findings.
 - *Refused* — back to the team, with what the human refused named, as the next pass; the lead's resumed run is told to undo
   what was refused.

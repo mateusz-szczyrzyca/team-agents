@@ -368,7 +368,14 @@ Each is derived or lives elsewhere, so that there is one place for it:
   and TEST-FIX disclosure. Missing or empty text does not block a round. It is not part of `state.json`.
 - **The checks before a review** — `tasks/<lead>/checks.json`, the **checks record** of a team's lead, written by the daemon only:
   `{"items": {"<item id>": {"passes": N, "allowed": [<subject>, ...]}}, "asked": {...}, "sent": {...}}`. For each item the passes the
-  checks sent its round back and what the human allowed (a subject is `{"path": "tests/a.rs"}` or `"no_tests"`); `asked` is the
+  checks sent its round back and what the human allowed (a subject is `{"path": "tests/a.rs"}` or `"no_tests"`). Three optional
+  keys, left out when empty and absent from a record an earlier daemon wrote (it loads, and its allowances hold as before):
+  `human_only`, the subjects of `allowed` that the human allowed in answer to a question about the issues they alone may allow,
+  which does not cover an issue of the team's about the same file; `allowed_at`, a map from a file the human allowed to the head
+  the checks looked at then — the allowance ends when the round changes that file again, and the file is asked about again; and,
+  beside `asked`, `basis` (`{"head": ..., "covers": "everything" | "human_part"}`), what the question waited on was put about: a
+  question about the human's part alone, put while the team still has passes, leaves the count of passes as it is when answered.
+  `asked` is the
   question the round waits on (the `number` of the lead's questions, when it was written, the items, what each question is about, how
   often the lead was woken to put it); `sent` is what the lead is to be told on its next run. Empty parts are left out and an empty
   record is `{}`. A task the checks have not seen has no file. See "Round checks before the review" in

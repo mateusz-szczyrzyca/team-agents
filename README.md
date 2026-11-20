@@ -607,7 +607,8 @@ A round that changes code without adding tests, edits the test of its own `RED:`
 suppression or code that asks whether it runs under test goes back to the team with the reasons, `[review] check_passes` times
 (2), and then you are asked. If a check also finds changes that only you may allow, you are asked about those
 changes first, before the team starts its next pass. After your answer, the remaining findings go back to the team;
-the question itself uses no team pass. If the passes are already used up, you are asked about all remaining findings.
+the question itself uses no team pass, and what you allowed is asked again if the team changes that file
+afterwards. If the passes are already used up, you are asked about all remaining findings.
 It is "Round checks before the review" in [`docs/architecture.md`](docs/architecture.md).
 
 A gate is run with `agent gate`, by an agent in its worktree (the human can run it too):
