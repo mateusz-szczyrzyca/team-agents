@@ -938,6 +938,16 @@ impl ItemProgress {
         self.merge_conflict = None;
     }
 
+    /// Reopens the review of an approved item whose branch the lead changed beyond the merge of the base: the reviewers
+    /// look at the pull request again and no review is kept.
+    ///
+    /// # Errors
+    /// [`AdvanceError::Transition`] unless the item is approved.
+    pub fn reopen_review_after_conflict(&mut self) -> Result<(), AdvanceError> {
+        // RED stub: the phase stays as it is.
+        Ok(())
+    }
+
     /// Records that the human is asked about the merge conflict at `at`, once.
     pub fn ask_human_about_merge_conflict(&mut self, at: Timestamp) {
         self.merge_conflict = Some(MergeConflict::AskingHuman { at });
@@ -1628,6 +1638,18 @@ mod tests {
         item.end_merge_conflict();
         assert_eq!(item.merge_conflict(), None);
         assert_eq!(item.merge_passes(), 1);
+    }
+
+    #[test]
+    fn reopening_the_review_after_a_conflict_keeps_no_review_and_needs_an_approval() {
+        let mut item = progress_in(PhaseKind::Approved);
+
+        item.reopen_review_after_conflict().unwrap();
+        assert_eq!(item.phase().kind(), PhaseKind::InReview);
+        assert!(matches!(item.phase(), ItemPhase::InReview { reviews, .. } if reviews.is_empty()));
+
+        let mut pending = progress_in(PhaseKind::InProgress);
+        assert!(pending.reopen_review_after_conflict().is_err());
     }
 
     #[test]
