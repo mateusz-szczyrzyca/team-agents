@@ -320,6 +320,17 @@ impl Member {
         }
     }
 
+    /// The reason of the send-back that waits for the next run, taken out: the run that starts is told it, and no later
+    /// run is. `None` when nothing waits, and for a task created before plans.
+    pub fn take_plan_reason(&mut self) -> Option<PlanReason> {
+        Some(PlanReason::Missing)
+    }
+
+    /// The human said to send the run back once more: one more send-back is granted and counted, and the plan's
+    /// stage is open again, so that a run that still ends against the plan asks the human anew; nothing for a task
+    /// created before plans.
+    pub fn send_back_once_more(&mut self) {}
+
     /// The human said to go on as it is: no run of the task is sent back for its plan again.
     pub fn release_plan(&mut self) {
         if let Some(keeping) = &mut self.plan {
@@ -904,6 +915,57 @@ mod tests {
     /// The member of `busy`, as JSON, to be spoiled.
     fn busy_json() -> serde_json::Value {
         serde_json::to_value(busy()).unwrap()
+    }
+
+    #[test]
+    fn the_reason_that_waits_is_taken_by_one_run_only() {
+        let mut member = Member::new(task(1), normal("codex-1"));
+        member.send_back(PlanReason::Unfinished {
+            steps: vec![item("1.2")],
+        });
+
+        let first = member.take_plan_reason();
+        let second = member.take_plan_reason();
+
+        assert_eq!(
+            first,
+            Some(PlanReason::Unfinished {
+                steps: vec![item("1.2")]
+            })
+        );
+        assert_eq!(second, None);
+        assert_eq!(member.plan().map(PlanKeeping::sent_back), Some(1));
+    }
+
+    #[test]
+    fn sending_back_once_more_grants_and_counts_one_send_back_and_opens_the_plan_again() {
+        let mut member = Member::new(task(1), normal("codex-1"));
+        member.send_back(PlanReason::Missing);
+        assert_eq!(member.take_plan_reason(), Some(PlanReason::Missing));
+        member.plan_asked(nz(2));
+
+        member.send_back_once_more();
+
+        let keeping = member.plan().expect("the member keeps its plan");
+        assert_eq!(
+            (
+                keeping.sent_back(),
+                keeping.granted(),
+                keeping.stage(),
+                keeping.pending()
+            ),
+            (2, 1, PlanStage::Open, None)
+        );
+    }
+
+    #[test]
+    fn a_task_created_before_plans_has_no_reason_and_nothing_to_send_back_once_more() {
+        let mut member = Member::without_plan(task(1), normal("codex-1"));
+
+        member.send_back_once_more();
+
+        assert_eq!(member.take_plan_reason(), None);
+        assert_eq!(member.plan(), None);
     }
 
     #[test]

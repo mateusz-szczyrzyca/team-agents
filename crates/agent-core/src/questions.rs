@@ -964,8 +964,10 @@ fn labelled(label: &str, text: &str) -> String {
     }
 }
 
-/// The text as a block quote: each line after `> `, an empty line as `>`.
-fn quote(text: &str) -> String {
+/// The text as a block quote: each line after `> `, an empty line as `>`. No line of a quote is a line of the form of
+/// a questions file, so a text quoted into a question's body stays part of it.
+#[must_use]
+pub fn quote(text: &str) -> String {
     text.lines()
         .map(|line| {
             if line.is_empty() {
