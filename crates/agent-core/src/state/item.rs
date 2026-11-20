@@ -947,8 +947,9 @@ impl ItemProgress {
     /// passes it has spent.
     #[must_use]
     pub fn completed_review_passes(&self) -> usize {
-        // RED stub: counts only fix passes, ignoring merge conflict passes.
-        self.fix_passes.len()
+        self.fix_passes
+            .len()
+            .saturating_add(usize::try_from(self.merge_passes).unwrap_or(usize::MAX))
     }
 
     /// The merge conflict pass in progress, if any.
