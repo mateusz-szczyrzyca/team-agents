@@ -186,6 +186,10 @@ pub enum LogEvent {
     QuestionsFileOpened,
     /// A build directory was removed to release disk space.
     BuildDirectoryRemoved,
+    /// A step of the owner that calls GitHub or git failed and waits to be tried again.
+    GithubStepWaiting,
+    /// A step of the owner that waited for GitHub or git goes through.
+    GithubStepResumed,
     /// A pure decision of `agent_core::decide` takes action, with its input and result.
     DecisionTaken,
     /// An outside call (`git`, `agentbus`, GitHub API, model CLI) completes, with its duration and outcome.
@@ -226,6 +230,7 @@ impl LogEvent {
             | Self::BusDown
             | Self::GitCallFailed
             | Self::GithubCallFailed
+            | Self::GithubStepWaiting
             | Self::GateCannotStart
             | Self::GateTimedOut
             | Self::GateDirtyTree
@@ -246,6 +251,7 @@ impl LogEvent {
             | Self::QuestionsAnswered
             | Self::ControlUsed
             | Self::ChecksDecided
+            | Self::GithubStepResumed
             | Self::ReviewsRequested
             | Self::ReviewReportLate
             | Self::NotificationSent
