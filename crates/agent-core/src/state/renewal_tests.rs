@@ -95,7 +95,7 @@ fn a_task_started_anew_before_its_last_run_started_is_refused() {
         .end_run(started(), RunEnd::NoStatus { exit_code: Some(0) })
         .expect("the run ends");
 
-    let refused = member.renew(Trouble::Hang, started());
+    let refused = member.renew(Trouble::Hang, "2026-11-20T19:59:59Z".parse().unwrap());
 
     assert!(matches!(refused, Err(RenewalError::NotAfterTheLastRun { .. })));
 }
