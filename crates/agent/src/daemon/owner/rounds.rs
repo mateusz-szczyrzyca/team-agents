@@ -49,12 +49,7 @@ use crate::daemon::checks::ChecksTextError;
 use crate::daemon::pr::PullTextError;
 use crate::daemon::questions::QuestionsProblem;
 use crate::daemon::team::agent_name;
-use waiting::Step;
-
-/// The step of a look at a team that rewrites the description of its open pull requests.
-pub(super) const REFRESH_DESCRIPTIONS: &str = "refresh the description of the pull requests";
-/// The step of a look at a team that gives the opinions of investigators gone silent to others.
-const REPLACE_SILENT: &str = "replace a silent investigator";
+use waiting::{Step, WaitingStep};
 
 /// Why the autopilot cannot be set up from the settings.
 #[derive(Debug, thiserror::Error)]
@@ -274,8 +269,8 @@ pub(super) enum Announcement {
     GithubRefused {
         /// The team.
         team: TeamId,
-        /// What the step does.
-        operation: String,
+        /// The step.
+        operation: WaitingStep,
     },
 }
 
@@ -482,23 +477,29 @@ impl Owner {
         };
         let now = Timestamp::now(&self.parts.clock)?;
         let refresh = Step::Team { team: team.clone() };
-        if self.watch.github_waits.due(&refresh, REFRESH_DESCRIPTIONS, now) {
+        if self
+            .watch
+            .github_waits
+            .due(&refresh, WaitingStep::RefreshDescriptions, now)
+        {
             match self.refresh_descriptions(&pulls, team).await {
-                Err(error) => self.github_step_failed(&refresh, team, REFRESH_DESCRIPTIONS, None, &error, now)?,
-                Ok(()) => self.github_step_done(&refresh, team, REFRESH_DESCRIPTIONS),
+                Err(error) => {
+                    self.github_step_failed(&refresh, team, WaitingStep::RefreshDescriptions, None, &error, now)?
+                }
+                Ok(()) => self.github_step_done(&refresh, team, WaitingStep::RefreshDescriptions),
             }
         }
         self.merge_approved(&pulls, team, look).await?;
         self.read_fix_responses(&pulls, team, look).await?;
         let now = Timestamp::now(&self.parts.clock)?;
         let silent = Step::Team { team: team.clone() };
-        if self.watch.github_waits.due(&silent, REPLACE_SILENT, now) {
+        if self.watch.github_waits.due(&silent, WaitingStep::ReplaceSilent, now) {
             match self.replace_silent_opinions(&pulls, team, now).await {
-                Ok(()) => self.github_step_done(&silent, team, REPLACE_SILENT),
+                Ok(()) => self.github_step_done(&silent, team, WaitingStep::ReplaceSilent),
                 // The task of an investigator cannot be inspected: that is the state's own trouble, not GitHub's.
                 Err(OwnerError::Opinion(error)) => {
                     let error = PublishError::Inspect(Box::new(error));
-                    self.github_step_failed(&silent, team, REPLACE_SILENT, None, &error, now)?;
+                    self.github_step_failed(&silent, team, WaitingStep::ReplaceSilent, None, &error, now)?;
                 }
                 Err(error) => return Err(error),
             }
