@@ -1,11 +1,11 @@
 //! The plan of a solo agent through a round: a run that ends done with a step to do goes back, one that then loses a
 //! step goes back again, and the run that settles its plan goes on; every version is kept.
 
-use agent_core::state::{MergeMode, PlanStage};
+use agent_core::state::{ItemPhase, MergeMode, PlanStage};
 use agent_core::status::TaskStatus;
 use agent_runtime::history::{PlanRead, Reader};
 
-use super::rig::{Rig, investigator, normal};
+use super::rig::{ONE, Rig, investigator, normal};
 
 /// Writes the script `name` of the stand-in CLI, which writes `plan` as the plan of the worktree it runs in.
 fn plan_script(rig: &Rig, name: &str, plan: &str) {
@@ -140,4 +140,132 @@ async fn the_same_done_after_a_send_back_for_a_lost_step_goes_back_again() {
     );
     let keeping = state.find_task(&tasks[0]).unwrap().member.plan().unwrap().clone();
     assert_eq!((keeping.sent_back(), keeping.pending()), (3, None));
+}
+
+/// A reviewer that asks for changes the first time and approves afterwards.
+const CHANGES_ONCE: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\\n   CHECK: read src/lib.rs:7,verify:VERDICT: APPROVE\\nSUMMARY: fixed";
+
+/// A reviewer that approves.
+const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
+
+/// Writes the script `name` of the stand-in CLI, which writes `plan` as the plan of the worktree and commits `file`.
+fn committing_plan_script(rig: &Rig, name: &str, plan: &str, file: &str) {
+    let dir = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join(format!("{name}.sh")),
+        format!(
+            "set -eu\nmkdir -p .agent\ncat > .agent/plan.md <<'PLAN'\n{plan}PLAN\necho {name} > {file}\ngit add {file}\n\
+             git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q -m {name}\n"
+        ),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_fix_pass_held_for_its_plan_is_not_taken_as_the_fix_response() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:first,fix-script:open,fix-held:1"),
+            investigator("inv-r1", CHANGES_ONCE),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 3\n"),
+    )
+    .unwrap();
+    let finished = "Do one.\n\n1. Work\n[x] 1.1 Write it\n";
+    committing_plan_script(&rig, "first", finished, "one.txt");
+    committing_plan_script(
+        &rig,
+        "open",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n[ ] 1.2 Cover the case\n",
+        "two.txt",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("the third run to start", || worktree.join(".fake-started-3").exists())
+        .await;
+    let held = rig.state();
+    std::fs::write(
+        worktree.join(".agent/plan.md"),
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n[x] 1.2 Cover the case\n",
+    )
+    .unwrap();
+    std::fs::write(worktree.join(".fake-release-3"), "").unwrap();
+    rig.state_where("the third run to end", |state| {
+        state
+            .find_task(&tasks[0])
+            .is_some_and(|found| found.member.runs().len() == 3 && found.member.current_run().is_none())
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    let team = held.teams().first().unwrap();
+    let phase = team.items()[0].phase().clone();
+    assert!(matches!(phase, ItemPhase::Fixing { .. }), "{phase:?}");
+    let keeping = held.find_task(&tasks[0]).unwrap().member.plan().unwrap().clone();
+    assert_eq!(keeping.sent_back(), 1);
+}
+
+#[tokio::test]
+async fn a_fix_pass_held_for_its_plan_is_not_taken_as_the_fix_response_of_a_rotating_verification() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:first,fix-script:open,fix-held:1"),
+            investigator("inv-r1", "rotating-verify"),
+            investigator("inv-r2", "rotating-verify"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 3\n"),
+    )
+    .unwrap();
+    let finished = "Do one.\n\n1. Work\n[x] 1.1 Write it\n";
+    committing_plan_script(&rig, "first", finished, "one.txt");
+    committing_plan_script(
+        &rig,
+        "open",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n[ ] 1.2 Cover the case\n",
+        "two.txt",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("the third run to start", || worktree.join(".fake-started-3").exists())
+        .await;
+    let held = rig.state();
+    std::fs::write(
+        worktree.join(".agent/plan.md"),
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n[x] 1.2 Cover the case\n",
+    )
+    .unwrap();
+    std::fs::write(worktree.join(".fake-release-3"), "").unwrap();
+    rig.state_where("the third run to end", |state| {
+        state
+            .find_task(&tasks[0])
+            .is_some_and(|found| found.member.runs().len() == 3 && found.member.current_run().is_none())
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    let team = held.teams().first().unwrap();
+    let phase = team.items()[0].phase().clone();
+    assert!(matches!(phase, ItemPhase::Fixing { .. }), "{phase:?}");
+    let keeping = held.find_task(&tasks[0]).unwrap().member.plan().unwrap().clone();
+    assert_eq!(keeping.sent_back(), 1);
 }
