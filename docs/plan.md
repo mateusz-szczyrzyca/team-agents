@@ -54,7 +54,8 @@ stage here, and what it calls an item is a step. A plan has no `Coordinator:` or
 - **The text of a step** — the indented lines after the step's line, until the next line at column 0. Its smallest
   indentation is removed; relative indentation, blank lines inside and non-ASCII text are kept.
 - **`Files:`** — at most one line of the text, `Files:` and then the paths the step is about, separated by commas; the
-  list does not go on to the next line, which would be note text. A path is relative to the repository's root, by the
+  list does not go on to the next line, which would be note text. Every entry is a path: `Files:` with nothing after
+  it, or an empty entry (`a.rs,,b.rs`, a comma at the end), is refused. A path is relative to the repository's root, by the
   rules of the task list's `Allow:` paths without globs: no absolute path, no empty segment, no `.` or `..` segment, no
   control character; `*` and `?` are characters of a file's name, not patterns. `Files:` and `Check:` count only at
   the start of a line of the text, after its indentation.
@@ -77,11 +78,13 @@ The line after `Check:` is trimmed and then told apart: `reviewer` counts only w
 or the first word, followed by a space or a tab and the path, which may itself contain spaces. A command is one line: there is no way to write a check of several lines.
 
 Line ends may be `\n` or `\r\n`, the last line needs no newline, and a byte order mark at the start of the file is
-ignored. A plan may be 1 MiB at most, the task list's limit.
+ignored. A plan may be 1 MiB at most, the task list's limit — as it is written and as it is written back: the
+harness writes a plan back with the text of its steps indented by four spaces, and a plan whose text written back
+would pass 1 MiB is refused, so that every plan read can be written back and read again.
 
 ## Errors
 
-The first fault in the text is the one reported, and every error but the empty text and the one over the size limit
+The first fault in the text is the one reported, and every error but the empty text and the two over the size limit
 names the number of its line, counted from 1 over the whole file (the byte order mark, blank lines and the intent
 included). A fault in the text of a step is reported before a broken line below it: the plan is read in the order of
 its faults.
@@ -90,6 +93,7 @@ its faults.
 |---|---|
 | `Empty` | nothing in the text but blank lines |
 | `TooLarge` | the text is over 1 MiB |
+| `TooLargeWrittenBack` | the text is within 1 MiB, but the plan written back is over it |
 | `StageNumber` | the number of a stage is `0`, has a leading zero, or is over 65535 |
 | `StageWithoutTitle` | `N.` with no title |
 | `DuplicateStage` | a stage number is used again (the first line is in the error) |
@@ -101,7 +105,7 @@ its faults.
 | `TextBeforeStep` | an indented line in a stage before its first step |
 | `UnexpectedLine` | a line at column 0 inside a stage that is not a stage or a step |
 | `GivenUpWithoutReason` | a `[-]` step whose note is blank |
-| `BadFile` | a `Files:` path that is absolute, has `..`, or is otherwise invalid (the cause in the error) |
+| `BadFile` | a `Files:` path that is empty, absolute, has `..`, or is otherwise invalid (the cause in the error) |
 | `DuplicatePart` | a second `Files:` or `Check:` line (the line of the second) |
 | `EmptyCheck` | a `Check:` line with nothing after it |
 | `ExistsWithoutPath` | `Check: exists` with no path after it |
