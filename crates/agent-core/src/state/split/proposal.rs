@@ -100,7 +100,7 @@ impl From<ScopeWire> for ScopeChange {
 
 /// Complete proposal input, before semantic checks of the parts and dependencies.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "ProposalWire")]
 pub struct Proposal {
     /// The existing item to split.
     parent: ItemId,
@@ -108,6 +108,31 @@ pub struct Proposal {
     scope: ScopeChange,
     /// Parts in permanent letter order.
     parts: Vec<PartInput>,
+}
+
+/// Raw serde input; both public readers pass through field validation.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProposalWire {
+    /// Existing item.
+    parent: ItemId,
+    /// Explicit scope declaration.
+    scope: ScopeChange,
+    /// Parts before proposal-field validation.
+    parts: Vec<PartInput>,
+}
+
+impl TryFrom<ProposalWire> for Proposal {
+    type Error = ReadProposalError;
+    fn try_from(wire: ProposalWire) -> Result<Self, Self::Error> {
+        let proposal = Self {
+            parent: wire.parent,
+            scope: wire.scope,
+            parts: wire.parts,
+        };
+        proposal.check_fields()?;
+        Ok(proposal)
+    }
 }
 
 /// The external part shape; separate from existing source-level part constructors.
@@ -178,29 +203,34 @@ pub fn read_proposal(text: &str) -> Result<Proposal, ReadProposalError> {
     if text.len() > crate::questions::MAX_QUESTIONS_BYTES {
         return Err(ReadProposalError::TooLarge);
     }
-    let proposal: Proposal = serde_json::from_str(text).map_err(|source| ReadProposalError::Json { source })?;
-    for (index, part) in proposal.parts.iter().enumerate() {
-        let valid = part.estimate.as_ref().is_some_and(|estimate| {
-            !estimate.unit.trim().is_empty() && estimate.amount.as_f64().is_some_and(|amount| amount >= 0.0)
-        });
-        if !valid {
-            return Err(ReadProposalError::Estimate {
-                part: index.saturating_add(1),
-            });
-        }
-    }
-    match &proposal.scope {
-        ScopeChange::Unchanged => {}
-        ScopeChange::Less { reason } | ScopeChange::More { reason } | ScopeChange::Different { reason } => {
-            if reason.trim().is_empty() {
-                return Err(ReadProposalError::ScopeReason);
-            }
-        }
-    }
-    Ok(proposal)
+    let wire: ProposalWire = serde_json::from_str(text).map_err(|source| ReadProposalError::Json { source })?;
+    wire.try_into()
 }
 
 impl Proposal {
+    /// Validate fields once so deserialization cannot construct incomplete proposal input.
+    fn check_fields(&self) -> Result<(), ReadProposalError> {
+        for (index, part) in self.parts.iter().enumerate() {
+            let valid = part.estimate.as_ref().is_some_and(|estimate| {
+                !estimate.unit.trim().is_empty() && estimate.amount.as_f64().is_some_and(|amount| amount >= 0.0)
+            });
+            if !valid {
+                return Err(ReadProposalError::Estimate {
+                    part: index.saturating_add(1),
+                });
+            }
+        }
+        match &self.scope {
+            ScopeChange::Unchanged => {}
+            ScopeChange::Less { reason } | ScopeChange::More { reason } | ScopeChange::Different { reason } => {
+                if reason.trim().is_empty() {
+                    return Err(ReadProposalError::ScopeReason);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Original item named in the proposal.
     pub const fn parent(&self) -> ItemId {
         self.parent
