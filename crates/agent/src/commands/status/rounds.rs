@@ -126,7 +126,7 @@ pub(super) async fn told(
     let going = teams
         .iter()
         .flat_map(|team| &team.rounds)
-        .filter(|round| *round.life() == RoundLife::Open);
+        .filter(|round| round.is_open());
     let mut drafts: Option<Drafts> = None;
     for round in going {
         let detail = round_detail(connection, round.id().clone()).await?;

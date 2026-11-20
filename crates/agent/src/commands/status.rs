@@ -216,7 +216,7 @@ pub(crate) fn running(teams: Vec<TeamSummary>) -> Vec<TeamSummary> {
     teams
         .into_iter()
         .filter_map(|mut team| {
-            team.rounds.retain(|round| *round.life() == RoundLife::Open);
+            team.rounds.retain(agent_core::state::Round::is_open);
             (!team.rounds.is_empty()).then_some(team)
         })
         .collect()
