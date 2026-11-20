@@ -390,6 +390,7 @@ pub(crate) fn round_line(round: &Round) -> String {
         .map_or_else(|| "whole task list".to_owned(), |item| format!("item {item}"));
     let state = match round.life() {
         RoundLife::Open => "open".to_owned(),
+        RoundLife::Delivered { pr } => format!("delivered by PR #{pr}"),
         RoundLife::Closed { how, .. } => format!("closed, {how}"),
     };
     format!("{}  {item}  {state}", round.id())

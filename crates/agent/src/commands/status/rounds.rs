@@ -164,7 +164,7 @@ fn suffix(round: &Round, work: Option<RoundWork>, offset: UtcOffset) -> String {
         local.minute()
     );
     let length = match round.life() {
-        RoundLife::Open => String::new(),
+        RoundLife::Open | RoundLife::Delivered { .. } => String::new(),
         RoundLife::Closed { at, .. } => {
             // A round is never closed before it was opened: the state refuses it when it is read.
             let seconds = u64::try_from((at.as_utc() - opened).whole_seconds()).unwrap_or_default();

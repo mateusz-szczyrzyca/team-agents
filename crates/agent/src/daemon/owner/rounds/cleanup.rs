@@ -65,7 +65,7 @@ impl Owner {
                 return;
             };
             match completion {
-                Completion::Merged { .. } => merged = true,
+                Completion::Merged { .. } | Completion::Delivered { .. } => merged = true,
                 Completion::Listed => {}
             }
         }

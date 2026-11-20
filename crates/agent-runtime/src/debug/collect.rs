@@ -1163,7 +1163,7 @@ fn task_round<'a>(
         } => (pr.branch.as_str().starts_with(&prefix) && run_round.is_none_or(|round| round.item() == Some(item.id())))
             .then_some((item.id(), &pr.branch)),
         ItemPhase::Done {
-            completion: agent_core::state::Completion::Listed,
+            completion: agent_core::state::Completion::Listed | agent_core::state::Completion::Delivered { .. },
         }
         | ItemPhase::Pending
         | ItemPhase::InProgress { .. }

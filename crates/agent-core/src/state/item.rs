@@ -177,6 +177,13 @@ pub enum Completion {
         /// When it was merged.
         at: Timestamp,
     },
+    /// The item was delivered by another pull request of the team.
+    Delivered {
+        /// The pull request that delivered it.
+        pr: PrNumber,
+        /// When it was delivered.
+        at: Timestamp,
+    },
 }
 
 /// Where an item is, with exactly the data that phase has.
@@ -255,6 +262,13 @@ enum CompletionWire {
         /// See [`Completion::Merged`].
         pr: PullRequest,
         /// See [`Completion::Merged`].
+        at: Timestamp,
+    },
+    /// See [`Completion::Delivered`].
+    Delivered {
+        /// See [`Completion::Delivered`].
+        pr: PrNumber,
+        /// See [`Completion::Delivered`].
         at: Timestamp,
     },
 }
@@ -556,6 +570,11 @@ impl CheckedMut<'_, ItemProgress> {
     /// Records the last gate result for the item, replacing the one before.
     pub fn set_gate(&mut self, result: GateResult) {
         self.value.gate = Some(result);
+    }
+
+    /// Completes the item as delivered by another pull request of the team.
+    pub fn complete_delivered(&mut self, pr: PrNumber, at: Timestamp) {
+        self.value.complete_delivered(pr, at);
     }
 }
 
@@ -1031,6 +1050,13 @@ impl ItemProgress {
         check_review_pass(&next).map_err(|source| ReplaceReviewError::Reviews { item, source })?;
         *reviews = next;
         Ok(())
+    }
+
+    /// Completes the item as delivered by another pull request of the team.
+    pub fn complete_delivered(&mut self, pr: PrNumber, at: Timestamp) {
+        self.phase = ItemPhase::Done {
+            completion: Completion::Delivered { pr, at },
+        };
     }
 
     /// Gives an item that is in progress or fixing to another member.

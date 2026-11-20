@@ -197,6 +197,9 @@ impl Round {
     }
 
     /// Closes the round. A round that is closed already stays as it is: whoever calls this checks that.
+    ///
+    /// # Errors
+    /// [`ClosedBeforeOpened`] when `at` is before `opened_at`.
     pub fn close(&mut self, at: Timestamp, how: RoundEnd) -> Result<(), ClosedBeforeOpened> {
         check_close(&self.id, self.opened_at, at)?;
         self.state = RoundLife::Closed { at, how };
@@ -204,15 +207,22 @@ impl Round {
     }
 
     /// Marks the round as delivered by pull request `pr`.
-    pub fn set_delivered(&mut self, _pr: PrNumber) {}
+    pub fn set_delivered(&mut self, pr: PrNumber) {
+        self.state = RoundLife::Delivered { pr };
+    }
 
     /// Closes the round as delivered.
-    pub fn close_delivered(&mut self, _at: Timestamp) -> Result<(), ClosedBeforeOpened> {
-        Ok(())
+    ///
+    /// # Errors
+    /// [`ClosedBeforeOpened`] when `at` is before `opened_at`.
+    pub fn close_delivered(&mut self, at: Timestamp) -> Result<(), ClosedBeforeOpened> {
+        self.close(at, RoundEnd::Delivered)
     }
 
     /// Reopens the round back to open.
-    pub fn reopen(&mut self) {}
+    pub fn reopen(&mut self) {
+        self.state = RoundLife::Open;
+    }
 }
 
 /// Checks that a round opened at `opened_at` may be closed at `at`.

@@ -9,7 +9,7 @@ use super::item::{Completion, ItemMut, ItemPhase, ItemProgress};
 use super::member::{Member, MemberMut, Participant};
 use super::round::{Round, RoundEnd};
 use super::strict::checked;
-use super::values::Timestamp;
+use super::values::{PrNumber, Timestamp};
 use crate::config::RepoName;
 use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::{Keyword, Role, Tier, UnknownKeyword};
@@ -21,7 +21,10 @@ pub use activities::{Activity, ActivityEnd, ActivityOutcome, ActivityRequest};
 mod rounds;
 
 pub(super) use self::legacy::{LegacyError, TeamV1};
-pub use self::rounds::{AdvanceItemError, BeginRunError, CloseRoundError, NewRun, OpenRoundError, RoundsError};
+pub use self::rounds::{
+    AdvanceItemError, BeginRunError, CloseRoundError, DeliverRoundError, NewRun, OpenRoundError, ReopenRoundError,
+    RoundsError,
+};
 
 /// What happens to a pull request that both reviewers approve.
 #[derive(
@@ -660,6 +663,22 @@ impl CheckedMut<'_, Team> {
     /// [`CloseRoundError`].
     pub fn close_round(&mut self, id: &RoundId, at: Timestamp, how: RoundEnd) -> Result<(), CloseRoundError> {
         self.value.close_round(id, at, how)
+    }
+
+    /// See [`Team::deliver_round`].
+    ///
+    /// # Errors
+    /// [`DeliverRoundError`].
+    pub fn deliver_round(&mut self, id: &RoundId, pr: PrNumber) -> Result<(), DeliverRoundError> {
+        self.value.deliver_round(id, pr)
+    }
+
+    /// See [`Team::reopen_round`].
+    ///
+    /// # Errors
+    /// [`ReopenRoundError`].
+    pub fn reopen_round(&mut self, id: &RoundId) -> Result<(), ReopenRoundError> {
+        self.value.reopen_round(id)
     }
 
     /// See [`Team::advance_item`].

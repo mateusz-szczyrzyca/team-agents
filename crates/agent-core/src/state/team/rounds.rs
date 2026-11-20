@@ -17,9 +17,9 @@ use crate::ids::{ItemId, RoundId, RunId, TaskId};
 use crate::kinds::Role;
 use crate::state::item::{AdvanceError, Completion, ItemPhase, ItemProgress, PhaseKind};
 use crate::state::member::Member;
-use crate::state::round::{ClosedBeforeOpened, Round, RoundEnd};
+use crate::state::round::{ClosedBeforeOpened, Round, RoundEnd, RoundLife};
 use crate::state::run::RunError;
-use crate::state::values::{SessionId, Timestamp};
+use crate::state::values::{PrNumber, SessionId, Timestamp};
 
 /// What a run that starts is given, besides the task it starts for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +101,40 @@ pub enum CloseRoundError {
         how: RoundEnd,
         /// The phase of the round's item; none for a round without an item.
         item: Option<PhaseKind>,
+    },
+}
+
+/// Why a round could not be marked as delivered.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DeliverRoundError {
+    /// There is no such round.
+    #[error("there is no round {round}")]
+    NoSuchRound {
+        /// The round.
+        round: RoundId,
+    },
+    /// The round is closed already, and a closed round stays as it is.
+    #[error("round {round} is closed already")]
+    AlreadyClosed {
+        /// The round.
+        round: RoundId,
+    },
+}
+
+/// Why a round could not be reopened.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ReopenRoundError {
+    /// There is no such round.
+    #[error("there is no round {round}")]
+    NoSuchRound {
+        /// The round.
+        round: RoundId,
+    },
+    /// The round is closed already, and a closed round stays as it is.
+    #[error("round {round} is closed already")]
+    AlreadyClosed {
+        /// The round.
+        round: RoundId,
     },
 }
 
@@ -329,6 +363,40 @@ impl Team {
         Ok(())
     }
 
+    /// Marks the round `id` as delivered by pull request `pr`.
+    ///
+    /// # Errors
+    /// [`DeliverRoundError`]: the team has no such round, or it is closed already.
+    pub fn deliver_round(&mut self, id: &RoundId, pr: PrNumber) -> Result<(), DeliverRoundError> {
+        let round = self
+            .rounds
+            .iter_mut()
+            .find(|round| round.id() == id)
+            .ok_or_else(|| DeliverRoundError::NoSuchRound { round: id.clone() })?;
+        if !round.is_open() {
+            return Err(DeliverRoundError::AlreadyClosed { round: id.clone() });
+        }
+        round.set_delivered(pr);
+        Ok(())
+    }
+
+    /// Reopens a delivered round back to open.
+    ///
+    /// # Errors
+    /// [`ReopenRoundError`]: the team has no such round, or it is closed already.
+    pub fn reopen_round(&mut self, id: &RoundId) -> Result<(), ReopenRoundError> {
+        let round = self
+            .rounds
+            .iter_mut()
+            .find(|round| round.id() == id)
+            .ok_or_else(|| ReopenRoundError::NoSuchRound { round: id.clone() })?;
+        if matches!(round.life(), RoundLife::Closed { .. }) {
+            return Err(ReopenRoundError::AlreadyClosed { round: id.clone() });
+        }
+        round.reopen();
+        Ok(())
+    }
+
     /// Moves item `id` to `next`, as [`ItemMut::advance`](crate::state::ItemMut::advance) does, and refuses to take an
     /// item out of `pending` that has no round.
     ///
@@ -377,10 +445,17 @@ fn end_fits(how: RoundEnd, phase: Option<&ItemPhase>) -> bool {
             completion: Completion::Merged { .. }
         })
     );
+    let delivered = matches!(
+        phase,
+        Some(ItemPhase::Done {
+            completion: Completion::Delivered { .. }
+        })
+    );
     match how {
         RoundEnd::Merged => merged,
         RoundEnd::Approved => merged || matches!(phase, Some(ItemPhase::Approved { .. })),
-        RoundEnd::Abandoned | RoundEnd::Delivered => true,
+        RoundEnd::Delivered => delivered,
+        RoundEnd::Abandoned => true,
     }
 }
 

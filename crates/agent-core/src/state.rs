@@ -43,8 +43,8 @@ pub use round::{ClosedBeforeOpened, Round, RoundEnd, RoundLife};
 pub use run::{Run, RunEnd, RunError, RunState};
 pub use team::{
     Activity, ActivityEnd, ActivityOutcome, ActivityRequest, AdvanceItemError, BeginRunError, CloseRoundError, Crew,
-    CrewError, CrewMut, MergeMode, NewRun, OpenRoundError, ReviewerProblem, RoundsError, TaskListText, Team, TeamError,
-    TeamMembers, TeamMut,
+    CrewError, CrewMut, DeliverRoundError, MergeMode, NewRun, OpenRoundError, ReopenRoundError, ReviewerProblem,
+    RoundsError, TaskListText, Team, TeamError, TeamMembers, TeamMut,
 };
 pub use values::{CommitId, InvalidCommitId, InvalidTimestamp, PrNumber, SessionId, Timestamp};
 pub use wake_delivery::WakeDelivery;
@@ -353,6 +353,30 @@ impl State {
             .find(|team| team.round(round).is_some())
             .ok_or_else(|| CloseRoundError::NoSuchRound { round: round.clone() })?
             .close_round(round, at, how)
+    }
+
+    /// Marks the round `round` as delivered by pull request `pr`.
+    ///
+    /// # Errors
+    /// [`DeliverRoundError`], as for [`Team::deliver_round`]; [`DeliverRoundError::NoSuchRound`] when no team has the round.
+    pub fn deliver_round(&mut self, round: &RoundId, pr: PrNumber) -> Result<(), DeliverRoundError> {
+        self.teams
+            .iter_mut()
+            .find(|team| team.round(round).is_some())
+            .ok_or_else(|| DeliverRoundError::NoSuchRound { round: round.clone() })?
+            .deliver_round(round, pr)
+    }
+
+    /// Reopens a delivered round back to open.
+    ///
+    /// # Errors
+    /// [`ReopenRoundError`], as for [`Team::reopen_round`]; [`ReopenRoundError::NoSuchRound`] when no team has the round.
+    pub fn reopen_round(&mut self, round: &RoundId) -> Result<(), ReopenRoundError> {
+        self.teams
+            .iter_mut()
+            .find(|team| team.round(round).is_some())
+            .ok_or_else(|| ReopenRoundError::NoSuchRound { round: round.clone() })?
+            .reopen_round(round)
     }
 
     /// Records that a run of task `task` has started, working for the rounds of `run`.

@@ -409,6 +409,9 @@ fn pull_of(item: &ItemProgress) -> Option<PrNumber> {
         | ItemPhase::Done {
             completion: Completion::Merged { pr, .. },
         } => Some(pr.number),
+        ItemPhase::Done {
+            completion: Completion::Delivered { pr, .. },
+        } => Some(*pr),
         ItemPhase::Pending
         | ItemPhase::InProgress { .. }
         | ItemPhase::Done {

@@ -52,7 +52,7 @@ impl Waiting {
             Self::For(Obligation::SecondOpinion) => include_str!("../../../../prompts/harness/pr/wait-opinion.md"),
             Self::For(Obligation::Human) => include_str!("../../../../prompts/harness/pr/wait-human.md"),
             Self::For(Obligation::LeadCorrection) => include_str!("../../../../prompts/harness/pr/wait-correction.md"),
-            Self::For(Obligation::Merge) => "wrong",
+            Self::For(Obligation::Merge) => include_str!("../../../../prompts/harness/pr/wait-merge.md"),
             Self::Defect => include_str!("../../../../prompts/harness/pr/wait-nothing.md"),
         }
     }

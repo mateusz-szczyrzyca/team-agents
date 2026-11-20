@@ -151,6 +151,9 @@ fn migrated_ending(phase: &ItemPhase, merge: MergeMode, created_at: Timestamp) -
         ItemPhase::Done {
             completion: Completion::Merged { at, .. },
         } => Ending::Closed((*at).max(created_at), RoundEnd::Merged),
+        ItemPhase::Done {
+            completion: Completion::Delivered { at, .. },
+        } => Ending::Closed((*at).max(created_at), RoundEnd::Delivered),
     }
 }
 

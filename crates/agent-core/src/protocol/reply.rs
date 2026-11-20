@@ -335,7 +335,7 @@ impl RoundDetail {
             ItemPhase::Pending
             | ItemPhase::InProgress { .. }
             | ItemPhase::Done {
-                completion: crate::state::Completion::Listed,
+                completion: crate::state::Completion::Listed | crate::state::Completion::Delivered { .. },
             } => None,
         });
         let mut review_passes: Vec<ReviewPass> = progress
