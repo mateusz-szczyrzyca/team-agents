@@ -151,13 +151,8 @@ pub(crate) enum OwnerError {
     #[error("cannot recover the state")]
     Recovery(#[from] RecoveryError),
     /// The renewal of a task that the ladder starts in a new session cannot be recorded.
-    #[error("task {task} cannot be started in a new session")]
-    Renewal {
-        /// The task.
-        task: TaskId,
-        /// What the state refused.
-        source: agent_core::state::RenewalError,
-    },
+    #[error("the ladder's new session cannot be recorded")]
+    Renewal(#[from] agent_core::state::RenewTaskError),
     /// A task that must be in the state is not.
     #[error("task {task} is not in the state")]
     LostTask {
@@ -1357,11 +1352,12 @@ impl Owner {
     /// is recorded in the state at once, so that a restart before its run begins keeps it.
     fn climb(&mut self, task: &TaskId, role: Role, trouble: Trouble, count: u32) -> Result<LadderStep, OwnerError> {
         let config = &self.parts.settings.config;
-        let (_, mut member) = self
+        let member = self
             .parts
             .state
-            .find_task_mut(task)
-            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
+            .member;
         let renewals = Renewals {
             used: member.renewals().map_or(0, agent_core::state::Renewals::used),
             allowed: config.replacement().new_sessions().get(),
@@ -1384,11 +1380,8 @@ impl Owner {
                 .map(agent_core::state::Run::started_at)
                 .filter(|started| started.as_utc() > now.as_utc())
                 .unwrap_or(now);
-            let renewed = member.renew(trouble, at).map_err(|source| OwnerError::Renewal {
-                task: task.clone(),
-                source,
-            })?;
-            // A task whose agent cannot be started anew (a worker) has no step left.
+            let renewed = self.parts.state.renew_task(task, trouble, at)?;
+            // A task with no run to have gone bad has no step left.
             if renewed {
                 LadderStep::NewSession
             } else {

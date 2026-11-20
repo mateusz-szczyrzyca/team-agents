@@ -147,7 +147,7 @@ impl CheckedMut<'_, Member> {
     ///
     /// # Errors
     /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
-    pub fn renew(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
+    pub(crate) fn renew(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
         self.value.renew(trouble, at)
     }
 
@@ -439,16 +439,14 @@ impl Member {
 
     /// Records that the task is started anew, in a new session, after `trouble` made the runs of the session it had go
     /// bad: the runs before the new one are not counted or resumed any more, and the new session's run starts in no
-    /// session. A worker or a reviewer is never started anew, and a task whose session had no run to go bad from.
+    /// session. A task with no run to have gone bad is not started anew. Only [`State::renew_task`](super::State::renew_task)
+    /// calls it, after it refused the roles that are never started anew (a worker, a reviewer).
     ///
     /// Returns whether the task was started anew: `false` when nothing changed.
     ///
     /// # Errors
     /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
-    pub fn renew(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
-        if !matches!(self.agent.tier(), Tier::Normal | Tier::Investigator) || self.runs.is_empty() {
-            return Ok(false);
-        }
+    pub(crate) fn renew(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
         let Some(last) = self.runs.last() else {
             return Ok(false);
         };
