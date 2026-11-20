@@ -203,6 +203,7 @@ async fn a_run_asks_the_daemon_for_the_team_and_prints_what_started() {
             Request::Run(_) => Reply::Started {
                 team: team_id(0),
                 tasks: vec![task(1), task(2), task(3)],
+                shared: Vec::new(),
             },
             Request::Show(show) => {
                 assert_eq!(show.target, Target::Team(team_id(0)));

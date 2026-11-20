@@ -350,7 +350,7 @@ impl Fixture {
     /// Starts a team and returns its ID and tasks.
     async fn start_team(&self, agents: &[&str], list: &str) -> (TeamId, Vec<TaskId>) {
         let reply = self.run(agents, list, None).await.unwrap();
-        let Reply::Started { team, tasks } = reply else {
+        let Reply::Started { team, tasks, .. } = reply else {
             panic!("a team was expected to start: {reply:?}")
         };
         (team, tasks)
@@ -2104,7 +2104,7 @@ async fn allowed_unpushed_base_is_reported_and_survives_daemon_restart() {
     f.start().await;
     let mut request = f.request(&["claude-1"], PLAIN, None);
     request.allow_unpushed_base = true;
-    let Reply::Started { team, tasks } = f.run_request(request).await.unwrap() else {
+    let Reply::Started { team, tasks, .. } = f.run_request(request).await.unwrap() else {
         panic!("expected started")
     };
     f.stop().await.unwrap();

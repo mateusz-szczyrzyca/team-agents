@@ -248,6 +248,7 @@ fn daemon_that_starts(dir: &tempfile::TempDir) -> FakeDaemon {
             Command::Run(_) => Reply::Started {
                 team: team_id(0),
                 tasks: vec![task(1), task(2), task(3)],
+                shared: Vec::new(),
             },
             Command::Show(show) => {
                 assert_eq!(show.target, Target::Team(team_id(0)));
@@ -565,6 +566,7 @@ async fn a_start_that_the_daemon_answers_after_the_ordinary_request_timeout_is_w
                 Reply::Started {
                     team: team_id(0),
                     tasks: vec![task(1), task(2), task(3)],
+                    shared: Vec::new(),
                 },
             ),
             Command::Show(_) => (

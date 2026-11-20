@@ -718,6 +718,7 @@ mod tests {
                 Reply::Started {
                     team: team_id(1),
                     tasks: vec![task(1), task(2)],
+                    shared: Vec::new(),
                 },
                 json!({"kind": "started", "team": TEAM, "tasks": ["task-20261111-153001-k3x9", TASK]}),
             ),
