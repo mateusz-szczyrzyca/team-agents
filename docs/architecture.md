@@ -593,7 +593,15 @@ the human is asked. A reviewer that cannot give its review is replaced (above), 
 - **Merge.** In autopilot the pull request is read from GitHub and merged with a merge commit at the head it carries (a merge
   made elsewhere or by the human completes the items as well); the items are `done`, the base branch is fetched, and the next
   item starts from the remote's base when it is ahead of the checkout's, so that it builds on what was merged. A merge GitHub
-  refuses for a reason waiting does not change is told once with GitHub's reason and not tried again; a pull request closed
+  refuses for a reason waiting does not change is told once with GitHub's reason and not tried again. A refusal that names a
+  conflict with the base (a 405 saying the pull request has merge conflicts, is not mergeable, or whose base was modified) is
+  a merge conflict pass instead while `[merge] conflict_passes` allows one: the item keeps `merge_conflict` in its state
+  (`merging_base` with the approved head, or `asking_human`), the lead is woken with `harness/pr/merge-conflict.md`, and the
+  pass is judged when the lead is done: a tip that merges the base and passes the gate is pushed, the files the lead changed
+  beyond the base merge are checked against `Allow:`; the merge is tried again when they are allowed, the review is reopened
+  when they are not (a full review of the pull request, not only of the change), and the lead is asked to put the question
+  in its questions file (`harness/pr/merge-conflict-ask.md`) when the passes are spent or it gives no result. The pass is
+  read from the state, so a restart goes on from it; a pull request closed
   without a merge is told once. An approved pull request that waits is read again every 30 seconds.
 - **`--no-merge`.** Nothing is merged: the human is told once that the pull request is approved. The next item of the feature
   starts at the approval; what depends on the pull request waits until it is merged, which the daemon finds when it reads it.
