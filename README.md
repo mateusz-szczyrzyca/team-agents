@@ -659,12 +659,15 @@ session in each. A direct message (`send_message` to a name) sent from a session
 in that team only: it wakes only that task, and only that session reads it. Each session of an agent has its own read
 cursor, so reading in one team does not mark the other team's messages as read. A message to a name that is not a
 member of the sender's team is refused, and the refusal lists the members. The exceptions are the human, `agentbus`, a
-running or configured agent, and the worker of one of the sender's requests. A session outside any team, and
-`agentbus send`, write to an agent in one open team in that team; to an agent in several open teams they must name the
-task (`send_message` with the task ID in `to`, `agentbus send --task <task>` or `--team <id>`), otherwise the message
-is refused with the tasks to choose from. Messages to `team` and to `all` are delivered as before. Messages written
-before 0.29.0 name no team and are read as before. A reservation belongs to the agent's task that took it: the
-agent's run in another team cannot release it, and it is freed when the run that holds it ends.
+running or configured agent, and the worker of one of the sender's open requests, as long as that name is in no open
+team. A session outside any team (a solo task among them), and `agentbus send`, write to an agent in one open team in
+that team; to an agent in several open teams they must name the task (`send_message` with the task ID in `to`,
+`agentbus send --task <task>` or `--team <id>`), otherwise the message is refused with the tasks to choose from — also
+when the agent runs or is configured. `agentbus send --for-task <task>` writes to the session of that task alone, a
+solo task too; `agent say <task>` uses it. The history of `read_messages` and `read_message` by number do not show a
+session the messages of the agent's other teams or tasks. Messages to `team` and to `all` are delivered as before.
+Messages written before 0.30.0 name no team or task and are read as before. A reservation belongs to the agent's task
+that took it: the agent's run in another team cannot release it, and it is freed when the run that holds it ends.
 
 ## Development and tests
 

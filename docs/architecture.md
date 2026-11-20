@@ -1020,8 +1020,9 @@ on the bus) or to each of its agents (a solo task has no team on the bus), and w
 look at its team. A task that is done hears nothing; the bus being down refuses the command, with the reason.
 A word to a task of a team on the bus goes with `agentbus send --team <team>`, and so do the notices the daemon writes
 to a member (`member_finished`, the answer to a request): an agent can be in several open teams, with a session in
-each, and the bus delivers a message bound to a team to the session of that team only. The bus refuses a direct message
-that names no team when its agent is in more than one open team.
+each, and the bus delivers a message bound to a team to the session of that team only. A word to a task whose team is
+not on the bus (a solo task) goes with `agentbus send --for-task <task>`, which binds it to that task's session alone.
+The bus refuses a direct message that names no team when its agent is in more than one open team.
 
 `run` answers with the agents of the new crew that are also in the crew of a team that is not finished, and whose task
 there is not done (`shared` of the `started` reply, absent when there is none); the CLI prints a line for each. The
