@@ -2370,3 +2370,37 @@ async fn the_worktrees_of_a_new_team_keep_the_plan_out_of_git() {
         assert_eq!(listed, "", "{task}");
     }
 }
+
+#[tokio::test]
+async fn a_plan_committed_by_mistake_leaves_the_branch_keeps_its_file_and_the_task_ends_done() {
+    let mut f = Fixture::new(&[
+        normal("claude-1", "script:commit-plan"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+    ]);
+    let scripts = f.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("commit-plan.sh"),
+        "mkdir -p .agent\nprintf 'Plan — zażółć.\\n' > .agent/plan.md\ngit add -f .agent/plan.md\n\
+         git commit -q -m 'Commit the plan by mistake'\n",
+    )
+    .unwrap();
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["claude-1"], PLAIN).await;
+    f.status_is(&tasks[0], TaskStatus::Done).await;
+    f.stop().await.unwrap();
+
+    let worktree = f.worktree(&tasks[0]);
+    assert_eq!(git(&worktree, &["ls-tree", "--name-only", "HEAD", "--", ".agent"]), "");
+    assert_eq!(git(&worktree, &["ls-files", "--", ".agent"]), "");
+    assert_eq!(
+        git(&worktree, &["log", "-2", "--format=%s"]),
+        "Keep the plan out of the delivery\nCommit the plan by mistake"
+    );
+    assert_eq!(
+        std::fs::read_to_string(worktree.join(".agent/plan.md")).unwrap(),
+        "Plan — zażółć.\n"
+    );
+}
