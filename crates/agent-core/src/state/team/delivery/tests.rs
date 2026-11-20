@@ -126,3 +126,25 @@ fn delivery_metadata_cannot_forge_team_ownership_or_item_phase_when_read() {
     value["items"][2]["phase"] = serde_json::json!({"phase": "pending"});
     crate::state::fixtures::assert_refused::<Team>(&value);
 }
+
+#[test]
+fn delivery_refuses_prs_owned_only_by_abandoned_or_approved_rounds() {
+    for end in [RoundEnd::Abandoned, RoundEnd::Approved] {
+        let mut team = working();
+        team.close_round(&round_id(1), at(30), end).unwrap();
+        let before = team.clone();
+        assert_eq!(
+            team.deliver_round(&round_id(2), pr(7).number),
+            Err(DeliveryError::NoTeamPr { number: pr(7).number })
+        );
+        assert_eq!(team, before);
+    }
+}
+
+#[test]
+fn delivery_round_details_show_the_owning_pr_while_the_item_is_working() {
+    let mut team = working();
+    team.deliver_round(&round_id(2), pr(7).number).unwrap();
+    let detail = crate::protocol::RoundDetail::new(&team, team.round(&round_id(2)).unwrap(), Vec::new());
+    assert_eq!(detail.pr, Some(pr(7)));
+}
