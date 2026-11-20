@@ -256,6 +256,8 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `bus_down` | `warn` | An `agentbus` operation fails and what waits for it is retried or dropped; also a member that did not read the message it was woken for `limits.wake_ups_per_message` times is not woken for it again (`task`, `message_id`, `from`, `wake_ups`). |
 | `git_call_failed` | `warn` | A `git` call, worktree operation or branch operation fails or is retried. |
 | `github_call_failed` | `warn` | A GitHub API call, a publication or a merge fails or is retried, or the home has no GitHub token. |
+| `github_step_waiting` | `warn` | A step of a round that calls GitHub or git fails and waits: once when it starts to wait, with `team`, `operation`, `pr`, `outlook` (`may_pass` or `will_not_pass`), `next_try` (empty for a refusal) and the `detail` line `agent status` shows. |
+| `github_step_resumed` | `info` | A step of a round that waited for GitHub goes through, once, with `team` and `operation`. |
 | `gate_cannot_start` | `warn` | A gate command cannot start or be recorded. |
 | `gate_timed_out` | `warn` | A gate command exceeds its timeout and is killed. |
 | `gate_dirty_tree` | `warn` | A gate runs on or leaves a dirty worktree or moves `HEAD`. |
@@ -282,6 +284,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `questions_answered` | `info` | The open questions of a task are answered, with `number` and `channel`. |
 | `control_used` | `info` | The human used a control (stop, pause, unpause, resume), with `action` and the number of `tasks` it reached. |
 | `checks_decided` | `info` | The checks before a review send a round back to its team, ask the human, or take the human's answer, with `outcome`. |
+| `github_step_resumed` | `info` | A step of a round that waited for GitHub goes through, once, with `team` and `operation`. |
 | `reviews_requested` | `info` | The reviews of a pull request are asked for, with `pr` and the number of `reviewers`. |
 | `review_report_late` | `info` | A reviewer's report comes when no review waits for it: it is kept or left out, and changes nothing. |
 | `notification_sent` | `info` | A notification for the human is delivered, with the `file` it was written to. |
