@@ -110,3 +110,14 @@ func bindingIn(b *Bus, to string, where sendWhere) (string, string, *CmdSendErro
 	}
 	return recipient, team, failure
 }
+
+func TestSendWithATaskToTheSenderItselfIsRefused(t *testing.T) {
+	b := newBus(t)
+	twoTeams(t, b)
+
+	_, _, err := bindingIn(b, "human", sendWhere{task: "task-codex-1-a"})
+
+	if err == nil || err.Cause != CmdSendToSelf {
+		t.Fatalf("got %v, want ToSelf", err)
+	}
+}
