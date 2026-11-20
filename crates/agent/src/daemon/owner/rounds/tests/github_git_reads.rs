@@ -308,7 +308,6 @@ async fn a_fix_response_whose_read_of_the_lead_s_commit_fails_waits_and_is_read_
     resume_team(&rig, &team).await;
     rig.wait_for("the read goes through", || times(&rig, LogEvent::GithubStepResumed) > 0)
         .await;
-    rig.stop().await.unwrap();
-
     assert_eq!(times(&rig, LogEvent::DaemonTaskFailed), 0);
+    rig.stop().await.unwrap();
 }
