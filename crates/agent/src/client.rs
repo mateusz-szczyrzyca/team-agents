@@ -149,8 +149,9 @@ impl Connection {
 
     /// Sends `command` like [`Connection::request`] and waits for the answer for as long as the daemon takes.
     ///
-    /// For a command whose answer comes when work is over: a gate waits for the gates asked before it, and then runs.
-    /// The wait is bounded by the daemon (its queue and the timeout of the gate), and a daemon that ends closes the
+    /// For a command whose answer comes when work is over: a gate waits for the gates asked before it, and then runs;
+    /// a start fetches the base from `origin` first. The wait is bounded by the daemon (its queue, the timeout of the
+    /// gate, the timeout of the fetch), and a daemon that ends closes the
     /// connection, which [`ClientError::Closed`] reports.
     ///
     /// # Errors

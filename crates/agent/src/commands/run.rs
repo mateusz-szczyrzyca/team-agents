@@ -317,7 +317,11 @@ pub(crate) async fn start(
     out: &mut impl Write,
 ) -> Result<(), RunError> {
     let warning = rotation_warning(home, &request.agents).await?;
-    let reply = connection.request(Client::Cli, Command::Run(request)).await?;
+    // The daemon fetches the base from `origin` before it starts anything, which may take longer than an ordinary
+    // request: it bounds that wait itself, and a client that gave up first would hide a team that starts anyway.
+    let reply = connection
+        .request_until_answered(Client::Cli, Command::Run(request))
+        .await?;
     let Reply::Started { team, .. } = reply else {
         return Err(RunError::UnexpectedReply { kind: kind_of(&reply) });
     };
