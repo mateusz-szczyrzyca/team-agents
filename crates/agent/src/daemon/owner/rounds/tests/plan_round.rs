@@ -89,3 +89,55 @@ async fn a_run_goes_back_for_a_step_to_do_then_for_a_lost_step_and_goes_on_when_
         .collect();
     assert_eq!(texts, ["[ ] 1.2 Fix it", "[x] 1.1 Find it", "    It was fixed by 1.1."]);
 }
+
+#[tokio::test]
+async fn the_same_done_after_a_send_back_for_a_lost_step_goes_back_again() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:unfinished,script:lost,script:lost,script:settled"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 3\n"),
+    )
+    .unwrap();
+    plan_script(
+        &rig,
+        "unfinished",
+        "Fix it.\n\n1. Work\n[x] 1.1 Find it\n[ ] 1.2 Fix it\n",
+    );
+    plan_script(&rig, "lost", "Fix it.\n\n1. Work\n[x] 1.1 Find it\n");
+    plan_script(
+        &rig,
+        "settled",
+        "Fix it.\n\n1. Work\n[x] 1.1 Find it\n[-] 1.2 Fix it\n    It was fixed by 1.1.\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], "Fix the typo.", MergeMode::NoMerge, None).await;
+    let fourth = rig.prompt(&tasks[0], 4).await;
+    let state = rig
+        .state_where("the plan settled after four runs", |state| {
+            state.find_task(&tasks[0]).is_some_and(|found| {
+                found.member.status() != TaskStatus::Running
+                    && found.member.status() != TaskStatus::Queued
+                    && found.member.runs().len() == 4
+            })
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        fourth.contains("another step now: 1.2. A step is never deleted"),
+        "{fourth}"
+    );
+    let keeping = state.find_task(&tasks[0]).unwrap().member.plan().unwrap().clone();
+    assert_eq!((keeping.sent_back(), keeping.pending()), (3, None));
+}
