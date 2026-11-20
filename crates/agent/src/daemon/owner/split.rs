@@ -278,8 +278,32 @@ impl Owner {
 
 /// The approving-verdict example for a submission that cannot be read: the parts it contains, cut down to the
 /// fields an approving verdict accepts, so the human can correct and approve them.
-fn unreadable_example(_text: &str, item: ItemId) -> serde_json::Value {
-    serde_json::json!({"parent": item, "parts": []})
+fn unreadable_example(text: &str, item: ItemId) -> serde_json::Value {
+    /// The part fields an approving verdict accepts; anything else would make the verdict invalid.
+    const VERDICT_FIELDS: [&str; 6] = ["title", "delivers", "checks", "depends_on", "estimate", "tier"];
+    let parts: Vec<serde_json::Value> = match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(value) => value
+            .get("parts")
+            .and_then(serde_json::Value::as_array)
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(serde_json::Value::as_object)
+                    .map(|part| {
+                        serde_json::Value::Object(
+                            part.iter()
+                                .filter(|(name, _)| VERDICT_FIELDS.contains(&name.as_str()))
+                                .map(|(name, field)| (name.clone(), field.clone()))
+                                .collect(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        // Text that is not JSON has no parts to keep; the question quotes it as submitted.
+        Err(_) => Vec::new(),
+    };
+    serde_json::json!({"parent": item, "parts": parts})
 }
 
 /// Preserves a known faulty part identity while retaining the parser's cause in diagnostics.
