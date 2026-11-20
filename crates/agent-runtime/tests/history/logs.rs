@@ -787,3 +787,51 @@ fn warning_coalescing_lookup_uses_its_equivalence_index_at_scale() {
         "warning lookup does not use its equivalence index: {plan}"
     );
 }
+
+#[test]
+fn a_history_of_version_ten_keeps_its_log_and_takes_every_event_of_the_daemon_once_it_is_opened() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let before: Vec<_> = MIGRATIONS
+        .iter()
+        .copied()
+        .filter(|migration| migration.version <= 10)
+        .collect();
+    let mut old = HistoryDb::open_with(&path, &before, roomy()).unwrap();
+    let record = |seconds: i64, event: LogEvent, message: &str| LogRecord {
+        at: at(seconds, 0),
+        module: "agent::daemon".to_owned(),
+        event,
+        team: None,
+        task: None,
+        message: message.to_owned(),
+        fields: BTreeMap::new(),
+        cut: Cut::default(),
+    };
+    old.write_logs(&[record(1, LogEvent::BusDown, "kept from version ten — ünïcode")])
+        .unwrap();
+    drop(old);
+
+    let mut opened = HistoryDb::open(&path, roomy()).unwrap();
+    let every: Vec<LogRecord> = LogEvent::ALL
+        .iter()
+        .zip(2_i64..)
+        .map(|(event, seconds)| record(seconds, *event, event.as_str()))
+        .collect();
+    opened.write_logs(&every).unwrap();
+    drop(opened);
+
+    let logs = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    let mut events: Vec<(LogEvent, String)> = logs
+        .iter()
+        .map(|entry| (entry.event(), entry.message().to_owned()))
+        .collect();
+    events.sort_by(|left, right| left.1.cmp(&right.1));
+    let mut expected: Vec<(LogEvent, String)> = LogEvent::ALL
+        .iter()
+        .map(|event| (*event, event.as_str().to_owned()))
+        .chain([(LogEvent::BusDown, "kept from version ten — ünïcode".to_owned())])
+        .collect();
+    expected.sort_by(|left, right| left.1.cmp(&right.1));
+    assert_eq!(events, expected);
+}

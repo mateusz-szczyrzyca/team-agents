@@ -1,6 +1,7 @@
 //! The merge: reading an approved pull request, merging it in autopilot, telling the human what the team does not do by
 //! itself, and completing the items of a pull request that is merged.
 
+use super::waiting::WaitingStep;
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, TeamId};
 use agent_core::log::LogEvent;
@@ -98,13 +99,14 @@ impl Owner {
                 .filter(|item| matches!(item.phase(), ItemPhase::Fixing { .. }))
                 .cloned();
             if let Some(item) = fixing {
-                let git = self
-                    .worktree_git(&lead.repo, &lead.task, &lead.agent)
-                    .map_err(super::OpinionDaemonError::from)?;
-                let head = git
-                    .rev_parse(&agent_runtime::git::Revision::Head)
-                    .await
-                    .map_err(super::OpinionDaemonError::from)?;
+                let place = self.place_of(team_id, &items);
+                let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent);
+                let Some(head) = self
+                    .head_of(&place, team_id, WaitingStep::ReadMergeHead, Some(pr.number), git)
+                    .await?
+                else {
+                    continue;
+                };
                 if item
                     .findings()
                     .and_then(|ledger| ledger.verification())

@@ -192,6 +192,10 @@ pub enum LogEvent {
     OutsideCallCompleted,
     /// The other end of an answer (a client of the socket, or a task of the daemon) was gone before the answer.
     PeerGone,
+    /// A step of the owner that calls GitHub or git failed and waits to be tried again.
+    GithubStepWaiting,
+    /// A step of the owner that waited for GitHub or git goes through.
+    GithubStepResumed,
 }
 
 impl Keyword for LogEvent {
@@ -226,6 +230,7 @@ impl LogEvent {
             | Self::BusDown
             | Self::GitCallFailed
             | Self::GithubCallFailed
+            | Self::GithubStepWaiting
             | Self::GateCannotStart
             | Self::GateTimedOut
             | Self::GateDirtyTree
@@ -246,6 +251,7 @@ impl LogEvent {
             | Self::QuestionsAnswered
             | Self::ControlUsed
             | Self::ChecksDecided
+            | Self::GithubStepResumed
             | Self::ReviewsRequested
             | Self::ReviewReportLate
             | Self::NotificationSent

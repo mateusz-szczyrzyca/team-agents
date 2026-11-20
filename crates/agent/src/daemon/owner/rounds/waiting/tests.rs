@@ -359,3 +359,65 @@ async fn a_failed_reviewer_that_is_not_yet_looked_at_for_replacement_waits_for_t
 
     assert_eq!(found, Some(Obligation::Human));
 }
+
+#[tokio::test]
+async fn a_turn_of_the_owner_forgets_the_waits_of_closed_rounds_and_of_closed_or_gone_teams() {
+    use super::{Step, WaitingStep};
+    use agent_core::state::RoundEnd;
+    use agent_runtime::github::Outlook;
+
+    let mut state = team_state();
+    let team = team_id(0);
+    let open: RoundId = "round-20261120-070000-open".parse().unwrap();
+    let closed: RoundId = "round-20261120-070000-shut".parse().unwrap();
+    state
+        .open_round(&team, closed.clone(), Some("1.1".parse().unwrap()), at(1))
+        .unwrap();
+    state.close_round(&closed, at(2), RoundEnd::Abandoned).unwrap();
+    state
+        .open_round(&team, open.clone(), Some("1.2".parse().unwrap()), at(2))
+        .unwrap();
+    let gone: TeamId = "team-20261120-070000-gone".parse().unwrap();
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let places = [
+        Step::Round { round: open.clone() },
+        Step::Round { round: closed },
+        Step::Team { team: team.clone() },
+        Step::Team { team: gone },
+    ];
+    for place in &places {
+        owner
+            .watch
+            .github_waits
+            .failed(
+                place,
+                &team,
+                WaitingStep::AskOpinion,
+                None,
+                "refused with status 404".to_owned(),
+                Outlook::WillNotPass,
+                at(3),
+            )
+            .unwrap();
+    }
+
+    owner.team_life().await.unwrap();
+
+    let kept = |owner: &crate::daemon::owner::Owner| {
+        places
+            .iter()
+            .filter(|place| !owner.watch.github_waits.due(place, WaitingStep::AskOpinion, at(4)))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        kept(&owner),
+        vec![Step::Round { round: open.clone() }, Step::Team { team: team.clone() }]
+    );
+
+    owner.closed.insert(team.clone());
+    owner.team_life().await.unwrap();
+
+    assert_eq!(kept(&owner), vec![Step::Round { round: open }]);
+}

@@ -49,6 +49,7 @@ use crate::daemon::checks::ChecksTextError;
 use crate::daemon::pr::PullTextError;
 use crate::daemon::questions::QuestionsProblem;
 use crate::daemon::team::agent_name;
+use waiting::{Step, WaitingStep};
 
 /// Why the autopilot cannot be set up from the settings.
 #[derive(Debug, thiserror::Error)]
@@ -148,6 +149,11 @@ pub(super) struct PullWatch {
     gate_sent_back: HashMap<TaskId, u32>,
     /// The pull requests whose merge GitHub refused: they are not merged again, only looked at for the human's merge.
     refused: HashSet<(TeamId, PrNumber)>,
+    /// The steps that call GitHub or git and failed: what each waits for, and until when.
+    pub(super) github_waits: waiting::Waits,
+    /// The final messages of the verifiers whose verdict waits for git to read the commit they verified, by task:
+    /// each is taken again at a later look, as when the run ended.
+    held_verdicts: HashMap<TaskId, String>,
 }
 
 impl PullWatch {
@@ -254,6 +260,15 @@ pub(super) enum Announcement {
         branch: BranchName,
         /// The tip the gate does not pass at.
         tip: agent_core::state::CommitId,
+    },
+    /// GitHub refuses a step of the team's round that will not pass until something is fixed.
+    GithubRefused {
+        /// The team.
+        team: TeamId,
+        /// The round, or the team's rounds as a whole, the step belongs to.
+        place: Step,
+        /// The step.
+        operation: WaitingStep,
     },
 }
 
@@ -386,6 +401,8 @@ pub(super) enum AutopilotNotice {
     Approved,
     /// Pull request merge failed.
     MergeFailed,
+    /// GitHub refuses a step of a round that will not pass until the human fixes something.
+    GithubRefused,
     /// Pull request merged.
     Merged,
 }
@@ -407,6 +424,7 @@ impl AutopilotNotice {
             Self::Closed => AutopilotPrompt::NoticeClosed,
             Self::Approved => AutopilotPrompt::NoticeApproved,
             Self::MergeFailed => AutopilotPrompt::NoticeMergeFailed,
+            Self::GithubRefused => AutopilotPrompt::NoticeGithubRefused,
             Self::Merged => AutopilotPrompt::NoticeMerged,
         }
     }
@@ -418,7 +436,7 @@ impl AutopilotNotice {
             Self::Decision | Self::ResponseRefused | Self::ReportRefused => NoticeKind::Decision,
             Self::NoVerdict => NoticeKind::NoVerdict,
             Self::Opinion => NoticeKind::Opinion,
-            Self::PublishFailed | Self::HandoverHeld => NoticeKind::PublishFailed,
+            Self::PublishFailed | Self::HandoverHeld | Self::GithubRefused => NoticeKind::PublishFailed,
             Self::TeamAsleep | Self::StandingItem => NoticeKind::TeamAsleep,
             Self::Closed => NoticeKind::Closed,
             Self::Approved => NoticeKind::Approved,
@@ -451,16 +469,32 @@ impl Owner {
         let Some(pulls) = self.pulls.clone() else {
             return Ok(());
         };
-        self.refresh_descriptions(&pulls, team)
-            .await
-            .map_err(OpinionDaemonError::from)?;
+        let now = Timestamp::now(&self.parts.clock)?;
+        let refresh = Step::Team { team: team.clone() };
+        if self
+            .watch
+            .github_waits
+            .due(&refresh, WaitingStep::RefreshDescriptions, now)
+        {
+            match self.refresh_descriptions(&pulls, team).await {
+                Err(error) => {
+                    self.github_step_failed(&refresh, team, WaitingStep::RefreshDescriptions, None, &error)?;
+                }
+                Ok(()) => self.github_step_done(&refresh, team, WaitingStep::RefreshDescriptions),
+            }
+        }
+        self.take_held_verdicts(team).await?;
         self.merge_approved(&pulls, team, look).await?;
         self.read_fix_responses(&pulls, team, look).await?;
         self.replace_silent_opinions(&pulls, team, Timestamp::now(&self.parts.clock)?)
             .await?;
         self.ask_opinions(&pulls, team, look).await?;
         self.continue_opinions(&pulls, team, look)?;
-        self.publish_branches(&pulls, team, look).await?;
+        // While the merge of an approved pull request waits to read the lead's commit, its item stays as it is: a
+        // publication would take the unread commit for a new fix and ask for another review.
+        if !self.watch.github_waits.holds(team, WaitingStep::ReadMergeHead) {
+            self.publish_branches(&pulls, team, look).await?;
+        }
         self.ask_for_reviews(team, look).await?;
         self.replace_reviewers(&pulls, team, look).await?;
         self.deliver_reviews(team, look)?;
@@ -704,6 +738,12 @@ mod checks_tests;
 #[path = "rounds/tests/fake_github.rs"]
 mod fake_github;
 #[cfg(test)]
+#[path = "rounds/tests/github_git_reads.rs"]
+mod github_git_reads_tests;
+#[cfg(test)]
+#[path = "rounds/tests/github_waits.rs"]
+mod github_waits_tests;
+#[cfg(test)]
 #[path = "rounds/tests/history_events.rs"]
 mod history_events_tests;
 #[cfg(test)]
@@ -806,17 +846,6 @@ mod reviewer_activity_tests;
 #[cfg(test)]
 #[path = "rounds/tests/wake_ups.rs"]
 mod wake_ups_tests;
-
-/// Failure to retain a reviewer's commit for subsequent verification.
-#[derive(Debug, thiserror::Error)]
-#[error("cannot retain the reviewed commit of task {task}")]
-pub(crate) struct ReviewedHeadError {
-    /// The reviewer whose worktree carries the commit.
-    task: TaskId,
-    /// The failed worktree or git operation.
-    #[source]
-    source: PublishError,
-}
 
 #[cfg(test)]
 #[path = "rounds/tests/opinions.rs"]

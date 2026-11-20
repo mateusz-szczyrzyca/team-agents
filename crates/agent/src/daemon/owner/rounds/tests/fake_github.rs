@@ -85,6 +85,10 @@ struct World {
     merge: MergeAnswer,
     /// The status the posting of a review is refused with, if it is.
     review_refusal: Option<u16>,
+    /// The answer every call gets while GitHub is down: its status and message.
+    outage: Option<(u16, String)>,
+    /// The calls answered with a failure while the rest are answered: method, exact target and status.
+    failing: Vec<(String, String, u16)>,
 }
 
 /// A running fake GitHub; it stops when it is dropped.
@@ -111,6 +115,8 @@ impl FakeGitHub {
             seen: Vec::new(),
             merge: MergeAnswer::Allow,
             review_refusal: None,
+            outage: None,
+            failing: Vec::new(),
         }));
         let accept_loop = tokio::spawn(accept_loop(listener, Arc::clone(&world)));
         Ok(Self {
@@ -170,6 +176,31 @@ impl FakeGitHub {
     /// Makes the posting of a review be refused with `status` from now on.
     pub(super) fn refuse_reviews(&self, status: u16) {
         self.world().review_refusal = Some(status);
+    }
+
+    /// Makes every call fail with `status` from now on, as an API that cannot be reached or is overloaded does.
+    pub(super) fn fail_every_call(&self, status: u16) {
+        self.world().outage = Some((status, "Service Unavailable".to_owned()));
+    }
+
+    /// Makes every `method` call of `target` (the exact path) fail with `status` from now on, while the other calls
+    /// are answered: one call of GitHub that times out or is refused, and not the whole API.
+    pub(super) fn fail_calls_to(&self, method: &str, target: &str, status: u16) {
+        self.world()
+            .failing
+            .push((method.to_owned(), target.to_owned(), status));
+    }
+
+    /// Answers the `method` calls of `target` again.
+    pub(super) fn answer_calls_to(&self, method: &str, target: &str) {
+        self.world()
+            .failing
+            .retain(|(failing, path, _)| !(failing == method && path == target));
+    }
+
+    /// Answers every call again.
+    pub(super) fn answer_again(&self) {
+        self.world().outage = None;
     }
 
     /// Makes a merge be answered as `answer` from now on.
@@ -306,6 +337,18 @@ fn head_filter(query: &str) -> Option<String> {
 
 /// Answers `request` as GitHub would.
 fn route(world: &mut World, method: &str, target: &str, body: &str) -> Answer {
+    // While GitHub is down, or this call is made to fail, nothing of the world changes: the call is only seen.
+    let failing = world
+        .failing
+        .iter()
+        .find(|(failing, path, _)| failing == method && path == target)
+        .map(|(_, _, status)| (*status, "Service Unavailable".to_owned()));
+    if let Some((status, message)) = world.outage.clone().or(failing) {
+        return Answer {
+            status,
+            body: json!({"message": message}),
+        };
+    }
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
     let body: Value = serde_json::from_str(body).unwrap_or(Value::Null);
     let pulls_path = format!("/repos/{SLUG}/pulls");

@@ -912,6 +912,8 @@ fn emit_the_names_of_the_daemon_causes(daemon: &Daemon) {
         LogEvent::QuestionsFileOpened,
         LogEvent::PeerGone,
         LogEvent::BuildDirectoryRemoved,
+        LogEvent::GithubStepWaiting,
+        LogEvent::GithubStepResumed,
     ] {
         daemon.clock.advance(time::Duration::seconds(1));
         match variant.level() {
@@ -1415,6 +1417,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     observed.insert(LogEvent::DaemonPanicked);
     super::daemon_log_cause_tests::record_named_daemon_causes(&mut observed).await;
     super::disk_tests::record_build_directory_removed(&mut observed).await;
+    super::github_waits_tests::record_github_step_events(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
     assert_eq!(
