@@ -17,6 +17,9 @@
 #                   for `.fake-gate-done-N` (N is the number of the run; the test creates it once the daemon ran the gate), then
 #                   ends with STATUS: DONE: the gate that gates the commit is the daemon's own
 #   integrate-gated  integrates like `integrate` and waits for the daemon's gate like `gated`
+#   merge-base       as the lead of a merge conflict: waits until the test says the base moved (`.fake-base-ready`), merges
+#                   `origin/main` into the branch and ends with STATUS: DONE
+#   merge-base-other  like `merge-base`, and then commits a file of its own, `resolved.txt`, which the task does not allow
 #   lead-gated      integrates like `integrate`, or commits a fix when the prompt is a fix pass; waits for the daemon's gate
 #   late:TEXT       waits until the other reviewer of the pass has its verdict in `state.json`, then ends with TEXT and STATUS: DONE
 #   work            commits a file in the worktree, records that the repository's gate passed at the new head (the file
@@ -518,6 +521,23 @@ case $action in
     commit_work
     wait_for_gate
     result 'Committed, and the gate ran.\nSTATUS: DONE'
+    ;;
+  merge-base|merge-base-other)
+    # Waits until the test moved the base on `origin` (`.fake-base-ready`), then merges it as a lead of a merge conflict
+    # does: the merge makes a commit, and `merge-base-other` resolves a conflict in a file the task does not allow.
+    hide_own_files
+    for _ in $(seq 300); do
+      [[ -e .fake-base-ready ]] && break
+      sleep 0.1
+    done
+    git fetch -q origin main
+    git "${GIT_FIXTURE[@]}" merge -q --no-ff --no-edit origin/main
+    if [[ $action == merge-base-other ]]; then
+      echo "resolved" > resolved.txt
+      git add resolved.txt
+      git "${GIT_FIXTURE[@]}" commit -q -m "Resolve the conflict in a file of the task's own"
+    fi
+    result 'Merged the base.\nSTATUS: DONE'
     ;;
   integrate-gated)
     # Integrates like `integrate`, and waits for the gate of the daemon like `gated`.
