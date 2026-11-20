@@ -184,3 +184,58 @@ async fn human_merges_release_three_parts_across_restart_without_closing_on_appr
     rig.status_is(&tasks[0], TaskStatus::Done).await;
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn split_answer_socket_reports_complete_activation_and_refusal_without_partial_parts() {
+    for (verdict, expected, recorded) in [
+        (
+            approval(2),
+            "Recorded split parts: 1.1a — Document 0; 1.1b — Document 1.",
+            1,
+        ),
+        ("please split into two".into(), "use the explicit split verdict form", 0),
+        ("split\n```json\n{}\n```".into(), "invalid split verdict json", 0),
+        (
+            approval(2).replace("\"depends_on\":[]", "\"depends_on\":[\"b\"]"),
+            "invalid split plan",
+            0,
+        ),
+    ] {
+        let mut rig = Rig::new(
+            &[
+                investigator("inv-lead", "ask,sleep"),
+                normal("claude-1", "sleep"),
+                investigator("inv-r1", "sleep"),
+                investigator("inv-r2", "sleep"),
+            ],
+            5,
+            true,
+        )
+        .await;
+        rig.start().await;
+        let (team, tasks) = rig.run(&["inv-lead", "claude-1"], ONE, MergeMode::NoMerge, None).await;
+        rig.status_is(&tasks[0], TaskStatus::Questions).await;
+        let mut connection = Connection::connect(&rig.home.socket_file()).await.unwrap();
+        let reply = connection
+            .request(
+                Client::Cli,
+                Command::Answer(AnswerRequest {
+                    task: tasks[0].clone(),
+                    number: n(1),
+                    answers: answers(&[(1, &verdict)]),
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            reply,
+            agent_core::protocol::Reply::Applied {
+                tasks: vec![tasks[0].clone()]
+            }
+        );
+        assert_eq!(rig.state().team(&team).unwrap().splits().len(), recorded);
+        let acknowledgement = connection.split_acknowledgement().unwrap();
+        assert!(acknowledgement.contains(expected), "{acknowledgement}");
+        rig.stop().await.unwrap();
+    }
+}
