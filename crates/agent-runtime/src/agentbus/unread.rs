@@ -191,8 +191,7 @@ async fn unread_messages_within(
     reader: Reader<'_>,
     state_limit: u64,
 ) -> Result<UnreadMessages, UnreadMessagesError> {
-    let _ = state_limit;
-    let cursor = read_cursor(&bus_dir.join(STATE_FILE), reader).await?;
+    let cursor = read_cursor(&bus_dir.join(STATE_FILE), reader, state_limit).await?;
     let path = bus_dir.join(LOG_FILE);
     let Some(window) = read_window(&path).await? else {
         return Ok(UnreadMessages {
@@ -238,18 +237,31 @@ async fn unread_messages_within(
 }
 
 /// The number of the last message the session of `reader` read, from the state file at `path`; 0 when the bus has no
-/// state or the session never read.
-async fn read_cursor(path: &Path, reader: Reader<'_>) -> Result<u64, UnreadMessagesError> {
-    let bytes = match tokio::fs::read(path).await {
-        Ok(bytes) => bytes,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(source) => {
-            return Err(UnreadMessagesError::Read {
-                path: path.to_owned(),
-                source,
-            });
-        }
+/// state or the session never read; a file longer than `limit` bytes is refused.
+async fn read_cursor(path: &Path, reader: Reader<'_>, limit: u64) -> Result<u64, UnreadMessagesError> {
+    use tokio::io::AsyncReadExt;
+
+    let read = |source| UnreadMessagesError::Read {
+        path: path.to_owned(),
+        source,
     };
+    let file = match tokio::fs::File::open(path).await {
+        Ok(file) => file,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(source) => return Err(read(source)),
+    };
+    let mut bytes = Vec::new();
+    // One byte more than the limit tells a file of exactly the limit from a longer one.
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(read)?;
+    if u64::try_from(bytes.len()).map_or(true, |len| len > limit) {
+        return Err(UnreadMessagesError::StateTooLarge {
+            path: path.to_owned(),
+            limit,
+        });
+    }
     let state: State = serde_json::from_slice(&bytes).map_err(|source| UnreadMessagesError::State {
         path: path.to_owned(),
         source,
