@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 use crate::history::MaxTextBytes;
 use crate::ids::{AgentName, BranchName, InvestigatorName};
-use crate::kinds::{CliKind, Keyword, Tier, UnknownKeyword};
+use crate::kinds::{CliKind, Keyword, Role, Tier, UnknownKeyword};
 use crate::log::LogLevel;
 use crate::repo_path::PathPatterns;
 use crate::review_response::opinion::Permission;
@@ -134,6 +134,18 @@ pub enum ConfigError {
     AgentInNoList {
         /// The agent that no list names.
         name: AgentName,
+    },
+    /// `[plan] roles` names a role whose task never keeps a plan.
+    #[error("the role {role} does not keep a plan: [plan] roles takes solo, member and coordinator")]
+    PlanRole {
+        /// The role that was refused.
+        role: Role,
+    },
+    /// `[plan] roles` names a role more than once.
+    #[error("the role {role} is in [plan] roles more than once")]
+    PlanRoleTwice {
+        /// The role that is listed twice.
+        role: Role,
     },
 }
 
@@ -378,6 +390,16 @@ impl Review {
     }
 }
 
+/// `[plan]`: which roles keep a plan of their task, and how often a run that ends done against it goes back.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Plan {
+    /// The roles whose runs are sent back for their task's plan, in the order the file gives them.
+    pub roles: Vec<Role>,
+    /// How many times a task's runs go back for its plan before the human is asked; `0` never sends a run back.
+    pub bounces: u32,
+}
+
 /// `[git]`: who the commits of the agents are by.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -569,6 +591,8 @@ pub struct Config {
     notifications: Notifications,
     /// The questions.
     questions: Questions,
+    /// The plans of tasks.
+    plan: Plan,
     /// The history.
     history: History,
     /// The daemon's own log.
@@ -636,6 +660,9 @@ struct RawConfig {
     /// See [`Config::questions`].
     #[serde(default)]
     questions: Questions,
+    /// See [`Config::plan`].
+    #[serde(default)]
+    plan: Plan,
     /// See [`Config::history`].
     #[serde(default)]
     history: History,
@@ -670,6 +697,7 @@ impl RawConfig {
             github,
             notifications,
             questions,
+            plan,
             history,
             log,
             web,
@@ -703,6 +731,7 @@ impl RawConfig {
             github,
             notifications,
             questions,
+            plan,
             history,
             log,
             web,
@@ -904,6 +933,11 @@ impl Config {
     }
 
     /// The dashboard's address and logins.
+    #[must_use]
+    pub fn plan(&self) -> &Plan {
+        &self.plan
+    }
+
     #[must_use]
     pub fn web(&self) -> &Web {
         &self.web
@@ -1161,6 +1195,44 @@ cli = "claude"
         assert_eq!(config.normal_agents(), [agent("codex-1"), agent("claude-1")]);
         // The order of delegation: the first free worker of this list gets the request.
         assert_eq!(config.worker_agents(), [agent("qwen"), agent("glm")]);
+    }
+
+    #[test]
+    fn a_file_without_plan_keeps_a_plan_for_solo_members_and_coordinators_three_times() {
+        let plan = config("").plan().clone();
+
+        assert_eq!(plan.roles, [Role::Solo, Role::Member, Role::Coordinator]);
+        assert_eq!(plan.bounces, 3);
+    }
+
+    #[test]
+    fn the_plan_table_says_which_roles_keep_a_plan_and_how_often_a_run_goes_back() {
+        let plan = config("[plan]\nroles = [\"member\"]\nbounces = 0\n").plan().clone();
+
+        assert_eq!(plan.roles, [Role::Member]);
+        assert_eq!(plan.bounces, 0);
+    }
+
+    #[test]
+    fn a_plan_role_whose_task_never_keeps_a_plan_is_refused() {
+        for role in [Role::Worker, Role::Reviewer] {
+            let error = failure(&format!("[plan]\nroles = [\"{role}\"]\n"));
+
+            assert!(
+                matches!(&error, ConfigError::PlanRole { role: refused } if *refused == role),
+                "{role}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_plan_role_named_twice_is_refused() {
+        let error = failure("[plan]\nroles = [\"solo\", \"member\", \"solo\"]\n");
+
+        assert!(
+            matches!(&error, ConfigError::PlanRoleTwice { role: Role::Solo }),
+            "{error:?}"
+        );
     }
 
     #[test]
