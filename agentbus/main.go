@@ -60,6 +60,9 @@ type Message struct {
 	// Team is the team a direct message is bound to: it is for the named agent in that team only. Empty in a broadcast,
 	// a "team:<id>" message and the messages of older versions, which are read by the name as before.
 	Team string `json:"team,omitempty"`
+	// Task is the task a direct message is for: only the session of that task reads it and only that member is woken.
+	// Empty in the messages of older versions and in those bound by name or team alone.
+	Task string `json:"task,omitempty"`
 }
 
 // quietEvent is an event that may ask to wake nobody (a chat sent with wake=false).
@@ -325,7 +328,7 @@ func (s *Server) readMessage(id int) (string, *ReadMessageError) {
 			return fromStorage(ReadMessageStorage, serr)
 		}
 		for i := range msgs {
-			if msgs[i].ID == int64(id) && !otherSession(st, msgs[i], s.me, s.team) {
+			if msgs[i].ID == int64(id) && !otherSession(st, msgs[i], s.me, s.team, s.info.Task) {
 				found = &msgs[i]
 			}
 		}
@@ -351,16 +354,27 @@ func (s *Server) readMessage(id int) (string, *ReadMessageError) {
 // post appends an event to messages.jsonl (caller holds the lock) and wakes sleeping recipients; its direct messages
 // are bound to no team.
 func (b *Bus) post(st *State, from, to string, ev busEvent) (Message, *StorageError) {
-	return b.postIn(st, "", from, to, ev)
+	return b.postTo(st, binding{}, from, to, ev)
 }
 
 // postIn appends an event whose direct messages are bound to the team team, and wakes its sleeping recipients.
 func (b *Bus) postIn(st *State, team, from, to string, ev busEvent) (Message, *StorageError) {
+	return b.postTo(st, binding{team: team}, from, to, ev)
+}
+
+// binding is what a direct message is bound to: a team, a task, both or neither (read by the agent's name).
+type binding struct {
+	team string // the team whose session of the agent reads it ("" = any)
+	task string // the task whose session alone reads it ("" = any)
+}
+
+// postTo appends an event whose direct messages are bound as bind says, and wakes its sleeping recipients.
+func (b *Bus) postTo(st *State, bind binding, from, to string, ev busEvent) (Message, *StorageError) {
 	data, err := json.Marshal(ev)
 	if err != nil {
 		return Message{}, storageErr(err, "cannot encode a %s event", ev.Kind())
 	}
-	m := Message{ID: st.NextID, TS: Now(), From: from, To: to, Kind: ev.Kind(), Data: data, Text: ev.Text(), Team: team}
+	m := Message{ID: st.NextID, TS: Now(), From: from, To: to, Kind: ev.Kind(), Data: data, Text: ev.Text(), Team: bind.team, Task: bind.task}
 	if q, ok := ev.(quietEvent); ok && q.quiet() {
 		m.Quiet = true
 	}
@@ -507,7 +521,7 @@ func (s *Server) unreadCount() (int, *StorageError) {
 		}
 		cur := cursor(st, s.me, s.team)
 		for _, m := range msgs {
-			if m.ID > cur && isForAgent(st, m, s.me, s.team, true) {
+			if m.ID > cur && isForSession(st, m, s.me, s.team, s.info.Task, true) {
 				n++
 			}
 		}
@@ -615,7 +629,7 @@ func (s *Server) read(history int) (string, *ReadMessagesError) {
 			}
 			var shown []Message
 			for _, m := range msgs[start:] {
-				if !otherSession(st, m, s.me, s.team) {
+				if !otherSession(st, m, s.me, s.team, s.info.Task) {
 					shown = append(shown, m)
 				}
 			}
@@ -628,7 +642,7 @@ func (s *Server) read(history int) (string, *ReadMessagesError) {
 		cur := cursor(st, s.me, s.team)
 		n := 0
 		for _, m := range msgs {
-			if m.ID > cur && isForAgent(st, m, s.me, s.team, true) {
+			if m.ID > cur && isForSession(st, m, s.me, s.team, s.info.Task, true) {
 				sb.WriteString(fmtMsg(m) + "\n")
 				n++
 			}
@@ -1387,11 +1401,22 @@ type sendRequest struct {
 
 // postSend posts what `agentbus send` writes, bound as its request says, or says why it is refused.
 func postSend(b *Bus, st *State, req sendRequest, ev busEvent) (Message, *CmdSendError) {
-	recipient, bound, refusal := bindSend(st, req.from, req.to, req.task, req.team)
-	if refusal != nil {
-		return Message{}, refusal
+	var bind binding
+	recipient := req.to
+	if req.forTask != "" {
+		bound, refusal := bindForTask(st, req)
+		if refusal != nil {
+			return Message{}, refusal
+		}
+		bind = bound
+	} else {
+		to, team, refusal := bindSend(st, req.from, req.to, req.task, req.team)
+		if refusal != nil {
+			return Message{}, refusal
+		}
+		recipient, bind = to, binding{team: team}
 	}
-	m, serr := b.postIn(st, bound, req.from, recipient, ev)
+	m, serr := b.postTo(st, bind, req.from, recipient, ev)
 	if serr != nil {
 		return Message{}, fromStorage(CmdSendStorage, serr)
 	}

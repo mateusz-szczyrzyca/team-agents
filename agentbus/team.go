@@ -115,7 +115,7 @@ func (b *Bus) wakeFor(st *State, m Message) {
 			if mem.State != MemberSleeping || name == m.From {
 				continue
 			}
-			direct := (m.To == name || m.To == mem.Task) && (m.Team == "" || m.Team == t.ID)
+			direct := (m.To == name || m.To == mem.Task) && (m.Team == "" || m.Team == t.ID) && (m.Task == "" || m.Task == mem.Task)
 			if direct || m.To == teamRecipient(t.ID) {
 				mem.State = MemberWaking
 				logInfo(LogMemberWokenBy, "team", t.ID, "member", name, "cause", "message", "message_id", m.ID, "kind", m.Kind, "from", m.From)
@@ -352,11 +352,14 @@ func isForAgent(st *State, m Message, agent, team string, broadcast bool) bool {
 
 // ---------------------------------------------------------------- MCP tools: team
 
-// otherSession reports whether a message belongs to the agent's session in another team than team ("" outside teams):
-// it is bound to a team (a direct message of a team, or one to "team:<id>") that is not team and that the agent is a
+// otherSession reports whether a message belongs to another session of the agent than the one of task in team ("" outside
+// teams): it is a direct message bound to another task of the agent, or it is bound to a team (a direct message of a team, or one to "team:<id>") that is not team and that the agent is a
 // member of. The reads of a session — its history and read_message by number — do not show such a message; messages of
 // teams the agent is not in, and messages bound to no team, stay visible as before.
-func otherSession(st *State, m Message, agent, team string) bool {
+func otherSession(st *State, m Message, agent, team, task string) bool {
+	if m.Task != "" && m.Task != task && (m.To == agent || m.From == agent) {
+		return true // a direct message for another task of the agent, or written by one
+	}
 	bound := m.Team
 	if strings.HasPrefix(m.To, "team:") {
 		bound = strings.TrimPrefix(m.To, "team:")
@@ -366,6 +369,29 @@ func otherSession(st *State, m Message, agent, team string) bool {
 	}
 	t := st.Teams[bound]
 	return t != nil && t.Members[agent] != nil
+}
+
+// isForSession reports whether a message is for the session of the agent with the task task in the team team: what
+// isForAgent says, and for a direct message bound to a task, that this is its task.
+func isForSession(st *State, m Message, agent, team, task string, broadcast bool) bool {
+	return isForAgent(st, m, agent, team, broadcast) && (m.Task == "" || m.Task == task)
+}
+
+// bindForTask finds where `agentbus send --for-task` posts a message: to the session of the task alone, in the open team
+// that holds it as a task of the recipient, or in no team when none holds it (a solo task). The task of another member,
+// and --for-task with --task, --team or a recipient that is not one agent, are refused.
+func bindForTask(st *State, req sendRequest) (binding, *CmdSendError) {
+	if req.task != "" || req.team != "" || req.to == "all" || strings.HasPrefix(req.to, "team:") {
+		return binding{}, opErr(CmdSendTwoBindings, "--for-task names the session of one task of one agent: give it alone, with --to <agent>")
+	}
+	team := memberOfTask(st, req.forTask)
+	if team == "" {
+		return binding{task: req.forTask}, nil
+	}
+	if taskOf(st, req.to, team) != req.forTask {
+		return binding{}, opErr(CmdSendNoSuchMember, "%s is not a task of %s in team %s", req.forTask, req.to, team)
+	}
+	return binding{team: team, task: req.forTask}, nil
 }
 
 // messageCursor is the key of an agent's unread cursor in a team: the agent and the team, so that no two teams share
@@ -558,7 +584,7 @@ func (s *Server) waitForMessage(from string, timeout int, broadcast bool) (strin
 			}
 			cur := cursor(st, s.me, s.team)
 			for _, m := range msgs {
-				if m.ID > cur && isForAgent(st, m, s.me, s.team, broadcast) && (from == "" || m.From == from) {
+				if m.ID > cur && isForSession(st, m, s.me, s.team, s.info.Task, broadcast) && (from == "" || m.From == from) {
 					found = true
 					break
 				}
@@ -567,7 +593,7 @@ func (s *Server) waitForMessage(from string, timeout int, broadcast bool) (strin
 				return nil
 			}
 			for _, m := range msgs {
-				if m.ID > cur && isForAgent(st, m, s.me, s.team, true) {
+				if m.ID > cur && isForSession(st, m, s.me, s.team, s.info.Task, true) {
 					sb.WriteString(fmtMsg(m) + "\n")
 				}
 			}
@@ -995,7 +1021,7 @@ func setMemberState(b *Bus, st *State, team, agent string, newState MemberState)
 	}
 	cur := cursor(st, agent, team)
 	for _, msg := range msgs {
-		if msg.ID > cur && !msg.Quiet && isForAgent(st, msg, agent, team, false) {
+		if msg.ID > cur && !msg.Quiet && isForSession(st, msg, agent, team, m.Task, false) {
 			m.State = MemberWaking
 			logInfo(LogMemberWokenBy, "team", t.ID, "member", agent, "cause", "unread", "message_id", msg.ID, "kind", msg.Kind, "from", msg.From)
 			wakeFn(t, m.Task)
