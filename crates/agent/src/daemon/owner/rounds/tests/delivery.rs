@@ -516,12 +516,7 @@ async fn delivery_closed_claim_reopens_the_round_and_runs_the_member_again() {
         |phase| matches!(phase, ItemPhase::Done { .. }),
     )
     .await;
-    let state = rig.state();
-    let ItemPhase::Approved { pr, .. } = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap().phase()
-    else {
-        panic!("the unrelated owning PR still waits")
-    };
-    super::rig::git(&rig.worktree(&tasks[0]), &["push", "origin", pr.branch.as_str()]);
+    push_integrated_owning_pr(&rig, &team, &tasks[0]);
     rig.github.reopened_by_a_human(1);
     rig.github.merged_by_a_human(1);
     let done = rig
@@ -538,4 +533,13 @@ async fn delivery_closed_claim_reopens_the_round_and_runs_the_member_again() {
             .all(|item| matches!(item.phase(), ItemPhase::Done { .. }))
     );
     assert!(done.team(&team).unwrap().rounds().iter().all(|round| !round.is_open()));
+}
+
+/// Updates the unrelated PR only after the returned item's independent merge.
+fn push_integrated_owning_pr(rig: &Rig, team: &agent_core::ids::TeamId, lead: &agent_core::ids::TaskId) {
+    let state = rig.state();
+    let ItemPhase::Approved { pr, .. } = state.team(team).unwrap().item("1.1".parse().unwrap()).unwrap().phase() else {
+        panic!("the unrelated owning PR still waits")
+    };
+    super::rig::git(&rig.worktree(lead), &["push", "origin", pr.branch.as_str()]);
 }
