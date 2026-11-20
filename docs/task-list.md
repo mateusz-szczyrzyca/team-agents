@@ -123,9 +123,9 @@ and it is not persisted: the state stores what it needs from it.
 
 ## Approved split plans: core format
 
-The core library defines the following explicit human verdict for approving a whole split. Daemon recording,
-part rounds, prompts and status output are a follow-up; **this version does not activate splits from answers**.
-An ordinary `ok` or free-text answer remains an ordinary answer. Do not rely on the format to schedule work yet.
+Only the coordinator requests a split, in one questions file with the full proposed verdict as an example in the
+question. The human approves the whole plan using the form below. `agent answer` reports the recorded parts, or
+explains why none were recorded. An ordinary `ok` does not approve the example implicitly.
 
 Inside `**Verdict:**`, write `split` on its own line immediately followed by one fenced `json` object:
 
@@ -164,4 +164,10 @@ Only the exact marker and JSON fence begin an explicit approval. A free answer s
 The task-list parser still accepts only two-number item IDs such as `1.1`; lettered part identities belong to the
 stored split plan. Existing items, branch names, rounds and histories keep their identities. The pure core decision
 returns unmerged parts whose dependencies have all merged, in declaration order; only all parts merged permits
-completion of the parent. Assignment and one-open-team-per-agent rules remain the daemon's responsibility.
+completion of the parent. The current working round becomes part a and keeps its original names; its first part
+must have no dependencies. Each later part gets its own round, branch and pull request, assigned to the same team
+through its usual assignment process. The daemon picks the first dependency-ready part in declaration order.
+Its prompt identifies that part's deliverable and checks, excludes the other parts, and names earlier merged pull requests. The parent stays
+open until every part merges, including with `--no-merge`. Plans and part progress survive daemon restarts.
+`agent status` lists every part as done, in progress, waiting for named dependencies, or to do.
+Assignment and one-open-team-per-agent rules remain unchanged.

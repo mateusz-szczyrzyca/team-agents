@@ -272,10 +272,13 @@ run evidence. The activity record also supplies the investigator selection order
 `agent status --investigators`. See the
 [activity record](docs/state.md#investigator-activities).
 
-The core library now supports whole, validated split plans stored with teams (state schema `13`). Older states
-load with no split plans and retain their existing history. The [split verdict format](docs/task-list.md#approved-split-plans-core-format)
-is defined for the next implementation part; daemon answer handling, automatic part rounds and split status output
-are not activated in this version. Continue using the existing question workflow until that part is delivered.
+A coordinator can ask the human to split an item into independently deliverable parts in one questions file.
+Approve using the [explicit split verdict](docs/task-list.md#approved-split-plans-core-format); `agent answer`
+lists the recorded parts, or explains a rejected form. The current round delivers part a. Later parts receive
+separate rounds, branches and pull requests after their dependencies merge; the original item and team remain
+open until all parts merge. `agent status` shows the parts and their dependency states. Definitions and progress
+survive restarts. Socket responses add optional split metadata; ordinary replies retain their existing shape.
+Schema `13` states from version 0.29.0 remain readable, with original round names and histories.
 
 The Rust CLI provides a read-only diagnostic bundle for one team:
 

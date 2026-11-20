@@ -37,9 +37,15 @@ is [state-before-splits.json](../crates/agent-core/tests/fixtures/state-before-s
 whole saved document with the fixture after adjusting only the schema number. Versions 1–11 retain their previous
 migrations and default to no split plans. Older binaries refuse schema 13, so keep a backup before upgrading.
 
-This is a preparatory state API: the daemon does not yet record split verdicts or open part rounds, and there is no
-per-part execution history in this schema addition. The following part connects these definitions and the pure
-next-part decision to answer handling, rounds and status. Loading a definition alone changes no item phase.
+Split execution adds an optional round `part`: `{"status":"working","key":"a"}` while active, or
+`{"status":"merged","key":"a","pr":…}` after merge, with the ordinary pull-request record in `pr`.
+Schema stays 13; states written by 0.29.0 omit this field and retain their meaning. The pre-execution fixture is
+[state-v0-29-before-part-rounds.json](../crates/agent-core/tests/fixtures/state-v0-29-before-part-rounds.json).
+Loading a stored definition alone activates nothing. An explicit coordinator answer records the whole plan and
+binds its working round to part a. Later rounds retain the parent item ID and carry their distinct letter.
+An intermediate merge records its pull request permanently and resets the parent to pending for the next
+ready part; only the last merge completes the parent. Split rounds remain open on review approval in `--no-merge`.
+Deserialization checks part membership, uniqueness and previously merged dependencies.
 
 ### The file
 
@@ -338,12 +344,13 @@ A run names the rounds it works for (`rounds`, above). Invariants, checked by th
 `advance_item`, `begin_run`, and `State::open_round`, `close_round`, `begin_run` for what needs the whole state) and again when the
 state is read:
 
-- an item has at most one round, and has one as soon as it leaves `pending`; an item the task list marks `[x]` has none, and a
+- an ordinary item has at most one round; an activated split has one per started part, and only a merged part permits its next round;
+  an item has a round as soon as it leaves `pending`; an item the task list marks `[x]` has none, and a
   round is not opened for an item that is done;
 - a round without an item exists only in a team whose task list has no items, and there is one at most;
 - a round ID is used once in the whole state;
-- a closed round is never opened again: closing it again is refused, and so is a second round for its item. A round closed as
-  `merged` belongs to an item `done` as merged; one closed as `approved` to an item that is `approved` or `done` as merged;
+- a closed round is never opened again: closing it again is refused, and so is a second ordinary round for its item. An ordinary round closed as
+  `merged` belongs to an item `done` as merged; a merged part retains its own pull request while its parent advances; one closed as `approved` to an item that is `approved` or `done` as merged;
   `abandoned` fits any item (a round of a whole list can end in no other way, since nothing merges it); it is not closed before it
   was opened;
 - a run names only rounds of its own team, none twice.
