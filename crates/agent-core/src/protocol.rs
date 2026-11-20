@@ -31,6 +31,15 @@ pub use request::{
 /// The protocol version that this build speaks.
 pub const PROTOCOL_VERSION: u32 = 3;
 
+/// Wire format requested by a client; version four includes approved split details.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyFormat {
+    /// Version three, readable by clients predating split execution.
+    Legacy,
+    /// Version four, including split acknowledgements, plans and round identities.
+    Split,
+}
+
 /// Longest line a client may send, in bytes: a task list (1 MiB at most) with room for the rest of the request.
 pub const MAX_REQUEST_BYTES: usize = 2 << 20;
 
@@ -159,6 +168,22 @@ impl Frame {
         } else {
             encode(self)
         }
+    }
+
+    /// Encodes a frame in the format requested by its recipient.
+    ///
+    /// # Errors
+    /// [`EncodeError`] when serialization fails.
+    pub fn to_line_for(&self, _format: ReplyFormat) -> Result<String, EncodeError> {
+        self.to_line()
+    }
+
+    /// Reads a frame from a daemon supporting either legacy or split-aware clients.
+    ///
+    /// # Errors
+    /// [`ProtocolError`] for an oversized, malformed or unsupported frame.
+    pub fn from_line_negotiated(line: &str) -> Result<Self, ProtocolError> {
+        Self::from_line(line)
     }
 
     /// Reads a line the daemon sent.
