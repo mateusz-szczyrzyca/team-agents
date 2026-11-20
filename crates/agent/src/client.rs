@@ -172,6 +172,11 @@ impl Connection {
         self.converse(client, command, None).await
     }
 
+    /// Requests split-aware version-four replies.
+    pub(crate) async fn request_split(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
+        self.request(client, command).await
+    }
+
     /// Sends `command` and reads its answer, giving up after `limit` when there is one.
     async fn converse(
         &mut self,

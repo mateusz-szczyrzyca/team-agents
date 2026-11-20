@@ -303,3 +303,53 @@ async fn split_fix_updates_its_pull_request() {
     assert_eq!(rig.remote_tip(&pulls[0].head), gate["result"]["head"].as_str().unwrap());
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn split_answer_and_status_negotiate_version_four() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,integrate"),
+            normal("claude-1", "ask-here"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["inv-lead", "claude-1"], ONE, MergeMode::NoMerge, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let mut connection = Connection::connect(&rig.home.socket_file()).await.unwrap();
+    let answer = connection
+        .request_split(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: n(1),
+                answers: answers(&[(1, &approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        answer,
+        agent_core::protocol::Reply::Applied {
+            tasks: vec![tasks[0].clone()]
+        }
+    );
+    assert!(matches!(connection.split_acknowledgement(), Some(text) if text.contains("1.1a") && text.contains("1.1b")));
+    let status = connection
+        .request_split(
+            Client::Cli,
+            Command::Status(agent_core::protocol::StatusRequest { target: None }),
+        )
+        .await
+        .unwrap();
+    let agent_core::protocol::Reply::Teams { teams } = status else {
+        panic!("expected team summaries");
+    };
+    assert_eq!(teams[0].splits.len(), 1);
+    assert_eq!(teams[0].splits[0].parts().len(), 2);
+    rig.stop().await.unwrap();
+}
