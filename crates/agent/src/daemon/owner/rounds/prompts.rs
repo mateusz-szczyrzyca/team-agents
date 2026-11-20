@@ -399,7 +399,7 @@ pub(super) async fn ask_human(
             continue;
         };
         findings.push(super::findings::open_text(texts, progress.findings())?);
-        let kept = count(progress.completed_review_passes());
+        let kept = count(progress.fix_passes().len());
         findings.extend(reports_of(ctx, texts, reviews, waits.pr.number, kept).await?);
     }
     let file = ctx.home.questions_file(found.member.task(), number);
