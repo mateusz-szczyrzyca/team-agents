@@ -4,7 +4,7 @@ resolver = "3"
 members = ["crates/agent-core", "crates/agent-runtime", "crates/agent", "crates/agent-web"]
 
 [workspace.package]
-version = "0.26.0"
+version = "0.27.0"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT"
