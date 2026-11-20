@@ -304,6 +304,8 @@ async fn a_coordinators_done_after_it_integrated_the_last_member_is_sent_back_fo
     let member = rig.worktree(&tasks[1]);
     rig.wait_for("the member's run to start", || member.join(".fake-started-1").exists())
         .await;
+    std::fs::create_dir_all(member.join(".agent")).unwrap();
+    std::fs::write(member.join(".agent/plan.md"), "Do one.\n\n1. Work\n[x] 1.1 Write it\n").unwrap();
     std::fs::write(member.join(".fake-release-1"), "").unwrap();
     let third = rig.prompt(&tasks[0], 3).await;
     rig.stop().await.unwrap();
