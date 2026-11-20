@@ -27,7 +27,8 @@ prompts/investigator/rust-developer.md
 prompts/investigator/code-review.md
 prompts/harness/<module>/<name>.md     texts the harness composes (run prompts, a team's life, questions files, notifications)
 config/agents.example.toml, config/systemd/agent-daemon.service
-docs/architecture.md, docs/configuration.md, docs/state.md, docs/task-list.md, docs/history.md, docs/history.schema.sql
+docs/architecture.md, docs/configuration.md, docs/state.md, docs/task-list.md, docs/plan.md, docs/history.md,
+docs/history.schema.sql
 ```
 
 The workspace exists with its four crates; the other files of this list arrive with the items that need them
