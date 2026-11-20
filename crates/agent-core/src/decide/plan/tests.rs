@@ -412,3 +412,54 @@ fn the_last_send_back_before_the_limit_still_goes_back() {
 
     assert_eq!(verdict, PlanVerdict::SendBack(PlanReason::Missing));
 }
+
+#[test]
+fn a_step_lost_by_a_version_already_sent_back_is_still_lost_when_the_same_done_comes_again() {
+    let end = ended(RunOutcome::Done);
+    let first = plan("Fix it — zażółć.\n\n1. Work\n[x] 1.1 Find it\n[ ] 1.2 Fix it\n");
+    let lost = plan("Fix it — zażółć.\n\n1. Work\n[x] 1.1 Find it\n");
+    let again = read("Fix it — zażółć.\n\n1. Work\n[x] 1.1 Find it\n");
+    let sent_back = keeping(1, PlanStage::Open);
+
+    let verdict = decide_plan(PlanFacts {
+        role: Role::Solo,
+        end: &end,
+        read: &again,
+        earlier: &[first, lost],
+        keeping: Some(&sent_back),
+        policy: &policy(),
+    });
+
+    assert_eq!(
+        verdict,
+        PlanVerdict::SendBack(PlanReason::LostStep {
+            steps: vec![item("1.2")]
+        })
+    );
+}
+
+#[test]
+fn a_step_of_any_earlier_version_is_lost_once_each_in_the_order_it_first_appeared() {
+    let end = ended(RunOutcome::Done);
+    let first = plan("1. Work\n[x] 1.1 Find it\n[ ] 1.2 Fix it\n");
+    let second = plan("1. Work\n[x] 1.1 Find it\n[ ] 1.2 Fix it\n[ ] 1.3 Test it\n");
+    let third = plan("1. Work\n[x] 1.1 Find it\n[ ] 1.3 Test it\n");
+    let now = read("1. Work\n[x] 1.1 Find it\n");
+    let sent_back = keeping(1, PlanStage::Open);
+
+    let verdict = decide_plan(PlanFacts {
+        role: Role::Member,
+        end: &end,
+        read: &now,
+        earlier: &[first, second, third],
+        keeping: Some(&sent_back),
+        policy: &policy(),
+    });
+
+    assert_eq!(
+        verdict,
+        PlanVerdict::SendBack(PlanReason::LostStep {
+            steps: vec![item("1.2"), item("1.3")]
+        })
+    );
+}
