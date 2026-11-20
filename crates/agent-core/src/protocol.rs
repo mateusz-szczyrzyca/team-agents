@@ -129,6 +129,37 @@ fn decode<T: DeserializeOwned>(line: &str, max: usize) -> Result<T, ProtocolErro
     serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })
 }
 
+/// Serializes one of the protocol's object-shaped messages with the split-aware version tag.
+fn encode_split<T: Serialize>(message: &T) -> Result<String, EncodeError> {
+    let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    if let Some(protocol) = value.get_mut("protocol") {
+        *protocol = serde_json::Value::from(4);
+    }
+    encode(&value)
+}
+
+/// Checks the wire boundary before decoding either supported format into the shared domain types.
+fn decode_negotiated<T: DeserializeOwned>(line: &str, max: usize) -> Result<(T, ReplyFormat), ProtocolError> {
+    if line.len() > max {
+        return Err(ProtocolError::TooLong { len: line.len(), max });
+    }
+    let probe: VersionProbe = serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
+    match probe.protocol {
+        3 => decode(line, max).map(|message| (message, ReplyFormat::Legacy)),
+        4 => {
+            let mut value: serde_json::Value =
+                serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
+            if let Some(protocol) = value.get_mut("protocol") {
+                *protocol = serde_json::Value::from(PROTOCOL_VERSION);
+            }
+            serde_json::from_value(value)
+                .map(|message| (message, ReplyFormat::Split))
+                .map_err(|source| ProtocolError::Malformed { source })
+        }
+        found => Err(UnsupportedVersion { found }.into()),
+    }
+}
+
 /// Removes fields unknown to protocol-three clients, retaining their ordinary frame encoding.
 fn strip_split_fields(value: &mut serde_json::Value) -> bool {
     match value {
@@ -174,8 +205,11 @@ impl Frame {
     ///
     /// # Errors
     /// [`EncodeError`] when serialization fails.
-    pub fn to_line_for(&self, _format: ReplyFormat) -> Result<String, EncodeError> {
-        self.to_line()
+    pub fn to_line_for(&self, format: ReplyFormat) -> Result<String, EncodeError> {
+        match format {
+            ReplyFormat::Legacy => self.to_line(),
+            ReplyFormat::Split => encode_split(self),
+        }
     }
 
     /// Reads a frame from a daemon supporting either legacy or split-aware clients.
@@ -183,7 +217,7 @@ impl Frame {
     /// # Errors
     /// [`ProtocolError`] for an oversized, malformed or unsupported frame.
     pub fn from_line_negotiated(line: &str) -> Result<Self, ProtocolError> {
-        Self::from_line(line)
+        decode_negotiated(line, MAX_FRAME_BYTES).map(|(frame, _format)| frame)
     }
 
     /// Reads a line the daemon sent.

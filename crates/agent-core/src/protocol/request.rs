@@ -418,8 +418,11 @@ impl Request {
     ///
     /// # Errors
     /// [`EncodeError`] when serialization fails.
-    pub fn to_line_for(&self, _format: super::ReplyFormat) -> Result<String, EncodeError> {
-        self.to_line()
+    pub fn to_line_for(&self, format: super::ReplyFormat) -> Result<String, EncodeError> {
+        match format {
+            super::ReplyFormat::Legacy => self.to_line(),
+            super::ReplyFormat::Split => super::encode_split(self),
+        }
     }
 
     /// Reads a supported request and selects the matching response format.
@@ -427,7 +430,7 @@ impl Request {
     /// # Errors
     /// [`ProtocolError`] for an oversized, malformed or unsupported request.
     pub fn from_line_negotiated(line: &str) -> Result<(Self, super::ReplyFormat), ProtocolError> {
-        Self::from_line(line).map(|request| (request, super::ReplyFormat::Legacy))
+        super::decode_negotiated(line, MAX_REQUEST_BYTES)
     }
 
     /// Reads a line a client sent.
