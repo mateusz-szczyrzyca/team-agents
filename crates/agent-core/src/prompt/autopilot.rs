@@ -64,6 +64,8 @@ pub enum AutopilotPrompt {
     PrAllowedBeforehand,
     /// Durable evidence that this team started with unpublished base commits.
     PrUnpushedBase,
+    /// The lead's instructions after GitHub refused an approved pull request for a conflict with its base.
+    PrMergeConflict,
     /// Gate provenance for a pull request.
     PrGate,
     /// A passing retry after a failed gate.
@@ -245,6 +247,7 @@ impl AutopilotPrompt {
         Self::PrSize,
         Self::PrAllowedBeforehand,
         Self::PrUnpushedBase,
+        Self::PrMergeConflict,
         Self::PrGate,
         Self::PrGateRetry,
         Self::PrNoLead,
@@ -389,6 +392,7 @@ impl AutopilotPrompt {
             Self::PrSize => "harness/pr/size.md",
             Self::PrAllowedBeforehand => "harness/pr/allowed-beforehand.md",
             Self::PrUnpushedBase => "harness/pr/unpushed-base.md",
+            Self::PrMergeConflict => "harness/pr/merge-conflict.md",
             Self::PrGate => "harness/pr/gate.md",
             Self::PrGateRetry => "harness/pr/gate-retry.md",
             Self::PrNoLead => "harness/pr/no-lead.md",
@@ -468,6 +472,10 @@ impl AutopilotPrompt {
     }
 
     /// The context required to render this text.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per text of the catalog; splitting the table would scatter the variables of a text from its path"
+    )]
     const fn variables(self) -> &'static [&'static str] {
         match self {
             Self::PrGateRetry
@@ -518,6 +526,7 @@ impl AutopilotPrompt {
             Self::PrSize => &["size"],
             Self::PrAllowedBeforehand => &["paths"],
             Self::PrUnpushedBase => &["base", "count", "first", "subject"],
+            Self::PrMergeConflict => &["pr", "url", "base", "branch", "pass", "passes"],
             Self::PrGate | Self::ReviewGate => &["head", "finished", "result", "log"],
             Self::PrLeadInstructions => &["description_file"],
             Self::ReviewGateMissing => &["head"],
