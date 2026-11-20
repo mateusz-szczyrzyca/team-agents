@@ -5,6 +5,16 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.40.0 — 20.11.2026 — PR #156
+
+### New features
+- [agent] [agent-core] [agent-runtime] A task whose session went bad goes on in a new session of the same agent: after the two retries of a run that ended without a `STATUS:` line, after the watchdog's last strike for a hung run and after the last turn-limit resume, the task is started once more in a fresh session instead of failing. Its first prompt is a briefing: why it was started anew, the task's whole prompt, the commits of its branch, the files it left uncommitted (kept in a snapshot first), its plan of steps and the messages of its team it had not read. When the new session goes bad too, the task fails as before.
+- [agent-core] The new key `[replacement] new_sessions` says how many such new sessions a task gets: `1` by default, `0` keeps the old behaviour. The count is kept in `state.json`, so a restart of the daemon does not reset it.
+- [agent] [agent-core] `agent status` says it on the task's line: `claude-1   queued, in a new session`.
+
+### Bug fixes
+- [agent] An item no longer stands behind a member the human stopped: when the lead ends `STATUS: DONE` with a passed gate, the item is published with the lead's branch.
+
 ## 0.39.0 — 20.11.2026 — PR #154
 
 ### New features
