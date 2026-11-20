@@ -45,6 +45,7 @@ Top-level key and tables:
 | `[watchdog]` | table | see below | when a silent run is hung |
 | `[limits]` | table | see below | pauses for quotas and rate limits |
 | `[review]` | table | `fix_passes = 5`, `check_passes = 2`, `replace_after_minutes = 15` | the review loop, the checks before it and the reviewers that cannot work |
+| `[split]` | table | `part_limit = 1500`, `corrections = 2` | split proposal policy; parsed now for later daemon integration |
 | `[plan]` | table | `roles = ["solo", "member", "coordinator"]`, `bounces = 3` | whose runs keep a plan of their task, and how often one goes back for it |
 | `[replacement]` | table | `new_sessions = 1` | how many times a task whose runs went bad is started in a new session of its agent |
 | `[git]` | table | see below | the identity of the agents' commits |
@@ -155,10 +156,25 @@ history; a run of a role here that ends `STATUS: DONE` against its plan is sent 
 A task created before the daemon first ran with plans keeps none of this: its plan, if it writes one, is recorded, and
 its runs are never sent back.
 
+### `[split]`
+
+These keys configure the pure split approval policy. This release defines the proposal form and durable progress;
+the daemon still uses the [explicit human verdict](task-list.md#approved-split-plans-core-format).
+It does not yet read coordinator proposal files or automatically approve them.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `part_limit` | `1500` | maximum estimate when its unit matches the repository unit — case, surrounding spaces and a plural `s` are ignored (`Lines`, `line`); `0` disables this check. The repository unit is an argument of the decision, not a key: the daemon will supply it when it starts using proposals. Other units are retained without conversion |
+| `corrections` | `2` | send-backs allowed before a faulty proposal needs a human decision; `0` asks on the first fault. A valid proposal remains eligible after the budget is exhausted |
+
+Both are nonnegative integers through `4294967295`. Missing tables or keys use the defaults; unknown keys,
+negative values, fractional values and strings are rejected. Scope changes always require human approval once
+the proposal satisfies the structural checks. Acceptance criteria are required for every kind of deliverable.
+
 ### `[replacement]`
 
 A run may end without a `STATUS:` line or hang. The task is asked again in the same session a few times — twice for a run
-without a status (`NO_STATUS_RETRIES`), `watchdog.hang_strikes` times for a hang, `limits.turn_limit_resumes` times for an
+without a status, `watchdog.hang_strikes` times for a hang, `limits.turn_limit_resumes` times for an
 exhausted turn budget. After that the session is itself the trouble: the model may keep writing its tool calls as text, or
 hang on the work it carries. The task is then started in a new session of the same agent, with a briefing built from facts:
 the task's own prompt, the commits on its branch since the base, the files it left uncommitted (a snapshot of the worktree
@@ -170,8 +186,10 @@ and a member are started anew; a worker and a reviewer are not.
 |---|---|---|
 | `new_sessions` | `1` | how many new sessions of its agent a task is started in after its runs went bad; `0` turns them off and the task fails as before; at most `10`. The count is kept in the state, so it survives a restart of the daemon |
 
-The new session works in the same worktree, on the same branch and on the same task. The history records the restart with
-its reason, and `agent status` says `new session` on the task's line.
+The new session works in the same worktree, on the same branch and on the same task. The state keeps the restart and its
+reason, the history the snapshot, the daemon's log the decision (`decision_taken` with `decision` `ladder`), and
+`agent status` says `in a new session` on the task's line. A task that works for no open round (a state of an older
+version) is started in a new session without the briefing.
 
 ### `[git]`
 

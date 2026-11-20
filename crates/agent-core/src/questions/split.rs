@@ -1,7 +1,7 @@
 //! Explicit human approval of a whole split; free-text answers never create partial plans.
 
 use crate::ids::ItemId;
-use crate::state::split::{PartDefinition, SplitError, SplitPlan};
+use crate::state::split::{SplitError, SplitPlan};
 
 use super::Verdict;
 
@@ -64,7 +64,7 @@ pub fn read_split(verdict: &Verdict) -> Result<Option<SplitPlan>, ReadSplitError
         return Err(ReadSplitError::Shape);
     }
     let wire: Approval = serde_json::from_str(&body.join("\n")).map_err(|source| ReadSplitError::Json { source })?;
-    SplitPlan::new(wire.parent, wire.parts)
+    SplitPlan::from_input(wire.parent, &wire.parts)
         .map(Some)
         .map_err(|source| ReadSplitError::Invalid { source })
 }
@@ -76,7 +76,7 @@ struct Approval {
     /// Existing task-list item to split.
     parent: ItemId,
     /// All parts in their permanent letter order.
-    parts: Vec<PartDefinition>,
+    parts: Vec<crate::state::split::proposal::PartInput>,
 }
 
 #[cfg(test)]

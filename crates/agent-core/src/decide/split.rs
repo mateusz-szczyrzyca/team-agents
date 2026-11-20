@@ -1,5 +1,7 @@
 //! Dependency decisions for a validated split, without opening rounds or performing I/O.
 
+pub mod approval;
+
 use std::collections::BTreeSet;
 
 use crate::state::split::{PartDefinition, PartId, PartKey, SplitPlan};

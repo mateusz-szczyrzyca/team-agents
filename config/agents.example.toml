@@ -118,6 +118,13 @@ replace_after_minutes = 15
 roles = ["solo", "member", "coordinator"]
 bounces = 3
 
+# Split proposal policy. The core validates these keys now; daemon proposal handling is added separately.
+# Estimates are compared only when their unit matches the repository unit (case, spaces and a plural s are ignored).
+# The daemon will name that unit when it starts using proposals; it is not a key yet.
+[split]
+part_limit = 1500 # 0 disables the size check
+corrections = 2   # 0 asks the human at the first invalid proposal
+
 # --- Replacement ------------------------------------------------------------------------------------------------
 # A run may end without a `STATUS:` line, or hang. The task is asked again in the same session a few times (twice for a
 # run without a status, `hang_strikes` times for a hang); after that the session itself is the trouble, and the task is

@@ -7,6 +7,8 @@
 
 #[cfg(test)]
 mod replacement_tests;
+mod split;
+pub use split::Split;
 mod review_count;
 mod secrets;
 mod values;
@@ -663,6 +665,8 @@ pub struct Config {
     plan: Plan,
     /// The replacement of a task whose session went bad.
     replacement: Replacement,
+    /// Split approval policy, defaulted for older configurations.
+    split: Split,
     /// The history.
     history: History,
     /// The daemon's own log.
@@ -739,6 +743,9 @@ struct RawConfig {
     /// See [`Config::replacement`].
     #[serde(default)]
     replacement: Replacement,
+    /// Split approval policy, defaulted for older configurations.
+    #[serde(default)]
+    split: Split,
     /// See [`Config::history`].
     #[serde(default)]
     history: History,
@@ -776,6 +783,7 @@ impl RawConfig {
             questions,
             plan,
             replacement,
+            split,
             history,
             log,
             web,
@@ -813,6 +821,7 @@ impl RawConfig {
             questions,
             plan,
             replacement,
+            split,
             history,
             log,
             web,
@@ -1046,6 +1055,12 @@ impl Config {
     #[must_use]
     pub fn replacement(&self) -> Replacement {
         self.replacement.clone()
+    }
+
+    /// Policy for approval of split proposals; daemon use is added separately.
+    #[must_use]
+    pub fn split(&self) -> Split {
+        self.split
     }
 
     /// The dashboard's address and logins.
