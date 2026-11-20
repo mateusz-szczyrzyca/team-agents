@@ -223,7 +223,15 @@ fn merge_conflict_text(
         .iter()
         .find_map(|item| match (item.phase(), item.merge_conflict()) {
             (ItemPhase::Approved { pr, .. }, Some(conflict)) => Some((pr, conflict, item.merge_passes())),
-            _ => None,
+            (ItemPhase::Approved { .. }, None)
+            | (
+                ItemPhase::Pending
+                | ItemPhase::InProgress { .. }
+                | ItemPhase::InReview { .. }
+                | ItemPhase::Fixing { .. }
+                | ItemPhase::Done { .. },
+                _,
+            ) => None,
         });
     let Some((pr, conflict, passes)) = troubled else {
         return Ok(None);

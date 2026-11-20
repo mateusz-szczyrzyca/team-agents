@@ -107,8 +107,9 @@ impl Owner {
                 .parts
                 .state
                 .team(team)
-                .map(|found| found.allowances().to_vec())
-                .unwrap_or_default();
+                .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?
+                .allowances()
+                .to_vec();
             let decided = after_lead(&LeadEnd::NoResult, &allowances);
             log_decision(
                 "after_lead",
@@ -167,8 +168,9 @@ impl Owner {
             .parts
             .state
             .team(team)
-            .map(|found| found.allowances().to_vec())
-            .unwrap_or_default();
+            .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?
+            .allowances()
+            .to_vec();
         let end = LeadEnd::Result { changed };
         let decided = after_lead(&end, &allowances);
         log_decision(
@@ -208,7 +210,15 @@ impl Owner {
             .iter()
             .find_map(|item| match (item.phase(), item.merge_conflict()) {
                 (ItemPhase::Approved { .. }, Some(MergeConflict::AskingHuman { at })) => Some(*at),
-                _ => None,
+                (ItemPhase::Approved { .. }, Some(MergeConflict::MergingBase { .. }) | None)
+                | (
+                    ItemPhase::Pending
+                    | ItemPhase::InProgress { .. }
+                    | ItemPhase::InReview { .. }
+                    | ItemPhase::Fixing { .. }
+                    | ItemPhase::Done { .. },
+                    _,
+                ) => None,
             })
     }
 
@@ -223,7 +233,15 @@ impl Owner {
                 (ItemPhase::Approved { pr, .. }, Some(MergeConflict::MergingBase { approved_head, at })) => {
                     Some((pr.clone(), approved_head.clone(), *at, items_of(found, pr.number)))
                 }
-                _ => None,
+                (ItemPhase::Approved { .. }, Some(MergeConflict::AskingHuman { .. }) | None)
+                | (
+                    ItemPhase::Pending
+                    | ItemPhase::InProgress { .. }
+                    | ItemPhase::InReview { .. }
+                    | ItemPhase::Fixing { .. }
+                    | ItemPhase::Done { .. },
+                    _,
+                ) => None,
             })
     }
 

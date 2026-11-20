@@ -202,7 +202,7 @@ At `level = "debug"`:
 
 - `decision_taken` is emitted whenever a pure decision function in `agent_core::decide` takes action (forming a team,
   assigning an item, starting or advancing a round, acting on a run outcome, scheduling a retry or pause, evaluating
-  round checks, or choosing a merge action). Its `fields` carry `decision`, `input`, and `result`. A decision check on
+  round checks, or choosing a merge or merge-conflict action). Its `fields` carry `decision`, `input`, and `result`. A decision check on
   an idle team or task that produces no action logs nothing.
 - `outside_call_completed` is emitted whenever an external call (`git`, `agentbus`, the GitHub API, or a model CLI
   process) finishes, with `tool`, `operation`, `duration_ms`, `outcome`, and, when available, `exit_code` in `fields`.
