@@ -63,3 +63,47 @@ async fn a_task_whose_session_ends_without_a_status_goes_on_in_a_new_session_wit
     assert_ne!(runs[3].session(), runs[2].session(), "the fourth run is a new session");
     assert_eq!(member.renewals().map(agent_core::state::Renewals::used), Some(1));
 }
+
+// Rule: a daemon stopped during the third run of a session that ended twice without a status starts the task in a new
+// session after its restart, instead of failing it at the stop.
+#[tokio::test]
+async fn a_stop_that_ends_the_last_retry_of_a_session_leaves_the_task_to_a_new_session() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "nostatus,nostatus,hold,work"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.wait_for("run 3 to start", || rig.runs(&tasks[0]) >= 3).await;
+
+    rig.stop().await.unwrap();
+    let stopped = rig.state();
+    rig.start().await;
+    let state = rig
+        .item_where("1.1", "merged after the new session", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let before = stopped.find_task(&tasks[0]).unwrap().member;
+    assert_ne!(
+        before.status(),
+        agent_core::status::TaskStatus::Failed,
+        "the stop does not fail the task"
+    );
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert_eq!(member.runs().len(), 4);
+    assert_ne!(
+        member.runs()[3].session(),
+        member.runs()[2].session(),
+        "the fourth run is a new session"
+    );
+    assert_eq!(member.renewals().map(agent_core::state::Renewals::used), Some(1));
+}
