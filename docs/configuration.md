@@ -46,6 +46,7 @@ Top-level key and tables:
 | `[limits]` | table | see below | pauses for quotas and rate limits |
 | `[review]` | table | `fix_passes = 5`, `check_passes = 2`, `replace_after_minutes = 15` | the review loop, the checks before it and the reviewers that cannot work |
 | `[plan]` | table | `roles = ["solo", "member", "coordinator"]`, `bounces = 3` | whose runs keep a plan of their task, and how often one goes back for it |
+| `[replacement]` | table | `new_sessions = 1` | how many times a task whose runs went bad is started in a new session of its agent |
 | `[git]` | table | see below | the identity of the agents' commits |
 | `[github]` | table | none trusted, public API | whose words on GitHub are instructions, and where the API is |
 | `[notifications]` | table | files only | how the human is told |
@@ -124,7 +125,8 @@ not affect builds started by hand. Copy [`agents.example.toml`](../config/agents
 | `limits.wake_ups_per_message` | `2` | runs a task is woken for one unread message; after that many that end without the message read, the task is not woken for it again, a `bus_down` warning names the task, the message and the count, and the message waits for the task's next run; `0` never wakes a task for a message |
 
 A turn-limit ending queues the task and resumes the same session with a short continuation prompt. With the default
-`turn_limit_resumes = 3`, the fourth consecutive exhaustion fails the task and sends one notification with the count.
+`turn_limit_resumes = 3`, the fourth consecutive exhaustion is the end of the retries of that session: the task is started
+in a new session when [`[replacement] new_sessions`](#replacement) allows it, and fails with one notification otherwise.
 Every other run ending resets the count (resuming a failed task with `agent resume` continues in the same session without
 resetting the count until a run ends in another way). The count is derived from saved runs and survives daemon restarts.
 Provider quota exhaustion takes precedence over a turn limit and uses the quota pause instead.
@@ -152,6 +154,24 @@ history; a run of a role here that ends `STATUS: DONE` against its plan is sent 
 
 A task created before the daemon first ran with plans keeps none of this: its plan, if it writes one, is recorded, and
 its runs are never sent back.
+
+### `[replacement]`
+
+A run may end without a `STATUS:` line or hang. The task is asked again in the same session a few times — twice for a run
+without a status (`NO_STATUS_RETRIES`), `watchdog.hang_strikes` times for a hang, `limits.turn_limit_resumes` times for an
+exhausted turn budget. After that the session is itself the trouble: the model may keep writing its tool calls as text, or
+hang on the work it carries. The task is then started in a new session of the same agent, with a briefing built from facts:
+the task's own prompt, the commits on its branch since the base, the files it left uncommitted (a snapshot of the worktree
+is taken first), its plan of steps when it has one, the messages of its team it had not read, and why it is started anew.
+The briefing tells it to go on from that state, not to start over and not to undo the commits. A solo agent, a coordinator
+and a member are started anew; a worker and a reviewer are not.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `new_sessions` | `1` | how many new sessions of its agent a task is started in after its runs went bad; `0` turns them off and the task fails as before; at most `10`. The count is kept in the state, so it survives a restart of the daemon |
+
+The new session works in the same worktree, on the same branch and on the same task. The history records the restart with
+its reason, and `agent status` says `new session` on the task's line.
 
 ### `[git]`
 
