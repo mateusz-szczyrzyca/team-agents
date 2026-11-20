@@ -12,6 +12,7 @@ mod disk;
 mod fixture;
 mod gate;
 mod history;
+mod plan;
 mod round_state;
 mod rounds;
 mod start;
@@ -769,6 +770,15 @@ impl Owner {
                 task: task.clone(),
                 source,
             })?;
+        // The run's prompt has the reason it was sent back for its plan, if any: no later run is told it again.
+        // So are the answers about its plan that no run asked for.
+        if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
+            let reason = member.take_plan_reason();
+            let answers = member.take_unread_plan_answers();
+            if reason.is_some() || answers.is_some() {
+                tracing::debug!(task = %task, ?reason, ?answers, "the run is told what waited for it of its plan");
+            }
+        }
         events.push(EventKind::RunStarted {
             team: located.team.clone(),
             task: task.clone(),
@@ -1011,6 +1021,7 @@ impl Owner {
     /// A run that went to its end: its task goes where the end says.
     async fn finished(&mut self, task: &TaskId, run: FinishedRun) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
+        self.keep_plan_out_of_delivery(task, &located).await;
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
         let settle_span = self.settle_span_of(task, &located.team);

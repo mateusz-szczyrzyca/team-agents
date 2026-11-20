@@ -38,14 +38,17 @@ mod harness_plan_prompts {
 
     /// The text of the first fenced `text` block of `text`.
     fn example(text: &str) -> String {
-        let start = text.find("```text\n").unwrap() + "```text\n".len();
-        let end = start + text[start..].find("```").unwrap();
-        text[start..end].to_owned()
+        let (_, after) = text.split_once("```text\n").unwrap();
+        let (block, _) = after.split_once("```").unwrap();
+        block.to_owned()
     }
+
+    /// A text of the catalog, the values it is rendered with, and the file of its golden text.
+    type Case = (HarnessPrompt, &'static [(&'static str, &'static str)], &'static str);
 
     #[test]
     fn each_text_of_the_plan_renders_as_its_golden_text() {
-        let cases: &[(HarnessPrompt, &[(&str, &str)], &str)] = &[
+        let cases: &[Case] = &[
             (HarnessPrompt::Plan, &[], "plan.txt"),
             (HarnessPrompt::PlanMissing, &[], "plan-missing.txt"),
             (
@@ -65,7 +68,10 @@ mod harness_plan_prompts {
                     ("task", "task-20261120-090000-abcd"),
                     ("agent", "claude-1"),
                     ("count", "3"),
-                    ("reason", "steps 1.2 and 2.1 are still to do or in hand — zażółć"),
+                    (
+                        "reason",
+                        "> ## Your plan is not finished\n>\n> Steps 1.2 and 2.1 are still to do or in hand — zażółć.",
+                    ),
                 ],
                 "notice-plan-question.txt",
             ),
@@ -96,7 +102,7 @@ mod harness_plan_prompts {
                 ("task", "task-20261120-090000-abcd"),
                 ("agent", "claude-1"),
                 ("count", "3"),
-                ("reason", "there is no plan"),
+                ("reason", "> ## Your plan is missing\n>\n> There is no plan."),
             ],
         );
 
