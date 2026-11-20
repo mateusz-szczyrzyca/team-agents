@@ -42,6 +42,8 @@ async fn shutdown_does_not_queue_a_fourth_no_status_run() {
         }
     }
     let daemon = Daemon::new(&state, None);
+    // The rung of a new session is off: this test is about the end of the retries of the same session.
+    daemon.configure("[replacement]\nnew_sessions = 0");
     let (mut owner, _sinks) = daemon.bare_owner().await;
     owner.interrupted(&task(1), None).await.unwrap();
     let member = owner.parts.state.find_task(&task(1)).unwrap().member;
