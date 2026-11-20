@@ -33,7 +33,7 @@ use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcDa
 use crate::cli::{ErrorTail, RunOutput, SessionId, StreamOutcome};
 use crate::config::{Limits, Watchdog};
 use crate::kinds::Role;
-use crate::state::{InvalidTimestamp, RunEnd, Timestamp};
+use crate::state::{InvalidTimestamp, PrNumber, RunEnd, Timestamp};
 use crate::status::RunOutcome;
 
 /// Seconds added to every pause, so that a run does not start a moment before the limit really ends.
@@ -268,6 +268,13 @@ pub fn parse_status_line(message: &str) -> StatusLine {
             word.parse::<RunOutcome>()
                 .map_or_else(|unknown| StatusLine::Unknown(unknown.value), StatusLine::Reported)
         })
+}
+
+/// The pull request an item was reported as delivered by, if the final message carries a delivery line such as
+/// `DELIVERED: #12` or `STATUS: DELIVERED #12`.
+#[must_use]
+pub fn parse_delivery_report(_message: &str) -> Option<PrNumber> {
+    None
 }
 
 /// Classifies a finished run.
@@ -1958,5 +1965,18 @@ mod tests {
                 1
             );
         }
+    }
+
+    #[test]
+    fn parse_delivery_report_finds_pull_request_number() {
+        let pr12 = PrNumber::new(std::num::NonZeroU32::new(12).unwrap());
+        assert_eq!(parse_delivery_report("DELIVERED: #12\nSTATUS: DONE"), Some(pr12));
+        assert_eq!(parse_delivery_report("DELIVERED: 12\nSTATUS: DONE"), Some(pr12));
+        assert_eq!(parse_delivery_report("STATUS: DELIVERED #12"), Some(pr12));
+        assert_eq!(parse_delivery_report("**DELIVERED:** #12"), Some(pr12));
+        assert_eq!(parse_delivery_report("`DELIVERED: #12`"), Some(pr12));
+        assert_eq!(parse_delivery_report("DELIVERED BY PR #12"), Some(pr12));
+        assert_eq!(parse_delivery_report("STATUS: DONE"), None);
+        assert_eq!(parse_delivery_report("DELIVERED: #0"), None);
     }
 }
