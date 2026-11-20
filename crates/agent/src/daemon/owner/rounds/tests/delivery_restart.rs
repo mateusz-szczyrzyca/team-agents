@@ -118,57 +118,68 @@ enum Boundary {
     Recovered,
 }
 
+/// Starts a prompt-driven accepted claim and stops its daemon before any closure is observed.
+async fn accepted_claim() -> (
+    Rig,
+    agent_core::ids::TeamId,
+    Vec<agent_core::ids::TaskId>,
+    agent_core::ids::RoundId,
+) {
+    let mut rig = Rig::new(
+        &[
+            investigator(
+                "inv-lead",
+                "sleep,integrate,delivery-from-prompt,delivery-return-lead,sleep",
+            ),
+            normal("claude-1", "commit-clean"),
+            normal("codex-1", "delivery-held,delivery-return-work"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(
+            &["inv-lead", "claude-1", "codex-1"],
+            PARALLEL,
+            MergeMode::NoMerge,
+            Some("inv-lead"),
+        )
+        .await;
+    rig.item_where("1.1", "the first PR to be approved", |phase| {
+        matches!(phase, ItemPhase::Approved { .. })
+    })
+    .await;
+    std::fs::write(rig.home.root().join("delivery-release"), "release").unwrap();
+    let accepted = rig
+        .state_where("the prompt-driven claim to be accepted", |state| {
+            state
+                .team(&team)
+                .unwrap()
+                .round_of("2.1".parse().unwrap())
+                .unwrap()
+                .delivered_by()
+                .is_some()
+        })
+        .await;
+    let old = accepted
+        .team(&team)
+        .unwrap()
+        .round_of("2.1".parse().unwrap())
+        .unwrap()
+        .id()
+        .clone();
+    rig.stop().await.unwrap();
+    (rig, team, tasks, old)
+}
+
 #[tokio::test]
 async fn delivery_restart_at_each_recovery_boundary_publishes_and_merges_the_items_own_pr() {
     for boundary in [Boundary::Observed, Boundary::Recovered] {
-        let mut rig = Rig::new(
-            &[
-                investigator(
-                    "inv-lead",
-                    "sleep,integrate,delivery-from-prompt,delivery-return-lead,sleep",
-                ),
-                normal("claude-1", "commit-clean"),
-                normal("codex-1", "delivery-held,delivery-return-work"),
-                investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
-                investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
-            ],
-            5,
-            true,
-        )
-        .await;
-        rig.start().await;
-        let (team, tasks) = rig
-            .run(
-                &["inv-lead", "claude-1", "codex-1"],
-                PARALLEL,
-                MergeMode::NoMerge,
-                Some("inv-lead"),
-            )
-            .await;
-        rig.item_where("1.1", "the first PR to be approved", |phase| {
-            matches!(phase, ItemPhase::Approved { .. })
-        })
-        .await;
-        std::fs::write(rig.home.root().join("delivery-release"), "release").unwrap();
-        let accepted = rig
-            .state_where("the prompt-driven claim to be accepted", |state| {
-                state
-                    .team(&team)
-                    .unwrap()
-                    .round_of("2.1".parse().unwrap())
-                    .unwrap()
-                    .delivered_by()
-                    .is_some()
-            })
-            .await;
-        let old = accepted
-            .team(&team)
-            .unwrap()
-            .round_of("2.1".parse().unwrap())
-            .unwrap()
-            .id()
-            .clone();
-        rig.stop().await.unwrap();
+        let (mut rig, team, tasks, old) = accepted_claim().await;
         rig.github.closed_by_a_human(1);
         let mut step = stepped(&rig).await;
         let pulls = step.owner.pulls.clone().unwrap();
