@@ -16,7 +16,7 @@ use crate::config::{Limits, Watchdog};
 use crate::kinds::Role;
 use crate::state::SessionId;
 
-use super::outcome::{AfterNoStatus, NO_STATUS_RETRIES, after_no_status};
+use super::outcome::{AfterNoStatus, after_no_status};
 
 /// Why a run of a task went bad in a way the ladder carries over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
