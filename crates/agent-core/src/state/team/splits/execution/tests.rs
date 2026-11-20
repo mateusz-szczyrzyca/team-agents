@@ -180,3 +180,16 @@ fn persisted_active_split_cannot_lose_a_later_rounds_part_identity() {
     let read = serde_json::from_value::<Team>(wire);
     assert!(matches!(read, Err(error) if error.is_data()));
 }
+
+#[test]
+fn persisted_split_cannot_have_two_open_parts_of_one_item() {
+    let mut found = working();
+    found.activate_split(plan(&[&[], &[]])).unwrap();
+    let mut wire = serde_json::to_value(found).unwrap();
+    let mut second = wire["rounds"][0].clone();
+    second["id"] = serde_json::to_value(round_id(2)).unwrap();
+    second["part"]["key"] = serde_json::json!("b");
+    wire["rounds"].as_array_mut().unwrap().push(second);
+    let read = serde_json::from_value::<Team>(wire);
+    assert!(matches!(read, Err(error) if error.is_data()));
+}
