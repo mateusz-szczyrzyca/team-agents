@@ -1058,6 +1058,8 @@ const (
 	CmdSendInvalidNotice                      // --notice is not a known script notice [InvalidArgument]
 	CmdSendNoSuchMember                       // --task or --team names no open team the agent is a member of with that task [NotFound]
 	CmdSendAmbiguousAgent                     // the agent is in more than one open team and neither --task nor --team names which [Conflict]
+	CmdSendBindingForMany                     // --task or --team is given with --to all or team:<id>: they name the team of one agent [InvalidArgument]
+	CmdSendToSelf                             // --task or --team is given and the sender writes to itself [InvalidArgument]
 	CmdSendStorage                            // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1070,6 +1072,8 @@ var cmdSendCauses = [...]causeInfo{
 	{"InvalidNotice", ClassInvalidArgument},
 	{"NoSuchMember", ClassNotFound},
 	{"AmbiguousAgent", ClassConflict},
+	{"BindingForMany", ClassInvalidArgument},
+	{"ToSelf", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
 

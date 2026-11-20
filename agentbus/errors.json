@@ -671,6 +671,16 @@
      "name": "AmbiguousAgent",
      "class": "Conflict",
      "doc": "the agent is in more than one open team and neither --task nor --team names which"
+    },
+    {
+     "name": "BindingForMany",
+     "class": "InvalidArgument",
+     "doc": "--task or --team is given with --to all or team:<id>: they name the team of one agent"
+    },
+    {
+     "name": "ToSelf",
+     "class": "InvalidArgument",
+     "doc": "--task or --team is given and the sender writes to itself"
     }
    ]
   },
