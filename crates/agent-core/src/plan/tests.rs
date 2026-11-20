@@ -784,3 +784,23 @@ fn a_fault_in_a_step_text_comes_before_the_stray_line_after_it() {
         PlanError::GivenUpWithoutReason { line: line!(2) }
     );
 }
+
+/// A `Files:` line with no path, or with an empty entry between its commas, is refused with its line: a path is
+/// never dropped, and the line written back can never be lost.
+#[test]
+fn a_files_line_with_an_empty_entry_is_refused_with_its_line() {
+    for files in [
+        "Files:",
+        "Files:   ",
+        "Files: a.rs,,b.rs",
+        "Files: a.rs,",
+        "Files: , a.rs",
+    ] {
+        let text = format!("1. S\n[ ] 1.1 a\n    {files}\n        Check: echo example\n");
+        let error = failure(&text);
+        assert!(
+            matches!(&error, PlanError::BadFile { line, problem } if *line == line!(3) && problem.rule == PathRule::Empty),
+            "{files:?}: {error:?}"
+        );
+    }
+}
