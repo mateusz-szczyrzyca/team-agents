@@ -46,8 +46,9 @@ pub use round::{ClosedBeforeOpened, Round, RoundEnd, RoundLife};
 pub use run::{Run, RunEnd, RunError, RunState};
 pub use team::{
     ActivateSplitError, Activity, ActivityEnd, ActivityOutcome, ActivityRequest, AdvanceItemError, BeginRunError,
-    CloseRoundError, Crew, CrewError, CrewMut, DeliveryError, MergeMode, NewRun, OpenRoundError, RecordSplitError,
-    ReviewerProblem, RoundsError, TaskListText, Team, TeamError, TeamMembers, TeamMut,
+    CloseRoundError, CompleteDeliveryError, Crew, CrewError, CrewMut, DeliverRoundError, DeliveryError, MergeMode,
+    NewRun, OpenRoundError, RecordSplitError, ReviewerProblem, RoundsError, TaskListText, Team, TeamError, TeamMembers,
+    TeamMut,
 };
 pub use values::{CommitId, InvalidCommitId, InvalidTimestamp, PrNumber, SessionId, Timestamp};
 pub use wake_delivery::WakeDelivery;

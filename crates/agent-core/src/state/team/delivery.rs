@@ -42,6 +42,12 @@ pub enum DeliveryError {
     BeforeOpening(#[from] ClosedBeforeOpened),
 }
 
+/// What [`Team::deliver_round`] returns when it refuses a claim.
+pub type DeliverRoundError = DeliveryError;
+
+/// What [`Team::complete_delivery`] returns when it refuses a completion.
+pub type CompleteDeliveryError = DeliveryError;
+
 impl Team {
     /// Finds a PR owned by an ordinary or split-part round of this team.
     #[must_use]

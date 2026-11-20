@@ -17,7 +17,7 @@ use crate::task_list::{AllowLines, ItemMark, TaskList, TaskListError};
 
 mod activities;
 mod delivery;
-pub use delivery::DeliveryError;
+pub use delivery::{CompleteDeliveryError, DeliverRoundError, DeliveryError};
 mod legacy;
 pub use activities::{Activity, ActivityEnd, ActivityOutcome, ActivityRequest};
 mod rounds;
