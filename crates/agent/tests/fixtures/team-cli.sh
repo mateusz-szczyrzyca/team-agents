@@ -177,6 +177,11 @@ fi
 init
 read_messages
 case $action in
+  proposal:*)
+    task=$(grep -o 'task-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
+    cp "$home/fake-proposals/${action#proposal:}.json" "$home/tasks/$task/split-proposal-1.1.json"
+    result 'SPLIT: 1.1\nSTATUS: SLEEPING'
+    ;;
   held-review)
     # A test releases each report explicitly, without depending on which reviewer finishes first.
     mkfifo ".fake-review-result-$n"
