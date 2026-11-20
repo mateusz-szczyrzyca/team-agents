@@ -368,6 +368,12 @@ case $action in
     fi
     result "$report"'\nSTATUS: DONE'
     ;;
+  delivery-held)
+    hide_own_files
+    : > .fake-delivery-ready
+    while [[ ! -f $home/delivery-release ]]; do sleep 0.02; done
+    result 'Already delivered.\nSTATUS: DONE'
+    ;;
   dirty-done)
     hide_own_files
     printf 'uncommitted delivery work\n' > delivery-uncommitted.txt

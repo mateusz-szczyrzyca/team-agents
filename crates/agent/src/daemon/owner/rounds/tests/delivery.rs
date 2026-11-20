@@ -139,3 +139,91 @@ async fn delivery_refuses_a_dirty_worktree_and_tells_the_lead_why() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn delivery_open_claim_survives_restart_and_closes_on_its_pr_merge() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,integrate,done:DELIVERED: #1,sleep"),
+            normal("claude-1", "commit-clean"),
+            normal("codex-1", "delivery-held"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(
+            &["inv-lead", "claude-1", "codex-1"],
+            super::rig::PARALLEL,
+            MergeMode::NoMerge,
+            Some("inv-lead"),
+        )
+        .await;
+    rig.item_where("1.1", "the owning PR to be approved", |phase| {
+        matches!(phase, ItemPhase::Approved { .. })
+    })
+    .await;
+    std::fs::write(rig.home.root().join("delivery-release"), "release").unwrap();
+    let waiting = rig
+        .state_where("the open claim to be checked", |state| {
+            let found = state.team(&team).unwrap();
+            found.round_of("2.1".parse().unwrap()).unwrap().delivered_by().is_some()
+                || found.find(&tasks[0]).unwrap().1.runs().len() >= 4
+        })
+        .await;
+    let found = waiting.team(&team).unwrap();
+    let round = found.round_of("2.1".parse().unwrap()).unwrap();
+    assert_eq!(round.delivered_by().map(|pr| pr.number.get().get()), Some(1));
+    assert!(round.is_open());
+    assert_eq!(found.find(&tasks[2]).unwrap().1.runs().len(), 1);
+    rig.stop().await.unwrap();
+    rig.start().await;
+    let before = rig
+        .state_where("restarted waiting member", |state| {
+            state.team(&team).unwrap().find(&tasks[2]).unwrap().1.status() == TaskStatus::Waiting
+        })
+        .await;
+    assert!(
+        before
+            .team(&team)
+            .unwrap()
+            .round_of("2.1".parse().unwrap())
+            .unwrap()
+            .is_open()
+    );
+    rig.github.merged_by_a_human(1);
+    rig.item_where("1.1", "the owning PR to merge", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+    for _ in 0..3 {
+        let reply = crate::client::Connection::connect(&rig.home.socket_file())
+            .await
+            .unwrap()
+            .request(
+                agent_core::protocol::Client::Cli,
+                agent_core::protocol::Command::Status(agent_core::protocol::StatusRequest { target: None }),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(reply, agent_core::protocol::Reply::Teams { .. }));
+    }
+    let done = rig.state();
+    rig.stop().await.unwrap();
+    let found = done.team(&team).unwrap();
+    assert!(
+        found
+            .items()
+            .iter()
+            .all(|item| matches!(item.phase(), ItemPhase::Done { .. }))
+    );
+    assert!(found.rounds().iter().all(|round| !round.is_open()));
+    assert_eq!(found.find(&tasks[0]).unwrap().1.status(), TaskStatus::Done);
+    assert_eq!(found.find(&tasks[2]).unwrap().1.runs().len(), 1);
+    assert_eq!(rig.github.pulls().len(), 1);
+    assert!(!rig.worktree(&tasks[2]).exists());
+}
