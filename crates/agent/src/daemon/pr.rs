@@ -101,12 +101,14 @@ pub(super) fn plan_publications(team: &Team) -> Result<Vec<Publication>, PlanErr
         }
         match progress.phase() {
             ItemPhase::InProgress { assignee, branch } if finished(&roster, assignee.as_str()) => {
-                let head = match (
-                    team_branch.as_ref(),
-                    team.round_of(progress.id()).and_then(agent_core::state::Round::part),
-                ) {
-                    (Some(integration), Some(key)) => format!("{integration}-{}{key}", progress.id()).parse()?,
-                    (Some(integration), None) => integration.clone(),
+                let head = match (team_branch.as_ref(), team.round_of(progress.id())) {
+                    (Some(integration), Some(round)) if returned_delivery(team, progress.id()) => {
+                        format!("{integration}-{}-{}", progress.id(), round.id()).parse()?
+                    }
+                    (Some(integration), round) => match round.and_then(agent_core::state::Round::part) {
+                        Some(key) => format!("{integration}-{}{key}", progress.id()).parse()?,
+                        None => integration.clone(),
+                    },
                     (None, Some(_) | None) => branch.clone(),
                 };
                 with_group(&mut groups, &head, |group| {
@@ -127,6 +129,13 @@ pub(super) fn plan_publications(team: &Team) -> Result<Vec<Publication>, PlanErr
         }
     }
     Ok(groups.into_iter().filter_map(Group::publication).collect())
+}
+
+/// Whether an observed closed claim requires independent publication of this item's replacement round.
+pub(super) fn returned_delivery(team: &Team, item: ItemId) -> bool {
+    team.rounds()
+        .iter()
+        .any(|round| round.item() == Some(item) && round.delivery_closed_at().is_some())
 }
 
 /// What is known of one branch while the items are looked at.
