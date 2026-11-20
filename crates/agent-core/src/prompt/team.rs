@@ -13,6 +13,8 @@ use super::{Audience, PromptSpec};
 pub enum TeamPrompt {
     /// What the first run of a team's member is told about the team: who is in it, its branch, how it talks to the others.
     Context,
+    /// A member asks its coordinator to submit a split proposal.
+    SplitRequested,
     /// The split proposal notice-question text.
     NoticeSplitQuestion,
     /// The split proposal correction text.
@@ -84,6 +86,7 @@ impl TeamPrompt {
     pub const ALL: &'static [Self] = &[
         Self::DeliveryClosed,
         Self::Context,
+        Self::SplitRequested,
         Self::NoticeSplitQuestion,
         Self::SplitCorrection,
         Self::SplitLimit,
@@ -120,12 +123,8 @@ impl TeamPrompt {
     #[must_use]
     pub const fn spec(self) -> PromptSpec {
         match self {
-            Self::NoticeSplitQuestion => PromptSpec::new(
-                "harness/team/notice-split-question.md",
-                Audience::Human,
-                &["task", "item", "reason", "proposal", "example"],
-            ),
-
+            Self::SplitRequested => split_requested_spec(),
+            Self::NoticeSplitQuestion => split_question_spec(),
             Self::SplitCorrection => {
                 PromptSpec::new("harness/team/split-correction.md", Audience::Model, &["item", "reason"])
             }
@@ -247,5 +246,23 @@ const fn delegation_spec() -> PromptSpec {
             "request",
             "context",
         ],
+    )
+}
+
+/// Catalog variables for the member-to-coordinator request.
+const fn split_requested_spec() -> PromptSpec {
+    PromptSpec::new(
+        "harness/team/split-requested.md",
+        Audience::Model,
+        &["member", "item", "task"],
+    )
+}
+
+/// Catalog variables for the harness-created human question.
+const fn split_question_spec() -> PromptSpec {
+    PromptSpec::new(
+        "harness/team/notice-split-question.md",
+        Audience::Human,
+        &["task", "item", "reason", "proposal", "example"],
     )
 }

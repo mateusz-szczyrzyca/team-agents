@@ -41,12 +41,14 @@ impl Default for Settings {
     }
 }
 impl Settings {
+    /// Returns the numeric limits used by the pure decision.
     pub(super) fn policy(&self) -> Split {
         Split {
             part_limit: self.part_limit,
             corrections: self.corrections,
         }
     }
+    /// Borrows the validated repository unit.
     pub(super) fn unit(&self) -> &str {
         &self.unit
     }

@@ -1,4 +1,4 @@
-PRAGMA user_version = 14;
+PRAGMA user_version = 15;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -223,10 +223,40 @@ CREATE INDEX runs_by_task ON runs (task, at);
 
 CREATE INDEX runs_by_agent ON runs(agent,run);
 
+CREATE TABLE snapshots (
+    round TEXT NOT NULL,
+    task TEXT NOT NULL,
+    n INTEGER NOT NULL CHECK (n >= 1),
+    at TEXT NOT NULL,
+    commit_id TEXT NOT NULL,
+    head TEXT NOT NULL,
+    bytes INTEGER NOT NULL CHECK (bytes >= 0),
+    PRIMARY KEY (round, task, n)
+) STRICT;
+
+CREATE TABLE plan_versions (
+    id INTEGER PRIMARY KEY,
+    task TEXT NOT NULL,
+    team TEXT NOT NULL,
+    run TEXT,
+    at TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('version', 'missing', 'unreadable')),
+    text TEXT,
+    line INTEGER CHECK (line IS NULL OR line >= 1),
+    detail TEXT,
+    CHECK ((kind = 'version') = (text IS NOT NULL)),
+    CHECK ((kind = 'unreadable') = (detail IS NOT NULL)),
+    CHECK ((kind = 'unreadable') OR line IS NULL)
+) STRICT;
+
+CREATE INDEX plan_versions_by_task ON plan_versions (task, id);
+
+CREATE INDEX plan_versions_by_team ON plan_versions (team, id);
+
 CREATE TABLE history_records (
     sequence INTEGER PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN (
-        'team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session',
+        'split_decision', 'team', 'round', 'run', 'launch', 'step', 'run_end', 'changes', 'session',
         'gate', 'checked', 'pull_opened', 'pull_pushed', 'pull_ready', 'review_asked', 'review_submitted',
         'finding_explained', 'finding_accepted', 'finding_rejected', 'finding_raised',
         'second_opinion_asked', 'second_opinion_ended', 'finding_confirmed', 'finding_not_confirmed',
@@ -283,36 +313,6 @@ END,'') AS body
 FROM history_records h WHERE sequence=new.sequence;
 END;
 
-CREATE TABLE snapshots (
-    round TEXT NOT NULL,
-    task TEXT NOT NULL,
-    n INTEGER NOT NULL CHECK (n >= 1),
-    at TEXT NOT NULL,
-    commit_id TEXT NOT NULL,
-    head TEXT NOT NULL,
-    bytes INTEGER NOT NULL CHECK (bytes >= 0),
-    PRIMARY KEY (round, task, n)
-) STRICT;
-
-CREATE TABLE plan_versions (
-    id INTEGER PRIMARY KEY,
-    task TEXT NOT NULL,
-    team TEXT NOT NULL,
-    run TEXT,
-    at TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('version', 'missing', 'unreadable')),
-    text TEXT,
-    line INTEGER CHECK (line IS NULL OR line >= 1),
-    detail TEXT,
-    CHECK ((kind = 'version') = (text IS NOT NULL)),
-    CHECK ((kind = 'unreadable') = (detail IS NOT NULL)),
-    CHECK ((kind = 'unreadable') OR line IS NULL)
-) STRICT;
-
-CREATE INDEX plan_versions_by_task ON plan_versions (task, id);
-
-CREATE INDEX plan_versions_by_team ON plan_versions (team, id);
-
 CREATE TABLE daemon_logs (
     id INTEGER PRIMARY KEY,
     first_at TEXT NOT NULL,
@@ -327,7 +327,7 @@ CREATE TABLE daemon_logs (
         'history_record_incomplete', 'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed',
         'run_started', 'run_ended', 'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated',
         'questions_answered', 'control_used', 'checks_decided', 'reviews_requested', 'review_report_late',
-        'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken',
+        'notification_sent', 'split_decision', 'questions_file_opened', 'build_directory_removed', 'decision_taken',
         'outside_call_completed', 'peer_gone', 'github_step_waiting', 'github_step_resumed', 'snapshot_failed', 'snapshot_large', 'delivery_closed'
     )),
     team TEXT,
@@ -354,7 +354,7 @@ CREATE TABLE daemon_logs (
             'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
             'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated', 'questions_answered',
             'control_used', 'checks_decided', 'reviews_requested', 'review_report_late', 'notification_sent',
-            'questions_file_opened', 'build_directory_removed', 'github_step_resumed'
+            'split_decision', 'questions_file_opened', 'build_directory_removed', 'github_step_resumed'
         ))
         OR (level = 'debug' AND event IN ('decision_taken', 'outside_call_completed', 'peer_gone'))
     )

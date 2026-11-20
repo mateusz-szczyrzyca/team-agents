@@ -245,7 +245,8 @@ fn event_entry(tx: &Transaction<'_>, record: &EventRecord, limit: MaxTextBytes) 
         HistoryEvent::Gate { task, .. } | HistoryEvent::Lost { task: Some(task), .. } if record.rounds.is_empty() => {
             rounds_of_task(tx, task.as_str(), kind)?
         }
-        HistoryEvent::Gate { .. }
+        HistoryEvent::SplitDecision { .. }
+        | HistoryEvent::Gate { .. }
         | HistoryEvent::Checked { .. }
         | HistoryEvent::PullOpened { .. }
         | HistoryEvent::PullPushed { .. }

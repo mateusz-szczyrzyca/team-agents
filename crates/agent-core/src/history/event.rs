@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray, VariantNames};
 
 use crate::decide::round::AskReason;
-use crate::ids::{AgentName, BranchName, InvestigatorName, RoundId, TaskId, TeamId};
+use crate::ids::{AgentName, BranchName, InvestigatorName, ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::{Keyword, UnknownKeyword};
 use crate::protocol::{Client, ControlAction, Target};
 use crate::state::{AnsweredVia, CommitId, GateRecord, PrNumber, RoundEnd, Timestamp};
@@ -94,7 +94,8 @@ impl FromStr for LostKind {
             Err(_) => {}
         }
         match EventKind::from_str(text)? {
-            kind @ (EventKind::Gate
+            kind @ (EventKind::SplitDecision
+            | EventKind::Gate
             | EventKind::Checked
             | EventKind::PullOpened
             | EventKind::PullPushed
@@ -204,6 +205,8 @@ impl LostCause {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, IntoStaticStr, VariantArray, VariantNames)]
 #[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<EventKind>)]
 pub enum EventKind {
+    /// [`HistoryEvent::SplitDecision`].
+    SplitDecision,
     /// [`HistoryEvent::Gate`].
     Gate,
     /// [`HistoryEvent::Checked`].
@@ -287,10 +290,38 @@ pub enum CheckOutcome {
     Allowed,
 }
 
+/// The actor selected by the split approval policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum SplitDecision {
+    /// The harness approved the complete plan.
+    Approved,
+    /// The coordinator must correct the saved fault.
+    Corrected,
+    /// The human must decide in a numbered questions file.
+    Asked,
+}
+
 /// One happening of a round or a team. The variants are the payload of the ledger: a name or a field of one is a format.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HistoryEvent {
+    /// The harness decided what happens to a coordinator split proposal.
+    SplitDecision {
+        /// Coordinator task that submitted the proposal.
+        task: TaskId,
+        /// Original item, before splitting.
+        item: ItemId,
+        /// Policy outcome.
+        decision: SplitDecision,
+        /// Completed send-backs, retained across restarts.
+        corrections: u32,
+        /// Questions number when a human decision is required.
+        question: Option<NonZeroU32>,
+        /// Catalog fault or the scope change requiring a decision; empty on approval.
+        reason: String,
+    },
     /// The gate ran for a task; the time of the record is when it ended.
     Gate {
         /// The task whose worktree the gate ran in.
@@ -587,6 +618,7 @@ impl HistoryEvent {
     #[must_use]
     pub const fn kind(&self) -> EventKind {
         match self {
+            Self::SplitDecision { .. } => EventKind::SplitDecision,
             Self::Gate { .. } => EventKind::Gate,
             Self::Checked { .. } => EventKind::Checked,
             Self::PullOpened { .. } => EventKind::PullOpened,
@@ -624,6 +656,16 @@ impl HistoryEvent {
     #[must_use]
     pub fn key(&self) -> Option<String> {
         match self {
+            Self::SplitDecision {
+                task,
+                item,
+                decision,
+                corrections,
+                question,
+                ..
+            } => Some(format!(
+                "task {task} item {item} {decision} correction {corrections} question {question:?}"
+            )),
             Self::Gate { .. }
             | Self::Checked { .. }
             | Self::Controlled { .. }
@@ -678,6 +720,7 @@ impl HistoryEvent {
     /// [`Cut`]: super::Cut
     pub fn texts_mut(&mut self) -> Vec<(&'static str, &mut String)> {
         match self {
+            Self::SplitDecision { reason, .. } => vec![("reason", reason)],
             Self::Checked { issues, .. } => issues.iter_mut().map(|issue| ("issues", issue)).collect(),
             Self::PullOpened { title, body, .. } | Self::Notified { title, body, .. } => {
                 vec![("title", title), ("body", body)]
@@ -741,7 +784,9 @@ impl HistoryEvent {
             | Self::FindingConfirmed { by, .. }
             | Self::FindingNotConfirmed { by, .. } => vec![by.as_str()],
             Self::PullMerged { commit, .. } => commit.iter().map(CommitId::as_str).collect(),
-            Self::QuestionAsked { task, .. } | Self::QuestionAnswered { task, .. } => vec![task.as_str()],
+            Self::SplitDecision { task, .. }
+            | Self::QuestionAsked { task, .. }
+            | Self::QuestionAnswered { task, .. } => vec![task.as_str()],
             Self::Controlled { target, by, tasks, .. } => {
                 let mut found = vec![match target {
                     Target::Team(id) => id.as_str(),

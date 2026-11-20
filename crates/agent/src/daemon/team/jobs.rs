@@ -56,6 +56,17 @@ type Rendered = (NoticeKind, Vec<(&'static str, String)>, String);
 /// [`NoticeRenderError`].
 pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) -> Result<Outgoing, NoticeRenderError> {
     let (kind, details, text) = match notice {
+        BusNotice::SplitRequested { member, item, task } => (
+            NoticeKind::MemberQuestions,
+            vec![("member", member.to_string()), ("item", item.to_string())],
+            texts.render(
+                TeamPrompt::SplitRequested,
+                &Variables::new()
+                    .with("member", member.as_str())?
+                    .with("item", item.to_string())?
+                    .with("task", task.as_str())?,
+            )?,
+        ),
         BusNotice::MemberFinished { member, item, branch } => member_finished(texts, member, item.as_ref(), branch)?,
         BusNotice::MemberFailed { member, message } => (
             NoticeKind::MemberFailed,

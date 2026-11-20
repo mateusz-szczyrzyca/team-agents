@@ -172,7 +172,8 @@ impl<S: Store> Noting<S> {
                     self.rounds_of_task(&e.team, task),
                     e.at,
                 )),
-                HistoryEvent::Gate { .. }
+                HistoryEvent::SplitDecision { .. }
+                | HistoryEvent::Gate { .. }
                 | HistoryEvent::Checked { .. }
                 | HistoryEvent::PullOpened { .. }
                 | HistoryEvent::PullPushed { .. }

@@ -1,8 +1,10 @@
 //! Durable coordinator proposals, whole-plan approval and bounded corrections.
 
 use agent_core::decide::split::approval::{AskReason, ProposalDecision, ProposalFault, ProposalRead, decide_proposal};
+use agent_core::history::{HistoryEvent, SplitDecision};
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
+use agent_core::log::LogEvent;
 use agent_core::prompt::{TeamPrompt, Variables, VariablesError};
 use agent_core::questions::{MAX_QUESTIONS_BYTES, quote};
 use agent_core::state::split::keeping::{ProposalKeeping, ProposalStage};
@@ -38,6 +40,24 @@ pub(crate) enum ProposalError {
     Question(#[from] ReplaceError),
 }
 
+/// The two task transitions a proposal can request.
+#[derive(Debug)]
+enum ProposalEnd {
+    /// Continue the coordinator after approval or correction.
+    Queued,
+    /// Wait for the existing human question.
+    Questions,
+}
+
+impl From<ProposalEnd> for Settled {
+    fn from(end: ProposalEnd) -> Self {
+        match end {
+            ProposalEnd::Queued => Self::Status(TaskStatus::Queued),
+            ProposalEnd::Questions => Self::Questions,
+        }
+    }
+}
+
 impl Owner {
     /// Recognizes explicit submissions and durably saves input before deciding.
     pub(super) async fn split_at_end(
@@ -66,7 +86,7 @@ impl Owner {
             })
             .map(agent_core::state::ItemProgress::id);
         let Some(item) = submitted else { return Ok(None) };
-        let mut keeping = team.split_proposal(item).cloned();
+        let keeping = team.split_proposal(item).cloned();
         let path = self
             .parts
             .store
@@ -82,14 +102,18 @@ impl Owner {
                 String::new()
             }
         };
-        match &mut keeping {
-            Some(saved) => saved.resubmit(text).map_err(ProposalError::Form)?,
-            None => keeping = Some(ProposalKeeping::new(text).map_err(ProposalError::Form)?),
-        }
-        let keeping = keeping.ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let keeping = match keeping {
+            Some(mut saved) => {
+                saved.resubmit(text).map_err(ProposalError::Form)?;
+                saved
+            }
+            None => ProposalKeeping::new(text).map_err(ProposalError::Form)?,
+        };
         self.keep_proposal(&located.team, item, keeping.clone())?;
         self.save().await?;
-        self.decide_split(task, located, item, keeping).await.map(Some)
+        self.decide_split(task, located, item, keeping)
+            .await
+            .map(|end| Some(end.into()))
     }
 
     /// Applies one saved pending proposal; all outcomes are committed with the task status.
@@ -99,7 +123,7 @@ impl Owner {
         located: &Located,
         item: ItemId,
         mut keeping: ProposalKeeping,
-    ) -> Result<Settled, OwnerError> {
+    ) -> Result<ProposalEnd, OwnerError> {
         let parsed = read_proposal(keeping.text());
         let read = match &parsed {
             Ok(proposal) if proposal.parent() == item => ProposalRead::Parsed(proposal),
@@ -125,12 +149,15 @@ impl Owner {
                         team: located.team.clone(),
                     })?
                     .activate_split(plan)?;
-                Ok(Settled::Status(TaskStatus::Queued))
+                self.record_split_decision(task, located, item, &keeping, SplitDecision::Approved, String::new());
+                Ok(ProposalEnd::Queued)
             }
             ProposalDecision::SendBack(fault) => {
+                let reason = fault_text(&self.parts.team_texts, &fault)?;
                 keeping.send_back(fault);
+                self.record_split_decision(task, located, item, &keeping, SplitDecision::Corrected, reason);
                 self.keep_proposal(&located.team, item, keeping)?;
-                Ok(Settled::Status(TaskStatus::Queued))
+                Ok(ProposalEnd::Queued)
             }
             ProposalDecision::AskHuman(reason) => {
                 let number = super::start::next_number(&self.member_mut(task)?.1)
@@ -169,10 +196,40 @@ impl Owner {
                     .await
                     .map_err(ProposalError::Question)?;
                 keeping.asked(number);
+                self.record_split_decision(task, located, item, &keeping, SplitDecision::Asked, reason);
                 self.keep_proposal(&located.team, item, keeping)?;
-                Ok(Settled::Questions)
+                Ok(ProposalEnd::Questions)
             }
         }
+    }
+
+    /// Captures the policy outcome in the structured log and the append-only history.
+    fn record_split_decision(
+        &self,
+        task: &TaskId,
+        located: &Located,
+        item: ItemId,
+        keeping: &ProposalKeeping,
+        decision: SplitDecision,
+        reason: String,
+    ) {
+        tracing::info!(event = LogEvent::SplitDecision.as_str(), task = %task, item = %item, %decision, corrections = keeping.corrections(), %reason, "split proposal decided");
+        let question = match keeping.stage() {
+            ProposalStage::Asked { question } => Some(*question),
+            ProposalStage::Pending | ProposalStage::Correction { .. } => None,
+        };
+        self.record_event(
+            &located.team,
+            self.rounds_of_tasks(std::slice::from_ref(task)),
+            HistoryEvent::SplitDecision {
+                task: task.clone(),
+                item,
+                decision,
+                corrections: keeping.corrections(),
+                question,
+                reason,
+            },
+        );
     }
 
     /// Keeps a complete pending input or decision without changing the approved plan.
@@ -211,12 +268,11 @@ impl Owner {
             let now = Timestamp::now(&self.parts.clock)?;
             let mut events = Vec::new();
             let (status, notice) = match settled {
-                Settled::Questions => match self.ask(&task, &located, now, &mut events).await? {
+                ProposalEnd::Questions => match self.ask(&task, &located, now, &mut events).await? {
                     Asked::Recorded(notice) => (TaskStatus::Questions, Some(notice)),
                     Asked::Unusable(notice) => (TaskStatus::Failed, Some(notice)),
                 },
-                Settled::Status(status) => (status, None),
-                _ => return Err(OwnerError::LostTask { task: task.clone() }),
+                ProposalEnd::Queued => (TaskStatus::Queued, None),
             };
             self.move_to(&task, &located.team, status, &mut events)?;
             self.commit(&task, &located, now, events, notice).await?;

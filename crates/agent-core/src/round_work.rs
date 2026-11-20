@@ -61,7 +61,8 @@ pub fn draft_pull<'a>(events: impl IntoIterator<Item = &'a HistoryEvent>) -> Dra
         | HistoryEvent::PullMerged { .. }
         | HistoryEvent::PullHandedOver { .. }
         | HistoryEvent::PullClosed { .. } => DraftPull::Absent,
-        HistoryEvent::Gate { .. }
+        HistoryEvent::SplitDecision { .. }
+        | HistoryEvent::Gate { .. }
         | HistoryEvent::Checked { .. }
         | HistoryEvent::PullPushed { .. }
         | HistoryEvent::ReviewAsked { .. }
