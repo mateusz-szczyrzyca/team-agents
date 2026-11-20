@@ -1085,8 +1085,8 @@ failed assignments retain their ending time and the reason known by the daemon.
 State schema `11` automatically rebuilds this history when reading schemas `1`–`10`, using retained crew,
 reviews, fix passes and second-opinion attempts. Old records without exact opinion times use the earliest task
 run for assignment and its last run ending for completion, falling back to team creation or the latest retained
-run evidence. The activity record also supplies the investigator selection order below; `agent status`
-retains its existing views. See the
+run evidence. The activity record also supplies the investigator selection order below and the view
+`agent status --investigators`. See the
 [activity record](docs/state.md#investigator-activities).
 
 The Rust CLI provides a read-only diagnostic bundle for one team:
