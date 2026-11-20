@@ -322,3 +322,114 @@ async fn delivery_waits_through_a_stop_and_resume_and_closes_at_its_pr_merge_wit
         1
     );
 }
+
+/// Runs the scenario of an open delivering PR #1 whose item 1.1 is approved and whose member of item 2.1 still holds,
+/// lets `spoil` change what GitHub or the remote says about it, then lets the coordinator claim `claim` for 2.1.
+/// The claim must be refused with `reason` in the lead's next prompt, and the round of 2.1 must stay open and unclaimed.
+async fn assert_open_claim_refused(
+    lead: &'static str,
+    members: [&'static str; 2],
+    spoil: impl FnOnce(&Rig),
+    reason: &str,
+) {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", lead),
+            normal("claude-1", members[0]),
+            normal("codex-1", members[1]),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(
+            &["inv-lead", "claude-1", "codex-1"],
+            super::rig::PARALLEL,
+            MergeMode::NoMerge,
+            Some("inv-lead"),
+        )
+        .await;
+    rig.item_where("1.1", "the owning PR to be approved", |phase| {
+        matches!(phase, ItemPhase::Approved { .. })
+    })
+    .await;
+    spoil(&rig);
+    std::fs::write(rig.home.root().join("delivery-release"), "release").unwrap();
+    let state = rig
+        .state_where("the refusal to reach the lead", |state| {
+            let found = state.team(&team).unwrap();
+            found.find(&tasks[0]).unwrap().1.runs().len() >= 4
+                || found.round_of("2.1".parse().unwrap()).unwrap().delivered_by().is_some()
+        })
+        .await;
+    let prompt = rig.prompt(&tasks[0], 4).await;
+    rig.stop().await.unwrap();
+    assert!(prompt.contains(reason), "{reason}: {prompt}");
+    let found = state.team(&team).unwrap();
+    let round = found.round_of("2.1".parse().unwrap()).unwrap();
+    assert_eq!(round.delivered_by(), None);
+    assert!(round.is_open());
+    assert!(matches!(
+        found.item("2.1".parse().unwrap()).unwrap().phase(),
+        ItemPhase::InProgress { .. }
+    ));
+}
+
+#[tokio::test]
+async fn delivery_refuses_an_existing_pr_of_another_team_and_tells_the_lead_why() {
+    assert_open_claim_refused(
+        "sleep,integrate,done:DELIVERED: #2,sleep",
+        ["commit-clean", "delivery-held"],
+        |rig| {
+            super::rig::git(&rig.origin, &["branch", "foreign-work", "main"]);
+            assert_eq!(rig.github.foreign_pull("foreign-work"), 2);
+        },
+        "PR #2 belongs to no other round of this team",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn delivery_refuses_a_pr_that_no_longer_uses_its_recorded_branch() {
+    assert_open_claim_refused(
+        "sleep,integrate,done:DELIVERED: #1,sleep",
+        ["commit-clean", "delivery-held"],
+        |rig| {
+            let head = rig.github.pulls()[0].head.clone();
+            super::rig::git(&rig.origin, &["branch", "moved-head", &format!("refs/heads/{head}")]);
+            rig.github.head_changed_by_a_human(1, "moved-head");
+        },
+        "the delivering pull request does not use its recorded team branch",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn delivery_refuses_a_pr_closed_without_a_merge() {
+    assert_open_claim_refused(
+        "sleep,integrate,done:DELIVERED: #1,sleep",
+        ["commit-clean", "delivery-held"],
+        |rig| rig.github.closed_by_a_human(1),
+        "the delivering pull request was closed without merging",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn delivery_refuses_work_that_the_pr_has_on_no_published_commit() {
+    assert_open_claim_refused(
+        "sleep,integrate,done:DELIVERED: #1,sleep",
+        ["commit-clean", "adopt-held"],
+        |rig| {
+            let head = rig.github.pulls()[0].head.clone();
+            let base = super::rig::git(&rig.origin, &["rev-parse", "refs/heads/main"]);
+            super::rig::git(&rig.origin, &["update-ref", &format!("refs/heads/{head}"), &base]);
+        },
+        "the item has commits outside the PR and base branches",
+    )
+    .await;
+}

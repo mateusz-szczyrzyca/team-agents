@@ -215,6 +215,35 @@ impl FakeGitHub {
         }
     }
 
+    /// The human points pull request `number` at another head branch of the remote.
+    pub(super) fn head_changed_by_a_human(&self, number: u32, head: &str) {
+        if let Some(pull) = self.world().pulls.iter_mut().find(|pull| pull.number == number) {
+            head.clone_into(&mut pull.head);
+        }
+    }
+
+    /// Someone else opens a pull request for the branch `head` of the remote; its number.
+    pub(super) fn foreign_pull(&self, head: &str) -> u32 {
+        let mut world = self.world();
+        let number = world
+            .pulls
+            .iter()
+            .map(|pull| pull.number)
+            .max()
+            .map_or(1, |last| last.saturating_add(1));
+        world.pulls.push(Pull {
+            number,
+            title: "Work of another team".to_owned(),
+            body: String::new(),
+            head: head.to_owned(),
+            base: "main".to_owned(),
+            draft: false,
+            merged: false,
+            closed: false,
+        });
+        number
+    }
+
     /// The human merges pull request `number` on GitHub.
     pub(super) fn merged_by_a_human(&self, number: u32) {
         let mut world = self.world();
