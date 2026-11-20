@@ -13,7 +13,7 @@ use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
-use super::PublishError;
+use super::{PublishError, Pulls};
 use crate::daemon::team::Why;
 
 /// Why a checked delivery cannot be retained or its correction rendered.
@@ -177,6 +177,61 @@ impl Owner {
         git.verify_delivery(&item, &pr.branch, &base).await?;
         verify_published_tip(&git, &item, &base, &remote.head).await?;
         Ok((round, number, remote.state))
+    }
+
+    /// Polls accepted claims independently of the delivering item's current review or fix pass.
+    pub(in crate::daemon::owner) async fn poll_deliveries(
+        &mut self,
+        pulls: &Pulls,
+        team: &TeamId,
+        look: &mut Look,
+    ) -> Result<(), OwnerError> {
+        let now = Timestamp::now(&self.parts.clock)?;
+        let waiting: Vec<_> = self
+            .parts
+            .state
+            .team(team)
+            .into_iter()
+            .flat_map(agent_core::state::Team::open_rounds)
+            .filter_map(|round| round.delivered_by().map(|pr| (round.id().clone(), pr.number)))
+            .filter(|(round, _)| {
+                self.watch
+                    .delivery_polled
+                    .get(round)
+                    .is_none_or(|last| last.as_utc().saturating_add(time::Duration::seconds(30)) <= now.as_utc())
+            })
+            .collect();
+        for (round, number) in waiting {
+            self.watch.delivery_polled.insert(round.clone(), now);
+            let lead = self.lead_of(team)?;
+            let observed = async {
+                let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
+                let github = self.github_for(pulls, &lead.repo, &git).await?;
+                Ok::<_, ClaimError>(github.get_pull_request(number).await?.state)
+            }
+            .await;
+            match observed {
+                Ok(PullState::Merged) => {
+                    self.finish_delivery(team, &round, now, look)?;
+                    tracing::info!(event = LogEvent::RoundChanged.as_str(), %team, %round, pr = %number,
+                        change = "delivery_merged", "a delivered item completed at its PR merge");
+                }
+                Ok(PullState::Open) => {}
+                Ok(PullState::Closed) => {
+                    // Reopening and member rescheduling belong to the second part of this feature.
+                    // Preserve the accepted claim rather than falsely completing a closed, unmerged PR.
+                    tracing::warn!(event = LogEvent::RoundChanged.as_str(), %team, %round, pr = %number,
+                        change = "delivery_closed", "delivering PR closed without merging; item remains waiting");
+                }
+                Err(error) => {
+                    // A failed observation proves no merge. Retry this durable claim at the next poll.
+                    tracing::warn!(event = LogEvent::RoundChanged.as_str(), %team, %round, pr = %number,
+                        change = "delivery_poll_failed", error = %error_chain(&error),
+                        "cannot observe delivering PR; item remains waiting");
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Closes checked delivery state and records the same lifecycle events as an ordinary merge.
