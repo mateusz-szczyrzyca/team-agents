@@ -2,13 +2,14 @@
 //! itself, and completing the items of a pull request that is merged.
 
 use super::waiting::WaitingStep;
+use agent_core::decide::merge_refusal::{AfterRefusal, ConflictBudget, Refusal, after_refusal};
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::Variables;
 use agent_core::protocol::EventKind;
-use agent_core::state::{CommitId, Completion, ItemPhase, PullRequest, RoundEnd, Timestamp};
-use agent_runtime::github::{GitHub, GitHubError, MergeMethod, MergeRequest, PullState, Rejection};
+use agent_core::state::{CommitId, Completion, ItemPhase, PrNumber, PullRequest, RoundEnd, Timestamp};
+use agent_runtime::github::{GitHub, MergeMethod, MergeRefusalKind, MergeRequest, PullState, merge_refusal_kind};
 use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
@@ -57,23 +58,14 @@ pub(super) enum Merge {
     },
     /// It is not merged and is left as it is for now.
     Waits,
-}
-
-/// Whether GitHub refused the merge for a reason that waiting does not change: the pull request cannot be merged as it is,
-/// its head moved, the values are refused, or the token may not do it. A busy or failing GitHub is not a refusal.
-pub(super) fn refuses(error: &GitHubError) -> bool {
-    matches!(
-        error,
-        GitHubError::Status {
-            reason: Rejection::NotAllowed
-                | Rejection::Conflict
-                | Rejection::Invalid
-                | Rejection::Forbidden
-                | Rejection::Unauthorized
-                | Rejection::NotFound,
-            ..
-        }
-    )
+    /// GitHub refused it for a conflict and the lead merges the base, or the human is asked (`ask`). `head` is the head
+    /// the refusal was for.
+    Conflict {
+        /// Whether the passes are spent: the human is asked instead of the lead merging the base.
+        ask: bool,
+        /// The head GitHub refused to merge.
+        head: CommitId,
+    },
 }
 
 impl Owner {
@@ -91,6 +83,9 @@ impl Owner {
         }
         let lead = self.lead_of(team_id)?;
         for (pr, items) in approved {
+            if self.in_merge_conflict(team_id, &items) {
+                continue;
+            }
             let fixing = self
                 .parts
                 .state
@@ -147,6 +142,10 @@ impl Owner {
                     .await?;
                 }
                 Ok(Merge::Waits) => {}
+                Ok(Merge::Conflict { ask, head }) => {
+                    self.start_merge_conflict(team_id, &items, ask, &head, now, look)
+                        .await?;
+                }
                 Err(error) => {
                     tracing::warn!(
                         event = LogEvent::GithubCallFailed.as_str(),
@@ -285,13 +284,52 @@ impl Owner {
                 commit: Some(merged.commit),
                 url: about.url.to_string(),
             }),
-            Err(error) if refuses(&error) => {
-                self.watch.refused.insert(key);
-                self.tell_about(about, Telling::MergeFailed(&error_chain(&error)));
-                Ok(Merge::Waits)
-            }
-            Err(error) => Err(error.into()),
+            Err(error) => match merge_refusal_kind(&error) {
+                // A busy or failing GitHub is tried again in a while; it refuses nothing.
+                None => Err(error.into()),
+                Some(kind) => {
+                    let budget = self.conflict_budget(team, pr.number);
+                    let refusal = match kind {
+                        MergeRefusalKind::Conflict => Refusal::Conflict,
+                        MergeRefusalKind::Other => Refusal::Other,
+                    };
+                    match after_refusal(refusal, budget) {
+                        AfterRefusal::TellHuman => {
+                            self.watch.refused.insert(key);
+                            self.tell_about(about, Telling::MergeFailed(&error_chain(&error)));
+                            Ok(Merge::Waits)
+                        }
+                        after @ (AfterRefusal::LeadMergesBase | AfterRefusal::AskHuman) => Ok(Merge::Conflict {
+                            ask: after == AfterRefusal::AskHuman,
+                            head: head.clone(),
+                        }),
+                    }
+                }
+            },
         }
+    }
+
+    /// The conflict passes of the items of the pull request `number` of `team`: the passes spent and the configured limit.
+    fn conflict_budget(&self, team: &TeamId, number: PrNumber) -> ConflictBudget {
+        let spent = self
+            .parts
+            .state
+            .team(team)
+            .and_then(|found| items_of(found, number).first().and_then(|id| found.item(*id)))
+            .map_or(0, agent_core::state::ItemProgress::merge_passes);
+        ConflictBudget {
+            spent,
+            limit: self.parts.settings.config.merge().conflict_passes,
+        }
+    }
+
+    /// Whether one of `items` is in a merge conflict pass: its approved pull request is not merged while the lead works.
+    pub(super) fn in_merge_conflict(&self, team: &TeamId, items: &[ItemId]) -> bool {
+        self.parts.state.team(team).is_some_and(|found| {
+            items
+                .iter()
+                .any(|id| found.item(*id).is_some_and(|item| item.merge_conflict().is_some()))
+        })
     }
 
     /// Tells the human `telling` about a pull request, once.

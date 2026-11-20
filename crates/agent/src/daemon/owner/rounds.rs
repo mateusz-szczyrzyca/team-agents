@@ -9,6 +9,7 @@
 mod asleep;
 mod checks;
 mod cleanup;
+mod conflicts;
 mod delivery;
 mod findings;
 pub(crate) use delivery::DeliveryDaemonError;
@@ -488,6 +489,7 @@ impl Owner {
             }
         }
         self.take_held_verdicts(team).await?;
+        self.advance_merge_conflicts(team, look, now).await?;
         self.merge_approved(&pulls, team, look).await?;
         self.poll_deliveries(&pulls, team, look).await?;
         self.read_fix_responses(&pulls, team, look).await?;

@@ -49,7 +49,16 @@ pub(super) fn rounds_for(state: &State, task: &TaskId, why: Option<&Why>) -> Res
         None if role == Role::Reviewer && !goes_on => RunStart::Review {
             round: reviewed.as_ref(),
         },
-        Some(Why::FixPass | Why::AskHuman | Why::Checks | Why::Gate(_) | Why::Asleep(_) | Why::NoStatus) | None
+        Some(
+            Why::FixPass
+            | Why::MergeConflict
+            | Why::AskHuman
+            | Why::Checks
+            | Why::Gate(_)
+            | Why::Asleep(_)
+            | Why::NoStatus,
+        )
+        | None
             if goes_on =>
         {
             RunStart::Continuation { previous: &previous }
@@ -58,6 +67,7 @@ pub(super) fn rounds_for(state: &State, task: &TaskId, why: Option<&Why>) -> Res
             Why::Woken
             | Why::Assigned(_)
             | Why::FixPass
+            | Why::MergeConflict
             | Why::AskHuman
             | Why::Checks
             | Why::Gate(_)
