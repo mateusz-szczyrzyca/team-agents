@@ -27,7 +27,7 @@ fn the_network_a_timeout_and_github_failing_may_pass() {
         status(403, Rejection::RateLimited, Some(Duration::from_secs(60))),
     ];
     for error in cases {
-        assert_eq!(error.outlook(), Outlook::WillNotPass, "{error:?}");
+        assert_eq!(error.outlook(), Outlook::MayPass, "{error:?}");
     }
 }
 
