@@ -530,7 +530,7 @@ impl ChecksPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AskReason {
-    /// Every issue is one that only the human may allow.
+    /// The question covers only issues that the human alone may allow.
     OnlyTheHumanMayAllow,
     /// The team fixed nothing in the passes the checks allow: the human decides what the issues are worth.
     PassesUsed,
@@ -584,8 +584,9 @@ impl Checking {
     ///
     /// - No issue: the reviews start.
     /// - An issue the human refused: back to the team.
-    /// - An issue the team can fix: back to the team while the policy has passes left, then the human is asked.
-    /// - Only issues that the human alone may allow: the human is asked.
+    /// - Issues the team can fix with no passes left: the human is asked about all issues.
+    /// - An issue that the human alone may allow: ask about that part before the next team pass.
+    /// - Otherwise: back to the team.
     #[must_use]
     pub fn conclude(&self, issues: &[Issue], refused: &[Subject], policy: ChecksPolicy) -> ChecksStep {
         if issues.is_empty() {
@@ -599,6 +600,9 @@ impl Checking {
         }
         let team_can_fix = issues.iter().any(|issue| issue.judge() == Judge::Team);
         match (team_can_fix, self.passes < policy.check_passes) {
+            (true, true) if issues.iter().any(|issue| issue.judge() == Judge::Human) => ChecksStep::AskHuman {
+                reason: AskReason::OnlyTheHumanMayAllow,
+            },
             (true, true) => back,
             (true, false) => ChecksStep::AskHuman {
                 reason: AskReason::PassesUsed,

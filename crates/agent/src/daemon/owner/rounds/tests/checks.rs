@@ -1281,3 +1281,140 @@ async fn task_allowances_cover_version_and_golden_changes_in_successive_rounds()
         assert!(!rig.home.questions_file(&task, NonZeroU32::MIN).exists());
     }
 }
+
+#[tokio::test]
+async fn a_mixed_first_check_asks_only_the_human_part_before_the_team_fixes_the_rest() {
+    let mut rig = checking_rig("script:mixed-first,questions,done,script:add-test", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    script(
+        &rig,
+        "mixed-first",
+        "sed -i 2d tests/existing.txt\necho 'fn a() {}' > src/a.txt\ngit add tests/existing.txt src/a.txt\ncommit -m 'Change the existing test and add code'\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.prompt(&tasks[0], 2).await;
+    let before = record(&rig, &tasks[0]).await;
+    assert_eq!(before.passes_of(&["1.1".parse().unwrap()]), 0);
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let file = questions_of(&rig, &tasks[0], 1);
+    assert_eq!(
+        before.asked.as_ref().unwrap().subjects,
+        [Subject::Path("tests/existing.txt".parse().unwrap())],
+    );
+    assert_eq!(file.entries().len(), 1);
+    assert!(file.title().unwrap().contains("[checks:v1]"));
+    assert_eq!(rig.github.calls("POST", "/graphql").len(), 0);
+
+    rig.stop().await.unwrap();
+    rig.start().await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    let team_pass = rig.prompt(&tasks[0], 4).await;
+    let after = record(&rig, &tasks[0]).await;
+    let member = rig.state().find_task(&tasks[0]).unwrap().member.clone();
+    rig.stop().await.unwrap();
+
+    assert!(team_pass.contains("THE ROUND IS NOT READY FOR ITS REVIEW (pull request #1, check 1)"));
+    assert!(team_pass.contains("Test-First: not possible"));
+    assert!(!team_pass.contains("`tests/existing.txt`"));
+    assert_eq!(after.passes_of(&["1.1".parse().unwrap()]), 1);
+    assert_eq!(
+        after.allowed_of(&["1.1".parse().unwrap()]),
+        [Subject::Path("tests/existing.txt".parse().unwrap())]
+    );
+    assert_eq!(after.asked, None);
+    assert_eq!(member.questions().len(), 1);
+    assert_eq!(rig.runs(&tasks[0]), 4);
+    assert_eq!(rig.github.calls("POST", "/graphql").len(), 1);
+}
+
+#[tokio::test]
+async fn allowing_the_human_part_of_a_mixed_check_does_not_allow_a_suppression_the_question_did_not_name() {
+    let mut rig = checking_rig("script:suppress-gate,questions,done,script:add-test", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    script(
+        &rig,
+        "suppress-gate",
+        "echo '# shellcheck disable=SC2086' >> ci/gate.sh\ngit add ci/gate.sh\ncommit -m 'Change the gate'\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    assert_eq!(
+        record(&rig, &tasks[0]).await.asked.as_ref().unwrap().subjects,
+        [Subject::Path("ci/gate.sh".parse().unwrap())],
+    );
+    answer(&rig, &tasks[0], 1, "allow").await;
+    let team_pass = rig.prompt(&tasks[0], 4).await;
+    let after = record(&rig, &tasks[0]).await;
+    let reviews = rig.github.calls("POST", "/graphql").len();
+    rig.stop().await.unwrap();
+
+    assert!(team_pass.contains("check 1)"), "{team_pass}");
+    assert!(team_pass.contains("ci/gate.sh"), "{team_pass}");
+    assert_eq!(after.passes_of(&["1.1".parse().unwrap()]), 1);
+    assert_eq!(reviews, 0);
+}
+
+#[tokio::test]
+async fn the_human_part_answered_in_a_mixed_check_keeps_the_team_returns_used_before_it() {
+    let mut rig = checking_rig(
+        "script:code-only,script:protected,questions,done,script:add-test",
+        2,
+        SILENT,
+        SILENT,
+    )
+    .await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    assert_eq!(record(&rig, &tasks[0]).await.passes_of(&["1.1".parse().unwrap()]), 1);
+    answer(&rig, &tasks[0], 1, "allow").await;
+    let second_return = rig.prompt(&tasks[0], 5).await;
+    reviews_asked(&rig).await;
+    let after = record(&rig, &tasks[0]).await;
+    rig.stop().await.unwrap();
+
+    assert!(second_return.contains("check 2)"), "{second_return}");
+    assert_eq!(after.passes_of(&["1.1".parse().unwrap()]), 2);
+}
+
+#[tokio::test]
+async fn a_path_the_team_changes_again_after_the_human_allowed_it_is_asked_again_before_the_review() {
+    let mut rig = checking_rig("script:mixed-first,questions,done,script:edit-again", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    script(
+        &rig,
+        "mixed-first",
+        "sed -i 2d tests/existing.txt\necho 'fn a() {}' > src/a.txt\ngit add tests/existing.txt src/a.txt\ncommit -m 'Change the existing test and add code'\n",
+    );
+    script(
+        &rig,
+        "edit-again",
+        "sed -i 2d tests/existing.txt\necho case > tests/new.txt\ngit add tests/existing.txt tests/new.txt\ncommit -m 'Change the existing test again and add a test'\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    rig.wait_for("the second question of the checks", || {
+        rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists()
+    })
+    .await;
+    let after = record(&rig, &tasks[0]).await;
+    let reviews = rig.github.calls("POST", "/graphql").len();
+    rig.stop().await.unwrap();
+
+    assert_eq!(
+        after.asked.as_ref().unwrap().subjects,
+        [Subject::Path("tests/existing.txt".parse().unwrap())],
+    );
+    assert_eq!(after.allowed_of(&["1.1".parse().unwrap()]), []);
+    assert_eq!(reviews, 0);
+}

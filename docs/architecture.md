@@ -837,7 +837,9 @@ tests of `RoundState` list its phases and events):
 - an issue the team can fix — the round goes back to the lead with the reasons, at most `[review] check_passes` times; then
   the human is asked;
 - only issues that the human alone may allow — the human is asked at once;
-- both kinds — the team goes first.
+- both kinds, with team passes left — the human is asked about only the human-only findings first; after the answer,
+  the remaining findings go to the team. Asking the human spends no team pass;
+- both kinds, with team passes used up — the human is asked about all findings.
 
 **The message to the team.** The lead is woken (`Why::Checks`) and told the reasons — one for each issue, from
 `prompts/harness/checks/` — with the pull request, the pass and what to do: settle every finding, get the gate green, end with
@@ -870,8 +872,11 @@ record and scheduled answer resume across a daemon restart without rewriting the
 the grammar; `QuestionsFile::allowed_check_subjects` projects the validated group verdicts, and the daemon returns the
 same per-subject `Decisions` used by the owner.
 
-- *Allowed* — the subjects are recorded for the items, which start the review (it is not asked again for the same file), and
-  the count of passes starts again. The lead, resumed with the answers, is told to change nothing and end with `STATUS: DONE`.
+- *Allowed* — the subjects are recorded for the items with the head they were allowed at (it is not asked again for the same
+  file, but it is when the round changes that file again), and the count of passes starts again, except after a question about
+  the human's part alone, which leaves it as it is; such an allowance does not cover an issue of the team's about the same file,
+  for example a lint suppression added to an allowed protected file. The lead, resumed with the answers, is told to change nothing and end with `STATUS: DONE`. The checks run
+  again: the review starts when nothing remains, otherwise the team receives its remaining findings.
 - *Refused* — back to the team, with what the human refused named, as the next pass; the lead's resumed run is told to undo
   what was refused.
 - A lead that ends without putting the question is woken again, twice; then the human is told directly (`notice-not-asked`).
