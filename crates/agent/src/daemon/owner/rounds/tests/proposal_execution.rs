@@ -325,3 +325,34 @@ async fn decisions_and_rejections_are_recorded_in_history() {
         assert!(events[0]["reason"].as_str().unwrap().contains(reason), "{events:?}");
     }
 }
+
+#[tokio::test]
+async fn missing_estimate_names_its_part_in_the_correction() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "proposal:bad,proposal:good,sleep"),
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        3,
+        true,
+    )
+    .await;
+    let mut value = proposal("Read first");
+    value["parts"][1].as_object_mut().unwrap().remove("estimate");
+    put(&rig, "bad", &value);
+    put(&rig, "good", &proposal("Read first"));
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+
+    let prompt = rig.prompt(&tasks[0], 2).await;
+
+    rig.stop().await.unwrap();
+    assert!(
+        prompt.contains("Part b cannot be read in the proposal form"),
+        "{prompt}"
+    );
+}
