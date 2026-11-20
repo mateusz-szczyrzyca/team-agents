@@ -86,3 +86,11 @@ async fn allowance_section_names_changed_paths_and_the_covering_line_only() {
         "## Tests\n\nreal"
     );
 }
+
+#[test]
+fn the_lead_cannot_replace_the_unpushed_base_evidence() {
+    assert_eq!(
+        lead_sections("## What and why\n\nWork.\n\n## Unpushed base\n\nClaim.\n\n## Tests\n\nTests."),
+        "## What and why\n\nWork.\n\n## Tests\n\nTests."
+    );
+}
