@@ -85,6 +85,8 @@ struct World {
     merge: MergeAnswer,
     /// The status the posting of a review is refused with, if it is.
     review_refusal: Option<u16>,
+    /// The answer every call gets while GitHub is down: its status and message.
+    outage: Option<(u16, String)>,
 }
 
 /// A running fake GitHub; it stops when it is dropped.
@@ -111,6 +113,7 @@ impl FakeGitHub {
             seen: Vec::new(),
             merge: MergeAnswer::Allow,
             review_refusal: None,
+            outage: None,
         }));
         let accept_loop = tokio::spawn(accept_loop(listener, Arc::clone(&world)));
         Ok(Self {
@@ -170,6 +173,16 @@ impl FakeGitHub {
     /// Makes the posting of a review be refused with `status` from now on.
     pub(super) fn refuse_reviews(&self, status: u16) {
         self.world().review_refusal = Some(status);
+    }
+
+    /// Makes every call fail with `status` from now on, as an API that cannot be reached or is overloaded does.
+    pub(super) fn fail_every_call(&self, status: u16) {
+        self.world().outage = Some((status, "Service Unavailable".to_owned()));
+    }
+
+    /// Answers every call again.
+    pub(super) fn answer_again(&self) {
+        self.world().outage = None;
     }
 
     /// Makes a merge be answered as `answer` from now on.
@@ -459,7 +472,13 @@ async fn serve_connection(mut stream: TcpStream, world: Arc<Mutex<World>>) {
             target: target.clone(),
             body: body.clone(),
         });
-        route(&mut world, &method, &target, &body)
+        match world.outage.clone() {
+            Some((status, message)) => Answer {
+                status,
+                body: json!({"message": message}),
+            },
+            None => route(&mut world, &method, &target, &body),
+        }
     };
     let text = answer.body.to_string();
     let wire = format!(

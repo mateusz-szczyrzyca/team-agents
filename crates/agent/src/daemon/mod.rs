@@ -428,7 +428,6 @@ async fn run_with_rng_and_log_layer(
             tick: timings.tick,
             notifier: emergency_notifier,
             free_space: surroundings.free_space.clone(),
-            retry_first: None,
         },
         shutdown.clone(),
     )
