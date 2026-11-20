@@ -24,6 +24,7 @@ fn clock() -> ManualClock {
 
 fn request(agents: &[&str], list: &str) -> RunRequest {
     RunRequest {
+        allow_unpushed_base: false,
         repo: "example".parse().unwrap(),
         checkout: AbsolutePath::from_str("/work/example").unwrap(),
         agents: AgentList::try_from(

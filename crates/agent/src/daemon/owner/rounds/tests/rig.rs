@@ -389,6 +389,7 @@ impl Rig {
     ) -> (TeamId, Vec<TaskId>) {
         let names: Vec<AgentName> = agents.iter().map(|name| name.parse().unwrap()).collect();
         let request = RunRequest {
+            allow_unpushed_base: false,
             repo: "example".parse().unwrap(),
             checkout: abs(&self.repo),
             agents: AgentList::try_from(names).unwrap(),

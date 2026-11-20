@@ -265,6 +265,7 @@ fn daemon_that_starts(dir: &tempfile::TempDir) -> FakeDaemon {
 
 fn input(words: &[&str], file: Option<PathBuf>) -> RunInput {
     RunInput {
+        allow_unpushed_base: false,
         words: self::words(words),
         file,
         coordinator: None,

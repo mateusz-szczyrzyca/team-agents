@@ -333,6 +333,7 @@ impl Fixture {
 
     fn request(&self, agents: &[&str], list: &str, coordinator: Option<&str>) -> RunRequest {
         RunRequest {
+            allow_unpushed_base: false,
             repo: "example".parse().unwrap(),
             checkout: abs(&self.repo),
             agents: AgentList::try_from(agents.iter().map(|name| agent(name)).collect::<Vec<_>>()).unwrap(),
