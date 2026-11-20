@@ -30,6 +30,7 @@
 //! because the error that carries it is created where no template renderer is available.
 
 pub mod checks;
+pub mod split;
 
 use std::collections::HashSet;
 
