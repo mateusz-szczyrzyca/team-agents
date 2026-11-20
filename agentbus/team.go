@@ -176,6 +176,13 @@ func cursor(st *State, agent, team string) int64 {
 	return st.Cursors[agent]
 }
 
+// advanceCursor marks the messages up to the last one read by the agent in the team, on the team's own cursor (the
+// agent's single one outside teams). A read in a team leaves the single cursor alone: the agent's session in another
+// team starts from it until it has read once, and must not lose its team's messages to this read.
+func advanceCursor(st *State, agent, team string) {
+	st.Cursors[messageCursor(agent, team)] = st.NextID - 1
+}
+
 // myTeam returns this agent's team (nil outside team mode).
 func (s *Server) myTeam(st *State) *Team {
 	if s.team == "" {
@@ -337,7 +344,7 @@ func (s *Server) waitForMessage(from string, timeout int, broadcast bool) (strin
 			if serr != nil {
 				return fromStorage(WaitForMessageStorage, serr)
 			}
-			cur := st.Cursors[s.me]
+			cur := cursor(st, s.me, s.team)
 			for _, m := range msgs {
 				if m.ID > cur && isForAgent(st, m, s.me, s.team, broadcast) && (from == "" || m.From == from) {
 					found = true
@@ -352,7 +359,7 @@ func (s *Server) waitForMessage(from string, timeout int, broadcast bool) (strin
 					sb.WriteString(fmtMsg(m) + "\n")
 				}
 			}
-			st.Cursors[s.me] = st.NextID - 1
+			advanceCursor(st, s.me, s.team)
 			return nil
 		})
 		if err != nil {
@@ -774,7 +781,7 @@ func setMemberState(b *Bus, st *State, team, agent string, newState MemberState)
 	if serr != nil {
 		return "", fromStorage(CmdTeamSetStorage, serr)
 	}
-	cur := st.Cursors[agent]
+	cur := cursor(st, agent, team)
 	for _, msg := range msgs {
 		if msg.ID > cur && !msg.Quiet && isForAgent(st, msg, agent, team, false) {
 			m.State = MemberWaking

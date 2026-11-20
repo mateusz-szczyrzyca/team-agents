@@ -480,7 +480,7 @@ func (s *Server) unreadCount() (int, *StorageError) {
 			readErr = err
 			return
 		}
-		cur := st.Cursors[s.me]
+		cur := cursor(st, s.me, s.team)
 		for _, m := range msgs {
 			if m.ID > cur && isForAgent(st, m, s.me, s.team, true) {
 				n++
@@ -590,7 +590,7 @@ func (s *Server) read(history int) (string, *ReadMessagesError) {
 			}
 			return nil
 		}
-		cur := st.Cursors[s.me]
+		cur := cursor(st, s.me, s.team)
 		n := 0
 		for _, m := range msgs {
 			if m.ID > cur && isForAgent(st, m, s.me, s.team, true) {
@@ -601,7 +601,7 @@ func (s *Server) read(history int) (string, *ReadMessagesError) {
 		if n == 0 {
 			sb.WriteString("No new messages.\n")
 		}
-		st.Cursors[s.me] = st.NextID - 1
+		advanceCursor(st, s.me, s.team)
 		return nil
 	})
 	return sb.String(), err
