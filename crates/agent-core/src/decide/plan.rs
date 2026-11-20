@@ -97,7 +97,8 @@ pub enum PlanVerdict {
 /// 3. a task created before plans, or whose plan the human released, is accepted;
 /// 4. a limit of `0` accepts every run;
 /// 5. a plan without a fault is accepted;
-/// 6. a step of the version before that is gone is a `LostStep`, before a step still to do (`Unfinished`);
+/// 6. a step of an earlier version that is gone, or renamed since the newest one, is a `LostStep`, before a step still
+///    to do (`Unfinished`);
 /// 7. a send-back below `[plan] bounces` plus what the human granted is a `SendBack`;
 /// 8. otherwise the human is asked — `AskHuman` for a task that is not asked already, and for one that is, the same
 ///    answer: the task waits for the human's reply either way.
@@ -122,7 +123,7 @@ pub fn decide_plan(facts: PlanFacts<'_>) -> PlanVerdict {
     if limit == 0 {
         return PlanVerdict::Accept;
     }
-    let Some(reason) = fault(facts.read, facts.earlier.last()) else {
+    let Some(reason) = fault(facts.read, facts.earlier) else {
         return PlanVerdict::Accept;
     };
     if keeping.sent_back() < limit {
@@ -133,17 +134,14 @@ pub fn decide_plan(facts: PlanFacts<'_>) -> PlanVerdict {
 }
 
 /// Why the plan a task read has a fault, the first of them being the one reported; `None` when it has none.
-fn fault(read: &PlanRead, previous: Option<&Plan>) -> Option<PlanReason> {
+fn fault(read: &PlanRead, earlier: &[Plan]) -> Option<PlanReason> {
     match read {
         PlanRead::Missing => Some(PlanReason::Missing),
         PlanRead::Unreadable { line, detail } => Some(PlanReason::Unreadable {
             line: *line,
             detail: detail.clone(),
         }),
-        PlanRead::Parsed(plan) => match previous {
-            Some(previous) => lost(previous, plan).or_else(|| unfinished(plan)),
-            None => unfinished(plan),
-        },
+        PlanRead::Parsed(plan) => lost(earlier, plan).or_else(|| unfinished(plan)),
     }
 }
 
@@ -157,15 +155,25 @@ fn unfinished(plan: &Plan) -> Option<PlanReason> {
     (!steps.is_empty()).then_some(PlanReason::Unfinished { steps })
 }
 
-/// The steps of `previous` that `newer` no longer has, or uses for another title, in the order of `previous`; `None`
-/// when it loses none.
-fn lost(previous: &Plan, newer: &Plan) -> Option<PlanReason> {
-    // A lost step and a renamed one are both reported by `loses_a_step`, and the lost ones come first.
-    let changes = previous.compare(newer);
-    let steps: Vec<ItemId> = changes
-        .disappeared
-        .into_iter()
-        .chain(changes.retitled.into_iter().map(|retitle| retitle.id))
-        .collect();
+/// The steps that `newer` no longer has though an earlier version had them — every earlier version counts, so that a
+/// step lost by a version that was sent back stays lost — and the steps whose ID `newer` uses for another title than
+/// the newest earlier version; each once, the lost ones first, in the order they first appeared. `None` when it loses
+/// none.
+fn lost(earlier: &[Plan], newer: &Plan) -> Option<PlanReason> {
+    let mut steps: Vec<ItemId> = Vec::new();
+    for version in earlier {
+        for id in version.compare(newer).disappeared {
+            if !steps.contains(&id) {
+                steps.push(id);
+            }
+        }
+    }
+    if let Some(newest) = earlier.last() {
+        for retitle in newest.compare(newer).retitled {
+            if !steps.contains(&retitle.id) {
+                steps.push(retitle.id);
+            }
+        }
+    }
     (!steps.is_empty()).then_some(PlanReason::LostStep { steps })
 }
