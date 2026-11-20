@@ -2500,3 +2500,35 @@ async fn a_member_in_a_team_is_sent_back_for_its_plan_and_its_coordinator_is_tol
         .count();
     assert_eq!(finished, 1, "{messages}");
 }
+
+#[tokio::test]
+async fn a_plan_the_base_branch_tracks_is_left_on_the_branch() {
+    let mut f = Fixture::new(&[
+        normal("claude-1", "script:edit-plan"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+    ]);
+    std::fs::create_dir_all(f.repo.join(".agent")).unwrap();
+    std::fs::write(f.repo.join(".agent/plan.md"), "The repository's own plan — zażółć.\n").unwrap();
+    git(&f.repo, &["add", "-f", ".agent/plan.md"]);
+    git(&f.repo, &["commit", "-q", "-m", "Track a plan of the repository"]);
+    let scripts = f.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("edit-plan.sh"),
+        "printf 'Edited by the agent.\\n' >> .agent/plan.md\ngit commit -q -am 'Edit the tracked plan'\n",
+    )
+    .unwrap();
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["claude-1"], PLAIN).await;
+    f.status_is(&tasks[0], TaskStatus::Done).await;
+    f.stop().await.unwrap();
+
+    let worktree = f.worktree(&tasks[0]);
+    assert_eq!(
+        git(&worktree, &["ls-tree", "--name-only", "HEAD", "--", ".agent/plan.md"]),
+        ".agent/plan.md"
+    );
+    assert_eq!(git(&worktree, &["log", "-1", "--format=%s"]), "Edit the tracked plan");
+}
