@@ -331,6 +331,26 @@ impl Default for Disk {
     }
 }
 
+/// `[snapshot]`: when a snapshot of a worktree is logged as large. A snapshot is never refused for its size.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Snapshot {
+    /// Size in megabytes above which a snapshot is still taken, and logged with a warning that says its size.
+    pub warn_mb: u64,
+}
+
+/// Default size in megabytes above which a snapshot is logged with a warning.
+const DEFAULT_SNAPSHOT_WARN_MB: u64 = 0;
+
+impl Default for Snapshot {
+    /// The default warning size: 200 megabytes.
+    fn default() -> Self {
+        Self {
+            warn_mb: DEFAULT_SNAPSHOT_WARN_MB,
+        }
+    }
+}
+
 /// `[review]`: what happens to a round that the checks or the reviewers send back.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -559,6 +579,8 @@ pub struct Config {
     limits: Limits,
     /// The free space thresholds.
     disk: Disk,
+    /// The snapshots of worktrees.
+    snapshot: Snapshot,
     /// The review fix passes.
     review: Review,
     /// The identity of the agents' commits.
@@ -621,6 +643,9 @@ struct RawConfig {
     /// See [`Config::disk`].
     #[serde(default)]
     disk: Disk,
+    /// See [`Config::snapshot`].
+    #[serde(default)]
+    snapshot: Snapshot,
     /// See [`Config::review`].
     #[serde(default)]
     review: Review,
@@ -665,6 +690,7 @@ impl RawConfig {
             watchdog,
             limits,
             disk,
+            snapshot,
             review,
             git,
             github,
@@ -698,6 +724,7 @@ impl RawConfig {
             watchdog,
             limits,
             disk,
+            snapshot,
             review,
             git,
             github,
@@ -859,6 +886,12 @@ impl Config {
     #[must_use]
     pub fn disk(&self) -> &Disk {
         &self.disk
+    }
+
+    /// The snapshots of worktrees: the size above which one is logged with a warning.
+    #[must_use]
+    pub const fn snapshot(&self) -> &Snapshot {
+        &self.snapshot
     }
 
     /// The review fix passes.
@@ -1431,6 +1464,21 @@ workers = ["qwen", "qwen"]"#,
         let config = Config::from_toml_str(text).unwrap();
         assert_eq!(config.disk().low_free_gb, 100);
         assert_eq!(config.disk().min_free_gb, 20);
+    }
+
+    #[test]
+    fn configuration_without_snapshot_reads_the_default_warning_size() {
+        let config =
+            Config::from_toml_str("[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n").unwrap();
+        assert_eq!(config.snapshot().warn_mb, 200);
+    }
+
+    #[test]
+    fn configuration_with_snapshot_reads_the_warning_size() {
+        let text =
+            "[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n\n[snapshot]\nwarn_mb = 50\n";
+        let config = Config::from_toml_str(text).unwrap();
+        assert_eq!(config.snapshot().warn_mb, 50);
     }
 
     #[test]

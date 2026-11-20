@@ -130,6 +130,8 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
             LogLevel::Error,
         ),
         (LogEvent::RestartCorrected, "restart_corrected", LogLevel::Warn),
+        (LogEvent::SnapshotFailed, "snapshot_failed", LogLevel::Warn),
+        (LogEvent::SnapshotLarge, "snapshot_large", LogLevel::Warn),
         (LogEvent::RequestRefused, "request_refused", LogLevel::Warn),
         (LogEvent::DaemonPanicked, "daemon_panicked", LogLevel::Error),
         (LogEvent::DaemonTaskFailed, "daemon_task_failed", LogLevel::Error),
