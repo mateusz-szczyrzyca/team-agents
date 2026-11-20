@@ -5,6 +5,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use agent_core::history::{MaxTextBytes, Record};
+
+use super::plans::PlanRecord;
 use agent_core::log::LogRecord;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
@@ -39,6 +41,14 @@ pub trait Store: Send + 'static {
     /// # Errors
     /// [`WriteError`] when they cannot be written; none of them is.
     fn write_logs(&mut self, _records: &[LogRecord]) -> Result<(), WriteError> {
+        Ok(())
+    }
+
+    /// Writes plan `records` as one unit: all of them or none, and each unless it is the task's last one.
+    ///
+    /// # Errors
+    /// [`WriteError`] when they cannot be written; none of them is.
+    fn write_plans(&mut self, _records: &[PlanRecord]) -> Result<(), WriteError> {
         Ok(())
     }
 }
@@ -175,6 +185,17 @@ impl Store for HistoryDb {
         for record in records {
             write::insert_log(&transaction, record, self.limit, self.logs)?;
         }
+        transaction
+            .commit()
+            .map_err(|source| WriteError::Transaction { source })
+    }
+
+    fn write_plans(&mut self, records: &[PlanRecord]) -> Result<(), WriteError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|source| WriteError::Transaction { source })?;
+        super::plans::insert(&transaction, records)?;
         transaction
             .commit()
             .map_err(|source| WriteError::Transaction { source })

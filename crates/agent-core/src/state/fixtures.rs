@@ -54,6 +54,11 @@ pub(crate) fn agent(name: &str) -> AgentName {
     name.parse().unwrap()
 }
 
+/// A task-list item ID, as in `1.2`.
+pub(crate) fn item(text: &str) -> ItemId {
+    text.parse().unwrap()
+}
+
 /// An investigator name.
 pub(crate) fn investigator(name: &str) -> InvestigatorName {
     name.parse().unwrap()

@@ -598,7 +598,7 @@ fn config(agents: &[Agent], github: &str, fix_passes: u32, home: &Home, bus: boo
     }
     write!(
         text,
-        "[tiers]\nnormal = [{}]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n[watchdog]\nhang_minutes = 1\n\
+        "[plan]\nbounces = 0\n[tiers]\nnormal = [{}]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n[watchdog]\nhang_minutes = 1\n\
          hang_strikes = 3\nasleep_minutes = 100000\n[review]\nfix_passes = {fix_passes}\n[github]\napi_base = \"{github}\"\n\
          trusted_accounts = [\"{ACCOUNT}\"]\n[repos.example]\nbase_branch = \"main\"\ngate = [\"sh\", \"-c\", \"test ! -e gate-fails\"]\n",
         normals.join(", "),

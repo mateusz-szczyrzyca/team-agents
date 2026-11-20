@@ -878,3 +878,7 @@ mod split_execution_tests;
 #[cfg(test)]
 #[path = "rounds/tests/delivery.rs"]
 mod delivery_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/plan_round.rs"]
+mod plan_round_tests;

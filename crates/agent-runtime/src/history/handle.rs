@@ -127,6 +127,8 @@ enum Job {
     Record(Record),
     /// A daemon log entry to write.
     Log(LogRecord),
+    /// Reads of a task's plan to write.
+    Plans(Vec<super::plans::PlanRecord>),
     /// The writer is to answer on this channel when everything before it is written.
     Flush(SyncSender<()>),
     /// The writer is to stop.
@@ -591,6 +593,39 @@ impl History {
         }
     }
 
+    /// Hands the plan `records` to the writer unless they are the task's last ones; never waits.
+    pub fn write_plans(&self, records: Vec<super::plans::PlanRecord>) {
+        if records.is_empty() {
+            return;
+        }
+        let Some(queue) = &self.queue else {
+            self.shared.lose(count(records.len()));
+            return;
+        };
+        match queue.try_send(Job::Plans(records)) {
+            Ok(()) => {}
+            Err(TrySendError::Full(Job::Plans(records))) => {
+                self.shared.lose(count(records.len()));
+                self.shared.report(Cause::QueueFull, || {
+                    "the writer of the history is slower than the work: plan versions are dropped while its queue is full"
+                        .to_owned()
+                });
+            }
+            Err(TrySendError::Disconnected(Job::Plans(records))) => {
+                self.shared.lose(count(records.len()));
+                self.stopped();
+            }
+            // Only `Job::Plans` is sent here, so every other job comes back as the one it was.
+            Err(TrySendError::Full(job) | TrySendError::Disconnected(job)) => {
+                let lost = match job {
+                    Job::Plans(plans) => count(plans.len()),
+                    Job::Record(_) | Job::Flush(_) | Job::Retain(_) | Job::Log(_) | Job::Close => 1,
+                };
+                self.shared.lose(lost);
+            }
+        }
+    }
+
     /// Waits until everything handed in before is written or lost.
     pub fn flush(&self) {
         let Some(queue) = &self.queue else {
@@ -656,6 +691,12 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
                         });
                     }
                 }
+                Job::Plans(plans) => {
+                    // A plan is kept for a task whose run the history has: the records handed in before it go first.
+                    write_batch(&mut store, shared, std::mem::take(&mut batch));
+                    write_plans(&mut store, shared, &plans);
+                    continue;
+                }
                 Job::Retain(request) => {
                     write_batch(&mut store, shared, std::mem::take(&mut batch));
                     write_log_batch(&mut store, shared, std::mem::take(&mut log_batch));
@@ -698,8 +739,33 @@ fn count_what_is_left(jobs: &Receiver<Job>, shared: &Shared) {
                 }
             }
             Job::Retain(_) => shared.report(Cause::Retention, || "writer stopped before retention".to_owned()),
+            Job::Plans(plans) => shared.lose(count(plans.len())),
             Job::Log(_) | Job::Close => {}
         }
+    }
+}
+
+/// How many records `len` planned rows are, for the count of what is lost: a count that does not fit `u64` (a 128-bit
+/// target) is the largest one there is, so that the loss stays visible.
+#[expect(
+    clippy::manual_unwrap_or,
+    reason = "the fallback is the largest count, not a discarded failure: a usize that does not fit u64 reports every record as lost"
+)]
+fn count(len: usize) -> u64 {
+    match u64::try_from(len) {
+        Ok(count) => count,
+        Err(_) => u64::MAX,
+    }
+}
+
+/// Writes `plans`; when they cannot be written, each that failed is counted as lost.
+fn write_plans(store: &mut impl Store, shared: &Shared, plans: &[super::plans::PlanRecord]) {
+    if plans.is_empty() {
+        return;
+    }
+    if let Err(error) = store.write_plans(plans) {
+        shared.lose(count(plans.len()));
+        shared.report(Cause::Write(error.kind()), || error_chain(&error));
     }
 }
 

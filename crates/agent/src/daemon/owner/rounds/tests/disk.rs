@@ -458,7 +458,7 @@ async fn a_state_that_cannot_be_saved_runs_the_emergency_command_with_the_reason
     let emergency = daemon.home.root().join("emergency.txt");
     let script = format!("printf '%s' \"$1\" > '{}'", emergency.display());
     let text = format!(
-        "[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n\n[notifications]\ncommand = [\"sh\", \"-c\", {script:?}, \"sh\"]\n"
+        "[agents.claude-1]\ncli = \"claude\"\n\n[plan]\nbounces = 0\n[tiers]\nnormal = [\"claude-1\"]\n\n[notifications]\ncommand = [\"sh\", \"-c\", {script:?}, \"sh\"]\n"
     );
     let config = agent_core::config::Config::from_toml_str(&text).unwrap();
     owner.parts.notifier = agent_runtime::notify::Notifier::from_config(

@@ -1,0 +1,6 @@
+## Your plan lost a step
+
+You ended your turn with `STATUS: DONE`, but steps of the last version of `.agent/plan.md` are gone, or their IDs name
+another step now: {{steps}}. A step is never deleted and its ID never given to another step: put each back with its ID
+and its title, and give it up (`[-]`) with its reason when it is not to be done; a new step takes a new ID. Then end
+your turn as before.

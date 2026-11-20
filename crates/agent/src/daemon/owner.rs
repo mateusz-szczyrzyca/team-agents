@@ -12,6 +12,7 @@ mod disk;
 mod fixture;
 mod gate;
 mod history;
+mod plan;
 mod round_state;
 mod rounds;
 mod snapshots;
@@ -774,6 +775,15 @@ impl Owner {
                 task: task.clone(),
                 source,
             })?;
+        // The run's prompt has the reason it was sent back for its plan, if any: no later run is told it again.
+        // So are the answers about its plan that no run asked for.
+        if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
+            let reason = member.take_plan_reason();
+            let answers = member.take_unread_plan_answers();
+            if reason.is_some() || answers.is_some() {
+                tracing::debug!(task = %task, ?reason, ?answers, "the run is told what waited for it of its plan");
+            }
+        }
         events.push(EventKind::RunStarted {
             team: located.team.clone(),
             task: task.clone(),
@@ -1016,6 +1026,7 @@ impl Owner {
     /// A run that went to its end: its task goes where the end says.
     async fn finished(&mut self, task: &TaskId, run: FinishedRun) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
+        self.keep_plan_out_of_delivery(task, &located).await;
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
         let settle_span = self.settle_span_of(task, &located.team);
@@ -1029,6 +1040,7 @@ impl Owner {
         );
         let settled = self.solo_waits_for_its_items(located.role, &located.team, settled);
         let settled = self.reviewer_waits(located.role, &located.team, settled);
+        let (settled, held) = self.plan_at_end(task, &located, &run.classified.end, settled).await?;
         {
             let _entered = settle_span.enter();
             log_decision(
@@ -1090,6 +1102,21 @@ impl Owner {
             events.extend(look.events);
         }
         self.commit(task, &located, now, events, notice).await?;
+        self.report_the_end(task, &located, &end, run.final_message.as_deref(), held)
+            .await
+    }
+
+    /// What the end `end` of a run of `task`, whose agent said `message` last, means beyond its task's status: a
+    /// coordinator's delivery claim, a reviewer's review, an opinion to ask again, and the others of the team told; a run
+    /// held back for its plan tells nobody it is done.
+    async fn report_the_end(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        end: &RunEnd,
+        message: Option<&str>,
+        held: plan::PlanHeld,
+    ) -> Result<(), OwnerError> {
         if located.role == Role::Coordinator
             && matches!(
                 end,
@@ -1097,11 +1124,12 @@ impl Owner {
                     outcome: RunOutcome::Done
                 }
             )
-            && let Some(message) = run.final_message.as_deref()
+            && let Some(message) = message
         {
             self.read_delivery_claim(task, &located.team, message).await?;
         }
         if located.role == Role::Reviewer
+            && held == plan::PlanHeld::No
             && matches!(
                 end,
                 RunEnd::Reported {
@@ -1109,10 +1137,15 @@ impl Owner {
                 }
             )
         {
-            self.review_ended(task, &located, run.final_message.as_deref()).await?;
+            self.review_ended(task, located, message).await?;
         }
-        self.retry_unanswered_opinion(task, &located, &end).await?;
-        self.after_run(task, &located, &end, run.final_message.as_deref())
+        self.retry_unanswered_opinion(task, located, end).await?;
+        if held == plan::PlanHeld::Yes {
+            // The run said DONE but goes back for its plan, or waits for the human: nobody is told it is done.
+            self.look_at(&located.team);
+            return Ok(());
+        }
+        self.after_run(task, located, end, message)
     }
 
     /// Replaces a failed opinion while preserving ordinary task settlement.
