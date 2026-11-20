@@ -24,7 +24,6 @@ pub struct UnknownMergedPart {
 /// Returns all unmerged parts whose dependencies have merged, or completion.
 ///
 /// Call between rounds: ongoing assignments remain the caller's responsibility.
-/// An empty ready list means that no further part can start yet.
 ///
 /// # Errors
 /// Returns [`UnknownMergedPart`] when progress contains a key outside this plan.
