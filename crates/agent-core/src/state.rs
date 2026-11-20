@@ -18,6 +18,7 @@ mod migrate;
 mod question;
 mod round;
 mod run;
+pub mod split;
 mod strict;
 mod team;
 mod values;
