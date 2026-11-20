@@ -116,7 +116,7 @@ impl Owner {
         if let Err(refusal) = self.check_disk_for_run() {
             return Ok(Err(refusal));
         }
-        let formed = match form(
+        let mut formed = match form(
             &request,
             &self.parts.settings.config,
             self.parts.store.home(),
@@ -126,6 +126,9 @@ impl Owner {
             Ok(formed) => formed,
             Err(refusal) => return Ok(Err(refusal_of(&refusal))),
         };
+        if let Err(refusal) = self.preflight_base(&request, &mut formed).await {
+            return Ok(Err(refusal));
+        }
         let team_span = tracing::debug_span!("team", team = %formed.team.id());
         // The team goes into a copy of the state first: a team the state refuses leaves nothing behind, and the state the
         // owner holds changes only once the copy is saved.
@@ -225,6 +228,36 @@ impl Owner {
             "a team is started"
         );
         self.look_at(id);
+        Ok(())
+    }
+
+    /// Fetches and checks the base before creating any team, task directory or worktree.
+    async fn preflight_base(&self, request: &RunRequest, formed: &mut Formed) -> Result<(), Failure> {
+        let Some(lead) = formed.workspaces.first() else {
+            return Err(internal("the team has no task"));
+        };
+        let git = checkout_git(&self.parts.settings.config, request, &lead.agent);
+        let evidence = git.unpushed_base(&formed.base).await.map_err(|error| Failure {
+            kind: FailureKind::Refused,
+            message: format!("cannot fetch or compare base {}: {}", formed.base, error_chain(&error)),
+        })?;
+        if let Some(base) = evidence {
+            if !request.allow_unpushed_base {
+                return Err(Failure {
+                    kind: FailureKind::Refused,
+                    message: format!(
+                        "base branch {} has {} commits absent from origin/{}; first: {:.7} — {}. Push them, or start again after git reset --hard origin/{}; alternatively pass --allow-unpushed-base to retain this evidence in every pull request",
+                        base.branch,
+                        base.count,
+                        base.branch,
+                        base.first.as_str(),
+                        base.subject,
+                        base.branch
+                    ),
+                });
+            }
+            formed.team.record_unpushed_base(base);
+        }
         Ok(())
     }
 

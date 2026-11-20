@@ -238,6 +238,16 @@ pub(crate) fn render_started(home: &Home, team: &Team) -> String {
         team.repo(),
         team.merge().as_str()
     )];
+    if let Some(base) = team.unpushed_base() {
+        lines.push(format!(
+            "  allowed unpushed base {}: {} commits absent from origin/{}; first: {:.7} — {}\n",
+            base.branch,
+            base.count,
+            base.branch,
+            base.first.as_str(),
+            base.subject
+        ));
+    }
     lines.extend(
         team.allowances()
             .iter()
