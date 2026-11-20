@@ -498,6 +498,29 @@ checked!(ItemProgress, ItemProgressWire, check_item_progress);
 pub type ItemMut<'a> = CheckedMut<'a, ItemProgress>;
 
 impl CheckedMut<'_, ItemProgress> {
+    /// See [`ItemProgress::begin_merge_conflict`].
+    pub fn begin_merge_conflict(&mut self, approved_head: CommitId, at: Timestamp) -> u32 {
+        self.value.begin_merge_conflict(approved_head, at)
+    }
+
+    /// See [`ItemProgress::end_merge_conflict`].
+    pub fn end_merge_conflict(&mut self) {
+        self.value.end_merge_conflict();
+    }
+
+    /// See [`ItemProgress::ask_human_about_merge_conflict`].
+    pub fn ask_human_about_merge_conflict(&mut self, at: Timestamp) {
+        self.value.ask_human_about_merge_conflict(at);
+    }
+
+    /// See [`ItemProgress::reopen_review_after_conflict`].
+    ///
+    /// # Errors
+    /// As [`ItemProgress::reopen_review_after_conflict`].
+    pub fn reopen_review_after_conflict(&mut self) -> Result<(), AdvanceError> {
+        self.value.reopen_review_after_conflict()
+    }
+
     /// See [`ItemProgress::advance`]. An item in review is approved only with the pull request and the reviews it has:
     /// the outcomes reach it through [`CheckedMut::submit_review`], not through the phase handed in. The pull request
     /// that was reviewed is also the one the item is fixed on and merged with.
