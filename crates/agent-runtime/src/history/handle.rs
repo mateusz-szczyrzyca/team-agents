@@ -692,6 +692,8 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
                     }
                 }
                 Job::Plans(plans) => {
+                    // A plan is kept for a task whose run the history has: the records handed in before it go first.
+                    write_batch(&mut store, shared, std::mem::take(&mut batch));
                     write_plans(&mut store, shared, &plans);
                     continue;
                 }
