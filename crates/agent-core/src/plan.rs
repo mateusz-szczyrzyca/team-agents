@@ -129,7 +129,10 @@ impl Plan {
         let mut text = String::new();
         if !self.intent.is_empty() {
             text.push_str(&self.intent);
-            text.push_str("\n\n");
+            // An intent alone ends the text without a line end, so that a text at the limit stays at it.
+            if !self.stages.is_empty() {
+                text.push_str("\n\n");
+            }
         }
         for stage in &self.stages {
             text.push_str(&stage.to_text());
@@ -585,8 +588,8 @@ impl PlanError {
 /// ```
 ///
 /// # Errors
-/// A [`PlanError`]: the text is empty or over [`MAX_TASK_LIST_BYTES`], or a line is not valid where it is; all but
-/// those two carry the line.
+/// A [`PlanError`]: the text is empty, it or the plan written back ([`Plan::to_text`]) is over
+/// [`MAX_TASK_LIST_BYTES`], or a line is not valid where it is; all but those three carry the line.
 pub fn parse_plan(text: &str) -> Result<Plan, PlanError> {
     if text.len() > MAX_TASK_LIST_BYTES {
         return Err(PlanError::TooLarge {
@@ -599,7 +602,16 @@ pub fn parse_plan(text: &str) -> Result<Plan, PlanError> {
     for (index, line) in text.lines().enumerate() {
         parser.accept(NonZeroUsize::MIN.saturating_add(index), line)?;
     }
-    parser.finish()
+    let plan = parser.finish()?;
+    // The text written back may be longer than the one read; a plan is read only if it can be read again.
+    let len = plan.to_text().len();
+    if len > MAX_TASK_LIST_BYTES {
+        return Err(PlanError::TooLargeWrittenBack {
+            len,
+            max: MAX_TASK_LIST_BYTES,
+        });
+    }
+    Ok(plan)
 }
 
 /// What a line of a plan is, by its first characters.
