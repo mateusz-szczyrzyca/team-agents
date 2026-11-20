@@ -2340,3 +2340,33 @@ async fn a_word_to_a_solo_task_of_an_agent_in_an_open_team_is_for_the_solo_sessi
         "{reply:?}: {line}"
     );
 }
+
+// ---- the plan is kept out of git --------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_worktrees_of_a_new_team_keep_the_plan_out_of_git() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    f.stop().await.unwrap();
+
+    for task in &tasks {
+        let worktree = f.worktree(task);
+        std::fs::create_dir_all(worktree.join(".agent")).unwrap();
+        std::fs::write(worktree.join(".agent/plan.md"), "Plan — zażółć.\n").unwrap();
+        let ignored = Process::new("git")
+            .args(["check-ignore", "--quiet", ".agent/plan.md"])
+            .current_dir(&worktree)
+            .status()
+            .unwrap();
+        assert_eq!(ignored.code(), Some(0), "{task}: git does not ignore the plan");
+        let listed = git(&worktree, &["status", "--porcelain", "--", ".agent"]);
+        assert_eq!(listed, "", "{task}");
+    }
+}
