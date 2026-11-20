@@ -19,9 +19,12 @@ use crate::daemon::team::Why;
 /// Why a checked delivery cannot be retained or its correction rendered.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum DeliveryDaemonError {
-    /// The checked state rejected a delivery transition.
+    /// The checked state rejected a claim.
     #[error(transparent)]
-    State(#[from] agent_core::state::DeliveryError),
+    Deliver(#[from] agent_core::state::DeliverRoundError),
+    /// The checked state rejected a completion.
+    #[error(transparent)]
+    Complete(#[from] agent_core::state::CompleteDeliveryError),
     /// A correction variable was invalid.
     #[error("cannot prepare delivery correction")]
     Variable(#[from] agent_core::prompt::VariablesError),
@@ -44,7 +47,7 @@ enum ClaimError {
     Binding(#[from] agent_core::decide::delivery::DeliveryBindingError),
     /// The named PR did not belong to this team.
     #[error(transparent)]
-    Team(#[from] agent_core::state::DeliveryError),
+    Team(#[from] agent_core::state::DeliverRoundError),
     /// The member no longer owns an available item checkout.
     #[error("the reported item has no available member checkout")]
     Member,
@@ -146,7 +149,7 @@ impl Owner {
         let pr = team
             .delivery_pull_request(number)
             .cloned()
-            .ok_or(agent_core::state::DeliveryError::NoTeamPr { number })?;
+            .ok_or(agent_core::state::DeliverRoundError::NoTeamPr { number })?;
         let progress = team
             .round(&round)
             .and_then(agent_core::state::Round::item)

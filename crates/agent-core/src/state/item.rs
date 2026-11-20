@@ -832,9 +832,9 @@ impl ItemProgress {
         round: &crate::ids::RoundId,
         pr: PullRequest,
         at: Timestamp,
-    ) -> Result<(), super::DeliveryError> {
+    ) -> Result<(), super::CompleteDeliveryError> {
         if !matches!(self.phase, ItemPhase::InProgress { .. }) {
-            return Err(super::DeliveryError::NotWorking { round: round.clone() });
+            return Err(super::CompleteDeliveryError::NotWorking { round: round.clone() });
         }
         self.phase = ItemPhase::Done {
             completion: Completion::Merged { pr, at },
