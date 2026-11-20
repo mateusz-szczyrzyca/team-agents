@@ -192,11 +192,7 @@ impl Owner {
                 Ok(Some(Held::WakeLead))
             }
             ChecksStep::AskHuman { reason } => {
-                let issues: Vec<_> = issues
-                    .into_iter()
-                    .filter(|issue| reason == AskReason::PassesUsed || issue.judge() == Judge::Human)
-                    .collect();
-                self.put_question(site, reviewing, &mut record, &issues, (reason, checking.passes()), now)
+                self.put_question(site, reviewing, &mut record, issues, (reason, checking.passes()), now)
                     .await
             }
         }
@@ -244,7 +240,7 @@ impl Owner {
         site: Site<'_>,
         reviewing: &Reviewing<'_>,
         record: &mut ChecksRecord,
-        issues: &[Issue],
+        mut issues: Vec<Issue>,
         (reason, passes): (AskReason, u32),
         now: Timestamp,
     ) -> Result<Option<Held>, PublishError> {
@@ -255,7 +251,8 @@ impl Owner {
             .find_task(&lead.task)
             .and_then(|found| next_number(found.member))
             .ok_or(PublishError::QuestionNumbers)?;
-        let asked = questions(pulls.checks(), team, &lead.task, issues, reason, passes)?;
+        issues.retain(|issue| reason == AskReason::PassesUsed || issue.judge() == Judge::Human);
+        let asked = questions(pulls.checks(), team, &lead.task, &issues, reason, passes)?;
         let file = self.parts.store.home().questions_file(&lead.task, number);
         replace_text_file(&file, &asked.file.render(), QUESTIONS_FILE_MODE).await?;
         record.sent = None;
@@ -267,7 +264,7 @@ impl Owner {
             relays: 0,
         });
         self.parts.store.save_checks_record(&lead.task, record).await?;
-        let lines = issue_lines(pulls, issues)?;
+        let lines = issue_lines(pulls, &issues)?;
         self.record_checked(
             team,
             reviewing,
