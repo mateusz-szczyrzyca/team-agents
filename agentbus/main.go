@@ -315,26 +315,37 @@ func (b *Bus) keepWhole(id int64, text string) *StorageError {
 	return nil
 }
 
-// readMessage gives one message whole by its number: a cut one from messages-full/, any other as it was posted.
+// readMessage gives one message whole by its number: a cut one from messages-full/, any other as it was posted. A message
+// of the agent's other team is not this session's to read (see otherSession): it is answered as no such message.
 func (s *Server) readMessage(id int) (string, *ReadMessageError) {
+	var found *Message
+	err := transact(s.bus, ReadMessageStorage, func(st *State) *ReadMessageError {
+		msgs, serr := s.bus.messages()
+		if serr != nil {
+			return fromStorage(ReadMessageStorage, serr)
+		}
+		for i := range msgs {
+			if msgs[i].ID == int64(id) && !otherSession(st, msgs[i], s.me, s.team) {
+				found = &msgs[i]
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if found == nil {
+		return "", opErr(ReadMessageNoSuchMessage, "no message #%d", id)
+	}
 	f := filepath.Join(s.bus.path("messages-full"), fmt.Sprintf("%d.txt", id))
-	b, err := os.ReadFile(f) // #nosec G304 -- the bus's own directory and a number; no request text reaches the path
-	if err == nil {
+	b, rerr := os.ReadFile(f) // #nosec G304 -- the bus's own directory and a number; no request text reaches the path
+	if rerr == nil {
 		return string(b), nil
 	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return "", fromStorage(ReadMessageStorage, storageErr(err, "cannot read %s", f))
+	if !errors.Is(rerr, os.ErrNotExist) {
+		return "", fromStorage(ReadMessageStorage, storageErr(rerr, "cannot read %s", f))
 	}
-	msgs, serr := s.bus.messages()
-	if serr != nil {
-		return "", fromStorage(ReadMessageStorage, serr)
-	}
-	for _, m := range msgs {
-		if m.ID == int64(id) {
-			return fmtMsg(m), nil
-		}
-	}
-	return "", opErr(ReadMessageNoSuchMessage, "no message #%d", id)
+	return fmtMsg(*found), nil
 }
 
 // post appends an event to messages.jsonl (caller holds the lock) and wakes sleeping recipients; its direct messages
@@ -602,8 +613,14 @@ func (s *Server) read(history int) (string, *ReadMessagesError) {
 			if start < 0 {
 				start = 0
 			}
-			fmt.Fprintf(&sb, "Last %d messages (all directions):\n", len(msgs)-start)
+			var shown []Message
 			for _, m := range msgs[start:] {
+				if !otherSession(st, m, s.me, s.team) {
+					shown = append(shown, m)
+				}
+			}
+			fmt.Fprintf(&sb, "Last %d messages (all directions):\n", len(shown))
+			for _, m := range shown {
 				sb.WriteString(fmtMsg(m) + "\n")
 			}
 			return nil

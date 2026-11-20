@@ -352,6 +352,22 @@ func isForAgent(st *State, m Message, agent, team string, broadcast bool) bool {
 
 // ---------------------------------------------------------------- MCP tools: team
 
+// otherSession reports whether a message belongs to the agent's session in another team than team ("" outside teams):
+// it is bound to a team (a direct message of a team, or one to "team:<id>") that is not team and that the agent is a
+// member of. The reads of a session — its history and read_message by number — do not show such a message; messages of
+// teams the agent is not in, and messages bound to no team, stay visible as before.
+func otherSession(st *State, m Message, agent, team string) bool {
+	bound := m.Team
+	if strings.HasPrefix(m.To, "team:") {
+		bound = strings.TrimPrefix(m.To, "team:")
+	}
+	if bound == "" || bound == team {
+		return false
+	}
+	t := st.Teams[bound]
+	return t != nil && t.Members[agent] != nil
+}
+
 // messageCursor is the key of an agent's unread cursor in a team: the agent and the team, so that no two teams share
 // one; "" outside teams for the agent's single cursor.
 func messageCursor(agent, team string) string {
