@@ -92,6 +92,8 @@ pub enum AutopilotPrompt {
     NoticeReportRefused,
     /// The notification that an approved pull request could not be merged.
     NoticeMergeFailed,
+    /// The notification that a step of the harness waits for GitHub, which refuses it.
+    NoticeGithubRefused,
     /// The notification that a pull request was closed without being merged.
     NoticeClosed,
     /// What a reviewer is told about the pull request it reviews.
@@ -253,6 +255,7 @@ impl AutopilotPrompt {
         Self::NoticeResponseRefused,
         Self::NoticeReportRefused,
         Self::NoticeMergeFailed,
+        Self::NoticeGithubRefused,
         Self::NoticeClosed,
         Self::ReviewRequest,
         Self::ReviewIndependent,
@@ -327,6 +330,7 @@ impl AutopilotPrompt {
                 | Self::NoticeReportRefused
                 | Self::NoticePublishFailed
                 | Self::NoticeMergeFailed
+                | Self::NoticeGithubRefused
                 | Self::NoticeClosed
                 | Self::NoticeNoVerdict
                 | Self::NoticeOpinion
@@ -389,6 +393,7 @@ impl AutopilotPrompt {
             Self::NoticeResponseRefused => "harness/pr/notice-response-refused.md",
             Self::NoticeReportRefused => "harness/review/notice-report-refused.md",
             Self::NoticeMergeFailed => "harness/pr/notice-merge-failed.md",
+            Self::NoticeGithubRefused => "harness/pr/notice-github-refused.md",
             Self::NoticeClosed => "harness/pr/notice-closed.md",
             Self::NoticeMerged => "harness/pr/notice-merged.md",
             Self::ReviewRequest => "harness/review/request.md",
@@ -513,6 +518,7 @@ impl AutopilotPrompt {
                 &["team", "items", "reason", "bounces", "task", "reviewer", "pr"]
             }
             Self::NoticeMergeFailed => &["team", "pr", "url", "reason"],
+            Self::NoticeGithubRefused => &["team", "operation", "answer"],
             Self::NoticeClosed => &["team", "pr", "url"],
             Self::NoticeMerged => &["team", "pr", "url", "items"],
             Self::ReviewRequest => &["team", "pr", "branch", "base", "head", "pass"],
