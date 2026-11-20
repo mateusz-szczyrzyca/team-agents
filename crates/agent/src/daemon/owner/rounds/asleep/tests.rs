@@ -6,34 +6,35 @@ use crate::fixtures::{at, pr, task, team_id, team_state};
 
 fn waiting_delivery() -> agent_core::state::State {
     let mut state = team_state();
-    let mut team = state.team_mut(&team_id(0)).unwrap();
-    for (id, suffix) in [("1.1", "wait"), ("1.2", "ownr")] {
-        team.open_round(
-            format!("round-20261119-090000-{suffix}").parse().unwrap(),
-            Some(id.parse().unwrap()),
-            at(1),
-        )
-        .unwrap();
+    {
+        let mut team = state.team_mut(&team_id(0)).unwrap();
+        for (id, suffix) in [("1.1", "wait"), ("1.2", "ownr")] {
+            team.open_round(
+                format!("round-20261119-090000-{suffix}").parse().unwrap(),
+                Some(id.parse().unwrap()),
+                at(1),
+            )
+            .unwrap();
+            team.advance_item(
+                id.parse().unwrap(),
+                ItemPhase::InProgress {
+                    assignee: "claude-1".parse().unwrap(),
+                    branch: "agents/claude-1/item".parse().unwrap(),
+                },
+            )
+            .unwrap();
+        }
         team.advance_item(
-            id.parse().unwrap(),
-            ItemPhase::InProgress {
-                assignee: "claude-1".parse().unwrap(),
-                branch: "agents/claude-1/item".parse().unwrap(),
+            "1.2".parse().unwrap(),
+            ItemPhase::InReview {
+                pr: pr(7),
+                reviews: Vec::new(),
             },
         )
         .unwrap();
+        team.deliver_round(&"round-20261119-090000-wait".parse().unwrap(), pr(7).number)
+            .unwrap();
     }
-    team.advance_item(
-        "1.2".parse().unwrap(),
-        ItemPhase::InReview {
-            pr: pr(7),
-            reviews: Vec::new(),
-        },
-    )
-    .unwrap();
-    team.deliver_round(&"round-20261119-090000-wait".parse().unwrap(), pr(7).number)
-        .unwrap();
-    drop(team);
     state
 }
 
