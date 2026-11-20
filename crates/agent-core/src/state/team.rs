@@ -419,6 +419,9 @@ pub struct Team {
     /// Whole approved splits; absent in older state files.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     splits: Vec<super::split::SplitPlan>,
+    /// Raw split proposals and correction progress, absent in older state files.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    split_proposals: std::collections::BTreeMap<ItemId, super::split::keeping::ProposalKeeping>,
 }
 
 /// How a [`Team`] is read; see [`checked!`].
@@ -454,6 +457,9 @@ struct TeamWire {
     /// Older teams have no approved splits.
     #[serde(default)]
     splits: Vec<super::split::SplitPlan>,
+    /// Missing in older teams; every key must name an unsplit original item.
+    #[serde(default)]
+    split_proposals: std::collections::BTreeMap<ItemId, super::split::keeping::ProposalKeeping>,
 }
 
 checked!(Team, TeamWire, check_team);
@@ -579,6 +585,7 @@ impl Team {
             activities: Vec::new(),
             unpushed_base: None,
             splits: Vec::new(),
+            split_proposals: std::collections::BTreeMap::new(),
         };
         team.record_activities(created_at);
         team

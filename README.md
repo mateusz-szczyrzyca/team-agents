@@ -289,6 +289,11 @@ run evidence. The activity record also supplies the investigator selection order
 `agent status --investigators`. See the
 [activity record](docs/state.md#investigator-activities).
 
+The core also defines a [coordinator proposal form](docs/task-list.md#coordinator-proposal-form-core-preparation)
+with estimates, units, requested tiers and a scope declaration, configurable through
+[`[split]`](docs/configuration.md#split). Proposal parsing, approval policy and restart-safe progress storage are
+available for the next integration part. The daemon in this release continues to use explicit human approval.
+
 A coordinator can ask the human to split an item into independently deliverable parts in one questions file.
 Approve using the [explicit split verdict](docs/task-list.md#approved-split-plans-core-format); `agent answer`
 lists the recorded parts, or explains a rejected form. The current round delivers part a. Later parts receive

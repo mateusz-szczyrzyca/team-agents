@@ -47,6 +47,25 @@ An intermediate merge records its pull request permanently and resets the parent
 ready part; only the last merge completes the parent. Split rounds remain open on review approval in `--no-merge`.
 Deserialization checks part membership, uniqueness and previously merged dependencies.
 
+### Split proposal preparation
+
+Schema remains 14. Approved parts may additionally retain `estimate` (`amount`, a JSON number, and `unit`, text)
+and `tier` (`investigator`, `normal`, `worker`). Absent estimates remain absent; an absent tier means `normal`.
+Default fields are omitted on saving, preserving the old split representation.
+
+Teams may have an optional `split_proposals` object, keyed by original item ID. Each entry stores bounded raw
+`text`, the `corrections` count and `stage`: `"pending"`, `{"correction":{"fault":…}}`, or
+`{"asked":{"question":N}}` with a nonzero questions number. Raw text deliberately includes unreadable proposals
+so a restart before the decision loses no input. Resubmission preserves the correction count; a send-back counts
+once and retains its fault; the asked stage retains the existing question. No daemon action uses these entries yet.
+
+Only known, unsplit parents may have proposals. Recording or activating a complete approved split removes its
+pending proposal atomically. Missing maps mean no proposals; empty maps are omitted. Existing state files and
+human verdicts still load. The pre-change-format fixture is
+[state-v0-36-before-proposals.json](../crates/agent-core/tests/fixtures/state-v0-36-before-proposals.json);
+its test compares the complete saved document and checks legacy part requirements.
+Older binaries reject the new fields, so retain a backup before saving new proposal or requirement data.
+
 ### Delivery claims
 
 Schema 14 adds optional round `delivery`, an ordinary pull-request record identifying another round's PR in

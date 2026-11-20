@@ -5,13 +5,15 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.37.0 — 20.11.2026 — PR #154
+## 0.37.0 — 20.11.2026 — PR #155
 
 ### New features
-- [agent] [agent-core] [agent-runtime] When GitHub refuses to merge an approved pull request because it conflicts with its base, the lead of the round is sent to merge the base into its branch, not told to you at once. The result is gated and pushed, and the merge is tried again; a change to files the task does not allow is verified by the reviewers first, and `agent status` shows `waits for the lead's correction` while the pass is idle. The new `[merge] conflict_passes` setting (default `3`) limits these passes per round; when they are used up, or the lead gives no result, the lead asks you once in its questions file. `conflict_passes = 0` keeps the old behaviour.
+- [agent-core] A split can now be written as a proposal: for each part its title, what it delivers, its checks, its dependencies, an estimate (a number and its unit, for example `900 lines`) and the tier of agent it asks for (`investigator`, `normal` or `worker`; none means `normal`), and whether the split changes the scope of the item. The approving verdict of today, without the new fields, is still read as before.
+- [agent-core] The decision on a proposal exists: approve it with no human, send it back with the fault named by part (it does not read, a part without checks, a dependency cycle, a part above the limit), or ask the human when it changes the scope or the corrections are used up. The daemon does not use it yet.
+- [agent-core] New keys `[split] part_limit` (the largest estimate a part may have, default 1500, `0` checks no limit) and `[split] corrections` (how many times a proposal goes back, default 2) in `agents.toml`; a file without `[split]` gets the defaults.
 
 ### Enhancements
-- [agent-runtime] A refused merge is told apart as a conflict or another refusal from GitHub's answer; a rate limit or a failing GitHub is still retried, not told.
+- [agent-core] A proposal and its corrections are kept in `state.json` with the item, so a restart loses neither. The schema number stays 14 and the new fields are optional, so a stored split plan written by 0.36.0 loads, with its parts asking for `normal`. **Action:** a plan written by this version has fields an older `agent` rejects, so keep a backup of `state.json` from before the upgrade.
 
 ## 0.36.0 — 20.11.2026 — PR #153
 

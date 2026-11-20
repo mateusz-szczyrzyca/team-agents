@@ -77,6 +77,7 @@ impl Team {
             .find(|candidate| candidate.id() == &round)
             .ok_or(ActivateSplitError::NotWorking { item })?;
         target.bind_part(first.key());
+        self.split_proposals.retain(|parent, _| *parent != item);
         self.splits.push(plan);
         Ok(())
     }

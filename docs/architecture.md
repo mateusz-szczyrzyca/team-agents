@@ -1255,6 +1255,23 @@ callers must not use it to reopen work already assigned in an active round.
 The daemon activation described below adds durable per-part execution to these definitions. Existing items without
 a split retain their lifecycle and names, including delivery through another pull request.
 
+### Split proposal policy and persistence
+
+`state::split::proposal::read_proposal` reads bounded coordinator JSON separately from legacy human verdicts.
+Validated proposal fields include explicit scope and per-part numeric estimates with units; optional tiers default
+to normal. Approved plans retain optional requirements without changing existing `PartDefinition` constructors.
+
+`decide::split::approval::decide_proposal` takes parsed input (or an unreadable fault), `[split]`, a repository unit
+and completed correction count. It returns a whole plan, a typed send-back fault or a reason to ask the human.
+Plan validity is checked before scope escalation. Dependency traversal names an actual member of a cycle rather
+than a downstream dependant, and accepts acyclic forward references. No I/O or code-specific checks occur here.
+
+`state::split::keeping::ProposalKeeping` retains raw input, correction count and a pending/correction/asked stage;
+`Team::keep_split_proposal` checks parent membership. Optional persisted fields preserve old state loading.
+The fixture and representation are documented in [state.md](state.md#split-proposal-preparation).
+This part supplies core APIs only: the owner still acts on explicit human verdicts, with proposal-file handling,
+prompt catalog entries, decision history and log events left to the integration part.
+
 ### Execution of approved split plans
 
 The state owner interprets coordinator answers atomically: a malformed plan records no parts and returns its
