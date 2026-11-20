@@ -200,6 +200,14 @@ min_free_gb = 20
 [snapshot]
 warn_mb = 200
 
+# --- Merges --------------------------------------------------------------------------------------------------------
+# GitHub may refuse to merge an approved pull request because it conflicts with its base. The lead of the round is then
+# asked to merge the base into its branch, at most `conflict_passes` times per round; after that you are asked.
+#   conflict_passes   lead passes per round on a merge conflict; when they are used up the lead asks you; 0 tells you at once, as before (default: 3)
+
+[merge]
+conflict_passes = 3
+
 # --- Dashboard -----------------------------------------------------------------------------------------------------
 # It listens on a loopback address only; remote access goes through `tailscale serve`, and only the Tailscale
 # logins listed here get in.

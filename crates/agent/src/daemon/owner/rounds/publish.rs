@@ -79,7 +79,7 @@ pub(super) enum OwnGate {
 
 /// Where the harness's own gate for the tip of a lead's branch is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Own {
+pub(super) enum Own {
     /// None ran for this tip, or the one that was started could not run.
     NotRun,
     /// One waits or runs; it may be for an earlier tip.
@@ -853,6 +853,17 @@ impl Owner {
             .map_or(0, |progress| progress.fix_passes().len())
     }
 
+    /// How many review passes `items` of `team` have completed before their current one: their fix passes and the merge
+    /// conflict passes they have spent.
+    pub(super) fn review_passes_of(&self, team: &TeamId, items: &[ItemId]) -> usize {
+        items
+            .iter()
+            .filter_map(|id| self.parts.state.team(team).and_then(|found| found.item(*id)))
+            .map(agent_core::state::ItemProgress::completed_review_passes)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// The items of `published` for which the round machine agrees that the pull request carries the commit the gate passed
     /// on; the others are looked at again.
     fn confirmed(&self, team_id: &TeamId, publication: &Publication, published: &Published) -> Vec<ItemId> {
@@ -990,7 +1001,7 @@ impl Owner {
 
     /// Where the gate the harness started by itself for `task` is, for the branch tip `tip`. A gate that is over is taken
     /// off the service: one that ran is remembered with its tip, one that could not run is forgotten and started again.
-    fn own_gate_state(&mut self, task: &TaskId, tip: &CommitId) -> Own {
+    pub(super) fn own_gate_state(&mut self, task: &TaskId, tip: &CommitId) -> Own {
         let over = match self.watch.own_gates.get_mut(task) {
             Some(OwnGate::Running {
                 tip: started,
@@ -1031,7 +1042,7 @@ impl Owner {
 
     /// Starts the gate of `task` for the branch tip `tip`: nobody ran one, and the lead says it is done; or, with `retry`,
     /// one did not pass there and is run once more.
-    fn start_own_gate(&mut self, task: &TaskId, tip: &CommitId, retry: bool) {
+    pub(super) fn start_own_gate(&mut self, task: &TaskId, tip: &CommitId, retry: bool) {
         match self.own_gate(task) {
             Ok(answer) => {
                 tracing::info!(

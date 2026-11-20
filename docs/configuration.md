@@ -54,6 +54,7 @@ Top-level key and tables:
 | `[history]` | table | `enabled = true`, `max_text_bytes = 1048576`, `keep_days = 0` | the history database (`history.db`) |
 | `[log]` | table | `level = "info"`, `keep_days = 0` | the daemon's own log (`stderr` and `history.db`) |
 | `[snapshot]` | table | `warn_mb = 200` | the snapshots of worktrees |
+| `[merge]` | table | `conflict_passes = 3` | what happens when GitHub refuses an approved pull request for a conflict |
 | `[web]` | table | loopback, nobody let in | the dashboard |
 | `[repos.NAME]` | table | none | per repository: base branch, gate and the checks before a review |
 
@@ -278,6 +279,17 @@ prunes the snapshots yet: their commits stay under `refs/agents/snapshots/` in t
 | Key | Default | Meaning |
 |---|---|---|
 | `warn_mb` | `200` | a snapshot bigger than this megabytes is taken and logged with a warning that says its size |
+
+### `[merge]`
+
+What happens when GitHub refuses to merge an approved pull request because it conflicts with its base (a 405 that says the
+pull request has merge conflicts, is not mergeable, or whose base branch was modified). The lead of the round is sent to
+merge the base into its branch, the result is gated and pushed, and the merge is tried again. A change to files the task
+does not allow (`Allow:`) is reviewed again before the merge. Every other refusal is told to you as before.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `conflict_passes` | `3` | lead passes per round to merge the base after a conflict; when they are used up, or the lead gives no result, the lead asks you in its questions file. `0` tells you at once, as before |
 
 ## `secrets.toml`
 

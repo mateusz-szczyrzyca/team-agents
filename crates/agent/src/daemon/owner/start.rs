@@ -669,7 +669,12 @@ fn pending_review(team: &Team, task: &TaskId) -> Option<(PrNumber, u32)> {
         reviews
             .iter()
             .any(|review| review.task == *task && matches!(review.outcome, ReviewOutcome::Pending))
-            .then(|| (pr.number, fix_passes(progress)))
+            .then(|| {
+                (
+                    pr.number,
+                    u32::try_from(progress.completed_review_passes()).unwrap_or(u32::MAX),
+                )
+            })
     })
 }
 
@@ -735,7 +740,8 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
         Some(Why::AskHuman) => RunWhy::AskHuman,
         // The gate is one of the checks a round passes before its review: the history has one reason for both.
         Some(Why::Checks | Why::Gate(_)) => RunWhy::Checks,
-        Some(Why::NoStatus) => RunWhy::Continuation,
+        // The history has no reason of its own for a merge conflict: the lead is told of it in a continuation.
+        Some(Why::NoStatus | Why::MergeConflict) => RunWhy::Continuation,
         None if matches!(
             member.runs().last().map(Run::state),
             Some(RunState::Ended {

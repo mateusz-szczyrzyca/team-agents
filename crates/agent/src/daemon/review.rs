@@ -275,7 +275,7 @@ pub(super) fn independent_first_review(team: &Team, task: &TaskId) -> bool {
     });
     let mut independent = false;
     for item in reviewed {
-        if !item.fix_passes().is_empty() {
+        if !item.fix_passes().is_empty() || item.merge_passes() > 0 {
             return false;
         }
         independent |= item.findings().is_some_and(|ledger| ledger.review_count().is_some());

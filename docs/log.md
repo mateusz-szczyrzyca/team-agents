@@ -202,7 +202,7 @@ At `level = "debug"`:
 
 - `decision_taken` is emitted whenever a pure decision function in `agent_core::decide` takes action (forming a team,
   assigning an item, starting or advancing a round, acting on a run outcome, scheduling a retry or pause, evaluating
-  round checks, or choosing a merge action). Its `fields` carry `decision`, `input`, and `result`. A decision check on
+  round checks, or choosing a merge or merge-conflict action). Its `fields` carry `decision`, `input`, and `result`. A decision check on
   an idle team or task that produces no action logs nothing. The plan of a task ([`plan.md`](plan.md)) has three:
   `plan` (a run that ended accepted, sent back or asked about), `plan_answer` (what the human's answer about a plan
   did) and `plan_out_of_delivery` (whether a plan committed by mistake was taken out of the branch). A plan that cannot

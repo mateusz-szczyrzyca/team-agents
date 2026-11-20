@@ -38,8 +38,8 @@ pub use findings::{
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
 pub use item::{
     AdvanceError, AskReviewsError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut,
-    ItemPhase, ItemProgress, NotWorkedOn, PhaseKind, PullRequest, ReplaceReviewError, Review, ReviewOutcome,
-    SubmitReviewError,
+    ItemPhase, ItemProgress, MergeConflict, NotWorkedOn, PhaseKind, PullRequest, ReplaceReviewError, Review,
+    ReviewOutcome, SubmitReviewError,
 };
 pub use member::{Member, MemberError, MemberMut, Participant, QuestionError};
 pub use plan::{PlanKeeping, PlanReason, PlanStage};

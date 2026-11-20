@@ -370,7 +370,10 @@ impl Owner {
         }
         match item.map(agent_core::state::ItemProgress::phase) {
             Some(ItemPhase::InReview { .. }) => Some(Obligation::Review),
-            Some(ItemPhase::Approved { .. }) => Some(Obligation::Human),
+            Some(ItemPhase::Approved { .. }) => match item.and_then(agent_core::state::ItemProgress::merge_conflict) {
+                Some(agent_core::state::MergeConflict::MergingBase { .. }) => Some(Obligation::LeadCorrection),
+                Some(agent_core::state::MergeConflict::AskingHuman { .. }) | None => Some(Obligation::Human),
+            },
             Some(ItemPhase::InProgress { .. } | ItemPhase::Fixing { .. }) | None
                 if !matches!(
                     lead.runs().last().map(agent_core::state::Run::state),
