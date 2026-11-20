@@ -172,6 +172,31 @@ impl CheckedMut<'_, Member> {
     ) -> Result<(), QuestionError> {
         self.value.answer_question(number, at, via)
     }
+
+    /// See [`Member::send_back`].
+    pub fn send_back(&mut self, reason: PlanReason) {
+        self.value.send_back(reason);
+    }
+
+    /// See [`Member::plan_asked`].
+    pub fn plan_asked(&mut self, question: NonZeroU32) {
+        self.value.plan_asked(question);
+    }
+
+    /// See [`Member::take_plan_reason`].
+    pub fn take_plan_reason(&mut self) -> Option<PlanReason> {
+        self.value.take_plan_reason()
+    }
+
+    /// See [`Member::send_back_once_more`].
+    pub fn send_back_once_more(&mut self) {
+        self.value.send_back_once_more();
+    }
+
+    /// See [`Member::release_plan`].
+    pub fn release_plan(&mut self) {
+        self.value.release_plan();
+    }
 }
 
 /// Why questions could not be added or answered.
