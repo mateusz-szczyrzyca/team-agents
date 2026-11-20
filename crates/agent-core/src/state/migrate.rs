@@ -1,4 +1,4 @@
-//! Reading schemas 1 through 10 and reconstructing their investigator activity history.
+//! Reading schemas 1 through 11 and reconstructing their investigator activity history.
 //!
 //! Version 1 also gains rounds; versions before 10 preserve `Allow:` lines as brief text. The latest retained
 //! task evidence supplies deterministic activity timestamps when older opinion records lack exact times.
@@ -181,4 +181,14 @@ fn rebuild_activities(teams: &mut [Team]) {
             .unwrap_or(team.created_at());
         team.record_activities(at);
     }
+}
+
+/// Promotes schema 11 without rebuilding its durable activity history or granting base permission.
+pub(super) fn from_v11(text: &str) -> Result<State, StateError> {
+    let mut value: Value = serde_json::from_str(text).map_err(|source| StateError::Malformed { source })?;
+    if let Some(version) = value.get_mut("schema_version") {
+        *version = Value::from(super::SCHEMA_VERSION);
+    }
+    let wire: StateWire = serde_json::from_value(value).map_err(|source| StateError::Malformed { source })?;
+    Ok(State::try_from(wire)?)
 }
