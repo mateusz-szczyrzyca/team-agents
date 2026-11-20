@@ -425,6 +425,15 @@ pub struct ItemProgress {
     /// The numbered protocol, absent for rounds opened by an earlier daemon.
     #[serde(skip_serializing_if = "Option::is_none")]
     findings: Option<Findings>,
+    /// The lead passes spent on merging the base into the branch after GitHub refused the merge for a conflict; the
+    /// configured `[merge] conflict_passes` is what this is compared with. Absent while none is spent.
+    #[serde(skip_serializing_if = "is_zero")]
+    merge_passes: u32,
+}
+
+/// Whether a count is zero; a count of zero is not written.
+fn is_zero(count: &u32) -> bool {
+    *count == 0
 }
 
 /// How an [`ItemProgress`] is read; see [`checked!`].
@@ -444,6 +453,9 @@ struct ItemProgressWire {
     /// See [`ItemProgress`]; old rounds keep the verdict-only protocol.
     #[serde(default)]
     findings: Option<Findings>,
+    /// See [`ItemProgress`]; a state written before merge passes has none.
+    #[serde(default)]
+    merge_passes: u32,
 }
 
 checked!(ItemProgress, ItemProgressWire, check_item_progress);
@@ -857,6 +869,7 @@ impl ItemProgress {
             fix_passes: Vec::new(),
             gate: None,
             findings: None,
+            merge_passes: 0,
         }
     }
 
@@ -869,6 +882,19 @@ impl ItemProgress {
     getter!("The fix passes so far, oldest first.", pub fn fix_passes(&self) -> &[FixPass] = &self.fix_passes);
 
     getter!("The findings ledger, or none for a legacy round.", pub fn findings(&self) -> Option<&Findings> = self.findings.as_ref());
+
+    /// The lead passes spent on merge conflicts so far; zero for an item that never met one.
+    #[must_use]
+    pub const fn merge_passes(&self) -> u32 {
+        // RED stub: no pass is ever counted.
+        0
+    }
+
+    /// Counts one more lead pass on a merge conflict and returns the number spent so far, including this one.
+    pub fn spend_merge_pass(&mut self) -> u32 {
+        // RED stub: the count stays where it is.
+        self.merge_passes
+    }
 
     /// Moves the item to `next`. Leaving `in_review` for `fixing` records the review pass's reviews as a fix pass.
     ///
@@ -1516,6 +1542,26 @@ mod tests {
             json!({"status": "submitted", "verdict": "REQUEST_CHANGES", "at": "2026-11-11T19:15:30Z"})
         );
         assert_eq!(serde_json::from_value::<Review>(value).unwrap(), review);
+    }
+
+    #[test]
+    fn a_new_item_has_spent_no_merge_pass_and_writes_none() {
+        let item = progress_in(PhaseKind::Approved);
+
+        assert_eq!(item.merge_passes(), 0);
+        let text = serde_json::to_string(&item).unwrap();
+        assert!(!text.contains("merge_passes"), "{text}");
+    }
+
+    #[test]
+    fn a_spent_merge_pass_is_written_and_read_back() {
+        let mut item = progress_in(PhaseKind::Approved);
+
+        assert_eq!(item.spend_merge_pass(), 1);
+        let text = serde_json::to_string(&item).unwrap();
+        let back: ItemProgress = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(back.merge_passes(), 1);
     }
 
     #[test]
