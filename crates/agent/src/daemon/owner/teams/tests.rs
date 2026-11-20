@@ -2307,3 +2307,36 @@ async fn a_notice_to_a_coordinator_in_two_open_teams_is_for_its_session_in_the_t
     f.stop().await.unwrap();
     assert!(line.contains(&format!(r#""team":"{second}""#)), "{line}");
 }
+
+#[tokio::test]
+async fn a_word_to_a_solo_task_of_an_agent_in_an_open_team_is_for_the_solo_session_alone() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    f.start_team(&["claude-1", "inv-opus"], PARALLEL).await;
+    let (_, tasks) = f.start_team(&["claude-1"], PLAIN).await;
+    let solo = tasks.first().unwrap().clone();
+
+    let reply = f
+        .connect()
+        .await
+        .request(
+            Client::Cli,
+            Command::Say(agent_core::protocol::SayRequest {
+                target: Target::Task(solo.clone()),
+                text: "Only for the solo task.".to_owned().try_into().unwrap(),
+            }),
+        )
+        .await;
+
+    let line = line_with(&f.messages(), "Only for the solo task.");
+    f.stop().await.unwrap();
+    assert!(
+        line.contains(&format!(r#""task":"{solo}""#)) && !line.contains(r#""team":"#),
+        "{reply:?}: {line}"
+    );
+}

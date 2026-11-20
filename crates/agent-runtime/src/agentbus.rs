@@ -828,6 +828,14 @@ pub enum Recipient {
         /// The team whose session of the agent the message is for.
         team: TeamId,
     },
+    /// One agent, in one of its tasks: the message is for the session of `task` alone, also for a solo task, which no
+    /// team of the bus holds.
+    Task {
+        /// The agent.
+        agent: AgentName,
+        /// The task whose session the message is for.
+        task: TaskId,
+    },
 }
 
 impl fmt::Display for Recipient {
@@ -835,7 +843,7 @@ impl fmt::Display for Recipient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::All => f.write_str("all"),
-            Self::Agent(agent) | Self::Member { agent, .. } => write!(f, "{agent}"),
+            Self::Agent(agent) | Self::Member { agent, .. } | Self::Task { agent, .. } => write!(f, "{agent}"),
             Self::Team(team) => write!(f, "team:{team}"),
         }
     }
