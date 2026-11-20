@@ -354,7 +354,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent answer <task> --file answers.md` | sends the answers written after `**Verdict:**` in a questions file instead of opening the editor |
 | `agent stop <task\|team>` | ends the run; nothing of it starts until it is resumed |
 | `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
-| `agent resume <task\|team>` | starts a stopped, failed or waiting task again; for a team, also tries at once every step that waits for GitHub |
+| `agent resume <task\|team>` | starts a stopped, failed or waiting task again; when steps of the team wait for GitHub or git, it tries those at once and starts no task |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus |
 | `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now |
 | `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed |
@@ -525,8 +525,10 @@ harness has lost its next action; it logs one `daemon_task_failed` error for tha
 A step of a round that GitHub or git fails does not stop the daemon: the round says `waits for GitHub: refresh the
 description of the pull requests, tried 4 times, next try 01:07` and the step is tried again by itself, after 30
 seconds, then after a pause that doubles up to 10 minutes. When GitHub refuses it for good (a 404, a token that may not
-do it) the line says `refused: <GitHub's answer>`, you are told once, and `agent resume <team>` tries it again at once
-after you fixed the cause — the resume may still say that no task of the team needed resuming. The log has one
+do it) the line says `refused: <GitHub's answer>`, you are told once while it waits, and `agent resume <team>` tries it
+again at once after you fixed the cause. Such a resume is for the waiting steps only: it starts no task of the team; a
+second `agent resume` starts them, as before. The same holds when git cannot read the commit of a worktree, for example
+the lead's before a merge: `waits for GitHub: read the lead's commit before the merge #1, refused: ...`. The log has one
 `github_step_waiting` warning when a step starts to wait and one `github_step_resumed` when it goes through; see
 [`docs/architecture.md`](docs/architecture.md) for the steps this covers. A daemon that starts tries every step at once.
 

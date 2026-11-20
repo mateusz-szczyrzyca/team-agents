@@ -190,20 +190,27 @@ the rejecting item's allowed answers, or asks the human after two corrections. I
 only part of the review. Failures of the storage and other infrastructure needed to keep state can still stop the owner.
 
 **GitHub and git.** A failure of GitHub or of git in a step of a round is not a failure of the state owner either. The
-steps that could end the owner — refreshing the description of a team's pull requests at each look, and making or
-moving the worktree of the investigator of a second opinion — now wait instead (`owner/rounds/waiting/github.rs`).
-A failure that may pass (no connection, a timeout, a 5xx answer, a rate limit; a git fetch or push) is tried again at
-the first look after a pause of 30 seconds, doubled after every further failure up to 10 minutes
-(`agent_core::decide::retry::pause`), without end. A failure that will not pass (401, 403 that is not a rate limit,
-404, 422, git's own refusals) waits for the human: one notice (`harness/pr/notice-github-refused.md`) names the step
-and the answer, and `agent resume <team>` (or a task or round of it) tries every waiting step of the team at the next
-look. The quick retries inside one call (`[github]` attempts and delays) stay as they were. The waits live in the
-owner's memory, not in `state.json`: a daemon that starts has none, so every step is tried at its first look. While a
-step waits the rest of the look, the other rounds and the other teams go on; `agent status` says what the round
-waits for ("GitHub: refresh the description of the pull requests, tried 4 times, next try 01:07"). The log has one
-`github_step_waiting` warning when a step starts to wait and one `github_step_resumed` when it goes through. What
-publishing, merging, posting comments and reviews, and the fetches do with a failure is unchanged: they log it and try
-again at a later look, and none of them ends the owner.
+steps that could end the owner wait instead (`owner/rounds/waiting/github.rs`): refreshing the description of a team's
+pull requests at each look; making or moving the worktree of the investigator of a second opinion; and the three reads
+of a worktree's commit — the lead's before an approved pull request whose item is in its fix pass is merged (the team's
+publication waits with it, so that the unread commit is not taken for a new fix), the lead's to check its fix
+response, and a verifier's before its verdict is taken (the verdict is held and taken again at a later look; nothing
+of it is recorded before the commit is read). A failure that may pass (no connection, a timeout, a 5xx answer, a rate
+limit; a git fetch or push) is tried again at the first look after a pause of 30 seconds from the end of the failed
+call, doubled after every further failure up to 10 minutes (`agent_core::decide::retry::pause`), without end. A failure
+that will not pass (401, 403 that is not a rate limit, 404, 422, git's own refusals) waits for the human: one notice
+(`harness/pr/notice-github-refused.md`) names the step and the answer, again only after the step went through and was
+refused anew, and `agent resume <team>` (or a task or round of it) tries every waiting step of the team at the next
+look; such a resume starts no task of the team. The quick retries inside one call (`[github]` attempts and delays)
+stay as they were. The waits live in the owner's memory, not in `state.json`: a daemon that starts has none, so every
+step is tried at its first look; a verdict held for its commit is not kept over a start. While a step waits the rest
+of the look, the other rounds and the other teams go on; `agent status` says what the round waits for ("GitHub:
+refresh the description of the pull requests, tried 4 times, next try 01:07"). The log has one `github_step_waiting`
+warning when a step starts to wait and one `github_step_resumed` when it goes through. Publishing, merging, posting
+comments and reviews, asking for and replacing reviewers and the fetches log a failure of GitHub or git and try again
+at a later look, as before; none of them ends the owner. Two failures of the home, not of GitHub or git, still end
+it: a worktree path that is not UTF-8 text, and a file of an investigator's run that cannot be inspected when a silent
+investigator is replaced (`replace_silent_opinions`).
 
 **Items of one pull request.** The items reviewed on one pull request share its findings ledger: each item keeps a
 copy, and every fix response, verification and finding is recorded in all of them, counted by the pull request's fix
