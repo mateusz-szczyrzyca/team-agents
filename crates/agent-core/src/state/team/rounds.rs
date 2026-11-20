@@ -351,7 +351,8 @@ impl Team {
         if let Some(pr) = merged_part {
             target.merge_part(pr);
         }
-        if let Some(parent) = parent
+        if how == RoundEnd::Merged
+            && let Some(parent) = parent
             && self.next_part(parent).is_some()
             && let Some(progress) = self.items.iter_mut().find(|progress| progress.id() == parent)
         {

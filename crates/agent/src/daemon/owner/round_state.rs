@@ -221,6 +221,7 @@ impl Owner {
             .team(team)
             .and_then(|found| found.round_of(item))
             .filter(|round| round.is_open())
+            .filter(|round| how != RoundEnd::Approved || round.part().is_none())
             .map(|round| round.id().clone());
         match open {
             Some(round) => self.close_round(team, &round, Some(item), how, now, look),
