@@ -3,11 +3,11 @@
 
 use super::waiting::WaitingStep;
 use agent_core::history::HistoryEvent;
-use agent_core::ids::{ItemId, TeamId};
+use agent_core::ids::{ItemId, RoundId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::Variables;
 use agent_core::protocol::EventKind;
-use agent_core::state::{CommitId, Completion, ItemPhase, PullRequest, RoundEnd, Timestamp};
+use agent_core::state::{CommitId, Completion, ItemPhase, PullRequest, RoundEnd, RoundLife, Timestamp};
 use agent_runtime::github::{GitHub, GitHubError, MergeMethod, MergeRequest, PullState, Rejection};
 use agent_runtime::process::error_chain;
 
@@ -251,6 +251,7 @@ impl Owner {
                     HistoryEvent::PullClosed { pr: pr.number },
                 );
                 self.tell_about(&about, Telling::Closed);
+                self.reopen_delivered_rounds(&about);
                 Ok(Merge::Waits)
             }
             PullState::Open => self.merge_open(&github, &about, &remote.head).await,
@@ -378,6 +379,7 @@ impl Owner {
                 "an item is merged"
             );
         }
+        self.complete_delivered_by(site.team, pr, now, look)?;
         // A restart uses the saved Done phases to deduplicate this notice. Never make
         // delivery visible while a failed save can still leave the items approved.
         self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
@@ -404,10 +406,97 @@ impl Owner {
         Ok(())
     }
 
+    /// Completes any items of `team` that were delivered by pull request `pr` that just merged.
+    fn complete_delivered_by(
+        &mut self,
+        team_id: &TeamId,
+        pr: &PullRequest,
+        now: Timestamp,
+        look: &mut Look,
+    ) -> Result<(), OwnerError> {
+        let delivered_items: Vec<(ItemId, RoundId)> = self
+            .parts
+            .state
+            .team(team_id)
+            .into_iter()
+            .flat_map(agent_core::state::Team::rounds)
+            .filter_map(|round| match round.life() {
+                RoundLife::Delivered { pr: delivered_pr } if *delivered_pr == pr.number => {
+                    round.item().map(|item| (item, round.id().clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        for (id, round) in delivered_items {
+            let mut team_mut = self
+                .parts
+                .state
+                .team_mut(team_id)
+                .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+            let mut item = team_mut.item_mut(id).ok_or_else(|| OwnerError::LostItem {
+                team: team_id.clone(),
+                item: id,
+            })?;
+            item.complete_delivered(pr.number, now);
+            look.events.push(EventKind::ItemStatus {
+                team: team_id.clone(),
+                item: id,
+                round: round.clone(),
+                status: agent_core::status::ItemStatus::Done,
+            });
+            look.changed = true;
+            self.close_item_round(team_id, id, RoundEnd::Delivered, now, look)?;
+            let span = tracing::error_span!("round", team = %team_id, rounds = %round);
+            let _entered = span.enter();
+            tracing::info!(
+                event = LogEvent::ItemPhaseChanged.as_str(),
+                team = %team_id,
+                item = %id,
+                phase = "done",
+                pr = %pr.number,
+                "an item is delivered"
+            );
+        }
+        Ok(())
+    }
+
     /// Reopens any rounds that were marked as delivered by `about.pr`, and tells the lead that the pull request was
     /// closed without merge.
     fn reopen_delivered_rounds(&mut self, about: &About<'_>) {
-        let _ = about;
+        let delivered_rounds: Vec<(RoundId, Option<ItemId>)> = self
+            .parts
+            .state
+            .team(about.site.team)
+            .into_iter()
+            .flat_map(agent_core::state::Team::rounds)
+            .filter_map(|round| match round.life() {
+                RoundLife::Delivered { pr } if *pr == about.pr.number => Some((round.id().clone(), round.item())),
+                _ => None,
+            })
+            .collect();
+
+        for (round_id, item_id) in delivered_rounds {
+            if let Err(error) = self.parts.state.reopen_round(&round_id) {
+                tracing::warn!(
+                    round = %round_id,
+                    error = %error,
+                    "cannot reopen delivered round"
+                );
+                continue;
+            }
+            let item_text = item_id.map_or_else(|| "task list".to_owned(), |id| format!("item {id}"));
+            let text = format!(
+                "Pull request #{} was closed without merge; {item_text} goes back to member work.",
+                about.pr.number
+            );
+            self.tell_bus(
+                about.site.team,
+                crate::daemon::team::BusJob::Message {
+                    to: about.site.lead.agent.clone(),
+                    text,
+                },
+            );
+        }
     }
 
     /// Fetches the base branch of the repository of `lead` into the checkout. A fetch that fails leaves the next item to
