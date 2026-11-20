@@ -28,6 +28,8 @@ use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, 
 
 mod base;
 mod changes;
+mod delivery;
+pub use delivery::{DeliveryGitError, DeliveryRead};
 #[cfg(test)]
 mod deadline_tests;
 mod range;
