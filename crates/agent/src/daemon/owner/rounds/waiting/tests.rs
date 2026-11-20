@@ -221,6 +221,19 @@ async fn an_idle_round_with_a_done_lead_and_no_scheduled_work_is_unowned() {
 }
 
 #[tokio::test]
+async fn a_delivered_round_waits_for_its_merge() {
+    let (mut state, team_id, round) = idle_round(in_progress(), LEAD_DONE);
+    state
+        .deliver_round(
+            &round,
+            agent_core::state::PrNumber::new(std::num::NonZeroU32::new(42).unwrap()),
+        )
+        .unwrap();
+    let found = obligation_after(&state, |_, _, _| {}, &round, &team_id).await;
+    assert_eq!(found, Some(Obligation::Merge));
+}
+
+#[tokio::test]
 async fn insufficient_independent_investigators_record_an_explicit_round_wait() {
     let (state, team, round) = idle_round(in_progress(), LEAD_DONE);
     let daemon = Daemon::new(&state, None);
