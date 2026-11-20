@@ -215,9 +215,6 @@ async fn delivery_restart_at_each_recovery_boundary_publishes_and_merges_the_ite
         assert_eq!(rig.runs(&tasks[2]), 1);
         drop(step.owner);
         crate::daemon::history::close(step.writer).await;
-        // A reopening after observation never restores the claim.
-        rig.github.reopened_by_a_human(1);
-        rig.github.merged_by_a_human(1);
         rig.start().await;
         rig.item_where("2.1", "the returned item's own PR to be approved", |phase| {
             matches!(phase, ItemPhase::Approved { .. })
@@ -235,6 +232,15 @@ async fn delivery_restart_at_each_recovery_boundary_publishes_and_merges_the_ite
         );
         assert_eq!(rig.github.pulls().len(), 2);
         rig.github.merged_by_a_human(2);
+        rig.item_where(
+            "2.1",
+            "the returned item to complete independently of closed PR #1",
+            |phase| matches!(phase, ItemPhase::Done { .. }),
+        )
+        .await;
+        // Only the unrelated owning item still needs its ordinary PR to merge.
+        rig.github.reopened_by_a_human(1);
+        rig.github.merged_by_a_human(1);
         rig.state_where("the team to finish both items", |state| {
             state.team(&team).unwrap().find(&tasks[0]).unwrap().1.status() == TaskStatus::Done
         })

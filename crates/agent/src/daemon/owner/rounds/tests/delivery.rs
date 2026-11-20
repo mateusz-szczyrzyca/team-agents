@@ -438,9 +438,12 @@ async fn delivery_refuses_work_that_the_pr_has_on_no_published_commit() {
 async fn delivery_closed_claim_reopens_the_round_and_runs_the_member_again() {
     let mut rig = Rig::new(
         &[
-            investigator("inv-lead", "sleep,integrate,done:DELIVERED: #1,sleep"),
+            investigator(
+                "inv-lead",
+                "sleep,integrate,done:DELIVERED: #1,delivery-return-lead,sleep",
+            ),
             normal("claude-1", "commit-clean"),
-            normal("codex-1", "delivery-held,commit-clean"),
+            normal("codex-1", "delivery-held,delivery-return-work"),
             investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
             investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
         ],
@@ -490,7 +493,6 @@ async fn delivery_closed_claim_reopens_the_round_and_runs_the_member_again() {
         .await;
     rig.prompt(&tasks[0], 4).await;
     let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
-    rig.stop().await.unwrap();
     let found = returned.team(&team).unwrap();
     assert!(found.round(&old).unwrap().delivery_closed_at().is_some());
     let fresh = found.round_of("2.1".parse().unwrap()).unwrap();
@@ -502,4 +504,32 @@ async fn delivery_closed_claim_reopens_the_round_and_runs_the_member_again() {
         &[fresh.id().clone()]
     );
     assert!(messages.contains("PR #1 was closed without merging"), "{messages}");
+    rig.item_where("2.1", "the returned item's independent PR to be approved", |phase| {
+        matches!(phase, ItemPhase::Approved { .. })
+    })
+    .await;
+    assert_eq!(rig.github.pulls().len(), 2);
+    rig.github.merged_by_a_human(2);
+    rig.item_where(
+        "2.1",
+        "the returned item to finish while its old PR stays closed",
+        |phase| matches!(phase, ItemPhase::Done { .. }),
+    )
+    .await;
+    rig.github.reopened_by_a_human(1);
+    rig.github.merged_by_a_human(1);
+    let done = rig
+        .state_where("the team to finish after both independent merges", |state| {
+            state.team(&team).unwrap().find(&tasks[0]).unwrap().1.status() == TaskStatus::Done
+        })
+        .await;
+    rig.stop().await.unwrap();
+    assert!(
+        done.team(&team)
+            .unwrap()
+            .items()
+            .iter()
+            .all(|item| matches!(item.phase(), ItemPhase::Done { .. }))
+    );
+    assert!(done.team(&team).unwrap().rounds().iter().all(|round| !round.is_open()));
 }
