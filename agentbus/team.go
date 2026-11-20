@@ -191,6 +191,11 @@ func (s *Server) delivery(st *State, to string) (recipient, team string, refusal
 	if team := memberOfTask(st, to); team != "" {
 		return to, team, nil // a task of an agent, in the team it is in
 	}
+	// a helper run writes to the member whose request it serves: the request names that member's task, so its message is
+	// for the member in that task's team, also when the member is in another open team too
+	if team := requestedTeam(st, s.me, to); team != "" {
+		return to, team, nil
+	}
 	tasks := tasksOf(st, to)
 	switch len(tasks) {
 	case 0:
@@ -203,6 +208,19 @@ func (s *Server) delivery(st *State, to string) (recipient, team string, refusal
 		pairs = append(pairs, "task "+of.task+" (team "+of.team+")")
 	}
 	return "", "", opErr(SendMessageAmbiguousAgent, "%s is in %d open teams: %s — put one of its task IDs in to", to, len(tasks), strings.Join(pairs, ", "))
+}
+
+// requestedTeam is the team of the task from which helper wrote to member: the task of the member's request the helper
+// serves, when that member is the one written to ("" when it is no such request).
+func requestedTeam(st *State, helper, member string) string {
+	for _, h := range st.Helpers {
+		if h.Worker == helper && h.From == member {
+			if team := teamOfTask(st, h.FromTask); team != "" {
+				return team
+			}
+		}
+	}
+	return ""
 }
 
 // teamOfTask is the team whose member has the task ("" when none): the team a result for that task is bound to.
