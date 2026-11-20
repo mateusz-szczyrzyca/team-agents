@@ -1683,7 +1683,14 @@ mod tests {
         assert!(matches!(item.phase(), ItemPhase::InReview { reviews, .. } if reviews.is_empty()));
 
         let mut pending = progress_in(PhaseKind::InProgress);
-        assert!(pending.reopen_review_after_conflict().is_err());
+        assert_eq!(
+            pending.reopen_review_after_conflict(),
+            Err(AdvanceError::Transition(InvalidAdvance {
+                item: id(),
+                from: PhaseKind::InProgress,
+                to: PhaseKind::InReview,
+            }))
+        );
     }
 
     #[test]
