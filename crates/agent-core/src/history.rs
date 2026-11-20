@@ -805,6 +805,26 @@ pub struct RunChanges {
     pub uncommitted: Vec<FileChange>,
 }
 
+/// A snapshot of a task's worktree, kept as a commit under a reference of its round and task (`docs/history.md`,
+/// "Snapshots"). The daemon records one when it finds a task whose run did not end.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotRecord {
+    /// The round the snapshot is kept under.
+    pub round: RoundId,
+    /// The task whose worktree is kept.
+    pub task: TaskId,
+    /// The number of the snapshot among those of its task, counted from 1.
+    pub number: u32,
+    /// When it was taken.
+    pub at: Timestamp,
+    /// The commit that holds the snapshot.
+    pub commit: CommitId,
+    /// The head of the worktree the snapshot stands on.
+    pub head: CommitId,
+    /// The bytes of the files the snapshot holds.
+    pub bytes: u64,
+}
+
 /// Everything the writer is given.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Record {
@@ -822,6 +842,8 @@ pub enum Record {
     RunEnd(Box<RunEndRecord>),
     /// What a run changed.
     Changes(Box<RunChanges>),
+    /// A snapshot of a task's worktree.
+    Snapshot(Box<SnapshotRecord>),
     /// A session reported after the CLI started.
     Session(Box<RunSession>),
     /// A gate, a pull request, a review, a question, a control, a notification or an end.

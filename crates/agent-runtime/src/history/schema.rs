@@ -62,6 +62,9 @@ pub(super) const LEDGER_VERSION: u32 = 3;
 /// The first version of the database that has the daemon's own log.
 pub(super) const DAEMON_LOGS_VERSION: u32 = 4;
 
+/// The first version of the database that has the snapshots of worktrees.
+pub(super) const SNAPSHOTS_VERSION: u32 = 12;
+
 /// The migrations, oldest first: version 1 is the schema of item 8.4.
 ///
 /// Every ordinary table is `STRICT`; the `CHECK`s repeat the rules of the typed records, so the database refuses what the types
@@ -395,5 +398,12 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
     Migration { version: 9, sql: include_str!("009-second-opinions.sql") },
     Migration { version: 10, sql: include_str!("010-opinion-ends.sql") },
     Migration { version: 11, sql: include_str!("011-daemon-log-events.sql") },
-    Migration { version: 12, sql: include_str!("012-plan-versions.sql") },
+    Migration {
+        version: 12,
+        sql: include_str!("012-snapshots.sql"),
+    },
+    Migration {
+        version: 13,
+        sql: include_str!("013-plan-versions.sql"),
+    },
 ];

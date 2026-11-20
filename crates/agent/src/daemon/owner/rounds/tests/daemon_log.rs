@@ -894,6 +894,14 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
 
 /// Emits, a second apart and each at its level, the names that `daemon_log_cause_tests` provokes by their causes.
 fn emit_the_names_of_the_daemon_causes(daemon: &Daemon) {
+    for variant in [LogEvent::SnapshotFailed, LogEvent::SnapshotLarge] {
+        daemon.clock.advance(time::Duration::seconds(1));
+        tracing::warn!(
+            event = variant.as_str(),
+            variant_name = variant.as_str(),
+            "snapshot warning"
+        );
+    }
     for variant in [
         LogEvent::DaemonTaskFailed,
         LogEvent::TeamNotStarted,
@@ -1418,6 +1426,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::daemon_log_cause_tests::record_named_daemon_causes(&mut observed).await;
     super::disk_tests::record_build_directory_removed(&mut observed).await;
     super::github_waits_tests::record_github_step_events(&mut observed).await;
+    super::turn_limit_restart_tests::record_snapshot_events(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
     assert_eq!(

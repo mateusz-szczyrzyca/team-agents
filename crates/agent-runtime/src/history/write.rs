@@ -11,7 +11,7 @@ use agent_core::config::EnvName;
 use agent_core::decide::checks::{Change, FileChange, Lines};
 use agent_core::history::{
     ChangeKind, ChangeScope, ClientKind, Cut, EndKind, HowChosen, Launch, MaxTextBytes, PlanEntry, Record,
-    RoundOpening, RoundSubject, RunChanges, RunEndRecord, RunStart, RunWhy, Step, StepKind, TeamStart,
+    RoundOpening, RoundSubject, RunChanges, RunEndRecord, RunStart, RunWhy, SnapshotRecord, Step, StepKind, TeamStart,
 };
 use agent_core::ids::{AgentName, RunId};
 use agent_core::log::{LogLevel, LogRecord, LogTaskScope, LogTeamScope};
@@ -59,6 +59,7 @@ pub(super) fn insert(
         Record::Step(step) => insert_step(tx, step, limit)?,
         Record::RunEnd(end) => insert_end(tx, end, limit)?,
         Record::Changes(changes) => insert_changes(tx, changes, limit)?,
+        Record::Snapshot(snapshot) => insert_snapshot(tx, snapshot)?,
         // An event has no table of its own: the ledger holds it.
         Record::Event(_) => {}
         Record::Session(session) => {
@@ -89,6 +90,7 @@ pub(super) fn insert(
             | Record::Step(_)
             | Record::RunEnd(_)
             | Record::Changes(_)
+            | Record::Snapshot(_)
             | Record::Session(_) => Ok(()),
         },
     }
@@ -116,6 +118,27 @@ fn path_text(record: RecordKind, path: &Path) -> Result<&str, WriteError> {
 fn json_list<'a>(record: RecordKind, items: impl Iterator<Item = &'a str>) -> Result<String, WriteError> {
     let list: Vec<&str> = items.collect();
     serde_json::to_string(&list).map_err(|source| WriteError::Json { record, source })
+}
+
+/// Writes the row of a snapshot. A snapshot handed in twice is one row: its round, task and number are the key.
+fn insert_snapshot(tx: &Transaction<'_>, snapshot: &SnapshotRecord) -> Result<(), WriteError> {
+    let record = RecordKind::Snapshot;
+    let bytes = i64::try_from(snapshot.bytes).map_err(|source| WriteError::Number { record, source })?;
+    tx.execute(
+        "INSERT INTO snapshots (round, task, n, at, commit_id, head, bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+         ON CONFLICT (round, task, n) DO NOTHING",
+        params![
+            snapshot.round.as_str(),
+            snapshot.task.as_str(),
+            i64::from(snapshot.number),
+            time_text(snapshot.at),
+            snapshot.commit.as_str(),
+            snapshot.head.as_str(),
+            bytes,
+        ],
+    )
+    .map_err(sql(record))?;
+    Ok(())
 }
 
 fn insert_team(tx: &Transaction<'_>, team: &TeamStart, limit: MaxTextBytes) -> Result<(), WriteError> {

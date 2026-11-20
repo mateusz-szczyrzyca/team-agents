@@ -181,7 +181,7 @@ fn last(snapshot: &Transaction<'_>, task: &TaskId, exclude: Option<&RunId>) -> R
     decode(row).map(Some)
 }
 
-/// Whether the database has `plan_versions`: a file written before migration 12 has none.
+/// Whether the database has `plan_versions`: a file written before migration 13 has none.
 fn has_table(snapshot: &Transaction<'_>) -> Result<bool, ReadError> {
     snapshot
         .query_row(

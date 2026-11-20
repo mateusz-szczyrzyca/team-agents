@@ -69,6 +69,7 @@ fn the_pinned_file_is_the_version_of_the_last_migration_and_every_table_of_it_is
             "run_rounds",
             "run_sessions",
             "runs",
+            "snapshots",
             "steps",
             "teams"
         ]

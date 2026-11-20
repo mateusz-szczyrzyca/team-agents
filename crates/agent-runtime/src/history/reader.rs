@@ -16,8 +16,8 @@ use agent_core::config::{AbsolutePath, EnvName, ModelName, TailscaleLogin};
 use agent_core::decide::checks::{Change, FileChange, Lines};
 use agent_core::history::{
     AgentIdentity, ChangeKind, ClientKind, CommitRecord, Cut, EndKind, HowChosen, ItemText, Launch, PlanEntry,
-    RoundOpening, RoundSubject, RunChanges, RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord, Step,
-    StepKind, TeamStart, WhyKind,
+    RoundOpening, RoundSubject, RunChanges, RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord,
+    SnapshotRecord, Step, StepKind, TeamStart, WhyKind,
 };
 use agent_core::ids::{AgentName, BranchName, ItemId, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{CliKind, Role, Tier};
@@ -36,7 +36,7 @@ use super::codec::parse_time;
 use super::error::{ReadError, ValueProblem};
 use super::migrate::{latest, version_of};
 use super::plans::PlanRecord;
-use super::schema::{DAEMON_LOGS_VERSION, MIGRATIONS};
+use super::schema::{DAEMON_LOGS_VERSION, MIGRATIONS, SNAPSHOTS_VERSION};
 
 /// How long a reader waits for the lock of a database that is being checkpointed.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -435,6 +435,49 @@ impl Reader {
     pub fn changes(&self, run: &RunId) -> Result<Option<Stored<RunChanges>>, ReadError> {
         let snapshot = self.snapshot("run_changes")?;
         read_changes(&snapshot, run)
+    }
+
+    /// The snapshots of the tasks of `round`, by task and then by number; a history before version 12 has none.
+    ///
+    /// # Errors
+    /// [`ReadError`] if a row or database cannot be read.
+    pub fn snapshots_of_round(&self, round: &RoundId) -> Result<Vec<SnapshotRecord>, ReadError> {
+        let table = "snapshots";
+        let snapshot = self.snapshot(table)?;
+        if version_of(&snapshot).map_err(query(table))? < SNAPSHOTS_VERSION {
+            return Ok(Vec::new());
+        }
+        let mut statement = snapshot
+            .prepare("SELECT task, n, at, commit_id, head, bytes FROM snapshots WHERE round = ?1 ORDER BY task, n")
+            .map_err(query(table))?;
+        let mut rows = statement.query(params![round.as_str()]).map_err(query(table))?;
+        let mut snapshots = Vec::new();
+        while let Some(row) = rows.next().map_err(query(table))? {
+            let task: String = row.get(0).map_err(query(table))?;
+            let n: i64 = row.get(1).map_err(query(table))?;
+            let here = Row_::of(table, format!("{round}/{task}/{n}"));
+            let number = count(&here, "n", n)?;
+            if number == 0 {
+                return Err(here.rule("n", "a snapshot number starts at one"));
+            }
+            let bytes: i64 = row.get(5).map_err(query(table))?;
+            snapshots.push(SnapshotRecord {
+                round: round.clone(),
+                task: here.value("task", TaskId::from_str(&task))?,
+                number,
+                at: here.value("at", parse_time(&row.get::<_, String>(2).map_err(query(table))?))?,
+                commit: here.value(
+                    "commit_id",
+                    CommitId::from_str(&row.get::<_, String>(3).map_err(query(table))?),
+                )?,
+                head: here.value(
+                    "head",
+                    CommitId::from_str(&row.get::<_, String>(4).map_err(query(table))?),
+                )?,
+                bytes: here.value("bytes", u64::try_from(bytes))?,
+            });
+        }
+        Ok(snapshots)
     }
 
     /// The plan versions of `task`, oldest first; empty for a database written before plans.

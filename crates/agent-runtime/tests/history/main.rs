@@ -21,6 +21,8 @@ mod schema;
 #[cfg(test)]
 mod sessions;
 #[cfg(test)]
+mod snapshots;
+#[cfg(test)]
 mod states;
 #[cfg(test)]
 mod support;

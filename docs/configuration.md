@@ -52,6 +52,7 @@ Top-level key and tables:
 | `[questions]` | table | nothing opened, `$VISUAL`/`$EDITOR` | how the questions of the agents reach you |
 | `[history]` | table | `enabled = true`, `max_text_bytes = 1048576`, `keep_days = 0` | the history database (`history.db`) |
 | `[log]` | table | `level = "info"`, `keep_days = 0` | the daemon's own log (`stderr` and `history.db`) |
+| `[snapshot]` | table | `warn_mb = 200` | the snapshots of worktrees |
 | `[web]` | table | loopback, nobody let in | the dashboard |
 | `[repos.NAME]` | table | none | per repository: base branch, gate and the checks before a review |
 
@@ -250,6 +251,15 @@ Thresholds for filesystem free space in `AGENTS_HOME`.
 |---|---|---|
 | `low_free_gb` | `100` | below this, a notification is sent once with largest worktrees, and `agent status` displays free space |
 | `min_free_gb` | `20` | below this, `agent run` is refused and open rounds wait for disk space |
+
+### `[snapshot]`
+
+The snapshots of worktrees ([`architecture.md`](architecture.md), "Snapshots"). A snapshot is never refused, and nothing
+prunes the snapshots yet: their commits stay under `refs/agents/snapshots/` in the repository until someone removes them.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `warn_mb` | `200` | a snapshot bigger than this megabytes is taken and logged with a warning that says its size |
 
 ## `secrets.toml`
 
