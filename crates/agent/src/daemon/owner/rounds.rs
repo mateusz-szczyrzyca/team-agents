@@ -9,6 +9,7 @@
 mod asleep;
 mod checks;
 mod cleanup;
+mod delivery;
 mod findings;
 mod human;
 mod merges;
@@ -865,3 +866,7 @@ mod split_findings_tests;
 #[cfg(test)]
 #[path = "rounds/tests/activities.rs"]
 mod activity_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/delivery.rs"]
+mod delivery_tests;

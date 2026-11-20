@@ -1083,8 +1083,34 @@ impl Owner {
         {
             self.review_ended(task, &located, run.final_message.as_deref()).await?;
         }
+        self.handle_coordinator_delivery(task, &located, &end, run.final_message.as_deref())
+            .await?;
         self.retry_unanswered_opinion(task, &located, &end).await?;
         self.after_run(task, &located, &end, run.final_message.as_deref())
+    }
+
+    /// Checks and handles a coordinator delivery report if reported by a completed coordinator run.
+    async fn handle_coordinator_delivery(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        end: &RunEnd,
+        final_message: Option<&str>,
+    ) -> Result<(), OwnerError> {
+        if located.role == Role::Coordinator
+            && matches!(
+                end,
+                RunEnd::Reported {
+                    outcome: RunOutcome::Done
+                }
+            )
+            && let Some(delivered_pr) = final_message.and_then(agent_core::decide::outcome::parse_delivery_report)
+        {
+            let mut look = teams::Look::default();
+            self.coordinator_delivered(&located.team, task, delivered_pr, &mut look)
+                .await?;
+        }
+        Ok(())
     }
 
     /// Replaces a failed opinion while preserving ordinary task settlement.
