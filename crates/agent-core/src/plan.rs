@@ -394,8 +394,8 @@ pub enum StepProblem {
     MissingTitle,
 }
 
-/// Why a text is not a [`Plan`]. Every variant but [`Empty`](Self::Empty) and [`TooLarge`](Self::TooLarge) carries
-/// the number of the line it is on, counted from 1.
+/// Why a text is not a [`Plan`]. Every variant but [`Empty`](Self::Empty), [`TooLarge`](Self::TooLarge) and
+/// [`TooLargeWrittenBack`](Self::TooLargeWrittenBack) carries the number of the line it is on, counted from 1.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlanError {
     /// The text has nothing in it but blank lines.
@@ -405,6 +405,15 @@ pub enum PlanError {
     #[error("the plan is {len} bytes: the limit is {max}")]
     TooLarge {
         /// The length of the text, in bytes.
+        len: usize,
+        /// The limit, in bytes.
+        max: usize,
+    },
+    /// The text is within the limit, but the plan written back by [`Plan::to_text`] is not: it widens every
+    /// indentation of a step's text to four spaces. A plan that is read always writes back into a text that is read.
+    #[error("the plan written back is {len} bytes: the limit is {max}")]
+    TooLargeWrittenBack {
+        /// The length of the plan written back, in bytes.
         len: usize,
         /// The limit, in bytes.
         max: usize,
@@ -538,12 +547,12 @@ pub enum PlanError {
 }
 
 impl PlanError {
-    /// The number of the line the fault is on; `None` for [`Empty`](Self::Empty) and [`TooLarge`](Self::TooLarge),
-    /// which are faults of the whole text.
+    /// The number of the line the fault is on; `None` for [`Empty`](Self::Empty), [`TooLarge`](Self::TooLarge) and
+    /// [`TooLargeWrittenBack`](Self::TooLargeWrittenBack), which are faults of the whole text.
     #[must_use]
     pub fn line(&self) -> Option<NonZeroUsize> {
         match self {
-            Self::Empty | Self::TooLarge { .. } => None,
+            Self::Empty | Self::TooLarge { .. } | Self::TooLargeWrittenBack { .. } => None,
             Self::StageNumber { line, .. }
             | Self::StageWithoutTitle { line }
             | Self::DuplicateStage { line, .. }

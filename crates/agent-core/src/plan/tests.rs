@@ -804,3 +804,32 @@ fn a_files_line_with_an_empty_entry_is_refused_with_its_line() {
         );
     }
 }
+
+/// A plan at the limit is written back into a text at the limit, which reads as the same plan.
+#[test]
+fn a_plan_at_the_limit_written_back_reads_as_the_same_plan() {
+    let plan = parsed(&"x".repeat(MAX_TASK_LIST_BYTES));
+
+    let written = plan.to_text();
+
+    assert_eq!(written.len(), MAX_TASK_LIST_BYTES);
+    assert_eq!(parse_plan(&written), Ok(plan));
+}
+
+/// A text within the limit whose plan written back is over it is refused, so that every plan read can be written
+/// back and read again.
+#[test]
+fn a_plan_whose_text_written_back_is_over_the_limit_is_refused() {
+    let head = "1. S\n[ ] 1.1 a\n";
+    let lines = (MAX_TASK_LIST_BYTES - head.len()) / " n\n".len();
+    let text = format!("{head}{}", " n\n".repeat(lines));
+    assert!(text.len() <= MAX_TASK_LIST_BYTES);
+
+    assert_eq!(
+        failure(&text),
+        PlanError::TooLargeWrittenBack {
+            len: head.len() + lines * "    n\n".len(),
+            max: MAX_TASK_LIST_BYTES,
+        }
+    );
+}
