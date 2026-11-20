@@ -8,7 +8,7 @@ use agent_core::ids::{ItemId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::Variables;
 use agent_core::protocol::EventKind;
-use agent_core::state::{CommitId, Completion, ItemPhase, PrNumber, PullRequest, RoundEnd, Timestamp};
+use agent_core::state::{CommitId, Completion, ItemPhase, MergeConflict, PrNumber, PullRequest, RoundEnd, Timestamp};
 use agent_runtime::github::{GitHub, MergeMethod, MergeRefusalKind, MergeRequest, PullState, merge_refusal_kind};
 use agent_runtime::process::error_chain;
 
@@ -271,7 +271,7 @@ impl Owner {
             return Ok(Merge::Waits);
         }
         let key = (team.clone(), pr.number);
-        if self.watch.refused.contains(&key) {
+        if self.watch.refused.contains(&key) || self.asking_human_for_conflict(team, pr.number) {
             return Ok(Merge::Waits);
         }
         let request = MergeRequest {
@@ -336,9 +336,22 @@ impl Owner {
     /// Whether one of `items` is in a merge conflict pass: its approved pull request is not merged while the lead works.
     pub(super) fn in_merge_conflict(&self, team: &TeamId, items: &[ItemId]) -> bool {
         self.parts.state.team(team).is_some_and(|found| {
-            items
-                .iter()
-                .any(|id| found.item(*id).is_some_and(|item| item.merge_conflict().is_some()))
+            items.iter().any(|id| {
+                found
+                    .item(*id)
+                    .is_some_and(|item| matches!(item.merge_conflict(), Some(MergeConflict::MergingBase { .. })))
+            })
+        })
+    }
+
+    /// Whether an item of pull request `number` of `team` is waiting on the human for a merge conflict.
+    fn asking_human_for_conflict(&self, team: &TeamId, number: PrNumber) -> bool {
+        self.parts.state.team(team).is_some_and(|found| {
+            items_of(found, number).into_iter().any(|id| {
+                found
+                    .item(id)
+                    .is_some_and(|item| matches!(item.merge_conflict(), Some(MergeConflict::AskingHuman { .. })))
+            })
         })
     }
 
@@ -382,6 +395,7 @@ impl Owner {
                 team: site.team.clone(),
                 item: *id,
             })?;
+            item.end_merge_conflict();
             let completion = if matches!(item.phase(), ItemPhase::Fixing { .. }) {
                 let head = item
                     .findings()

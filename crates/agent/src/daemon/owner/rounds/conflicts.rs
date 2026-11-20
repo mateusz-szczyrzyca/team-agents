@@ -4,10 +4,12 @@
 
 use agent_core::decide::merge_refusal::{AfterLead, LeadEnd, after_lead, changed_by_lead};
 use agent_core::history::HistoryEvent;
-use agent_core::ids::{ItemId, TeamId};
+use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::repo_path::RepoPath;
-use agent_core::state::{AdvanceError, CommitId, ItemMut, ItemPhase, MergeConflict, PullRequest, Timestamp};
+use agent_core::state::{
+    AdvanceError, CommitId, ItemMut, ItemPhase, MergeConflict, PullRequest, QuestionState, Timestamp,
+};
 use agent_core::status::TaskStatus;
 use agent_runtime::git::{Git, Revision};
 use agent_runtime::history::log_decision;
@@ -66,7 +68,32 @@ impl Owner {
         self.parts.state.record_activities(now);
         self.save().await?;
         let lead = self.lead_of(team)?;
-        self.release(&lead.task, Why::MergeConflict, look)
+        self.release_conflict_lead(&lead.task, look)
+    }
+
+    /// Queues the lead task `task` for a merge conflict pass or question, including when the lead's last run failed.
+    fn release_conflict_lead(&mut self, task: &TaskId, look: &mut Look) -> Result<(), OwnerError> {
+        let located = self.locate(task)?;
+        let status = self
+            .parts
+            .state
+            .find_task(task)
+            .map(|found| found.member.status())
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        match status {
+            TaskStatus::Waiting | TaskStatus::Failed => {
+                self.move_to(task, &located.team, TaskStatus::Queued, &mut look.events)?;
+                look.changed = true;
+            }
+            TaskStatus::Queued => {}
+            TaskStatus::Running
+            | TaskStatus::Questions
+            | TaskStatus::Paused
+            | TaskStatus::Stopped
+            | TaskStatus::Done => return Ok(()),
+        }
+        self.reasons.insert(task.clone(), Why::MergeConflict);
+        Ok(())
     }
 
     /// Looks at the merge conflict pass of `team`, when one is in progress: the lead is sent again when it was not run
@@ -81,7 +108,7 @@ impl Owner {
         now: Timestamp,
     ) -> Result<(), OwnerError> {
         let Some((pr, approved_head, at, items)) = self.conflict_in_progress(team) else {
-            return self.wake_unasked_conflict_lead(team, look);
+            return self.wake_unasked_conflict_lead(team, look).await;
         };
         let lead = self.lead_of(team)?;
         let member = self
@@ -92,11 +119,11 @@ impl Owner {
             .ok_or_else(|| OwnerError::LostTask {
                 task: lead.task.clone(),
             })?;
-        if member.status() != TaskStatus::Waiting {
+        if !matches!(member.status(), TaskStatus::Waiting | TaskStatus::Failed) {
             return Ok(());
         }
         if !ran_since(member, at) {
-            return self.release(&lead.task, Why::MergeConflict, look);
+            return self.release_conflict_lead(&lead.task, look);
         }
         if !lead.done {
             let allowances = self.team_allowances(team)?;
@@ -158,9 +185,10 @@ impl Owner {
             .await
     }
 
-    /// Wakes the lead of `team` once when a merge conflict pass needs the human and the lead has not run since.
-    fn wake_unasked_conflict_lead(&mut self, team: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
-        let Some(at) = self.conflict_asking_human(team) else {
+    /// Wakes the lead of `team` once when a merge conflict pass needs the human and the lead has not run since, and
+    /// clears the conflict state once the human's answer has been acted on by the lead.
+    async fn wake_unasked_conflict_lead(&mut self, team: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
+        let Some((pr, at, items)) = self.conflict_asking_human(team) else {
             return Ok(());
         };
         let lead = self.lead_of(team)?;
@@ -172,8 +200,26 @@ impl Owner {
             .ok_or_else(|| OwnerError::LostTask {
                 task: lead.task.clone(),
             })?;
-        if member.status() == TaskStatus::Waiting && !ran_since(member, at) {
-            return self.release(&lead.task, Why::MergeConflict, look);
+        if !ran_since(member, at) {
+            if matches!(member.status(), TaskStatus::Waiting | TaskStatus::Failed) {
+                return self.release_conflict_lead(&lead.task, look);
+            }
+            return Ok(());
+        }
+        let answered_at = member
+            .questions()
+            .iter()
+            .filter_map(|question| match question.state() {
+                QuestionState::Answered { at: answered_at, .. } if *answered_at >= at => Some(*answered_at),
+                QuestionState::Answered { .. } | QuestionState::Open => None,
+            })
+            .max();
+        if let Some(answered_at) = answered_at
+            && member.status() == TaskStatus::Waiting
+            && ran_since(member, answered_at)
+        {
+            self.end_pass(team, &items, pr.number)?;
+            self.save().await?;
         }
         Ok(())
     }
@@ -233,13 +279,15 @@ impl Owner {
     }
 
     /// When an approved pull request of `team` asked the human about a merge conflict, if one did.
-    fn conflict_asking_human(&self, team: &TeamId) -> Option<Timestamp> {
+    fn conflict_asking_human(&self, team: &TeamId) -> Option<(PullRequest, Timestamp, Vec<ItemId>)> {
         let found = self.parts.state.team(team)?;
         found
             .items()
             .iter()
             .find_map(|item| match (item.phase(), item.merge_conflict()) {
-                (ItemPhase::Approved { .. }, Some(MergeConflict::AskingHuman { at })) => Some(*at),
+                (ItemPhase::Approved { pr, .. }, Some(MergeConflict::AskingHuman { at })) => {
+                    Some((pr.clone(), *at, items_of(found, pr.number)))
+                }
                 (ItemPhase::Approved { .. }, Some(MergeConflict::MergingBase { .. }) | None)
                 | (
                     ItemPhase::Pending
