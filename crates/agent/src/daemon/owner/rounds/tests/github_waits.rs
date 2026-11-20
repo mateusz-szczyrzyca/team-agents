@@ -307,3 +307,25 @@ async fn a_github_that_answers_no_call_ends_nothing_and_the_daemon_answers_statu
 
     assert_eq!(times(&rig, LogEvent::DaemonTaskFailed), 0);
 }
+
+/// Records in `observed` the events of a step that waits for GitHub, from a daemon whose read of an approved pull
+/// request GitHub does not answer and then answers: the real causes of `github_step_waiting` and `github_step_resumed`.
+pub(super) async fn record_github_step_events(observed: &mut std::collections::BTreeSet<LogEvent>) {
+    let mut rig = two_teams().await;
+    approved_then_failing(&mut rig, 503).await;
+    rig.wait_for("a step that waits for GitHub", || {
+        times(&rig, LogEvent::GithubStepWaiting) > 0
+    })
+    .await;
+    rig.github.answer_calls_to("GET", FIRST_PULL);
+    rig.wait_for("the step that waited goes through", || {
+        times(&rig, LogEvent::GithubStepResumed) > 0
+    })
+    .await;
+    rig.stop().await.unwrap();
+    for event in [LogEvent::GithubStepWaiting, LogEvent::GithubStepResumed] {
+        if times(&rig, event) > 0 {
+            observed.insert(event);
+        }
+    }
+}
