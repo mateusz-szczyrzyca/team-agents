@@ -25,6 +25,16 @@ fn sent_back(reason: PlanReason) -> State {
     state
 }
 
+/// A plan whose every step is done or given up.
+const FINISHED: &str = "Finish it.\n\n1. Work\n[x] 1.1 Do it\n[-] 1.2 Polish it\n    Not asked for.\n";
+
+/// Gives the worktree of task 1 of `daemon` a finished plan, so that its fake agent's `DONE` is taken as it is.
+fn finished_plan(daemon: &Daemon) {
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(dir.join(".agent/plan.md"), FINISHED).unwrap();
+}
+
 /// A daemon of `state` whose configuration holds runs to their plan `bounces` times.
 fn with_bounces(state: &State, bounces: u32) -> Daemon {
     let daemon = Daemon::new(state, None);
@@ -44,6 +54,7 @@ async fn a_run_sent_back_is_told_its_reason_and_no_later_run_is() {
     };
     let mut daemon = with_bounces(&sent_back(reason), 3);
     daemon.scenario(1, "done");
+    finished_plan(&daemon);
 
     daemon.start().await;
     let state = daemon.status_is(1, TaskStatus::Done).await;
@@ -66,6 +77,7 @@ async fn a_plan_that_does_not_parse_is_told_with_its_line() {
     };
     let mut daemon = with_bounces(&sent_back(reason), 3);
     daemon.scenario(1, "done");
+    finished_plan(&daemon);
 
     daemon.start().await;
     daemon.status_is(1, TaskStatus::Done).await;
@@ -82,6 +94,7 @@ async fn a_plan_that_does_not_parse_is_told_with_its_line() {
 async fn a_first_prompt_has_the_rules_of_the_plan_where_runs_are_held_to_it() {
     let mut daemon = with_bounces(&solo_state(), 3);
     daemon.scenario(1, "done");
+    finished_plan(&daemon);
 
     daemon.start().await;
     daemon.status_is(1, TaskStatus::Done).await;
@@ -143,7 +156,7 @@ async fn waiting_for_answers(asked: Asked) -> Daemon {
         }
     }
     std::fs::write(daemon.home.state_file(), state.to_json().unwrap()).unwrap();
-    daemon.scenario(1, "done");
+    finished_plan(&daemon);
     daemon.start().await;
     daemon
 }
