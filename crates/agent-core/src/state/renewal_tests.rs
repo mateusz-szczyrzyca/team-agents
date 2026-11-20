@@ -117,3 +117,31 @@ fn a_state_whose_renewal_does_not_follow_its_run_is_refused() {
 
     assert!(refused.is_err(), "the renewal precedes the run: {refused:?}");
 }
+
+/// The old state's failed task, started anew at `renewed_at`: the ladder's decision, before its new run begins.
+fn renewed_at(state: &mut State, renewed_at: Timestamp) {
+    let (_, mut member) = state.find_task_mut(&task()).expect("the task");
+    let renewed = member
+        .renew(Trouble::NoStatus, renewed_at)
+        .expect("a failed task may be started anew");
+    assert!(renewed);
+}
+
+#[test]
+fn the_run_of_a_new_session_records_the_session_the_harness_named_for_it() {
+    let mut state = old_state();
+    renewed_at(&mut state, started());
+    let (_, mut member) = state.find_task_mut(&task()).expect("the task");
+    member.transition(TaskStatus::Queued).expect("queued");
+    member.transition(TaskStatus::Running).expect("runs");
+    let named: SessionId = "00000000-0000-4000-8000-000000000003".parse().unwrap();
+
+    let begun = member.begin_run(
+        "run-20261120-200101-n2n2".parse().unwrap(),
+        "2026-11-20T20:01:01Z".parse().unwrap(),
+        Some(named.clone()),
+    );
+
+    assert_eq!(begun, Ok(()));
+    assert_eq!(member.last_session(), Some(&named));
+}
