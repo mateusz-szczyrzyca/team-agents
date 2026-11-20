@@ -107,14 +107,15 @@ fn a_task_started_anew_before_its_last_run_started_is_refused() {
 #[test]
 fn a_state_whose_renewal_does_not_follow_its_run_is_refused() {
     let mut state = old_state();
-    let (_, mut member) = state.find_task_mut(&task()).expect("the task");
-    renewed(member.value);
+    renewed(state.find_task_mut(&task()).expect("the task").1.value);
     let mut written: serde_json::Value = serde_json::from_str(&state.to_json().expect("saves")).expect("json");
-    let mut slot = &mut written;
-    for key in ["teams", "0", "crew", "members", "0", "renewals", "at"] {
-        slot = slot.get_mut(key).expect("the renewal's time");
-    }
-    *slot = serde_json::Value::from("2026-11-20T19:00:00Z");
+    let teams = written.get_mut("teams").expect("the teams");
+    let team = teams.get_mut(0).expect("the team");
+    let crew = team.get_mut("crew").expect("the crew");
+    let members = crew.get_mut("members").expect("the members");
+    let member = members.get_mut(0).expect("the member");
+    let renewals = member.get_mut("renewals").expect("the renewals");
+    *renewals.get_mut("at").expect("the renewal's time") = serde_json::Value::from("2026-11-20T20:00:30Z");
 
     let refused = State::from_json(&written.to_string());
 
