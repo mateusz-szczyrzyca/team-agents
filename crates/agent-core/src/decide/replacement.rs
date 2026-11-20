@@ -71,6 +71,11 @@ pub const fn rank(tier: Tier) -> u8 {
 /// decides.
 #[must_use]
 pub fn choose<'a>(role: Role, replaced: Tier, candidates: &[Candidate<'a>], mode: ReplacementMode) -> Handover<'a> {
+    // A worker's and a reviewer's task is outside this choice, whatever the configuration names.
+    match role {
+        Role::Worker | Role::Reviewer => return Handover::Human,
+        Role::Solo | Role::Coordinator | Role::Member => {}
+    }
     match mode {
         ReplacementMode::Off => Handover::Human,
         ReplacementMode::Lead => lead_of(role),
