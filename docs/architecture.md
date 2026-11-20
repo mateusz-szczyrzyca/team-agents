@@ -649,7 +649,10 @@ lead from the team prompt catalog, open a fresh round for the same item (or spli
 The new round and queue state are saved together. Recovery retries after a restart without consulting the old PR;
 therefore a later reopening cannot revive the claim. Notification precedes the new round, so a crash after sending
 but before saving may repeat the message. A stopped member keeps the recovery pending until resumed. Publication
-and subsequent merge use the ordinary item lifecycle.
+and subsequent merge use the ordinary item lifecycle. A returned item publishes the integrated, gated tip on a
+branch named for its fresh round, independently of the closed PR and any other item still attached to that PR.
+A failed bus send logs `bus_down` and leaves the saved notification and reopening obligation for the next poll;
+it does not stop the owner loop.
 
 ### Snapshots (`agent-runtime`, `agent`)
 

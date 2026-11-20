@@ -553,7 +553,8 @@ completes it immediately; after the merge the line says `done, delivered by PR #
 If the daemon observes the PR closed without merging, the old round says
 `closed, abandoned, delivery PR #N closed without merging`. The coordinator receives the reason on the bus, and
 the member resumes the same item on its branch in a fresh round whose status says `open`. The item then gets its
-own PR through the usual gate, review and merge process. This return survives a daemon restart at either step.
+own PR on a separate publication branch through the usual gate, review and merge process, even while the old PR
+stays closed. This return survives a daemon restart at either step.
 Reopening a PR before the daemon observes its closure preserves the claim; reopening it after observation never
 restores that claim. A stopped team resumes this recovery when its member is resumed.
 

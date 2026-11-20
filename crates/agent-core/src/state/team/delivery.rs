@@ -125,10 +125,10 @@ impl Team {
         if round.delivered_by().is_none()
             || round.delivery_closed_at().is_some()
             || round.part_pull_request().is_some()
-            || !round
+            || round
                 .item()
                 .and_then(|item| self.round_of(item))
-                .is_some_and(|latest| latest.id() == id)
+                .is_none_or(|latest| latest.id() != id)
         {
             return Err(EndDeliveryError::NotWaiting { round: id.clone() });
         }
