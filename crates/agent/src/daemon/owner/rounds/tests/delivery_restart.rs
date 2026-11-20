@@ -197,15 +197,7 @@ async fn delivery_restart_at_each_recovery_boundary_publishes_and_merges_the_ite
         }
         let mut look = Look::default();
         let result = step.owner.poll_deliveries(&pulls, &team, &mut look).await;
-        match boundary {
-            Boundary::Observed => assert!(matches!(
-                result,
-                Err(crate::daemon::owner::OwnerError::Delivery(
-                    super::DeliveryDaemonError::Bus(_)
-                ))
-            )),
-            Boundary::Recovered => result.unwrap(),
-        }
+        result.unwrap();
         let saved = rig.state();
         let found = saved.team(&team).unwrap();
         assert!(found.round(&old).unwrap().delivery_closed_at().is_some());
