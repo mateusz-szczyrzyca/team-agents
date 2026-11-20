@@ -12,6 +12,10 @@ use super::{Audience, PromptSpec};
 /// Every text of the autopilot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AutopilotPrompt {
+    /// Return a delivery claim whose evidence could not be verified.
+    DeliveryRefused,
+    /// Describe a delivered item waiting for its owning PR.
+    WaitMerge,
     /// Describe an idle round in status output.
     WaitNothing,
     /// Describe an idle round in status output.
@@ -219,7 +223,9 @@ pub enum AutopilotPrompt {
 impl AutopilotPrompt {
     /// Every text of the catalog.
     pub const ALL: &'static [Self] = &[
+        Self::DeliveryRefused,
         Self::ReviewOpinionRequest,
+        Self::WaitMerge,
         Self::WaitGate,
         Self::WaitReview,
         Self::WaitInvestigator,
@@ -363,6 +369,8 @@ impl AutopilotPrompt {
     )]
     const fn path(self) -> &'static str {
         match self {
+            Self::DeliveryRefused => "harness/pr/delivery-refused.md",
+            Self::WaitMerge => "harness/pr/wait-merge.md",
             Self::WaitNothing => "harness/pr/wait-nothing.md",
             Self::WaitCorrection => "harness/pr/wait-correction.md",
             Self::WaitHuman => "harness/pr/wait-human.md",
@@ -470,7 +478,9 @@ impl AutopilotPrompt {
     /// The context required to render this text.
     const fn variables(self) -> &'static [&'static str] {
         match self {
-            Self::PrGateRetry
+            Self::DeliveryRefused => &["reason"],
+            Self::WaitMerge
+            | Self::PrGateRetry
             | Self::PrNoLead
             | Self::ReviewFixNoCommitUndone
             | Self::WaitNothing
@@ -554,9 +564,7 @@ impl AutopilotPrompt {
             Self::ReviewAskHuman => ASK_HUMAN_VARIABLES,
             Self::ReviewFindingsInvalid => &["line", "reason"],
             Self::ReviewOpenFinding => &["number", "severity", "rule", "place", "text", "check"],
-            Self::ReviewFindingEntry => &[
-                "number", "severity", "rule", "place", "state", "reporter", "text", "note",
-            ],
+            Self::ReviewFindingEntry => FINDING_ENTRY_VARIABLES,
             Self::ReviewFindingsList => &["blockers", "majors", "minors", "closed", "entries"],
             Self::ReviewFindingsClosed => &["count", "entries"],
             Self::OpinionAttemptFailed
@@ -609,3 +617,8 @@ const BRANCH_VARIABLES: &[&str] = &["branch", "missing", "sent", "limit"];
 
 /// Required context of this catalog entry.
 const FIX_PASS_VARIABLES: &[&str] = &["pr", "pass", "passes", "branch", "findings"];
+
+/// Context identifying and explaining one review finding.
+const FINDING_ENTRY_VARIABLES: &[&str] = &[
+    "number", "severity", "rule", "place", "state", "reporter", "text", "note",
+];

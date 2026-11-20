@@ -421,3 +421,44 @@ async fn a_turn_of_the_owner_forgets_the_waits_of_closed_rounds_and_of_closed_or
 
     assert_eq!(kept(&owner), vec![Step::Round { round: open }]);
 }
+
+#[tokio::test]
+async fn delivery_marker_owns_the_wait_even_when_a_gate_is_running() {
+    let (mut state, team, round) = idle_round(in_progress(), LEAD_DONE);
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        let owner = "1.2".parse().unwrap();
+        found
+            .open_round("round-20261119-090001-ownr".parse().unwrap(), Some(owner), at(10))
+            .unwrap();
+        found.advance_item(owner, in_progress()).unwrap();
+        found
+            .advance_item(
+                owner,
+                ItemPhase::InReview {
+                    pr: crate::fixtures::pr(7),
+                    reviews: Vec::new(),
+                },
+            )
+            .unwrap();
+        found.deliver_round(&round, crate::fixtures::pr(7).number).unwrap();
+    }
+    let found = obligation_after(
+        &state,
+        |owner, lead, _| {
+            let (_, answer) = tokio::sync::oneshot::channel();
+            owner.watch.own_gates.insert(
+                lead.clone(),
+                OwnGate::Running {
+                    tip: "0123456789abcdef0123456789abcdef01234567".parse().unwrap(),
+                    retry: false,
+                    answer,
+                },
+            );
+        },
+        &round,
+        &team,
+    )
+    .await;
+    assert_eq!(found, Some(Obligation::Merge));
+}

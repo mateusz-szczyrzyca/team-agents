@@ -5,14 +5,14 @@ use super::*;
 fn schema_nine_migrates_without_allowances_and_writes_schema_ten() {
     let old = include_str!("../../tests/fixtures/state-before-task-allowances.json");
     let state = State::from_json(old).unwrap();
-    assert_eq!(SCHEMA_VERSION, 13);
+    assert_eq!(SCHEMA_VERSION, 14);
     for team in state.teams() {
         assert_eq!(team.allowances(), []);
     }
     assert_eq!(
         state.to_json().unwrap(),
         include_str!("../../tests/fixtures/state-before-task-allowances-activities.json")
-            .replace("\"schema_version\": 11", "\"schema_version\": 13")
+            .replace("\"schema_version\": 11", "\"schema_version\": 14")
     );
     assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
 }

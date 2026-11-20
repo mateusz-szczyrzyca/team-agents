@@ -8,15 +8,17 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ## 0.34.0 — 20.11.2026 — PR #151
 
 ### New features
-- [agent] [agent-core] [agent-runtime] The daemon reads the plan a task keeps in `.agent/plan.md` at the end of every run and keeps each new version in the history; a missing plan and one that does not parse are recorded too.
-- [agent] [agent-core] A solo agent, a member or a coordinator that ends `STATUS: DONE` while its plan is missing, does not parse, has a step still to do or in hand, or lost a step goes back to the same agent with the reason, at most `[plan] bounces` times per task (default 3, `0` only records).
-- [agent] After that limit you are asked once, in the task's questions file, whether to go on as it is (`a` or `ok`) or send the run back once more.
-- [agent] The first prompt of a solo agent, a member and a coordinator says how to keep the plan and its form, for example one step in hand and a step given up with its reason instead of deleted.
+- [agent] [agent-core] [agent-runtime] The harness can check a coordinator's report that an item is delivered by
+  another pull request of its team (`DELIVERED: #N`). It accepts it only when that pull request belongs to the team and
+  the item's branch holds nothing outside it or the base branch; otherwise the lead is told why. An accepted item opens
+  no pull request, `agent status` shows `delivered by PR #N, waits for its merge`, and when #N is merged the item is
+  done as `done, delivered by PR #N`. A stop and a resume of the team in between change nothing: the item still
+  waits, opens no second pull request and closes at the merge, also when it is a part of a split item. Coordinators are not told about the report yet:
+  that and the return to work when #N is closed without a merge come in the next version.
 
 ### Enhancements
-- [agent] [agent-runtime] The plan stays out of git and out of the pull request: new worktrees ignore it, and a plan an agent commits by mistake is taken out of its branch by a commit "Keep the plan out of the delivery".
-- [agent] Tasks that were open before this version are never sent back for their plan; their plan is recorded all the same.
-- [agent-runtime] The history database migrates automatically to version 13 on the next daemon start.
+- [agent-core] The state file is now schema 14 and still reads every state written by earlier versions; an older `agent`
+  cannot read a state written by this one, so keep a backup from before the upgrade.
 
 ## 0.33.0 — 20.11.2026 — PR #150
 

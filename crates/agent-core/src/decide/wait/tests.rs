@@ -49,3 +49,9 @@ fn an_unassigned_review_names_the_missing_free_investigator() {
         "a free independent investigator"
     );
 }
+
+#[test]
+fn an_item_delivered_by_a_team_pr_waits_for_its_merge_without_a_defect() {
+    let waiting = round_wait(Activity::Idle, Some(Obligation::Merge)).unwrap();
+    assert_eq!(waiting.text(), "the delivering pull request to merge");
+}

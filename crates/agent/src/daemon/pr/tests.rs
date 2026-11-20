@@ -481,3 +481,67 @@ async fn every_item_description_includes_the_durable_unpushed_base_evidence() {
         assert_eq!(section.as_deref(), Some(include_str!("description/unpushed.md")));
     }
 }
+
+#[test]
+fn delivery_waiter_never_joins_publication_or_the_owning_prs_fix_pass() {
+    use agent_core::state::RoundEnd;
+    let mut team = led(PARALLEL);
+    let first = "round-20261111-153001-q1w2".parse().unwrap();
+    let second: agent_core::ids::RoundId = "round-20261111-153002-q1w2".parse().unwrap();
+    team.open_round(first, Some(item("1.1")), at(0)).unwrap();
+    team.open_round(second.clone(), Some(item("2.1")), at(0)).unwrap();
+    start(&mut team, "1.1", "claude-1", "actual-pr");
+    start(&mut team, "2.1", "claude-2", "empty-item");
+    let owning = pr(7, "actual-pr");
+    team.item_mut(item("1.1"))
+        .unwrap()
+        .advance(ItemPhase::InReview {
+            pr: owning.clone(),
+            reviews: Vec::new(),
+        })
+        .unwrap();
+    waits(&mut team, 1);
+    waits(&mut team, 2);
+    waits(&mut team, 3);
+    team.deliver_round(&second, owning.number).unwrap();
+    assert_eq!(plan_publications(&team).unwrap(), Vec::new());
+    fix(&mut team, "1.1", "claude-1", "actual-pr", 7, "actual-pr");
+    assert_eq!(
+        plan_publications(&team).unwrap(),
+        vec![Publication {
+            head_branch: branch("actual-pr"),
+            publish: Publish::Update {
+                pr: owning,
+                fixing: vec![item("1.1")],
+                joining: Vec::new()
+            },
+        }]
+    );
+    team.close_round(&second, at(20), RoundEnd::Abandoned).unwrap();
+}
+
+#[test]
+fn delivery_waiter_whose_round_a_stop_abandoned_is_not_published_again() {
+    use agent_core::state::RoundEnd;
+    let mut team = led(PARALLEL);
+    let first = "round-20261111-153001-q1w2".parse().unwrap();
+    let second: agent_core::ids::RoundId = "round-20261111-153002-q1w2".parse().unwrap();
+    team.open_round(first, Some(item("1.1")), at(0)).unwrap();
+    team.open_round(second.clone(), Some(item("2.1")), at(0)).unwrap();
+    start(&mut team, "1.1", "claude-1", "actual-pr");
+    start(&mut team, "2.1", "claude-2", "empty-item");
+    let owning = pr(7, "actual-pr");
+    team.item_mut(item("1.1"))
+        .unwrap()
+        .advance(ItemPhase::InReview {
+            pr: owning.clone(),
+            reviews: Vec::new(),
+        })
+        .unwrap();
+    waits(&mut team, 1);
+    waits(&mut team, 2);
+    waits(&mut team, 3);
+    team.deliver_round(&second, owning.number).unwrap();
+    team.close_round(&second, at(20), RoundEnd::Abandoned).unwrap();
+    assert_eq!(plan_publications(&team).unwrap(), Vec::new());
+}

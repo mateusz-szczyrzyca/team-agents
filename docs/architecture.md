@@ -637,6 +637,16 @@ catalog text to both status views. After scheduling each team's work, an unowned
 `daemon_task_failed` with `operation=round_wait` and its round ID. Deduplication lasts for the daemon's lifetime.
 No wait label or publication correction counter is added to `state.json`.
 
+An accepted delivery claim is optional durable round metadata naming another round's PR in the same team.
+The daemon binds a claim to the coordinator run's round references, checks the clean member checkout against
+fresh base and published PR commits, and refuses unverifiable claims before publication. Accepted claims are
+excluded from publication and idle-work alarms. Their merge obligation survives restart, and separate polling
+observes the delivering PR even while its owner is in review or a fix pass. A merge completes the checked item
+and round before normal team completion and worktree cleanup. A stop of the whole team abandons the round but keeps
+the claim: the item stays out of publication, the delivering PR is still polled after a resume, and its merge completes
+the item without recording the end of the round a second time. Closed, unmerged delivery recovery is deferred
+to the second part; this part logs a warning and preserves the wait.
+
 ### Snapshots (`agent-runtime`, `agent`)
 
 A snapshot keeps what a worktree holds when its run was cut, so that nobody else can lose it. The daemon takes one of

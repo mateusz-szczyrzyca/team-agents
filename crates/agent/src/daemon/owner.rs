@@ -133,6 +133,9 @@ pub(crate) enum OwnerError {
     /// A second opinion cannot be scheduled or retained.
     #[error(transparent)]
     Opinion(#[from] rounds::OpinionDaemonError),
+    /// A delivery claim cannot be recorded or its refusal rendered.
+    #[error(transparent)]
+    Delivery(#[from] rounds::DeliveryDaemonError),
     /// A fix response correction cannot be rendered.
     #[error("cannot render fix response correction")]
     FixResponse(#[from] rounds::ResponseTextError),
@@ -1099,6 +1102,17 @@ impl Owner {
             events.extend(look.events);
         }
         self.commit(task, &located, now, events, notice).await?;
+        if located.role == Role::Coordinator
+            && matches!(
+                end,
+                RunEnd::Reported {
+                    outcome: RunOutcome::Done
+                }
+            )
+            && let Some(message) = run.final_message.as_deref()
+        {
+            self.read_delivery_claim(task, &located.team, message).await?;
+        }
         if located.role == Role::Reviewer
             && held == plan::PlanHeld::No
             && matches!(

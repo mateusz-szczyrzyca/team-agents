@@ -397,9 +397,26 @@ pub(crate) fn round_line(round: &Round) -> String {
     let item = round
         .item()
         .map_or_else(|| "whole task list".to_owned(), |item| format!("item {item}"));
-    let state = match round.life() {
-        RoundLife::Open => "open".to_owned(),
-        RoundLife::Closed { how, .. } => format!("closed, {how}"),
+    let state = match (round.delivered_by(), round.life()) {
+        (Some(pr), RoundLife::Open) => format!("delivered by PR #{}, waits for its merge", pr.number),
+        (
+            Some(pr),
+            RoundLife::Closed {
+                how: agent_core::state::RoundEnd::Merged,
+                ..
+            },
+        ) => format!("done, delivered by PR #{}", pr.number),
+        (
+            Some(pr),
+            RoundLife::Closed {
+                how: agent_core::state::RoundEnd::Abandoned,
+                ..
+            },
+        ) => format!("closed, abandoned, delivered by PR #{}", pr.number),
+        (Some(_) | None, life) => match life {
+            RoundLife::Open => "open".to_owned(),
+            RoundLife::Closed { how, .. } => format!("closed, {how}"),
+        },
     };
     format!("{}  {item}  {state}", round.id())
 }

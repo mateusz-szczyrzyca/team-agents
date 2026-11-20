@@ -550,6 +550,13 @@ a review, a free independent investigator (for a review, a second opinion or the
 work, when none is free), a second opinion that an investigator is giving, the human's answer, or the lead's correction. `nothing: this is a defect` means the
 harness has lost its next action; it logs one `daemon_task_failed` error for that round with `operation=round_wait`.
 
+A verified item delivered through another team PR says `delivered by PR #N, waits for its merge`; after that
+PR merges it says `done, delivered by PR #N`. It opens no separate PR and keeps waiting across daemon restarts.
+This release includes the checked delivery lifecycle; the coordinator instructions and automatic return to work
+when the delivering PR closes without merging follow in the next part. Until then, such an item remains waiting
+and the daemon logs a warning. The state format advances to schema 14, which reads existing state through schema
+13; older binaries need a state backup from before the upgrade.
+
 A step of a round that GitHub or git fails does not stop the daemon: the round says `waits for GitHub: refresh the
 description of the pull requests, tried 4 times, next try 01:07` and the step is tried again by itself, after 30
 seconds, then after a pause that doubles up to 10 minutes. When GitHub refuses it for good (a 404, a token that may not
