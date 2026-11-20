@@ -56,7 +56,7 @@ pub enum Reply {
         tasks: Vec<TaskId>,
         /// The agents of the team that work in another open team too, with that team and their task there; absent
         /// from the reply of a daemon before it told them, and when no agent is shared.
-        #[serde(default, skip)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         shared: Vec<SharedAgent>,
     },
     /// `status`: the teams in short.

@@ -36,7 +36,7 @@ use super::{Located, Owner, OwnerError};
 use crate::daemon::team::{
     Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace, assignable,
     closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for, reconcile, render_notice,
-    request_outcome, start_item, team_done_notification,
+    request_outcome, shared_agents, start_item, team_done_notification,
 };
 
 /// The name the harness puts on the messages it writes to the bus, as the bus itself does.
@@ -129,6 +129,7 @@ impl Owner {
         if let Err(refusal) = self.preflight_base(&request, &mut formed).await {
             return Ok(Err(refusal));
         }
+        let shared = shared_agents(&formed.team, self.parts.state.teams());
         let team_span = tracing::debug_span!("team", team = %formed.team.id());
         // The team goes into a copy of the state first: a team the state refuses leaves nothing behind, and the state the
         // owner holds changes only once the copy is saved.
@@ -207,7 +208,7 @@ impl Owner {
         Ok(Ok(Reply::Started {
             team: id,
             tasks,
-            shared: Vec::new(),
+            shared,
         }))
     }
 
