@@ -134,7 +134,8 @@ func taskOf(st *State, agent, team string) string {
 }
 
 // knowsOutside reports whether the bus knows name outside teams: the human, the agentbus, a running agent or a configured
-// one, and the worker of a request the agent sent.
+// one, and the worker of an open request the agent sent. It is asked only for a name that is in no open team: a member
+// of an open team is written to in its team, whatever else the bus knows of it.
 func knowsOutside(st *State, peers []string, agent, name string) bool {
 	if name == "human" || name == "agentbus" || st.Agents[name] != nil {
 		return true
@@ -145,7 +146,7 @@ func knowsOutside(st *State, peers []string, agent, name string) bool {
 		}
 	}
 	for _, h := range st.Helpers {
-		if h.From == agent && h.Worker == name {
+		if h.From == agent && h.Worker == name && h.Status.Open() {
 			return true
 		}
 	}
@@ -153,40 +154,20 @@ func knowsOutside(st *State, peers []string, agent, name string) bool {
 }
 
 // delivery finds where a direct message of this session to "to" goes: the recipient it is posted to — the agent's name,
-// or the ID of a task for an outside sender — and the team it is bound to. A session of a team writes to a member of its
-// team, by name or by task, and to the recipients the bus knows outside teams; a session outside teams writes to a task
-// it names, to the one open team of the agent, or to anyone outside teams. Anything else is refused with what to send.
+// or the ID of a task for an outside sender — and the team it is bound to. A session of a team on the bus writes to a
+// member of its team, by name or by task, and to a recipient the bus knows outside teams that is in no open team. A
+// session outside teams (or of a team the bus does not hold, as a solo task's) writes to a task it names, to the task of
+// an open request it serves, to the one open team of the agent, or to anyone in no open team. Anything else is refused
+// with what to send.
 func (s *Server) delivery(st *State, to string) (recipient, team string, refusal *SendMessageError) {
 	if to == "all" || strings.HasPrefix(to, "team:") {
 		return to, "", nil // a broadcast and a team are for every task of their readers
 	}
-	if s.team != "" {
-		t := st.Teams[s.team]
-		switch {
-		case to == s.me || to == taskOf(st, s.me, s.team):
-			return "", "", opErr(SendMessageToSelf, "do not send messages to yourself")
-		case t != nil && t.Members[to] != nil:
-			return to, s.team, nil
-		}
-		for name, m := range t.Members {
-			if m.Task == to {
-				return name, s.team, nil
-			}
-		}
-		if knowsOutside(st, s.peers, s.me, to) {
-			return to, "", nil
-		}
-		members := ""
-		if t != nil {
-			members = strings.Join(t.names(), ", ")
-		}
-		return "", "", opErr(SendMessageNotInYourTeam, "%s is not in your team (%s) — send to one of its members, by name or task, to team, to all, or to the human", to, members)
+	if t := s.myTeam(st); t != nil {
+		return s.deliveryInTeam(st, t, to)
 	}
-	switch {
-	case to == s.me:
+	if to == s.me {
 		return "", "", opErr(SendMessageToSelf, "do not send messages to yourself")
-	case to == "human" || to == "agentbus" || st.Agents[to] != nil:
-		return to, "", nil
 	}
 	if team := memberOfTask(st, to); team != "" {
 		return to, team, nil // a task of an agent, in the team it is in
@@ -208,6 +189,25 @@ func (s *Server) delivery(st *State, to string) (recipient, team string, refusal
 		pairs = append(pairs, "task "+of.task+" (team "+of.team+")")
 	}
 	return "", "", opErr(SendMessageAmbiguousAgent, "%s is in %d open teams: %s — put one of its task IDs in to", to, len(tasks), strings.Join(pairs, ", "))
+}
+
+// deliveryInTeam is the delivery of a direct message from a session of the team t (see delivery).
+func (s *Server) deliveryInTeam(st *State, t *Team, to string) (recipient, team string, refusal *SendMessageError) {
+	switch {
+	case to == s.me || to == taskOf(st, s.me, t.ID):
+		return "", "", opErr(SendMessageToSelf, "do not send messages to yourself")
+	case t.Members[to] != nil:
+		return to, t.ID, nil
+	}
+	for name, m := range t.Members {
+		if m.Task == to {
+			return name, t.ID, nil
+		}
+	}
+	if len(tasksOf(st, to)) == 0 && knowsOutside(st, s.peers, s.me, to) {
+		return to, "", nil
+	}
+	return "", "", opErr(SendMessageNotInYourTeam, "%s is not in your team (%s) — send to one of its members, by name or task, to team, to all, or to the human", to, strings.Join(t.names(), ", "))
 }
 
 // bindSend finds where `agentbus send` posts a message: the recipient and the team it is bound to, or why it is refused.
@@ -261,11 +261,11 @@ func named(task, team string) string {
 	}
 }
 
-// requestedTeam is the team of the task from which helper wrote to member: the task of the member's request the helper
-// serves, when that member is the one written to ("" when it is no such request).
+// requestedTeam is the team of the task from which helper wrote to member: the task of the member's open request the
+// helper serves, when that member is the one written to ("" when it is no such request).
 func requestedTeam(st *State, helper, member string) string {
 	for _, h := range st.Helpers {
-		if h.Worker == helper && h.From == member {
+		if h.Worker == helper && h.From == member && h.Status.Open() {
 			if team := teamOfTask(st, h.FromTask); team != "" {
 				return team
 			}
