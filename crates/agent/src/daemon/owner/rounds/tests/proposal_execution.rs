@@ -214,3 +214,114 @@ async fn saved_pending_proposal_is_approved_after_restart() {
     );
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn member_proposal_reaches_coordinator_without_human_questions() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep"),
+            normal("claude-1", "proposal:good,sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        3,
+        true,
+    )
+    .await;
+    put(&rig, "good", &proposal("Read first"));
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    rig.prompt(&tasks[0], 2).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.stop().await.unwrap();
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
+    assert!(messages.contains("claude-1 requests a split of item 1.1"), "{messages}");
+    let state = rig.state();
+    assert_eq!(state.team(&id).unwrap().splits().len(), 0);
+    for task in tasks {
+        assert_eq!(state.find_task(&task).unwrap().member.questions().len(), 0);
+        assert!(!rig.home.questions_file(&task, std::num::NonZeroU32::MIN).exists());
+    }
+}
+
+#[tokio::test]
+async fn decisions_and_rejections_are_recorded_in_history() {
+    use agent_core::history::Record;
+    use agent_runtime::history::Reader;
+    let mut cases = Vec::new();
+    cases.push(("checks", proposal(""), "Part a has no checks"));
+    let mut cycle = proposal("Read first");
+    cycle["parts"][1]["depends_on"] = serde_json::json!(["b"]);
+    cases.push(("cycle", cycle, "Part b belongs to a dependency cycle"));
+    let mut limit = proposal("Read first");
+    limit["parts"][1]["estimate"]["amount"] = 1501.into();
+    cases.push(("limit", limit, "Part b estimates 1501 lines"));
+    cases.push((
+        "unreadable",
+        serde_json::json!({"parent":"1.1","unexpected":true}),
+        "cannot be read in the proposal form",
+    ));
+    let mut scope = proposal("Read first");
+    scope["scope"] = serde_json::json!({"kind":"more","reason":"Add translations"});
+    cases.push(("scope", scope, "Add translations"));
+    for (name, value, reason) in cases {
+        let human = name == "scope";
+        let mut rig = Rig::new(
+            &[
+                investigator("inv-lead", "proposal:bad,proposal:good,sleep"),
+                normal("claude-1", "sleep"),
+                investigator("inv-r1", "done:VERDICT: APPROVE"),
+                investigator("inv-r2", "done:VERDICT: APPROVE"),
+            ],
+            3,
+            true,
+        )
+        .await;
+        put(&rig, "bad", &value);
+        put(&rig, "good", &proposal("Read first"));
+        rig.start().await;
+        let (id, tasks) = rig
+            .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+            .await;
+        if human {
+            rig.status_is(&tasks[0], TaskStatus::Questions).await;
+        } else {
+            rig.state_where("corrected proposal approved", |state| {
+                state.team(&id).unwrap().splits().len() == 1
+            })
+            .await;
+            assert!(rig.prompt(&tasks[0], 2).await.contains(reason));
+        }
+        rig.stop().await.unwrap();
+        let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+        assert!(
+            logs.iter().any(|row| row.event().as_str() == "split_decision"),
+            "missing split decision log: {name}"
+        );
+        let events: Vec<_> = Reader::open(&rig.home.history_file())
+            .unwrap()
+            .team_records(&id)
+            .unwrap()
+            .into_iter()
+            .filter_map(|row| match row.record {
+                Record::Event(event) if event.event.kind().to_string() == "split_decision" => {
+                    Some(serde_json::to_value(event.event).unwrap())
+                }
+                _ => None,
+            })
+            .collect();
+        let outcomes: Vec<_> = events.iter().map(|event| event["decision"].as_str().unwrap()).collect();
+        assert_eq!(
+            outcomes,
+            if human {
+                vec!["asked"]
+            } else {
+                vec!["corrected", "approved"]
+            },
+            "{name}: {events:?}"
+        );
+        assert!(events[0]["reason"].as_str().unwrap().contains(reason), "{events:?}");
+    }
+}
