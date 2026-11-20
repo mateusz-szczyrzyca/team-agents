@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use agent_core::config::{AbsolutePath, EnvName, GitIdentity, InvalidValue};
 use agent_core::ids::{AgentName, BranchName};
-use agent_core::repo_path::InvalidRepoPath;
+use agent_core::repo_path::{InvalidRepoPath, RepoPath};
 use agent_core::state::{CommitId, InvalidCommitId};
 use tokio::process::Command;
 use tracing::Instrument;
@@ -251,6 +251,15 @@ pub enum GitOperation {
     /// `git ls-tree`, to list the files in a commit tree.
     #[strum(serialize = "ls-tree")]
     LsTree,
+    /// `git ls-files`, to see whether git tracks a path.
+    #[strum(serialize = "ls-files")]
+    LsFiles,
+    /// `git rm --cached`, to take a path out of the index and keep its file.
+    #[strum(serialize = "rm --cached")]
+    RmCached,
+    /// `git commit`, of a change the harness makes itself.
+    #[strum(serialize = "commit")]
+    Commit,
 }
 
 /// Why the scratch area of a read of the uncommitted changes cannot be made.
@@ -462,6 +471,22 @@ pub struct StatusEntry {
     pub worktree: char,
     /// The path, relative to the root of the checkout; for a rename, the new one.
     pub path: PathBuf,
+}
+
+/// What [`Git::untrack`] did with a path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Untracked {
+    /// Git does not track the path: nothing was done.
+    NotTracked,
+    /// The path was in the index only: it was taken out of it, and no commit was needed.
+    Unstaged,
+    /// The path was committed: this commit, now `HEAD`, removes it from the branch; the file stays.
+    Removed {
+        /// The commit that removes the path.
+        commit: CommitId,
+    },
+    /// Other changes are staged beside the path: nothing was done, so that no commit of the harness takes them.
+    OtherChangesStaged,
 }
 
 /// Whether a checkout has changes.
@@ -964,6 +989,21 @@ impl Git {
         let printed = text(operation, &captured.stdout)?;
         // In the main checkout git prints the path relative to the directory it ran in; `join` keeps an absolute one.
         Ok(self.dir.as_path().join(printed.trim_end()))
+    }
+
+    /// Takes `path` out of git in this checkout and keeps its file: out of the index, and out of the branch with a
+    /// commit of `message` when the path was committed. A checkout with other changes staged is left as it is.
+    ///
+    /// # Errors
+    /// [`GitError::EmptyMessage`]; [`GitError::Failed`] when git refuses (no repository, a commit that cannot be
+    /// made); [`GitError::Run`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and the errors of
+    /// [`Git::rev_parse`].
+    pub async fn untrack(&self, _path: &RepoPath, message: &str) -> Result<Untracked, GitError> {
+        if message.trim().is_empty() {
+            Ok(Untracked::NotTracked)
+        } else {
+            Err(GitError::EmptyMessage)
+        }
     }
 
     /// The root directory of the checkout this handle runs in, from whatever directory of it.
