@@ -1,8 +1,7 @@
 ## Merge conflict on pull request #150
 
-Pull request #150 (https://example.com/pulls/150) was approved by both reviewers, but GitHub refuses to merge it: it conflicts with
-`main`. This is conflict pass 1 of 3 for this round. Do this on your branch `agents/claude-1/task-1-1.1`, in your
-worktree:
+Pull request #150 was approved by both reviewers, but GitHub refuses to merge it: it conflicts with `main`. This
+is conflict pass 1 of 3 for this round. Do this on your branch `agents/claude-1/task-1-1.1`, in your worktree:
 
 1. Fetch the base: `git fetch origin main`.
 2. Merge it into your branch: `git merge --no-ff origin/main`. Do not rebase and do not force push.

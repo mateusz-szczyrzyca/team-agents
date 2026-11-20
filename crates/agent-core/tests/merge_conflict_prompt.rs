@@ -13,7 +13,6 @@ mod merge_conflict_prompt {
         let spec = AutopilotPrompt::PrMergeConflict.spec();
         let values = Variables::new()
             .with("pr", "150")
-            .and_then(|values| values.with("url", "https://example.com/pulls/150"))
             .and_then(|values| values.with("base", "main"))
             .and_then(|values| values.with("branch", "agents/claude-1/task-1-1.1"))
             .and_then(|values| values.with("pass", "1"))

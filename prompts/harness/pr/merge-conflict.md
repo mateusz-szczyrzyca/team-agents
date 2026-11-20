@@ -1,8 +1,7 @@
 ## Merge conflict on pull request #{{pr}}
 
-Pull request #{{pr}} ({{url}}) was approved by both reviewers, but GitHub refuses to merge it: it conflicts with
-`{{base}}`. This is conflict pass {{pass}} of {{passes}} for this round. Do this on your branch `{{branch}}`, in your
-worktree:
+Pull request #{{pr}} was approved by both reviewers, but GitHub refuses to merge it: it conflicts with `{{base}}`. This
+is conflict pass {{pass}} of {{passes}} for this round. Do this on your branch `{{branch}}`, in your worktree:
 
 1. Fetch the base: `git fetch origin {{base}}`.
 2. Merge it into your branch: `git merge --no-ff origin/{{base}}`. Do not rebase and do not force push.
