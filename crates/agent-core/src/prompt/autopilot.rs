@@ -12,6 +12,8 @@ use super::{Audience, PromptSpec};
 /// Every text of the autopilot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AutopilotPrompt {
+    /// Return a delivery claim whose evidence could not be verified.
+    DeliveryRefused,
     /// Describe a delivered item waiting for its owning PR.
     WaitMerge,
     /// Describe an idle round in status output.
@@ -221,6 +223,7 @@ pub enum AutopilotPrompt {
 impl AutopilotPrompt {
     /// Every text of the catalog.
     pub const ALL: &'static [Self] = &[
+        Self::DeliveryRefused,
         Self::ReviewOpinionRequest,
         Self::WaitMerge,
         Self::WaitGate,
@@ -366,6 +369,7 @@ impl AutopilotPrompt {
     )]
     const fn path(self) -> &'static str {
         match self {
+            Self::DeliveryRefused => "harness/pr/delivery-refused.md",
             Self::WaitMerge => "harness/pr/wait-merge.md",
             Self::WaitNothing => "harness/pr/wait-nothing.md",
             Self::WaitCorrection => "harness/pr/wait-correction.md",
@@ -474,6 +478,7 @@ impl AutopilotPrompt {
     /// The context required to render this text.
     const fn variables(self) -> &'static [&'static str] {
         match self {
+            Self::DeliveryRefused => &["reason"],
             Self::WaitMerge
             | Self::PrGateRetry
             | Self::PrNoLead

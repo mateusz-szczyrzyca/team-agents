@@ -9,7 +9,9 @@
 mod asleep;
 mod checks;
 mod cleanup;
+mod delivery;
 mod findings;
+pub(crate) use delivery::DeliveryDaemonError;
 mod human;
 mod merges;
 mod opinions;
