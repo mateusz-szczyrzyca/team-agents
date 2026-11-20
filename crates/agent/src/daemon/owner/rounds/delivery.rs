@@ -149,7 +149,7 @@ impl Owner {
             .ok_or(agent_core::state::DeliveryError::NoTeamPr { number })?;
         let progress = team
             .round(&round)
-            .and_then(|round| round.item())
+            .and_then(agent_core::state::Round::item)
             .and_then(|id| team.item(id))
             .ok_or(ClaimError::Member)?;
         let ItemPhase::InProgress { assignee, branch } = progress.phase() else {
@@ -198,7 +198,7 @@ impl Owner {
                 self.watch
                     .delivery_polled
                     .get(round)
-                    .is_none_or(|last| last.as_utc().saturating_add(time::Duration::seconds(30)) <= now.as_utc())
+                    .is_none_or(|last| last.as_utc().saturating_add(super::merges::POLL_EVERY) <= now.as_utc())
             })
             .collect();
         for (round, number) in waiting {
@@ -249,7 +249,7 @@ impl Owner {
             .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?;
         let item = found
             .round(round)
-            .and_then(|round| round.item())
+            .and_then(agent_core::state::Round::item)
             .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?;
         self.parts
             .state
