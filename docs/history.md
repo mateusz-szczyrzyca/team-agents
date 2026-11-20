@@ -486,6 +486,9 @@ migration `3` have their true order.
 The read-only API accepts version `1` and `2` histories: it returns an empty session-observation list for version `1`, and
 it gives a file without a ledger the same records the migration would, through two temporary views of the connection that
 change nothing in the file; opening one for writing applies the migrations. A preserved version `1` fixture verifies that the upgrade retains existing runs.
+Migration `11` rebuilds `daemon_logs` with a `CHECK` that lists every event of the daemon: `github_step_waiting`,
+`github_step_resumed`, and `build_directory_removed`, which an edit of migration `4` gave only to new files. The rows keep
+their ids, rounds and search entries; the table's indexes and triggers are made again.
 
 ## Asking with `sqlite3`
 

@@ -336,7 +336,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent answer <task> --file answers.md` | sends the answers written after `**Verdict:**` in a questions file instead of opening the editor |
 | `agent stop <task\|team>` | ends the run; nothing of it starts until it is resumed |
 | `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
-| `agent resume <task\|team>` | starts a stopped, failed or waiting task again |
+| `agent resume <task\|team>` | starts a stopped, failed or waiting task again; for a team, also tries at once every step that waits for GitHub |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus |
 | `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now |
 | `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed |
@@ -503,6 +503,14 @@ An idle open round's line in `agent status` and `agent status <round>` names wha
 a review, a free independent investigator (for a review, a second opinion or the replacement of a reviewer that cannot
 work, when none is free), a second opinion that an investigator is giving, the human's answer, or the lead's correction. `nothing: this is a defect` means the
 harness has lost its next action; it logs one `daemon_task_failed` error for that round with `operation=round_wait`.
+
+A step of a round that GitHub or git fails does not stop the daemon: the round says `waits for GitHub: refresh the
+description of the pull requests, tried 4 times, next try 01:07` and the step is tried again by itself, after 30
+seconds, then after a pause that doubles up to 10 minutes. When GitHub refuses it for good (a 404, a token that may not
+do it) the line says `refused: <GitHub's answer>`, you are told once, and `agent resume <team>` tries it again at once
+after you fixed the cause — the resume may still say that no task of the team needed resuming. The log has one
+`github_step_waiting` warning when a step starts to wait and one `github_step_resumed` when it goes through; see
+[`docs/architecture.md`](docs/architecture.md) for the steps this covers. A daemon that starts tries every step at once.
 
 Verifiers answer a pending explanation with `FINDING 3: ACCEPTED — why` or `FINDING 3: REJECTED — why`.
 Every verifier must accept before the finding becomes MINOR; one rejection requires a code fix and bars another

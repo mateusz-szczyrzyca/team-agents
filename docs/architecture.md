@@ -189,6 +189,22 @@ without parsing the text again. A refusal returns the report to the reviewer wit
 the rejecting item's allowed answers, or asks the human after two corrections. It cannot stop the daemon or record
 only part of the review. Failures of the storage and other infrastructure needed to keep state can still stop the owner.
 
+**GitHub and git.** A failure of GitHub or of git in a step of a round is not a failure of the state owner either. The
+steps that could end the owner — refreshing the description of a team's pull requests at each look, and making or
+moving the worktree of the investigator of a second opinion — now wait instead (`owner/rounds/waiting/github.rs`).
+A failure that may pass (no connection, a timeout, a 5xx answer, a rate limit; a git fetch or push) is tried again at
+the first look after a pause of 30 seconds, doubled after every further failure up to 10 minutes
+(`agent_core::decide::retry::pause`), without end. A failure that will not pass (401, 403 that is not a rate limit,
+404, 422, git's own refusals) waits for the human: one notice (`harness/pr/notice-github-refused.md`) names the step
+and the answer, and `agent resume <team>` (or a task or round of it) tries every waiting step of the team at the next
+look. The quick retries inside one call (`[github]` attempts and delays) stay as they were. The waits live in the
+owner's memory, not in `state.json`: a daemon that starts has none, so every step is tried at its first look. While a
+step waits the rest of the look, the other rounds and the other teams go on; `agent status` says what the round
+waits for ("GitHub: refresh the description of the pull requests, tried 4 times, next try 01:07"). The log has one
+`github_step_waiting` warning when a step starts to wait and one `github_step_resumed` when it goes through. What
+publishing, merging, posting comments and reviews, and the fetches do with a failure is unchanged: they log it and try
+again at a later look, and none of them ends the owner.
+
 **Items of one pull request.** The items reviewed on one pull request share its findings ledger: each item keeps a
 copy, and every fix response, verification and finding is recorded in all of them, counted by the pull request's fix
 pass — the most fix passes of any of its items, since an item that joined a fix pass has none of its own for it. A
