@@ -20,11 +20,38 @@
 //! [`parse_plan`] reads the text and every fault is a [`PlanError`] that carries the number of the line it is on,
 //! counted from 1 over the whole text.
 
+use std::collections::HashMap;
 use std::num::{NonZeroU16, NonZeroUsize};
 
 use crate::ids::ItemId;
 use crate::repo_path::RepoPath;
-use crate::task_list::{MAX_TASK_LIST_BYTES, NumberProblem};
+use crate::task_list::{self, MAX_TASK_LIST_BYTES, NumberProblem};
+
+/// The byte order mark some editors put at the start of a file; it is not part of the text.
+const BYTE_ORDER_MARK: char = '\u{feff}';
+
+/// The text that starts the line listing the paths a step is about.
+const FILES_PREFIX: &str = "Files:";
+
+/// The text that starts the line naming the check of a step.
+const CHECK_PREFIX: &str = "Check:";
+
+/// The check that says a person judges the step done; it is never a command.
+const REVIEWER_CHECK: &str = "reviewer";
+
+/// The check that says a path is there.
+const EXISTS_CHECK: &str = "exists";
+
+/// The step's title and whatever a step line carries besides its mark and ID.
+#[derive(Debug)]
+struct StepLine {
+    /// The state of the step.
+    state: StepState,
+    /// The step's ID.
+    id: ItemId,
+    /// The rest of the line.
+    title: String,
+}
 
 /// A plan: an intent, its stages and their steps.
 ///
@@ -387,10 +414,359 @@ impl PlanError {
 /// A [`PlanError`]: the text is empty or over [`MAX_TASK_LIST_BYTES`], or a line is not valid where it is; all but
 /// those two carry the line.
 pub fn parse_plan(text: &str) -> Result<Plan, PlanError> {
-    Err(PlanError::TooLarge {
-        len: text.len(),
-        max: MAX_TASK_LIST_BYTES,
+    if text.len() > MAX_TASK_LIST_BYTES {
+        return Err(PlanError::TooLarge {
+            len: text.len(),
+            max: MAX_TASK_LIST_BYTES,
+        });
+    }
+    let text = text.strip_prefix(BYTE_ORDER_MARK).unwrap_or(text);
+    let mut parser = Parser::default();
+    for (index, line) in text.lines().enumerate() {
+        parser.accept(NonZeroUsize::MIN.saturating_add(index), line)?;
+    }
+    parser.finish()
+}
+
+/// What a line of a plan is, by its first characters.
+enum LineKind<'a> {
+    /// Nothing but whitespace.
+    Blank,
+    /// Starts with a space or a tab.
+    Indented,
+    /// `N. Title`: the text before the `.` and the title after it.
+    Stage {
+        /// The text before the `.`, which is all ASCII digits.
+        digits: &'a str,
+        /// The text after the `.`, without the spaces around it.
+        title: &'a str,
+    },
+    /// Starts with `[`: a step line, or something that was meant to be one.
+    Step,
+    /// Anything else.
+    Text,
+}
+
+/// Tells what kind of line `line` is.
+fn classify(line: &str) -> LineKind<'_> {
+    if line.trim().is_empty() {
+        return LineKind::Blank;
+    }
+    if line.starts_with([' ', '\t']) {
+        return LineKind::Indented;
+    }
+    if line.starts_with('[') {
+        return LineKind::Step;
+    }
+    match line.split_once('.') {
+        Some((digits, rest))
+            if !digits.is_empty()
+                && digits.bytes().all(|b| b.is_ascii_digit())
+                && (rest.is_empty() || rest.starts_with(char::is_whitespace)) =>
+        {
+            LineKind::Stage {
+                digits,
+                title: rest.trim(),
+            }
+        }
+        _ => LineKind::Text,
+    }
+}
+
+/// Whether `line` starts with the mark of a valid step line: `[ ]`, `[>]`, `[x]`, `[X]` or `[-]`.
+fn has_step_mark(line: &str) -> bool {
+    ["[ ]", "[>]", "[x]", "[X]", "[-]"]
+        .iter()
+        .any(|mark| line.starts_with(mark))
+}
+
+/// Parses a step line, which starts with `[`.
+fn parse_step_line(line: &str) -> Result<StepLine, StepProblem> {
+    let after_bracket = line.strip_prefix('[').ok_or(StepProblem::BadMark)?;
+    let state = match after_bracket.chars().next() {
+        Some(' ') => StepState::Todo,
+        Some('>') => StepState::InHand,
+        Some('x' | 'X') => StepState::Done,
+        Some('-') => StepState::GivenUp,
+        _ => return Err(StepProblem::BadMark),
+    };
+    // The mark's character is one byte, so `get(1..)` is the rest.
+    let after_mark = after_bracket
+        .get(1..)
+        .and_then(|rest| rest.strip_prefix(']'))
+        .ok_or(StepProblem::BadMark)?;
+    if !after_mark.starts_with(char::is_whitespace) {
+        return Err(StepProblem::NoSpaceAfterMark);
+    }
+    let after_mark = after_mark.trim();
+    let (token, title) = after_mark
+        .split_once(char::is_whitespace)
+        .map_or((after_mark, ""), |(token, title)| (token, title.trim()));
+    let id = token.parse::<ItemId>().map_err(StepProblem::BadId)?;
+    if title.is_empty() {
+        return Err(StepProblem::MissingTitle);
+    }
+    Ok(StepLine {
+        state,
+        id,
+        title: title.to_owned(),
     })
+}
+
+/// A step whose line has been read and whose text is being collected.
+struct OpenStep<'a> {
+    /// The step line's state, ID and title.
+    line: StepLine,
+    /// The line of the step line.
+    at: NonZeroUsize,
+    /// The lines that follow it.
+    body: Vec<(NonZeroUsize, &'a str)>,
+}
+
+/// The state of the parse: what has been read so far and what the next line may be.
+#[derive(Default)]
+struct Parser<'a> {
+    /// The lines before the first stage.
+    intent: Vec<&'a str>,
+    /// The stages read so far; the last one is the current one.
+    stages: Vec<Stage>,
+    /// The lines of the stages' headings, by number, to refuse a repeated number.
+    stage_lines: HashMap<NonZeroU16, NonZeroUsize>,
+    /// The lines of the step lines, by ID, to refuse a repeated ID.
+    step_lines: HashMap<ItemId, NonZeroUsize>,
+    /// The line of the step in hand, for the second one in hand.
+    in_hand: Option<NonZeroUsize>,
+    /// The step whose text is being read.
+    step: Option<OpenStep<'a>>,
+}
+
+impl<'a> Parser<'a> {
+    /// Reads the line `text` that is line number `line` of the input.
+    fn accept(&mut self, line: NonZeroUsize, text: &'a str) -> Result<(), PlanError> {
+        match classify(text) {
+            LineKind::Blank => self.blank(line, text),
+            LineKind::Indented => self.indented(line, text)?,
+            LineKind::Stage { digits, title } => self.stage(line, digits, title)?,
+            LineKind::Step => self.step_line(line, text)?,
+            LineKind::Text if self.stages.is_empty() => self.intent.push(text),
+            LineKind::Text => return Err(PlanError::UnexpectedLine { line }),
+        }
+        Ok(())
+    }
+
+    /// A blank line: part of the open step's text or of the intent.
+    fn blank(&mut self, line: NonZeroUsize, text: &'a str) {
+        if let Some(open) = &mut self.step {
+            open.body.push((line, text));
+        } else if self.stages.is_empty() {
+            self.intent.push(text);
+        }
+    }
+
+    /// An indented line: part of the open step's text or of the intent.
+    fn indented(&mut self, line: NonZeroUsize, text: &'a str) -> Result<(), PlanError> {
+        if let Some(open) = &mut self.step {
+            open.body.push((line, text));
+        } else if self.stages.is_empty() {
+            self.intent.push(text);
+        } else {
+            return Err(PlanError::TextBeforeStep { line });
+        }
+        Ok(())
+    }
+
+    /// A stage line with the `digits` of its number and its `title`: closes the open step and opens a stage.
+    fn stage(&mut self, line: NonZeroUsize, digits: &str, title: &str) -> Result<(), PlanError> {
+        self.close_step()?;
+        let number = task_list::parse_number(digits).map_err(|problem| PlanError::StageNumber {
+            line,
+            text: digits.to_owned(),
+            problem,
+        })?;
+        if title.is_empty() {
+            return Err(PlanError::StageWithoutTitle { line });
+        }
+        if let Some(&first_line) = self.stage_lines.get(&number) {
+            return Err(PlanError::DuplicateStage {
+                line,
+                number,
+                first_line,
+            });
+        }
+        self.stage_lines.insert(number, line);
+        self.stages.push(Stage {
+            number,
+            title: title.to_owned(),
+            steps: Vec::new(),
+        });
+        Ok(())
+    }
+
+    /// A line that starts with `[`: a step line in a stage, text in the intent unless it has a step's mark.
+    fn step_line(&mut self, line: NonZeroUsize, text: &'a str) -> Result<(), PlanError> {
+        let Some(stage) = self.stages.last() else {
+            if has_step_mark(text) {
+                return Err(PlanError::StepBeforeStage { line });
+            }
+            self.intent.push(text);
+            return Ok(());
+        };
+        let stage = stage.number;
+        self.close_step()?;
+        let step = parse_step_line(text).map_err(|problem| PlanError::MalformedStep { line, problem })?;
+        if step.id.feature() != stage {
+            return Err(PlanError::StepInOtherStage {
+                line,
+                id: step.id,
+                stage,
+            });
+        }
+        if let Some(&first_line) = self.step_lines.get(&step.id) {
+            return Err(PlanError::DuplicateStep {
+                line,
+                id: step.id,
+                first_line,
+            });
+        }
+        if step.state == StepState::InHand {
+            if let Some(first_line) = self.in_hand {
+                return Err(PlanError::TwoInHand { line, first_line });
+            }
+            self.in_hand = Some(line);
+        }
+        self.step_lines.insert(step.id, line);
+        self.step = Some(OpenStep {
+            line: step,
+            at: line,
+            body: Vec::new(),
+        });
+        Ok(())
+    }
+
+    /// Ends the open step, if any: reads its text and adds it to the current stage.
+    fn close_step(&mut self) -> Result<(), PlanError> {
+        let Some(OpenStep { line, at, body }) = self.step.take() else {
+            return Ok(());
+        };
+        let labeled = read_labels(&body, narrowest_indentation(&body))?;
+        let note = task_list::join_trimmed(&labeled.note);
+        if line.state == StepState::GivenUp && note.is_empty() {
+            return Err(PlanError::GivenUpWithoutReason { line: at });
+        }
+        // A step is opened only under a stage (`step_line`), so the current stage is there.
+        if let Some(stage) = self.stages.last_mut() {
+            stage.steps.push(Step {
+                id: line.id,
+                title: line.title,
+                state: line.state,
+                files: labeled.files,
+                check: labeled.check,
+                note,
+            });
+        }
+        Ok(())
+    }
+
+    /// Ends the text: the plan, or [`PlanError::Empty`] when it has nothing in it.
+    fn finish(mut self) -> Result<Plan, PlanError> {
+        self.close_step()?;
+        let intent = task_list::join_trimmed(&self.intent);
+        if intent.is_empty() && self.stages.is_empty() {
+            return Err(PlanError::Empty);
+        }
+        Ok(Plan {
+            intent,
+            stages: self.stages,
+        })
+    }
+}
+
+/// The smallest indentation of the text lines of a step, which their text is measured from; 0 when there are none.
+fn narrowest_indentation(body: &[(NonZeroUsize, &str)]) -> usize {
+    body.iter()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(_, line)| task_list::indentation(line))
+        .min()
+        .unwrap_or(0)
+}
+
+/// The `Files:` line of a step and its `Check:` line, read from its text lines.
+struct Labeled<'a> {
+    /// The paths of the `Files:` line.
+    files: Vec<RepoPath>,
+    /// The check of the `Check:` line.
+    check: Option<Check>,
+    /// The text lines that are neither of the two lines, dedented.
+    note: Vec<&'a str>,
+}
+
+/// Reads a step's text lines, dedented by `narrowest`, into its `Files:` and `Check:` lines and the rest of its text.
+fn read_labels<'a>(body: &[(NonZeroUsize, &'a str)], narrowest: usize) -> Result<Labeled<'a>, PlanError> {
+    let mut files: Option<Vec<RepoPath>> = None;
+    let mut check: Option<Check> = None;
+    let mut note: Vec<&'a str> = Vec::new();
+    for &(line, text) in body {
+        let part = task_list::dedent(text, narrowest);
+        if let Some(paths) = part.strip_prefix(FILES_PREFIX) {
+            if files.is_some() {
+                return Err(PlanError::DuplicatePart {
+                    line,
+                    part: StepPart::Files,
+                });
+            }
+            files = Some(read_paths(line, paths)?);
+        } else if let Some(rest) = part.strip_prefix(CHECK_PREFIX) {
+            if check.is_some() {
+                return Err(PlanError::DuplicatePart {
+                    line,
+                    part: StepPart::Check,
+                });
+            }
+            check = Some(read_check(line, rest)?);
+        } else {
+            note.push(part);
+        }
+    }
+    Ok(Labeled {
+        files: files.unwrap_or_default(),
+        check,
+        note,
+    })
+}
+
+/// The paths of a `Files:` line that is on `line`, separated by commas.
+fn read_paths(line: NonZeroUsize, paths: &str) -> Result<Vec<RepoPath>, PlanError> {
+    paths
+        .split(',')
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(|path| path.parse().map_err(|problem| PlanError::BadFile { line, problem }))
+        .collect()
+}
+
+/// The check of a `Check:` line that is on `line`, after `Check:`.
+fn read_check(line: NonZeroUsize, rest: &str) -> Result<Check, PlanError> {
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return Err(PlanError::EmptyCheck { line });
+    }
+    if rest == REVIEWER_CHECK {
+        return Ok(Check::Reviewer);
+    }
+    if rest == EXISTS_CHECK {
+        return Err(PlanError::ExistsWithoutPath { line });
+    }
+    // `rest` is trimmed, so after `exists` and its whitespace there is a path.
+    let Some(path) = rest
+        .strip_prefix(EXISTS_CHECK)
+        .filter(|path| path.starts_with(char::is_whitespace))
+    else {
+        return Ok(Check::Command(rest.to_owned()));
+    };
+    path.trim()
+        .parse()
+        .map(Check::Exists)
+        .map_err(|problem| PlanError::BadCheck { line, problem })
 }
 
 #[cfg(test)]
