@@ -88,8 +88,26 @@ pub enum DeliveryBindingError {
 /// # Errors
 /// Returns [`DeliveryBindingError`] when the references cannot identify exactly one working item.
 pub fn bind_delivery(
-    _team: &crate::state::Team,
-    _rounds: &[crate::ids::RoundId],
+    team: &crate::state::Team,
+    rounds: &[crate::ids::RoundId],
 ) -> Result<crate::ids::RoundId, DeliveryBindingError> {
-    Err(DeliveryBindingError::Missing)
+    let mut target = None;
+    for id in rounds {
+        let round = team
+            .round(id)
+            .ok_or_else(|| DeliveryBindingError::Unknown { round: id.clone() })?;
+        if round.is_open()
+            && round.delivered_by().is_none()
+            && round
+                .item()
+                .and_then(|item| team.item(item))
+                .is_some_and(|item| matches!(item.phase(), crate::state::ItemPhase::InProgress { .. }))
+        {
+            if target.is_some() {
+                return Err(DeliveryBindingError::Ambiguous);
+            }
+            target = Some(id.clone());
+        }
+    }
+    target.ok_or(DeliveryBindingError::Missing)
 }
