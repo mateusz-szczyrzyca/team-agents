@@ -5,6 +5,16 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.37.0 — 20.11.2026 — PR #155
+
+### New features
+- [agent-core] A split can now be written as a proposal: for each part its title, what it delivers, its checks, its dependencies, an estimate (a number and its unit, for example `900 lines`) and the tier of agent it asks for (`investigator`, `normal` or `worker`; none means `normal`), and whether the split changes the scope of the item. The approving verdict of today, without the new fields, is still read as before.
+- [agent-core] The decision on a proposal exists: approve it with no human, send it back with the fault named by part (it does not read, a part without checks, a dependency cycle, a part above the limit), or ask the human when it changes the scope or the corrections are used up. The daemon does not use it yet.
+- [agent-core] New keys `[split] part_limit` (the largest estimate a part may have, default 1500, `0` checks no limit) and `[split] corrections` (how many times a proposal goes back, default 2) in `agents.toml`; a file without `[split]` gets the defaults.
+
+### Enhancements
+- [agent-core] A proposal and its corrections are kept in `state.json` with the item, so a restart loses neither. The schema number stays 14 and the new fields are optional, so a stored split plan written by 0.36.0 loads, with its parts asking for `normal`. **Action:** a plan written by this version has fields an older `agent` rejects, so keep a backup of `state.json` from before the upgrade.
+
 ## 0.36.0 — 20.11.2026 — PR #153
 
 ### New features
