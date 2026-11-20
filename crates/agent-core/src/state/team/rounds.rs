@@ -445,6 +445,16 @@ pub(super) fn check_rounds(team: &Team) -> Result<(), TeamError> {
 fn check_round_list(team: &Team) -> Result<(), RoundsError> {
     super::splits::execution::check_execution(team)?;
     for round in &team.rounds {
+        if let Some(at) = round.delivery_closed_at()
+            && (round.delivered_by().is_none()
+                || round.ended() != Some(RoundEnd::Abandoned)
+                || round.part_pull_request().is_some()
+                || at < round.opened_at())
+        {
+            return Err(RoundsError::Delivery {
+                round: round.id().clone(),
+            });
+        }
         if let Some(pr) = round.delivered_by() {
             let phase = round.item().and_then(|id| team.item(id)).map(ItemProgress::phase);
             let fits = if round.is_open() {
