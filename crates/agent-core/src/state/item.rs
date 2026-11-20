@@ -929,20 +929,18 @@ impl ItemProgress {
     /// Sends the lead to merge the base into the branch of `approved_head`: one more pass is spent and the pass is
     /// recorded at `at`. Returns the passes spent so far, this one included.
     pub fn begin_merge_conflict(&mut self, approved_head: CommitId, at: Timestamp) -> u32 {
-        // RED stub: nothing is recorded.
-        let _ = (approved_head, at);
-        self.merge_passes
+        self.merge_conflict = Some(MergeConflict::MergingBase { approved_head, at });
+        self.spend_merge_pass()
     }
 
     /// Ends the merge conflict pass in progress; the passes spent stay counted.
     pub fn end_merge_conflict(&mut self) {
-        // RED stub: the pass in progress stays.
+        self.merge_conflict = None;
     }
 
     /// Records that the human is asked about the merge conflict at `at`, once.
     pub fn ask_human_about_merge_conflict(&mut self, at: Timestamp) {
-        // RED stub: nothing is recorded.
-        let _ = at;
+        self.merge_conflict = Some(MergeConflict::AskingHuman { at });
     }
 
     /// Counts one more lead pass on a merge conflict and returns the number spent so far, including this one. A count
