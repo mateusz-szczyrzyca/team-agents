@@ -553,3 +553,44 @@ async fn explicit_unpushed_base_permission_is_forwarded_to_the_daemon() {
     let request = prepare(&repo, input).await.unwrap();
     assert!(request.allow_unpushed_base);
 }
+
+#[tokio::test]
+async fn a_start_that_the_daemon_answers_after_the_ordinary_request_timeout_is_waited_for() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_work, repo) = checkout(Some("https://example.com/org/team-agents.git"));
+    let daemon = FakeDaemon::serve(&dir.path().join("agent.sock"), |request| {
+        let (wait, reply) = match &request.command {
+            Command::Run(_) => (
+                crate::client::REQUEST_TIMEOUT + std::time::Duration::from_secs(1),
+                Reply::Started {
+                    team: team_id(0),
+                    tasks: vec![task(1), task(2), task(3)],
+                },
+            ),
+            Command::Show(_) => (
+                std::time::Duration::ZERO,
+                Reply::Team {
+                    team: Box::new(sample_team()),
+                },
+            ),
+            other => panic!("{other:?}"),
+        };
+        Answer::After {
+            wait,
+            lines: vec![Frame::Response(Response::ok(request.id, reply)).to_line().unwrap()],
+        }
+    });
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+    let mut out = Vec::new();
+
+    let request = prepare(&repo, input(&["claude-1", "Fix the typo."], None))
+        .await
+        .unwrap();
+    // The checkout is read with real git above; from here on only the daemon's answer is waited for, on a clock that
+    // moves when nothing else is left to do.
+    tokio::time::pause();
+
+    start(&mut connection, &home(), request, &mut out).await.unwrap();
+
+    assert_eq!(String::from_utf8(out).unwrap(), render_started(&home(), &sample_team()));
+}
