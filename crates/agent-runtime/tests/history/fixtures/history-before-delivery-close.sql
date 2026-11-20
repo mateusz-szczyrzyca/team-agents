@@ -367,3 +367,5 @@ CREATE INDEX daemon_logs_by_time ON daemon_logs((substr(at,1,19)||'.'||substr(CA
 CREATE TRIGGER daemon_logs_cursor AFTER INSERT ON daemon_logs BEGIN
  UPDATE history_cursors SET value = max(value, new.id) WHERE name = 'daemon_logs';
 END;
+
+INSERT INTO history_cursors(name, value) VALUES ('daemon_logs', 0);
