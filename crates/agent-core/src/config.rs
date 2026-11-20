@@ -644,6 +644,8 @@ pub struct Config {
     questions: Questions,
     /// The plans of tasks.
     plan: Plan,
+    /// Split approval policy, defaulted for older configurations.
+    split: Split,
     /// The history.
     history: History,
     /// The daemon's own log.
@@ -717,6 +719,9 @@ struct RawConfig {
     /// See [`Config::plan`].
     #[serde(default)]
     plan: Plan,
+    /// Split approval policy, defaulted for older configurations.
+    #[serde(default)]
+    split: Split,
     /// See [`Config::history`].
     #[serde(default)]
     history: History,
@@ -753,6 +758,7 @@ impl RawConfig {
             notifications,
             questions,
             plan,
+            split,
             history,
             log,
             web,
@@ -789,6 +795,7 @@ impl RawConfig {
             notifications,
             questions,
             plan,
+            split,
             history,
             log,
             web,
@@ -1020,7 +1027,7 @@ impl Config {
 
     /// Policy for approval of split proposals; daemon use is added separately.
     pub fn split(&self) -> Split {
-        Split::default()
+        self.split
     }
 
     /// The dashboard's address and logins.
