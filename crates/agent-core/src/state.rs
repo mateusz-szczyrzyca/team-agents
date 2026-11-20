@@ -60,7 +60,7 @@ use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
 
 /// The schema version this build writes, with investigator activities reconstructed from versions 1 through 10.
-pub const SCHEMA_VERSION: u32 = 13;
+pub const SCHEMA_VERSION: u32 = 14;
 
 /// Largest state text accepted, in bytes: a bound on untrusted input, far above any real state.
 pub const MAX_STATE_BYTES: usize = 64 << 20;
@@ -445,7 +445,7 @@ impl State {
         if matches!(probe.schema_version, 2..=10) {
             return migrate::from_v2(text);
         }
-        if matches!(probe.schema_version, 11 | 12) {
+        if matches!(probe.schema_version, 11 | 12 | 13) {
             return migrate::from_v11(text);
         }
         if probe.schema_version != u64::from(SCHEMA_VERSION) {
