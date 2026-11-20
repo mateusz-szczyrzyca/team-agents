@@ -104,7 +104,7 @@ fn part_keys_accept_exactly_one_lowercase_ascii_letter() {
             Err(InvalidPartKey { raw: raw.to_owned() })
         );
     }
-    assert!("1.1a".parse::<ItemId>().is_err());
+    assert!(matches!("1.1a".parse::<ItemId>(), Err(crate::ids::InvalidItemId::Shape { value }) if value == "1.1a"));
 }
 
 #[test]
@@ -112,10 +112,20 @@ fn deserializing_a_split_cannot_bypass_validation() {
     let value = serde_json::json!({"parent": "1.1", "parts": definitions()});
     let mut invalid = value.clone();
     invalid["parts"][0]["checks"] = serde_json::json!("");
-    assert!(serde_json::from_value::<SplitPlan>(invalid).is_err());
+    assert_eq!(
+        serde_json::from_value::<SplitPlan>(invalid)
+            .expect_err("blank checks")
+            .classify(),
+        serde_json::error::Category::Data
+    );
     let mut extra = value;
     extra["extra"] = serde_json::json!(true);
-    assert!(serde_json::from_value::<SplitPlan>(extra).is_err());
+    assert_eq!(
+        serde_json::from_value::<SplitPlan>(extra)
+            .expect_err("unknown field")
+            .classify(),
+        serde_json::error::Category::Data
+    );
 }
 
 #[test]

@@ -7,10 +7,9 @@ fn verdict(text: &str) -> Verdict {
 }
 
 fn approval(parts: serde_json::Value) -> Verdict {
-    verdict(&format!(
-        "split\n```json\n{}\n```",
-        serde_json::json!({"parent":"1.1","parts":parts})
-    ))
+    let mut approval = serde_json::json!({"parent":"1.1"});
+    approval["parts"] = parts;
+    verdict(&format!("split\n```json\n{approval}\n```"))
 }
 
 fn part(title: &str, dependencies: &[&str]) -> serde_json::Value {
