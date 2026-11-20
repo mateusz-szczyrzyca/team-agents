@@ -1166,9 +1166,35 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent resume <task\|team>` | starts a stopped, failed or waiting task again |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus |
 | `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now |
+| `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed |
 
 `agent status` ends the line of a task that runs with `last activity HH:MM:SS`: the local time the output of its run last
 changed (the file `tasks/<task>/runs/<run>/out.jsonl`), which is how to tell a task that works from one that hangs.
+
+The line of a reviewer says what it did or does, from the record of the team's investigators, instead of the one word of
+its status (a reviewer that waits between its reviews said only `waiting`):
+
+| Says | Means |
+|---|---|
+| `working`, with `last activity HH:MM:SS` while its run writes | a review goes, or one is queued for it |
+| `done, 1st review finished 12:08:17` | it gave the report the harness asked for; the ordinal counts the reviews it gave for the round (the first review, the verifications and the second opinions alike; a review that ended without its report is not counted) |
+| `stopped at 12:10:00, reason: the run showed no activity for too long` | the task was stopped or failed; the reason is the one the daemon knows (`the human stopped it`, `the run ended without a status`, and so on) |
+
+A reviewer task without recorded activity shows the word of its status as before. The lines of the coordinator, the
+members and the workers do not change.
+
+`agent status --investigators` shows every investigator of `[investigators.NAME]` in `agents.toml`, in the order of
+their names, with the last two of its activities in the teams that are not closed, the newest first: the task, the kind of
+the activity (`team-member`, `reviewer`, `investigator`, `task-allocator`), the investigator, the team, and what it did:
+`done at 12:15:15, 1st review finished`, `working, 2nd review`, `done at 12:00:00, tasks allocated`, or, for one that
+ended without its report, `stopped at 12:10:00, reason: …` as on a reviewer's line. A team counts as open while it has a
+round that goes on. An investigator with no activity in an open team is listed as `free, no activity in an open team`:
+
+```text
+task-20261119-094409-saal  reviewer  inv-gemini-argon  for team-20261119-094000-saal  working, 2nd review
+task-20261119-094408-mhdx  task-allocator  inv-kimi-deepinfra  for team-20261119-094000-p4vt  done at 12:00:00, tasks allocated
+inv-opus  free, no activity in an open team
+```
 
 The line of a round ends with when the round started, in local time (`started DD-MM-YYYY HH:MM`), and for a round that
 is closed with how long it took (`took 3h 01m`). A round that goes on also says where its work is, after `open`:
