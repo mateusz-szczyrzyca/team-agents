@@ -7,7 +7,7 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
-use agent_core::decide::plan::{DoneEnds, PlanFacts, PlanRead, PlanVerdict, decide_plan, done_ends};
+use agent_core::decide::plan::{DoneEnds, PlanFacts, PlanRead, PlanVerdict, decide_plan, done_ends_with};
 use agent_core::ids::RunId;
 use agent_core::ids::{AgentName, BranchName, InvalidName, TaskId, TeamId};
 use agent_core::kinds::Role;
@@ -17,7 +17,7 @@ use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::questions::{Entry, QuestionsFile, Verdict, quote};
 use agent_core::repo_path::{InvalidRepoPath, RepoPath};
 use agent_core::state::{ItemProgress, PlanKeeping, PlanReason, PlanStage};
-use agent_core::state::{RunEnd, Timestamp};
+use agent_core::state::{RunEnd, RunState, Team, Timestamp};
 use agent_core::status::{RunOutcome, TaskStatus};
 use agent_core::task_list::MAX_TASK_LIST_BYTES;
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision, Untracked};
@@ -380,7 +380,9 @@ impl Owner {
         };
         self.keep_plan(task, located, run, &found)?;
         let ends = self.parts.state.team(&located.team).map_or(DoneEnds::Work, |team| {
-            done_ends(located.role, team.items().iter().map(ItemProgress::phase))
+            done_ends_with(located.role, team.items().iter().map(ItemProgress::phase), |agent| {
+                member_works(team, agent)
+            })
         });
         if ends == DoneEnds::Turn {
             // The coordinator's members still work: its plan has steps for them, and the turn is not judged by it.
@@ -482,6 +484,32 @@ impl Owner {
         }]);
         Ok(())
     }
+}
+
+/// Whether the member `agent` of `team` still works on its item: it does unless it waits after a run that ended
+/// `DONE`, which hands the item to the coordinator. A name the crew does not have works, which keeps the turn open.
+fn member_works(team: &Team, agent: &AgentName) -> bool {
+    let Some((_, member)) = team
+        .crew()
+        .roster()
+        .into_iter()
+        .find(|(_, member)| member.agent().name() == agent.as_str())
+    else {
+        return true;
+    };
+    let finished = member.status() == TaskStatus::Waiting
+        && member.runs().last().is_some_and(|run| {
+            matches!(
+                run.state(),
+                RunState::Ended {
+                    end: RunEnd::Reported {
+                        outcome: RunOutcome::Done
+                    },
+                    ..
+                }
+            )
+        });
+    !finished
 }
 
 /// What the file `path` of a plan holds: missing, unreadable with why, or the plan with its text.
