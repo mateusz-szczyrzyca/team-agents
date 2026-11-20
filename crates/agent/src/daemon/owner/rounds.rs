@@ -333,6 +333,9 @@ enum PublishError {
     /// The lead cannot ask any more questions.
     #[error("the lead cannot ask more questions: the numbers are used up")]
     QuestionNumbers,
+    /// A question cannot be asked.
+    #[error("the question cannot be asked")]
+    Question(#[from] agent_core::state::QuestionError),
     /// A reviewer cannot be added to the team.
     #[error("a reviewer cannot be added to the team")]
     Reviewer(#[from] agent_core::state::AddReviewerError),

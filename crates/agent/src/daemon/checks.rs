@@ -180,7 +180,15 @@ pub(super) fn team_message_with_waiting(
     issues: &[Issue],
     refused: &[Subject],
 ) -> Result<String, ChecksTextError> {
-    team_message_impl(texts, pr, pass, passes, issues, refused, TeamMessageNotice::WaitingForHuman)
+    team_message_impl(
+        texts,
+        pr,
+        pass,
+        passes,
+        issues,
+        refused,
+        TeamMessageNotice::WaitingForHuman,
+    )
 }
 
 fn team_message_impl(

@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use agent_core::config::{AbsolutePath, EnvName, GitIdentity, InvalidValue};
 use agent_core::ids::{AgentName, BranchName};
-use agent_core::repo_path::InvalidRepoPath;
+use agent_core::repo_path::{InvalidRepoPath, RepoPath};
 use agent_core::state::{CommitId, InvalidCommitId};
 use tokio::process::Command;
 use tracing::Instrument;

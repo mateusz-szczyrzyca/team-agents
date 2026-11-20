@@ -216,8 +216,7 @@ impl Owner {
             kind: FailureKind::NotFound,
             message: format!("there is no task {task}"),
         })?;
-        let waiting = found.member.status() == TaskStatus::Questions;
-        let Some(question) = found.member.open_question().filter(|_| waiting) else {
+        let Some(question) = found.member.open_question() else {
             return Err(Failure {
                 kind: FailureKind::Conflict,
                 message: format!("task {task} is {}, not waiting for answers", found.member.status()),
@@ -347,7 +346,7 @@ impl Owner {
     ) -> Result<(), OwnerError> {
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
-        {
+        let status = {
             let (_, mut member) = self.member_mut(task)?;
             member
                 .answer_question(open.number, now, via)
@@ -355,14 +354,17 @@ impl Owner {
                     task: task.clone(),
                     source,
                 })?;
-        }
+            member.status()
+        };
         events.push(EventKind::QuestionAnswered {
             team: open.located.team.clone(),
             task: task.clone(),
             number: open.number,
             via,
         });
-        self.move_to(task, &open.located.team, TaskStatus::Queued, &mut events)?;
+        if status == TaskStatus::Questions || status == TaskStatus::Waiting {
+            self.move_to(task, &open.located.team, TaskStatus::Queued, &mut events)?;
+        }
         self.unwatch_task(task);
         self.commit(task, &open.located, now, events, None).await?;
         // The file keeps the answers: what the human answered, whole, is what it says now.

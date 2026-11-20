@@ -13,6 +13,7 @@ use super::values::Timestamp;
 use crate::decide::checks::Subject;
 use crate::decide::round::AskReason;
 use crate::ids::ItemId;
+use crate::repo_path::RepoPath;
 
 /// What the checks hold for one item.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,12 +73,12 @@ pub struct ChecksRecord {
     /// Why the question was asked, if any question is recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asked_reason: Option<AskReason>,
-    /// The content bindings (e.g. blob object hashes) of asked subjects when asked.
+    /// The content bindings (e.g. blob object hashes) of asked paths when asked.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub asked_bindings: BTreeMap<Subject, Option<String>>,
-    /// The content bindings (e.g. blob object hashes) of allowed subjects when allowed.
+    pub asked_bindings: BTreeMap<RepoPath, Option<String>>,
+    /// The content bindings (e.g. blob object hashes) of allowed paths when allowed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub allowed_bindings: BTreeMap<Subject, Option<String>>,
+    pub allowed_bindings: BTreeMap<RepoPath, Option<String>>,
 }
 
 impl ChecksRecord {
@@ -103,21 +104,28 @@ impl ChecksRecord {
         allowed.into_iter().cloned().collect()
     }
 
-    /// What the human allowed for any of `items`, without repeats, filtering out any allowed subject whose
-    /// binding does not match `current` (if a binding was recorded for that subject).
+    /// What the human allowed for any of `items`, without repeats, filtering out any allowed path whose
+    /// binding does not match `current` (if a binding was recorded for that path).
     #[must_use]
-    pub fn allowed_matching(&self, items: &[ItemId], current: &BTreeMap<Subject, Option<String>>) -> Vec<Subject> {
+    pub fn allowed_matching(&self, items: &[ItemId], current: &BTreeMap<RepoPath, Option<String>>) -> Vec<Subject> {
         let mut allowed = BTreeSet::new();
         for item in items {
             if let Some(held) = self.items.get(item) {
                 for subject in &held.allowed {
-                    if let Some(expected) = self.allowed_bindings.get(subject) {
-                        if current.get(subject) == Some(expected) {
+                    match subject {
+                        Subject::Path(path) => {
+                            if let Some(expected) = self.allowed_bindings.get(path) {
+                                if current.get(path) == Some(expected) {
+                                    allowed.insert(subject.clone());
+                                }
+                            } else {
+                                // Backward compatibility: no binding recorded in older states.
+                                allowed.insert(subject.clone());
+                            }
+                        }
+                        Subject::NoTests => {
                             allowed.insert(subject.clone());
                         }
-                    } else {
-                        // Backward compatibility: no binding recorded in older states.
-                        allowed.insert(subject.clone());
                     }
                 }
             }
@@ -142,15 +150,17 @@ impl ChecksRecord {
         &mut self,
         items: &[ItemId],
         subjects: &[Subject],
-        bindings: &BTreeMap<Subject, Option<String>>,
+        bindings: &BTreeMap<RepoPath, Option<String>>,
     ) {
         for item in items {
             let entry = self.items.entry(*item).or_default();
             entry.allowed.extend(subjects.iter().cloned());
         }
         for subject in subjects {
-            if let Some(hash) = bindings.get(subject) {
-                self.allowed_bindings.insert(subject.clone(), hash.clone());
+            if let Subject::Path(path) = subject
+                && let Some(hash) = bindings.get(path)
+            {
+                self.allowed_bindings.insert(path.clone(), hash.clone());
             }
         }
     }

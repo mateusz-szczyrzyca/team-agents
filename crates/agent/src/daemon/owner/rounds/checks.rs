@@ -7,9 +7,12 @@
 //! the question they wait on, what the lead is still to be told — is the record in the lead's task directory
 //! (`checks.json`), so that a daemon that restarts goes on. Without a `checks` table for the repository nothing is checked.
 
+use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
+use std::str::FromStr;
 
+use agent_core::config::AbsolutePath;
 use agent_core::decide::checks::{Issue, Judge, Subject, assess_near, markers};
 use agent_core::decide::disclosure::{test_fix_section, with_section};
 use agent_core::decide::round::{AskReason, Checking, ChecksPolicy, ChecksStep};
@@ -17,21 +20,21 @@ use agent_core::history::{CheckOutcome, HistoryEvent};
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::prompt::Variables;
 use agent_core::repo_path::RepoPath;
-use agent_core::state::{Asked, ChecksRecord, PrNumber, Sent, Timestamp};
+use agent_core::state::{Asked, ChecksRecord, PrNumber, Question, Sent, Timestamp};
 use agent_runtime::git::Revision;
 use agent_runtime::history::log_decision;
 use agent_runtime::notify::Notification;
 use agent_runtime::text_file::replace_text_file;
 
 use super::super::start::next_number;
-use super::super::{Owner, OwnerError};
+use super::super::{Notice, Owner, OwnerError};
 use super::publish::{Ready, Site};
 use super::{Announcement, Lead, PublishError, Pulls};
 use crate::daemon::checks::{
     MAX_RELAYS, authored, grouped_decisions, named, questions, reason, team_message, team_message_with_waiting,
 };
 use crate::daemon::notice::{NoticeContext, NoticeKind, layout_notification};
-use crate::daemon::questions;
+use crate::daemon::questions::{self, QuestionsProblem};
 use crate::daemon::team::Why;
 
 use super::super::teams::Look;
@@ -163,34 +166,30 @@ impl Owner {
         match step {
             ChecksStep::StartReviews => Ok(None),
             ChecksStep::BackToTeam { pass } => {
-                let has_waiting_human = issues
-                    .iter()
-                    .any(|i| i.judge() == Judge::Human && !refused.contains(&i.subject()));
-                if has_waiting_human {
-                    self.step_both(
-                        site,
-                        reviewing,
-                        &mut record,
-                        pass,
-                        policy.check_passes,
-                        &issues,
-                        &refused,
-                        now,
-                    )
-                    .await
-                } else {
-                    self.send_back_to_team(
-                        site,
-                        reviewing,
-                        &mut record,
-                        pass,
-                        policy.check_passes,
-                        &issues,
-                        &refused,
-                        now,
-                    )
-                    .await
-                }
+                self.send_back_to_team(
+                    site,
+                    reviewing,
+                    &mut record,
+                    pass,
+                    policy.check_passes,
+                    &issues,
+                    &refused,
+                    now,
+                )
+                .await
+            }
+            ChecksStep::Both { pass } => {
+                self.step_both(
+                    site,
+                    reviewing,
+                    &mut record,
+                    pass,
+                    policy.check_passes,
+                    &issues,
+                    &refused,
+                    now,
+                )
+                .await
             }
             ChecksStep::AskHuman { reason } => {
                 self.step_ask_human(site, reviewing, &mut record, reason, checking.passes(), &issues, now)
@@ -267,53 +266,33 @@ impl Owner {
             .filter(|i| i.judge() == Judge::Human && !refused.contains(&i.subject()))
             .cloned()
             .collect();
-        let human_subjects: Vec<Subject> = human_issues.iter().map(Issue::subject).collect();
+        let mut human_subjects: Vec<Subject> = human_issues.iter().map(Issue::subject).collect();
+        human_subjects.sort();
+        human_subjects.dedup();
 
-        let is_unchanged = record.asked.as_ref().is_some_and(|a| a.subjects == human_subjects);
+        let mut asked_bindings = BTreeMap::new();
+        for subject in &human_subjects {
+            if let Subject::Path(repo_path) = subject {
+                let blob = reviewing.ready.git.path_blob(&reviewing.ready.tip, repo_path).await?;
+                asked_bindings.insert(repo_path.clone(), blob);
+            }
+        }
+
+        let is_unchanged = record
+            .asked
+            .as_ref()
+            .is_some_and(|a| a.subjects == human_subjects && record.asked_bindings == asked_bindings);
         if !is_unchanged {
-            let number = self
-                .parts
-                .state
-                .find_task(&lead.task)
-                .and_then(|found| next_number(found.member))
-                .ok_or(PublishError::QuestionNumbers)?;
-            let asked = questions(
-                pulls.checks(),
-                team,
-                &lead.task,
-                &human_issues,
-                AskReason::OnlyTheHumanMayAllow,
-                check_passes,
-            )?;
-            let file = self.parts.store.home().questions_file(&lead.task, number);
-            replace_text_file(&file, &asked.file.render(), QUESTIONS_FILE_MODE).await?;
-
-            record.asked = Some(Asked {
-                number,
-                at: now,
-                items: reviewing.items.to_vec(),
-                subjects: asked.subjects,
-                relays: 0,
-            });
-            let human_lines = issue_lines(pulls, &human_issues)?;
-            self.record_checked(
-                team,
+            self.emit_human_question(
+                site,
                 reviewing,
-                human_lines,
-                CheckOutcome::AskedHuman {
-                    reason: AskReason::OnlyTheHumanMayAllow,
-                    question: number,
-                },
-            );
-            tracing::info!(
-                event = agent_core::log::LogEvent::ChecksDecided.as_str(),
-                outcome = "asked_human",
-                team = %team,
-                pr = %reviewing.pr,
-                reason = ?AskReason::OnlyTheHumanMayAllow,
-                issues = human_issues.len(),
-                "the checks ask the human about the round"
-            );
+                record,
+                &human_issues,
+                asked_bindings,
+                check_passes,
+                now,
+            )
+            .await?;
         }
 
         let text = team_message_with_waiting(pulls.checks(), reviewing.pr, pass, check_passes, &team_issues, refused)?;
@@ -344,6 +323,120 @@ impl Owner {
         Ok(Some(Held::WakeLead))
     }
 
+    /// Emits questions for the human when mixed checks find both human-only and team issues.
+    #[expect(clippy::too_many_arguments, reason = "private helper taking round question context")]
+    async fn emit_human_question(
+        &mut self,
+        site: Site<'_>,
+        reviewing: &Reviewing<'_>,
+        record: &mut ChecksRecord,
+        human_issues: &[Issue],
+        asked_bindings: BTreeMap<RepoPath, Option<String>>,
+        check_passes: u32,
+        now: Timestamp,
+    ) -> Result<(), PublishError> {
+        let Site { pulls, team, lead } = site;
+        let number = self
+            .parts
+            .state
+            .find_task(&lead.task)
+            .and_then(|found| next_number(found.member))
+            .ok_or(PublishError::QuestionNumbers)?;
+        let asked = questions(
+            pulls.checks(),
+            team,
+            &lead.task,
+            human_issues,
+            AskReason::OnlyTheHumanMayAllow,
+            check_passes,
+        )?;
+        let file = self.parts.store.home().questions_file(&lead.task, number);
+        replace_text_file(&file, &asked.file.render(), QUESTIONS_FILE_MODE).await?;
+
+        let loaded = questions::read(&file).await?;
+        let abs_file = match file.to_str().map(AbsolutePath::from_str) {
+            Some(Ok(f)) => f,
+            Some(Err(source)) => {
+                return Err(PublishError::Path {
+                    path: file.clone(),
+                    source: Some(source),
+                });
+            }
+            None => {
+                return Err(PublishError::Path {
+                    path: file.clone(),
+                    source: None,
+                });
+            }
+        };
+
+        {
+            let (_, mut member) = self.member_mut(&lead.task).map_err(|source| match source {
+                OwnerError::QuestionNumbers { .. } => PublishError::QuestionNumbers,
+                _ => PublishError::Lost,
+            })?;
+            member.ask_question(Question::new(number, abs_file, now))?;
+        }
+
+        self.publish(
+            now,
+            agent_core::protocol::EventKind::QuestionAsked {
+                team: team.clone(),
+                task: lead.task.clone(),
+                number,
+            },
+        );
+
+        self.prepare_questions(&lead.task, &file, &loaded).await;
+
+        let notice = Notice::Questions {
+            number,
+            file: file.clone(),
+        };
+        if let Ok(context) = self.notice_context(&lead.task, now, None)
+            && let Ok(notification) = notice.render(&self.parts.texts, &context)
+            && let Ok(located) = self.locate(&lead.task)
+        {
+            self.notify(now, &located, &lead.task, notification);
+        }
+
+        self.save().await.map_err(|error| match error {
+            OwnerError::Store(source) => PublishError::Store(source),
+            _ => PublishError::Lost,
+        })?;
+
+        record.asked = Some(Asked {
+            number,
+            at: now,
+            items: reviewing.items.to_vec(),
+            subjects: asked.subjects,
+            relays: 0,
+        });
+        record.asked_reason = Some(AskReason::OnlyTheHumanMayAllow);
+        record.asked_bindings = asked_bindings;
+
+        let human_lines = issue_lines(pulls, human_issues)?;
+        self.record_checked(
+            team,
+            reviewing,
+            human_lines,
+            CheckOutcome::AskedHuman {
+                reason: AskReason::OnlyTheHumanMayAllow,
+                question: number,
+            },
+        );
+        tracing::info!(
+            event = agent_core::log::LogEvent::ChecksDecided.as_str(),
+            outcome = "asked_human",
+            team = %team,
+            pr = %reviewing.pr,
+            reason = ?AskReason::OnlyTheHumanMayAllow,
+            issues = human_issues.len(),
+            "the checks ask the human about the round"
+        );
+        Ok(())
+    }
+
     /// Handles a check that asks the human.
     #[expect(clippy::too_many_arguments, reason = "private helper taking round check context")]
     async fn step_ask_human(
@@ -356,8 +449,20 @@ impl Owner {
         issues: &[Issue],
         now: Timestamp,
     ) -> Result<Option<Held>, PublishError> {
-        let human_subjects: Vec<Subject> = issues.iter().map(Issue::subject).collect();
-        let is_unchanged = record.asked.as_ref().is_some_and(|a| a.subjects == human_subjects);
+        let mut human_subjects: Vec<Subject> = issues.iter().map(Issue::subject).collect();
+        human_subjects.sort();
+        human_subjects.dedup();
+        let mut asked_bindings = BTreeMap::new();
+        for subject in &human_subjects {
+            if let Subject::Path(repo_path) = subject {
+                let blob = reviewing.ready.git.path_blob(&reviewing.ready.tip, repo_path).await?;
+                asked_bindings.insert(repo_path.clone(), blob);
+            }
+        }
+        let is_unchanged = record
+            .asked
+            .as_ref()
+            .is_some_and(|a| a.subjects == human_subjects && record.asked_bindings == asked_bindings);
         if is_unchanged {
             if let Some(asked) = &record.asked {
                 match self.where_is(&site.lead.task, asked).await? {
@@ -407,9 +512,14 @@ impl Owner {
         let Site { pulls, team, lead } = site;
         let loaded = questions::read(file).await?;
         let decided = grouped_decisions(&asked.subjects, &loaded.file)?;
-        record.allow(&asked.items, &decided.allowed);
-        record.restart_passes(&asked.items);
+        let bindings = record.asked_bindings.clone();
+        record.allow_with_bindings(&asked.items, &decided.allowed, &bindings);
+        if record.asked_reason != Some(AskReason::OnlyTheHumanMayAllow) {
+            record.restart_passes(&asked.items);
+        }
         record.asked = None;
+        record.asked_reason = None;
+        record.asked_bindings.clear();
         self.parts.store.save_checks_record(&lead.task, record).await?;
         tracing::info!(
             event = agent_core::log::LogEvent::ChecksDecided.as_str(),
@@ -450,7 +560,16 @@ impl Owner {
         let asked = questions(pulls.checks(), team, &lead.task, issues, reason, passes)?;
         let file = self.parts.store.home().questions_file(&lead.task, number);
         replace_text_file(&file, &asked.file.render(), QUESTIONS_FILE_MODE).await?;
+        let mut asked_bindings = BTreeMap::new();
+        for subject in &asked.subjects {
+            if let Subject::Path(repo_path) = subject {
+                let blob = reviewing.ready.git.path_blob(&reviewing.ready.tip, repo_path).await?;
+                asked_bindings.insert(repo_path.clone(), blob);
+            }
+        }
         record.sent = None;
+        record.asked_reason = Some(reason);
+        record.asked_bindings = asked_bindings;
         record.asked = Some(Asked {
             number,
             at: now,
@@ -543,22 +662,44 @@ impl Owner {
             .collect();
         edited.dedup();
         let unchanged = git.range_unchanged_lines(&merge_base, tip, &edited).await?;
+        let mut current_bindings = BTreeMap::new();
+        for subject in record.allowed_of(reviewing.items) {
+            if let Subject::Path(repo_path) = subject {
+                let blob = git.path_blob(tip, &repo_path).await?;
+                current_bindings.insert(repo_path, blob);
+            }
+        }
         let team = self.parts.state.find_task(&lead.task).ok_or(PublishError::Lost)?.team;
-        Ok(
-            assess_near(rules, &facts, &unchanged, &record.allowed_of(reviewing.items))
-                .into_iter()
-                .filter(|issue| issue.allowed_beforehand(team.allowances()).is_none())
-                .collect(),
+        Ok(assess_near(
+            rules,
+            &facts,
+            &unchanged,
+            &record.allowed_matching(reviewing.items, &current_bindings),
         )
+        .into_iter()
+        .filter(|issue| issue.allowed_beforehand(team.allowances()).is_none())
+        .collect())
     }
 
     /// Where the question `asked` of the lead `task` is.
     async fn where_is(&self, task: &TaskId, asked: &Asked) -> Result<Asking, PublishError> {
         let path = self.parts.store.home().questions_file(task, asked.number);
-        if let Ok(loaded) = questions::read(&path).await
-            && questions::judge(&loaded.file) == questions::Judgement::Answered
-        {
-            return Ok(Asking::Answered(path));
+        match questions::read(&path).await {
+            Ok(loaded) => {
+                if questions::judge(&loaded.file) == questions::Judgement::Answered {
+                    return Ok(Asking::Answered(path));
+                }
+            }
+            Err(QuestionsProblem::Read { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::QuestionsFileInvalid.as_str(),
+                    task = %task,
+                    path = %path.display(),
+                    error = %agent_runtime::process::error_chain(&error),
+                    "questions file cannot be read or parsed"
+                );
+            }
         }
         let found = self.parts.state.find_task(task).ok_or(PublishError::Lost)?;
         Ok(
