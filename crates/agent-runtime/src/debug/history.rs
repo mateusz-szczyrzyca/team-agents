@@ -56,7 +56,7 @@ pub(crate) fn record_run_id(record: &Record) -> Option<&RunId> {
         Record::RunEnd(e) => Some(&e.run),
         Record::Changes(c) => Some(&c.run),
         Record::Session(s) => Some(&s.run),
-        Record::Team(_) | Record::Round(_) | Record::Event(_) => None,
+        Record::Team(_) | Record::Round(_) | Record::Event(_) | Record::Snapshot(_) => None,
     }
 }
 

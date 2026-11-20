@@ -39,6 +39,8 @@ pub enum RecordKind {
     RunEnd,
     /// What a run changed.
     Changes,
+    /// A snapshot of a task's worktree.
+    Snapshot,
     /// An event of a round: a gate, a pull request, a question and the like.
     Event,
 }

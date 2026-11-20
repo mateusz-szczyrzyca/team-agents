@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_core::history::RunWhy;
+use agent_core::log::LogEvent;
 use agent_core::protocol::{AgentList, Client, Command, Reply, RunRequest};
 use agent_core::state::{MergeMode, RunEnd, TaskListText};
 use agent_core::status::TaskStatus;
@@ -1141,4 +1142,187 @@ async fn a_reviewer_that_cannot_be_started_after_a_run_without_a_status_fails_wh
     );
     drop(step.owner);
     crate::daemon::history::close(step.writer).await;
+}
+
+/// Starts a run of a team, leaves it going with a file in its worktree that nothing committed, and drops the owner: the
+/// state a restart finds. Returns the team and the task; the restart's rig is the caller's.
+async fn cut_a_run(rig: &Rig) -> (agent_core::ids::TeamId, agent_core::ids::TaskId) {
+    let mut step = stepped(rig).await;
+    let (reply, receive) = oneshot::channel();
+    step.owner
+        .handle(Message::Request {
+            client: Client::Cli,
+            command: Command::Run(RunRequest {
+                allow_unpushed_base: false,
+                repo: "example".parse().unwrap(),
+                checkout: rig.repo.to_str().unwrap().parse().unwrap(),
+                agents: AgentList::try_from(vec!["claude-1".parse().unwrap()]).unwrap(),
+                task_list: TaskListText::new("Finish the work.".to_owned()).unwrap(),
+                coordinator: None,
+                merge: MergeMode::Autopilot,
+            }),
+            reply,
+        })
+        .await
+        .unwrap();
+    let Reply::Started { team, tasks, .. } = receive.await.unwrap().unwrap() else {
+        panic!("team did not start")
+    };
+    step.owner.start_queued().await.unwrap();
+    std::fs::write(
+        rig.worktree(&tasks[0]).join("uncommitted.txt"),
+        b"kept by the snapshot\n",
+    )
+    .unwrap();
+    drop(step.owner);
+    crate::daemon::history::close(step.writer).await;
+    (team, tasks[0].clone())
+}
+
+/// A rig of one normal agent and two investigators, as the restart tests use.
+async fn rig_with_reviewers() -> Rig {
+    Rig::new(
+        &[
+            normal("claude-1", "done"),
+            investigator("inv-r1", "done"),
+            investigator("inv-r2", "done"),
+        ],
+        5,
+        false,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_restart_snapshots_the_worktree_of_a_run_that_was_cut() {
+    let mut rig = rig_with_reviewers().await;
+    let (team, task) = cut_a_run(&rig).await;
+
+    rig.start().await;
+    rig.stop().await.unwrap();
+
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let round = reader.rounds_of_team(&team).unwrap();
+    let round = round.first().expect("the team opened a round").value.round.clone();
+    let snapshots = reader.snapshots_of_round(&round).unwrap();
+    let ours: Vec<_> = snapshots.iter().filter(|snapshot| snapshot.task == task).collect();
+    assert_eq!(ours.len(), 1, "{snapshots:?}");
+    assert_eq!(ours[0].number, 1);
+    assert!(ours[0].bytes >= b"kept by the snapshot\n".len() as u64, "{:?}", ours[0]);
+    let listed = std::process::Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", &ours[0].commit.to_string()])
+        .current_dir(rig.worktree(&task))
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&listed.stdout).contains("uncommitted.txt"));
+}
+
+/// Records the two snapshot warnings in `observed`, each provoked by its cause in a restart: a snapshot above a limit of
+/// zero megabytes, and a snapshot of a worktree that no longer exists.
+pub(super) async fn record_snapshot_events(observed: &mut std::collections::BTreeSet<LogEvent>) {
+    let mut rig = rig_with_reviewers().await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(rig.home.config_file(), format!("{config}\n[snapshot]\nwarn_mb = 0\n")).unwrap();
+    cut_a_run(&rig).await;
+    rig.start().await;
+    rig.stop().await.unwrap();
+    let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    assert!(
+        logs.iter().any(|entry| entry.event() == LogEvent::SnapshotLarge),
+        "{logs:?}"
+    );
+    observed.insert(LogEvent::SnapshotLarge);
+
+    let mut rig = rig_with_reviewers().await;
+    let (_team, task) = cut_a_run(&rig).await;
+    std::fs::remove_dir_all(rig.worktree(&task)).unwrap();
+    rig.start().await;
+    rig.stop().await.unwrap();
+    let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    assert!(
+        logs.iter().any(|entry| entry.event() == LogEvent::SnapshotFailed),
+        "{logs:?}"
+    );
+    observed.insert(LogEvent::SnapshotFailed);
+}
+
+#[tokio::test]
+async fn a_graceful_stop_and_restart_snapshots_the_worktree_shows_it_in_round_status_and_finishes_the_round() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "gated,done"),
+            investigator("inv-r1", "done"),
+            investigator("inv-r2", "done"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["claude-1"], "Finish the work.", MergeMode::Autopilot, None)
+        .await;
+    let task = tasks[0].clone();
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while !rig.worktree(&task).join(".fake-committed-1").exists() {
+        assert!(std::time::Instant::now() < deadline, "first run did not start");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    std::fs::write(
+        rig.worktree(&task).join("uncommitted.txt"),
+        b"kept across graceful stop\n",
+    )
+    .unwrap();
+
+    rig.stop().await.unwrap();
+    rig.start().await;
+    rig.status_is(&task, TaskStatus::Done).await;
+
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let rounds = reader.rounds_of_team(&team).unwrap();
+    let round = rounds.first().expect("the team opened a round").value.round.clone();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let snapshots = loop {
+        let found = reader.snapshots_of_round(&round).unwrap();
+        if found.iter().any(|snapshot| snapshot.task == task) {
+            break found;
+        }
+        assert!(std::time::Instant::now() < deadline, "snapshot was not recorded");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    let ours: Vec<_> = snapshots.iter().filter(|snapshot| snapshot.task == task).collect();
+    assert_eq!(ours.len(), 1, "{snapshots:?}");
+    assert_eq!(ours[0].number, 1);
+
+    let mut connection = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap();
+    let activity = crate::commands::status::Activity::new(rig.home.clone(), time::UtcOffset::UTC);
+    let mut rendered = Vec::new();
+    crate::commands::status::status_active(
+        &mut connection,
+        Some(agent_core::protocol::Target::Round(round.clone())),
+        &activity,
+        &mut rendered,
+    )
+    .await
+    .unwrap();
+    let status_text = String::from_utf8(rendered).unwrap();
+    assert!(
+        status_text.contains(&format!("  snapshot {task} number 1 at ")),
+        "round status must show the task's snapshot: {status_text}"
+    );
+    assert!(
+        status_text.contains(&format!("{} bytes\n", ours[0].bytes)),
+        "round status must show the snapshot's byte count: {status_text}"
+    );
+
+    rig.stop().await.unwrap();
+
+    let listed = std::process::Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", &ours[0].commit.to_string()])
+        .current_dir(rig.worktree(&task))
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&listed.stdout).contains("uncommitted.txt"));
 }

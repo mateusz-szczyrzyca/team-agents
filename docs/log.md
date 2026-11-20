@@ -263,6 +263,8 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `questions_file_invalid` | `warn` | A questions file is missing or not valid, or cannot be prepared, watched or opened. |
 | `configuration_name_missing` | `error` | An agent, investigator, or repository named in the state or a request is no longer in `agents.toml`. |
 | `restart_corrected` | `warn` | A start or restart of the daemon found an interrupted run or a host fallback and corrected it. |
+| `snapshot_failed` | `warn` | A snapshot of a task's worktree cannot be taken; the daemon goes on without it. |
+| `snapshot_large` | `warn` | A snapshot of a task's worktree is bigger than `[snapshot] warn_mb`; it is kept, and its size is logged. |
 | `request_refused` | `warn` | A client connection, subscription or request cannot be accepted or is refused. |
 | `daemon_panicked` | `error` | A task or thread in the daemon panicked, with its message and location. |
 | `daemon_task_failed` | `error` | A task of the daemon (a side task or the task of a client connection) ends with an error it does not handle, such as a panic, with `error`. |

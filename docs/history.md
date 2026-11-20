@@ -358,6 +358,26 @@ The rounds a daemon log entry belongs to, oldest first. Key `(log, position)`, `
 | `position` | INTEGER ≥ 1 | its place in the list |
 | `round` | TEXT | the round |
 
+### `snapshots`
+
+The snapshots of worktrees ([`architecture.md`](architecture.md), "Snapshots"): one row per snapshot a task's worktree got,
+added by migration `12`. The daemon takes one of every task of an open round whose last run did not end when it starts;
+`agent status <round>` shows the last one of each task. The commit that holds a snapshot is kept under
+`refs/agents/snapshots/<round>/<task>/<n>` in the repository, and nothing deletes it or prunes it yet.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `round` | TEXT, key | the round the snapshot is kept under; a plain column, the round may be unknown to the history |
+| `task` | TEXT, key | the task whose worktree is kept |
+| `n` | INTEGER, key | the number of the snapshot among its task's, counted from 1 |
+| `at` | TEXT | when it was taken |
+| `commit_id` | TEXT | the commit that holds the snapshot's tree |
+| `head` | TEXT | the head of the worktree the snapshot stands on (its parent) |
+| `bytes` | INTEGER | the bytes of the files the snapshot holds |
+
+The rows are not in the ledger: a snapshot is a fact about a worktree, not a happening of a round. A snapshot handed in
+twice is one row: the key is the first write's.
+
 ## Indexes
 
 | Index | On | For |
@@ -489,6 +509,9 @@ change nothing in the file; opening one for writing applies the migrations. A pr
 Migration `11` rebuilds `daemon_logs` with a `CHECK` that lists every event of the daemon: `github_step_waiting`,
 `github_step_resumed`, and `build_directory_removed`, which an edit of migration `4` gave only to new files. The rows keep
 their ids, rounds and search entries; the table's indexes and triggers are made again.
+Migration `12` adds `snapshots` ([above](#snapshots)) and rebuilds `daemon_logs` with the two snapshot warnings,
+`snapshot_failed` and `snapshot_large`, the same way migration `11` did. `snapshots` is not in the ledger, so a version `11`
+history gains the table and keeps every record, its order, its log rows and its search entries as they were.
 
 ## Asking with `sqlite3`
 

@@ -138,6 +138,10 @@ pub enum LogEvent {
     ConfigurationNameMissing,
     /// A start or restart of the daemon found an interrupted run or a host fallback and corrected it.
     RestartCorrected,
+    /// A snapshot of a task's worktree cannot be taken; the daemon goes on without it.
+    SnapshotFailed,
+    /// A snapshot of a task's worktree is bigger than `[snapshot] warn_mb`; it is kept, and its size is logged.
+    SnapshotLarge,
     /// A client connection, subscription or request cannot be accepted or is refused.
     RequestRefused,
     /// A task or thread in the daemon panicked.
@@ -236,6 +240,8 @@ impl LogEvent {
             | Self::GateDirtyTree
             | Self::QuestionsFileInvalid
             | Self::RestartCorrected
+            | Self::SnapshotFailed
+            | Self::SnapshotLarge
             | Self::RequestRefused
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged

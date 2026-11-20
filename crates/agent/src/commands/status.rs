@@ -131,7 +131,7 @@ pub(crate) async fn status_active(
     out: &mut impl Write,
 ) -> Result<(), StatusError> {
     if let Some(Target::Round(round)) = target {
-        return show_round(connection, round, out).await;
+        return show_round(connection, round, Some(activity), out).await;
     }
     let (teams, history) = teams(connection, target).await?;
     let told = rounds::told(connection, activity, &teams).await?;
@@ -157,7 +157,7 @@ pub(crate) async fn status(
     out: &mut impl Write,
 ) -> Result<(), StatusError> {
     if let Some(Target::Round(round)) = target {
-        return show_round(connection, round, out).await;
+        return show_round(connection, round, None, out).await;
     }
     let (teams, history) = teams(connection, target).await?;
     write(out, &render(&teams), history.as_ref(), None)
@@ -270,10 +270,18 @@ async fn round_detail(connection: &mut Connection, round: RoundId) -> Result<Rou
 }
 
 /// Asks the daemon to show the round `round` and writes it to `out`.
-async fn show_round(connection: &mut Connection, round: RoundId, out: &mut impl Write) -> Result<(), StatusError> {
-    let round = round_detail(connection, round).await?;
-    out.write_all(render_round(&round).as_bytes())
-        .map_err(StatusError::Output)?;
+async fn show_round(
+    connection: &mut Connection,
+    round: RoundId,
+    activity: Option<&Activity>,
+    out: &mut impl Write,
+) -> Result<(), StatusError> {
+    let detail = round_detail(connection, round.clone()).await?;
+    let mut text = render_round(&detail);
+    if let Some(activity) = activity {
+        text.push_str(&snapshots::snapshots_of(&activity.home, &round, activity.offset));
+    }
+    out.write_all(text.as_bytes()).map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)
 }
 
@@ -496,6 +504,7 @@ const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 mod investigators;
 mod reviewer;
 mod rounds;
+mod snapshots;
 mod splits;
 
 #[cfg(test)]

@@ -34,8 +34,10 @@ pub use delivery::{DeliveryGitError, DeliveryRead};
 mod deadline_tests;
 mod range;
 mod size;
+mod snapshot;
 
 pub use changes::WorkChanges;
+pub use snapshot::Snapshot;
 
 /// How long a local git command may run before its group is killed.
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -253,6 +255,24 @@ pub enum GitOperation {
     /// `git ls-tree`, to list the files in a commit tree.
     #[strum(serialize = "ls-tree")]
     LsTree,
+    /// `git write-tree`, to write the tree of the scratch index of a snapshot.
+    #[strum(serialize = "write-tree")]
+    WriteTree,
+    /// `git commit-tree`, to write the commit that holds a snapshot.
+    #[strum(serialize = "commit-tree")]
+    CommitTree,
+    /// `git for-each-ref`, to count the snapshots a task has.
+    #[strum(serialize = "for-each-ref")]
+    ForEachRef,
+    /// `git ls-files`, to inspect the scratch index of a snapshot.
+    #[strum(serialize = "ls-files")]
+    LsFiles,
+    /// `git hash-object`, to store a worktree file's bytes without attribute filters.
+    #[strum(serialize = "hash-object")]
+    HashObject,
+    /// `git update-index`, to point a scratch index entry at its raw blob.
+    #[strum(serialize = "update-index")]
+    UpdateIndex,
 }
 
 /// Why the scratch area of a read of the uncommitted changes cannot be made.

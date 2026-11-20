@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.33.0 — 20.11.2026 — PR #151
+## 0.34.0 — 20.11.2026 — PR #151
 
 ### New features
 - [agent] [agent-core] [agent-runtime] The harness can check a coordinator's report that an item is delivered by
@@ -13,12 +13,22 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
   the item's branch holds nothing outside it or the base branch; otherwise the lead is told why. An accepted item opens
   no pull request, `agent status` shows `delivered by PR #N, waits for its merge`, and when #N is merged the item is
   done as `done, delivered by PR #N`. A stop and a resume of the team in between change nothing: the item still
-  waits, opens no second pull request and closes at the merge, also when it is a part of a split item. Coordinators are not told about the report yet: that and the return to work when
-  #N is closed without a merge come in the next version.
+  waits, opens no second pull request and closes at the merge, also when it is a part of a split item. Coordinators are not told about the report yet:
+  that and the return to work when #N is closed without a merge come in the next version.
 
 ### Enhancements
 - [agent-core] The state file is now schema 14 and still reads every state written by earlier versions; an older `agent`
   cannot read a state written by this one, so keep a backup from before the upgrade.
+
+## 0.33.0 — 20.11.2026 — PR #150
+
+### New features
+- [agent] [agent-runtime] When the daemon starts, every task whose run was cut by a crash or a stop of the daemon gets a snapshot of its worktree if its round is still open: all uncommitted, staged, deleted and untracked files (binary ones too; ignored files are left out) are kept as a commit under `refs/agents/snapshots/<round>/<task>/<n>`, without changing the worktree, its index or its files.
+- [agent] `agent status <round>` shows the last snapshot of each task at the end of the round view, for example `snapshot task-… number 1 at 14:05:10, 4096 bytes`.
+- [agent-core] [agent-runtime] The new optional `[snapshot] warn_mb` setting (default `200`) sets the size in megabytes above which a snapshot is logged with a `snapshot_large` warning, and the history database migrates automatically to version 12 on the next daemon start.
+
+### Enhancements
+- [agent-runtime] Snapshots are recorded in the history database (`snapshots`) and can be read back by round.
 
 ## 0.32.0 — 20.11.2026 — PR #149
 

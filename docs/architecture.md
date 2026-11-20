@@ -645,6 +645,17 @@ the claim: the item stays out of publication, the delivering PR is still polled 
 the item without recording the end of the round a second time. Closed, unmerged delivery recovery is deferred
 to the second part; this part logs a warning and preserves the wait.
 
+### Snapshots (`agent-runtime`, `agent`)
+
+A snapshot keeps what a worktree holds when its run was cut, so that nobody else can lose it. The daemon takes one of
+every task whose run did not end when it starts, when the round that run worked for is still open. The snapshot is a
+commit of everything in the worktree (modified, staged, deleted, untracked and binary files; ignored files are left out),
+made in a scratch index with the repository's filters, hooks and filesystem monitor switched off: the worktree, its index
+and its files are not changed. The commit is kept under `refs/agents/snapshots/<round>/<task>/<n>`, `n` counted from 1,
+and its parent is the head; the history records it ([`history.md`](history.md), `snapshots`). A snapshot above
+`[snapshot] warn_mb` is still taken and logged as `snapshot_large`; a failure is logged as `snapshot_failed` and the daemon
+goes on. Nothing prunes the snapshots yet, and nothing pushes them. `agent status <round>` shows the last snapshot of each task.
+
 ### The history
 
 The state file says what is; the history says what happened. It is one SQLite database, `history.db` in the home, written
