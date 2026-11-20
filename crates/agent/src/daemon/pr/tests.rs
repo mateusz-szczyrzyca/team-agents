@@ -575,3 +575,23 @@ fn a_returned_delivery_publishes_independently_of_the_closed_prs_occupied_branch
         }]
     );
 }
+
+#[test]
+fn an_observed_closed_delivery_waits_for_its_replacement_round_before_publication() {
+    let mut team = led(PARALLEL);
+    let integration = format!("agents/inv-opus/{}", task(1));
+    team.open_round("round-20261111-153001-q1w2".parse().unwrap(), Some(item("1.1")), at(0))
+        .unwrap();
+    team.open_round("round-20261111-153002-q1w2".parse().unwrap(), Some(item("2.1")), at(0))
+        .unwrap();
+    start(&mut team, "1.1", "claude-1", "first-work");
+    start(&mut team, "2.1", "claude-2", "returned-work");
+    review(&mut team, "1.1", 7, &integration);
+    waits(&mut team, 1);
+    waits(&mut team, 2);
+    waits(&mut team, 3);
+    let waiting = team.round_of(item("2.1")).unwrap().id().clone();
+    team.deliver_round(&waiting, pr(7, &integration).number).unwrap();
+    team.end_delivery(&waiting, at(20)).unwrap();
+    assert_eq!(plan_publications(&team).unwrap(), Vec::new());
+}
