@@ -19,6 +19,9 @@ mod member;
 mod migrate;
 mod plan;
 mod question;
+mod renewal;
+#[cfg(test)]
+mod renewal_tests;
 mod round;
 mod run;
 pub mod split;
@@ -44,6 +47,7 @@ pub use item::{
 pub use member::{Member, MemberError, MemberMut, Participant, QuestionError};
 pub use plan::{PlanKeeping, PlanReason, PlanStage};
 pub use question::{AnswerBeforeQuestion, AnsweredVia, Question, QuestionState};
+pub use renewal::{InvalidRenewalLimit, RenewalError, RenewalLimit, Renewals};
 pub use round::{ClosedBeforeOpened, Round, RoundEnd, RoundLife};
 pub use run::{Run, RunEnd, RunError, RunState};
 pub use team::{

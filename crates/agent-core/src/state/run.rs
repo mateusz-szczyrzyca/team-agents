@@ -184,6 +184,9 @@ pub enum RunError {
         /// The round named twice.
         round: RoundId,
     },
+    /// A run that begins a session the task was started anew for names one: it is a new session.
+    #[error("a run that begins a new session cannot name one to resume")]
+    SessionOfANewSession,
     /// The end is before the start.
     #[error("run {run} cannot end at {at}, before it started at {started_at}")]
     EndsBeforeStart {
