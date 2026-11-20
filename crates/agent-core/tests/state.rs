@@ -164,14 +164,14 @@ mod state_file {
 
     #[test]
     fn the_same_state_of_another_schema_version_is_refused_with_that_version() {
-        let text = FIXTURE.replacen("\"schema_version\": 1", "\"schema_version\": 12", 1);
+        let text = FIXTURE.replacen("\"schema_version\": 1", "\"schema_version\": 13", 1);
         assert_ne!(text, FIXTURE);
 
         let err = State::from_json(&text).unwrap_err();
 
         assert!(matches!(
             err,
-            StateError::UnsupportedSchema(UnsupportedSchema { found: 12 })
+            StateError::UnsupportedSchema(UnsupportedSchema { found: 13 })
         ));
     }
 }
