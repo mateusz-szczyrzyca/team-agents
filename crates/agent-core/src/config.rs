@@ -351,6 +351,9 @@ impl Default for Snapshot {
     }
 }
 
+/// Default number of lead passes per round on a merge conflict.
+const DEFAULT_CONFLICT_PASSES: u32 = 3;
+
 /// `[merge]`: what the harness does when GitHub refuses to merge an approved pull request for a conflict.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -361,9 +364,11 @@ pub struct Merge {
 }
 
 impl Default for Merge {
-    /// The default: no conflict passes yet (stub, RED).
+    /// The default: three lead passes per round, as the item of the merge conflicts asks.
     fn default() -> Self {
-        Self { conflict_passes: 0 }
+        Self {
+            conflict_passes: DEFAULT_CONFLICT_PASSES,
+        }
     }
 }
 
