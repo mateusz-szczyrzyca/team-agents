@@ -165,7 +165,7 @@ impl Owner {
                 // The legacy approving verdict has no scope field; its parts retain estimate and tier.
                 let mut example = match parsed {
                     Ok(proposal) => serde_json::to_value(proposal).map_err(ProposalError::Example)?,
-                    Err(_) => serde_json::json!({"parent": item, "parts": []}),
+                    Err(_) => unreadable_example(keeping.text(), item),
                 };
                 if let Some(object) = example.as_object_mut() {
                     object.remove("scope");
@@ -274,6 +274,12 @@ impl Owner {
         }
         Ok(())
     }
+}
+
+/// The approving-verdict example for a submission that cannot be read: the parts it contains, cut down to the
+/// fields an approving verdict accepts, so the human can correct and approve them.
+fn unreadable_example(_text: &str, item: ItemId) -> serde_json::Value {
+    serde_json::json!({"parent": item, "parts": []})
 }
 
 /// Preserves a known faulty part identity while retaining the parser's cause in diagnostics.

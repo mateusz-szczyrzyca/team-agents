@@ -70,3 +70,39 @@ async fn every_fault_has_its_own_catalog_text_and_names_its_part() {
     let expected: Vec<_> = cases.iter().map(|(_, text)| text.to_string()).collect();
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn unreadable_example_keeps_the_parts_with_the_fields_a_verdict_accepts() {
+    let item: ItemId = "1.1".parse().unwrap();
+    let text = serde_json::json!({
+        "parent": "9.9", "scope": {"kind": "unchanged"}, "extra": true,
+        "parts": [
+            {"title": "Première", "delivers": "Doc", "checks": "Read", "depends_on": [], "estimate": {"amount": 1, "unit": "pages"}, "tier": "worker", "note": "dropped"},
+            {"title": "Second", "delivers": "Bundle", "checks": "", "depends_on": ["a"]},
+            "not a part"
+        ]
+    })
+    .to_string();
+
+    let example = unreadable_example(&text, item);
+
+    assert_eq!(
+        example,
+        serde_json::json!({"parent": "1.1", "parts": [
+            {"title": "Première", "delivers": "Doc", "checks": "Read", "depends_on": [], "estimate": {"amount": 1, "unit": "pages"}, "tier": "worker"},
+            {"title": "Second", "delivers": "Bundle", "checks": "", "depends_on": ["a"]}
+        ]})
+    );
+}
+
+#[test]
+fn unreadable_example_has_no_parts_when_the_text_is_not_json_or_has_none() {
+    let item: ItemId = "1.1".parse().unwrap();
+    for text in ["", "{not json", "[1, 2]", r#"{"parent":"1.1"}"#, r#"{"parts":"none"}"#] {
+        assert_eq!(
+            unreadable_example(text, item),
+            serde_json::json!({"parent": "1.1", "parts": []}),
+            "{text:?}"
+        );
+    }
+}
