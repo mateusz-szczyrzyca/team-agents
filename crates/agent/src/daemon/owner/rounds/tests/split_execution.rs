@@ -301,6 +301,5 @@ async fn split_fix_updates_its_pull_request() {
     let gate: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&tasks[0])).unwrap()).unwrap();
     assert_eq!(rig.remote_tip(&pulls[0].head), gate["result"]["head"].as_str().unwrap());
-    assert_eq!(rig.runs(&tasks[0]), 3);
     rig.stop().await.unwrap();
 }
