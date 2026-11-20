@@ -944,7 +944,18 @@ impl ItemProgress {
     /// # Errors
     /// [`AdvanceError::Transition`] unless the item is approved.
     pub fn reopen_review_after_conflict(&mut self) -> Result<(), AdvanceError> {
-        // RED stub: the phase stays as it is.
+        let ItemPhase::Approved { pr, .. } = &self.phase else {
+            return Err(InvalidAdvance {
+                item: self.id,
+                from: self.phase.kind(),
+                to: PhaseKind::InReview,
+            }
+            .into());
+        };
+        self.phase = ItemPhase::InReview {
+            pr: pr.clone(),
+            reviews: Vec::new(),
+        };
         Ok(())
     }
 
