@@ -1,4 +1,4 @@
-//! A history written before plans were kept (schema eleven, `fixtures/history-before-plans.sql`, the pinned schema of
+//! A history written before plans were kept (schema twelve, `fixtures/history-before-plans.sql`, the pinned schema of
 //! that version) is migrated to the plans' version: its records stay, it has no plan, and it keeps plans from then on.
 
 use agent_runtime::history::{HistoryDb, PlanRead, PlanRecord, Reader, Store};
@@ -16,7 +16,7 @@ fn a_history_written_before_plans_keeps_its_records_and_keeps_plans_after_its_mi
     let old: Vec<_> = agent_runtime::history::schema::MIGRATIONS
         .iter()
         .copied()
-        .filter(|migration| migration.version <= 11)
+        .filter(|migration| migration.version <= 12)
         .collect();
     let world = complete(7);
     let mut db = HistoryDb::open_with(&path, &old, roomy()).unwrap();
@@ -32,7 +32,7 @@ fn a_history_written_before_plans_keeps_its_records_and_keeps_plans_after_its_mi
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
     let reader = Reader::open(&path).unwrap();
     assert_eq!(reader.round_records(round).unwrap(), before);
     assert_eq!(reader.plan_versions(&task).unwrap(), Vec::new());

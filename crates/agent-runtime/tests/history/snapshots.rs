@@ -117,7 +117,7 @@ fn a_history_of_version_11_is_migrated_and_keeps_its_records_and_takes_snapshots
     let version: u32 = raw
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("the version");
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
     let reader = Reader::open(&path).expect("the history opens");
     assert_eq!(reader.round_records(&round).expect("the records are read"), before);
     let snapshot_round = RoundId::from_str(ROUND).expect("a round ID");
