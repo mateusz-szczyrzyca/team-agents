@@ -58,7 +58,12 @@ mod round_checks {
     fn an_issue_the_team_can_fix_sends_the_round_back_while_passes_are_left() {
         let issues = [for_the_team()];
 
-        assert_eq!(Checking::after(0).conclude(&issues, &[], TWICE), pass(1));
+        assert_eq!(
+            Checking::after(0).conclude(&issues, &[], TWICE),
+            ChecksStep::AskHuman {
+                reason: AskReason::OnlyTheHumanMayAllow
+            }
+        );
         assert_eq!(Checking::after(1).conclude(&issues, &[], TWICE), pass(2));
     }
 
@@ -105,10 +110,9 @@ mod round_checks {
         }
     }
 
-    // Rule: with both kinds the team goes first: what it can fix is fixed before the human is bothered, and the human is
-    // asked about everything when the passes are used.
+    // Rule: with both kinds the human is asked first about their part; exhausted passes still ask about everything.
     #[test]
-    fn with_both_kinds_the_team_goes_first_and_the_human_is_asked_when_passes_are_used() {
+    fn with_both_kinds_the_human_goes_first_and_all_are_asked_when_passes_are_used() {
         let issues = [for_the_human(), for_the_team()];
 
         assert_eq!(Checking::after(0).conclude(&issues, &[], TWICE), pass(1));
