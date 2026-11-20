@@ -269,3 +269,47 @@ async fn a_fix_pass_held_for_its_plan_is_not_taken_as_the_fix_response_of_a_rota
     let keeping = held.find_task(&tasks[0]).unwrap().member.plan().unwrap().clone();
     assert_eq!(keeping.sent_back(), 1);
 }
+
+#[tokio::test]
+async fn a_coordinators_done_after_it_integrated_the_last_member_is_sent_back_for_its_open_steps() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,integrate,integrate"),
+            normal("claude-1", "fix-held:1"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 3\n"),
+    )
+    .unwrap();
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let lead = rig.worktree(&tasks[0]);
+    std::fs::create_dir_all(lead.join(".agent")).unwrap();
+    std::fs::write(
+        lead.join(".agent/plan.md"),
+        "Lead it — zażółć.\n\n1. Integrate\n[x] 1.1 Merge one\n[ ] 1.2 Check the merge\n",
+    )
+    .unwrap();
+    let member = rig.worktree(&tasks[1]);
+    rig.wait_for("the member's run to start", || member.join(".fake-started-1").exists())
+        .await;
+    std::fs::write(member.join(".fake-release-1"), "").unwrap();
+    let third = rig.prompt(&tasks[0], 3).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        third.contains("are still to do or in hand: 1.2. Finish each"),
+        "{third}"
+    );
+}
