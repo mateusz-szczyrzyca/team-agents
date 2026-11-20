@@ -87,6 +87,10 @@ type Reservation struct {
 	Task     string    `json:"task"`     // holder's task
 	Note     string    `json:"note"`     // why it was reserved
 	Since    Timestamp `json:"since"`    // when the reservation was made
+	// PID is the agentbus process of the run that holds it: an agent in two teams has a run in each, and the bus
+	// keeps one presence per agent name, so the holder's own process tells when it is gone. 0 in a reservation of
+	// an older version: it is held while the agent has a presence.
+	PID int `json:"pid,omitempty"`
 }
 
 // Investigation is a request handled by an investigator (an advanced, expensive model):
@@ -258,6 +262,16 @@ func alive(pid int) bool {
 	return err == nil && bytes.Contains(cmd, []byte("agentbus"))
 }
 
+// held reports whether the run that took the reservation is still there: its own process, or — for a reservation
+// of an older version, which names no process — a presence of its agent.
+func (r *Reservation) held(st *State) bool {
+	if r.PID != 0 {
+		return alive(r.PID)
+	}
+	_, ok := st.Agents[r.Agent]
+	return ok
+}
+
 // gc removes presences of dead agentbus processes and releases their reservations. Announcing an
 // automatic release is a side effect of whatever operation triggered the cleanup, so a failure is logged.
 func (b *Bus) gc(st *State) {
@@ -268,7 +282,7 @@ func (b *Bus) gc(st *State) {
 		}
 	}
 	for res, r := range st.Reservations {
-		if _, ok := st.Agents[r.Agent]; !ok {
+		if !r.held(st) {
 			delete(st.Reservations, res)
 			ev := EventAutoReleased{Resource: res, Holder: r.Agent, Reason: ReleaseAgentGone}
 			if _, err := b.post(st, "agentbus", "all", ev); err != nil {
@@ -455,8 +469,8 @@ func (s *Server) unregister() {
 		}
 		delete(st.Agents, s.me)
 		for res, r := range st.Reservations {
-			if r.Agent != s.me {
-				continue
+			if r.Agent != s.me || r.Task != s.info.Task {
+				continue // the agent's other task keeps its own
 			}
 			delete(st.Reservations, res)
 			ev := EventAutoReleased{Resource: res, Holder: s.me, Reason: ReleaseAgentFinished}
@@ -647,12 +661,12 @@ func (s *Server) reserve(res, note string, wait int) (string, *ReserveError) {
 			r, held := st.Reservations[res]
 			switch {
 			case !held:
-				st.Reservations[res] = &Reservation{Resource: res, Agent: s.me, Task: s.info.Task, Note: note, Since: Now()}
+				st.Reservations[res] = &Reservation{Resource: res, Agent: s.me, Task: s.info.Task, Note: note, Since: Now(), PID: os.Getpid()}
 				if _, serr := s.bus.post(st, s.me, "all", EventReserved{Resource: res, Note: note}); serr != nil {
 					return fromStorage(ReserveStorage, serr)
 				}
 				granted, msg = true, "OK: reserved "+res+". Release it right after you are done."
-			case r.Agent == s.me:
+			case r.Agent == s.me && r.Task == s.info.Task:
 				r.Note = note
 				granted, msg = true, "OK: "+res+" is already yours."
 			default:
@@ -684,7 +698,7 @@ func (s *Server) release(res string) (string, *ReleaseError) {
 		switch {
 		case !held:
 			msg = res + " was not reserved."
-		case r.Agent != s.me:
+		case r.Agent != s.me || r.Task != s.info.Task:
 			return opErr(ReleaseNotHolder, "%s belongs to %s — you cannot release it", res, r.Agent)
 		default:
 			delete(st.Reservations, res)
