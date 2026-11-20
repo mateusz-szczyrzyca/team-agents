@@ -20,11 +20,6 @@ fn read(text: &str) -> PlanRead {
     }
 }
 
-/// The plan of `text`, which must parse.
-fn plan(text: &str) -> Plan {
-    parse_plan(text).expect("the plan parses")
-}
-
 /// The task of the members the tests make.
 fn task(n: u32) -> TaskId {
     format!("task-20261111-1530{n:02}-k3x9").parse().expect("a task")
@@ -33,6 +28,11 @@ fn task(n: u32) -> TaskId {
 /// The participant of the members the tests make.
 fn normal(name: &str) -> Participant {
     Participant::Normal(name.parse().expect("an agent"))
+}
+
+/// The plan of `text`, which must parse.
+fn plan(text: &str) -> Plan {
+    parse_plan(text).expect("the plan parses")
 }
 
 /// An item ID.
@@ -210,14 +210,14 @@ fn each_fault_of_a_plan_goes_back_with_its_own_reason() {
             None,
             PlanReason::Unreadable {
                 line: Some(2.try_into().expect("a line")),
-                detail: "line 2: malformed step line: it must start with [ ], [>], [x] or [-]".to_owned(),
+                detail: "line 2: malformed step line".to_owned(),
             },
         ),
         (
             unfinished,
             None,
             PlanReason::Unfinished {
-                steps: vec![item("1.1")],
+                steps: vec![item("1.1"), item("1.2")],
             },
         ),
         (
@@ -364,11 +364,7 @@ fn a_send_back_the_human_granted_raises_the_limit() {
         policy: &policy(),
     });
 
-    let reason = PlanReason::Unreadable {
-        line: Some(2.try_into().expect("a line")),
-        detail: "line 2: the step is given up and its text does not say why".to_owned(),
-    };
-    assert_eq!(verdict, PlanVerdict::SendBack(reason));
+    assert_eq!(verdict, PlanVerdict::SendBack(PlanReason::Missing));
 }
 
 #[test]
