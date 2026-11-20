@@ -530,6 +530,7 @@ case $action in
       [[ -e .fake-base-ready ]] && break
       sleep 0.1
     done
+    rm -f .fake-base-ready
     git fetch -q origin main
     git "${GIT_FIXTURE[@]}" merge -q --no-ff --no-edit origin/main
     if [[ $action == merge-base-other ]]; then
