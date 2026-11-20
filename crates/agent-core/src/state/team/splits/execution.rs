@@ -42,9 +42,7 @@ impl Team {
             .filter(|round| round.part_pull_request().is_some())
             .filter_map(|round| round.part())
             .collect();
-        plan.entries().find(|(id, definition)| {
-            !merged.contains(&id.key()) && definition.depends_on.iter().all(|key| merged.contains(key))
-        })
+        crate::decide::split::ready_entries(plan, &merged).next()
     }
 
     /// Records a whole plan and binds the working round to its first part.
