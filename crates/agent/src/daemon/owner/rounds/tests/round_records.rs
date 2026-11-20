@@ -476,6 +476,7 @@ async fn agent_run_prints_the_round_of_each_item_and_agent_status_of_a_round_sho
     .await;
     rig.start().await;
     let request = agent_core::protocol::RunRequest {
+        allow_unpushed_base: false,
         repo: "example".parse().unwrap(),
         checkout: agent_core::config::AbsolutePath::try_from(rig.repo.to_str().unwrap().to_owned()).unwrap(),
         agents: agent_core::protocol::AgentList::try_from(vec![

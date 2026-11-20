@@ -125,6 +125,7 @@ async fn restart_after_the_saved_turn_limit_resumes_once_and_keeps_the_budget() 
             .handle(Message::Request {
                 client: Client::Cli,
                 command: Command::Run(RunRequest {
+                    allow_unpushed_base: false,
                     repo: "example".parse().unwrap(),
                     checkout: rig.repo.to_str().unwrap().parse().unwrap(),
                     agents: AgentList::try_from(vec!["claude-1".parse().unwrap()]).unwrap(),
@@ -194,6 +195,7 @@ async fn turn_limit_without_a_session_fails_with_its_own_notice() {
         .handle(Message::Request {
             client: Client::Cli,
             command: Command::Run(RunRequest {
+                allow_unpushed_base: false,
                 repo: "example".parse().unwrap(),
                 checkout: rig.repo.to_str().unwrap().parse().unwrap(),
                 agents: AgentList::try_from(vec!["claude-1".parse().unwrap()]).unwrap(),

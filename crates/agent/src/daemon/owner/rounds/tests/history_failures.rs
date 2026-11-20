@@ -248,6 +248,7 @@ async fn records_the_daemon_cannot_build_are_counted_as_lost() {
     .unwrap();
     let owner = owner.with_history(started.history.clone());
     let wrong_agents = RunRequest {
+        allow_unpushed_base: false,
         repo: "team-agents".parse().unwrap(),
         checkout: AbsolutePath::from_str("/work/example").unwrap(),
         agents: AgentList::try_from(vec!["claude-2".parse::<AgentName>().unwrap()]).unwrap(),

@@ -219,6 +219,17 @@ agent debug --team <team>         a diagnostic bundle with a summary that names 
 `agent <command> --help` has the options of each. The next section describes what the daemon does with a team, in
 the order the features were built.
 
+`agent run` fetches the configured base branch from `origin` before creating a team, task directory or
+worktree. If the local base has unpublished commits, it refuses with their count and the first commit's short ID
+and subject. Push those commits, or review and manually run `git reset --hard origin/<base>` before trying again
+(the reset discards local changes). Fetch errors also refuse the start. A base behind origin keeps the existing
+behavior: the initial worktree starts from the local base. Repositories without `origin` keep their existing behavior.
+
+Use `agent run --allow-unpushed-base <agents...> "task"` to explicitly start with unpublished base commits.
+The CLI prints the count and first commit; the team retains that evidence across daemon restarts, and the harness
+adds it under `## Unpushed base` in every pull request description. The flag does not bypass a failed fetch.
+Older clients and saved teams grant no such permission.
+
 ## What the daemon does
 
 

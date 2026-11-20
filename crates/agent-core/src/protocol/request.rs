@@ -127,6 +127,9 @@ pub enum Target {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunRequest {
+    /// Explicit permission to start despite local base commits absent from origin.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_unpushed_base: bool,
     /// The repository, as `[repos.NAME]` of the configuration.
     pub repo: RepoName,
     /// The local checkout the client is in: the worktrees are made from it.
@@ -570,6 +573,7 @@ mod tests {
     #[test]
     fn every_command_has_its_json_and_reads_back_equal() {
         let run = RunRequest {
+            allow_unpushed_base: false,
             repo: "team-agents".parse().unwrap(),
             checkout: "/home/dev/projects/team-agents".parse().unwrap(),
             agents: AgentList::try_from(vec![agent("codex-1"), agent("inv-opus")]).unwrap(),
@@ -578,6 +582,7 @@ mod tests {
             merge: MergeMode::Autopilot,
         };
         let with_coordinator = RunRequest {
+            allow_unpushed_base: false,
             coordinator: Some(agent("inv-opus")),
             merge: MergeMode::NoMerge,
             ..run.clone()

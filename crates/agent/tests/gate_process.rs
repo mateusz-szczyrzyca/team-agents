@@ -116,6 +116,17 @@ mod gate_process {
             let repo = root.join("example");
             std::fs::create_dir(&repo).unwrap();
             git(&repo, &["init", "-q", "-b", "main"]);
+            let origin = root.join("remote/example.git");
+            std::fs::create_dir_all(&origin).unwrap();
+            git(&origin, &["init", "-q", "--bare", "-b", "main"]);
+            git(
+                &repo,
+                &[
+                    "config",
+                    &format!("url.{}.insteadOf", origin.to_str().unwrap()),
+                    "https://example.com/org/example.git",
+                ],
+            );
             git(
                 &repo,
                 &["remote", "add", "origin", "https://example.com/org/example.git"],
@@ -123,6 +134,7 @@ mod gate_process {
             std::fs::write(repo.join("README.md"), "Hello\n").unwrap();
             git(&repo, &["add", "README.md"]);
             git(&repo, &["commit", "-q", "-m", "First"]);
+            git(&repo, &["push", "-q", "origin", "main"]);
             Self {
                 _dir: dir,
                 home,

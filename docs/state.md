@@ -29,7 +29,7 @@ The state is one JSON document, written indented with a newline at the end, the 
 
 ```json
 {
-  "schema_version": 11,
+  "schema_version": 12,
   "teams": [ { "id": "team-20261111-193000-a1b2", "...": "..." } ]
 }
 ```
@@ -125,6 +125,16 @@ remain intact. The previous-version fixture is
 main before this change with an open second fix pass and an assigned second opinion. Socket protocol and
 status output are unchanged; builds that write schema 10 cannot read a schema-11 state after it is saved.
 
+### Unpublished base commits
+
+Schema 12 adds each team's optional `unpushed_base` evidence: the base `branch`, nonzero `count`, full
+`first` commit ID and its `subject`. It is recorded only when `agent run --allow-unpushed-base` permits a
+start with commits absent from origin. The harness retains and prints this evidence in every pull request.
+Teams without the field grant no permission and have no evidence to report. Schema 11 migrates without
+changing retained investigator activities; its fixture is
+[`state-before-unpushed-base.json`](../crates/agent-core/tests/fixtures/state-before-unpushed-base.json).
+Older daemons cannot read a state saved with schema 12.
+
 ### Reading and its rules
 
 - **Strict.** A field that is not on this page is an error, in every object (`deny_unknown_fields`); so is a missing
@@ -135,8 +145,8 @@ status output are unchanged; builds that write schema 10 cannot read a schema-11
   as one that was built through the API. There is one way to read a value, the `Deserialize` trait: the field-by-field
   reading that serde derives lives on a private mirror type (`remote`), so no public `T::deserialize` skips the checks.
 - **Versioned.** `State::from_json` reads `schema_version` **first**. A state of another version is refused with
-  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 11,
-  migrates versions 1 through 10 as it reads them (see "Version 1" below); any other version is
+  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 12,
+  migrates versions 1 through 11 as it reads them (see "Version 1" below); any other version is
   refused. Version 2 is read as it is: its items have no `findings`, so a round that was open when the daemon was
   updated ends by the rules it started with (verdicts only), and the numbered findings hold for pull requests opened
   after the update. A change that old files do not satisfy raises the version and comes with a migration, a fixture of the old

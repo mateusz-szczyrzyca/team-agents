@@ -14,6 +14,13 @@ use crate::lines::{read_line, write_line};
 pub(crate) enum Answer {
     /// Writes these lines, in order.
     Lines(Vec<String>),
+    /// Waits for `wait` (on the runtime's clock), then writes these lines, in order.
+    After {
+        /// How long the stand-in takes to answer.
+        wait: std::time::Duration,
+        /// What it writes then.
+        lines: Vec<String>,
+    },
     /// Reads the request and says nothing.
     Silence,
     /// Closes the connection.
@@ -52,6 +59,12 @@ impl FakeDaemon {
                         record.lock().unwrap_or_else(PoisonError::into_inner).push(request);
                         match reply {
                             Answer::Lines(lines) => {
+                                for line in lines {
+                                    write_line(&mut write, &line).await.unwrap();
+                                }
+                            }
+                            Answer::After { wait, lines } => {
+                                tokio::time::sleep(wait).await;
                                 for line in lines {
                                     write_line(&mut write, &line).await.unwrap();
                                 }

@@ -235,7 +235,7 @@ pub(super) fn pull_text(
         .iter()
         .map(|item| item_section(texts, item))
         .collect::<Result<Vec<String>, _>>()?;
-    let body = texts.render(
+    let mut body = texts.render(
         AutopilotPrompt::PrBody,
         &Variables::new()
             .with("team", team.id().as_str())?
@@ -243,6 +243,19 @@ pub(super) fn pull_text(
             .with("gate", gate.summary())?
             .with("items", sections.join(SECTION_SEPARATOR))?,
     )?;
+    if let Some(base) = team.unpushed_base() {
+        body.push_str(SECTION_SEPARATOR);
+        body.push_str(
+            &texts.render(
+                AutopilotPrompt::PrUnpushedBase,
+                &Variables::new()
+                    .with("base", base.branch.as_str())?
+                    .with("count", base.count.to_string())?
+                    .with("first", format!("{:.7}", base.first.as_str()))?
+                    .with("subject", &base.subject)?,
+            )?,
+        );
+    }
     Ok(PullText {
         title: title.trim().chars().take(MAX_TITLE_CHARS).collect(),
         body: body.trim_end().to_owned(),

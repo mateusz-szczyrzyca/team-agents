@@ -61,6 +61,7 @@ async fn run_request_refused_below_min_free_space() {
 
     let names: Vec<AgentName> = vec!["claude-1".parse().unwrap()];
     let request = RunRequest {
+        allow_unpushed_base: false,
         repo: "example".parse().unwrap(),
         checkout: AbsolutePath::from_str(rig.repo.to_str().unwrap()).unwrap(),
         agents: AgentList::try_from(names).unwrap(),

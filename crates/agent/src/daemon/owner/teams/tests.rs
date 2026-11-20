@@ -333,6 +333,7 @@ impl Fixture {
 
     fn request(&self, agents: &[&str], list: &str, coordinator: Option<&str>) -> RunRequest {
         RunRequest {
+            allow_unpushed_base: false,
             repo: "example".parse().unwrap(),
             checkout: abs(&self.repo),
             agents: AgentList::try_from(agents.iter().map(|name| agent(name)).collect::<Vec<_>>()).unwrap(),
@@ -2018,4 +2019,181 @@ async fn a_round_is_found_by_its_id_in_status_and_show_an_unknown_one_is_not_fou
     assert_eq!(refused(missing), FailureKind::NotFound);
     assert_eq!(refused(missing_status), FailureKind::NotFound);
     assert_eq!(refused(stopped), FailureKind::Invalid);
+}
+
+/// A bare origin whose main branch initially equals the local base.
+fn base_origin(f: &Fixture) -> PathBuf {
+    let origin = f
+        .repo
+        .parent()
+        .expect("fixture repository has a parent")
+        .join("origin.git");
+    git(
+        f.repo.parent().expect("fixture repository has a parent"),
+        &["init", "--bare", "-q", "-b", "main", origin.to_str().unwrap()],
+    );
+    git(&f.repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(&f.repo, &["push", "-q", "origin", "main"]);
+    origin
+}
+
+/// Adds one local commit and returns its full ID.
+fn base_commit(repo: &Path, subject: &str) -> String {
+    git(repo, &["commit", "--allow-empty", "-q", "-m", subject]);
+    git(repo, &["rev-parse", "HEAD"])
+}
+
+#[tokio::test]
+async fn unpushed_base_is_refused_with_remedies_and_leaves_no_resources() {
+    for diverged in [false, true] {
+        let mut f = Fixture::new(&all_agents());
+        let origin = base_origin(&f);
+        let first = base_commit(&f.repo, "Żółć unpublished");
+        base_commit(&f.repo, "Second unpublished");
+        // A remote-only commit makes this a diverged base as well as an ahead base.
+        if diverged {
+            let elsewhere = f
+                .repo
+                .parent()
+                .expect("fixture repository has a parent")
+                .join("elsewhere");
+            git(
+                f.repo.parent().expect("fixture repository has a parent"),
+                &["clone", "-q", origin.to_str().unwrap(), elsewhere.to_str().unwrap()],
+            );
+            base_commit(&elsewhere, "Remote-only");
+            git(&elsewhere, &["push", "-q", "origin", "main"]);
+        }
+        f.start().await;
+        let result = f.run(&["claude-1"], PLAIN, None).await;
+        f.stop().await.unwrap();
+        assert!(matches!(&result, Err(ClientError::Refused(_))), "{result:?}");
+        let Err(ClientError::Refused(failure)) = result else {
+            panic!("expected a refusal, got {result:?}")
+        };
+        assert_eq!(failure.kind, FailureKind::Refused);
+        for expected in [
+            "2",
+            first.get(..7).expect("commit ID contains seven ASCII characters"),
+            "Żółć unpublished",
+            "push",
+            "git reset --hard origin/main",
+        ] {
+            assert!(
+                failure.message.contains(expected),
+                "{} lacks {expected}",
+                failure.message
+            );
+        }
+        assert_nothing_started(&f);
+        assert_eq!(std::fs::read_dir(f.home.tasks_dir()).unwrap().count(), 0);
+        assert_eq!(
+            git(&f.repo, &["worktree", "list", "--porcelain"])
+                .matches("worktree ")
+                .count(),
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn allowed_unpushed_base_is_reported_and_survives_daemon_restart() {
+    let mut f = Fixture::new(&all_agents());
+    base_origin(&f);
+    let first = base_commit(&f.repo, "Unpublished base");
+    f.start().await;
+    let mut request = f.request(&["claude-1"], PLAIN, None);
+    request.allow_unpushed_base = true;
+    let Reply::Started { team, tasks } = f.run_request(request).await.unwrap() else {
+        panic!("expected started")
+    };
+    f.stop().await.unwrap();
+    let before = f.state();
+    let value = serde_json::to_value(before.team(&team).unwrap()).unwrap();
+    assert_eq!(
+        value["unpushed_base"],
+        serde_json::json!({"branch":"main","count":1,"first":first,"subject":"Unpublished base"})
+    );
+    let text = crate::commands::run::render_started(&f.home, before.team(&team).unwrap());
+    for expected in [
+        "1",
+        first.get(..7).expect("commit ID contains seven ASCII characters"),
+        "Unpublished base",
+        "origin",
+    ] {
+        assert!(text.contains(expected), "{text}");
+    }
+    assert_eq!(git(&f.worktree(&tasks[0]), &["rev-parse", "HEAD"]), first);
+    f.start().await;
+    f.answered().await;
+    f.stop().await.unwrap();
+    let after = f.state();
+    assert_eq!(
+        serde_json::to_value(after.team(&team).unwrap()).unwrap()["unpushed_base"],
+        value["unpushed_base"]
+    );
+}
+
+#[tokio::test]
+async fn base_fetch_preserves_the_local_start_when_equal_behind_or_without_origin() {
+    for remote in ["none", "equal", "behind"] {
+        let mut f = Fixture::new(&all_agents());
+        if remote != "none" {
+            let origin = base_origin(&f);
+            if remote == "behind" {
+                let elsewhere = f
+                    .repo
+                    .parent()
+                    .expect("fixture repository has a parent")
+                    .join("elsewhere");
+                git(
+                    f.repo.parent().expect("fixture repository has a parent"),
+                    &["clone", "-q", origin.to_str().unwrap(), elsewhere.to_str().unwrap()],
+                );
+                base_commit(&elsewhere, "Only remote");
+                git(&elsewhere, &["push", "-q", "origin", "main"]);
+            }
+        }
+        let initial = git(&f.repo, &["rev-parse", "main"]);
+        f.start().await;
+        let (team, tasks) = f.start_team(&["claude-1"], PLAIN).await;
+        f.stop().await.unwrap();
+        assert_eq!(git(&f.worktree(&tasks[0]), &["rev-parse", "HEAD"]), initial);
+        assert_eq!(
+            serde_json::to_value(f.state().team(&team).unwrap())
+                .unwrap()
+                .get("unpushed_base"),
+            None
+        );
+    }
+}
+
+#[tokio::test]
+async fn base_fetch_failure_is_refused_even_when_unpushed_commits_are_allowed() {
+    let mut f = Fixture::new(&all_agents());
+    base_origin(&f);
+    let missing = f
+        .repo
+        .parent()
+        .expect("fixture repository has a parent")
+        .join("missing.git");
+    git(&f.repo, &["remote", "set-url", "origin", missing.to_str().unwrap()]);
+    f.start().await;
+    let mut request = f.request(&["claude-1"], PLAIN, None);
+    request.allow_unpushed_base = true;
+    let result = f.run_request(request).await;
+    f.stop().await.unwrap();
+    assert!(matches!(&result, Err(ClientError::Refused(_))), "{result:?}");
+    let Err(ClientError::Refused(failure)) = result else {
+        panic!("expected refusal: {result:?}")
+    };
+    assert_eq!(failure.kind, FailureKind::Refused);
+    assert!(failure.message.contains("fetch"), "{}", failure.message);
+    assert!(
+        failure.message.contains("does not appear to be a git repository"),
+        "{}",
+        failure.message
+    );
+    assert_nothing_started(&f);
+    assert_eq!(std::fs::read_dir(f.home.tasks_dir()).unwrap().count(), 0);
 }

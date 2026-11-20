@@ -24,6 +24,8 @@ use crate::client::{ClientError, Connection};
 /// What the command line of `agent run` says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunInput {
+    /// Explicit permission from `--allow-unpushed-base`.
+    pub(crate) allow_unpushed_base: bool,
     /// The words that are not options: the agents, and the task when there is no file.
     pub(crate) words: Vec<String>,
     /// The file with the task list, from `-f`.
@@ -236,6 +238,16 @@ pub(crate) fn render_started(home: &Home, team: &Team) -> String {
         team.repo(),
         team.merge().as_str()
     )];
+    if let Some(base) = team.unpushed_base() {
+        lines.push(format!(
+            "  allowed unpushed base {}: {} commits absent from origin/{}; first: {:.7} — {}\n",
+            base.branch,
+            base.count,
+            base.branch,
+            base.first.as_str(),
+            base.subject
+        ));
+    }
     lines.extend(
         team.allowances()
             .iter()
@@ -284,6 +296,7 @@ pub(crate) async fn prepare(directory: &Path, input: RunInput) -> Result<RunRequ
     let task_list = TaskListText::new(text)?;
     let (checkout, repo) = repository(directory).await?;
     Ok(RunRequest {
+        allow_unpushed_base: input.allow_unpushed_base,
         repo,
         checkout,
         agents,
@@ -304,7 +317,11 @@ pub(crate) async fn start(
     out: &mut impl Write,
 ) -> Result<(), RunError> {
     let warning = rotation_warning(home, &request.agents).await?;
-    let reply = connection.request(Client::Cli, Command::Run(request)).await?;
+    // The daemon fetches the base from `origin` before it starts anything, which may take longer than an ordinary
+    // request: it bounds that wait itself, and a client that gave up first would hide a team that starts anyway.
+    let reply = connection
+        .request_until_answered(Client::Cli, Command::Run(request))
+        .await?;
     let Reply::Started { team, .. } = reply else {
         return Err(RunError::UnexpectedReply { kind: kind_of(&reply) });
     };
