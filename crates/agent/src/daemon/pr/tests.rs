@@ -545,3 +545,33 @@ fn delivery_waiter_whose_round_a_stop_abandoned_is_not_published_again() {
     team.close_round(&second, at(20), RoundEnd::Abandoned).unwrap();
     assert_eq!(plan_publications(&team).unwrap(), Vec::new());
 }
+
+#[test]
+fn a_returned_delivery_publishes_independently_of_the_closed_prs_occupied_branch() {
+    let mut team = led(PARALLEL);
+    let integration = format!("agents/inv-opus/{}", task(1));
+    let first = "round-20261111-153001-q1w2".parse().unwrap();
+    let second = "round-20261111-153002-q1w2".parse().unwrap();
+    let fresh: agent_core::ids::RoundId = "round-20261111-153003-q1w2".parse().unwrap();
+    team.open_round(first, Some(item("1.1")), at(0)).unwrap();
+    team.open_round(second, Some(item("2.1")), at(0)).unwrap();
+    start(&mut team, "1.1", "claude-1", "first-work");
+    start(&mut team, "2.1", "claude-2", "returned-work");
+    review(&mut team, "1.1", 7, &integration);
+    waits(&mut team, 1);
+    waits(&mut team, 2);
+    waits(&mut team, 3);
+    let waiting = team.round_of(item("2.1")).unwrap().id().clone();
+    team.deliver_round(&waiting, pr(7, &integration).number).unwrap();
+    team.end_delivery(&waiting, at(20)).unwrap();
+    team.open_round(fresh.clone(), Some(item("2.1")), at(21)).unwrap();
+    assert_eq!(
+        plan_publications(&team).unwrap(),
+        vec![Publication {
+            head_branch: branch(&format!("{integration}-2.1-{fresh}")),
+            publish: Publish::Open {
+                items: vec![joining("2.1", "returned-work")]
+            }
+        }]
+    );
+}
