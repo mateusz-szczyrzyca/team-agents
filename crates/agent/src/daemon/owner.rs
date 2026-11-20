@@ -1102,6 +1102,21 @@ impl Owner {
             events.extend(look.events);
         }
         self.commit(task, &located, now, events, notice).await?;
+        self.report_the_end(task, &located, &end, run.final_message.as_deref(), held)
+            .await
+    }
+
+    /// What the end `end` of a run of `task`, whose agent said `message` last, means beyond its task's status: a
+    /// coordinator's delivery claim, a reviewer's review, an opinion to ask again, and the others of the team told; a run
+    /// held back for its plan tells nobody it is done.
+    async fn report_the_end(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        end: &RunEnd,
+        message: Option<&str>,
+        held: plan::PlanHeld,
+    ) -> Result<(), OwnerError> {
         if located.role == Role::Coordinator
             && matches!(
                 end,
@@ -1109,7 +1124,7 @@ impl Owner {
                     outcome: RunOutcome::Done
                 }
             )
-            && let Some(message) = run.final_message.as_deref()
+            && let Some(message) = message
         {
             self.read_delivery_claim(task, &located.team, message).await?;
         }
@@ -1122,15 +1137,15 @@ impl Owner {
                 }
             )
         {
-            self.review_ended(task, &located, run.final_message.as_deref()).await?;
+            self.review_ended(task, located, message).await?;
         }
-        self.retry_unanswered_opinion(task, &located, &end).await?;
+        self.retry_unanswered_opinion(task, located, end).await?;
         if held == plan::PlanHeld::Yes {
             // The run said DONE but goes back for its plan, or waits for the human: nobody is told it is done.
             self.look_at(&located.team);
             return Ok(());
         }
-        self.after_run(task, &located, &end, run.final_message.as_deref())
+        self.after_run(task, located, end, message)
     }
 
     /// Replaces a failed opinion while preserving ordinary task settlement.
