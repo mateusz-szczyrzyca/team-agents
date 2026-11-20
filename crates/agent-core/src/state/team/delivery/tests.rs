@@ -385,3 +385,34 @@ fn persisted_ended_delivery_requires_a_claim_abandoned_round_and_valid_time() {
         assert_eq!(result.expect_err(field).classify(), serde_json::error::Category::Data);
     }
 }
+
+#[test]
+fn ending_a_completed_abandoned_part_refuses_a_stale_claim_without_mutation() {
+    let mut team = two_part_team();
+    team.deliver_round(&round_id(2), pr(7).number).unwrap();
+    team.close_round(&round_id(2), at(30), RoundEnd::Abandoned).unwrap();
+    team.complete_delivery(&round_id(2), at(40)).unwrap();
+    team.open_round(round_id(3), Some("2.1".parse().unwrap()), at(60))
+        .unwrap();
+    drive(&mut team, "2.1", PhaseKind::InProgress);
+    let before = team.clone();
+    for observation in [
+        crate::decide::delivery::DeliveryObservation::Open,
+        crate::decide::delivery::DeliveryObservation::Closed,
+        crate::decide::delivery::DeliveryObservation::Merged,
+    ] {
+        assert_eq!(
+            crate::decide::delivery::delivery_action(&team, &round_id(2), observation),
+            crate::decide::delivery::DeliveryAction::Ignore
+        );
+    }
+    assert_eq!(
+        team.end_delivery(&round_id(2), at(70)),
+        Err(EndDeliveryError::NotWaiting { round: round_id(2) })
+    );
+    assert_eq!(team, before);
+    assert_eq!(
+        serde_json::from_str::<Team>(&serde_json::to_string(&team).unwrap()).unwrap(),
+        before
+    );
+}
