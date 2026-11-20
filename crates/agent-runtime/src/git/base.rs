@@ -34,7 +34,15 @@ impl Git {
         let log = self
             .base_output(
                 GitOperation::Log,
-                &["log", "--reverse", "--topo-order", "--format=%H%x00%s", &range, "--"],
+                &[
+                    "log",
+                    "--no-show-signature",
+                    "--reverse",
+                    "--topo-order",
+                    "--format=%H%x00%s",
+                    &range,
+                    "--",
+                ],
             )
             .await?;
         let (first, subject) = log
