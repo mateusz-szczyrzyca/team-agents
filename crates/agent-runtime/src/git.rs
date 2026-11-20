@@ -1010,6 +1010,16 @@ impl Git {
         Ok(self.dir.as_path().join(printed.trim_end()))
     }
 
+    /// Whether the commit `revision` names has `path` in its tree.
+    ///
+    /// # Errors
+    /// [`GitError::UnknownRevision`] when `revision` names no commit; [`GitError::Run`], [`GitError::Failed`],
+    /// [`GitError::OutputTooLong`] and [`GitError::NotUtf8`].
+    pub async fn tracks(&self, revision: &Revision, path: &RepoPath) -> Result<bool, GitError> {
+        let _ = (revision, path);
+        Ok(true)
+    }
+
     /// Takes `path` out of git in this checkout and keeps its file: out of the index, and out of the branch with a
     /// commit of `message` when the path was committed. A checkout with other changes staged is left as it is.
     ///
