@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Notification hook for ntfy (https://ntfy.sh or self-hosted).
-# agents.conf:  NOTIFY_CMD="$HOME/agents/notify/ntfy.sh"
-# Variables (put them in ~/agents/secrets.env — notifications are sent from agent runs, which load it):
+# agents.toml:  [notifications] command = ["/home/you/notify/ntfy.sh"]   (docs/configuration.md)
+# Variables (put them in [notification_env] of secrets.toml):
 #   NTFY_URL   topic URL, e.g. https://ntfy.example.com/agents
 #   NTFY_TOKEN optional access token
 set -euo pipefail

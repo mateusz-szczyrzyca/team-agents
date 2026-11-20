@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Notification hook for Pushsafer (https://www.pushsafer.com).
-# agents.conf:  NOTIFY_CMD="$HOME/agents/notify/pushsafer.sh"
-# Variables (put them in ~/agents/secrets.env — notifications are sent from agent runs, which load it):
+# agents.toml:  [notifications] command = ["/home/you/notify/pushsafer.sh"]   (docs/configuration.md)
+# Variables (put them in [notification_env] of secrets.toml):
 #   PUSHSAFER_KEY (private or alias key), optional PUSHSAFER_DEVICE (default: all devices "a").
 set -euo pipefail
 f=$1
