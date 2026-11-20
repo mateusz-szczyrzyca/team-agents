@@ -125,15 +125,7 @@ impl Owner {
         mut keeping: ProposalKeeping,
     ) -> Result<ProposalEnd, OwnerError> {
         let parsed = read_proposal(keeping.text());
-        let read = match &parsed {
-            Ok(proposal) if proposal.parent() == item => ProposalRead::Parsed(proposal),
-            Ok(_) => ProposalRead::Unreadable { part: None },
-            Err(error) => {
-                // The diagnostic is retained in the log while the coordinator receives a catalog correction.
-                tracing::warn!(task = %task, error = %agent_runtime::process::error_chain(error), "split proposal does not read");
-                ProposalRead::Unreadable { part: None }
-            }
-        };
+        let read = proposal_read(&parsed, item, task);
         let decision = decide_proposal(
             read,
             self.parts.settings.config.split(),
@@ -278,6 +270,29 @@ impl Owner {
             self.commit(&task, &located, now, events, notice).await?;
         }
         Ok(())
+    }
+}
+
+/// Preserves a known faulty part identity while retaining the parser's cause in diagnostics.
+fn proposal_read<'a>(
+    parsed: &'a Result<agent_core::state::split::proposal::Proposal, ReadProposalError>,
+    item: ItemId,
+    task: &TaskId,
+) -> ProposalRead<'a> {
+    match parsed {
+        Ok(proposal) if proposal.parent() == item => ProposalRead::Parsed(proposal),
+        Ok(_) => ProposalRead::Unreadable { part: None },
+        Err(error) => {
+            // The diagnostic is retained in the log while the coordinator receives a catalog correction.
+            tracing::warn!(task = %task, error = %agent_runtime::process::error_chain(error), "split proposal does not read");
+            let part = match error {
+                ReadProposalError::Estimate { part } => part
+                    .checked_sub(1)
+                    .and_then(agent_core::state::split::PartKey::at_position),
+                ReadProposalError::TooLarge | ReadProposalError::Json { .. } => None,
+            };
+            ProposalRead::Unreadable { part }
+        }
     }
 }
 

@@ -23,8 +23,8 @@ pub struct PartKey(
 impl PartKey {
     /// The key assigned to a zero-based position, or `None` beyond the supported alphabet.
     #[must_use]
-    pub fn at_position(_position: usize) -> Option<Self> {
-        None
+    pub fn at_position(position: usize) -> Option<Self> {
+        PART_KEYS.chars().nth(position).map(Self)
     }
 }
 
