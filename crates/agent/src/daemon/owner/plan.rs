@@ -310,7 +310,7 @@ impl Owner {
             .state
             .find_task(task)
             .and_then(|found| found.member.current_run().map(|run| run.id().clone()));
-        // Only a parsed plan of a run that may be sent back is compared with the version before: in every other case the
+        // Only a parsed plan of a run that may be sent back is compared with the earlier versions: in every other case the
         // decision needs no history, and the run's end reads none.
         let policy = self.parts.settings.config.plan();
         let may_be_sent_back = matches!(found.read, PlanRead::Parsed(_))
@@ -322,10 +322,10 @@ impl Owner {
             )
             && policy.bounces() > 0
             && policy.roles().contains(&located.role);
-        let previous = if may_be_sent_back {
-            self.previous_plan(task, run.as_ref()).await
+        let earlier = if may_be_sent_back {
+            self.earlier_plans(task, run.as_ref()).await
         } else {
-            None
+            Vec::new()
         };
         self.keep_plan(task, located, run, &found)?;
         let verdict = {
@@ -339,7 +339,7 @@ impl Owner {
                 role: located.role,
                 end,
                 read: &found.read,
-                earlier: previous.as_slice(),
+                earlier: &earlier,
                 keeping: member.plan(),
                 policy: self.parts.settings.config.plan(),
             })
@@ -358,47 +358,48 @@ impl Owner {
         })
     }
 
-    /// The last version of the plan of `task` the history kept from a run other than `run`; `None` when there is none or
-    /// the history cannot be read (logged): a step lost since then is then not found.
-    async fn previous_plan(&self, task: &TaskId, run: Option<&RunId>) -> Option<Plan> {
+    /// The versions of the plan of `task` the history kept from runs other than `run`, oldest first; none when the
+    /// history cannot be read (logged): a step lost since then is then not found. A kept version that does not parse is
+    /// left out and logged.
+    async fn earlier_plans(&self, task: &TaskId, run: Option<&RunId>) -> Vec<Plan> {
         let path = self.parts.store.home().history_file();
-        let (task_id, run_id) = (task.clone(), run.cloned());
-        let looked = tokio::task::spawn_blocking(move || {
-            Reader::open(&path).and_then(|reader| reader.last_plan_version_before(&task_id, run_id.as_ref()))
-        })
-        .await;
-        let record = match looked {
-            Ok(Ok(record)) => record?,
+        let task_id = task.clone();
+        let looked =
+            tokio::task::spawn_blocking(move || Reader::open(&path).and_then(|reader| reader.plan_versions(&task_id)))
+                .await;
+        let records = match looked {
+            Ok(Ok(records)) => records,
             Ok(Err(error)) => {
                 // A home without a history (or one disabled) has kept no plan: nothing can be found lost.
                 tracing::debug!(task = %task, error = %error_chain(&error), "no plan kept before can be read");
-                return None;
+                return Vec::new();
             }
             Err(error) => {
                 tracing::warn!(
                     event = LogEvent::HistoryRecordIncomplete.as_str(),
                     task = %task,
                     %error,
-                    "the plan kept before cannot be read: no step is found lost"
+                    "the plans kept before cannot be read: no step is found lost"
                 );
-                return None;
+                return Vec::new();
             }
         };
-        match record.read {
-            HistoryPlanRead::Version { text } => match parse_plan(&text) {
-                Ok(plan) => Some(plan),
-                Err(error) => {
-                    tracing::warn!(
-                        event = LogEvent::HistoryRecordIncomplete.as_str(),
-                        task = %task,
-                        %error,
-                        "the plan kept before does not parse: no step is found lost"
-                    );
-                    None
-                }
-            },
-            HistoryPlanRead::Missing | HistoryPlanRead::Unreadable { .. } => None,
+        let mut plans = Vec::new();
+        for record in records.into_iter().filter(|record| record.run.as_ref() != run) {
+            let HistoryPlanRead::Version { text } = record.read else {
+                continue;
+            };
+            match parse_plan(&text) {
+                Ok(plan) => plans.push(plan),
+                Err(error) => tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    %error,
+                    "a plan kept before does not parse: its steps are not looked for"
+                ),
+            }
         }
+        plans
     }
 
     /// Hands what was found of the plan of `task` at the end of `run` to the history.
