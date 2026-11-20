@@ -17,9 +17,7 @@ async fn split_answer_reports_recorded_parts_and_rejection_reasons() {
                 agent_core::protocol::Response::ok(request.id, Reply::Applied { tasks: vec![task(1)] }),
             ))
             .unwrap();
-            frame["result"]["reply"] = serde_json::json!({
-                "kind": "answered", "tasks": [task(1)], "split": reply,
-            });
+            frame["split"] = serde_json::json!(reply);
             Answer::Lines(vec![format!("{}\n", serde_json::to_string(&frame).unwrap())])
         });
         let mut connection = Connection::connect(daemon.socket()).await.unwrap();
