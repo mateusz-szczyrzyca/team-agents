@@ -164,7 +164,12 @@ async fn zero_resumes_notifies_with_the_exact_exhaustion_text_and_restart_does_n
     rig.pin_turn_limit_clock();
     let path = rig.home.config_file();
     let config = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(path, format!("{config}\n[limits]\nturn_limit_resumes = 0\n")).unwrap();
+    // The rung of a new session is off: this test is about the end of the resumes of the same session.
+    std::fs::write(
+        path,
+        format!("{config}\n[limits]\nturn_limit_resumes = 0\n[replacement]\nnew_sessions = 0\n"),
+    )
+    .unwrap();
     rig.start().await;
     let (_, tasks) = rig
         .run(&["claude-1"], "Finish the work.", MergeMode::Autopilot, None)

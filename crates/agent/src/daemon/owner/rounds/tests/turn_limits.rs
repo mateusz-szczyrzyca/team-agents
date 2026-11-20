@@ -112,6 +112,10 @@ async fn configured_max_turns_reaches_the_cli_process() {
 #[tokio::test]
 async fn one_resume_allows_two_turn_limits_then_fails_and_notifies_once() {
     let mut rig = rig("turn-limit", 1).await;
+    // The rung of a new session is off: this test is about the end of the resumes of the same session.
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("[replacement]\nnew_sessions = 0\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
     rig.start().await;
     let (team, tasks) = rig
         .run(&["claude-1"], "Finish the work.", MergeMode::Autopilot, None)
