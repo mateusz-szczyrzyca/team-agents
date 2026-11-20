@@ -8,7 +8,9 @@ use agent_core::state::{PrNumber, Timestamp};
 use agent_runtime::git::GitError;
 use agent_runtime::github::{GitHubError, GitHubOperation, Outlook, Rejection};
 
-use crate::daemon::owner::rounds::waiting::github::{Failure, MAX_WAITS, Step, Waits, clock_time, outlook_of};
+use crate::daemon::owner::rounds::waiting::github::{
+    Failure, MAX_WAITS, Step, WaitingStep, Waits, clock_time, outlook_of,
+};
 
 fn team() -> TeamId {
     "team-20261120-070000-wt01".parse().unwrap()
@@ -25,7 +27,7 @@ fn round() -> Step {
 }
 
 /// The step of a second opinion: reading the pull request before the investigator's worktree is made.
-const OPINION: &str = "prepare a second opinion";
+const OPINION: WaitingStep = WaitingStep::AskOpinion;
 
 #[test]
 fn a_first_failure_waits_thirty_seconds_and_each_further_one_doubles_the_wait() {
@@ -110,7 +112,7 @@ fn the_line_of_a_wait_names_the_step_the_tries_and_the_next_try_in_local_time() 
         .failed(
             &round(),
             &team(),
-            "get pull request",
+            WaitingStep::AskOpinion,
             Some(PrNumber::new(NonZeroU32::new(138).unwrap())),
             "timed out".to_owned(),
             Outlook::MayPass,
@@ -121,7 +123,7 @@ fn the_line_of_a_wait_names_the_step_the_tries_and_the_next_try_in_local_time() 
 
     assert_eq!(
         wait.line(two_hours),
-        "get pull request #138, tried 1 time, next try 02:05"
+        "prepare a second opinion #138, tried 1 time, next try 02:05"
     );
     assert_eq!(clock_time(at("2026-11-20T00:07:00Z"), two_hours), "02:07");
 }
@@ -148,7 +150,7 @@ fn next_due_is_the_latest_try_of_the_steps_asked_and_none_for_a_refusal() {
     );
     assert_eq!(waits.next_due(&round_id, &[OPINION], at("2026-11-20T01:00:30Z")), None);
     assert_eq!(
-        waits.next_due(&round_id, &["another step"], at("2026-11-20T01:00:00Z")),
+        waits.next_due(&round_id, &[WaitingStep::OpinionEnded], at("2026-11-20T01:00:00Z")),
         None
     );
     // A step that waited for a pause and now waits for the human keeps the round until the human resumes it.
