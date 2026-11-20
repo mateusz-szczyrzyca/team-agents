@@ -5,7 +5,7 @@ use agent_core::state::{SCHEMA_VERSION, State};
 fn schema_three_migrates_without_opting_existing_items_into_independent_reviews() {
     let old = include_str!("fixtures/state-before-independent-reviews.json");
     let state = State::from_json(old).unwrap();
-    assert_eq!(SCHEMA_VERSION, 13);
+    assert_eq!(SCHEMA_VERSION, 14);
     assert!(
         state
             .teams()
@@ -17,7 +17,7 @@ fn schema_three_migrates_without_opting_existing_items_into_independent_reviews(
     assert_eq!(
         saved,
         include_str!("fixtures/state-before-independent-reviews-activities.json")
-            .replace("\"schema_version\": 11", "\"schema_version\": 13")
+            .replace("\"schema_version\": 11", "\"schema_version\": 14")
     );
     assert_eq!(State::from_json(&saved).unwrap(), state);
 }

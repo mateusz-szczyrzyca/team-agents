@@ -5,7 +5,7 @@ use agent_core::state::{SCHEMA_VERSION, State};
 fn schema_six_findings_migrate_without_consuming_a_second_opinion() {
     let old = include_str!("fixtures/state-before-second-opinions.json");
     let state = State::from_json(old).unwrap();
-    assert_eq!(SCHEMA_VERSION, 13);
+    assert_eq!(SCHEMA_VERSION, 14);
     let ledger = state.teams()[0].items()[1].findings().unwrap();
     assert_eq!(ledger.opinions().len(), 0);
     assert_eq!(ledger.open().len(), 1);
@@ -13,7 +13,7 @@ fn schema_six_findings_migrate_without_consuming_a_second_opinion() {
     assert_eq!(
         state.to_json().unwrap(),
         include_str!("fixtures/state-before-second-opinions-activities.json")
-            .replace("\"schema_version\": 11", "\"schema_version\": 13")
+            .replace("\"schema_version\": 11", "\"schema_version\": 14")
     );
     assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
 }

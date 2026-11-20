@@ -11,11 +11,11 @@ fn schema_seven_active_fix_pass_migrates_without_inventing_answers() {
         std::collections::BTreeSet::default()
     );
     assert_eq!(ledger.opinions().len(), 0);
-    assert_eq!(SCHEMA_VERSION, 13);
+    assert_eq!(SCHEMA_VERSION, 14);
     assert_eq!(
         state.to_json().unwrap(),
         include_str!("fixtures/state-before-opinion-responses-activities.json")
-            .replace("\"schema_version\": 11", "\"schema_version\": 13")
+            .replace("\"schema_version\": 11", "\"schema_version\": 14")
     );
     assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
 }
