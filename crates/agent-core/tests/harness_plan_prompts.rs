@@ -68,7 +68,10 @@ mod harness_plan_prompts {
                     ("task", "task-20261120-090000-abcd"),
                     ("agent", "claude-1"),
                     ("count", "3"),
-                    ("reason", "steps 1.2 and 2.1 are still to do or in hand — zażółć"),
+                    (
+                        "reason",
+                        "> ## Your plan is not finished\n>\n> Steps 1.2 and 2.1 are still to do or in hand — zażółć.",
+                    ),
                 ],
                 "notice-plan-question.txt",
             ),
@@ -99,7 +102,7 @@ mod harness_plan_prompts {
                 ("task", "task-20261120-090000-abcd"),
                 ("agent", "claude-1"),
                 ("count", "3"),
-                ("reason", "there is no plan"),
+                ("reason", "> ## Your plan is missing\n>\n> There is no plan."),
             ],
         );
 
