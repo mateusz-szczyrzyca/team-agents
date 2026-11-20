@@ -1053,9 +1053,7 @@ impl Config {
     /// Whether a task whose runs go bad is started in a new session, and how often.
     #[must_use]
     pub fn replacement(&self) -> Replacement {
-        Replacement {
-            new_sessions: RenewalLimit::default(),
-        }
+        self.replacement.clone()
     }
 
     /// The dashboard's address and logins.
