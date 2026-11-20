@@ -431,6 +431,12 @@ case $action in
     ;;
   fail) result 'I could not do it.\nSTATUS: FAILED' ;;
   nostatus) result 'I think that is all.' ;;
+  nostatus-dirty)
+    # Leaves a file it did not commit and ends without a status, as a session that went bad in the middle of its work.
+    hide_own_files
+    echo "draft of run $n" > draft.txt
+    result 'I think that is all.'
+    ;;
   nostatus-hold-2)
     if ((n == 2)); then
       while [[ ! -f .fake-continue ]]; do
