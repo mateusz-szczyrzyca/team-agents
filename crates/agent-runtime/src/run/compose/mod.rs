@@ -17,6 +17,10 @@ use agent_core::task_list::Item;
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
 use crate::prompts::{PromptLoader, RenderPromptError};
 
+mod briefing;
+
+pub use briefing::{Briefing, BriefingCommit, BriefingMessage, BriefingStep, briefing};
+
 /// Why a run is resumed instead of started: what its prompt tells the agent about the interruption.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResumeReason {

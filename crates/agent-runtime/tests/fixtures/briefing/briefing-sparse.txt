@@ -1,0 +1,38 @@
+# A NEW SESSION ON A TASK THAT WAS ALREADY STARTED
+
+You work on task task-20261120-144101-r7q2 again, in a new session. The session before you went bad:
+
+its last three runs ended without a `STATUS:` line
+
+You do not have its memory; this briefing is what you need to go on without asking anybody.
+
+Go on from this state. Do not start over, and do not undo the commits below: the work in the worktree and on the
+branch is the work of the runs before yours and is yours to finish.
+
+## The task you were given
+
+Fix the parser.
+
+## The branch
+
+The work is on branch agents/deepinfra-deepseek/task-20261120-191109-qesn-1.1, forked from main.
+
+Nothing of the branch is committed yet: its first commit is the first thing you do.
+
+## What is uncommitted
+
+Everything the worktree had when the last run before yours began is kept as a snapshot, refs/agents/snapshots/round-1/task-20261120-144101-r7q2/1. The worktree
+keeps it all, but none of it is in your branch until you commit it.
+
+No file of the worktree is left uncommitted.
+
+The task keeps no plan of steps.
+
+No message of your team waits unread.
+
+## What to do now
+
+1. Find where the work stands: read the files above, the end of the branch's history and the task's own prompt.
+2. Go on with what is left of the task, in the same worktree, the same branch and the same task.
+3. Follow your rules: test first, small commits, and only the work of this task.
+4. End your turn with a `STATUS:` line, as your first message says.

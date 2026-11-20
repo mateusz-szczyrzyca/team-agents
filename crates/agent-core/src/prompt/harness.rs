@@ -46,6 +46,8 @@ pub enum HarnessPrompt {
     ResumeTurnLimit,
     /// Continue a session after the run ended without a STATUS: line.
     ResumeNoStatus,
+    /// The briefing of a task started in a new session after its runs went bad.
+    Briefing,
     /// Tell the human that consecutive turn-limit resumes are exhausted.
     NoticeTurnLimitExhausted,
     /// Tell the human that a turn-limited run had no session to resume.
@@ -110,6 +112,7 @@ impl HarnessPrompt {
         Self::ResumeLimit,
         Self::ResumeTurnLimit,
         Self::ResumeNoStatus,
+        Self::Briefing,
         Self::NoticeTurnLimitExhausted,
         Self::NoticeTurnLimitNoSession,
         Self::PromptFile,
@@ -169,6 +172,22 @@ impl HarnessPrompt {
             Self::ResumeRestart => PromptSpec::new("harness/run/resume-restart.md", Audience::Model, &[]),
             Self::ResumeTurnLimit => PromptSpec::new("harness/run/resume-turn-limit.md", Audience::Model, &[]),
             Self::ResumeNoStatus => PromptSpec::new("harness/run/resume-no-status.md", Audience::Model, &[]),
+            Self::Briefing => PromptSpec::new(
+                "harness/run/briefing.md",
+                Audience::Model,
+                &[
+                    "reason",
+                    "task",
+                    "prompt",
+                    "base",
+                    "branch",
+                    "commits",
+                    "uncommitted",
+                    "snapshot",
+                    "plan",
+                    "messages",
+                ],
+            ),
             Self::NoticeTurnLimitExhausted => PromptSpec::new(
                 "harness/run/notice-turn-limit-exhausted.md",
                 Audience::Human,
