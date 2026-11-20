@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::run::{Run, RunEnd, RunState};
 use super::values::Timestamp;
-use crate::decide::ladder::{self, Trouble};
+use crate::decide::ladder::Trouble;
 
 /// Renewals of one task, recorded by [`Member::renew`](super::Member::renew): how many times it was started in a new
 /// session after its runs went bad, and when the last renewal happened.
@@ -163,12 +163,4 @@ pub(super) fn bad_runs_in_a_row(runs: &[Run], since: Option<Timestamp>, trouble:
         })
         .count();
     u32::try_from(count).unwrap_or(u32::MAX)
-}
-
-/// The renewals as the ladder reads them, with the configured limit.
-pub(super) fn as_ladder(renewals: Option<&Renewals>, limit: ladder::Renewals) -> ladder::Renewals {
-    ladder::Renewals {
-        used: renewals.map_or(0, Renewals::used),
-        allowed: limit.allowed,
-    }
 }

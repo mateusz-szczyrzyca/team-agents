@@ -71,11 +71,7 @@ fn a_task_started_anew_forgets_the_session_of_its_runs_before_and_keeps_the_new_
         .expect("the run ends");
 
     assert_eq!(member.last_session(), Some(&new_session));
-    assert_eq!(
-        member.renewals().map(|renewals| renewals.used()),
-        Some(1),
-        "the renewal is counted"
-    );
+    assert_eq!(member.renewals().map(Renewals::used), Some(1), "the renewal is counted");
 }
 
 #[test]
@@ -86,7 +82,7 @@ fn a_renewal_is_kept_and_round_trips_through_the_state() {
     let loaded = State::from_json(&saved).expect("it loads again");
 
     let found = loaded.find_task(&task()).expect("the task");
-    assert_eq!(found.member.renewals().map(|renewals| renewals.used()), Some(1));
+    assert_eq!(found.member.renewals().map(Renewals::used), Some(1));
     assert!(found.member.last_session().is_none());
 }
 
@@ -119,5 +115,5 @@ fn a_state_whose_renewal_does_not_follow_its_run_is_refused() {
 
     let refused = State::from_json(&written.to_string());
 
-    assert!(refused.is_err());
+    assert!(refused.is_err(), "the renewal precedes the run: {refused:?}");
 }
