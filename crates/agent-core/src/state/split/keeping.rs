@@ -70,6 +70,9 @@ impl ProposalKeeping {
     /// # Errors
     /// Returns [`ReadProposalError::TooLarge`] when the input exceeds the questions-file bound.
     pub fn new(text: String) -> Result<Self, ReadProposalError> {
+        if text.len() > crate::questions::MAX_QUESTIONS_BYTES {
+            return Err(ReadProposalError::TooLarge);
+        }
         Ok(Self {
             text,
             corrections: 0,
@@ -92,13 +95,21 @@ impl ProposalKeeping {
     ///
     /// # Errors
     /// Returns [`ReadProposalError::TooLarge`] without mutation if the input is too large.
-    pub fn resubmit(&mut self, _text: String) -> Result<(), ReadProposalError> {
+    pub fn resubmit(&mut self, text: String) -> Result<(), ReadProposalError> {
+        let replacement = Self::new(text)?;
+        self.text = replacement.text;
+        self.stage = replacement.stage;
         Ok(())
     }
     /// Records one rejection and its undelivered reason; the count saturates rather than wrapping.
-    pub fn send_back(&mut self, _fault: ProposalFault) {}
+    pub fn send_back(&mut self, fault: ProposalFault) {
+        self.corrections = self.corrections.saturating_add(1);
+        self.stage = ProposalStage::Correction { fault };
+    }
     /// Records the question already written for the human.
-    pub fn asked(&mut self, _question: NonZeroU32) {}
+    pub fn asked(&mut self, question: NonZeroU32) {
+        self.stage = ProposalStage::Asked { question };
+    }
 }
 #[cfg(test)]
 mod tests;
