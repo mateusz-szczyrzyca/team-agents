@@ -131,6 +131,16 @@ fn delivery_metadata_cannot_forge_team_ownership_or_item_phase_when_read() {
 fn delivery_refuses_prs_owned_only_by_abandoned_or_approved_rounds() {
     for end in [RoundEnd::Abandoned, RoundEnd::Approved] {
         let mut team = working();
+        if end == RoundEnd::Approved {
+            team.advance_item(
+                "1.2".parse().unwrap(),
+                ItemPhase::Approved {
+                    pr: pr(7),
+                    reviews: Vec::new(),
+                },
+            )
+            .unwrap();
+        }
         team.close_round(&round_id(1), at(30), end).unwrap();
         let before = team.clone();
         assert_eq!(
