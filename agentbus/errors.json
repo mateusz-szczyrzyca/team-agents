@@ -43,6 +43,16 @@
      "name": "NotInTeam",
      "class": "NotInTeam",
      "doc": "the recipient is \"team\" but the caller is not in a team"
+    },
+    {
+     "name": "NotInYourTeam",
+     "class": "NotInTeam",
+     "doc": "the recipient is no member of the caller's team, and is no recipient the bus knows outside teams"
+    },
+    {
+     "name": "AmbiguousAgent",
+     "class": "Conflict",
+     "doc": "the caller is outside teams and the agent is in more than one open team: the message needs a task"
     }
    ]
   },

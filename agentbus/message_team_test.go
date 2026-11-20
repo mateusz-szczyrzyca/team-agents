@@ -201,3 +201,89 @@ func TestAWokenMemberReadsTheMessagesOfItsTeamAndNotTheOldCursor(t *testing.T) {
 		}
 	})
 }
+
+func TestADirectMessageToANameOutsideMyTeamIsRefusedWithItsMembers(t *testing.T) {
+	b := newBus(t)
+	woken := captureWakes(t)
+	twoTeams(t, b)
+
+	err := failure(t, SendMessageNotInYourTeam)(server(b, "lead-a", inTeam("A")).sendMessage("lead-b", "take item 1.1", true))
+
+	if !strings.Contains(err.Message, "codex-1") || !strings.Contains(err.Message, "lead-a") {
+		t.Fatalf("the refusal must list the members of the team, got: %s", err.Message)
+	}
+	if len(*woken) != 0 || strings.Contains(allMessages(t, b), "take item 1.1") {
+		t.Fatalf("a refused message woke %v or was stored", *woken)
+	}
+}
+
+func TestADirectMessageToTheHumanIsNotRefusedByATeamMember(t *testing.T) {
+	b := newBus(t)
+	captureWakes(t)
+	twoTeams(t, b)
+
+	chk(t).ok(toolResult(server(b, "lead-a", inTeam("A")).send("human", "the gate fails")))
+}
+
+func TestADirectMessageToTheTaskOfATeamMateIsDeliveredToIt(t *testing.T) {
+	b := newBus(t)
+	woken := captureWakes(t)
+	twoTeams(t, b)
+
+	chk(t).ok(toolResult(server(b, "lead-a", inTeam("A")).send("task-codex-1-a", "take item 1.1")))
+
+	if got := *woken; len(got) != 1 || got[0] != "task-codex-1-a" {
+		t.Fatalf("woken %v, want the task named", got)
+	}
+	if out := readOutput(t, b, "codex-1", "A"); !strings.Contains(out, "take item 1.1") {
+		t.Fatalf("the task named did not read its message:\n%s", out)
+	}
+}
+
+func TestAMessageFromOutsideTeamsToAnAgentInTwoTeamsIsRefusedWithTheirTasks(t *testing.T) {
+	b := newBus(t)
+	woken := captureWakes(t)
+	twoTeams(t, b)
+
+	err := failure(t, SendMessageAmbiguousAgent)(server(b, "human").sendMessage("codex-1", "please look", true))
+
+	if !strings.Contains(err.Message, "task-codex-1-a") || !strings.Contains(err.Message, "task-codex-1-b") {
+		t.Fatalf("the refusal must name every task, got: %s", err.Message)
+	}
+	if len(*woken) != 0 {
+		t.Fatalf("a refused message woke %v", *woken)
+	}
+}
+
+func TestAMessageFromOutsideTeamsToATaskIsDeliveredToThatTaskOnly(t *testing.T) {
+	b := newBus(t)
+	woken := captureWakes(t)
+	twoTeams(t, b)
+
+	chk(t).ok(toolResult(server(b, "human").send("task-codex-1-b", "take item 1.2 of team B")))
+
+	if got := *woken; len(got) != 1 || got[0] != "task-codex-1-b" {
+		t.Fatalf("woken %v, want only the task named", got)
+	}
+	if out := readOutput(t, b, "codex-1", "B"); !strings.Contains(out, "take item 1.2 of team B") {
+		t.Fatalf("the task named did not read its message:\n%s", out)
+	}
+	if out := readOutput(t, b, "codex-1", "A"); strings.Contains(out, "take item 1.2 of team B") {
+		t.Fatalf("the other task read the message:\n%s", out)
+	}
+}
+
+func TestAMessageFromOutsideTeamsToAnAgentInOneTeamIsBoundToIt(t *testing.T) {
+	b := newBus(t)
+	woken := captureWakes(t)
+	createTeam(t, b, "A", map[string][3]string{"lead-a": {"normal", "", "active"}, "codex-1": {"normal", "", "sleeping"}})
+
+	chk(t).ok(toolResult(server(b, "human").send("codex-1", "please look")))
+
+	if got := *woken; len(got) != 1 || got[0] != "task-codex-1" {
+		t.Fatalf("woken %v, want the agent's one task", got)
+	}
+	if out := readOutput(t, b, "codex-1", "A"); !strings.Contains(out, "please look") {
+		t.Fatalf("the agent's team did not read the message:\n%s", out)
+	}
+}

@@ -65,6 +65,8 @@ const (
 	SendMessageMissingArgument SendMessageCause = iota // to or text is missing [InvalidArgument]
 	SendMessageToSelf                                  // the recipient is the caller itself [InvalidArgument]
 	SendMessageNotInTeam                               // the recipient is "team" but the caller is not in a team [NotInTeam]
+	SendMessageNotInYourTeam                           // the recipient is no member of the caller's team, and is no recipient the bus knows outside teams [NotInTeam]
+	SendMessageAmbiguousAgent                          // the caller is outside teams and the agent is in more than one open team: the message needs a task [Conflict]
 	SendMessageStorage                                 // the shared state or a file could not be read or written [Storage]
 )
 
@@ -76,6 +78,8 @@ var sendMessageCauses = [...]causeInfo{
 	{"MissingArgument", ClassInvalidArgument},
 	{"ToSelf", ClassInvalidArgument},
 	{"NotInTeam", ClassNotInTeam},
+	{"NotInYourTeam", ClassNotInTeam},
+	{"AmbiguousAgent", ClassConflict},
 	{"Storage", ClassStorage},
 }
 
