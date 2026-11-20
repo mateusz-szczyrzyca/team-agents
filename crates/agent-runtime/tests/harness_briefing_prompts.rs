@@ -31,7 +31,7 @@ mod harness_briefing_prompts {
 
     /// The reason a task of these tests is started anew.
     fn reason() -> String {
-        "its last three runs ended without a `STATUS:` line".to_owned()
+        "no_status".to_owned()
     }
 
     /// A commit of the branch of these tests.
@@ -57,8 +57,8 @@ mod harness_briefing_prompts {
         ];
         let uncommitted = ["crates/agent-core/src/decide/ladder.rs", "notes.md"];
         let plan = [
-            step("1.1", "Read the code", "done"),
-            step("1.2", "Write the test", "in hand"),
+            step("1.1", "Read the code", "[x]"),
+            step("1.2", "Write the test", "[>]"),
         ];
         let facts = Briefing {
             reason: &reason(),
