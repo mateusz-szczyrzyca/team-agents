@@ -140,10 +140,13 @@ four reasons, in this order, each with its own text of the catalog (`prompts/har
 |---|---|---|
 | missing | there is no `.agent/plan.md` | to write it, with every step marked as it is |
 | unreadable | it does not parse | the error with its line, as the table of [Errors](#errors) gives it |
-| lost step | a step of the version kept from an earlier run is gone, or its ID names another step | the step IDs, and that a step is given up, never deleted |
+| lost step | a step that any version kept from an earlier run had is gone, or its ID names another step than in the newest of them — so the same plan handed in again after a send-back for a lost step goes back again | the step IDs, and that a step is given up, never deleted |
 | unfinished | a step is to do (`[ ]`) or in hand (`[>]`) | the step IDs, and to finish them or give them up with a reason |
 
-A run that ends with another status is recorded and never sent back for its plan. A task is sent back at most
+A run that ends with another status is recorded and never sent back for its plan. **A coordinator** also ends a turn
+with `STATUS: DONE` after it integrated one member while others work: its `DONE` is judged by its plan only when no
+item of its team waits to be given or is with a member still working on it (a member that waits after a `DONE` has
+handed its item over); until then its steps for the other items are not a fault. A task is sent back at most
 `[plan] bounces` times (default 3; `0` sends nothing back and still records the plan). The count is kept in
 `state.json` with the task ([`state.md`](state.md)), and so is the reason of a send-back until the next run starts: a
 restart of the daemon loses neither.
@@ -161,15 +164,20 @@ for a plan where it holds runs to one.
 
 **Never sent back:** a role outside `[plan] roles` (a worker, a reviewer, an investigator — none needs a plan, and one
 it writes is recorded all the same), and a task created before the daemon first ran this version (0.35.0): its agent was
-never told. Such a task has no `plan` field in `state.json`; every task made since has one.
+never told. Such a task has no `plan` field in `state.json`; every task made since has one. **Going back** to 0.34.0
+after this version made a task is not possible as it is: 0.34.0 refuses a member with a `plan` field (a member's fields
+are strict) and a history of version 13 (newer than it reads); keep a copy of `state.json` and `history.db` from before
+the upgrade to go back.
 
 **Not in the delivery.** The plan is the task's working file. When the daemon makes the worktrees of a team, it adds
 `/.agent/plan.md` to the repository's `info/exclude`, which every worktree shares, so `git add -A` does not take it. A
 plan committed all the same (`git add -f`) is taken out of the branch at the end of the run of a solo agent, a
 coordinator or a member, by a commit of the agent's identity, "Keep the plan out of the delivery"; the file stays in the
-worktree. The pull request, the checks before the review and the count of changed lines therefore never see it. A lead
-whose tip moved past its gate that way gets the harness's own gate, as any tip without a recorded gate does; with other
-changes staged the daemon leaves the branch as it is and the plan stays in it.
+worktree. The pull request, the checks before the review and the count of changed lines therefore never see it. The commit
+moves the tip past the gate the run recorded, so the gate is to be run again before the round goes on, as for any
+commit after a gate. With other changes staged the daemon leaves the branch as it is and the plan stays in it. A
+repository whose base branch tracks `.agent/plan.md` itself keeps it: the daemon never takes it out of a branch then
+(the decision is logged), and every task branch has the repository's file.
 
 ## The three examples
 
