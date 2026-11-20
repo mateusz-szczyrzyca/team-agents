@@ -381,3 +381,6 @@ impl ActivityKind {
 #[cfg(test)]
 #[path = "kinds/activity_tests.rs"]
 mod activity_tests;
+
+#[cfg(test)]
+mod tier_order_tests;
