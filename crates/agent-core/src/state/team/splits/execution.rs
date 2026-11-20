@@ -100,6 +100,7 @@ pub(in crate::state::team) fn check_execution(team: &Team) -> Result<(), crate::
         .filter(|round| round.part().is_some())
         .filter_map(crate::state::Round::item)
         .collect();
+    let mut open = std::collections::BTreeSet::new();
     let mut seen = std::collections::BTreeSet::new();
     let mut merged = std::collections::BTreeSet::new();
     for round in team.rounds() {
@@ -123,6 +124,7 @@ pub(in crate::state::team) fn check_execution(team: &Team) -> Result<(), crate::
                 .all(|dependency| merged.contains(&(parent, *dependency)))
         });
         if !valid
+            || (round.is_open() && !open.insert(parent))
             || !seen.insert((parent, key))
             || (round.part_pull_request().is_some() != (round.ended() == Some(crate::state::RoundEnd::Merged)))
         {
