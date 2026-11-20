@@ -14,7 +14,7 @@ use agent_core::status::TaskStatus;
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::process::error_chain;
 use agent_runtime::run::activity::last_activity;
-use agent_runtime::settings::SettingsError;
+use agent_runtime::settings::{Settings, SettingsError};
 use agent_runtime::store::Home;
 use time::UtcOffset;
 
@@ -170,12 +170,18 @@ pub(crate) async fn status(
 /// [`StatusError`]: the settings of `home` cannot be read, the daemon cannot be asked or answers with something else
 /// than a list of teams, or the output cannot be written.
 pub(crate) async fn status_investigators(
-    _connection: &mut Connection,
-    _home: &Home,
-    _offset: UtcOffset,
-    _out: &mut impl Write,
+    connection: &mut Connection,
+    home: &Home,
+    offset: UtcOffset,
+    out: &mut impl Write,
 ) -> Result<(), StatusError> {
-    Ok(())
+    let settings = Settings::load(home).await.map_err(StatusError::Settings)?;
+    // The configuration keeps the investigators by name: the view lists them in that order.
+    let configured: Vec<_> = settings.config.investigators().keys().cloned().collect();
+    let (teams, _) = teams(connection, None).await?;
+    let text = investigators::render(&teams, &configured, offset);
+    out.write_all(text.as_bytes()).map_err(StatusError::Output)?;
+    out.flush().map_err(StatusError::Output)
 }
 
 /// Asks the daemon for every team and writes to `out` those that have a round that goes on, with those rounds only:

@@ -57,7 +57,7 @@ use crate::commands::pause::pause;
 use crate::commands::resume::resume;
 use crate::commands::run::{RunError, RunInput, prepare, start};
 use crate::commands::say::{say, text as say_text};
-use crate::commands::status::{Activity, StatusError, status_active, status_running};
+use crate::commands::status::{Activity, StatusError, status_active, status_investigators, status_running};
 use crate::commands::stop::stop;
 use crate::commands::unpause::unpause;
 use crate::environment::{EditorError, Environment, EnvironmentError};
@@ -674,7 +674,9 @@ async fn execute(environment: &Environment, command: Command, out: &mut impl Wri
             let home = environment.home()?;
             let mut connection = Connection::connect(&home.socket_file()).await?;
             let activity = Activity::new(home.clone(), environment.local_offset());
-            if args.running {
+            if args.investigators {
+                status_investigators(&mut connection, &home, environment.local_offset(), out).await?;
+            } else if args.running {
                 status_running(&mut connection, &activity, out).await?;
             } else {
                 status_active(&mut connection, args.target, &activity, out).await?;
