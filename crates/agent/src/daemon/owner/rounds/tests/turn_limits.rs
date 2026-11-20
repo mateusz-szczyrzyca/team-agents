@@ -187,3 +187,30 @@ async fn exhausted_team_member_notifies_the_coordinator_on_the_bus() {
         "{messages}"
     );
 }
+
+// Rule: after the last turn-limit resume of its session the task goes on once in a new session.
+#[tokio::test]
+async fn after_its_last_turn_limit_resume_a_task_goes_on_in_a_new_session() {
+    let mut rig = rig("turn-limit,turn-limit,done", 1).await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["claude-1"], "Finish the work.", MergeMode::Autopilot, None)
+        .await;
+
+    done_without_failure(&rig).await;
+    let state = rig.state();
+    rig.stop().await.unwrap();
+
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    let runs = member.runs();
+    assert_eq!(runs.len(), 3, "two turn limits in the first session, then the new one");
+    assert_eq!(
+        runs[0].session(),
+        runs[1].session(),
+        "the resume continues the first session"
+    );
+    assert_ne!(runs[2].session(), runs[1].session(), "the third run is a new session");
+    let renewals = member.renewals().unwrap();
+    assert_eq!(renewals.used(), 1);
+    assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::TurnLimit);
+}
