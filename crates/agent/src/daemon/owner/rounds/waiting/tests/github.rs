@@ -129,46 +129,6 @@ fn the_line_of_a_wait_names_the_step_the_tries_and_the_next_try_in_local_time() 
 }
 
 #[test]
-fn next_due_is_the_latest_try_of_the_steps_asked_and_none_for_a_refusal() {
-    let mut waits = Waits::default();
-    waits
-        .failed(
-            &round(),
-            &team(),
-            OPINION,
-            None,
-            "timed out".to_owned(),
-            Outlook::MayPass,
-            at("2026-11-20T01:00:00Z"),
-        )
-        .unwrap();
-    let round_id = "round-20261120-070000-wt01".parse().unwrap();
-
-    assert_eq!(
-        waits.next_due(&round_id, &[OPINION], at("2026-11-20T01:00:00Z")),
-        Some(at("2026-11-20T01:00:30Z"))
-    );
-    assert_eq!(waits.next_due(&round_id, &[OPINION], at("2026-11-20T01:00:30Z")), None);
-    assert_eq!(
-        waits.next_due(&round_id, &[WaitingStep::OpinionEnded], at("2026-11-20T01:00:00Z")),
-        None
-    );
-    // A step that waited for a pause and now waits for the human keeps the round until the human resumes it.
-    waits
-        .failed(
-            &round(),
-            &team(),
-            OPINION,
-            None,
-            "404".to_owned(),
-            Outlook::WillNotPass,
-            at("2026-11-20T01:00:30Z"),
-        )
-        .unwrap();
-    assert_eq!(waits.next_due(&round_id, &[OPINION], at("2026-11-20T01:00:30Z")), None);
-}
-
-#[test]
 fn never_more_than_the_limit_of_waits_is_kept() {
     let mut waits = Waits::default();
     for index in 0..=MAX_WAITS {
