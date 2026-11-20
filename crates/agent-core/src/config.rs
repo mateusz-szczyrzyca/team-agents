@@ -5,6 +5,8 @@
 //! refused (`deny_unknown_fields`), every value is parsed into its type (the newtypes of this module), and the lists of agents are
 //! checked against each other. The type does no I/O; whoever reads the file passes its text in.
 
+#[cfg(test)]
+mod replacement_tests;
 mod review_count;
 mod secrets;
 mod values;
@@ -22,6 +24,7 @@ use crate::kinds::{CliKind, Keyword, Role, Tier, UnknownKeyword};
 use crate::log::LogLevel;
 use crate::repo_path::PathPatterns;
 use crate::review_response::opinion::Permission;
+use crate::state::RenewalLimit;
 
 pub use secrets::{InvalidSecret, MAX_SECRETS_BYTES, Position, Secret, Secrets, SecretsError};
 pub use values::{
@@ -447,6 +450,30 @@ impl Default for Plan {
     }
 }
 
+/// `[replacement]`: whether a task whose runs go bad is started in a new session, and how often.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Replacement {
+    /// How many new sessions of its agent a task is started in after its runs went bad; `0` never starts one.
+    new_sessions: RenewalLimit,
+}
+
+impl Default for Replacement {
+    fn default() -> Self {
+        Self {
+            new_sessions: RenewalLimit::default(),
+        }
+    }
+}
+
+impl Replacement {
+    /// How many new sessions of its agent a task is started in after its runs went bad; `0` never starts one.
+    #[must_use]
+    pub const fn new_sessions(&self) -> RenewalLimit {
+        self.new_sessions
+    }
+}
+
 /// `[git]`: who the commits of the agents are by.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -642,6 +669,8 @@ pub struct Config {
     questions: Questions,
     /// The plans of tasks.
     plan: Plan,
+    /// The replacement of a task whose session went bad.
+    replacement: Replacement,
     /// The history.
     history: History,
     /// The daemon's own log.
@@ -715,6 +744,9 @@ struct RawConfig {
     /// See [`Config::plan`].
     #[serde(default)]
     plan: Plan,
+    /// See [`Config::replacement`].
+    #[serde(default)]
+    replacement: Replacement,
     /// See [`Config::history`].
     #[serde(default)]
     history: History,
@@ -751,6 +783,7 @@ impl RawConfig {
             notifications,
             questions,
             plan,
+            replacement,
             history,
             log,
             web,
@@ -787,6 +820,7 @@ impl RawConfig {
             notifications,
             questions,
             plan,
+            replacement,
             history,
             log,
             web,
@@ -1014,6 +1048,14 @@ impl Config {
     #[must_use]
     pub fn plan(&self) -> &Plan {
         &self.plan
+    }
+
+    /// Whether a task whose runs go bad is started in a new session, and how often.
+    #[must_use]
+    pub fn replacement(&self) -> Replacement {
+        Replacement {
+            new_sessions: RenewalLimit::default(),
+        }
     }
 
     /// The dashboard's address and logins.
