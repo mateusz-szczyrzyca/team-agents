@@ -61,7 +61,7 @@ pub(crate) fn investigator(name: &str) -> Participant {
 
 /// A member of task `n`.
 pub(crate) fn member(n: u32, agent: Participant) -> Member {
-    Member::without_plan(task(n), agent)
+    Member::new(task(n), agent)
 }
 
 /// The repository the sample teams work on.

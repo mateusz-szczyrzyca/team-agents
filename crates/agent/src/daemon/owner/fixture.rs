@@ -111,7 +111,7 @@ pub(super) fn answer(task_number: u32, number: u32, given: &[(u32, &str)]) -> Co
 pub(super) fn pair_state() -> State {
     let crew = Crew::team(TeamMembers {
         coordinator: member(1, normal("claude-1")),
-        members: vec![Member::without_plan(task(2), normal("claude-2"))],
+        members: vec![Member::new(task(2), normal("claude-2"))],
         workers: vec![],
     })
     .unwrap();
