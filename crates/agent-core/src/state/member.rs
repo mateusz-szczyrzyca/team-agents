@@ -146,7 +146,7 @@ impl CheckedMut<'_, Member> {
     /// See [`Member::renew`].
     ///
     /// # Errors
-    /// [`RenewalError::NotAfterTheLastRun`] when no run of the task started before `at`.
+    /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
     pub fn renew(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
         self.value.renew(trouble, at)
     }
@@ -444,7 +444,7 @@ impl Member {
     /// Returns whether the task was started anew: `false` when nothing changed.
     ///
     /// # Errors
-    /// [`RenewalError::NotAfterTheLastRun`] when no run of the task started before `at`.
+    /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
     pub fn renew(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
         if !matches!(self.agent.tier(), Tier::Normal | Tier::Investigator) || self.runs.is_empty() {
             return Ok(false);
@@ -513,6 +513,14 @@ impl Member {
     /// started.
     pub fn end_run(&mut self, at: Timestamp, end: RunEnd) -> Result<(), RunError> {
         self.current_run_mut()?.end(at, end)
+    }
+
+    /// Whether the task was started anew and the run of its new session has not begun: that run is briefed.
+    #[must_use]
+    pub fn awaits_new_session(&self) -> bool {
+        self.renewals
+            .as_ref()
+            .is_some_and(|renewals| renewals.awaits_run(self.runs.len()))
     }
 
     /// See [`Member::renew`], and how many of the latest runs went bad in a row since the task was started anew.

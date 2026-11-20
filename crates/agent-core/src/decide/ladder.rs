@@ -5,8 +5,9 @@
 //! kept in its context — and starting the same session again only fails the same way. [`next_step`] decides which rung
 //! of the ladder a task takes after such a run:
 //!
-//! 1. The same session again, up to the retries of its trouble: [`NO_STATUS_RETRIES`] endings without a status, or the
-//!    watchdog's strikes for a hang ([`AfterNoStatus`] and [`AfterHang`] of [`super::outcome`]).
+//! 1. The same session again, up to the retries of its trouble:
+//!    [`NO_STATUS_RETRIES`](super::outcome::NO_STATUS_RETRIES) endings without a status, the watchdog's strikes for a
+//!    hang, or the turn-limit resumes ([`super::outcome::after_no_status`], [`super::outcome::after_hang`]).
 //! 2. A new session of the same agent, up to `[replacement] new_sessions` times per task, with a briefing that says what
 //!    the previous sessions did.
 //! 3. Give up: the task fails and the human decides. Replacing the agent with another one, and asking the human, are

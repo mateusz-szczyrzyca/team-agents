@@ -6,6 +6,7 @@
 //! events. A state it cannot save ends the daemon: models must not go on working with a state that is not kept.
 
 mod answers;
+mod briefing;
 mod controls;
 mod disk;
 #[cfg(test)]
@@ -29,10 +30,8 @@ use std::time::Duration;
 
 use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, InvalidValue};
-use agent_core::decide::outcome::{
-    AfterHang, AfterNoStatus, AfterTurnLimit, after_hang, after_no_status, after_turn_limit, consecutive_no_status,
-    consecutive_turn_limits,
-};
+use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
+use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
 use agent_core::history::{HistoryEvent, RunWhy};
 use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
@@ -151,6 +150,14 @@ pub(crate) enum OwnerError {
     /// Recovery on start failed.
     #[error("cannot recover the state")]
     Recovery(#[from] RecoveryError),
+    /// The renewal of a task that the ladder starts in a new session cannot be recorded.
+    #[error("task {task} cannot be started in a new session")]
+    Renewal {
+        /// The task.
+        task: TaskId,
+        /// What the state refused.
+        source: agent_core::state::RenewalError,
+    },
     /// A task that must be in the state is not.
     #[error("task {task} is not in the state")]
     LostTask {
@@ -686,6 +693,10 @@ impl Owner {
             .wake_notes
             .remove(&task)
             .filter(|_| matches!(why, Some(Why::Woken)));
+        let briefing = match self.briefing_facts(&task).await {
+            Ok(briefing) => briefing,
+            Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
+        };
         let planned = {
             let context = Context {
                 state: &self.parts.state,
@@ -700,7 +711,7 @@ impl Owner {
                 autopilot: self.pulls.as_ref().map(Pulls::texts),
                 checks: self.pulls.as_ref().map(Pulls::checks),
             };
-            plan(&context, &mut self.parts.rng, &task).await
+            plan(&context, &mut self.parts.rng, &task, briefing.as_ref()).await
         };
         let plan = match planned {
             Ok(plan) => plan,
@@ -1247,7 +1258,7 @@ impl Owner {
                 };
                 (TaskStatus::Paused, Some(notice))
             }
-            Settled::Hung => self.hung(task, progress)?,
+            Settled::Hung => self.hung(task, located.role, progress)?,
             Settled::TurnLimit => {
                 self.hangs.remove(task);
                 self.turn_limit(task)?
@@ -1280,33 +1291,40 @@ impl Owner {
         Ok(next)
     }
 
-    /// What follows a run that ended without a STATUS: line: it is resumed up to twice in a row,
-    /// or fails after retries are exhausted.
+    /// What follows a run that ended without a STATUS: line: it is resumed up to twice in a row, then started in a new
+    /// session, or fails when the ladder has no step left.
     fn no_status(
         &mut self,
         task: &TaskId,
         role: Role,
         exit: Option<i32>,
     ) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
-        let found = self
+        let count = self
             .parts
             .state
             .find_task(task)
-            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
-        let count = consecutive_no_status(found.member.runs());
-        let session = found.member.runs().last().and_then(|run| run.session());
-        let next = match after_no_status(role, count, session) {
-            AfterNoStatus::Resume => {
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
+            .member
+            .bad_runs_since_renewal();
+        let next = match self.climb(task, role, Trouble::NoStatus, count)? {
+            LadderStep::SameSession => {
                 self.reasons.insert(task.clone(), Why::NoStatus);
                 (TaskStatus::Queued, None)
             }
-            AfterNoStatus::Fail => (TaskStatus::Failed, Some(Notice::NoStatus { exit })),
+            LadderStep::NewSession => (TaskStatus::Queued, None),
+            LadderStep::GiveUp => (TaskStatus::Failed, Some(Notice::NoStatus { exit })),
         };
         Ok(next)
     }
 
-    /// What follows a hung run: it is resumed, or after the last strike the task fails and the human is told.
-    fn hung(&mut self, task: &TaskId, progress: Progress) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+    /// What follows a hung run: it is resumed, after the last strike started in a new session, and when the ladder has
+    /// no step left the task fails and the human is told.
+    fn hung(
+        &mut self,
+        task: &TaskId,
+        role: Role,
+        progress: Progress,
+    ) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
         let watchdog = self.parts.settings.config.watchdog();
         // A run that did something before it went silent starts the count again.
         let count = match progress {
@@ -1314,31 +1332,77 @@ impl Owner {
             Progress::Nothing => self.hangs.get(task).copied().unwrap_or(0).saturating_add(1),
         };
         self.hangs.insert(task.clone(), count);
-        let session = self
-            .parts
-            .state
-            .find_task(task)
-            .and_then(|found| found.member.last_session())
-            .map(|session| CliSessionId::from_str(session.as_str()))
-            .transpose()?;
-        let decision = after_hang(count, session.as_ref(), watchdog);
-        log_decision(
-            "after_hang",
-            &format!("count={count}, has_session={}", session.is_some()),
-            &format!("{decision:?}"),
-        );
-        let next = match decision {
-            AfterHang::Resume => (TaskStatus::Queued, None),
-            AfterHang::MarkHung => {
+        let notice = Notice::Hung {
+            minutes: watchdog.hang_minutes.as_duration().as_secs() / SECS_PER_MINUTE,
+            strikes: watchdog.hang_strikes.get(),
+        };
+        let next = match self.climb(task, role, Trouble::Hang, count)? {
+            LadderStep::SameSession => (TaskStatus::Queued, None),
+            LadderStep::NewSession => {
                 self.hangs.remove(task);
-                let notice = Notice::Hung {
-                    minutes: watchdog.hang_minutes.as_duration().as_secs() / SECS_PER_MINUTE,
-                    strikes: watchdog.hang_strikes.get(),
-                };
+                (TaskStatus::Queued, None)
+            }
+            LadderStep::GiveUp => {
+                self.hangs.remove(task);
                 (TaskStatus::Failed, Some(notice))
             }
         };
         Ok(next)
+    }
+
+    /// The ladder's step for `task` of `role`, whose last `count` runs in a row went bad with `trouble`. A new session
+    /// is recorded in the state at once, so that a restart before its run begins keeps it.
+    fn climb(&mut self, task: &TaskId, role: Role, trouble: Trouble, count: u32) -> Result<LadderStep, OwnerError> {
+        let config = &self.parts.settings.config;
+        let (_, mut member) = self
+            .parts
+            .state
+            .find_task_mut(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let renewals = Renewals {
+            used: member.renewals().map_or(0, agent_core::state::Renewals::used),
+            allowed: config.replacement().new_sessions().get(),
+        };
+        let step = next_step(
+            role,
+            trouble,
+            count,
+            member.last_session(),
+            renewals,
+            config.watchdog(),
+            config.limits(),
+        );
+        let step = if step == LadderStep::NewSession {
+            let now = Timestamp::now(&self.parts.clock)?;
+            // A clock set back during the run is not before its start: the run's end is clamped the same way.
+            let at = member
+                .runs()
+                .last()
+                .map(agent_core::state::Run::started_at)
+                .filter(|started| started.as_utc() > now.as_utc())
+                .unwrap_or(now);
+            let renewed = member.renew(trouble, at).map_err(|source| OwnerError::Renewal {
+                task: task.clone(),
+                source,
+            })?;
+            // A task whose agent cannot be started anew (a worker) has no step left.
+            if renewed {
+                LadderStep::NewSession
+            } else {
+                LadderStep::GiveUp
+            }
+        } else {
+            step
+        };
+        log_decision(
+            "ladder",
+            &format!(
+                "trouble={trouble:?}, count={count}, role={role:?}, new_sessions_used={}, new_sessions={}",
+                renewals.used, renewals.allowed
+            ),
+            &format!("{step:?}"),
+        );
+        Ok(step)
     }
 
     /// Records the questions the agent asked, when their file is usable.

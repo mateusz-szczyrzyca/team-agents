@@ -41,6 +41,11 @@ impl Renewals {
         self.reason
     }
 
+    /// Whether a task with `runs` runs has begun no run since it was last started anew.
+    pub(super) const fn awaits_run(&self, runs: usize) -> bool {
+        runs <= self.after_runs
+    }
+
     /// The renewals of a task started anew for the first time, at `at`, for `reason`, after its first `after_runs` runs.
     pub(super) const fn first(at: Timestamp, reason: Trouble, after_runs: usize) -> Self {
         Self {
@@ -71,7 +76,7 @@ pub(super) fn runs_since<'a>(runs: &'a [Run], renewals: Option<&Renewals>) -> &'
 /// The most `[replacement] new_sessions` of a task: a configuration above it is refused.
 const MAX_RENEWALS: u32 = 10;
 
-/// The renewals a task may have: `0` to [`MAX_RENEWALS`].
+/// The renewals a task may have: `0` to 10.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "u32", into = "u32")]
 pub struct RenewalLimit(u32);
@@ -88,7 +93,7 @@ impl RenewalLimit {
     /// A limit of `value` new sessions per task.
     ///
     /// # Errors
-    /// [`InvalidRenewalLimit`] above [`MAX_RENEWALS`].
+    /// [`InvalidRenewalLimit`] above 10.
     pub fn new(value: u32) -> Result<Self, InvalidRenewalLimit> {
         if value <= MAX_RENEWALS {
             Ok(Self(value))
