@@ -154,13 +154,6 @@ pub(super) struct PullWatch {
 }
 
 impl PullWatch {
-    /// The same, whose first failure of a step that calls GitHub waits `first`.
-    #[cfg(test)]
-    pub(super) fn with_retry_first(mut self, first: time::Duration) -> Self {
-        self.github_waits = waiting::Waits::with_first(first);
-        self
-    }
-
     /// Clears blocked item announcements for any items in progress or fixing assigned to `task`.
     pub(super) fn reset_item_blocked_for_task(&mut self, state: &State, team_id: &TeamId, task: &TaskId) {
         let Some(team) = state.team(team_id) else {
@@ -317,9 +310,6 @@ enum PublishError {
     /// A variable name of the program is not valid.
     #[error("a variable of a text is not valid")]
     Variable(#[from] VariablesError),
-    /// A second opinion's worktree cannot be inspected.
-    #[error("cannot inspect a second opinion's worktree")]
-    Inspect(#[source] Box<OpinionDaemonError>),
     /// The pull request carries another commit than the gated one.
     #[error("the pull request does not carry the commit the gate passed on")]
     Round(#[from] agent_core::decide::round::RoundError),
@@ -441,12 +431,11 @@ impl AutopilotNotice {
             Self::Decision | Self::ResponseRefused | Self::ReportRefused => NoticeKind::Decision,
             Self::NoVerdict => NoticeKind::NoVerdict,
             Self::Opinion => NoticeKind::Opinion,
-            Self::PublishFailed | Self::HandoverHeld => NoticeKind::PublishFailed,
+            Self::PublishFailed | Self::HandoverHeld | Self::GithubRefused => NoticeKind::PublishFailed,
             Self::TeamAsleep | Self::StandingItem => NoticeKind::TeamAsleep,
             Self::Closed => NoticeKind::Closed,
             Self::Approved => NoticeKind::Approved,
             Self::MergeFailed => NoticeKind::MergeFailed,
-            Self::GithubRefused => NoticeKind::PublishFailed,
             Self::Merged => NoticeKind::Merged,
         }
     }
@@ -484,26 +473,15 @@ impl Owner {
         {
             match self.refresh_descriptions(&pulls, team).await {
                 Err(error) => {
-                    self.github_step_failed(&refresh, team, WaitingStep::RefreshDescriptions, None, &error, now)?
+                    self.github_step_failed(&refresh, team, WaitingStep::RefreshDescriptions, None, &error, now)?;
                 }
                 Ok(()) => self.github_step_done(&refresh, team, WaitingStep::RefreshDescriptions),
             }
         }
         self.merge_approved(&pulls, team, look).await?;
         self.read_fix_responses(&pulls, team, look).await?;
-        let now = Timestamp::now(&self.parts.clock)?;
-        let silent = Step::Team { team: team.clone() };
-        if self.watch.github_waits.due(&silent, WaitingStep::ReplaceSilent, now) {
-            match self.replace_silent_opinions(&pulls, team, now).await {
-                Ok(()) => self.github_step_done(&silent, team, WaitingStep::ReplaceSilent),
-                // The task of an investigator cannot be inspected: that is the state's own trouble, not GitHub's.
-                Err(OwnerError::Opinion(error)) => {
-                    let error = PublishError::Inspect(Box::new(error));
-                    self.github_step_failed(&silent, team, WaitingStep::ReplaceSilent, None, &error, now)?;
-                }
-                Err(error) => return Err(error),
-            }
-        }
+        self.replace_silent_opinions(&pulls, team, Timestamp::now(&self.parts.clock)?)
+            .await?;
         self.ask_opinions(&pulls, team, look).await?;
         self.continue_opinions(&pulls, team, look)?;
         self.publish_branches(&pulls, team, look).await?;

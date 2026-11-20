@@ -22,10 +22,6 @@ impl GitHubError {
     pub fn outlook(&self) -> Outlook {
         match self {
             Self::Transport { .. } | Self::Timeout { .. } => Outlook::MayPass,
-            Self::Status {
-                reason: Rejection::Server | Rejection::RateLimited,
-                ..
-            } => Outlook::MayPass,
             Self::Status { reason, .. } => match reason {
                 Rejection::Server | Rejection::RateLimited => Outlook::MayPass,
                 Rejection::Unauthorized

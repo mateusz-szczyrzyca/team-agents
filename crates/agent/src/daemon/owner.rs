@@ -504,15 +504,6 @@ impl Owner {
         self
     }
 
-    /// The same, whose first failure of a step that calls GitHub waits `first`.
-    #[cfg(test)]
-    pub(super) fn with_retry_first(mut self, first: Duration) -> Self {
-        self.watch = self.watch.with_retry_first(time::Duration::seconds(
-            i64::try_from(first.as_secs()).unwrap_or(i64::MAX),
-        ));
-        self
-    }
-
     /// The same, with the gates it is asked for going to `queue`.
     pub(super) fn with_gate(mut self, queue: GateQueue) -> Self {
         self.gate = Some(queue);

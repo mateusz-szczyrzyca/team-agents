@@ -32,7 +32,7 @@ impl Owner {
     ///
     /// # Errors
     /// [`OwnerError::Clock`] when the pause would pass the last year a time records.
-    pub(in crate::daemon::owner) fn github_step_failed(
+    pub(super) fn github_step_failed(
         &mut self,
         step: &Step,
         team: &TeamId,
@@ -43,11 +43,10 @@ impl Owner {
     ) -> Result<(), OwnerError> {
         let outlook = outlook_of(error);
         let offset = self.parts.local_offset;
-        let (failure, wait) = self
-            .watch
-            .github_waits
-            .failed(step, team, which, pr, error_chain(error), outlook, now)
-            .map_err(|missed| missed.owner_error())?;
+        let (failure, wait) =
+            self.watch
+                .github_waits
+                .failed(step, team, which, pr, error_chain(error), outlook, now)?;
         let starts = matches!(failure, Failure::First | Failure::Starts);
         if starts {
             tracing::warn!(
@@ -73,7 +72,7 @@ impl Owner {
     }
 
     /// Records that `step` of `team` went through: a step that waited is done, logged once.
-    pub(in crate::daemon::owner) fn github_step_done(&mut self, step: &Step, team: &TeamId, which: WaitingStep) {
+    pub(super) fn github_step_done(&mut self, step: &Step, team: &TeamId, which: WaitingStep) {
         if self.watch.github_waits.done(step, which) {
             tracing::info!(
                 event = LogEvent::GithubStepResumed.as_str(),

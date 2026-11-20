@@ -10,11 +10,13 @@ use std::num::NonZeroU32;
 
 use agent_core::decide::retry::pause;
 use agent_core::ids::{RoundId, TeamId};
-use agent_core::state::{PrNumber, Timestamp};
+use agent_core::state::{InvalidTimestamp, PrNumber, Timestamp};
 use agent_runtime::git::{GitError, GitOperation};
 use agent_runtime::github::Outlook;
 use time::Duration;
-/// How many steps may wait for GitHub at once; beyond it the oldest wait gives way, as a loop with no memory would.
+
+/// How many steps may wait for GitHub at once: the owner's memory stays bounded whatever fails. Beyond it the wait with
+/// the smallest key (step, round) gives way; that step is then tried at its next look, as after a start of the daemon.
 pub(in crate::daemon::owner) const MAX_WAITS: usize = 256;
 
 /// Whether a failed step may pass at a later try, from what it failed with: a GitHub failure says so itself, and a
@@ -32,9 +34,8 @@ pub(in crate::daemon::owner) fn outlook_of(error: &super::super::PublishError) -
         {
             Outlook::MayPass
         }
-        PublishError::Git(_) => Outlook::WillNotPass,
-        PublishError::Inspect(_) => Outlook::WillNotPass,
-        PublishError::Findings(_)
+        PublishError::Git(_)
+        | PublishError::Findings(_)
         | PublishError::Path { .. }
         | PublishError::Description { .. }
         | PublishError::Origin(_)
@@ -72,12 +73,8 @@ pub(in crate::daemon::owner) fn clock_time(time: Timestamp, offset: time::UtcOff
 pub(in crate::daemon::owner) enum WaitingStep {
     /// Rewriting the description of the open pull requests of a team.
     RefreshDescriptions,
-    /// Giving the opinion of an investigator gone silent to another investigator.
-    ReplaceSilent,
-    /// Reading the pull request before a second opinion's worktree is made.
+    /// Making or moving the worktree of the investigator that gives a second opinion.
     AskOpinion,
-    /// Reading the reviewed commit at the end of a second opinion.
-    OpinionEnded,
 }
 
 impl WaitingStep {
@@ -86,9 +83,7 @@ impl WaitingStep {
     pub(in crate::daemon::owner) const fn operation(self) -> &'static str {
         match self {
             Self::RefreshDescriptions => "refresh the description of the pull requests",
-            Self::ReplaceSilent => "replace a silent investigator",
             Self::AskOpinion => "prepare a second opinion",
-            Self::OpinionEnded => "read the commit a second opinion reviewed",
         }
     }
 }
@@ -152,7 +147,7 @@ impl Wait {
         outlook: Outlook,
         now: Timestamp,
         pause: Duration,
-    ) -> Result<Self, DurationOverflow> {
+    ) -> Result<Self, InvalidTimestamp> {
         let tries = NonZeroU32::MIN;
         let next_at = match outlook {
             Outlook::MayPass => Some(later(now, pause)?),
@@ -176,7 +171,7 @@ impl Wait {
         outlook: Outlook,
         now: Timestamp,
         pause: Duration,
-    ) -> Result<(), DurationOverflow> {
+    ) -> Result<(), InvalidTimestamp> {
         self.tries = self.tries.saturating_add(1);
         self.answer = answer;
         self.outlook = outlook;
@@ -222,17 +217,23 @@ fn named(step: WaitingStep, pr: Option<PrNumber>) -> String {
 
 /// The minute a time shows, rounded up: 25 seconds past 00:04 shows 00:05, as the human reads a time in the log.
 fn minute_shown(at: Timestamp, offset: time::UtcOffset) -> String {
-    let local = at.as_utc().to_offset(offset);
-    let ahead = time::Duration::seconds(60 - i64::from(local.second()));
-    let shown = local + ahead;
-    format!("{:02}:{:02}", shown.hour(), shown.minute())
+    let second = i64::from(at.as_utc().second());
+    let shown = at
+        .as_utc()
+        .saturating_add(Duration::seconds(60_i64.saturating_sub(second)));
+    match Timestamp::from_utc(shown) {
+        Ok(shown) => clock_time(shown, offset),
+        // A next try in the last minute a time records is shown as it is: there is no later minute to round to.
+        Err(_past_the_last_year) => clock_time(at, offset),
+    }
 }
+
 /// `now` plus `span`.
 ///
 /// # Errors
-/// [`DurationOverflow`] when the time cannot be recorded.
-fn later(now: Timestamp, span: Duration) -> Result<Timestamp, DurationOverflow> {
-    Timestamp::from_utc(now.as_utc().saturating_add(span)).map_err(|_| DurationOverflow)
+/// [`InvalidTimestamp`] when the time after the pause cannot be recorded.
+fn later(now: Timestamp, span: Duration) -> Result<Timestamp, InvalidTimestamp> {
+    Timestamp::from_utc(now.as_utc().saturating_add(span))
 }
 
 /// What a failure did to the wait of its step.
@@ -248,54 +249,14 @@ pub(in crate::daemon::owner) enum Failure {
     RefusedAgain,
 }
 
-/// The pause carries the time past the last year a [`Timestamp`] records.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("the time after the pause cannot be recorded")]
-pub(in crate::daemon::owner) struct DurationOverflow;
-
-impl DurationOverflow {
-    /// The error the owner answers with: a clock whose pause ends past the last year a time records is broken, and
-    /// the daemon ends on a broken clock as it does on any time it cannot record.
-    pub(in crate::daemon::owner) fn owner_error(self) -> super::super::OwnerError {
-        use agent_core::state::InvalidTimestamp;
-        super::super::OwnerError::Clock(InvalidTimestamp::YearOutOfRange { year: 10000 })
-    }
-}
-
 /// The steps that failed and wait, by round and by step.
 #[derive(Debug, Default)]
 pub(in crate::daemon::owner) struct Waits {
     /// The waits of each round, and of each team's rounds as a whole, by step.
     steps: BTreeMap<(Step, WaitingStep), Wait>,
-    /// The pause before the first try of a step; none for [`agent_core::decide::retry::FIRST_PAUSE`].
-    first: Option<Duration>,
 }
 
 impl Waits {
-    /// The same, whose first failure waits `first` instead of the first pause: a test reads a wait without a clock
-    /// that goes a minute ahead.
-    #[cfg(test)]
-    #[must_use]
-    pub(in crate::daemon::owner) fn with_first(first: Duration) -> Self {
-        Self {
-            first: Some(first),
-            ..Self::default()
-        }
-    }
-
-    /// The pause before the try that follows `tries` failures.
-    fn pause(&self, tries: NonZeroU32) -> Duration {
-        match self.first {
-            Some(first) => {
-                let doublings = tries.get().saturating_sub(1).min(16);
-                first
-                    .saturating_mul(1_i32.saturating_pow(doublings))
-                    .min(agent_core::decide::retry::LONGEST_PAUSE)
-            }
-            None => pause(tries),
-        }
-    }
-
     /// The wait of `step` for `operation`, if it has one.
     pub(super) fn get(&self, place: &Step, step: WaitingStep) -> Option<&Wait> {
         self.steps.get(&(place.clone(), step))
@@ -318,7 +279,11 @@ impl Waits {
     /// pause. Returns what the failure did to the wait, and the wait as it is now.
     ///
     /// # Errors
-    /// [`DurationOverflow`] when the next try cannot be recorded.
+    /// [`InvalidTimestamp`] when the next try cannot be recorded.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the committed tests of the waits call it with each value on its own; a struct of them is a refactoring of its own"
+    )]
     pub(super) fn failed(
         &mut self,
         place: &Step,
@@ -328,7 +293,7 @@ impl Waits {
         answer: String,
         outlook: Outlook,
         now: Timestamp,
-    ) -> Result<(Failure, Wait), DurationOverflow> {
+    ) -> Result<(Failure, Wait), InvalidTimestamp> {
         let key = (place.clone(), step);
         let failure = match self.steps.get(&key).map(|wait| wait.outlook) {
             Some(Outlook::MayPass) if outlook == Outlook::MayPass => Failure::Again,
@@ -338,18 +303,10 @@ impl Waits {
         };
         let wait = match self.steps.remove(&key) {
             Some(mut wait) => {
-                wait.again(answer, outlook, now, self.pause(wait.tries.saturating_add(1)))?;
+                wait.again(answer, outlook, now, pause(wait.tries.saturating_add(1)))?;
                 wait
             }
-            None => Wait::first(
-                team.clone(),
-                step,
-                pr,
-                answer,
-                outlook,
-                now,
-                self.pause(NonZeroU32::MIN),
-            )?,
+            None => Wait::first(team.clone(), step, pr, answer, outlook, now, pause(NonZeroU32::MIN))?,
         };
         if self.steps.len() >= MAX_WAITS
             && let Some(oldest) = self.steps.keys().next().cloned()
@@ -371,50 +328,26 @@ impl Waits {
         self.steps.len()
     }
 
-    /// When the step of `round` that is to be tried last is due, among those of `operations`: the round is looked at
-    /// again then, and so is the daemon. None when none of them waits, when one waits for the human (who is told), or
-    /// when the pauses are all over and the next look tries them.
-    pub(in crate::daemon::owner) fn next_due(
-        &self,
-        round: &RoundId,
-        steps: &[WaitingStep],
-        now: Timestamp,
-    ) -> Option<Timestamp> {
-        let waits: Vec<&Wait> = steps.iter().filter_map(|step| self.for_round(round, *step)).collect();
-        if waits.iter().any(|wait| wait.next_at.is_none()) {
-            return None;
-        }
-        waits
-            .iter()
-            .filter_map(|wait| wait.next_at)
-            .max()
-            .filter(|at| *at > now)
-    }
-
     /// Forgets every wait of `team`, so that the human's `agent resume` tries its steps at once.
     pub(super) fn forget_team(&mut self, team: &TeamId) {
         self.steps.retain(|_, wait| &wait.team != team);
     }
 
-    /// The line of the first wait of `team` as `agent status` tells it, by round: the step that waits, and what.
-    pub(super) fn of_team(&self, team: &TeamId, offset: time::UtcOffset) -> Vec<(RoundId, String)> {
-        let mut found: BTreeMap<RoundId, (Option<Timestamp>, String)> = BTreeMap::new();
-        for ((step, _), wait) in &self.steps {
-            if &wait.team != team {
-                continue;
-            }
-            let Step::Round { round } = step else {
-                continue;
-            };
-            let line = wait.line(offset);
-            match found.get_mut(round) {
-                Some((at, _)) if *at >= wait.next_at => {}
-                Some(entry) => *entry = (wait.next_at, line),
-                None => {
-                    found.insert(round.clone(), (wait.next_at, line));
-                }
-            }
-        }
-        found.into_iter().map(|(round, (_, line))| (round, line)).collect()
+    /// What `agent status` says `round` of `team` waits for: the step of the round itself, else a step of all the
+    /// team's rounds; the one tried last when several wait, and a refusal before all of them.
+    pub(in crate::daemon::owner) fn line_of(
+        &self,
+        team: &TeamId,
+        round: &RoundId,
+        offset: time::UtcOffset,
+    ) -> Option<String> {
+        let own = Step::Round { round: round.clone() };
+        let shared = Step::Team { team: team.clone() };
+        self.steps
+            .iter()
+            .filter(|((place, _), wait)| *place == own || (*place == shared && &wait.team == team))
+            .map(|(_, wait)| wait)
+            .max_by_key(|wait| (wait.next_at.is_none(), wait.next_at))
+            .map(|wait| wait.line(offset))
     }
 }
