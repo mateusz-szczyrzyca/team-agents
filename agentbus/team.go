@@ -216,12 +216,12 @@ func (s *Server) delivery(st *State, to string) (recipient, team string, refusal
 func bindSend(st *State, from, to, task, team string) (string, string, *CmdSendError) {
 	if to == "all" || strings.HasPrefix(to, "team:") {
 		if task != "" || team != "" {
-			return "", "", opErr(CmdSendMissingText, "--task and --team name the team of one agent, not of %s", to)
+			return "", "", opErr(CmdSendBindingForMany, "--task and --team name the team of one agent, not of %s", to)
 		}
 		return to, "", nil
 	}
 	if to == from && (task != "" || team != "") {
-		return "", "", opErr(CmdSendMissingText, "%s writes to itself", to)
+		return "", "", opErr(CmdSendToSelf, "%s writes to itself", to)
 	}
 	if task != "" || team != "" {
 		for _, of := range tasksOf(st, to) {
