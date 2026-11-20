@@ -29,7 +29,7 @@ The state is one JSON document, written indented with a newline at the end, the 
 
 ```json
 {
-  "schema_version": 12,
+  "schema_version": 13,
   "teams": [ { "id": "team-20261111-193000-a1b2", "...": "..." } ]
 }
 ```
@@ -135,6 +135,15 @@ changing retained investigator activities; its fixture is
 [`state-before-unpushed-base.json`](../crates/agent-core/tests/fixtures/state-before-unpushed-base.json).
 Older daemons cannot read a state saved with schema 12.
 
+### Delivered rounds
+
+Schema 13 adds the round life `status: "delivered"` (with `pr`) and round completion `how: "delivered"` (with `pr`).
+A coordinator delivery report `DELIVERED: #N` sets the open round to delivered while waiting for the pull request's merge.
+When the pull request is merged, the round closes with `how: "delivered"`; if closed without merge, the round reopens
+to `status: "open"`. Schema 12 migrates to 13 without changing rounds; its fixture is
+[`state-before-delivered-rounds.json`](../crates/agent-core/tests/fixtures/state-before-delivered-rounds.json).
+Older daemons cannot read a state saved with schema 13.
+
 ### Reading and its rules
 
 - **Strict.** A field that is not on this page is an error, in every object (`deny_unknown_fields`); so is a missing
@@ -145,8 +154,8 @@ Older daemons cannot read a state saved with schema 12.
   as one that was built through the API. There is one way to read a value, the `Deserialize` trait: the field-by-field
   reading that serde derives lives on a private mirror type (`remote`), so no public `T::deserialize` skips the checks.
 - **Versioned.** `State::from_json` reads `schema_version` **first**. A state of another version is refused with
-  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 12,
-  migrates versions 1 through 11 as it reads them (see "Version 1" below); any other version is
+  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 13,
+  migrates versions 1 through 12 as it reads them (see "Version 1" below); any other version is
   refused. Version 2 is read as it is: its items have no `findings`, so a round that was open when the daemon was
   updated ends by the rules it started with (verdicts only), and the numbered findings hold for pull requests opened
   after the update. A change that old files do not satisfy raises the version and comes with a migration, a fixture of the old

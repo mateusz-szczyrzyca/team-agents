@@ -272,6 +272,12 @@ run evidence. The activity record also supplies the investigator selection order
 `agent status --investigators`. See the
 [activity record](docs/state.md#investigator-activities).
 
+When a team coordinator delivers an item through another pull request of the team, the coordinator reports
+`DELIVERED: #N` before `STATUS: DONE`. State schema `13` persists delivered rounds (`status: "delivered"`) while
+awaiting merge. When the pull request is merged, the round closes as delivered; if closed without merge, the
+round reopens to open. Schema `12` migrates automatically to schema `13`. See
+[delivered rounds](docs/state.md#delivered-rounds).
+
 The Rust CLI provides a read-only diagnostic bundle for one team:
 
 ```sh
@@ -322,13 +328,6 @@ Repeated identical warnings are coalesced with a count. [`docs/log.md`](docs/log
 team/round/task/run scope, redaction, decisions and outside-call records; [`docs/configuration.md`](docs/configuration.md)
 documents the setting.
 
-Two events tell a step of a round that GitHub or git failed: `github_step_waiting` (`warn`), logged once when the step
-starts to wait, with `team`, `operation`, `pr`, `outlook` (`may_pass` or `will_not_pass`), `next_try` and the line
-`agent status` shows; and `github_step_resumed` (`info`), logged once when it goes through, with `team` and
-`operation`. The tries in between log only the `github_call_failed` warnings of the calls themselves. A `history.db`
-made before this version is migrated at the start of the daemon (history version 11) so that it keeps these events;
-it also keeps `build_directory_removed` from then on, which such a file refused before.
-
 Read a round with `target/debug/agent log --round <round-id>`, or a team's rounds with
 `target/debug/agent log --team <team-id>`. Both read the history directly and work with the daemon stopped.
 Use `--prompts` for whole prompts, `--no-steps` to omit individual steps, or `--json` for every record exactly once
@@ -354,7 +353,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent answer <task> --file answers.md` | sends the answers written after `**Verdict:**` in a questions file instead of opening the editor |
 | `agent stop <task\|team>` | ends the run; nothing of it starts until it is resumed |
 | `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
-| `agent resume <task\|team>` | starts a stopped, failed or waiting task again; when steps of the team wait for GitHub or git, it tries those at once and starts no task |
+| `agent resume <task\|team>` | starts a stopped, failed or waiting task again |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus |
 | `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now |
 | `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed |
@@ -521,16 +520,6 @@ An idle open round's line in `agent status` and `agent status <round>` names wha
 a review, a free independent investigator (for a review, a second opinion or the replacement of a reviewer that cannot
 work, when none is free), a second opinion that an investigator is giving, the human's answer, or the lead's correction. `nothing: this is a defect` means the
 harness has lost its next action; it logs one `daemon_task_failed` error for that round with `operation=round_wait`.
-
-A step of a round that GitHub or git fails does not stop the daemon: the round says `waits for GitHub: refresh the
-description of the pull requests, tried 4 times, next try 01:07` and the step is tried again by itself, after 30
-seconds, then after a pause that doubles up to 10 minutes. When GitHub refuses it for good (a 404, a token that may not
-do it) the line says `refused: <GitHub's answer>`, you are told once while it waits, and `agent resume <team>` tries it
-again at once after you fixed the cause. Such a resume is for the waiting steps only: it starts no task of the team; a
-second `agent resume` starts them, as before. The same holds when git cannot read the commit of a worktree, for example
-the lead's before a merge: `waits for GitHub: read the lead's commit before the merge #1, refused: ...`. The log has one
-`github_step_waiting` warning when a step starts to wait and one `github_step_resumed` when it goes through; see
-[`docs/architecture.md`](docs/architecture.md) for the steps this covers. A daemon that starts tries every step at once.
 
 Verifiers answer a pending explanation with `FINDING 3: ACCEPTED — why` or `FINDING 3: REJECTED — why`.
 Every verifier must accept before the finding becomes MINOR; one rejection requires a code fix and bars another
