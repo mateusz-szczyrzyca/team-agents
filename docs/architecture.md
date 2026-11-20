@@ -253,12 +253,21 @@ end does (`settle.rs`):
 | `STATUS: DONE` against its plan | `queued`, sent back with the reason; after `[plan] bounces` send-backs `questions`, in a questions file the daemon writes | only for the roles of `[plan] roles` and tasks this version made; see [`plan.md`](plan.md#the-daemon-and-the-plan) |
 | `STATUS: QUESTIONS` | `questions`, when `tasks/<task>/questions-<number>.md` is there and parses | the questions are recorded and the human told; a missing or unreadable file fails the task and says why |
 | `STATUS: FAILED` | `failed` | the coordinator (or human) is told |
-| no `STATUS:` line | `queued`: resumed in the same session with a short prompt (`harness/run/resume-no-status.md`) | at most 2 consecutive automatic resumes for resumable tasks with a session (solo, coordinator, member; excluding workers serving requests, reviewers, tasks without a session, or failures during startup/execution); the 3rd fails and notifies. Runs ending without a status line upon daemon shutdown/interruption (exit code `None`) count toward the streak so restarts remain bounded. Any other end resets the count. Settle records `Settled::NoStatus` so human pause or stop overrules retry |
+| no `STATUS:` line | `queued`: resumed in the same session with a short prompt (`harness/run/resume-no-status.md`) | at most 2 consecutive automatic resumes for resumable tasks with a session (solo, coordinator, member; excluding workers serving requests, reviewers, tasks without a session, or failures during startup/execution); the 3rd goes up the ladder (below): once a new session with a briefing, then it fails and notifies. Runs ending without a status line upon daemon shutdown/interruption (exit code `None`) count toward the streak so restarts remain bounded. Any other end resets the count. Settle records `Settled::NoStatus` so human pause or stop overrules retry |
 | `STATUS: SLEEPING` / `EXCLUDED` | `waiting` / `done` | |
 | quota exhausted, rate limited | `paused` | woken at the time the CLI gave (plus a minute), else after the `[limits]` minutes; the human is told |
-| turn limit | `queued`: resumed in the same session with a short continuation prompt | at most `[limits] turn_limit_resumes` consecutive automatic resumes (default `3`); the next exhaustion fails and notifies with the count; any other end resets the count |
-| hung | `queued`: resumed from its session | after `[watchdog] hang_strikes` hangs in a row without progress, `failed` and the human is told; a run that did something before it went silent starts the count again |
+| turn limit | `queued`: resumed in the same session with a short continuation prompt | at most `[limits] turn_limit_resumes` consecutive automatic resumes (default `3`); the next exhaustion goes up the ladder (below), then fails and notifies with the count; any other end resets the count |
+| hung | `queued`: resumed from its session | after `[watchdog] hang_strikes` hangs in a row without progress, the ladder (below), then `failed` and the human is told; a run that did something before it went silent starts the count again |
 | the daemon shut down | `queued`, or `failed` when the no-status budget is exhausted | the run is recorded as ended with no status and no exit code; resumable solo, coordinator and member tasks with sessions fail on the third consecutive no-status end |
+
+**The ladder** (`decide::ladder::next_step`, `[replacement] new_sessions`): after the retries of the same session a task of
+a solo agent, a coordinator or a member is started once in a new session of the same agent. The renewal (`renewals` of the
+member, with its reason) is saved with the decision, so a restart before the new run keeps it; the run after it resumes
+no session. When that run starts, the daemon takes a snapshot of the worktree (recorded in the history) and the prompt is
+the briefing (`harness/run/briefing.md`): why the task is started anew, its whole prompt, the commits of its branch since
+the base, the uncommitted files, its plan of steps and the unread messages of its team (read from the bus's log and
+cursors, `agentbus/unread.rs`). Each decision is logged as `decision_taken` with `decision` `ladder`. A worker and a
+reviewer are not started anew; when the new session goes bad too, the task fails as before.
 
 **The watchdog** is the engine's: a run whose output files show no change for `[watchdog] hang_minutes` is stopped (its
 whole process group, `SIGTERM` then `SIGKILL`) and classified as a hang unless the provider refused it. **A pause** is
@@ -336,7 +345,7 @@ seconds, because the Go bus wakes a sleeper by marking it `waking` and spawns no
    and the human is notified, once.
 
 When a member ends, the coordinator gets a message on the bus (`member_finished` with the item and the branch,
-`member_failed`, `member_no_status`), which wakes it to integrate. If the member failed or ended without status while holding an item, the message names the item and the branch (`prompts/harness/team/bus-member-failed-item.md`, `bus-member-no-status-item.md`), advising the coordinator that if it takes over the work, it should still report `STATUS: DONE`: the harness will tell the human, the human will resume the member, and the member must end with a status. Because the harness only publishes while the assignee task is waiting, a coordinator taking over finishes its own work and reports `STATUS: DONE`, after which the human is alerted to resume the member with status. A member's item stays `in_progress` until its pull
+`member_failed`, `member_no_status`), which wakes it to integrate. If the member failed or ended without status while holding an item, the message names the item and the branch (`prompts/harness/team/bus-member-failed-item.md`, `bus-member-no-status-item.md`), advising the coordinator that if it takes over the work, it should still report `STATUS: DONE`: the harness will tell the human, the human will resume the member, and the member must end with a status. The harness publishes an item while its assignee task waits, or, when the assignee task is stopped or no longer in the crew, once the coordinator's last run ended `STATUS: DONE`: the item follows its task, not the agent. A coordinator taking over the item of a failed member finishes its own work and reports `STATUS: DONE`, after which the human is alerted to resume the member with status. A member's item stays `in_progress` until its pull
 request is open ("Pull requests, reviews and the merge", below): the next item of a feature starts when the previous one is
 merged, so a member that is done waits. A solo task whose item is under way waits as well, instead of ending (`done` is
 final).

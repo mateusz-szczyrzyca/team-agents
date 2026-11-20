@@ -294,7 +294,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `notification_sent` | `info` | A notification for the human is delivered, with the `file` it was written to. |
 | `questions_file_opened` | `info` | A new questions file is opened in the editor, or is not because the editor is not there, with `outcome`. |
 | `build_directory_removed` | `info` | A build directory of a worktree was removed to release disk space, with `task` and `bytes`. |
-| `decision_taken` | `debug` | A pure decision of `agent_core::decide` takes action, with `decision`, `input`, and `result`. |
+| `decision_taken` | `debug` | A pure decision of `agent_core::decide` takes action, with `decision`, `input`, and `result`. The ladder of a task whose run went bad is `decision` `ladder`: `input` names the trouble (`NoStatus`, `Hang`, `TurnLimit`), the count, the role and the new sessions used and allowed; `result` is `SameSession`, `NewSession` or `GiveUp`. |
 | `outside_call_completed` | `debug` | An outside call (`git`, `agentbus`, GitHub API, model CLI) completes, with `tool`, `operation`, `duration_ms`, `outcome`, and, when available, `exit_code`. |
 | `peer_gone` | `debug` | The other end of an answer (a client of the socket, or a task of the daemon) was gone before the answer. |
 | `github_step_waiting` | `warn` | A step of a round that calls GitHub or git fails and waits: once when it starts to wait, with `team`, `operation`, `pr`, `outlook` (`may_pass` or `will_not_pass`), `next_try` (empty for a refusal) and the `detail` line `agent status` shows. |

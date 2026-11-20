@@ -256,8 +256,12 @@ the pull request: a plan an agent commits by mistake is taken out of its branch 
 delivery". See [configuration](docs/configuration.md#plan).
 
 A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt
-(`prompts/harness/run/resume-no-status.md`), up to twice in a row; a third failure in a row marks the task failed and
-notifies the coordinator (or human). Automatic retries apply only to resumable tasks with a session (solo tasks,
+(`prompts/harness/run/resume-no-status.md`), up to twice in a row. After that the session itself is taken to have gone
+bad, and the task is started once in a new session of the same agent with a briefing built from facts — its prompt, the
+commits of its branch, the files it left uncommitted (kept in a snapshot first), its plan of steps and the messages of its
+team it had not read (`[replacement] new_sessions = 1`; `0` turns it off). The same happens after the watchdog's last
+strike for a hung run and after the last turn-limit resume. When the new session goes bad too, the task is marked failed
+and the coordinator (or human) is notified. `agent status` shows such a task as `in a new session`. Automatic retries apply only to resumable tasks with a session (solo tasks,
 coordinators, and team members), excluding workers serving requests, reviewers, tasks without a session, or failures
 during startup or execution. Runs ending without a status line upon daemon shutdown or interruption (exit code `None`)
 count toward the consecutive limit; an interruption that exhausts the budget fails the task before another run starts.
@@ -268,7 +272,9 @@ holding an item, the coordinator receives a notice naming the item and the membe
 item (`prompts/harness/pr/notice-standing-item.md`) with the member's last-run details and commands to speak to the
 member and resume it (`agent say <task>`, `agent resume <task>`). Resuming a task clears the notification deduplication
 for items assigned to that task. Existing notification files identify the item and the failed run, preserving suppression
-across daemon restarts; a later failed run can notify again.
+across daemon restarts; a later failed run can notify again. An item does not stand behind a member that the human stopped,
+or that is no longer in the team: when the lead ends `STATUS: DONE` with a passed gate, the item is published with the
+lead's branch.
 
 Snapshots keep a worktree's work when its run was cut. When the daemon starts, it takes a snapshot of every task whose run did not end, if the round that run worked for is still open: everything in the worktree (uncommitted, staged, deleted, untracked and binary files; ignored files are left out) becomes a commit under `refs/agents/snapshots/<round>/<task>/<n>` in the repository, and the worktree, its index and its files do not change. `agent status <round>` shows the last snapshot of each task with its number, time and size. A snapshot above `[snapshot] warn_mb` (default `200`) is still taken and logged as `snapshot_large`; a snapshot that fails is logged as `snapshot_failed` and the daemon goes on. Snapshots are never pushed and never pruned yet: remove the references with `git update-ref -d` when you no longer need them. Two events and one history table (`snapshots`, migration `12`) describe them, see [`docs/history.md`](docs/history.md).
 

@@ -127,10 +127,10 @@ corrections = 2   # 0 asks the human at the first invalid proposal
 
 # --- Replacement ------------------------------------------------------------------------------------------------
 # A run may end without a `STATUS:` line, or hang. The task is asked again in the same session a few times (twice for a
-# run without a status, `hang_strikes` times for a hang); after that the session itself is the trouble, and the task is
-# started in a new session of the same agent with a briefing of what the previous sessions did: its prompt, the commits
-# on its branch, the files it left uncommitted, its plan and the messages of its team it had not read. `new_sessions`
-# is how many such restarts a task gets: 1 by default, 0 turns them off.
+# run without a status, `hang_strikes` times for a hang, `turn_limit_resumes` times for a turn limit); after that the
+# session itself is the trouble, and the task is started in a new session of the same agent with a briefing of what the
+# previous sessions did: its prompt, the commits on its branch, the files it left uncommitted, its plan and the messages
+# of its team it had not read. `new_sessions` is how many such restarts a task gets: 1 by default, 0 turns them off.
 
 [replacement]
 new_sessions = 1
