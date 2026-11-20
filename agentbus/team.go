@@ -210,11 +210,55 @@ func (s *Server) delivery(st *State, to string) (recipient, team string, refusal
 	return "", "", opErr(SendMessageAmbiguousAgent, "%s is in %d open teams: %s — put one of its task IDs in to", to, len(tasks), strings.Join(pairs, ", "))
 }
 
-// bindSend finds where `agentbus send` posts a message: the recipient — the agent, or a task — and the team it is bound
-// to, or why it is refused. The daemon is in no team; it names the team with a task of the member or with --team, and
-// without them a member of one open team is written to in it (a stub of this commit: it binds nothing).
-func bindSend(_ *State, _, to, _, _ string) (string, string, *CmdSendError) {
-	return to, "", nil
+// bindSend finds where `agentbus send` posts a message: the recipient and the team it is bound to, or why it is refused.
+// The daemon is in no team; it names the team with a task of the member or with --team, and without them a member of one
+// open team is written to in it.
+func bindSend(st *State, from, to, task, team string) (string, string, *CmdSendError) {
+	if to == "all" || strings.HasPrefix(to, "team:") {
+		if task != "" || team != "" {
+			return "", "", opErr(CmdSendMissingText, "--task and --team name the team of one agent, not of %s", to)
+		}
+		return to, "", nil
+	}
+	if to == from && (task != "" || team != "") {
+		return "", "", opErr(CmdSendMissingText, "%s writes to itself", to)
+	}
+	if task != "" || team != "" {
+		for _, of := range tasksOf(st, to) {
+			if task != "" && of.task != task {
+				continue
+			}
+			if team != "" && of.team != team {
+				continue
+			}
+			return to, of.team, nil
+		}
+		return "", "", opErr(CmdSendNoSuchMember, "%s is in no open team with %s", to, named(task, team))
+	}
+	switch tasks := tasksOf(st, to); len(tasks) {
+	case 0:
+		return to, "", nil
+	case 1:
+		return to, tasks[0].team, nil
+	default:
+		pairs := make([]string, 0, len(tasks))
+		for _, of := range tasks {
+			pairs = append(pairs, "task "+of.task+" (team "+of.team+")")
+		}
+		return "", "", opErr(CmdSendAmbiguousAgent, "%s is in %d open teams: %s — name one with --task or --team", to, len(tasks), strings.Join(pairs, ", "))
+	}
+}
+
+// named says which task or team a refusal was about.
+func named(task, team string) string {
+	switch {
+	case task != "" && team != "":
+		return "task " + task + " in team " + team
+	case task != "":
+		return "task " + task
+	default:
+		return "team " + team
+	}
 }
 
 // requestedTeam is the team of the task from which helper wrote to member: the task of the member's request the helper

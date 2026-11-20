@@ -1322,12 +1322,15 @@ func (f fieldFlags) Set(v string) error {
 	return nil
 }
 
-// send: posts a message as a human (chat) or, with --notice, an event of the `agent` script.
+// send: posts a message as a human (chat) or, with --notice, an event of the `agent` script. --task or --team names the
+// open team of the agent it is for, since the daemon is in no team.
 func cmdSend(args []string) {
 	fs := newFlagSet("send")
 	dir := fs.String("dir", defaultDir(), "state directory")
 	from := fs.String("from", os.Getenv("USER"), "sender")
-	to := fs.String("to", "all", "recipient (agent, all or team:<id>)")
+	to := fs.String("to", "all", "recipient (agent, task, all or team:<id>)")
+	task := fs.String("task", "", "a task of the recipient: the open team it is in is the one written to")
+	team := fs.String("team", "", "the open team of the recipient the message is written to")
 	notice := fs.String("notice", "", "script event kind (see ScriptNotice); empty = chat message")
 	fields := fieldFlags{}
 	fs.Var(fields, "field", "key=value detail of a script event (repeatable)")
@@ -1345,7 +1348,11 @@ func cmdSend(args []string) {
 	b := &Bus{dir: *dir}
 	var out cliWriter
 	exitOn(transact(b, CmdSendStorage, func(st *State) *CmdSendError {
-		m, serr := b.post(st, *from, *to, ev)
+		recipient, bound, refusal := bindSend(st, *from, *to, strings.TrimSpace(*task), strings.TrimSpace(*team))
+		if refusal != nil {
+			return refusal
+		}
+		m, serr := b.postIn(st, bound, *from, recipient, ev)
 		if serr != nil {
 			return fromStorage(CmdSendStorage, serr)
 		}
@@ -1469,7 +1476,7 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, `agentbus `+version+`
   agentbus serve   --agent NAME [--dir D --task --repo --branch --worktree --peers a,b]   (MCP server, stdio)
-  agentbus send    [--dir D] [--from me] [--to all|agent] TEXT
+  agentbus send    [--dir D] [--from me] [--to all|agent|task] [--task T] [--team ID] TEXT
   agentbus log     [--dir D] [-n 30]
   agentbus status  [--dir D]
   agentbus release [--dir D] RESOURCE    (forced release)
