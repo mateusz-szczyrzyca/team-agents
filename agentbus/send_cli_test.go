@@ -75,7 +75,7 @@ func TestSendWithATaskOrTeamToEveryoneIsRefused(t *testing.T) {
 
 	for _, to := range []string{"all", "team:A"} {
 		_, _, err := bindingIn(b, to, sendWhere{task: "task-codex-1-a"})
-		if err == nil || err.Cause != CmdSendMissingText {
+		if err == nil || err.Cause != CmdSendBindingForMany {
 			t.Fatalf("%s: got %v, want an invalid argument", to, err)
 		}
 	}
