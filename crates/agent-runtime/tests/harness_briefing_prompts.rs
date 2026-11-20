@@ -6,7 +6,7 @@ mod harness_briefing_prompts {
     use std::path::Path;
 
     use agent_core::prompt::{HarnessPrompt, PROMPTS_DIR};
-    use agent_runtime::run::compose::{Briefing, BriefingCommit, BriefingMessage, BriefingStep, briefing};
+    use agent_runtime::run::compose::{Briefing, BriefingCommit, BriefingMessage, BriefingStep, briefing_variables};
 
     /// The briefing of `facts`, rendered through the real text of `prompts/harness/run/briefing.md`.
     fn render(facts: &Briefing<'_>) -> String {
@@ -16,13 +16,7 @@ mod harness_briefing_prompts {
             .join(PROMPTS_DIR)
             .join(spec.path());
         let text = std::fs::read_to_string(path).unwrap();
-        briefing(
-            &|_, values| match spec.render(&text, values) {
-                Ok(rendered) => rendered,
-                Err(error) => panic!("the briefing renders: {error:?}"),
-            },
-            facts,
-        )
+        spec.render(&text, &briefing_variables(facts).unwrap()).unwrap()
     }
 
     /// The golden text `name` of the briefing.
