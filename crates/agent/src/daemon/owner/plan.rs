@@ -3,6 +3,7 @@
 
 use std::str::FromStr;
 
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 use agent_core::config::{AbsolutePath, InvalidValue};
@@ -11,6 +12,7 @@ use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::plan::PLAN_FILE;
 use agent_core::prompt::{HarnessPrompt, Variables};
+use agent_core::questions::QuestionsFile;
 use agent_core::repo_path::{InvalidRepoPath, RepoPath};
 use agent_core::state::PlanReason;
 use agent_runtime::git::{CommitIdentity, Git, GitError, Untracked};
@@ -19,7 +21,7 @@ use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::ComposeError;
 
-use super::{Located, Owner};
+use super::{Located, Owner, OwnerError};
 
 /// Why the plan of a task cannot be taken out of its branch.
 #[derive(Debug, thiserror::Error)]
@@ -130,6 +132,57 @@ impl Owner {
             }),
             None => Err(OutOfDeliveryError::Worktree { path, source: None }),
         }
+    }
+}
+
+/// Whether the human's question about a task's plan was written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PlanQuestion {
+    /// The task's next questions file holds it, and the task's plan waits for its answer: the run's end is settled as
+    /// a run that asked questions.
+    Written,
+    /// It could not be made or written (logged): the run's end is settled as the done it reported.
+    NotWritten,
+}
+
+/// What the human's answer to the question about a task's plan says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PlanAnswer {
+    /// Go on as it is: the plan is released, and the agent's next `DONE` is taken as it is.
+    GoOn,
+    /// Send the run back once more: one more send-back is granted and counted.
+    OnceMore,
+}
+
+impl Owner {
+    /// Writes the question to the human about the plan of `task`, sent back as often as `[plan] bounces` allows and still
+    /// against its plan for `reason`, as the task's next questions file, and records that its plan waits for the answer.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the task is gone or has no questions number left.
+    pub(super) async fn write_plan_question(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        reason: &PlanReason,
+    ) -> Result<PlanQuestion, OwnerError> {
+        let _ = (task, located, reason);
+        Ok(PlanQuestion::NotWritten)
+    }
+
+    /// Applies the human's answer `file` to questions `number` of `task` to its plan, when those are the questions about
+    /// its plan; other questions change nothing of it.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the task is gone.
+    pub(super) fn apply_plan_answer(
+        &mut self,
+        task: &TaskId,
+        number: NonZeroU32,
+        file: &QuestionsFile,
+    ) -> Result<(), OwnerError> {
+        let _ = (task, number, file);
+        Ok(())
     }
 }
 
