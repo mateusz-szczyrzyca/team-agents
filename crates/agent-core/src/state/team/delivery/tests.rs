@@ -128,7 +128,7 @@ fn delivery_metadata_cannot_forge_team_ownership_or_item_phase_when_read() {
 }
 
 #[test]
-fn delivery_refuses_prs_owned_only_by_abandoned_or_approved_rounds() {
+fn delivery_retains_team_pr_ownership_after_its_round_closes() {
     for end in [RoundEnd::Abandoned, RoundEnd::Approved] {
         let mut team = working();
         if end == RoundEnd::Approved {
@@ -151,12 +151,8 @@ fn delivery_refuses_prs_owned_only_by_abandoned_or_approved_rounds() {
             item.advance(ItemPhase::Approved { pr, reviews }).unwrap();
         }
         team.close_round(&round_id(1), at(30), end).unwrap();
-        let before = team.clone();
-        assert_eq!(
-            team.deliver_round(&round_id(2), pr(7).number),
-            Err(DeliveryError::NoTeamPr { number: pr(7).number })
-        );
-        assert_eq!(team, before);
+        assert_eq!(team.deliver_round(&round_id(2), pr(7).number), Ok(()));
+        assert_eq!(team.round(&round_id(2)).unwrap().delivered_by(), Some(&pr(7)));
     }
 }
 
