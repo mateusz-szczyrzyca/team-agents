@@ -245,6 +245,16 @@ of its continuation. This build supports legacy socket protocol `3` and split-aw
 state schema `2`, and migrates history to schema `8`. See [configuration](docs/configuration.md) and
 [state compatibility](docs/state.md#turn-limit-compatibility-item-88).
 
+**The plan of a task.** A solo agent, a member and a coordinator keep the plan of their task in `.agent/plan.md` of
+their worktree: its stages and steps, each marked to do, in hand, done or given up ([`docs/plan.md`](docs/plan.md)).
+The daemon reads the file at the end of every run and keeps each new version in the history. A run of a role in
+`[plan] roles` that ends `STATUS: DONE` while its plan is missing, does not parse, has a step still to do or in hand,
+or lost a step of its last version goes back to the same agent with the reason, at most `[plan] bounces` times per task
+(default 3; `0` only records); after that you are asked once, in the task's questions file, whether to go on as it is
+or send it back once more. Tasks created before this version are never sent back. The plan is kept out of git and out of
+the pull request: a plan an agent commits by mistake is taken out of its branch by a commit "Keep the plan out of the
+delivery". See [configuration](docs/configuration.md#plan).
+
 A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt
 (`prompts/harness/run/resume-no-status.md`), up to twice in a row; a third failure in a row marks the task failed and
 notifies the coordinator (or human). Automatic retries apply only to resumable tasks with a session (solo tasks,
