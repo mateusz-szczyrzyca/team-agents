@@ -236,6 +236,7 @@ impl BriefingFacts {
             uncommitted: &uncommitted,
             plan: steps.as_deref(),
             messages: &messages,
+            left_out: None,
             snapshot: &self.snapshot,
         };
         let values = briefing_variables(&facts)?;

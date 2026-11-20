@@ -55,6 +55,8 @@ pub struct Briefing<'a> {
     pub plan: Option<&'a [BriefingStep<'a>]>,
     /// The messages of the task's team it had not read.
     pub messages: &'a [BriefingMessage<'a>],
+    /// The note that older unread messages are left out of [`Briefing::messages`], when they are.
+    pub left_out: Option<&'a str>,
     /// The reference of the snapshot of the worktree, taken before the session starts.
     pub snapshot: &'a str,
 }

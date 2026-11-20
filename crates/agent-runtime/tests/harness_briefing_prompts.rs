@@ -70,6 +70,7 @@ mod harness_briefing_prompts {
             uncommitted: &uncommitted,
             plan: Some(&plan),
             messages: &[message("1508", "inv-opus", "Work on item 1.1 only.")],
+            left_out: None,
             snapshot: "refs/agents/snapshots/round-1/task-20261120-144101-r7q2/1",
         };
 
@@ -90,6 +91,7 @@ mod harness_briefing_prompts {
             uncommitted: &[],
             plan: None,
             messages: &[],
+            left_out: None,
             snapshot: "refs/agents/snapshots/round-1/task-20261120-144101-r7q2/1",
         };
 
@@ -111,11 +113,34 @@ mod harness_briefing_prompts {
             uncommitted: &uncommitted,
             plan: None,
             messages: &[message("1508", "inv-opus", "Work on item 1.1 only.")],
+            left_out: None,
             snapshot: "refs/agents/snapshots/round-1/task-20261120-144101-r7q2/1",
         };
 
         let text = render(&facts);
 
         assert_eq!(text, golden("briefing-messages.txt"));
+    }
+
+    #[test]
+    fn a_new_session_is_told_when_older_unread_messages_are_left_out() {
+        let note = "Older unread messages are left out of this list: read them all with `read_messages` before anything else.\n";
+        let facts = Briefing {
+            reason: "hang",
+            task: "task-20261120-144101-r7q2",
+            prompt: "Fix the parser.\n",
+            base: "main",
+            branch: "agents/deepinfra-deepseek/task-20261120-191109-qesn-1.1",
+            commits: &[],
+            uncommitted: &[],
+            plan: None,
+            messages: &[message("1508", "inv-opus", "Work on item 1.1 only.")],
+            left_out: Some(note),
+            snapshot: "refs/agents/snapshots/round-1/task-20261120-144101-r7q2/1",
+        };
+
+        let text = render(&facts);
+
+        assert_eq!(text, golden("briefing-left-out.txt"));
     }
 }
