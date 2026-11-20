@@ -5,6 +5,15 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.28.0 — 20.11.2026 — PR #144
+
+### New features
+- [agent] [agent-core] A coordinator can report that its item is already delivered by a pull request of its team (for example `delivered by PR #42`). The daemon checks the report and closes the item when that pull request is merged; the item opens no pull request, version or review of its own. `agent status` shows `delivered by PR #42, waits for its merge` while it waits.
+- [agent] [agent-core] **Action:** state files move to schema 13. Older files migrate automatically.
+
+### Bug fixes
+- [agent] [agent-core] A round whose item was delivered by another pull request of its team no longer says `nothing: this is a defect`; the lead is told why a delivery report is refused.
+
 ## 0.27.0 — 20.11.2026 — PR #143
 
 ### Bug fixes
