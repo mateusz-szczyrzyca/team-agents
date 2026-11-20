@@ -329,11 +329,22 @@ impl State {
         trouble: crate::decide::ladder::Trouble,
         at: Timestamp,
     ) -> Result<bool, RenewTaskError> {
-        let (role, _member) = self
+        let (role, mut member) = self
             .find_task_mut(task)
             .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
-        let _ = (trouble, at, role);
-        Ok(false)
+        match role {
+            Role::Solo | Role::Coordinator | Role::Member => {}
+            Role::Worker | Role::Reviewer => {
+                return Err(RenewTaskError::Role {
+                    task: task.clone(),
+                    role,
+                });
+            }
+        }
+        member.renew(trouble, at).map_err(|source| RenewTaskError::Renewal {
+            task: task.clone(),
+            source,
+        })
     }
 
     /// The round `round` with its team.
