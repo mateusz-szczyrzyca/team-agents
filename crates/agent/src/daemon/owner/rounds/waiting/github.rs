@@ -17,7 +17,8 @@ use time::Duration;
 
 /// How many steps that may pass are kept waiting at once. Beyond it the one of them with the smallest key (step, round)
 /// gives way and is tried at its next look, as after a start of the daemon. A refusal is never given up for room: it
-/// waits for the human's resume, and there is at most one per step of a round or team the state has.
+/// waits for the human's resume, and there is at most one per step of an open round or team, as the waits of a round
+/// that closed and of a team that is closed or gone are dropped (`Waits::keep`).
 pub(in crate::daemon::owner) const MAX_WAITS: usize = 256;
 
 /// Whether a failed step may pass at a later try, from what it failed with: a GitHub failure says so itself, and a
@@ -366,7 +367,9 @@ impl Waits {
     }
 
     /// Keeps only the waits whose place `open` holds for: a round that is open, a team that is not closed.
-    pub(in crate::daemon::owner) fn keep(&mut self, _open: impl Fn(&Step) -> bool) {}
+    pub(in crate::daemon::owner) fn keep(&mut self, open: impl Fn(&Step) -> bool) {
+        self.steps.retain(|(place, _), _| open(place));
+    }
 
     /// Whether a step `step` of `team` waits, in any of its rounds.
     pub(in crate::daemon::owner) fn holds(&self, team: &TeamId, step: WaitingStep) -> bool {

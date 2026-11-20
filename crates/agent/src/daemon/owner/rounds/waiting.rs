@@ -73,6 +73,19 @@ impl Owner {
         Ok(())
     }
 
+    /// Forgets the steps that wait for GitHub or git in a round that closed, or of a team that is closed or gone: nothing
+    /// tries them again, and the owner's memory holds the waits of open rounds and teams only.
+    pub(in crate::daemon::owner) fn drop_closed_waits(&mut self) {
+        let state = &self.parts.state;
+        let closed = &self.closed;
+        self.watch.github_waits.keep(|place| match place {
+            Step::Round { round } => state
+                .find_round(round)
+                .is_some_and(|(_, found)| *found.life() == agent_core::state::RoundLife::Open),
+            Step::Team { team } => state.team(team).is_some() && !closed.contains(team),
+        });
+    }
+
     /// Where a step for `items` of `team` waits: their round, or the team's rounds as a whole for items whose round
     /// the state cannot name.
     pub(super) fn place_of(&self, team: &TeamId, items: &[agent_core::ids::ItemId]) -> Step {

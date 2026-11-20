@@ -397,6 +397,7 @@ impl Owner {
     /// [`OwnerError`] when the state cannot be saved or is found inconsistent.
     pub(super) async fn team_life(&mut self) -> Result<(), OwnerError> {
         self.flush_outbox().await?;
+        self.drop_closed_waits();
         let looks = std::mem::take(&mut self.looks);
         for team in looks {
             self.look_after(&team).await?;
