@@ -368,6 +368,11 @@ case $action in
     fi
     result "$report"'\nSTATUS: DONE'
     ;;
+  dirty-done)
+    hide_own_files
+    printf 'uncommitted delivery work\n' > delivery-uncommitted.txt
+    result 'Delivery still has local changes.\nSTATUS: DONE'
+    ;;
   done:*) result "${action#done:}"'\nSTATUS: DONE' ;;
   target-done:*)
     # Leaves the build directory a build would leave in the worktree, then finishes with the text after the colon.
