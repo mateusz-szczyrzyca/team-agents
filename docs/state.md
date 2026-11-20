@@ -433,11 +433,22 @@ activity of a control (who paused, who answered).
 
 ### Versions
 
-Every line carries `"protocol": 3`. A reader looks at **the version first** and refuses a line of another version with
-`ProtocolError::UnsupportedVersion { found }`, whatever else the line says: a client of version 4 that sends a request
-this daemon does not know gets that answer and not a parse error, and so does a line of version 1 or 2. A line without a usable
-version, or not JSON, is `Malformed` (with the parser's reason); a line over the limit is `TooLong`. A change to a message that
-old peers cannot read raises the version.
+Legacy APIs and clients use `"protocol":3`. Split-aware clients send `"protocol":4`; the daemon answers in the
+request's version and retains it for subscription events. Version 4 adds split acknowledgements (`Response.split`),
+plans in team summaries (`TeamSummary.splits`) and part identities in rounds (`Round.part`). All are omitted from
+version-3 replies and events. A version-3 `show` of a full split team returns an `invalid` refusal explaining that
+protocol 4 is required: removing part identities would make historical rounds invalid. Ordinary version-3 frames
+retain their existing encoding. State schema 13 is unchanged.
+
+The CLI negotiates before sending split-aware commands: it sends a read-only version-4 `status` probe, then sends
+the intended command in version 4. If an older daemon rejects the probe or closes the connection, it reconnects
+once and uses version 3 instead; no mutating command is retried. The choice is cached on that connection. Older
+clients continue to send version 3 directly.
+
+A reader checks the version before decoding the message body. Strict legacy `Request::from_line` and
+`Frame::from_line` retain version-3-only behavior; their negotiated counterparts accept 3 and 4. Other versions
+return `ProtocolError::UnsupportedVersion`. A line without a usable version, or invalid JSON, is `Malformed`;
+a line over the direction's limit is `TooLong`. A message change that old peers cannot read raises the version.
 
 Version 2 added the round — the target `{"round":"round-…"}`, the rounds in a team's summary, the reply `round`, the events
 `round_opened` and `round_closed`, and the round in the events about an item or a run — and renamed the `round` of the questions

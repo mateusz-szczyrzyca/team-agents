@@ -240,7 +240,7 @@ Older clients and saved teams grant no such permission.
 A Claude Code run that exhausts its turn budget now resumes in the same session. Configure `[limits] max_turns`
 (default `300`) and `turn_limit_resumes` (default `3`); after that many consecutive resumes the task fails and
 notifies you with the count. Any other ending resets the count. `agent log` records `turn_limit` and the reason
-of its continuation. This build uses socket protocol `3` (upgrade clients and daemon together), reads existing
+of its continuation. This build supports legacy socket protocol `3` and split-aware protocol `4`, reads existing
 state schema `2`, and migrates history to schema `8`. See [configuration](docs/configuration.md) and
 [state compatibility](docs/state.md#turn-limit-compatibility-item-88).
 
@@ -281,7 +281,10 @@ Approve using the [explicit split verdict](docs/task-list.md#approved-split-plan
 lists the recorded parts, or explains a rejected form. The current round delivers part a. Later parts receive
 separate rounds, branches and pull requests after their dependencies merge; the original item and team remain
 open until all parts merge. `agent status` shows the parts and their dependency states. Definitions and progress
-survive restarts. Socket responses add optional split metadata; ordinary replies retain their existing shape.
+survive restarts. The CLI negotiates socket protocol `4` for split acknowledgements and status details. Older clients keep protocol
+`3`, whose replies omit split fields; ordinary replies retain their existing shape. A new CLI probes with a
+read-only status request and reconnects once using protocol `3` when an older daemon rejects or closes the probe.
+The actual answer is sent once. Showing the full state of a split team requires protocol `4`.
 Schema `13` states from version 0.29.0 remain readable, with original round names and histories.
 
 The Rust CLI provides a read-only diagnostic bundle for one team:

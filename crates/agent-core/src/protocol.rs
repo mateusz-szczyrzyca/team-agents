@@ -2,9 +2,9 @@
 //! its Unix socket (see `docs/state.md`).
 //!
 //! A client sends one [`Request`] per line; the daemon answers each with a [`Response`] and, to a client that
-//! subscribed, sends [`Event`]s as the state changes — a [`Frame`] is either. Every line carries `"protocol": 3`
-//! ([`PROTOCOL_VERSION`]); a line of another version is refused with [`ProtocolError::UnsupportedVersion`] before
-//! anything else of it is read, so a client and a daemon of different versions say so and do not misread each other.
+//! subscribed, sends [`Event`]s as the state changes — a [`Frame`] is either. The strict legacy APIs use
+//! [`PROTOCOL_VERSION`]; negotiated APIs also accept [`SPLIT_PROTOCOL_VERSION`] for split-aware clients.
+//! Unsupported tags are refused before the message body is decoded.
 //! The types here only describe lines and read and write them; the socket is the daemon's.
 
 mod event;
@@ -28,8 +28,11 @@ pub use request::{
     SayRequest, SayText, ShowRequest, StatusRequest, SubscribeRequest, Target,
 };
 
-/// The protocol version that this build speaks.
+/// The legacy protocol version, retained for strict clients predating split execution.
 pub const PROTOCOL_VERSION: u32 = 3;
+
+/// The negotiated protocol version carrying split plans, acknowledgements and part round identities.
+pub const SPLIT_PROTOCOL_VERSION: u32 = 4;
 
 /// Wire format requested by a client; version four includes approved split details.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,7 +136,7 @@ fn decode<T: DeserializeOwned>(line: &str, max: usize) -> Result<T, ProtocolErro
 fn encode_split<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
     if let Some(protocol) = value.get_mut("protocol") {
-        *protocol = serde_json::Value::from(4);
+        *protocol = serde_json::Value::from(SPLIT_PROTOCOL_VERSION);
     }
     encode(&value)
 }
@@ -145,8 +148,10 @@ fn decode_negotiated<T: DeserializeOwned>(line: &str, max: usize) -> Result<(T, 
     }
     let probe: VersionProbe = serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
     match probe.protocol {
-        3 => decode(line, max).map(|message| (message, ReplyFormat::Legacy)),
-        4 => {
+        version if version == u64::from(PROTOCOL_VERSION) => {
+            decode(line, max).map(|message| (message, ReplyFormat::Legacy))
+        }
+        version if version == u64::from(SPLIT_PROTOCOL_VERSION) => {
             let mut value: serde_json::Value =
                 serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
             if let Some(protocol) = value.get_mut("protocol") {

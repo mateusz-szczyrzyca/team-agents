@@ -158,9 +158,10 @@ impl Connection {
     /// # Errors
     /// [`ClientError`]: the conversation failed, or the daemon answered with an error.
     pub(crate) async fn request(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
-        match command {
-            Command::Answer(_) => self.request_split(client, command).await,
-            _ => self.converse(client, command, Some(REQUEST_TIMEOUT)).await,
+        if matches!(command, Command::Answer(_)) {
+            self.request_split(client, command).await
+        } else {
+            self.converse(client, command, Some(REQUEST_TIMEOUT)).await
         }
     }
 
