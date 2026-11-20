@@ -6,6 +6,7 @@
 //! one the bus wrote. Which message a session reads follows `isForSession` of `agentbus/team.go`, and the cursor
 //! `cursor` of the same file: the one of the agent in the team, or the agent's single one before the team had its own.
 
+use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 
@@ -113,16 +114,181 @@ impl AgentBus {
     }
 }
 
+/// The file of the bus that holds the messages, one JSON object a line.
+const LOG_FILE: &str = "messages.jsonl";
+
+/// The file of the bus that holds its state, with the read cursors.
+const STATE_FILE: &str = "state.json";
+
+/// The part of the state of the bus that tells where each session stopped reading.
+#[derive(serde::Deserialize)]
+struct State {
+    /// The number of the last message read, by session: `<agent>/<team>` in a team, `<agent>` outside teams and in
+    /// states written before teams kept their own.
+    #[serde(default)]
+    cursors: BTreeMap<String, u64>,
+}
+
+/// A line of the log, as far as [`unread_messages`] reads it.
+#[derive(serde::Deserialize)]
+struct Line {
+    /// The number of the message.
+    id: NonZeroU64,
+    /// The sender.
+    from: String,
+    /// The recipient: an agent, the id of a task, `all`, or `team:` and a team.
+    to: String,
+    /// What it says.
+    #[serde(default)]
+    text: String,
+    /// The team a direct message is bound to; empty when it is bound to none.
+    #[serde(default)]
+    team: String,
+    /// The task a direct message is for; empty when it is for any session of the agent.
+    #[serde(default)]
+    task: String,
+}
+
+impl Line {
+    /// Whether the session of `reader` reads this message (`isForSession` of `agentbus/team.go`).
+    fn is_for(&self, reader: Reader<'_>) -> bool {
+        let agent = reader.agent.as_str();
+        if self.from == agent {
+            return false;
+        }
+        let team = reader.team.as_str();
+        let addressed = if self.to == agent || self.to == reader.task.as_str() {
+            self.team.is_empty() || self.team == team
+        } else if let Some(to_team) = self.to.strip_prefix("team:") {
+            to_team == team
+        } else {
+            self.to == "all"
+        };
+        addressed && (self.task.is_empty() || self.task == reader.task.as_str())
+    }
+}
+
 /// See [`AgentBus::unread_messages`]; `bus_dir` is the directory of the bus.
-async fn unread_messages(_bus_dir: &Path, _reader: Reader<'_>) -> Result<UnreadMessages, UnreadMessagesError> {
+async fn unread_messages(bus_dir: &Path, reader: Reader<'_>) -> Result<UnreadMessages, UnreadMessagesError> {
+    let cursor = read_cursor(&bus_dir.join(STATE_FILE), reader).await?;
+    let path = bus_dir.join(LOG_FILE);
+    let Some(window) = read_window(&path).await? else {
+        return Ok(UnreadMessages {
+            shown: Vec::new(),
+            completeness: Completeness::All,
+        });
+    };
+    let text = std::str::from_utf8(window.bytes()).map_err(|source| UnreadMessagesError::NotUtf8 {
+        path: path.clone(),
+        source,
+    })?;
+    let mut unread = Vec::new();
+    let mut first_id = None;
+    for (index, text) in text.lines().enumerate().filter(|(_, text)| !text.trim().is_empty()) {
+        let line: Line = serde_json::from_str(text).map_err(|source| UnreadMessagesError::Line {
+            path: path.clone(),
+            line: index.saturating_add(1),
+            source,
+        })?;
+        first_id.get_or_insert(line.id.get());
+        if line.id.get() > cursor && line.is_for(reader) {
+            unread.push(UnreadMessage {
+                id: line.id,
+                from: line.from,
+                text: line.text.chars().take(MAX_TEXT_CHARS).collect(),
+            });
+        }
+    }
+    // A window that starts inside the log may have left out unread messages: those after the cursor and before the
+    // first message read.
+    let cut_before = window.cut && first_id.is_some_and(|first| first > cursor.saturating_add(1));
+    let skip = unread.len().saturating_sub(MAX_MESSAGES);
+    let completeness = if cut_before || skip > 0 {
+        Completeness::Newest
+    } else {
+        Completeness::All
+    };
+    unread.drain(..skip);
     Ok(UnreadMessages {
-        shown: vec![UnreadMessage {
-            id: NonZeroU64::MAX,
-            from: String::new(),
-            text: String::new(),
-        }],
-        completeness: Completeness::Newest,
+        shown: unread,
+        completeness,
     })
+}
+
+/// The number of the last message the session of `reader` read, from the state file at `path`; 0 when the bus has no
+/// state or the session never read.
+async fn read_cursor(path: &Path, reader: Reader<'_>) -> Result<u64, UnreadMessagesError> {
+    let bytes = match tokio::fs::read(path).await {
+        Ok(bytes) => bytes,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(source) => {
+            return Err(UnreadMessagesError::Read {
+                path: path.to_owned(),
+                source,
+            });
+        }
+    };
+    let state: State = serde_json::from_slice(&bytes).map_err(|source| UnreadMessagesError::State {
+        path: path.to_owned(),
+        source,
+    })?;
+    let in_team = format!("{}/{}", reader.agent, reader.team);
+    let cursor = state
+        .cursors
+        .get(&in_team)
+        .or_else(|| state.cursors.get(reader.agent.as_str()))
+        .copied();
+    // A session that never read has read nothing: every message is after its cursor.
+    Ok(cursor.unwrap_or(0))
+}
+
+/// The end of the log that is read: whole lines, at most [`WINDOW_BYTES`].
+struct Window {
+    /// The bytes read, from the start of the file or from just after the line break where the window starts.
+    bytes: Vec<u8>,
+    /// Where the lines start in [`Window::bytes`].
+    from: usize,
+    /// Whether the window starts inside the log, so that older lines were left out.
+    cut: bool,
+}
+
+impl Window {
+    /// The whole lines of the window.
+    fn bytes(&self) -> &[u8] {
+        self.bytes.get(self.from..).unwrap_or_default()
+    }
+}
+
+/// Reads the end of the log at `path`; `None` when there is no log.
+async fn read_window(path: &Path) -> Result<Option<Window>, UnreadMessagesError> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+    let read = |source| UnreadMessagesError::Read {
+        path: path.to_owned(),
+        source,
+    };
+    let mut file = match tokio::fs::File::open(path).await {
+        Ok(file) => file,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(read(source)),
+    };
+    let len = file.metadata().await.map_err(read)?.len();
+    let start = len.saturating_sub(WINDOW_BYTES);
+    file.seek(std::io::SeekFrom::Start(start)).await.map_err(read)?;
+    let mut bytes = Vec::new();
+    file.take(WINDOW_BYTES).read_to_end(&mut bytes).await.map_err(read)?;
+    // A window that starts inside the log starts inside a line, and maybe inside a character: it is cut at the first
+    // line break, before the text is decoded.
+    let cut = start > 0;
+    let from = if cut {
+        bytes
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(bytes.len(), |at| at.saturating_add(1))
+    } else {
+        0
+    };
+    Ok(Some(Window { bytes, from, cut }))
 }
 
 #[cfg(test)]
