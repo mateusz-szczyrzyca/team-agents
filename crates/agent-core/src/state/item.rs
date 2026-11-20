@@ -886,13 +886,13 @@ impl ItemProgress {
     /// The lead passes spent on merge conflicts so far; zero for an item that never met one.
     #[must_use]
     pub const fn merge_passes(&self) -> u32 {
-        // RED stub: no pass is ever counted.
-        0
+        self.merge_passes
     }
 
-    /// Counts one more lead pass on a merge conflict and returns the number spent so far, including this one.
+    /// Counts one more lead pass on a merge conflict and returns the number spent so far, including this one. A count
+    /// that would pass `u32::MAX` stays there: no configured limit is that large.
     pub fn spend_merge_pass(&mut self) -> u32 {
-        // RED stub: the count stays where it is.
+        self.merge_passes = self.merge_passes.saturating_add(1);
         self.merge_passes
     }
 

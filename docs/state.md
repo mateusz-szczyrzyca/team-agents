@@ -274,7 +274,9 @@ the `**ANSWERED**` marker, `dashboard`). **The questions and the answers are in 
 
 #### Items
 
-An item's progress is `{id, phase, fix_passes?, gate?, findings?}`. The `phase` carries exactly the data of that phase:
+An item's progress is `{id, phase, fix_passes?, gate?, findings?, merge_passes?}`. `merge_passes` counts the lead passes
+spent on a merge that GitHub refused for a conflict, compared with `[merge] conflict_passes`; it is absent while none is spent,
+so states written before it read as none spent and keep the schema version. The `phase` carries exactly the data of that phase:
 
 | `phase` | Data | Item status | Moves to |
 |---|---|---|---|
