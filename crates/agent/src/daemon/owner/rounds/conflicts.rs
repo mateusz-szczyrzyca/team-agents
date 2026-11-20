@@ -58,7 +58,12 @@ impl Owner {
     ) -> Result<(), OwnerError> {
         self.each_item(team, items, |item| {
             match step {
-                ConflictStep::AskHuman => item.ask_human_about_merge_conflict(now),
+                ConflictStep::AskHuman => {
+                    if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
+                        context.reviewed_head = Some(head.clone());
+                    }
+                    item.ask_human_about_merge_conflict(now);
+                }
                 ConflictStep::MergeBase => {
                     item.begin_merge_conflict(head.clone(), now);
                 }
@@ -108,7 +113,7 @@ impl Owner {
         now: Timestamp,
     ) -> Result<(), OwnerError> {
         let Some((pr, approved_head, at, items)) = self.conflict_in_progress(team) else {
-            return self.wake_unasked_conflict_lead(team, look).await;
+            return self.wake_unasked_conflict_lead(team, look);
         };
         let lead = self.lead_of(team)?;
         let member = self
@@ -185,10 +190,9 @@ impl Owner {
             .await
     }
 
-    /// Wakes the lead of `team` once when a merge conflict pass needs the human and the lead has not run since, and
-    /// clears the conflict state once the human's answer has been acted on by the lead.
-    async fn wake_unasked_conflict_lead(&mut self, team: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
-        let Some((pr, at, items)) = self.conflict_asking_human(team) else {
+    /// Wakes the lead of `team` once when a merge conflict pass needs the human and the lead has not run since.
+    fn wake_unasked_conflict_lead(&mut self, team: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
+        let Some(at) = self.conflict_asking_human(team) else {
             return Ok(());
         };
         let lead = self.lead_of(team)?;
@@ -200,26 +204,8 @@ impl Owner {
             .ok_or_else(|| OwnerError::LostTask {
                 task: lead.task.clone(),
             })?;
-        if !ran_since(member, at) {
-            if matches!(member.status(), TaskStatus::Waiting | TaskStatus::Failed) {
-                return self.release_conflict_lead(&lead.task, look);
-            }
-            return Ok(());
-        }
-        let answered_at = member
-            .questions()
-            .iter()
-            .filter_map(|question| match question.state() {
-                QuestionState::Answered { at: answered_at, .. } if *answered_at >= at => Some(*answered_at),
-                QuestionState::Answered { .. } | QuestionState::Open => None,
-            })
-            .max();
-        if let Some(answered_at) = answered_at
-            && member.status() == TaskStatus::Waiting
-            && ran_since(member, answered_at)
-        {
-            self.end_pass(team, &items, pr.number)?;
-            self.save().await?;
+        if matches!(member.status(), TaskStatus::Waiting | TaskStatus::Failed) && !ran_since(member, at) {
+            return self.release_conflict_lead(&lead.task, look);
         }
         Ok(())
     }
@@ -279,15 +265,13 @@ impl Owner {
     }
 
     /// When an approved pull request of `team` asked the human about a merge conflict, if one did.
-    fn conflict_asking_human(&self, team: &TeamId) -> Option<(PullRequest, Timestamp, Vec<ItemId>)> {
+    fn conflict_asking_human(&self, team: &TeamId) -> Option<Timestamp> {
         let found = self.parts.state.team(team)?;
         found
             .items()
             .iter()
             .find_map(|item| match (item.phase(), item.merge_conflict()) {
-                (ItemPhase::Approved { pr, .. }, Some(MergeConflict::AskingHuman { at })) => {
-                    Some((pr.clone(), *at, items_of(found, pr.number)))
-                }
+                (ItemPhase::Approved { .. }, Some(MergeConflict::AskingHuman { at })) => Some(*at),
                 (ItemPhase::Approved { .. }, Some(MergeConflict::MergingBase { .. }) | None)
                 | (
                     ItemPhase::Pending
@@ -304,6 +288,12 @@ impl Owner {
     /// the pass began and its items.
     fn conflict_in_progress(&self, team: &TeamId) -> Option<(PullRequest, CommitId, Timestamp, Vec<ItemId>)> {
         let found = self.parts.state.team(team)?;
+        let answered = self.lead_of(team).ok().and_then(|lead| {
+            self.parts
+                .state
+                .find_task(&lead.task)
+                .map(|task| task.member.questions())
+        });
         found
             .items()
             .iter()
@@ -311,7 +301,23 @@ impl Owner {
                 (ItemPhase::Approved { pr, .. }, Some(MergeConflict::MergingBase { approved_head, at })) => {
                     Some((pr.clone(), approved_head.clone(), *at, items_of(found, pr.number)))
                 }
-                (ItemPhase::Approved { .. }, Some(MergeConflict::AskingHuman { .. }) | None)
+                (ItemPhase::Approved { pr, .. }, Some(MergeConflict::AskingHuman { at })) => {
+                    let answered_at = answered?
+                        .iter()
+                        .filter_map(|question| match question.state() {
+                            QuestionState::Answered { at: answered_at, .. } if *answered_at >= *at => {
+                                Some(*answered_at)
+                            }
+                            QuestionState::Answered { .. } | QuestionState::Open => None,
+                        })
+                        .max()?;
+                    let approved_head = item
+                        .findings()
+                        .and_then(|ledger| ledger.verification())
+                        .and_then(|context| context.reviewed_head.clone())?;
+                    Some((pr.clone(), approved_head, answered_at, items_of(found, pr.number)))
+                }
+                (ItemPhase::Approved { .. }, None)
                 | (
                     ItemPhase::Pending
                     | ItemPhase::InProgress { .. }
@@ -343,20 +349,25 @@ impl Owner {
         {
             return Ok(Judgement::Ask);
         }
-        match self.own_gate_state(&lead.task, &tip) {
+        let own = self.own_gate_state(&lead.task, &tip);
+        if own == Own::Running {
+            return Ok(Judgement::Wait);
+        }
+        let record = self.parts.store.load_gate_record(&lead.task).await?;
+        if record
+            .as_ref()
+            .is_some_and(|record| record.result.head == tip && record.counts_as_pass())
+        {
+            return Ok(Judgement::Tip(tip));
+        }
+        match own {
             Own::Running => Ok(Judgement::Wait),
             Own::NotRun => {
                 self.start_own_gate(&lead.task, &tip, false);
                 Ok(Judgement::Wait)
             }
-            Own::Ran { .. } => {
-                let record = self.parts.store.load_gate_record(&lead.task).await?;
-                match record {
-                    Some(record) if record.result.head == tip && record.counts_as_pass() => Ok(Judgement::Tip(tip)),
-                    // A gate that did not pass at the tip is the human's to see: the lead gave no usable result.
-                    Some(_) | None => Ok(Judgement::Ask),
-                }
-            }
+            // A gate that did not pass at the tip is the human's to see: the lead gave no usable result.
+            Own::Ran { .. } => Ok(Judgement::Ask),
         }
     }
 

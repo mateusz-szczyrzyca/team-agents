@@ -346,7 +346,7 @@ pub(super) async fn fix_pass(
         ));
     }
     // The reports of the review pass that asked for this pass were kept under the number of the passes before it.
-    let kept = count(passes.saturating_sub(1));
+    let kept = count(progress.completed_review_passes().saturating_sub(1));
     let mut findings = vec![super::findings::open_text(texts, progress.findings())?];
     if ctx.settings.config.review().second_opinion() == agent_core::review_response::opinion::Permission::Enabled {
         findings.push(texts.render(AutopilotPrompt::ReviewOpinionOffer, &Variables::new())?);
@@ -399,7 +399,7 @@ pub(super) async fn ask_human(
             continue;
         };
         findings.push(super::findings::open_text(texts, progress.findings())?);
-        let kept = count(progress.fix_passes().len());
+        let kept = count(progress.completed_review_passes());
         findings.extend(reports_of(ctx, texts, reviews, waits.pr.number, kept).await?);
     }
     let file = ctx.home.questions_file(found.member.task(), number);
