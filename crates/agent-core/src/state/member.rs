@@ -151,6 +151,21 @@ impl CheckedMut<'_, Member> {
         self.value.renew(trouble, at)
     }
 
+    /// See [`Member::renew_after`].
+    ///
+    /// # Errors
+    /// [`RenewalError::NotAfterTheLastRun`] when no run of the task started before `at`.
+    pub fn renew_after(
+        &mut self,
+        trouble: ladder::Trouble,
+        at: Timestamp,
+        renewals: ladder::Renewals,
+        watchdog: &crate::config::Watchdog,
+        limits: &crate::config::Limits,
+    ) -> Result<ladder::LadderStep, renewal::RenewalError> {
+        self.value.renew_after(trouble, at, renewals, watchdog, limits)
+    }
+
     /// See [`Member::attach_session`].
     ///
     /// # Errors
@@ -523,6 +538,21 @@ impl Member {
     /// started.
     pub fn end_run(&mut self, at: Timestamp, end: RunEnd) -> Result<(), RunError> {
         self.current_run_mut()?.end(at, end)
+    }
+
+    /// See [`Member::renew_after`].
+    ///
+    /// # Errors
+    /// [`RenewalError::NotAfterTheLastRun`] when no run of the task started before `at`.
+    pub fn renew_after(
+        &mut self,
+        _trouble: ladder::Trouble,
+        _at: Timestamp,
+        _renewals: ladder::Renewals,
+        _watchdog: &crate::config::Watchdog,
+        _limits: &crate::config::Limits,
+    ) -> Result<ladder::LadderStep, renewal::RenewalError> {
+        Ok(ladder::LadderStep::GiveUp)
     }
 
     /// See [`Member::renew`], and how many of the latest runs went bad in a row since the task was started anew.
