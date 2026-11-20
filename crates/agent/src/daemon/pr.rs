@@ -95,10 +95,8 @@ pub(super) fn plan_publications(team: &Team) -> Result<Vec<Publication>, PlanErr
     };
     let mut groups: Vec<Group> = Vec::new();
     for progress in team.items() {
-        if team
-            .round_of(progress.id())
-            .is_some_and(|round| round.is_open() && round.delivered_by().is_some())
-        {
+        // An accepted delivery waits for the merge of another PR, also when a stop of the team abandoned its round.
+        if team.delivery_waits().any(|round| round.item() == Some(progress.id())) {
             continue;
         }
         match progress.phase() {
