@@ -41,3 +41,11 @@ fn wait_labels_name_every_owner_and_the_unowned_defect() {
         assert_eq!(waiting.text(), expected);
     }
 }
+
+#[test]
+fn an_unassigned_review_names_the_missing_free_investigator() {
+    assert_eq!(
+        Waiting::For(Obligation::FreeInvestigator).text(),
+        "a free independent investigator"
+    );
+}

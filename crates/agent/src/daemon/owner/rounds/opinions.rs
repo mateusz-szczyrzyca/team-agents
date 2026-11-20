@@ -4,7 +4,7 @@ use super::super::{Located, Owner, OwnerError};
 use super::reviewers::Prepared;
 use super::verdicts::Asked;
 use super::{PublishError, Pulls};
-use crate::daemon::review::{choose_opinion, free_reviewers, pending_opinion};
+use crate::daemon::review::{pending_opinion, select_reviewers};
 use crate::daemon::team::Why;
 use agent_core::decide::opinion::{Next, Tip, after_opinions};
 use agent_core::history::HistoryEvent;
@@ -68,6 +68,30 @@ opinion_error!(agent_core::prompt::VariablesError);
 opinion_error!(agent_runtime::autopilot_prompts::RenderAutopilotTextError);
 opinion_error!(super::findings::TextError);
 
+/// The answered pass, reporter and previous opinions remain permanently independent.
+fn opinion_exclusions(
+    item: &agent_core::state::ItemProgress,
+    ledger: &Findings,
+    number: NonZeroU32,
+) -> HashSet<agent_core::ids::InvestigatorName> {
+    let mut excluded: HashSet<_> = item
+        .fix_passes()
+        .last()
+        .into_iter()
+        .flat_map(|pass| pass.requested_by.iter().map(|review| review.reviewer.clone()))
+        .collect();
+    if let Some(entry) = ledger.entries().iter().find(|entry| entry.number == number) {
+        excluded.insert(entry.reporter.clone());
+    }
+    excluded.extend(
+        ledger
+            .opinion_attempts(number)
+            .iter()
+            .map(|attempt| attempt.investigator.clone()),
+    );
+    excluded
+}
+
 impl Owner {
     /// Copies one PR's authoritative ledger to all its items.
     fn keep_opinions(&mut self, team: &TeamId, items: &[ItemId], ledger: &Findings) -> Result<(), OwnerError> {
@@ -126,23 +150,15 @@ impl Owner {
                 .map(|(number, opinion)| (*number, opinion.request.clone()))
                 .collect();
             for (number, request) in waiting {
-                let mut excluded: HashSet<_> = item
-                    .fix_passes()
-                    .last()
-                    .into_iter()
-                    .flat_map(|pass| pass.requested_by.iter().map(|review| review.reviewer.clone()))
-                    .collect();
-                if let Some(entry) = ledger.entries().iter().find(|entry| entry.number == number) {
-                    excluded.insert(entry.reporter.clone());
-                }
-                excluded.extend(
-                    ledger
-                        .opinion_attempts(number)
-                        .iter()
-                        .map(|attempt| attempt.investigator.clone()),
-                );
-                let free = free_reviewers(&self.parts.state, &self.parts.settings.config, team_id);
-                let Some(reviewer) = choose_opinion(free, &excluded, &mut self.parts.rng) else {
+                let excluded = opinion_exclusions(&item, &ledger, number);
+                let Some(reviewer) = select_reviewers(
+                    &self.parts.state,
+                    &self.parts.settings.config,
+                    team_id,
+                    std::num::NonZeroUsize::MIN,
+                    &excluded,
+                )
+                .and_then(|reviewers| reviewers.into_iter().next()) else {
                     continue;
                 };
                 let now = Timestamp::now(&self.parts.clock)?;
@@ -302,7 +318,7 @@ impl Owner {
         Ok(true)
     }
 
-    /// Retains the unsuccessful owner before returning its request to the independent draw.
+    /// Retains the unsuccessful owner before returning its request to independent selection.
     pub(in crate::daemon::owner) async fn retry_opinion(
         &mut self,
         pulls: &Pulls,

@@ -407,11 +407,11 @@ mod story_text {
     }
 
     #[test]
-    fn an_outside_reviewer_is_listed_under_agents_with_the_candidates_it_was_drawn_from() {
+    fn an_outside_reviewer_is_listed_under_agents_with_its_selection_candidates() {
         let text = story(&solo(), PREVIEW);
 
         assert!(
-            text.contains("3. inv-c — reviewer — drawn at random among inv-c, inv-d\n"),
+            text.contains("3. inv-c — reviewer — selected among inv-c, inv-d\n"),
             "{text}"
         );
     }
@@ -554,5 +554,29 @@ mod story_text {
             "{text}"
         );
         assert_eq!(text.matches("capture_head: second run failed").count(), 1, "{text}");
+    }
+
+    #[test]
+    fn reviewer_selection_is_described_without_claiming_a_random_draw() {
+        for omit_candidates in [false, true] {
+            let mut records = solo();
+            if omit_candidates {
+                for record in &mut records {
+                    if let agent_core::history::Record::Event(event) = &mut record.record
+                        && let HistoryEvent::ReviewAsked { among, .. } = &mut event.event
+                    {
+                        among.clear();
+                    }
+                }
+            }
+            let text = story(&records, PREVIEW);
+            let line = text.lines().find(|line| line.starts_with("3. inv-c — reviewer"));
+            let expected = if omit_candidates {
+                "3. inv-c — reviewer — selected"
+            } else {
+                "3. inv-c — reviewer — selected among inv-c, inv-d"
+            };
+            assert_eq!(line, Some(expected));
+        }
     }
 }

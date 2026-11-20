@@ -1085,7 +1085,8 @@ failed assignments retain their ending time and the reason known by the daemon.
 State schema `11` automatically rebuilds this history when reading schemas `1`–`10`, using retained crew,
 reviews, fix passes and second-opinion attempts. Old records without exact opinion times use the earliest task
 run for assignment and its last run ending for completion, falling back to team creation or the latest retained
-run evidence. No reviewer selection or `agent status` output changes in this version. See the
+run evidence. The activity record also supplies the investigator selection order below and the view
+`agent status --investigators`. See the
 [activity record](docs/state.md#investigator-activities).
 
 The Rust CLI provides a read-only diagnostic bundle for one team:
@@ -1234,10 +1235,23 @@ The first pass consists of independent full reviews: reviewers have no bus and m
 The harness holds every report and its findings until the last verdict arrives, then posts reports in request order
 and the findings table. A replacement reviewer performs its own full review while the received reports keep waiting.
 Later passes retain the bus and post reports as they arrive. After a fix pass they verify the open findings and
-changes since the preceding reviewed commit, with the lead's final fix message. Investigators who reviewed this pull
-request longest ago go first; investigators who never reviewed it precede them, with random draws among equals.
-The preceding pair is reused only when other investigators are unavailable. Fewer than twice the review count
-outside the team produces a startup warning and does not prevent starting. A pull request keeps its review count
+changes since the preceding reviewed commit, with the lead's final fix message.
+
+Every review, verification, second opinion and replacement uses the same deterministic order. Investigators with
+no activity in this team come first; then the one whose latest assignment in this team is oldest. Ties use the
+oldest latest assignment anywhere (never assigned comes first), then the investigator's name. All activity kinds
+count. The investigators asked in the team's latest request, including both of a pair, go after all other eligible
+candidates and are reused only when needed to fill the request. An investigator is free across teams when it has
+no running or queued work; a sleeping coordinator or member can review elsewhere. Accepted review and opinion
+requests reserve their investigator while awaiting scheduling. A team's own coordinator and members are always
+excluded, as are a finding's reporter and previous opinion participants where independence requires it. Within the
+same team, an investigator whose reviewer task there is stopped, failed, paused, waiting for your answers or done is
+not offered again for a later review: the harness does not start a reviewer you stopped or held, and a task that
+is done cannot start again; the investigator is free for every other team. If too few eligible investigators remain, the round
+waits for a free independent investigator; these permanent exclusions are never relaxed. The text of
+`agent log --round <round-id>` describes reviewers as selected among the available candidates, for both old and new histories.
+
+Fewer than twice the review count outside the team produces a startup warning and does not prevent starting. A pull request keeps its review count
 even if the configuration changes. Active pull requests migrated from an older daemon retain their original review protocol.
 
 `agent run --no-merge` stops before the merge and tells you; after `[review] fix_passes` rounds of "changes
@@ -1314,7 +1328,8 @@ An unchanged tip can still enter verification when every blocker is explained or
 Legacy unanswered blockers require a committed fix too.
 
 An idle open round's line in `agent status` and `agent status <round>` names what it waits for: a harness gate,
-a review, a second opinion, the human's answer, or the lead's correction. `nothing: this is a defect` means the
+a review, a free independent investigator (for a review, a second opinion or the replacement of a reviewer that cannot
+work, when none is free), a second opinion that an investigator is giving, the human's answer, or the lead's correction. `nothing: this is a defect` means the
 harness has lost its next action; it logs one `daemon_task_failed` error for that round with `operation=round_wait`.
 
 Verifiers answer a pending explanation with `FINDING 3: ACCEPTED — why` or `FINDING 3: REJECTED — why`.

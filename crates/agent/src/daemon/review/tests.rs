@@ -154,7 +154,8 @@ mod pool {
     use rand::SeedableRng;
     use rand::rngs::StdRng;
 
-    use crate::daemon::review::{Reviewer, Slot, choose_reviewers, free_reviewers};
+    use super::choose_reviewers;
+    use crate::daemon::review::{Reviewer, Slot, free_reviewers};
     use crate::fixtures::{at, investigator, member, normal, task, team_id};
 
     /// A configuration with a normal agent and four investigators.
@@ -282,24 +283,19 @@ gate = ["true"]
     }
 
     #[test]
-    fn an_investigator_that_leads_another_team_that_is_not_finished_is_busy() {
+    fn an_investigator_that_leads_another_team_is_free_when_its_run_sleeps() {
         let mut state = state();
         state.insert_team(led_by("inv-b", 1)).unwrap();
         go(&mut state, 11, &[TaskStatus::Running, TaskStatus::Waiting]);
 
         let free = free_reviewers(&state, &config(), &team_id(0));
 
-        assert_eq!(names(&free), ["inv-c", "inv-d"]);
+        assert_eq!(names(&free), ["inv-b", "inv-c", "inv-d"]);
     }
 
     #[test]
-    fn an_investigator_whose_task_is_going_or_about_to_start_or_asking_or_paused_is_busy() {
-        for statuses in [
-            vec![],
-            vec![TaskStatus::Running],
-            vec![TaskStatus::Running, TaskStatus::Questions],
-            vec![TaskStatus::Paused],
-        ] {
+    fn an_investigator_whose_task_is_running_or_queued_is_busy() {
+        for statuses in [vec![], vec![TaskStatus::Running]] {
             let mut state = state();
             state.insert_team(led_by("inv-b", 1)).unwrap();
             go(&mut state, 11, &statuses);
@@ -429,6 +425,28 @@ gate = ["true"]
         assert!(!free.iter().any(|reviewer| reviewer.name == name("inv-d")));
     }
 
+    #[test]
+    fn sleeping_coordinator_is_free_elsewhere_but_never_for_own_team() {
+        let mut state = state();
+        state.insert_team(led_by("inv-b", 1)).unwrap();
+        go(&mut state, 11, &[TaskStatus::Running, TaskStatus::Waiting]);
+        assert!(names(&free_reviewers(&state, &config(), &team_id(0))).contains(&"inv-b"));
+        assert!(!names(&free_reviewers(&state, &config(), &team_id(1))).contains(&"inv-b"));
+    }
+
+    #[test]
+    fn questions_and_pauses_without_a_run_do_not_reserve_an_investigator() {
+        for statuses in [
+            vec![TaskStatus::Running, TaskStatus::Questions],
+            vec![TaskStatus::Paused],
+        ] {
+            let mut state = state();
+            state.insert_team(led_by("inv-b", 1)).unwrap();
+            go(&mut state, 11, &statuses);
+            assert!(names(&free_reviewers(&state, &config(), &team_id(0))).contains(&"inv-b"));
+        }
+    }
+
     fn pool(count: usize) -> Vec<Reviewer> {
         ["inv-a", "inv-b", "inv-c", "inv-d"]
             .iter()
@@ -474,7 +492,7 @@ gate = ["true"]
     }
 
     #[test]
-    fn the_reviewers_that_already_review_for_the_team_are_drawn_before_new_ones() {
+    fn an_existing_task_does_not_override_the_activity_order() {
         for seed in 0..64 {
             let drawn = choose_reviewers(
                 with_known(pool(4), &["inv-b", "inv-d"]),
@@ -484,29 +502,29 @@ gate = ["true"]
             let drawn: BTreeSet<String> = drawn.unwrap().into_iter().map(|r| r.name.as_str().to_owned()).collect();
             assert_eq!(
                 drawn,
-                BTreeSet::from(["inv-b".to_owned(), "inv-d".to_owned()]),
+                BTreeSet::from(["inv-a".to_owned(), "inv-b".to_owned()]),
                 "seed {seed}"
             );
         }
     }
 
     #[test]
-    fn one_reviewer_that_already_reviews_for_the_team_is_joined_by_a_new_one_drawn_at_random() {
+    fn one_existing_task_does_not_change_the_deterministic_tie_break() {
         let mut others = BTreeSet::new();
         for seed in 0..64 {
             let drawn = choose_reviewers(with_known(pool(4), &["inv-c"]), &mut StdRng::seed_from_u64(seed)).unwrap();
 
             let names: Vec<&str> = drawn.iter().map(|r| r.name.as_str()).collect();
             assert_eq!(names.len(), 2, "seed {seed}");
-            assert!(names.contains(&"inv-c"), "seed {seed}: {names:?}");
+            assert_eq!(names, ["inv-a", "inv-b"], "seed {seed}");
             others.extend(names.into_iter().filter(|name| *name != "inv-c").map(str::to_owned));
         }
 
-        assert_eq!(others.len(), 3, "{others:?}");
+        assert_eq!(others, BTreeSet::from(["inv-a".to_owned(), "inv-b".to_owned()]));
     }
 
     #[test]
-    fn the_draw_is_a_function_of_the_random_source_and_reaches_every_reviewer() {
+    fn the_choice_is_identical_for_every_random_source() {
         let draw = |seed| choose_reviewers(pool(4), &mut StdRng::seed_from_u64(seed)).unwrap();
         assert_eq!(draw(7), draw(7));
 
@@ -517,7 +535,7 @@ gate = ["true"]
             }
         }
 
-        assert_eq!(seen.len(), 4, "{seen:?}");
+        assert_eq!(seen, BTreeSet::from(["inv-a".to_owned(), "inv-b".to_owned()]));
     }
 }
 
@@ -607,7 +625,7 @@ fn a_joined_item_without_fix_passes_does_not_make_a_later_pass_independent() {
 
 #[test]
 fn verifiers_rotate_through_the_least_recent_free_investigators() {
-    use super::{Reviewer, Slot, choose_verifiers};
+    use super::{Reviewer, Slot};
     use agent_core::config::ReviewCount;
     use agent_core::state::{FixPass, Review, ReviewOutcome};
     use rand::{SeedableRng, rngs::Xoshiro256PlusPlus};
@@ -663,8 +681,8 @@ fn verifiers_rotate_through_the_least_recent_free_investigators() {
 }
 
 #[test]
-fn verification_draw_uses_only_available_candidates_and_keeps_random_ties() {
-    use super::{Reviewer, Slot, choose_verifiers};
+fn verification_uses_only_available_candidates_and_breaks_ties_by_name() {
+    use super::{Reviewer, Slot};
     use agent_core::config::ReviewCount;
     use rand::{SeedableRng, rngs::Xoshiro256PlusPlus};
     let mut firsts = std::collections::BTreeSet::new();
@@ -687,7 +705,7 @@ fn verification_draw_uses_only_available_candidates_and_keeps_random_ties() {
         assert_ne!(chosen[0].name, chosen[1].name);
         firsts.insert(chosen[0].name.clone());
     }
-    assert_eq!(firsts.len(), 3);
+    assert_eq!(firsts, ["inv-free".parse().unwrap()].into());
     assert_eq!(
         choose_verifiers(
             Vec::new(),
@@ -713,22 +731,88 @@ fn opinions_exclude_reporter_and_entire_answered_pass_over_many_seeds() {
             })
             .collect();
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-        let chosen =
-            super::choose_opinion(free, &names[..2].iter().map(|n| n.parse().unwrap()).collect(), &mut rng).unwrap();
+        let chosen = choose_opinion(free, &names[..2].iter().map(|n| n.parse().unwrap()).collect(), &mut rng).unwrap();
         assert!(!names[..2].contains(&chosen.name.as_str()));
         selected.insert(chosen.name);
     }
-    assert_eq!(selected.len(), 2);
+    assert_eq!(selected, ["inv-free-a".parse().unwrap()].into());
     let only_reporter = vec![super::Reviewer {
         name: names[0].parse().unwrap(),
         slot: super::Slot::New,
     }];
     assert_eq!(
-        super::choose_opinion(
+        choose_opinion(
             only_reporter,
             &[names[0].parse().unwrap()].into(),
             &mut rand::rngs::StdRng::seed_from_u64(1)
         ),
         None
     );
+}
+
+// Adapt the former draw fixtures to the common pure selector. Slots are worktree
+// locations, not activity evidence; pass indices supply strictly ordered fixture times.
+fn choose_reviewers(free: Vec<super::Reviewer>, _rng: &mut impl rand::Rng) -> Option<Vec<super::Reviewer>> {
+    select_pool(
+        free,
+        &[],
+        &std::collections::HashSet::new(),
+        std::num::NonZeroUsize::new(2).unwrap(),
+    )
+}
+
+fn choose_verifiers(
+    free: Vec<super::Reviewer>,
+    required: agent_core::config::ReviewCount,
+    history: &[agent_core::state::FixPass],
+    _rng: &mut impl rand::Rng,
+) -> Option<Vec<super::Reviewer>> {
+    select_pool(
+        free,
+        history,
+        &std::collections::HashSet::new(),
+        std::num::NonZeroUsize::new(required.get()).unwrap(),
+    )
+}
+
+fn choose_opinion(
+    free: Vec<super::Reviewer>,
+    excluded: &std::collections::HashSet<agent_core::ids::InvestigatorName>,
+    _rng: &mut impl rand::Rng,
+) -> Option<super::Reviewer> {
+    select_pool(free, &[], excluded, std::num::NonZeroUsize::MIN).and_then(|v| v.into_iter().next())
+}
+
+fn select_pool(
+    free: Vec<super::Reviewer>,
+    history: &[agent_core::state::FixPass],
+    excluded: &std::collections::HashSet<agent_core::ids::InvestigatorName>,
+    required: std::num::NonZeroUsize,
+) -> Option<Vec<super::Reviewer>> {
+    use agent_core::decide::investigator::{Activity, choose};
+    let team = crate::fixtures::team_id(0);
+    let activities: Vec<_> = history
+        .iter()
+        .enumerate()
+        .flat_map(|(index, pass)| {
+            let team = &team;
+            pass.requested_by.iter().map(move |review| Activity {
+                investigator: &review.reviewer,
+                team,
+                kind: agent_core::kinds::ActivityKind::Reviewer,
+                asked_at: crate::fixtures::at(u32::try_from(index).unwrap()),
+            })
+        })
+        .collect();
+    let available = free.iter().map(|r| r.name.clone()).collect();
+    let names = choose(
+        &available,
+        &available,
+        &activities,
+        &team,
+        &excluded.iter().cloned().collect(),
+        required,
+    )?;
+    let mut slots: std::collections::BTreeMap<_, _> = free.into_iter().map(|r| (r.name.clone(), r)).collect();
+    Some(names.iter().map(|name| slots.remove(name).unwrap()).collect())
 }

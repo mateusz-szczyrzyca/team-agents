@@ -13,8 +13,8 @@ Team started <time>: repo example, base branch main, merge autopilot
 
 Agents
 1. claude-1 — solo — named on the command line
-2. inv-r2 — reviewer — drawn at random among inv-r1, inv-r2
-3. inv-r1 — reviewer — drawn at random among inv-r1, inv-r2
+2. inv-r1 — reviewer — selected among inv-r1, inv-r2
+3. inv-r2 — reviewer — selected among inv-r1, inv-r2
 
 Story
 
@@ -145,19 +145,19 @@ Result: passed at [`<commit-2>`](https://github.com/octo/example/commit/<commit-
 Log: `<home>/tasks/<task-4>/gate-1.log`.
   ----- end of pull request body -----
 <time>  pull request #1 marked ready for review
-<time>  review pass 1 of #1 asked of inv-r2 (task <task-6>) at <commit-2>
-<time>  review pass 1 of #1 asked of inv-r1 (task <task-7>) at <commit-2>
-<time>  run <run-8>: inv-r2 (investigator, claude) as reviewer, because a review of pull request #1, pass 1
-    task <task-6>; worktree <home>/worktrees/example/<task-6>, branch agents/inv-r2/<task-6>
+<time>  review pass 1 of #1 asked of inv-r1 (task <task-6>) at <commit-2>
+<time>  review pass 1 of #1 asked of inv-r2 (task <task-7>) at <commit-2>
+<time>  run <run-8>: inv-r1 (investigator, claude) as reviewer, because a review of pull request #1, pass 1
+    task <task-6>; worktree <home>/worktrees/example/<task-6>, branch agents/inv-r1/<task-6>
     took <duration>
     prompt: <n> lines, <n> bytes
       # Working context
       
-      You are agent **inv-r2**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      You are agent **inv-r1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-8>/mcp.json --max-turns 300 --strict-mcp-config --settings <home>/tasks/<task-6>/runs/<run-8>/claude-settings.json --session-id <uuid> --scenario 'late-verify:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-8>/mcp.json --max-turns 300 --strict-mcp-config --settings <home>/tasks/<task-6>/runs/<run-8>/claude-settings.json --session-id <uuid> --scenario 'verify:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r1 --home <home> <the prompt>
     started <time> in <home>/worktrees/example/<task-6>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -169,17 +169,17 @@ SUMMARY: fine
 STATUS: DONE
     ----- end of final message -----
     changes: head <commit-2> → <commit-2>
-<time>  run <run-9>: inv-r1 (investigator, claude) as reviewer, because a review of pull request #1, pass 1
-    task <task-7>; worktree <home>/worktrees/example/<task-7>, branch agents/inv-r1/<task-7>
+<time>  run <run-9>: inv-r2 (investigator, claude) as reviewer, because a review of pull request #1, pass 1
+    task <task-7>; worktree <home>/worktrees/example/<task-7>, branch agents/inv-r2/<task-7>
     took <duration>
     prompt: <n> lines, <n> bytes
       # Working context
       
-      You are agent **inv-r1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
+      You are agent **inv-r2**, working unattended (headless) on this host as an unprivileged user, with a full shell.
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-7>/runs/<run-9>/mcp.json --max-turns 300 --strict-mcp-config --settings <home>/tasks/<task-7>/runs/<run-9>/claude-settings.json --session-id <uuid> --scenario 'verify:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r1 --home <home> <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-7>/runs/<run-9>/mcp.json --max-turns 300 --strict-mcp-config --settings <home>/tasks/<task-7>/runs/<run-9>/claude-settings.json --session-id <uuid> --scenario 'late-verify:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> <the prompt>
     started <time> in <home>/worktrees/example/<task-7>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model

@@ -344,7 +344,7 @@ pub enum HistoryEvent {
         reviewer: InvestigatorName,
         /// The reviewer's task.
         task: TaskId,
-        /// The free investigators outside the team that the reviewer was drawn among, in configuration order.
+        /// The free investigators outside the team considered for the review, in configuration order.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         among: Vec<InvestigatorName>,
     },

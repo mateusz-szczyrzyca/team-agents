@@ -18,6 +18,8 @@ pub enum Obligation {
     Gate,
     /// Reviewers or the publication scheduler must advance the review.
     Review,
+    /// The review needs an available independent investigator.
+    FreeInvestigator,
     /// An independent investigator must answer a disputed finding.
     SecondOpinion,
     /// Only an instruction or answer from the human can advance the round.
@@ -42,6 +44,9 @@ impl Waiting {
         match self {
             Self::For(Obligation::Gate) => include_str!("../../../../prompts/harness/pr/wait-gate.md"),
             Self::For(Obligation::Review) => include_str!("../../../../prompts/harness/pr/wait-review.md"),
+            Self::For(Obligation::FreeInvestigator) => {
+                include_str!("../../../../prompts/harness/pr/wait-investigator.md")
+            }
             Self::For(Obligation::SecondOpinion) => include_str!("../../../../prompts/harness/pr/wait-opinion.md"),
             Self::For(Obligation::Human) => include_str!("../../../../prompts/harness/pr/wait-human.md"),
             Self::For(Obligation::LeadCorrection) => include_str!("../../../../prompts/harness/pr/wait-correction.md"),

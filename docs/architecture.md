@@ -98,9 +98,11 @@ membership, first reviews, fix-pass verifications, second opinions and future in
 The daemon retains assignments before launching them, accepted reports before item phases discard their review
 lists, and terminal task outcomes before saving. Migration from schemas 1–10 reconstructs the same records from
 crew, item review/fix-pass history and opinion attempts, with deterministic timestamp fallbacks where older
-schemas kept no exact time. The record observes the existing review scheduler; it does not select investigators
-or add protocol/status fields. What it shows — the reviewers' lines of `agent status --running` and the view of
-`agent status --investigators` — is described below ("What the investigators did").
+schemas kept no exact time. The pure `decide::investigator::choose` consumes configured names, free names,
+activity facts, the target team, permanent exclusions and a nonzero request size. It performs no I/O and uses
+neither a clock nor a random generator. Selection adds no persisted or protocol fields. What the record shows — the
+reviewers' lines of `agent status --running` and the view of `agent status --investigators` — is described below
+("What the investigators did").
 
 ### The prompt catalog and the CLI contract (`agent-core`)
 
@@ -404,11 +406,24 @@ result and log path. They forbid repeating that gate and allow single tests to i
 or missing record instead renders the request to run `agent gate`; a red gate report names the step and log line.
 
 **Reviewers** (`daemon/review.rs`). The review pass of an item in review starts empty and is filled once (`ItemMut::ask_reviews`) with
-`[review] min_first_full_reviews` investigators (default two) drawn among the free ones: configured, outside the crew,
-with no running, asking or paused task, outstanding review or unfinished team to lead. For the first pass, available
-review tasks of the team are preferred. After a fix pass, investigators who have never reviewed this pull request
-come first, then those whose most recent pass was longest ago; ties are random. The preceding pass is reused only
-when other investigators are unavailable. The PR waits only when fewer than the required number are free.
+`[review] min_first_full_reviews` investigators (default two). All investigator requests, including verification,
+second opinions and replacements, use `decide::investigator::choose`. The daemon projects the activity history
+of every team into the pure selector and maps its chosen names back to team-specific worktree slots.
+
+Only running or queued work reserves an investigator across teams. Accepted pending reviews and opinions count
+as queued work before their reusable task is scheduled. Sleeping coordinators and members may serve another
+team, but never their own. Within the same team, an investigator whose reviewer task is `Stopped`, `Failed`, `Paused`, `Questions` or `Done` is
+not offered again (`slot_in`): the state keeps one task per investigator in a team, `release` queues only a waiting
+task, a stopped or held task is not started against the human, and `Done` is final. Such an investigator is free for
+every other team. Crew and
+caller exclusions (including the reporter, answered pass and prior opinion attempts) are permanent.
+
+Candidates with no team activity precede those with activity; then the oldest latest team assignment wins,
+followed by the oldest latest assignment anywhere (never assigned first), then name. All activity kinds count,
+regardless of outcome. Everyone asked at the team's latest assignment time forms the latest request: both
+reviewers of a simultaneous pair are deferred. If too few others remain, these candidates are appended in the
+same order. If still insufficient, the whole request waits and its round names a free independent investigator.
+No random draw is used. Old states continue through the activity migration described above.
 A reviewer is a task of the team with its own worktree at the reviewed head. It ends `waiting` and can be reused
 in the same session. A verification request replaces the full-review request after fixes: open numbered findings
 and their checks, `git diff <previous reviewed head>..HEAD`, the lead's last fix message, and the gate. If history
@@ -475,7 +490,7 @@ number and never increment the pass count. The owner assigns a free investigator
 pass and all earlier investigators for this request. Its task runs at the requested head without a bus.
 
 **Second-opinion recovery.** Failed runs, missing final statuses and exhausted report corrections record their
-cause with the assignment and return the request to waiting. The same free-investigator draw supplies at most
+cause with the assignment and return the request to waiting. The same deterministic activity order supplies at most
 two replacements. A lack of candidates leaves the request waiting rather than dropping it or notifying the
 human prematurely. Opinion inactivity uses the review replacement interval and resets when output changes;
 a silent run is cancelled before its request is reassigned. Replacement stops the old queued, waiting or

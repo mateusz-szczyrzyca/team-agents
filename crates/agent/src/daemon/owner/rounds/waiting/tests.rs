@@ -219,3 +219,143 @@ async fn an_idle_round_with_a_done_lead_and_no_scheduled_work_is_unowned() {
 
     assert_eq!(found, None);
 }
+
+#[tokio::test]
+async fn insufficient_independent_investigators_record_an_explicit_round_wait() {
+    let (state, team, round) = idle_round(in_progress(), LEAD_DONE);
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let lead = owner.lead_of(&team).unwrap();
+    let item = state.team(&team).unwrap().round(&round).unwrap().item().unwrap();
+    assert!(
+        !owner
+            .try_ask(&team, &lead, &crate::fixtures::pr(7), &[item], at(20))
+            .await
+            .unwrap()
+    );
+    assert_eq!(owner.watch.waits.get(&round), Some(&Obligation::FreeInvestigator));
+}
+
+/// Gives the item 1.1 of the sample team a ledger with one finding and a second opinion asked about it, in `stage`.
+fn with_opinion(all: &mut State, team: &TeamId, stage: agent_core::state::OpinionStage) {
+    use agent_core::review_findings::{Finding, Severity};
+    use agent_core::state::{FindingStatus, Findings, OpinionRequest, RecordedFinding};
+    use std::num::NonZeroU32;
+
+    let mut team = all.team_mut(team).unwrap();
+    let mut item = team.item_mut("1.1".parse().unwrap()).unwrap();
+    item.start_findings();
+    let mut ledger = Findings::new(vec![RecordedFinding {
+        number: NonZeroU32::MIN,
+        finding: Finding {
+            severity: Severity::Blocker,
+            rule: "ERR-3".into(),
+            place: "lib.rs:1".into(),
+            text: "problem → fix".into(),
+            check: "read lib.rs:1".into(),
+        },
+        reporter: "inv-codex".parse().unwrap(),
+        pass: NonZeroU32::MIN,
+        status: FindingStatus::Open,
+    }])
+    .unwrap();
+    ledger
+        .request_opinion(
+            NonZeroU32::MIN,
+            OpinionRequest {
+                pass: NonZeroU32::MIN,
+                head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap(),
+                reason: "café branch is unreachable".to_owned().try_into().unwrap(),
+            },
+        )
+        .unwrap();
+    if let agent_core::state::OpinionStage::Assigned { investigator, task } = stage {
+        ledger.assign_opinion(NonZeroU32::MIN, investigator, task).unwrap();
+    }
+    *item.findings_mut().unwrap() = ledger;
+}
+
+#[tokio::test]
+async fn a_second_opinion_nobody_has_taken_waits_for_a_free_investigator() {
+    let (mut state, team, round) = idle_round(in_progress(), LEAD_DONE);
+    with_opinion(&mut state, &team, agent_core::state::OpinionStage::Waiting);
+
+    let found = obligation_after(&state, |_, _, _| {}, &round, &team).await;
+
+    assert_eq!(found, Some(Obligation::FreeInvestigator));
+}
+
+#[tokio::test]
+async fn a_second_opinion_an_investigator_has_taken_waits_for_the_opinion() {
+    let (mut state, team, round) = idle_round(in_progress(), LEAD_DONE);
+    with_opinion(
+        &mut state,
+        &team,
+        agent_core::state::OpinionStage::Assigned {
+            investigator: "inv-codex".parse().unwrap(),
+            task: task(4),
+        },
+    );
+
+    let found = obligation_after(&state, |_, _, _| {}, &round, &team).await;
+
+    assert_eq!(found, Some(Obligation::SecondOpinion));
+}
+
+/// The round of item 1.1 in review, where the review of the reviewer `inv-codex` (task 4) is asked and its task failed.
+fn round_with_a_failed_reviewer() -> (State, TeamId, RoundId) {
+    let phase = ItemPhase::InReview {
+        pr: crate::fixtures::pr(7),
+        reviews: vec![crate::fixtures::review("inv-codex", 4)],
+    };
+    let (mut state, team_id, round) = idle_round(phase, LEAD_DONE);
+    {
+        let mut team = state.team_mut(&team_id).unwrap();
+        team.begin_run(
+            &task(4),
+            NewRun {
+                id: run(2),
+                at: at(21),
+                session: None,
+                rounds: vec![round.clone()],
+            },
+        )
+        .unwrap();
+        let (_, mut reviewer) = team.find_mut(&task(4)).unwrap();
+        reviewer.transition(TaskStatus::Running).unwrap();
+        reviewer
+            .end_run(at(25), RunEnd::NoStatus { exit_code: Some(1) })
+            .unwrap();
+        reviewer.transition(TaskStatus::Failed).unwrap();
+    }
+    (state, team_id, round)
+}
+
+#[tokio::test]
+async fn a_failed_reviewer_nobody_replaces_waits_for_a_free_investigator() {
+    let (state, team, round) = round_with_a_failed_reviewer();
+
+    let found = {
+        let daemon = Daemon::new(&state, None);
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+        owner.watch.waits.insert(round.clone(), Obligation::FreeInvestigator);
+        let team = owner.parts.state.team(&team).unwrap();
+        owner.stuck_obligation(team, team.round(&round).unwrap())
+    };
+
+    assert_eq!(found, Some(Obligation::FreeInvestigator));
+}
+
+#[tokio::test]
+async fn a_failed_reviewer_that_is_not_yet_looked_at_for_replacement_waits_for_the_human() {
+    let (state, team, round) = round_with_a_failed_reviewer();
+
+    let found = {
+        let daemon = Daemon::new(&state, None);
+        let (owner, _sinks) = daemon.bare_owner().await;
+        let team = owner.parts.state.team(&team).unwrap();
+        owner.stuck_obligation(team, team.round(&round).unwrap())
+    };
+
+    assert_eq!(found, Some(Obligation::Human));
+}
