@@ -12,6 +12,7 @@ mod disk;
 mod fixture;
 mod gate;
 mod history;
+mod plan;
 mod round_state;
 mod rounds;
 mod start;
@@ -1011,6 +1012,7 @@ impl Owner {
     /// A run that went to its end: its task goes where the end says.
     async fn finished(&mut self, task: &TaskId, run: FinishedRun) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
+        self.keep_plan_out_of_delivery(task, &located).await;
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
         let settle_span = self.settle_span_of(task, &located.team);
