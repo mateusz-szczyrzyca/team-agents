@@ -49,6 +49,12 @@ use crate::daemon::checks::ChecksTextError;
 use crate::daemon::pr::PullTextError;
 use crate::daemon::questions::QuestionsProblem;
 use crate::daemon::team::agent_name;
+use waiting::Step;
+
+/// The step of a look at a team that rewrites the description of its open pull requests.
+pub(super) const REFRESH_DESCRIPTIONS: &str = "refresh the description of the pull requests";
+/// The step of a look at a team that gives the opinions of investigators gone silent to others.
+const REPLACE_SILENT: &str = "replace a silent investigator";
 
 /// Why the autopilot cannot be set up from the settings.
 #[derive(Debug, thiserror::Error)]
@@ -148,6 +154,8 @@ pub(super) struct PullWatch {
     gate_sent_back: HashMap<TaskId, u32>,
     /// The pull requests whose merge GitHub refused: they are not merged again, only looked at for the human's merge.
     refused: HashSet<(TeamId, PrNumber)>,
+    /// The steps that call GitHub or git and failed: what each waits for, and until when.
+    github_waits: waiting::Waits,
 }
 
 impl PullWatch {
@@ -255,6 +263,13 @@ pub(super) enum Announcement {
         /// The tip the gate does not pass at.
         tip: agent_core::state::CommitId,
     },
+    /// GitHub refuses a step of the team's round that will not pass until something is fixed.
+    GithubRefused {
+        /// The team.
+        team: TeamId,
+        /// What the step does.
+        operation: String,
+    },
 }
 
 /// Why a branch could not be published: what the human is told, and what is logged.
@@ -300,6 +315,9 @@ enum PublishError {
     /// A variable name of the program is not valid.
     #[error("a variable of a text is not valid")]
     Variable(#[from] VariablesError),
+    /// A second opinion's worktree cannot be inspected.
+    #[error("cannot inspect a second opinion's worktree")]
+    Inspect(#[source] Box<OpinionDaemonError>),
     /// The pull request carries another commit than the gated one.
     #[error("the pull request does not carry the commit the gate passed on")]
     Round(#[from] agent_core::decide::round::RoundError),
@@ -386,6 +404,8 @@ pub(super) enum AutopilotNotice {
     Approved,
     /// Pull request merge failed.
     MergeFailed,
+    /// GitHub refuses a step of a round that will not pass until the human fixes something.
+    GithubRefused,
     /// Pull request merged.
     Merged,
 }
@@ -407,6 +427,7 @@ impl AutopilotNotice {
             Self::Closed => AutopilotPrompt::NoticeClosed,
             Self::Approved => AutopilotPrompt::NoticeApproved,
             Self::MergeFailed => AutopilotPrompt::NoticeMergeFailed,
+            Self::GithubRefused => AutopilotPrompt::NoticeGithubRefused,
             Self::Merged => AutopilotPrompt::NoticeMerged,
         }
     }
@@ -423,6 +444,7 @@ impl AutopilotNotice {
             Self::Closed => NoticeKind::Closed,
             Self::Approved => NoticeKind::Approved,
             Self::MergeFailed => NoticeKind::MergeFailed,
+            Self::GithubRefused => NoticeKind::PublishFailed,
             Self::Merged => NoticeKind::Merged,
         }
     }
@@ -451,13 +473,29 @@ impl Owner {
         let Some(pulls) = self.pulls.clone() else {
             return Ok(());
         };
-        self.refresh_descriptions(&pulls, team)
-            .await
-            .map_err(OpinionDaemonError::from)?;
+        let now = Timestamp::now(&self.parts.clock)?;
+        let refresh = Step::Team { team: team.clone() };
+        if self.watch.github_waits.due(&refresh, REFRESH_DESCRIPTIONS, now) {
+            match self.refresh_descriptions(&pulls, team).await {
+                Err(error) => self.github_step_failed(&refresh, team, REFRESH_DESCRIPTIONS, None, &error, now)?,
+                Ok(()) => self.github_step_done(&refresh, team, REFRESH_DESCRIPTIONS),
+            }
+        }
         self.merge_approved(&pulls, team, look).await?;
         self.read_fix_responses(&pulls, team, look).await?;
-        self.replace_silent_opinions(&pulls, team, Timestamp::now(&self.parts.clock)?)
-            .await?;
+        let now = Timestamp::now(&self.parts.clock)?;
+        let silent = Step::Team { team: team.clone() };
+        if self.watch.github_waits.due(&silent, REPLACE_SILENT, now) {
+            match self.replace_silent_opinions(&pulls, team, now).await {
+                Ok(()) => self.github_step_done(&silent, team, REPLACE_SILENT),
+                // The task of an investigator cannot be inspected: that is the state's own trouble, not GitHub's.
+                Err(OwnerError::Opinion(error)) => {
+                    let error = PublishError::Inspect(Box::new(error));
+                    self.github_step_failed(&silent, team, REPLACE_SILENT, None, &error, now)?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
         self.ask_opinions(&pulls, team, look).await?;
         self.continue_opinions(&pulls, team, look)?;
         self.publish_branches(&pulls, team, look).await?;
