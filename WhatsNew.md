@@ -5,6 +5,24 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.26.0 — 20.11.2026 — PR #143
+
+### Bug fixes
+- [agent] [agent-core] [agent-runtime] A pause of the network or of GitHub no longer stops the daemon: the round waits and the step is tried
+  again by itself, after 30 seconds, then after a pause that doubles up to 10 minutes, while the other teams go on.
+- [agent] A second opinion whose worktree git cannot make no longer stops the daemon: the opinion waits and is asked
+  again.
+- [agent-runtime] **Action:** The history learns the daemon's newest log events (it refused them before, and
+  `build_directory_removed` on histories made before 0.19.0); `history.db` is migrated to version 11 at the start of
+  the daemon.
+
+### New features
+- [agent] [agent-core] `agent status` says what a round waits for at GitHub, for example `waits for GitHub: refresh the description
+  of the pull requests, tried 4 times, next try 01:07`; the log has one `github_step_waiting` warning when a step
+  starts to wait and one `github_step_resumed` when it goes through.
+- [agent] When GitHub refuses a step for good (a 404, a token that may not do it) you are told once, and
+  `agent resume <team>` tries it again at once.
+
 ## 0.25.0 — 20.11.2026 — PR #141
 
 ### Enhancements
