@@ -193,6 +193,16 @@ impl CheckedMut<'_, Member> {
         self.value.send_back_once_more();
     }
 
+    /// See [`Member::plan_answered`].
+    pub fn plan_answered(&mut self, question: NonZeroU32) {
+        self.value.plan_answered(question);
+    }
+
+    /// See [`Member::take_unread_plan_answers`].
+    pub fn take_unread_plan_answers(&mut self) -> Option<NonZeroU32> {
+        self.value.take_unread_plan_answers()
+    }
+
     /// See [`Member::release_plan`].
     pub fn release_plan(&mut self) {
         self.value.release_plan();
@@ -358,6 +368,18 @@ impl Member {
         if let Some(keeping) = &mut self.plan {
             keeping.once_more();
         }
+    }
+
+    /// The human answered questions `question` about the task's plan: the next run is to be given the answers, which
+    /// no run asked for; nothing for a task created before plans.
+    pub fn plan_answered(&mut self, question: NonZeroU32) {
+        let _ = question;
+    }
+
+    /// The questions about the plan whose answers no run has been given yet, taken out: the run that starts is given
+    /// them, and no later run is.
+    pub fn take_unread_plan_answers(&mut self) -> Option<NonZeroU32> {
+        NonZeroU32::new(1)
     }
 
     /// The human said to go on as it is: no run of the task is sent back for its plan again.
@@ -944,6 +966,29 @@ mod tests {
     /// The member of `busy`, as JSON, to be spoiled.
     fn busy_json() -> serde_json::Value {
         serde_json::to_value(busy()).unwrap()
+    }
+
+    #[test]
+    fn the_answers_about_a_plan_wait_for_one_run_and_survive_json() {
+        let mut member = Member::new(task(1), normal("codex-1"));
+
+        member.plan_answered(nz(3));
+
+        assert_eq!(member.plan().and_then(PlanKeeping::unread_answers), Some(nz(3)));
+        let value = serde_json::to_value(&member).unwrap();
+        let mut read: Member = serde_json::from_value(value).unwrap();
+        assert_eq!(read, member);
+        assert_eq!(read.take_unread_plan_answers(), Some(nz(3)));
+        assert_eq!(read.take_unread_plan_answers(), None);
+    }
+
+    #[test]
+    fn a_task_created_before_plans_has_no_unread_answers_about_one() {
+        let mut member = Member::without_plan(task(1), normal("codex-1"));
+
+        member.plan_answered(nz(3));
+
+        assert_eq!(member.take_unread_plan_answers(), None);
     }
 
     #[test]
