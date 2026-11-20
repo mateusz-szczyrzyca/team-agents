@@ -59,6 +59,7 @@ pub(super) fn insert(
         Record::Step(step) => insert_step(tx, step, limit)?,
         Record::RunEnd(end) => insert_end(tx, end, limit)?,
         Record::Changes(changes) => insert_changes(tx, changes, limit)?,
+        Record::Snapshot(_) => {}
         // An event has no table of its own: the ledger holds it.
         Record::Event(_) => {}
         Record::Session(session) => {
@@ -89,6 +90,7 @@ pub(super) fn insert(
             | Record::Step(_)
             | Record::RunEnd(_)
             | Record::Changes(_)
+            | Record::Snapshot(_)
             | Record::Session(_) => Ok(()),
         },
     }

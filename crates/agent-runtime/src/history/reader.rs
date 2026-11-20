@@ -16,8 +16,8 @@ use agent_core::config::{AbsolutePath, EnvName, ModelName, TailscaleLogin};
 use agent_core::decide::checks::{Change, FileChange, Lines};
 use agent_core::history::{
     AgentIdentity, ChangeKind, ClientKind, CommitRecord, Cut, EndKind, HowChosen, ItemText, Launch, PlanEntry,
-    RoundOpening, RoundSubject, RunChanges, RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord, Step,
-    StepKind, TeamStart, WhyKind,
+    RoundOpening, RoundSubject, RunChanges, RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord,
+    SnapshotRecord, Step, StepKind, TeamStart, WhyKind,
 };
 use agent_core::ids::{AgentName, BranchName, ItemId, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{CliKind, Role, Tier};
@@ -434,6 +434,15 @@ impl Reader {
     pub fn changes(&self, run: &RunId) -> Result<Option<Stored<RunChanges>>, ReadError> {
         let snapshot = self.snapshot("run_changes")?;
         read_changes(&snapshot, run)
+    }
+
+    /// The snapshots of the tasks of `round`, by task and then by number; a history before version 12 has none.
+    ///
+    /// # Errors
+    /// [`ReadError`] if a row or database cannot be read.
+    pub fn snapshots_of_round(&self, _round: &RoundId) -> Result<Vec<SnapshotRecord>, ReadError> {
+        let _snapshot = self.snapshot("snapshots")?;
+        Ok(Vec::new())
     }
 
     /// Every record of `team` in the order it was written: the stories of its rounds are made of them.

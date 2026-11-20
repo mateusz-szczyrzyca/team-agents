@@ -49,6 +49,7 @@ const fn kind_of(record: &Record) -> RecordKind {
         Record::Step(_) => RecordKind::Step,
         Record::RunEnd(_) => RecordKind::RunEnd,
         Record::Changes(_) => RecordKind::Changes,
+        Record::Snapshot(_) => RecordKind::Snapshot,
         Record::Session(_) => RecordKind::Session,
         Record::Event(_) => RecordKind::Event,
     }
@@ -65,6 +66,10 @@ fn sql(record: RecordKind) -> impl Fn(rusqlite::Error) -> WriteError {
 /// [`WriteError`]: the record of a run whose start is not recorded, an event that cannot be turned into JSON, or a
 /// refusal of the database.
 pub(super) fn append(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes) -> Result<(), WriteError> {
+    // A snapshot has a table of its own and is not an event of the ledger.
+    if let Record::Snapshot(_) = record {
+        return Ok(());
+    }
     let kind = kind_of(record);
     let entry = entry_of(tx, record, limit)?;
     check_rounds(tx, &entry.team, &entry.rounds, kind)?;
@@ -169,6 +174,10 @@ fn entry_of(tx: &Transaction<'_>, record: &Record, limit: MaxTextBytes) -> Resul
         Record::Session(s) => of_run(&s.run, format!("{}/{}", s.run, s.number), time_text(s.at)),
         Record::Changes(c) => of_run(&c.run, c.run.to_string(), changed_at(tx, c.run.as_str(), kind)?),
         Record::Event(event) => event_entry(tx, event, limit),
+        Record::Snapshot(_) => Err(WriteError::Rule {
+            record: RecordKind::Snapshot,
+            rule: "a snapshot has a table of its own and is not entered in the ledger",
+        }),
     }
 }
 

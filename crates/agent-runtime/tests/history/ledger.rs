@@ -122,6 +122,7 @@ fn a_round_has_the_start_of_its_team_its_opening_and_what_the_runs_that_worked_f
                 Record::RunEnd(end) => working.contains(&end.run),
                 Record::Changes(changes) => working.contains(&changes.run),
                 Record::Session(session) => working.contains(&session.run),
+                Record::Snapshot(snapshot) => working.is_empty() && snapshot.number == 0,
                 Record::Event(_) => false,
             })
             .collect();

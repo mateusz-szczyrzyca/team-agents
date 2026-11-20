@@ -375,6 +375,7 @@ fn record_of(
             Ok((Record::Session(Box::new(value)), Cut::default()))
         }
         RecordKind::Event => Err(here.rule("kind", "an event is kept under the keyword of its kind")),
+        RecordKind::Snapshot => Err(here.rule("kind", "a snapshot has a table of its own and is not in the ledger")),
     }
 }
 

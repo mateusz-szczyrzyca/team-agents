@@ -10,7 +10,7 @@ use crate::config::{EnvName, ModelName};
 use crate::decide::checks::{Change, FileChange, Lines};
 use crate::history::{
     EndKind, HistoryEvent, HowChosen, Launch, PlanEntry, Record, RecordKind, RoundOpening, RoundSubject, RunChanges,
-    RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord, Step, StepKind, TeamStart,
+    RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord, SnapshotRecord, Step, StepKind, TeamStart,
 };
 use crate::ids::{AgentName, RoundId, RunId};
 use crate::protocol::Client;
@@ -26,6 +26,7 @@ pub(super) fn record_json(stored: &SequencedRecord) -> Value {
         Record::Step(step) => (RecordKind::Step.to_string(), step_json(step)),
         Record::RunEnd(end) => (RecordKind::RunEnd.to_string(), end_json(end)),
         Record::Changes(changes) => (RecordKind::Changes.to_string(), changes_json(changes)),
+        Record::Snapshot(snapshot) => (RecordKind::Snapshot.to_string(), snapshot_json(snapshot)),
         Record::Session(session) => (RecordKind::Session.to_string(), session_json(session)),
         Record::Event(event) => (event.event.kind().to_string(), event_json(&event.event)),
     };
@@ -188,6 +189,18 @@ fn file_json(file: &FileChange) -> Value {
     };
     let binary = matches!(file.lines, Lines::Binary);
     json!({"path": file.path.as_str(), "change": change, "from": from, "binary": binary, "lines": lines})
+}
+
+/// A snapshot as the story shows it. A snapshot is not in the ledger, so a story does not reach it today.
+fn snapshot_json(snapshot: &SnapshotRecord) -> Value {
+    json!({
+        "round": snapshot.round.as_str(),
+        "task": snapshot.task.as_str(),
+        "number": snapshot.number,
+        "commit": snapshot.commit.to_string(),
+        "head": snapshot.head.to_string(),
+        "bytes": snapshot.bytes,
+    })
 }
 
 fn changes_json(changes: &RunChanges) -> Value {
