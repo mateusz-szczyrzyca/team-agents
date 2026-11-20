@@ -91,8 +91,11 @@ pub fn after_lead(end: &LeadEnd, allowances: &[TaskAllowance]) -> AfterLead {
 /// base (`vs_base`): a file that only the merge of the base brought in is in none of the last two and is not counted.
 #[must_use]
 pub fn changed_by_lead(since_approved: &[RepoPath], on_branch: &[RepoPath], vs_base: &[RepoPath]) -> Vec<RepoPath> {
-    let _ = (since_approved, on_branch, vs_base);
-    Vec::new()
+    since_approved
+        .iter()
+        .filter(|path| on_branch.contains(path) || vs_base.contains(path))
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
