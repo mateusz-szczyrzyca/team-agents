@@ -31,7 +31,7 @@ pub struct Round {
     /// Split execution identity; absent in schema 13 rounds written before activation.
     #[serde(skip_serializing_if = "Option::is_none")]
     part: Option<PartRound>,
-    /// Another round's verified PR; retained after its merge closes this round.
+    /// Another round's verified PR; retained after completion or an observed unmerged closure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     delivery: Option<super::PullRequest>,
     /// Observed unmerged close; ends the claim and allows a fresh round, including after a restart.

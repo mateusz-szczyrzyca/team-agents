@@ -687,14 +687,14 @@ These choices are in the model and are expensive to change once state files exis
     only that value's checked operations (`advance`, `transition`, `begin_run`, ...), so no caller can overwrite a team,
     an item, the crew or a member and bypass the checks that keep IDs unique and phases in order. The compiler refuses
     the overwrite (compile-fail doctests on `State::team_mut` and `State::find_task_mut`).
-16. **A round is a record of its team, found by the item.** It is `{id, item?, opened_at, state}`, an item has one, and a run
+16. **A round is a record of its team, found by the item.** It is `{id, item?, opened_at, state}` with optional split and delivery metadata; an item has one current round, and a run
     names the rounds it works for (a list, because a coordinator works for every round that is open). The ID of a team and the ID
     of a round are the two keys the history of item 8.4 is found by.
 17. **A closed round is never opened again, also when its team is resumed.** A `stop` that leaves a team with nobody to work
     abandons its open rounds; a `resume` goes on with the item in its round, which stays `abandoned`, and the runs that go on name
-    it. The other ways — a new round for the same item, or a round that opens again — break "an item has one round" and "a closed
-    round is closed". The cost: such an item is merged in a round that says `abandoned`. A human who wants a clean round starts a
-    new team.
+    it. Such an item can merge in a round that says `abandoned`. An observed unmerged closure of a delivery PR is
+    different: it ends that claim permanently and permits a fresh round for the same item or split part. The old
+    round stays abandoned with its delivery and closure timestamp.
 18. **The round of a list without items ends `abandoned`.** Nothing merges it and nothing approves it; `abandoned` is the only
     ending that fits it, and it is what the team's end says.
 19. **The migration of version 1 is by one rule and opens its rounds when the team was started.** Version 1 did not record when
