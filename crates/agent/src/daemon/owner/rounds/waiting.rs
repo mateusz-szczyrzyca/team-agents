@@ -262,7 +262,7 @@ impl Owner {
     /// The action that owns the next step of an idle round.
     pub(in crate::daemon::owner) fn waiting_for(&self, team: &Team, round: &Round) -> Option<Waiting> {
         let members = team.members_in(round.id());
-        let activity = if *round.life() != RoundLife::Open {
+        let activity = if !round.is_open() {
             Activity::Closed
         } else if members
             .iter()
@@ -320,7 +320,10 @@ impl Owner {
     }
 
     /// The pending operation, including gates which do not run a model task.
-    fn round_obligation(&self, team: &Team, round: &Round) -> Option<Obligation> {
+    pub(in crate::daemon::owner) fn round_obligation(&self, team: &Team, round: &Round) -> Option<Obligation> {
+        if matches!(round.life(), RoundLife::Delivered { .. }) {
+            return Some(Obligation::Merge);
+        }
         let lead = team.crew().roster().into_iter().next().map(|(_, member)| member)?;
         // Only the harness's own gate is tracked to its end. The token the owner keeps for a gate a lead asked for stays
         // after the gate is over, and that gate is awaited by the lead's run, which is active, not idle.
