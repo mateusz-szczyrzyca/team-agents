@@ -216,6 +216,9 @@ struct RunArgs {
     /// Stop before the merge of an approved pull request and hand it to you.
     #[arg(long)]
     no_merge: bool,
+    /// Permit unpublished commits on the base branch.
+    #[arg(skip)]
+    allow_unpushed_base: bool,
 }
 
 /// The arguments of `agent log`.
@@ -795,6 +798,7 @@ async fn execute_run(environment: &Environment, args: RunArgs, out: &mut impl Wr
     let request = prepare(
         directory,
         RunInput {
+            allow_unpushed_base: args.allow_unpushed_base,
             words: args.words,
             file: args.file,
             coordinator: args.coordinator,

@@ -127,6 +127,9 @@ pub enum Target {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunRequest {
+    /// Explicit permission to start despite local base commits absent from origin.
+    #[serde(default, skip_serializing)]
+    pub allow_unpushed_base: bool,
     /// The repository, as `[repos.NAME]` of the configuration.
     pub repo: RepoName,
     /// The local checkout the client is in: the worktrees are made from it.

@@ -24,6 +24,8 @@ use crate::client::{ClientError, Connection};
 /// What the command line of `agent run` says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunInput {
+    /// Explicit permission from `--allow-unpushed-base`.
+    pub(crate) allow_unpushed_base: bool,
     /// The words that are not options: the agents, and the task when there is no file.
     pub(crate) words: Vec<String>,
     /// The file with the task list, from `-f`.
@@ -284,6 +286,7 @@ pub(crate) async fn prepare(directory: &Path, input: RunInput) -> Result<RunRequ
     let task_list = TaskListText::new(text)?;
     let (checkout, repo) = repository(directory).await?;
     Ok(RunRequest {
+        allow_unpushed_base: false,
         repo,
         checkout,
         agents,

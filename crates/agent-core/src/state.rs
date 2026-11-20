@@ -5,6 +5,7 @@
 //! through the control protocol ([`crate::protocol`]). Everything here is pure data with its rules: a value that
 //! exists is a valid one, and a text that is not valid is refused when it is read.
 
+mod base;
 mod checked;
 mod checks;
 mod findings;
@@ -22,6 +23,7 @@ mod team;
 mod values;
 mod wake_delivery;
 
+pub use base::UnpushedBase;
 pub use checked::CheckedMut;
 pub use checks::{Asked, ChecksRecord, ItemChecks, Sent};
 pub use findings::{

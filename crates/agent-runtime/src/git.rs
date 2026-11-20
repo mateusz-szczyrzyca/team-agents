@@ -26,6 +26,7 @@ use tracing::Instrument;
 
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture, capture_until};
 
+mod base;
 mod changes;
 #[cfg(test)]
 mod deadline_tests;
@@ -2434,6 +2435,74 @@ mod tests {
                 .await
                 .unwrap(),
             5
+        );
+    }
+    #[tokio::test]
+    async fn base_preflight_fetches_and_reports_the_count_and_first_unpushed_commit() {
+        let fixture = Fixture::new();
+        with_origin(&fixture);
+        raw(&fixture.repo, &["push", "-q", "origin", "main"]);
+        fixture.commit("one", "one", "Żółć first unpublished");
+        let first = fixture.head();
+        fixture.commit("two", "two", "Second unpublished");
+        let expected = agent_core::state::UnpushedBase {
+            branch: branch("main"),
+            count: std::num::NonZeroU64::new(2).unwrap(),
+            first,
+            subject: "Żółć first unpublished".to_owned(),
+        };
+        assert_eq!(
+            fixture.git().unpushed_base(&branch("main")).await.unwrap(),
+            Some(expected)
+        );
+    }
+
+    #[tokio::test]
+    async fn base_preflight_preserves_equal_behind_and_no_origin_branches() {
+        let fixture = Fixture::new();
+        let git = fixture.git();
+        assert_eq!(git.unpushed_base(&branch("main")).await.unwrap(), None);
+        let origin = with_origin(&fixture);
+        raw(&fixture.repo, &["push", "-q", "origin", "main"]);
+        assert_eq!(git.unpushed_base(&branch("main")).await.unwrap(), None);
+        let local = fixture.head();
+        pushed_from_elsewhere(&fixture, &origin, "main");
+        assert_eq!(git.unpushed_base(&branch("main")).await.unwrap(), None);
+        assert_eq!(git.branch_tip(&branch("main")).await.unwrap(), Some(local));
+        let remote = raw(&origin, &["rev-parse", "main"]);
+        assert_eq!(
+            git.rev_parse(&Revision::RemoteBranch(branch("main")))
+                .await
+                .unwrap()
+                .as_str(),
+            remote
+        );
+        fixture.commit("local", "local", "Diverged local");
+        assert_eq!(
+            git.unpushed_base(&branch("main")).await.unwrap().unwrap().count.get(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn base_preflight_refuses_a_failed_fetch_even_with_a_stale_remote_ref() {
+        let fixture = Fixture::new();
+        with_origin(&fixture);
+        raw(&fixture.repo, &["push", "-q", "origin", "main"]);
+        raw(
+            &fixture.repo,
+            &["remote", "set-url", "origin", "/nonexistent/example.git"],
+        );
+        let result = fixture.git().unpushed_base(&branch("main")).await;
+        assert!(
+            matches!(
+                result,
+                Err(GitError::Failed {
+                    operation: GitOperation::Fetch,
+                    ..
+                })
+            ),
+            "{result:?}"
         );
     }
 }
