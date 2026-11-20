@@ -88,6 +88,7 @@ async fn stepped(rig: &Rig) -> Stepped {
             &settings.secrets,
         ),
         free_space: agent_runtime::disk::SharedFreeSpace::system(),
+        retry_first: None,
         settings,
         texts,
     };

@@ -116,9 +116,13 @@ impl Wait {
         answer: String,
         outlook: Outlook,
         now: Timestamp,
+        pause: Duration,
     ) -> Result<Self, DurationOverflow> {
         let tries = NonZeroU32::MIN;
-        let next_at = Some(later(now, pause(tries))?);
+        let next_at = match outlook {
+            Outlook::MayPass => Some(later(now, pause)?),
+            Outlook::WillNotPass => None,
+        };
         Ok(Self {
             team,
             operation: named(operation, pr),
@@ -130,12 +134,18 @@ impl Wait {
     }
 
     /// The next failure of the same step, at `now`.
-    fn again(&mut self, answer: String, outlook: Outlook, now: Timestamp) -> Result<(), DurationOverflow> {
+    fn again(
+        &mut self,
+        answer: String,
+        outlook: Outlook,
+        now: Timestamp,
+        pause: Duration,
+    ) -> Result<(), DurationOverflow> {
         self.tries = self.tries.saturating_add(1);
         self.answer = answer;
         self.outlook = outlook;
         self.next_at = match outlook {
-            Outlook::MayPass => Some(later(now, pause(self.tries))?),
+            Outlook::MayPass => Some(later(now, pause)?),
             Outlook::WillNotPass => None,
         };
         Ok(())
@@ -221,9 +231,35 @@ impl DurationOverflow {
 pub(in crate::daemon::owner) struct Waits {
     /// The waits of each round, and of each team's rounds as a whole, by operation.
     steps: BTreeMap<(Step, String), Wait>,
+    /// The pause before the first try of a step; none for [`agent_core::decide::retry::FIRST_PAUSE`].
+    first: Option<Duration>,
 }
 
 impl Waits {
+    /// The same, whose first failure waits `first` instead of the first pause: a test reads a wait without a clock
+    /// that goes a minute ahead.
+    #[cfg(test)]
+    #[must_use]
+    pub(in crate::daemon::owner) fn with_first(first: Duration) -> Self {
+        Self {
+            first: Some(first),
+            ..Self::default()
+        }
+    }
+
+    /// The pause before the try that follows `tries` failures.
+    fn pause(&self, tries: NonZeroU32) -> Duration {
+        match self.first {
+            Some(first) => {
+                let doublings = tries.get().saturating_sub(1).min(16);
+                first
+                    .saturating_mul(1_i32.saturating_pow(doublings))
+                    .min(agent_core::decide::retry::LONGEST_PAUSE)
+            }
+            None => pause(tries),
+        }
+    }
+
     /// The wait of `step` for `operation`, if it has one.
     pub(super) fn get(&self, step: &Step, operation: &str) -> Option<&Wait> {
         self.steps.get(&(step.clone(), operation.to_owned()))
@@ -267,10 +303,18 @@ impl Waits {
         };
         let wait = match self.steps.remove(&key) {
             Some(mut wait) => {
-                wait.again(answer, outlook, now)?;
+                wait.again(answer, outlook, now, self.pause(wait.tries.saturating_add(1)))?;
                 wait
             }
-            None => Wait::first(team.clone(), operation.to_owned(), pr, answer, outlook, now)?,
+            None => Wait::first(
+                team.clone(),
+                operation.to_owned(),
+                pr,
+                answer,
+                outlook,
+                now,
+                self.pause(NonZeroU32::MIN),
+            )?,
         };
         if self.steps.len() >= MAX_WAITS
             && let Some(oldest) = self.steps.keys().next().cloned()
@@ -320,7 +364,7 @@ impl Waits {
         self.steps.retain(|_, wait| &wait.team != team);
     }
 
-    /// The wait of each open round of `team`, by round, as `agent status` tells it: the one that is due last.
+    /// The line of the first wait of `team` as `agent status` tells it, by round: the step that waits, and what.
     pub(super) fn of_team(&self, team: &TeamId, offset: time::UtcOffset) -> Vec<(RoundId, String)> {
         let mut found: BTreeMap<RoundId, (Option<Timestamp>, String)> = BTreeMap::new();
         for ((step, _), wait) in &self.steps {

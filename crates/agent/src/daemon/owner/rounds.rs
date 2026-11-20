@@ -159,6 +159,13 @@ pub(super) struct PullWatch {
 }
 
 impl PullWatch {
+    /// The same, whose first failure of a step that calls GitHub waits `first`.
+    #[cfg(test)]
+    pub(super) fn with_retry_first(mut self, first: time::Duration) -> Self {
+        self.github_waits = waiting::Waits::with_first(first);
+        self
+    }
+
     /// Clears blocked item announcements for any items in progress or fixing assigned to `task`.
     pub(super) fn reset_item_blocked_for_task(&mut self, state: &State, team_id: &TeamId, task: &TaskId) {
         let Some(team) = state.team(team_id) else {
