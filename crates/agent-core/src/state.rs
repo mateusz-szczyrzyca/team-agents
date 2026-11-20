@@ -875,3 +875,7 @@ mod tests {
 #[cfg(test)]
 #[path = "state/allowances_tests.rs"]
 mod allowances_tests;
+
+#[cfg(test)]
+#[path = "state/split_migration_tests.rs"]
+mod split_migration_tests;
