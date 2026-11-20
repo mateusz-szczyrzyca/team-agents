@@ -1,5 +1,6 @@
 //! Validated plans for splitting a task-list item, independent of how its parts are executed.
 
+pub mod keeping;
 pub mod proposal;
 
 use std::collections::{BTreeMap, BTreeSet};
