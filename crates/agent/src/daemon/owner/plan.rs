@@ -7,23 +7,29 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use agent_core::config::{AbsolutePath, InvalidValue};
+use agent_core::decide::plan::{PlanFacts, PlanRead, PlanVerdict, decide_plan};
+use agent_core::ids::RunId;
 use agent_core::ids::{AgentName, InvalidName, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
-use agent_core::plan::PLAN_FILE;
+use agent_core::plan::{PLAN_FILE, Plan, PlanError, parse_plan};
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::questions::{Entry, QuestionsFile, Verdict, quote};
 use agent_core::repo_path::{InvalidRepoPath, RepoPath};
 use agent_core::state::{PlanKeeping, PlanReason, PlanStage};
+use agent_core::state::{RunEnd, Timestamp};
+use agent_core::status::TaskStatus;
+use agent_core::task_list::MAX_TASK_LIST_BYTES;
 use agent_runtime::git::{CommitIdentity, Git, GitError, Untracked};
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
-use agent_runtime::history::log_decision;
+use agent_runtime::history::{PlanRead as HistoryPlanRead, PlanRecord, Reader, log_decision};
 use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::ComposeError;
-use agent_runtime::text_file::{ReplaceError, replace_text_file};
+use agent_runtime::text_file::{ReplaceError, TextFileError, read_text_file, replace_text_file};
 
 use super::start::next_number;
 use super::{Located, Owner, OwnerError};
+use crate::daemon::settle::Settled;
 
 /// Why the plan of a task cannot be taken out of its branch.
 #[derive(Debug, thiserror::Error)]
@@ -139,16 +145,29 @@ impl Owner {
 
 /// Whether the human's question about a task's plan was written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "called at the end of a run, wired by step 6 of this item")
-)]
 pub(super) enum PlanQuestion {
     /// The task's next questions file holds it, and the task's plan waits for its answer: the run's end is settled as
     /// a run that asked questions.
     Written,
     /// It could not be made or written (logged): the run's end is settled as the done it reported.
     NotWritten,
+}
+
+/// Whether the end of a run was held back for its plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PlanHeld {
+    /// The run ends as it reported.
+    No,
+    /// The run reported `DONE` and was sent back, or the human is asked: nobody is told it is done.
+    Yes,
+}
+
+/// What the end of a run found of the plan: what the decision reads, and the text as the task wrote it.
+struct Found {
+    /// What the decision reads.
+    read: PlanRead,
+    /// The text of a plan that parses, as written; `None` otherwise.
+    text: Option<String>,
 }
 
 /// What the human's answer to the question about a task's plan says.
@@ -166,10 +185,6 @@ impl Owner {
     ///
     /// # Errors
     /// [`OwnerError`] when the task is gone or has no questions number left.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "called at the end of a run, wired by step 6 of this item")
-    )]
     pub(super) async fn write_plan_question(
         &mut self,
         task: &TaskId,
@@ -202,10 +217,6 @@ impl Owner {
     }
 
     /// Renders the question about the plan of `task` and writes it to `path`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "called at the end of a run, wired by step 6 of this item")
-    )]
     async fn put_plan_question(
         &self,
         task: &TaskId,
@@ -268,6 +279,160 @@ impl Owner {
     }
 }
 
+impl Owner {
+    /// What the end `end` of a run of `task` does with its plan: what the worktree has is kept in the history, and a
+    /// run that reported `DONE` against its plan is sent back or the human asked, by [`decide_plan`]. `settled` is what
+    /// the run's end comes to otherwise; the result is what it comes to now.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the task is gone or has no questions number left.
+    pub(super) async fn plan_at_end(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        end: &RunEnd,
+        settled: Settled,
+    ) -> Result<(Settled, PlanHeld), OwnerError> {
+        let found = match self.worktree_of(task, located) {
+            Ok(worktree) => read_plan(&worktree.as_path().join(PLAN_FILE)).await,
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::GitCallFailed.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the plan of the task cannot be looked for"
+                );
+                return Ok((settled, PlanHeld::No));
+            }
+        };
+        let run = self
+            .parts
+            .state
+            .find_task(task)
+            .and_then(|found| found.member.current_run().map(|run| run.id().clone()));
+        let previous = self.previous_plan(task, run.as_ref()).await;
+        self.keep_plan(task, located, run, &found)?;
+        let verdict = {
+            let member = self
+                .parts
+                .state
+                .find_task(task)
+                .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
+                .member;
+            decide_plan(PlanFacts {
+                role: located.role,
+                end,
+                read: &found.read,
+                previous: previous.as_ref(),
+                keeping: member.plan(),
+                policy: self.parts.settings.config.plan(),
+            })
+        };
+        log_decision("plan", &task.as_str(), &format!("{verdict:?}"));
+        Ok(match verdict {
+            PlanVerdict::Accept => (settled, PlanHeld::No),
+            PlanVerdict::SendBack(reason) => {
+                self.member_mut(task)?.1.send_back(reason);
+                (Settled::Status(TaskStatus::Queued), PlanHeld::Yes)
+            }
+            PlanVerdict::AskHuman(reason) => match self.write_plan_question(task, located, &reason).await? {
+                PlanQuestion::Written => (Settled::Questions, PlanHeld::Yes),
+                PlanQuestion::NotWritten => (settled, PlanHeld::No),
+            },
+        })
+    }
+
+    /// The last version of the plan of `task` the history kept from a run other than `run`; `None` when there is none or
+    /// the history cannot be read (logged): a step lost since then is then not found.
+    async fn previous_plan(&self, task: &TaskId, run: Option<&RunId>) -> Option<Plan> {
+        let path = self.parts.store.home().history_file();
+        let (task_id, run_id) = (task.clone(), run.cloned());
+        let looked = tokio::task::spawn_blocking(move || {
+            Reader::open(&path).and_then(|reader| reader.last_plan_version_before(&task_id, run_id.as_ref()))
+        })
+        .await;
+        let record = match looked {
+            Ok(Ok(record)) => record?,
+            Ok(Err(error)) => {
+                // A home without a history (or one disabled) has kept no plan: nothing can be found lost.
+                tracing::debug!(task = %task, error = %error_chain(&error), "no plan kept before can be read");
+                return None;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    %error,
+                    "the plan kept before cannot be read: no step is found lost"
+                );
+                return None;
+            }
+        };
+        match record.read {
+            HistoryPlanRead::Version { text } => match parse_plan(&text) {
+                Ok(plan) => Some(plan),
+                Err(error) => {
+                    tracing::warn!(
+                        event = LogEvent::HistoryRecordIncomplete.as_str(),
+                        task = %task,
+                        %error,
+                        "the plan kept before does not parse: no step is found lost"
+                    );
+                    None
+                }
+            },
+            HistoryPlanRead::Missing | HistoryPlanRead::Unreadable { .. } => None,
+        }
+    }
+
+    /// Hands what was found of the plan of `task` at the end of `run` to the history.
+    fn keep_plan(&self, task: &TaskId, located: &Located, run: Option<RunId>, found: &Found) -> Result<(), OwnerError> {
+        let at = Timestamp::now(&self.parts.clock)?;
+        let read = match (&found.read, &found.text) {
+            (PlanRead::Parsed(_), Some(text)) => HistoryPlanRead::Version { text: text.clone() },
+            (PlanRead::Parsed(plan), None) => HistoryPlanRead::Version { text: plan.to_text() },
+            (PlanRead::Missing, _) => HistoryPlanRead::Missing,
+            (PlanRead::Unreadable { line, detail }, _) => HistoryPlanRead::Unreadable {
+                line: *line,
+                detail: detail.clone(),
+            },
+        };
+        self.history.write_plans(vec![PlanRecord {
+            task: task.clone(),
+            team: located.team.clone(),
+            run,
+            at,
+            read,
+        }]);
+        Ok(())
+    }
+}
+
+/// What the file `path` of a plan holds: missing, unreadable with why, or the plan with its text.
+async fn read_plan(path: &Path) -> Found {
+    let read = match read_text_file(path, MAX_TASK_LIST_BYTES).await {
+        Ok(None) => PlanRead::Missing,
+        Ok(Some(file)) => match parse_plan(&file.text) {
+            Ok(plan) => {
+                return Found {
+                    read: PlanRead::Parsed(plan),
+                    text: Some(file.text),
+                };
+            }
+            Err(error) => PlanRead::unreadable(&error),
+        },
+        Err(TextFileError::TooLarge { limit }) => PlanRead::unreadable(&PlanError::TooLarge {
+            len: limit.saturating_add(1),
+            max: limit,
+        }),
+        Err(error) => PlanRead::Unreadable {
+            line: None,
+            detail: error_chain(&error),
+        },
+    };
+    Found { read, text: None }
+}
+
 /// What the human's answer `file` to the question about a plan says: the recommendation (`ok`) or an answer that starts
 /// with `a` is "go on as it is"; any other answer, the human's own words too, sends the run back once more, so that the
 /// agent reads it with the answers.
@@ -286,18 +451,10 @@ fn starts_as_option_a(answer: &str) -> bool {
 }
 
 /// The permission bits of a questions file the harness writes: the human's to read and edit.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "called at the end of a run, wired by step 6 of this item")
-)]
 const QUESTIONS_MODE: u32 = 0o600;
 
 /// Why the question about a plan cannot be written.
 #[derive(Debug, thiserror::Error)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "called at the end of a run, wired by step 6 of this item")
-)]
 enum PlanQuestionError {
     /// The texts do not take their values.
     #[error("the question cannot be made")]

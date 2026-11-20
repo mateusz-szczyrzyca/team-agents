@@ -1035,6 +1035,7 @@ impl Owner {
         );
         let settled = self.solo_waits_for_its_items(located.role, &located.team, settled);
         let settled = self.reviewer_waits(located.role, &located.team, settled);
+        let (settled, held) = self.plan_at_end(task, &located, &run.classified.end, settled).await?;
         {
             let _entered = settle_span.enter();
             log_decision(
@@ -1097,6 +1098,7 @@ impl Owner {
         }
         self.commit(task, &located, now, events, notice).await?;
         if located.role == Role::Reviewer
+            && held == plan::PlanHeld::No
             && matches!(
                 end,
                 RunEnd::Reported {
@@ -1107,6 +1109,11 @@ impl Owner {
             self.review_ended(task, &located, run.final_message.as_deref()).await?;
         }
         self.retry_unanswered_opinion(task, &located, &end).await?;
+        if held == plan::PlanHeld::Yes {
+            // The run said DONE but goes back for its plan, or waits for the human: nobody is told it is done.
+            self.look_at(&located.team);
+            return Ok(());
+        }
         self.after_run(task, &located, &end, run.final_message.as_deref())
     }
 
