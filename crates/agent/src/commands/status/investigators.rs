@@ -9,11 +9,11 @@ use std::cmp::Reverse;
 use agent_core::ids::InvestigatorName;
 use agent_core::kinds::ActivityKind;
 use agent_core::protocol::TeamSummary;
-use agent_core::state::{Activity, ActivityEnd, ActivityOutcome, RoundLife, Timestamp};
+use agent_core::state::{Activity, ActivityEnd, ActivityOutcome, RoundLife};
 use time::UtcOffset;
 
 use super::clock_of;
-use super::reviewer::{ordinal, ordinal_text, stopped};
+use super::reviewer::{Place, ordinal, ordinal_text, placed, stopped};
 
 /// How many activities of an investigator the view shows.
 const SHOWN: usize = 2;
@@ -25,7 +25,7 @@ pub(crate) fn render(teams: &[TeamSummary], configured: &[InvestigatorName], off
     let mut lines = Vec::new();
     for investigator in configured {
         let mut found = Shown::all_of(investigator, teams);
-        found.sort_by_key(|shown| Reverse(shown.asked));
+        found.sort_by_key(|shown| Reverse(shown.place));
         if found.is_empty() {
             lines.push(format!("{investigator}  free, no activity in an open team"));
             continue;
@@ -40,8 +40,8 @@ pub(crate) fn render(teams: &[TeamSummary], configured: &[InvestigatorName], off
 /// An activity of an investigator in a team that is not closed, with its team.
 #[derive(Debug)]
 struct Shown<'a> {
-    /// When it was asked: the view is newest first.
-    asked: Timestamp,
+    /// Where it stands in its team's record: the view is newest first.
+    place: Place,
     /// The activity.
     activity: &'a Activity,
     /// Its team, whose activities give the ordinal of a review.
@@ -55,14 +55,9 @@ impl<'a> Shown<'a> {
             .iter()
             .filter(|team| team.rounds.iter().any(|round| *round.life() == RoundLife::Open))
             .flat_map(|team| {
-                team.activities
-                    .iter()
-                    .filter(|activity| activity.investigator() == investigator)
-                    .map(|activity| Self {
-                        asked: activity.asked_at(),
-                        activity,
-                        team,
-                    })
+                placed(&team.activities)
+                    .filter(|(_, activity)| activity.investigator() == investigator)
+                    .map(|(place, activity)| Self { place, activity, team })
             })
             .collect()
     }
@@ -109,7 +104,7 @@ impl<'a> Shown<'a> {
 
     /// The ordinal of the review among those its investigator gave for its rounds: `1st`, `2nd`, ...
     fn review(&self) -> String {
-        ordinal_text(ordinal(self.activity, &self.team.activities))
+        ordinal_text(ordinal(self.place, self.activity, &self.team.activities))
     }
 }
 

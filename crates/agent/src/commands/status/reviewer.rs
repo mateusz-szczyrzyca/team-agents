@@ -1,10 +1,9 @@
 //! What the line of a reviewer says: what it did or does, from the record of the team's activities, instead of the one
 //! word of its status, which says `waiting` between its reviews.
 
-use agent_core::ids::TaskId;
 use agent_core::kinds::ActivityKind;
 use agent_core::protocol::MemberSummary;
-use agent_core::state::{Activity, ActivityEnd, ActivityOutcome, RunEnd, Timestamp};
+use agent_core::state::{Activity, ActivityEnd, ActivityOutcome, ActivityRequest, OpinionFailure, RunEnd, Timestamp};
 use time::UtcOffset;
 
 use super::clock_of;
@@ -12,7 +11,7 @@ use super::clock_of;
 /// What the line of the reviewer `member` says, `None` when the team recorded no activity of it: the activity replaces
 /// the line of its status for a reviewer.
 pub(crate) fn status(member: &MemberSummary, activities: &[Activity], offset: UtcOffset) -> Option<String> {
-    let newest = newest(member, activities)?;
+    let (place, newest) = newest(member, activities)?;
     Some(match newest.outcome() {
         ActivityOutcome::Working => "working".to_owned(),
         ActivityOutcome::Finished {
@@ -20,7 +19,7 @@ pub(crate) fn status(member: &MemberSummary, activities: &[Activity], offset: Ut
             end: ActivityEnd::Reported,
         } => format!(
             "done, {} review finished {}",
-            ordinal_text(ordinal(newest, activities)),
+            ordinal_text(ordinal(place, newest, activities)),
             clock_of(*at, offset)
         ),
         ActivityOutcome::Finished { at, end } => stopped(*at, end, offset),
@@ -32,25 +31,57 @@ pub(super) fn stopped(at: Timestamp, end: &ActivityEnd, offset: UtcOffset) -> St
     format!("stopped at {}, reason: {}", clock_of(at, offset), ending(end))
 }
 
-/// The newest activity of `member`'s task, or `None` when there is none.
-fn newest<'a>(member: &MemberSummary, activities: &'a [Activity]) -> Option<&'a Activity> {
-    activities
-        .iter()
-        .filter(|activity| activity.task() == &member.task)
-        .max_by_key(|activity| activity.asked_at())
+/// Where an activity stands in the record of its team, oldest first: by when it was asked, then by the pass of the pull
+/// request it is about, then by its place in the record, which keeps the order in which the daemon recorded the
+/// activities asked in one second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct Place {
+    /// When the activity was asked.
+    asked_at: Timestamp,
+    /// The fix passes of the pull request before it: 0 for a first review and for work that is about no pass.
+    pass: u32,
+    /// Its index in the team's record.
+    index: usize,
+}
+
+/// The activities of a team's record, each with its place in it.
+pub(super) fn placed(activities: &[Activity]) -> impl Iterator<Item = (Place, &Activity)> {
+    activities.iter().enumerate().map(|(index, activity)| {
+        let place = Place {
+            asked_at: activity.asked_at(),
+            pass: pass_of(activity.request()),
+            index,
+        };
+        (place, activity)
+    })
+}
+
+/// The fix passes of the pull request before the work `request` asks for: a verification or a second opinion of pass
+/// `n` comes after the first review and after the passes before `n`.
+const fn pass_of(request: &ActivityRequest) -> u32 {
+    match request {
+        ActivityRequest::TeamMember
+        | ActivityRequest::FirstReview
+        | ActivityRequest::Investigation
+        | ActivityRequest::TaskAllocation => 0,
+        ActivityRequest::Verification { pass } | ActivityRequest::SecondOpinion { pass, .. } => pass.get(),
+    }
+}
+
+/// The newest activity of `member`'s task with its place, or `None` when there is none.
+fn newest<'a>(member: &MemberSummary, activities: &'a [Activity]) -> Option<(Place, &'a Activity)> {
+    placed(activities)
+        .filter(|(_, activity)| activity.task() == &member.task)
+        .max_by_key(|(place, _)| *place)
 }
 
 /// The place of the review `activity` among the reviews that its investigator gave for one of the rounds it serves,
 /// counting from one: the first review, the verifications and the second opinions alike. A review gave its report; one
-/// that ended without it is not counted, and `activity` itself counts whatever its outcome.
-pub(super) fn ordinal(activity: &Activity, activities: &[Activity]) -> usize {
-    /// Where an activity stands among the reviews: by when it was asked, then by its task.
-    fn place(activity: &Activity) -> (Timestamp, &TaskId) {
-        (activity.asked_at(), activity.task())
-    }
-    let this = place(activity);
-    let earlier = activities
-        .iter()
+/// that ended without it is not counted, and `activity`, at `this` place of `activities`, counts whatever its outcome.
+pub(super) fn ordinal(this: Place, activity: &Activity, activities: &[Activity]) -> usize {
+    let earlier = placed(activities)
+        .filter(|(place, _)| *place < this)
+        .map(|(_, other)| other)
         .filter(|other| other.investigator() == activity.investigator())
         .filter(|other| matches!(other.request().kind(), ActivityKind::Reviewer))
         .filter(|other| other.rounds().iter().any(|round| activity.rounds().contains(round)))
@@ -63,7 +94,6 @@ pub(super) fn ordinal(activity: &Activity, activities: &[Activity]) -> usize {
                 }
             )
         })
-        .filter(|other| place(other) < this)
         .count();
     earlier.saturating_add(1)
 }
@@ -74,7 +104,20 @@ fn ending(end: &ActivityEnd) -> String {
         ActivityEnd::Reported => "the report was given".to_owned(),
         ActivityEnd::Stopped => "the human stopped it".to_owned(),
         ActivityEnd::Failed { reason } => reason.as_ref().map_or_else(|| "it failed".to_owned(), run_end),
-        ActivityEnd::OpinionFailed { .. } => "its second opinion was abandoned".to_owned(),
+        ActivityEnd::OpinionFailed { reason } => {
+            format!("its second opinion was abandoned: {}", opinion_failure(*reason))
+        }
+    }
+}
+
+/// Why a second opinion was abandoned, in the words the human reads.
+const fn opinion_failure(reason: OpinionFailure) -> &'static str {
+    match reason {
+        OpinionFailure::Failed => "the run failed",
+        OpinionFailure::NoStatus => "the run ended without a status",
+        OpinionFailure::MissingReport => "the corrections ran out without an opinion",
+        OpinionFailure::Silent => "the investigator stayed silent too long",
+        OpinionFailure::Interrupted => "the task can no longer be resumed",
     }
 }
 
