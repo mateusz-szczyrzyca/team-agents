@@ -213,3 +213,33 @@ fn the_runs_of_the_session_are_those_since_the_task_was_last_started_anew() {
 
     assert_eq!(runs, ["run-20261120-200101-n3n3"]);
 }
+
+#[test]
+fn a_reviewer_and_a_worker_are_never_started_anew_and_a_member_is() {
+    let mut state = old_state();
+    let reviewer: TaskId = "task-20261111-193007-k3x9".parse().unwrap();
+    let worker: TaskId = "task-20261111-193003-k3x9".parse().unwrap();
+    let late: Timestamp = "2026-11-21T00:00:00Z".parse().unwrap();
+
+    let refused = state.renew_task(&reviewer, Trouble::NoStatus, late);
+    let refused_worker = state.renew_task(&worker, Trouble::NoStatus, late);
+    let renewed = state.renew_task(&task(), Trouble::NoStatus, late);
+
+    assert!(
+        matches!(&refused, Err(RenewTaskError::Role { task, role: crate::kinds::Role::Reviewer }) if *task == reviewer),
+        "{refused:?}"
+    );
+    assert!(
+        matches!(
+            &refused_worker,
+            Err(RenewTaskError::Role {
+                role: crate::kinds::Role::Worker,
+                ..
+            })
+        ),
+        "{refused_worker:?}"
+    );
+    assert!(matches!(renewed, Ok(true)), "{renewed:?}");
+    let found = state.find_task(&reviewer).expect("the reviewer");
+    assert_eq!(found.member.renewals(), None);
+}

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use super::run::{Run, RunEnd, RunState};
 use super::values::Timestamp;
 use crate::decide::ladder::Trouble;
+use crate::ids::TaskId;
+use crate::kinds::Role;
 
 /// Renewals of one task, recorded by [`Member::renew`](super::Member::renew): how many times it was started in a new
 /// session after its runs went bad, and when the last renewal happened.
@@ -146,6 +148,33 @@ pub enum RenewalError {
     BeforeEveryRun {
         /// When the renewal says the task was started anew.
         at: Timestamp,
+    },
+}
+
+/// Why [`State::renew_task`](super::State::renew_task) refused to start a task anew.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RenewTaskError {
+    /// The task is not in the state.
+    #[error("task {task} is not in the state")]
+    NoTask {
+        /// The task.
+        task: TaskId,
+    },
+    /// The task's role is never started anew: a worker serves one request, a reviewer one review.
+    #[error("task {task} is a {role} and is never started in a new session")]
+    Role {
+        /// The task.
+        task: TaskId,
+        /// Its role.
+        role: Role,
+    },
+    /// The renewal does not fit the task's runs.
+    #[error("task {task} cannot be started anew")]
+    Renewal {
+        /// The task.
+        task: TaskId,
+        /// What the renewal refused.
+        source: RenewalError,
     },
 }
 

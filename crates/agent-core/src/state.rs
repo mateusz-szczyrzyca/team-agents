@@ -47,7 +47,7 @@ pub use item::{
 pub use member::{Member, MemberError, MemberMut, Participant, QuestionError};
 pub use plan::{PlanKeeping, PlanReason, PlanStage};
 pub use question::{AnswerBeforeQuestion, AnsweredVia, Question, QuestionState};
-pub use renewal::{InvalidRenewalLimit, RenewalError, RenewalLimit, Renewals};
+pub use renewal::{InvalidRenewalLimit, RenewTaskError, RenewalError, RenewalLimit, Renewals};
 pub use round::{ClosedBeforeOpened, Round, RoundEnd, RoundLife};
 pub use run::{Run, RunEnd, RunError, RunState};
 pub use team::{
@@ -315,6 +315,25 @@ impl State {
     #[doc = include_str!("../tests/docs/find-task-mut.md")]
     pub fn find_task_mut(&mut self, task: &TaskId) -> Option<(Role, MemberMut<'_>)> {
         self.teams.iter_mut().find_map(|team| team.find_mut(task))
+    }
+
+    /// Starts `task` anew in a new session after `trouble`, at `at` ([`Member::renew`]): only a task of a solo agent, a
+    /// coordinator or a member is. Returns whether the task was started anew.
+    ///
+    /// # Errors
+    /// [`RenewTaskError`] when the task is not in the state, is of a worker or a reviewer, or the renewal does not fit
+    /// its runs.
+    pub fn renew_task(
+        &mut self,
+        task: &TaskId,
+        trouble: crate::decide::ladder::Trouble,
+        at: Timestamp,
+    ) -> Result<bool, RenewTaskError> {
+        let (role, _member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        let _ = (trouble, at, role);
+        Ok(false)
     }
 
     /// The round `round` with its team.
