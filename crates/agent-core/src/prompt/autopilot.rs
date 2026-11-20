@@ -62,6 +62,8 @@ pub enum AutopilotPrompt {
     PrSize,
     /// Task-authored path allowances used by this round.
     PrAllowedBeforehand,
+    /// Durable evidence that this team started with unpublished base commits.
+    PrUnpushedBase,
     /// Gate provenance for a pull request.
     PrGate,
     /// A passing retry after a failed gate.
@@ -240,6 +242,7 @@ impl AutopilotPrompt {
         Self::PrUpdate,
         Self::PrSize,
         Self::PrAllowedBeforehand,
+        Self::PrUnpushedBase,
         Self::PrGate,
         Self::PrGateRetry,
         Self::PrNoLead,
@@ -381,6 +384,7 @@ impl AutopilotPrompt {
             Self::PrUpdate => "harness/pr/update.md",
             Self::PrSize => "harness/pr/size.md",
             Self::PrAllowedBeforehand => "harness/pr/allowed-beforehand.md",
+            Self::PrUnpushedBase => "harness/pr/unpushed-base.md",
             Self::PrGate => "harness/pr/gate.md",
             Self::PrGateRetry => "harness/pr/gate-retry.md",
             Self::PrNoLead => "harness/pr/no-lead.md",
@@ -508,6 +512,7 @@ impl AutopilotPrompt {
             Self::PrUpdate => &["head", "pass", "gate"],
             Self::PrSize => &["size"],
             Self::PrAllowedBeforehand => &["paths"],
+            Self::PrUnpushedBase => &["base", "count", "first", "subject"],
             Self::PrGate | Self::ReviewGate => &["head", "finished", "result", "log"],
             Self::PrLeadInstructions => &["description_file"],
             Self::ReviewGateMissing => &["head"],

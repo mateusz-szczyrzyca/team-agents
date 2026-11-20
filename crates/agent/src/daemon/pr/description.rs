@@ -13,7 +13,7 @@ pub(crate) const MAX_DESCRIPTION_BYTES: usize = 1 << 20;
 
 /// Removes harness-owned sections from the lead's contribution.
 pub(crate) fn lead_sections(text: &str) -> String {
-    without_sections(text, &["Size", "Gate", "Allowed beforehand"])
+    without_sections(text, &["Size", "Gate", "Allowed beforehand", "Unpushed base"])
 }
 
 /// Excludes task permissions from marker justifications supplied by the lead or the remote description.
