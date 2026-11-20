@@ -495,7 +495,11 @@ impl Owner {
             BusJob::Tell { to, notice } => {
                 let message = render_notice(&self.parts.team_texts, notice)?;
                 let from: AgentName = BUS_SENDER.parse()?;
-                bus.send(&from, &Recipient::Agent(to.clone()), &message).await.map(drop)
+                let to = Recipient::Member {
+                    agent: to.clone(),
+                    team: outbound.team.clone(),
+                };
+                bus.send(&from, &to, &message).await.map(drop)
             }
             BusJob::Answer { request, update } => bus.helper_set(*request, update).await,
             BusJob::Finish => bus.team_done(&outbound.team).await,

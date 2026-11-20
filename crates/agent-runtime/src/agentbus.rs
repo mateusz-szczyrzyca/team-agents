@@ -1214,6 +1214,9 @@ impl AgentBus {
         message: &Outgoing,
     ) -> Result<SentMessage, AgentBusError> {
         let mut args = Args::new().flag("--from", from.as_str()).flag("--to", to.to_string());
+        if let Recipient::Member { team, .. } = to {
+            args = args.flag("--team", team.to_string());
+        }
         let text = match message {
             Outgoing::Chat { text } => text,
             Outgoing::Notice { kind, fields, text } => {
