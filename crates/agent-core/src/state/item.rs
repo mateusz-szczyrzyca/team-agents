@@ -432,6 +432,10 @@ pub struct ItemProgress {
 }
 
 /// Whether a count is zero; a count of zero is not written.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes the field by reference"
+)]
 fn is_zero(count: &u32) -> bool {
     *count == 0
 }
