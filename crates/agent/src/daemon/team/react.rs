@@ -1,6 +1,6 @@
 //! What a member's run ending tells the coordinator.
 
-use agent_core::ids::{AgentName, BranchName, ItemId};
+use agent_core::ids::{AgentName, BranchName, ItemId, TaskId};
 use agent_core::kinds::Role;
 use agent_core::state::{ItemPhase, Member, RunEnd, Team};
 use agent_core::status::{RunOutcome, TaskStatus};
@@ -12,6 +12,15 @@ use crate::daemon::settle::end_of;
 /// A notice for the bus: what happened to a member.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::daemon) enum BusNotice {
+    /// A member asks its coordinator to submit a complete split proposal.
+    SplitRequested {
+        /// Member whose item needs splitting.
+        member: AgentName,
+        /// Original item that needs a plan.
+        item: ItemId,
+        /// Task directory containing the member's proposal.
+        task: TaskId,
+    },
     /// A member reported `DONE`: its branch is ready to be integrated.
     MemberFinished {
         /// The member.
@@ -147,6 +156,18 @@ pub(in crate::daemon) fn notice_for(
     };
     let to = agent_name(coordinator.agent())?;
     let who = agent_name(member.agent())?;
+    if let Some((item, _branch)) = worked_on(team, member)
+        && message.is_some_and(|text| text.lines().any(|line| line.trim() == format!("SPLIT: {item}")))
+    {
+        return Ok(Some(Told {
+            to,
+            notice: BusNotice::SplitRequested {
+                member: who,
+                item,
+                task: member.task().clone(),
+            },
+        }));
+    }
     let notice = match end {
         RunEnd::Reported {
             outcome: RunOutcome::Done,

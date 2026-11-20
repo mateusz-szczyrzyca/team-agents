@@ -141,3 +141,19 @@ fn parts_are_named_by_the_parent_and_their_declared_order() {
     assert_eq!(entries[1].0.key(), key("b"));
     assert_eq!(entries[1].1, &definitions()[1]);
 }
+
+#[test]
+fn part_positions_cover_only_the_supported_alphabet() {
+    for (position, expected) in [
+        (0, Some("a")),
+        (1, Some("b")),
+        (25, Some("z")),
+        (26, None),
+        (usize::MAX, None),
+    ] {
+        assert_eq!(
+            PartKey::at_position(position).map(|key| key.to_string()),
+            expected.map(str::to_owned)
+        );
+    }
+}

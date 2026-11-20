@@ -18,3 +18,7 @@ Read the document
 ### Earlier deliveries
 
 - 1.1a: pull request #1 (/pull/1; branch `agents/codex-1/item-1-2`)
+
+If this work needs splitting again, send the complete proposal to your coordinator. Only the coordinator submits
+a split for harness approval; do not ask the human separately. Follow the proposal-file and `SPLIT:` protocol
+from your role instructions.

@@ -16,3 +16,7 @@ The original item stays open until all its parts merge.
 ### Earlier deliveries
 
 {{previous}}
+
+If this work needs splitting again, send the complete proposal to your coordinator. Only the coordinator submits
+a split for harness approval; do not ask the human separately. Follow the proposal-file and `SPLIT:` protocol
+from your role instructions.

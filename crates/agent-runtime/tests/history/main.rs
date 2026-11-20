@@ -62,4 +62,6 @@ mod plans;
 #[cfg(test)]
 mod plans_before;
 #[cfg(test)]
+mod split_proposals;
+#[cfg(test)]
 mod writer_plans;

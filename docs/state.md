@@ -57,7 +57,8 @@ Teams may have an optional `split_proposals` object, keyed by original item ID. 
 `text`, the `corrections` count and `stage`: `"pending"`, `{"correction":{"fault":…}}`, or
 `{"asked":{"question":N}}` with a nonzero questions number. Raw text deliberately includes unreadable proposals
 so a restart before the decision loses no input. Resubmission preserves the correction count; a send-back counts
-once and retains its fault; the asked stage retains the existing question. No daemon action uses these entries yet.
+once and retains its fault; the asked stage retains the existing question. The daemon saves pending input before deciding. On restart it decides only pending entries; a saved correction
+is included in the next coordinator prompt without incrementing its count, and a saved question is reused.
 
 Only known, unsplit parents may have proposals. Recording or activating a complete approved split removes its
 pending proposal atomically. Missing maps mean no proposals; empty maps are omitted. Existing state files and

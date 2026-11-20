@@ -137,6 +137,18 @@ mod history_events {
         ]
     }
 
+    /// A corrected split proposal with a non-ASCII explanation.
+    fn split_decision() -> HistoryEvent {
+        HistoryEvent::SplitDecision {
+            task: world::task(1),
+            item: "1.1".parse().unwrap(),
+            decision: agent_core::history::SplitDecision::Corrected,
+            corrections: 1,
+            question: None,
+            reason: "uzupełnij sprawdzenie — 日本語".to_owned(),
+        }
+    }
+
     /// One event of every kind, with texts that are not ASCII and a text of a thousand characters.
     fn every_event() -> Vec<HistoryEvent> {
         let mut events = vec![
@@ -228,12 +240,14 @@ mod history_events {
             },
         ];
         events.splice(7..7, finding_events());
+        events.insert(0, split_decision());
         events
     }
 
     #[test]
     fn every_event_has_the_keyword_of_its_variant_and_the_keywords_read_back() {
         let expected = [
+            "split_decision",
             "gate",
             "checked",
             "pull_opened",
@@ -352,6 +366,7 @@ mod history_events {
     #[test]
     fn the_texts_of_an_event_are_the_free_texts_it_has_each_under_the_name_of_its_field() {
         let expected: Vec<(&str, Vec<&str>)> = vec![
+            ("split_decision", vec!["reason"]),
             ("gate", vec![]),
             ("checked", vec!["issues", "issues"]),
             ("pull_opened", vec!["title", "body"]),
@@ -400,7 +415,7 @@ mod history_events {
             assert_eq!(json.matches("\"changed\"").count(), count, "{json}");
             total += count;
         }
-        assert_eq!(total, 19);
+        assert_eq!(total, 20);
     }
 
     #[test]
