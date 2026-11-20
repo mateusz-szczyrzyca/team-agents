@@ -148,6 +148,18 @@ pub struct ClosedBeforeOpened {
 }
 
 impl Round {
+    /// The approved split part delivered by this round, absent for ordinary rounds.
+    #[must_use]
+    pub const fn part(&self) -> Option<super::split::PartKey> {
+        None
+    }
+
+    /// The pull request delivered by a merged split part.
+    #[must_use]
+    pub const fn part_pull_request(&self) -> Option<&super::PullRequest> {
+        None
+    }
+
     /// A round that has just been opened.
     pub(super) const fn opened(id: RoundId, item: Option<ItemId>, opened_at: Timestamp) -> Self {
         Self {
