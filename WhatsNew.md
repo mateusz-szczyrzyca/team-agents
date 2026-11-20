@@ -5,6 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.31.0 — 20.11.2026 — PR #149
+
+### Enhancements
+- [agent-core] The core can now read, write back and compare the plan of steps a task will keep in its worktree;
+  nothing the daemon or the CLI does changes yet.
+
 ## 0.30.0 — 20.11.2026 — PR #147
 
 ### Bug fixes
