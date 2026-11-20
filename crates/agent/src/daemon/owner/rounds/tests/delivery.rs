@@ -516,6 +516,12 @@ async fn delivery_closed_claim_reopens_the_round_and_runs_the_member_again() {
         |phase| matches!(phase, ItemPhase::Done { .. }),
     )
     .await;
+    let state = rig.state();
+    let ItemPhase::Approved { pr, .. } = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap().phase()
+    else {
+        panic!("the unrelated owning PR still waits")
+    };
+    super::rig::git(&rig.worktree(&tasks[0]), &["push", "origin", pr.branch.as_str()]);
     rig.github.reopened_by_a_human(1);
     rig.github.merged_by_a_human(1);
     let done = rig

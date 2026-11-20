@@ -238,6 +238,13 @@ async fn delivery_restart_at_each_recovery_boundary_publishes_and_merges_the_ite
             |phase| matches!(phase, ItemPhase::Done { .. }),
         )
         .await;
+        // The fake server merges only fast-forward heads; publish the already integrated head for the owning item.
+        let state = rig.state();
+        let ItemPhase::Approved { pr, .. } = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap().phase()
+        else {
+            panic!("the unrelated owning PR still waits")
+        };
+        super::rig::git(&rig.worktree(&tasks[0]), &["push", "origin", pr.branch.as_str()]);
         // Only the unrelated owning item still needs its ordinary PR to merge.
         rig.github.reopened_by_a_human(1);
         rig.github.merged_by_a_human(1);
