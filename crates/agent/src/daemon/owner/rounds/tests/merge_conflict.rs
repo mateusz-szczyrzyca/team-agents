@@ -400,3 +400,132 @@ async fn a_pull_request_merged_by_the_human_while_a_conflict_question_is_open_co
     assert!(matches!(item.phase(), ItemPhase::Done { .. }));
     assert_eq!(item.merge_conflict(), None);
 }
+
+/// Runs the conflict-pass limit scenario where the human answers the conflict question and the lead's fourth run
+/// (`fourth_action`) commits an unallowed file (`work-4.txt`), asserting that the commit is on the remote branch and
+/// verified by a second review pass before the pull request merges.
+async fn assert_answered_conflict_correction_is_pushed_and_verified(scenario: &'static str) {
+    use agent_core::protocol::{AnswerInput, AnswerList, AnswerRequest, Client, Command, Reply};
+    use agent_core::questions::Verdict;
+    use agent_core::status::TaskStatus;
+    use std::io::Write as _;
+    use std::num::NonZeroU32;
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", scenario),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    {
+        let mut config = std::fs::OpenOptions::new()
+            .append(true)
+            .open(rig.home.config_file())
+            .unwrap();
+        writeln!(config, "[merge]\nconflict_passes = 1").unwrap();
+    }
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    rig.state_where("the lead is sent to merge the base", in_conflict_pass)
+        .await;
+
+    move_base(&rig);
+    std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+
+    rig.status_is(&task, TaskStatus::Questions).await;
+    rig.github.answer_merges(MergeAnswer::Allow);
+    let answers = AnswerList::try_from(vec![AnswerInput {
+        question: NonZeroU32::MIN,
+        verdict: Verdict::from_text("ok").unwrap().unwrap(),
+    }])
+    .unwrap();
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: NonZeroU32::MIN,
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+    assert!(matches!(item.phase(), ItemPhase::Done { .. }));
+    assert_eq!(item.merge_conflict(), None);
+    assert_eq!(
+        git(&rig.origin, &["show", "refs/heads/main:work-4.txt"]),
+        "run 4 of claude-1"
+    );
+    assert_eq!(
+        rig.github
+            .calls("POST", &format!("/repos/{SLUG}/pulls/1/reviews"))
+            .len(),
+        4,
+        "the post-answer change to work-4.txt must be verified before merge"
+    );
+}
+
+#[tokio::test]
+async fn an_answered_conflict_question_whose_lead_changes_another_file_is_pushed_and_verified_before_merge() {
+    assert_answered_conflict_correction_is_pushed_and_verified("work,merge-base,ask-here,work").await;
+    assert_answered_conflict_correction_is_pushed_and_verified("work,merge-base,ask-here,work-pushed").await;
+}
+
+#[tokio::test]
+async fn a_fix_pass_after_a_conflict_verification_review_attaches_the_verification_review_reports() {
+    const REJECT_ON_VERIFY: &str = "verify:VERDICT: APPROVE\\nSUMMARY: initial approval,\
+        verify:VERDICT: REQUEST_CHANGES\\nSUMMARY: verification rejection\\nFINDINGS\\n\
+        1. [MAJOR] TDD-2 resolved.txt:1 — conflict resolution is untested → add coverage\\n   \
+        CHECK: read resolved.txt,\
+        verify:VERDICT: APPROVE\\nSUMMARY: final approval";
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,merge-base-other,fix-work"),
+            investigator("inv-r1", REJECT_ON_VERIFY),
+            investigator("inv-r2", REJECT_ON_VERIFY),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    rig.state_where("the lead is sent to merge the base", in_conflict_pass)
+        .await;
+
+    rig.github.answer_merges(MergeAnswer::Allow);
+    move_base(&rig);
+    std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let prompt = rig.kept_prompt(&task, 3);
+    assert!(
+        prompt.contains("SUMMARY: verification rejection"),
+        "fix pass prompt after a conflict verification must attach the verification review reports:\n{prompt}"
+    );
+    assert!(!prompt.contains("SUMMARY: initial approval"), "{prompt}");
+}
