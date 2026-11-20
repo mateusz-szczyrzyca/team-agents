@@ -6,6 +6,8 @@
 //! through which channel. What the next run is told is made from the file when that run is made ready (`start.rs`), so
 //! it survives a restart of the daemon.
 
+mod splits;
+
 use std::path::Path;
 
 use agent_core::history::HistoryEvent;
