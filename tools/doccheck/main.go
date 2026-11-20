@@ -2,7 +2,7 @@
 // and every struct field, must have a comment. It prints the offending declarations and exits with status 1
 // if there are any. Test files are skipped.
 //
-//	go run ./tools/doccheck agentbus/*.go live/*.go    (from tools/doccheck: go build, then run the binary)
+//	go run ./tools/doccheck agentbus/*.go    (from tools/doccheck: go build, then run the binary)
 package main
 
 import (

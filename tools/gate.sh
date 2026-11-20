@@ -13,10 +13,7 @@ set -euo pipefail
 ROOT=${GATE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}   # the repository (tests: a directory with a fake Makefile)
 LOGS=${GATE_LOG_DIR:-$ROOT/build/gate}                 # where the full logs go
 MAX_LINES=${GATE_MAX_LINES:-25}                        # at most this many lines of a failed step are shown
-STEPS=(check-generated lint-shell lint-go lint-docs unit-go unit-bats harness)
-if grep -q '^[[:space:]]*unit-agent-bats:' "$ROOT/Makefile" || grep -q '^\.PHONY:.*unit-agent-bats' "$ROOT/Makefile"; then
-  STEPS+=(unit-agent-bats)
-fi
+STEPS=(check-generated lint-shell lint-go lint-docs unit-go)
 if grep -q '^[[:space:]]*rust:' "$ROOT/Makefile"; then   # the Rust workspace's checks (make rust)
   STEPS+=(rust)
 fi
@@ -29,8 +26,6 @@ excerpt() {
       awk '/^--- FAIL|^panic:|^FAIL|^[^ \t].*\.go:[0-9]+:[0-9]+: / { print; inblk = ($0 ~ /^--- FAIL/); next }
            /^(=== |--- PASS|--- SKIP|ok )/ { inblk = 0; next }
            inblk { print }' "$2" ;;
-    unit-bats | harness | unit-agent-bats) # every failed test: its line and the first lines of its diagnosis
-      awk '/^not ok / { print; n = 4; next } n > 0 && /^#/ { print; n--; next } { n = 0 }' "$2" ;;
     lint-go | lint-docs) # findings ("file:line:col: message") and the summary, without the code snippets
       { grep -E '^[^[:space:]].*:[0-9]+(:[0-9]+)?: |^[0-9]+ issues?|undocumented declarations' "$2" || (($? == 1)); } ;;
     lint-shell) # where (file and line) and what (the SC code and message); bash -n syntax errors

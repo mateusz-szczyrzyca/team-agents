@@ -53,9 +53,8 @@ The RED commit is the one commit allowed to fail — only on its new tests; ever
   without git. Only the thin layer runs git — once, in a temporary repository, isolated from the user's
   configuration (`GIT_CONFIG_GLOBAL=/dev/null`, `commit.gpgsign=false`): a signing key or a hook on the machine must
   not decide whether a test passes.
-- **Fakes at process boundaries.** Calls of external programs go through package variables (`callAgent`,
-  `callTailscale` in `live/`). Tests replace them; `TestMain` sets them to fail loudly, so no test can run the real
-  installation by accident.
+- **Fakes at process boundaries.** Calls of external programs go through a seam the tests replace (a fake CLI, a
+  fake GitHub server on loopback), so no test can run the real installation by accident.
 - **Never the real `~/agents`.** `t.TempDir()`, `newBus(t)`, `httptest` servers on loopback.
 - **A bug you notice becomes a test first** — then the fix.
 - **Concurrency:** run `go test -race`.
@@ -73,11 +72,6 @@ The developer rules each role is given say it in full (TDD-1 to TDD-14). What di
   `git diff <red> HEAD -- <its test files>` shows added lines only, or the lines of a listed `TEST-FIX`.
 - **The unit tests of a new module live in its `tests.rs`** (`#[cfg(test)] mod tests;`), so a change of the tests is
   a change of test files. An inline `mod tests { }` that is already there stays and may grow.
-
-## In bats (`bin/agent`)
-
-The same cycle: the tests in `tests/unit/*.bats` first (stub CLIs in `tests/unit/stubs/`, the fake agent driven
-by `scenario`), the script second. `tests/unit/rounds.bats` and its commits are the example.
 
 ## When a test first is not possible
 

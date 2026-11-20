@@ -5,6 +5,17 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.25.0 — 20.11.2026 — PR #141
+
+### Enhancements
+- [agent] **Action:** The first implementation is removed from the repository: the Bash `agent`, its unfinished Go
+  version, the terminal panel and the old web interface (`agent live`, `agent web`), their tests and the installer.
+  The Rust `agent` and `agentbus` are what is left. An installation of the old version can no longer be installed
+  or updated from this repository; git's history has it.
+- [agent] `make gate-full` checks `agentbus` and the Rust workspace only. `make unit-bats` does nothing and stays
+  until the CI workflow stops calling it.
+- [agent] The README describes the Rust `agent` alone: how to build it, set up its home and start the daemon.
+
 ## 0.24.0 — 20.11.2026 — PR #139
 
 ### Bug fixes
