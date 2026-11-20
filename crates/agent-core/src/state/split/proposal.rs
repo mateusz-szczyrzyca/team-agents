@@ -217,7 +217,7 @@ impl Proposal {
     /// # Errors
     /// Returns [`super::SplitError`] for missing criteria or invalid dependencies.
     pub fn plan(&self) -> Result<SplitPlan, super::SplitError> {
-        SplitPlan::new(self.parent, self.parts.iter().map(PartInput::definition).collect())
+        SplitPlan::from_input(self.parent, &self.parts)
     }
 }
 

@@ -2,7 +2,7 @@
 
 pub mod proposal;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -87,29 +87,53 @@ pub struct PartDefinition {
 
 /// A whole validated split, with stable keys assigned in the given order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "SplitWire")]
+#[serde(try_from = "SplitWire", into = "SplitWire")]
 pub struct SplitPlan {
     /// The original task-list item, whose syntax stays unchanged.
     parent: ItemId,
     /// At least two independently deliverable parts, at most 26.
     parts: Vec<PartDefinition>,
+    /// Non-default requirements keyed by stable part identity.
+    requirements: BTreeMap<PartKey, proposal::Requirements>,
 }
 
 /// Serialized plan input, validated through the same constructor as a human verdict.
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SplitWire {
     /// The item being split.
     parent: ItemId,
-    /// Parts in letter order.
-    parts: Vec<PartDefinition>,
+    /// Parts in letter order, including optional requirements.
+    parts: Vec<proposal::PartInput>,
 }
 
 impl TryFrom<SplitWire> for SplitPlan {
     type Error = SplitError;
-
     fn try_from(wire: SplitWire) -> Result<Self, Self::Error> {
-        Self::new(wire.parent, wire.parts)
+        Self::from_input(wire.parent, &wire.parts)
+    }
+}
+
+impl From<SplitPlan> for SplitWire {
+    fn from(plan: SplitPlan) -> Self {
+        let parts = plan
+            .entries()
+            .map(|(id, part)| {
+                let requirements = plan.requirements.get(&id.key()).cloned().unwrap_or_default();
+                proposal::PartInput {
+                    title: part.title.clone(),
+                    delivers: part.delivers.clone(),
+                    checks: part.checks.clone(),
+                    depends_on: part.depends_on.clone(),
+                    estimate: requirements.estimate,
+                    tier: requirements.tier,
+                }
+            })
+            .collect();
+        Self {
+            parent: plan.parent,
+            parts,
+        }
     }
 }
 
@@ -181,7 +205,11 @@ impl SplitPlan {
         if !(2..=PART_KEYS.len()).contains(&parts.len()) {
             return Err(SplitError::Count { count: parts.len() });
         }
-        let plan = Self { parent, parts };
+        let plan = Self {
+            parent,
+            parts,
+            requirements: BTreeMap::new(),
+        };
         let known: BTreeSet<PartKey> = plan.entries().map(|(id, _)| id.key).collect();
         for (id, part) in plan.entries() {
             for (field, text) in [
@@ -246,8 +274,23 @@ impl SplitPlan {
     }
 
     /// Requested agent tier and estimate of an existing part; unknown keys return none.
-    pub fn requirements(&self, _key: PartKey) -> Option<proposal::Requirements> {
-        None
+    pub fn requirements(&self, key: PartKey) -> Option<proposal::Requirements> {
+        self.entries()
+            .find(|(id, _)| id.key() == key)
+            .map(|_| self.requirements.get(&key).cloned().unwrap_or_default())
+    }
+
+    /// Validates definitions and retains only requirements absent from legacy plans.
+    pub(crate) fn from_input(parent: ItemId, parts: &[proposal::PartInput]) -> Result<Self, SplitError> {
+        let mut plan = Self::new(parent, parts.iter().map(proposal::PartInput::definition).collect())?;
+        let requirements = parts
+            .iter()
+            .zip(PART_KEYS.chars())
+            .map(|(part, key)| (PartKey(key), part.requirements()))
+            .filter(|(_, requirements)| requirements != &proposal::Requirements::default())
+            .collect();
+        plan.requirements = requirements;
+        Ok(plan)
     }
 
     getter!("The original item.", pub const fn parent(&self) -> ItemId = self.parent);
