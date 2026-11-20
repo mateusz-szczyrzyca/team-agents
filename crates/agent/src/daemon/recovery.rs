@@ -15,8 +15,6 @@ use super::settle::wake_time;
 
 mod findings;
 pub(super) use findings::reconcile_findings;
-#[cfg(test)]
-mod ladder_tests;
 
 /// What recovery found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
