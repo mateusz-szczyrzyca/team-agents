@@ -95,6 +95,12 @@ pub(super) fn plan_publications(team: &Team) -> Result<Vec<Publication>, PlanErr
     };
     let mut groups: Vec<Group> = Vec::new();
     for progress in team.items() {
+        if team
+            .round_of(progress.id())
+            .is_some_and(|round| round.is_open() && round.delivered_by().is_some())
+        {
+            continue;
+        }
         match progress.phase() {
             ItemPhase::InProgress { assignee, branch } if finished(&roster, assignee.as_str()) => {
                 let head = match (

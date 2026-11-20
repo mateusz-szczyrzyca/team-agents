@@ -12,6 +12,8 @@ use super::{Audience, PromptSpec};
 /// Every text of the autopilot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AutopilotPrompt {
+    /// Describe a delivered item waiting for its owning PR.
+    WaitMerge,
     /// Describe an idle round in status output.
     WaitNothing,
     /// Describe an idle round in status output.
@@ -220,6 +222,7 @@ impl AutopilotPrompt {
     /// Every text of the catalog.
     pub const ALL: &'static [Self] = &[
         Self::ReviewOpinionRequest,
+        Self::WaitMerge,
         Self::WaitGate,
         Self::WaitReview,
         Self::WaitInvestigator,
@@ -363,6 +366,7 @@ impl AutopilotPrompt {
     )]
     const fn path(self) -> &'static str {
         match self {
+            Self::WaitMerge => "harness/pr/wait-merge.md",
             Self::WaitNothing => "harness/pr/wait-nothing.md",
             Self::WaitCorrection => "harness/pr/wait-correction.md",
             Self::WaitHuman => "harness/pr/wait-human.md",
@@ -470,7 +474,8 @@ impl AutopilotPrompt {
     /// The context required to render this text.
     const fn variables(self) -> &'static [&'static str] {
         match self {
-            Self::PrGateRetry
+            Self::WaitMerge
+            | Self::PrGateRetry
             | Self::PrNoLead
             | Self::ReviewFixNoCommitUndone
             | Self::WaitNothing
