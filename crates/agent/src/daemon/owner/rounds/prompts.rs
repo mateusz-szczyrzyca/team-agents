@@ -246,7 +246,12 @@ fn merge_conflict_text(
                 .with("pass", passes.to_string())?;
             texts.render(AutopilotPrompt::PrMergeConflict, &values)?
         }
-        MergeConflict::AskingHuman { .. } => texts.render(AutopilotPrompt::PrMergeConflictAsk, &values)?,
+        MergeConflict::AskingHuman { at } => {
+            if crate::daemon::merge::ran_since(found.member, *at) {
+                return Ok(None);
+            }
+            texts.render(AutopilotPrompt::PrMergeConflictAsk, &values)?
+        }
     };
     Ok(Some(text.trim_end().to_owned()))
 }
@@ -465,7 +470,11 @@ pub(super) struct Verification<'a> {
 /// The pass is the one after the most fix passes of any item: an item that joined a fix pass has none of its own, and
 /// whatever the order of the task list, the report validation demands answers for the ledger that the request shows.
 pub(super) fn verification_of<'a>(items: &[&'a ItemProgress]) -> Verification<'a> {
-    let passes = items.iter().map(|item| item.fix_passes().len()).max().unwrap_or(0);
+    let passes = items
+        .iter()
+        .map(|item| item.fix_passes().len().max(usize::from(item.merge_passes() > 0)))
+        .max()
+        .unwrap_or(0);
     Verification {
         pass: passes.saturating_add(1),
         findings: items.iter().find_map(|item| item.findings()),

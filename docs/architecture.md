@@ -599,7 +599,7 @@ the human is asked. A reviewer that cannot give its review is replaced (above), 
   (`merging_base` with the approved head, or `asking_human`), the lead is woken with `harness/pr/merge-conflict.md`, and the
   pass is judged when the lead is done: a tip that merges the base and passes the gate is pushed, the files the lead changed
   beyond the base merge are checked against `Allow:`; the merge is tried again when they are allowed, the review is reopened
-  when they are not (a full review of the pull request, not only of the change), and the lead is asked to put the question
+  when they are not (a verification review of what changed since the approval), and the lead is asked to put the question
   in its questions file (`harness/pr/merge-conflict-ask.md`) when the passes are spent or it gives no result. The pass is
   read from the state, so a restart goes on from it; a pull request closed
   without a merge is told once. An approved pull request that waits is read again every 30 seconds.

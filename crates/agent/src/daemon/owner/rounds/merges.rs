@@ -293,7 +293,13 @@ impl Owner {
                         MergeRefusalKind::Conflict => Refusal::Conflict,
                         MergeRefusalKind::Other => Refusal::Other,
                     };
-                    match after_refusal(refusal, budget) {
+                    let decided = after_refusal(refusal, budget);
+                    agent_runtime::history::log_decision(
+                        "after_refusal",
+                        &format!("pr={}, refusal={refusal:?}, budget={budget:?}", pr.number),
+                        &format!("{decided:?}"),
+                    );
+                    match decided {
                         AfterRefusal::TellHuman => {
                             self.watch.refused.insert(key);
                             self.tell_about(about, Telling::MergeFailed(&error_chain(&error)));

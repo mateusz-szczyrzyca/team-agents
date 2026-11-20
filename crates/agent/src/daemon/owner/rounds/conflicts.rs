@@ -3,12 +3,14 @@
 //! item says where the pass is, so a restart of the daemon goes on from it.
 
 use agent_core::decide::merge_refusal::{AfterLead, LeadEnd, after_lead, changed_by_lead};
+use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::repo_path::RepoPath;
 use agent_core::state::{AdvanceError, CommitId, ItemMut, ItemPhase, MergeConflict, PullRequest, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::git::{Git, Revision};
+use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
@@ -69,6 +71,20 @@ impl Owner {
         now: Timestamp,
     ) -> Result<(), OwnerError> {
         let Some((pr, approved_head, at, items)) = self.conflict_in_progress(team) else {
+            if let Some(at) = self.conflict_asking_human(team) {
+                let lead = self.lead_of(team)?;
+                let member = self
+                    .parts
+                    .state
+                    .find_task(&lead.task)
+                    .map(|found| found.member)
+                    .ok_or_else(|| OwnerError::LostTask {
+                        task: lead.task.clone(),
+                    })?;
+                if member.status() == TaskStatus::Waiting && !ran_since(member, at) {
+                    return self.release(&lead.task, Why::MergeConflict, look);
+                }
+            }
             return Ok(());
         };
         let lead = self.lead_of(team)?;
@@ -87,6 +103,18 @@ impl Owner {
             return self.release(&lead.task, Why::MergeConflict, look);
         }
         if !lead.done {
+            let allowances = self
+                .parts
+                .state
+                .team(team)
+                .map(|found| found.allowances().to_vec())
+                .unwrap_or_default();
+            let decided = after_lead(&LeadEnd::NoResult, &allowances);
+            log_decision(
+                "after_lead",
+                &format!("pr={}, end=no_result", pr.number),
+                &format!("{decided:?}"),
+            );
             return self
                 .start_merge_conflict(team, &items, true, &approved_head, now, look)
                 .await;
@@ -126,13 +154,29 @@ impl Owner {
                 return Ok(());
             }
         };
+        self.record_event_at(
+            now,
+            team,
+            self.rounds_of_items(team, &items),
+            HistoryEvent::PullPushed {
+                pr: pr.number,
+                head: tip,
+            },
+        );
         let allowances = self
             .parts
             .state
             .team(team)
             .map(|found| found.allowances().to_vec())
             .unwrap_or_default();
-        match after_lead(&LeadEnd::Result { changed }, &allowances) {
+        let end = LeadEnd::Result { changed };
+        let decided = after_lead(&end, &allowances);
+        log_decision(
+            "after_lead",
+            &format!("pr={}, end={end:?}", pr.number),
+            &format!("{decided:?}"),
+        );
+        match decided {
             AfterLead::RetryMerge => {
                 self.end_pass(team, &items, pr.number)?;
                 self.save().await?;
@@ -140,6 +184,9 @@ impl Owner {
             AfterLead::VerifyFirst => {
                 self.end_pass(team, &items, pr.number)?;
                 self.each_item(team, &items, |item: &mut ItemMut<'_>| {
+                    if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
+                        context.reviewed_head = Some(approved_head.clone());
+                    }
                     item.reopen_review_after_conflict()
                 })?;
                 self.save().await?;
@@ -151,6 +198,18 @@ impl Owner {
             }
         }
         Ok(())
+    }
+
+    /// When an approved pull request of `team` asked the human about a merge conflict, if one did.
+    fn conflict_asking_human(&self, team: &TeamId) -> Option<Timestamp> {
+        let found = self.parts.state.team(team)?;
+        found
+            .items()
+            .iter()
+            .find_map(|item| match (item.phase(), item.merge_conflict()) {
+                (ItemPhase::Approved { .. }, Some(MergeConflict::AskingHuman { at })) => Some(*at),
+                _ => None,
+            })
     }
 
     /// The approved pull request of `team` whose merge conflict pass is in progress, with the head the pass is for, when
