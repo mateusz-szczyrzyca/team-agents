@@ -273,8 +273,31 @@ pub fn parse_status_line(message: &str) -> StatusLine {
 /// The pull request an item was reported as delivered by, if the final message carries a delivery line such as
 /// `DELIVERED: #12` or `STATUS: DELIVERED #12`.
 #[must_use]
-pub fn parse_delivery_report(_message: &str) -> Option<PrNumber> {
-    None
+pub fn parse_delivery_report(message: &str) -> Option<PrNumber> {
+    message.lines().find_map(|line| {
+        let plain: String = line.chars().filter(|c| !matches!(c, '*' | '`')).collect();
+        let trimmed = plain.trim();
+        let rest = trimmed.strip_prefix("STATUS:").unwrap_or(trimmed).trim();
+        let rest_lower = rest.to_ascii_lowercase();
+        let after_delivered = rest_lower.strip_prefix("delivered")?;
+        if !after_delivered.is_empty()
+            && !after_delivered.starts_with(|c: char| c.is_whitespace() || c == ':' || c == '#')
+        {
+            return None;
+        }
+        let after_colon = after_delivered
+            .trim_start()
+            .strip_prefix(':')
+            .unwrap_or(after_delivered)
+            .trim();
+        let after_by = after_colon.strip_prefix("by").unwrap_or(after_colon).trim();
+        let after_pr = after_by.strip_prefix("pr").unwrap_or(after_by).trim();
+        let after_hash = after_pr.strip_prefix('#').unwrap_or(after_pr).trim();
+        let digits: String = after_hash.chars().take_while(char::is_ascii_digit).collect();
+        let num: u32 = digits.parse().ok()?;
+        let non_zero = std::num::NonZeroU32::new(num)?;
+        Some(PrNumber::new(non_zero))
+    })
 }
 
 /// Classifies a finished run.
