@@ -15,6 +15,9 @@ use agent_runtime::git::{GitError, GitOperation};
 use agent_runtime::github::Outlook;
 use time::Duration;
 
+#[cfg(test)]
+mod reading;
+
 /// How many steps that may pass are kept waiting at once. Beyond it the one of them with the smallest key (step, round)
 /// gives way and is tried at its next look, as after a start of the daemon. A refusal is never given up for room: it
 /// waits for the human's resume, and there is at most one per step of an open round or team, as the waits of a round
@@ -274,12 +277,6 @@ pub(in crate::daemon::owner) struct Waits {
 }
 
 impl Waits {
-    /// The wait of the round `round` for `operation`, if it has one.
-    #[cfg(test)]
-    pub(super) fn for_round(&self, round: &RoundId, step: WaitingStep) -> Option<&Wait> {
-        self.steps.get(&(Step::Round { round: round.clone() }, step))
-    }
-
     /// Whether `step` is to be tried now: it has not failed, its pause is over, or it waits for the human.
     pub(in crate::daemon::owner) fn due(&self, place: &Step, step: WaitingStep, now: Timestamp) -> bool {
         match self.steps.get(&(place.clone(), step)) {
@@ -343,12 +340,6 @@ impl Waits {
     /// Forgets the wait of `step` for `operation`, which is done; `true` when it waited and is no longer.
     pub(super) fn done(&mut self, place: &Step, step: WaitingStep) -> bool {
         self.steps.remove(&(place.clone(), step)).is_some()
-    }
-
-    /// How many waits it keeps.
-    #[cfg(test)]
-    pub(super) fn kept(&self) -> usize {
-        self.steps.len()
     }
 
     /// Makes every wait of `team` due, so that the human's `agent resume` tries its steps at the next look; returns how
