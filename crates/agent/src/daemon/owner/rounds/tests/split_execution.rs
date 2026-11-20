@@ -353,3 +353,64 @@ async fn split_answer_and_status_negotiate_version_four() {
     assert_eq!(teams[0].splits[0].parts().len(), 2);
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn split_pre_review_correction_reuses_its_draft_pull_request() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,integrate,script:restore-test"),
+            normal("claude-1", "script:edit-test"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        format!("{config}[repos.example.checks]\ntest_paths = [\"tests/\"]\ncode_paths = [\"src/\"]\nprotected_paths = [\"ci/\"]\n"),
+    ).unwrap();
+    std::fs::create_dir_all(rig.repo.join("tests")).unwrap();
+    std::fs::write(rig.repo.join("tests/existing.txt"), "a\nb\nc\n").unwrap();
+    super::rig::git(&rig.repo, &["add", "tests/existing.txt"]);
+    super::rig::git(&rig.repo, &["commit", "-q", "-m", "Seed the existing test"]);
+    super::rig::git(&rig.repo, &["push", "-q", "origin", "main"]);
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    for (name, command) in [
+        ("edit-test", "sed -i 2d tests/existing.txt"),
+        ("restore-test", "git checkout main -- tests/existing.txt"),
+    ] {
+        std::fs::write(scripts.join(format!("{name}.sh")), format!(
+            "set -eu\n{command}\ngit add tests/existing.txt\ngit -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q -m '{name}'\n"
+        )).unwrap();
+    }
+    rig.start().await;
+    let (_team, tasks) = rig.run(&["inv-lead", "claude-1"], ONE, MergeMode::NoMerge, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: n(1),
+                answers: answers(&[(1, &approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+    rig.item_where("1.1", "approved", |phase| matches!(phase, ItemPhase::Approved { .. }))
+        .await;
+    assert_eq!(rig.runs(&tasks[0]), 3);
+    let pulls = rig.github.pulls();
+    assert_eq!(pulls.len(), 1);
+    assert_eq!(pulls[0].head, format!("agents/inv-lead/{}-1.1a", tasks[0]));
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&tasks[0])).unwrap()).unwrap();
+    assert_eq!(rig.remote_tip(&pulls[0].head), gate["result"]["head"].as_str().unwrap());
+    rig.stop().await.unwrap();
+}
