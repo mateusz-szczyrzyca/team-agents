@@ -1016,8 +1016,21 @@ impl Git {
     /// [`GitError::UnknownRevision`] when `revision` names no commit; [`GitError::Run`], [`GitError::Failed`],
     /// [`GitError::OutputTooLong`] and [`GitError::NotUtf8`].
     pub async fn tracks(&self, revision: &Revision, path: &RepoPath) -> Result<bool, GitError> {
-        let _ = (revision, path);
-        Ok(true)
+        let commit = self.rev_parse(revision).await?.to_string();
+        let operation = GitOperation::LsTree;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[arg("ls-tree"), arg("-z"), arg(&commit), arg("--"), arg(path.as_str())],
+            )
+            .await?;
+        let printed = text(operation, &captured.stdout)?;
+        // `mode type object<TAB>path`, one entry for the path: a file is a blob, a directory a tree.
+        Ok(printed
+            .split('\0')
+            .filter_map(|entry| entry.split_once('\t'))
+            .any(|(head, name)| name == path.as_str() && head.split(' ').nth(1) == Some("blob")))
     }
 
     /// Takes `path` out of git in this checkout and keeps its file: out of the index, and out of the branch with a
