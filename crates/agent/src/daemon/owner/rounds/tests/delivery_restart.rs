@@ -347,3 +347,39 @@ async fn delivery_reopened_before_observation_keeps_the_claim_and_completes_on_m
     assert_eq!(found.find(&tasks[2]).unwrap().1.runs().len(), 1);
     assert_eq!(rig.github.pulls().len(), 1);
 }
+
+/// Exercises the real delivery poll while recording its warning with the production history layer.
+pub(super) async fn record_delivery_closed_event(observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>) {
+    use agent_core::config::Secrets;
+    use agent_core::log::{LogEvent, LogLevel};
+    use agent_runtime::history::{HistoryLayer, Reader};
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let (rig, team, _, old) = accepted_claim().await;
+    rig.github.closed_by_a_human(1);
+    let mut step = stepped(&rig).await;
+    let layer = HistoryLayer::new(
+        LogLevel::Info,
+        rig.history_test_clock(),
+        Secrets::default(),
+        Some(step.owner.history.clone()),
+    );
+    let subscriber = tracing_subscriber::registry().with(layer);
+    let pulls = step.owner.pulls.clone().unwrap();
+    let mut look = Look::default();
+    step.owner
+        .poll_deliveries(&pulls, &team, &mut look)
+        .with_subscriber(subscriber)
+        .await
+        .unwrap();
+    drop(step.owner);
+    crate::daemon::history::close(step.writer).await;
+    let rows = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    let row = rows.iter().find(|row| row.event() == LogEvent::DeliveryClosed).unwrap();
+    assert_eq!(row.level(), LogLevel::Warn);
+    assert_eq!(row.team(), Some(&team));
+    assert_eq!(row.rounds(), &[old]);
+    assert_eq!(row.fields().get("pr"), Some(&serde_json::json!("1")));
+    observed.insert(LogEvent::DeliveryClosed);
+}
