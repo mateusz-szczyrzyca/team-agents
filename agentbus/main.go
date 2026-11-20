@@ -335,7 +335,7 @@ func (b *Bus) postIn(st *State, team, from, to string, ev busEvent) (Message, *S
 	if err != nil {
 		return Message{}, storageErr(err, "cannot encode a %s event", ev.Kind())
 	}
-	m := Message{ID: st.NextID, TS: Now(), From: from, To: to, Kind: ev.Kind(), Data: data, Text: ev.Text()}
+	m := Message{ID: st.NextID, TS: Now(), From: from, To: to, Kind: ev.Kind(), Data: data, Text: ev.Text(), Team: team}
 	if q, ok := ev.(quietEvent); ok && q.quiet() {
 		m.Quiet = true
 	}
@@ -556,7 +556,7 @@ func (s *Server) sendMessage(to, text string, wake bool) (string, *SendMessageEr
 	var out string
 	err := transact(s.bus, SendMessageStorage, func(st *State) *SendMessageError {
 		s.touch(st)
-		m, serr := s.bus.post(st, s.me, to, EventChat{Body: text, Quiet: !wake})
+		m, serr := s.bus.postIn(st, s.team, s.me, to, EventChat{Body: text, Quiet: !wake})
 		if serr != nil {
 			return fromStorage(SendMessageStorage, serr)
 		}

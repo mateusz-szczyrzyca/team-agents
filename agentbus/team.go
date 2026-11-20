@@ -115,7 +115,8 @@ func (b *Bus) wakeFor(st *State, m Message) {
 			if mem.State != MemberSleeping || name == m.From {
 				continue
 			}
-			if m.To == name || m.To == teamRecipient(t.ID) {
+			direct := m.To == name && (m.Team == "" || m.Team == t.ID)
+			if direct || m.To == teamRecipient(t.ID) {
 				mem.State = MemberWaking
 				logInfo(LogMemberWokenBy, "team", t.ID, "member", name, "cause", "message", "message_id", m.ID, "kind", m.Kind, "from", m.From)
 				wakeFn(t, mem.Task)
@@ -124,17 +125,30 @@ func (b *Bus) wakeFor(st *State, m Message) {
 	}
 }
 
-// isForAgent reports whether a message is for the agent in the team team ("" outside teams): direct, to its team, or —
-// optionally — to all (a stub of this commit: the team is not read yet).
+// taskOf is the task of the agent in the team ("" outside the team).
+func taskOf(st *State, agent, team string) string {
+	if t := st.Teams[team]; t != nil && t.Members[agent] != nil {
+		return t.Members[agent].Task
+	}
+	return ""
+}
+
+// isForAgent reports whether a message is for the agent in the team team ("" outside teams): a direct message — the
+// agent's name, or the ID of its task in that team —, a message to that team, or — optionally — to all. A direct message
+// bound to a team is for the agent in that team only.
 func isForAgent(st *State, m Message, agent, team string, broadcast bool) bool {
 	if m.From == agent {
 		return false
 	}
-	if m.To == agent {
-		return true
+	if m.To == agent || (team != "" && m.To == taskOf(st, agent, team)) {
+		return m.Team == "" || m.Team == team
 	}
 	if strings.HasPrefix(m.To, "team:") {
-		t := st.Teams[strings.TrimPrefix(m.To, "team:")]
+		id := strings.TrimPrefix(m.To, "team:")
+		if team != "" {
+			return id == team
+		}
+		t := st.Teams[id]
 		return t != nil && t.Members[agent] != nil
 	}
 	return broadcast && m.To == "all"
