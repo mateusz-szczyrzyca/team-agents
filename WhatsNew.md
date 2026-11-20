@@ -5,6 +5,16 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.26.0 — 20.11.2026 — PR #142
+
+### New features
+- [agent] [agent-core] `agent run --allow-unpushed-base` permits an unpublished base explicitly, prints its
+  commit count and first commit, and retains that evidence across daemon restarts in every pull request.
+
+### Bug fixes
+- [agent] [agent-runtime] `agent run` fetches the base from origin before starting and refuses unpublished
+  commits or a failed fetch, so teams no longer inherit unpushed commits silently.
+
 ## 0.25.0 — 20.11.2026 — PR #141
 
 ### Enhancements
