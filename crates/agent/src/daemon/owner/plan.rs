@@ -18,7 +18,7 @@ use agent_core::questions::{Entry, QuestionsFile, Verdict, quote};
 use agent_core::repo_path::{InvalidRepoPath, RepoPath};
 use agent_core::state::{PlanKeeping, PlanReason, PlanStage};
 use agent_core::state::{RunEnd, Timestamp};
-use agent_core::status::TaskStatus;
+use agent_core::status::{RunOutcome, TaskStatus};
 use agent_core::task_list::MAX_TASK_LIST_BYTES;
 use agent_runtime::git::{CommitIdentity, Git, GitError, Untracked};
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
@@ -310,7 +310,23 @@ impl Owner {
             .state
             .find_task(task)
             .and_then(|found| found.member.current_run().map(|run| run.id().clone()));
-        let previous = self.previous_plan(task, run.as_ref()).await;
+        // Only a parsed plan of a run that may be sent back is compared with the version before: in every other case the
+        // decision needs no history, and the run's end reads none.
+        let policy = self.parts.settings.config.plan();
+        let may_be_sent_back = matches!(found.read, PlanRead::Parsed(_))
+            && matches!(
+                end,
+                RunEnd::Reported {
+                    outcome: RunOutcome::Done
+                }
+            )
+            && policy.bounces() > 0
+            && policy.roles().contains(&located.role);
+        let previous = if may_be_sent_back {
+            self.previous_plan(task, run.as_ref()).await
+        } else {
+            None
+        };
         self.keep_plan(task, located, run, &found)?;
         let verdict = {
             let member = self
