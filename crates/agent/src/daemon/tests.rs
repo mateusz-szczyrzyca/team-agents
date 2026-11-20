@@ -357,6 +357,10 @@ async fn a_hung_run_is_resumed_in_its_session() {
 async fn after_the_configured_strikes_the_task_is_hung_and_the_human_is_told() {
     let mut f = Fixture::new(&solo_state(), 2, "hang");
 
+    // The rung of a new session is off: this test is about the retries of the same session.
+    let mut config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    config.push_str("[replacement]\nnew_sessions = 0\n");
+    std::fs::write(f.home.config_file(), config).unwrap();
     f.start().await;
     let state = f.status_is(TaskStatus::Failed).await;
     f.stop().await.unwrap();
@@ -515,6 +519,10 @@ fn hung_once_state() -> State {
 async fn a_restart_keeps_the_strikes_of_the_watchdog() {
     let mut f = Fixture::new(&hung_once_state(), 2, "hang");
 
+    // The rung of a new session is off: this test is about the retries of the same session.
+    let mut config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    config.push_str("[replacement]\nnew_sessions = 0\n");
+    std::fs::write(f.home.config_file(), config).unwrap();
     f.start().await;
     let state = f.status_is(TaskStatus::Failed).await;
     f.stop().await.unwrap();
@@ -1239,6 +1247,10 @@ async fn a_clock_set_back_during_a_run_records_its_clamped_end_without_losing_re
     .unwrap();
     drop(db);
 
+    // The rung of a new session is off: this test is about the retries of the same session.
+    let mut config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    config.push_str("[replacement]\nnew_sessions = 0\n");
+    std::fs::write(f.home.config_file(), config).unwrap();
     f.start().await;
     let state = f.status_is(TaskStatus::Running).await;
     let started_at = member_one(&state).runs()[0].started_at();

@@ -647,6 +647,10 @@ async fn member_with_nostatus_alone_has_three_runs_and_fails_with_item_branch_no
         true,
     )
     .await;
+    // The rung of a new session is off: this test is about the retries of the same session.
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("[replacement]\nnew_sessions = 0\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
     rig.start().await;
 
     let (_team, tasks) = rig
@@ -701,6 +705,10 @@ async fn restart_after_second_no_status_does_not_give_a_fourth_run() {
         true,
     )
     .await;
+    // The rung of a new session is off: this test is about the retries of the same session.
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("[replacement]\nnew_sessions = 0\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
     rig.start().await;
 
     let (team, tasks) = rig
