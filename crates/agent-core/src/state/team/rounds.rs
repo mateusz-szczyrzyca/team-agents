@@ -245,7 +245,7 @@ impl Team {
     /// The round of item `item`; none for an item that has not started.
     #[must_use]
     pub fn round_of(&self, item: ItemId) -> Option<&Round> {
-        self.rounds.iter().find(|round| round.item() == Some(item))
+        self.rounds.iter().rev().find(|round| round.item() == Some(item))
     }
 
     /// The rounds that are open, oldest first.
@@ -278,7 +278,9 @@ impl Team {
         }
         if let Some(item) = item {
             let progress = self.item(item).ok_or(OpenRoundError::UnknownItem { item })?;
-            if let Some(existing) = self.round_of(item) {
+            if let Some(existing) = self.round_of(item)
+                && (existing.part_pull_request().is_none() || self.next_part(item).is_none())
+            {
                 return Err(OpenRoundError::ItemHasRound {
                     item,
                     round: existing.id().clone(),
@@ -297,7 +299,12 @@ impl Team {
                 });
             }
         }
-        self.rounds.push(Round::opened(id, item, at));
+        let part = item.and_then(|item| self.next_part(item).map(|(id, _)| id.key()));
+        let mut round = Round::opened(id, item, at);
+        if let Some(part) = part {
+            round.bind_part(part);
+        }
+        self.rounds.push(round);
         Ok(())
     }
 
@@ -321,11 +328,29 @@ impl Team {
                 item: phase.map(ItemPhase::kind),
             });
         }
-        self.rounds
-            .iter_mut()
-            .find(|round| round.id() == id)
-            .ok_or_else(|| CloseRoundError::NoSuchRound { round: id.clone() })?
-            .close(at, how)?;
+        let merged_part = if how == RoundEnd::Merged && round.part().is_some() {
+            match phase {
+                Some(ItemPhase::Done {
+                    completion: Completion::Merged { pr, .. },
+                }) => Some(pr.clone()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let parent = round.item();
+        let target = self.rounds.iter_mut().find(|round| round.id() == id);
+        let target = target.ok_or_else(|| CloseRoundError::NoSuchRound { round: id.clone() })?;
+        target.close(at, how)?;
+        if let Some(pr) = merged_part {
+            target.merge_part(pr);
+        }
+        if let Some(parent) = parent
+            && self.next_part(parent).is_some()
+            && let Some(progress) = self.items.iter_mut().find(|progress| progress.id() == parent)
+        {
+            *progress = ItemProgress::new(parent, crate::task_list::ItemMark::Open);
+        }
         Ok(())
     }
 
@@ -407,7 +432,9 @@ fn check_round_list(team: &Team) -> Result<(), RoundsError> {
         let item = progress.id();
         let mut rounds = team.rounds.iter().filter(|round| round.item() == Some(item));
         let first = rounds.next();
-        if let (Some(first), Some(second)) = (first, rounds.next()) {
+        if let (Some(first), Some(second)) = (first, rounds.next())
+            && (first.part().is_none() || second.part().is_none())
+        {
             return Err(RoundsError::ItemWithTwoRounds {
                 item,
                 first: first.id().clone(),
@@ -462,6 +489,9 @@ fn check_round(team: &Team, round: &Round) -> Result<(), RoundsError> {
             round: round.id().clone(),
             item,
         });
+    }
+    if round.part_pull_request().is_some() && round.ended() == Some(RoundEnd::Merged) {
+        return Ok(());
     }
     check_end(round, Some(progress.phase()))
 }
