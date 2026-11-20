@@ -108,6 +108,16 @@ fix_passes = 5
 check_passes = 2
 replace_after_minutes = 15
 
+# Plans: every task keeps its plan of steps in `.agent/plan.md` in its worktree (docs/plan.md). The daemon reads it at
+# the end of every run and keeps each new version in the history. A run of a role here that ends `STATUS: DONE` against
+# its plan goes back to the same agent with the reason (no plan, a plan with a line that does not parse, a step still to
+# do or in hand, a step the version before had) at most `bounces` times for the task; then you are asked once, in the
+# task's questions file. `0` never sends a run back; the plan is recorded all the same.
+
+[plan]
+roles = ["solo", "member", "coordinator"]
+bounces = 3
+
 # --- Git and GitHub ----------------------------------------------------------------------------------------------
 # The identity of every commit an agent makes; {agent} is the agent's name. `signing_key` is an SSH private key that
 # signs the commits ("Verified" on GitHub); without it commits are unsigned, even if your own git signs everything.
