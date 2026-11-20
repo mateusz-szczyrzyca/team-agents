@@ -967,7 +967,11 @@ impl ItemProgress {
     /// passes or reopened conflict verifications it has spent.
     #[must_use]
     pub fn completed_review_passes(&self) -> usize {
-        let conflict_passes = self.conflict_verifications.max(self.merge_passes);
+        let conflict_passes = if self.conflict_verifications > 0 {
+            self.conflict_verifications
+        } else {
+            self.merge_passes
+        };
         self.fix_passes
             .len()
             .saturating_add(usize::try_from(conflict_passes).unwrap_or(usize::MAX))
