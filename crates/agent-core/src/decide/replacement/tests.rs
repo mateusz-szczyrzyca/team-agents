@@ -156,6 +156,22 @@ fn a_workers_and_a_reviewers_task_is_the_humans() {
 }
 
 #[test]
+fn a_workers_and_a_reviewers_task_is_the_humans_even_with_a_fitting_agent() {
+    let investigator = agent("inv-opus");
+    let candidates = [idle(&investigator, Tier::Investigator)];
+
+    for role in [Role::Worker, Role::Reviewer] {
+        for mode in [ReplacementMode::Auto, ReplacementMode::Lead, ReplacementMode::Off] {
+            assert_eq!(
+                choose(role, Tier::Worker, &candidates, mode),
+                Handover::Human,
+                "{role:?} {mode:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn the_lead_mode_answers_the_lead_of_a_member_and_the_human_otherwise() {
     let investigator = agent("inv-opus");
     let candidates = [idle(&investigator, Tier::Investigator)];
