@@ -70,8 +70,8 @@ fn every_agent_in_every_other_open_team_is_named_in_the_order_of_the_new_team() 
         named,
         vec![
             ("inv-opus", task_id(1)),
-            ("claude-1", task_id(2)),
-            ("claude-1", task_id(1))
+            ("claude-1", task_id(1)),
+            ("claude-1", task_id(2))
         ]
     );
 }
