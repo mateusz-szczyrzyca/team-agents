@@ -6,13 +6,15 @@ use std::time::SystemTime;
 
 use agent_core::history::HistoryHealth;
 use agent_core::ids::{RoundId, TaskId};
+use agent_core::kinds::Role;
 use agent_core::protocol::{Client, Command, Reply, RoundDetail, ShowRequest, StatusRequest, Target, TeamSummary};
 use agent_core::review_findings::Severity;
-use agent_core::state::{Round, RoundLife, RunState};
+use agent_core::state::{Round, RoundLife, RunState, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::process::error_chain;
 use agent_runtime::run::activity::last_activity;
+use agent_runtime::settings::{Settings, SettingsError};
 use agent_runtime::store::Home;
 use time::UtcOffset;
 
@@ -30,6 +32,9 @@ pub(crate) enum StatusError {
         /// What it answered.
         kind: &'static str,
     },
+    /// The settings of the home, which name the investigators, cannot be read.
+    #[error("cannot read the settings of the home")]
+    Settings(#[source] SettingsError),
     /// The output cannot be written.
     #[error("cannot write the status")]
     Output(#[source] io::Error),
@@ -108,6 +113,12 @@ pub(crate) fn clock_time(at: SystemTime, offset: UtcOffset) -> String {
     format!("{:02}:{:02}:{:02}", local.hour(), local.minute(), local.second())
 }
 
+/// `at` as a time of day, `HH:MM:SS`, at `offset` from UTC: the time of a recorded activity.
+pub(crate) fn clock_of(at: Timestamp, offset: UtcOffset) -> String {
+    let local = at.as_utc().to_offset(offset);
+    format!("{:02}:{:02}:{:02}", local.hour(), local.minute(), local.second())
+}
+
 /// Asks the daemon for the status of `target` (every team without one) and writes it to `out`; the tasks that run say
 /// when they were last active.
 ///
@@ -124,7 +135,12 @@ pub(crate) async fn status_active(
     }
     let (teams, history) = teams(connection, target).await?;
     let told = rounds::told(connection, activity, &teams).await?;
-    let text = render_with(&teams, &|task| activity.of(task), &|round| told.of(round));
+    let text = render_at(
+        &teams,
+        &|task| activity.of(task),
+        &|round| told.of(round),
+        activity.offset,
+    );
     write(
         out,
         &format!("{text}{}", told.unread()),
@@ -147,6 +163,27 @@ pub(crate) async fn status(
     write(out, &render(&teams), history.as_ref(), None)
 }
 
+/// Asks the daemon for every team and writes to `out` what `investigators::render` says of the investigators configured in
+/// `home`: for each of them its last two activities in the teams that are not closed, and the one that has none as free.
+///
+/// # Errors
+/// [`StatusError`]: the settings of `home` cannot be read, the daemon cannot be asked or answers with something else
+/// than a list of teams, or the output cannot be written.
+pub(crate) async fn status_investigators(
+    connection: &mut Connection,
+    home: &Home,
+    offset: UtcOffset,
+    out: &mut impl Write,
+) -> Result<(), StatusError> {
+    let settings = Settings::load(home).await.map_err(StatusError::Settings)?;
+    // The configuration keeps the investigators by name: the view lists them in that order.
+    let configured: Vec<_> = settings.config.investigators().keys().cloned().collect();
+    let (teams, _) = teams(connection, None).await?;
+    let text = investigators::render(&teams, &configured, offset);
+    out.write_all(text.as_bytes()).map_err(StatusError::Output)?;
+    out.flush().map_err(StatusError::Output)
+}
+
 /// Asks the daemon for every team and writes to `out` those that have a round that goes on, with those rounds only:
 /// what is being worked on now.
 ///
@@ -163,7 +200,12 @@ pub(crate) async fn status_running(
         NO_OPEN_ROUNDS.to_owned()
     } else {
         let told = rounds::told(connection, activity, &teams).await?;
-        let text = render_with(&teams, &|task| activity.of(task), &|round| told.of(round));
+        let text = render_at(
+            &teams,
+            &|task| activity.of(task),
+            &|round| told.of(round),
+            activity.offset,
+        );
         format!("{text}{}", told.unread())
     };
     write(out, &text, history.as_ref(), activity.disk_line().as_deref())
@@ -261,14 +303,27 @@ pub(crate) fn render(teams: &[TeamSummary]) -> String {
 /// The teams as text: a line for each team, and under it a line for each of its tasks, with what `activity` says of each
 /// task that runs after its status; the rounds say nothing beyond their lines.
 pub(crate) fn render_active(teams: &[TeamSummary], activity: &dyn Fn(&TaskId) -> Option<String>) -> String {
-    render_with(teams, activity, &|_| String::new())
+    render_at(teams, activity, &|_| String::new(), UtcOffset::UTC)
 }
 
-/// [`render_active`] with what `rounds` says of each round after its line.
+/// [`render_active`] with what `rounds` says of each round after its line, the times in UTC: what the tests of the
+/// rounds compare.
+#[cfg(test)]
 fn render_with(
     teams: &[TeamSummary],
     activity: &dyn Fn(&TaskId) -> Option<String>,
     rounds: &dyn Fn(&Round) -> String,
+) -> String {
+    render_at(teams, activity, rounds, UtcOffset::UTC)
+}
+
+/// [`render_active`] with what `rounds` says of each round after its line, the times of the recorded activities told at
+/// `offset` from UTC.
+fn render_at(
+    teams: &[TeamSummary],
+    activity: &dyn Fn(&TaskId) -> Option<String>,
+    rounds: &dyn Fn(&Round) -> String,
+    offset: UtcOffset,
 ) -> String {
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
@@ -304,12 +359,17 @@ fn render_with(
                 .then(|| activity(&member.task))
                 .flatten()
                 .map_or_else(String::new, |said| format!(", {said}"));
+            let status = match member.role {
+                Role::Reviewer => {
+                    reviewer::status(member, &team.activities, offset).unwrap_or_else(|| member.status.to_string())
+                }
+                Role::Solo | Role::Coordinator | Role::Member | Role::Worker => member.status.to_string(),
+            };
             lines.push(format!(
-                "  {}  {:<role_width$}  {:<agent_width$}  {}{active}{waiting}",
+                "  {}  {:<role_width$}  {:<agent_width$}  {status}{active}{waiting}",
                 member.task,
                 member.role.to_string(),
                 member.agent.name(),
-                member.status,
             ));
         }
     }
@@ -415,6 +475,8 @@ const NO_TEAMS: &str = "no teams\n";
 /// What `agent status --running` writes when no round goes on.
 const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 
+mod investigators;
+mod reviewer;
 mod rounds;
 
 #[cfg(test)]
