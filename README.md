@@ -560,6 +560,8 @@ restores that claim. A stopped team resumes this recovery when its member is res
 State schema 14 remains readable, including open claims written by 0.34.0. The optional
 `delivery_closed_at` field retains the observed closure on the abandoned round; no migration is needed for those
 states. Older binaries cannot read states containing the new field: keep a state backup before upgrading.
+History schema 13 adds the `delivery_closed` warning and migrates existing logs, search entries and cursors.
+Keep a backup of `history.db` before upgrading too: older agents cannot read history schema 13.
 
 A step of a round that GitHub or git fails does not stop the daemon: the round says `waits for GitHub: refresh the
 description of the pull requests, tried 4 times, next try 01:07` and the step is tried again by itself, after 30
