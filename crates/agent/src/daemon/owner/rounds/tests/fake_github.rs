@@ -337,6 +337,18 @@ fn head_filter(query: &str) -> Option<String> {
 
 /// Answers `request` as GitHub would.
 fn route(world: &mut World, method: &str, target: &str, body: &str) -> Answer {
+    // While GitHub is down, or this call is made to fail, nothing of the world changes: the call is only seen.
+    let failing = world
+        .failing
+        .iter()
+        .find(|(failing, path, _)| failing == method && path == target)
+        .map(|(_, _, status)| (*status, "Service Unavailable".to_owned()));
+    if let Some((status, message)) = world.outage.clone().or(failing) {
+        return Answer {
+            status,
+            body: json!({"message": message}),
+        };
+    }
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
     let body: Value = serde_json::from_str(body).unwrap_or(Value::Null);
     let pulls_path = format!("/repos/{SLUG}/pulls");
@@ -490,18 +502,7 @@ async fn serve_connection(mut stream: TcpStream, world: Arc<Mutex<World>>) {
             target: target.clone(),
             body: body.clone(),
         });
-        let failing = world
-            .failing
-            .iter()
-            .find(|(failing, path, _)| *failing == method && *path == target)
-            .map(|(_, _, status)| (*status, "Service Unavailable".to_owned()));
-        match world.outage.clone().or(failing) {
-            Some((status, message)) => Answer {
-                status,
-                body: json!({"message": message}),
-            },
-            None => route(&mut world, &method, &target, &body),
-        }
+        route(&mut world, &method, &target, &body)
     };
     let text = answer.body.to_string();
     let wire = format!(
