@@ -270,7 +270,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `notification_failed` | `error` | A notification for the human cannot be made, timed, queued or delivered. |
 | `history_record_incomplete` | `warn` | A record of the history cannot be made as it should: it is left out, counted as lost, or made with a fallback (such as a run's reason recorded as a continuation). |
 | `team_changed` | `info` | A team is started or closed. |
-| `round_changed` | `info` | A round is opened or closed. |
+| `round_changed` | `info`, `warn` | A round is opened or closed. Checked delivery changes use `change=delivery_accepted` or `delivery_merged` at info, and `delivery_refused`, `delivery_closed` or `delivery_poll_failed` at warn. Records name `team`, the known `round` and `pr`, and an `error` cause chain for failed checks or observations. |
 | `item_phase_changed` | `info` | An item's phase changes. |
 | `task_status_changed` | `info` | A task's status changes. |
 | `run_started` | `info` | A model CLI run starts. A run that the bus's wake-up starts also has `why` (`wake_up`), `message_id`, `from` and `wake_ups` (the number of this wake-up for that message). |

@@ -47,13 +47,28 @@ An intermediate merge records its pull request permanently and resets the parent
 ready part; only the last merge completes the parent. Split rounds remain open on review approval in `--no-merge`.
 Deserialization checks part membership, uniqueness and previously merged dependencies.
 
+### Delivery claims
+
+Schema 14 adds optional round `delivery`, an ordinary pull-request record identifying another round's PR in
+that team. An absent marker preserves the previous round lifecycle. Schema 13 loads without changing its teams,
+split plans, round parts, run references or history; the pre-change fixture is
+[state-before-delivery.json](../crates/agent-core/tests/fixtures/state-before-delivery.json).
+Older binaries cannot read schema 14; keep a state backup before upgrading.
+
+Only an open round of an `in_progress` item may receive this marker. Acceptance preserves the item's phase;
+completion records `done` with the delivering PR and closes the round as `merged`. Both transitions are checked,
+and a refusal leaves the team unchanged. Split-part completion preserves the existing rule: intermediate parts
+retain their PR and leave the parent pending until its final part merges. The marker survives completion and restart.
+Loading verifies that its complete PR record belongs to another round of the same team and agrees with the
+waiting or completed item. Git evidence and remote merge observation are the daemon's responsibility.
+
 ### The file
 
 The state is one JSON document, written indented with a newline at the end, the schema version first:
 
 ```json
 {
-  "schema_version": 13,
+  "schema_version": 14,
   "teams": [ { "id": "team-20261111-193000-a1b2", "...": "..." } ]
 }
 ```
@@ -169,8 +184,8 @@ Older daemons cannot read a state saved with schema 12.
   as one that was built through the API. There is one way to read a value, the `Deserialize` trait: the field-by-field
   reading that serde derives lives on a private mirror type (`remote`), so no public `T::deserialize` skips the checks.
 - **Versioned.** `State::from_json` reads `schema_version` **first**. A state of another version is refused with
-  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 13,
-  migrates versions 1 through 12 as it reads them (see "Version 1" below); any other version is
+  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 14,
+  migrates versions 1 through 13 as it reads them (see "Version 1" below); any other version is
   refused. Version 2 is read as it is: its items have no `findings`, so a round that was open when the daemon was
   updated ends by the rules it started with (verdicts only), and the numbered findings hold for pull requests opened
   after the update. A change that old files do not satisfy raises the version and comes with a migration, a fixture of the old
@@ -331,12 +346,13 @@ its approval) — or the whole work of a team whose list has no items. One round
 "Round" means this and nothing else here: the numbered questions of a task are its `number`, and the reviews asked for one head
 of a pull request are a review pass.
 
-A round is `{id, item?, opened_at, state}`:
+A round is `{id, item?, opened_at, state, part?, delivery?}`:
 
 | Field | Meaning |
 |---|---|
 | `id` | `round-YYYYMMDD-HHMMSS-xxxx`, generated like the other IDs; unique in the whole state |
 | `item` | the item the round is for; absent for the whole work of a team whose task list has no items |
+| `delivery` | optional PR record belonging to another round of this team; retained while waiting and after completion |
 | `opened_at` | when the daemon opened it: when the item was first given to a member, or when the team started |
 | `state` | `{"status":"open"}`, or `{"status":"closed","at":…,"how":…}` with `how` one of `merged`, `approved` (`--no-merge`: both reviews approved, the pull request is the human's) and `abandoned` (the team was stopped or ended without a merge or an approval) |
 
