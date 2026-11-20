@@ -103,3 +103,84 @@ async fn approved_parts_merge_in_distinct_rounds_and_branches_and_close_only_the
     rig.status_is(&tasks[0], TaskStatus::Done).await;
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn human_merges_release_three_parts_across_restart_without_closing_on_approval() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,integrate"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team_id, tasks) = rig.run(&["inv-lead", "claude-1"], ONE, MergeMode::NoMerge, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.status_is(&tasks[1], TaskStatus::Waiting).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: n(1),
+                answers: answers(&[(1, &approval(3))]),
+            }),
+        )
+        .await
+        .unwrap();
+    for number in 1..=3 {
+        rig.wait_for("part approved or wrongly closed", || {
+            let wire: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(rig.home.state_file()).unwrap()).unwrap();
+            let team = &wire["teams"][0];
+            team["rounds"].as_array().unwrap().len() == usize::try_from(number).unwrap()
+                && (team["rounds"].as_array().unwrap().last().unwrap()["state"]["status"] == "closed"
+                    || team["items"][0]["phase"]["phase"] == "approved")
+        })
+        .await;
+        let wire: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(rig.home.state_file()).unwrap()).unwrap();
+        assert_eq!(wire["teams"][0]["items"][0]["phase"]["phase"], "approved");
+        let state = rig.state();
+        let team = state.team(&team_id).unwrap();
+        assert!(team.rounds().last().unwrap().is_open());
+        assert_eq!(
+            team.rounds().last().unwrap().part().unwrap().to_string(),
+            match number {
+                1 => "a",
+                2 => "b",
+                3 => "c",
+                _ => unreachable!(),
+            }
+        );
+        if number == 1 {
+            rig.stop().await.unwrap();
+            rig.github.merged_by_a_human(number);
+            rig.start().await;
+        } else {
+            rig.github.merged_by_a_human(number);
+        }
+    }
+    let state = rig
+        .item_where("1.1", "all three parts merged", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+    let team = state.team(&team_id).unwrap();
+    assert_eq!(team.rounds().len(), 3);
+    assert_eq!(
+        team.rounds()
+            .iter()
+            .filter(|round| round.part_pull_request().is_some())
+            .count(),
+        3
+    );
+    rig.status_is(&tasks[0], TaskStatus::Done).await;
+    rig.stop().await.unwrap();
+}
