@@ -18,7 +18,7 @@ fn proposal_reader_accepts_number_units_and_defaults_tiers() {
         let parsed = read_proposal(&value.to_string()).unwrap();
         assert_eq!(parsed.parent(), "1.1".parse().unwrap());
         assert_eq!(parsed.scope(), &ScopeChange::Unchanged);
-        assert_eq!(parsed.parts()[0].estimate.as_ref().unwrap().unit, "images");
+        assert_eq!(parsed.parts()[0].estimate.as_ref().unwrap().unit(), "images");
         assert_eq!(
             parsed.parts()[0].tier,
             tier.map_or(Tier::Normal, |tier| tier.parse().unwrap())
@@ -85,7 +85,7 @@ fn proposal_reader_rejects_bad_estimates_tiers_scope_and_oversized_input() {
         value["parts"][0]["estimate"] = estimate;
         assert!(matches!(
             read_proposal(&value.to_string()),
-            Err(ReadProposalError::Estimate { part: 1 })
+            Err(ReadProposalError::Json { .. })
         ));
     }
     let mut value = proposal();
@@ -104,7 +104,7 @@ fn proposal_reader_rejects_bad_estimates_tiers_scope_and_oversized_input() {
         value["scope"]["reason"] = json!(" ");
         assert!(matches!(
             read_proposal(&value.to_string()),
-            Err(ReadProposalError::ScopeReason)
+            Err(ReadProposalError::Json { .. })
         ));
         value["scope"].as_object_mut().unwrap().remove("reason");
         assert!(matches!(
@@ -136,10 +136,7 @@ fn legacy_approvals_and_new_requirements_survive_round_trip_without_changing_leg
         let plan = crate::questions::split::read_split(&answer).unwrap().unwrap();
         let wanted = if extended {
             Requirements {
-                estimate: Some(Estimate {
-                    amount: 0.into(),
-                    unit: "pages".into(),
-                }),
+                estimate: Some(Estimate::new(0.into(), "pages".into()).unwrap()),
                 tier: Tier::Investigator,
             }
         } else {
@@ -161,7 +158,7 @@ fn legacy_approvals_and_new_requirements_survive_round_trip_without_changing_leg
             .unwrap()
             .estimate
             .unwrap()
-            .unit,
+            .unit(),
         "images"
     );
 }

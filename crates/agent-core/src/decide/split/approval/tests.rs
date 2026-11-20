@@ -35,10 +35,7 @@ fn approval_table_covers_good_scope_faults_limits_and_correction_budgets() {
     let missing_fault = ProposalFault::MissingChecks { part: key("b") };
     let size_fault = ProposalFault::AboveLimit {
         part: key("b"),
-        estimate: Estimate {
-            amount: serde_json::Number::from_f64(1500.5).unwrap(),
-            unit: "lines".into(),
-        },
+        estimate: Estimate::new(serde_json::Number::from_f64(1500.5).unwrap(), "lines".into()).unwrap(),
         limit: 1500,
     };
     let cases = [
@@ -171,26 +168,42 @@ fn cycle_table_names_a_cycle_member_and_accepts_forward_edges_without_cycles() {
 
 #[test]
 fn invalid_whole_plans_never_approve_and_name_parts_where_possible() {
-    for (deps, part) in [
-        (vec![vec!["b"], vec![]], Some("a")),
-        (vec![vec![], vec!["z"]], Some("b")),
-        (vec![vec![], vec!["a", "a"]], Some("b")),
-        (vec![vec![]], None),
-        (vec![], None),
+    for (deps, fault) in [
+        (
+            vec![vec!["b"], vec![]],
+            ProposalFault::FirstPartDepends { part: key("a") },
+        ),
+        (
+            vec![vec![], vec!["z"]],
+            ProposalFault::UnknownDependency {
+                part: key("b"),
+                dependency: key("z"),
+            },
+        ),
+        (
+            vec![vec![], vec!["a", "a"]],
+            ProposalFault::DuplicateDependency {
+                part: key("b"),
+                dependency: key("a"),
+            },
+        ),
+        (vec![vec![]], ProposalFault::PartCount { count: 1 }),
+        (vec![], ProposalFault::PartCount { count: 0 }),
     ] {
         let slices: Vec<_> = deps.iter().map(Vec::as_slice).collect();
         assert_eq!(
             decision(&input(&slices), Split::default(), 0),
-            ProposalDecision::SendBack(ProposalFault::Unreadable { part: part.map(key) })
+            ProposalDecision::SendBack(fault),
+            "{deps:?}"
         );
     }
-    for field in ["title", "delivers"] {
+    for (field, fault) in [
+        ("title", ProposalFault::EmptyTitle { part: key("b") }),
+        ("delivers", ProposalFault::EmptyDeliverable { part: key("b") }),
+    ] {
         let mut value = input(&[&[], &[]]);
         value["parts"][1][field] = json!(" ");
-        assert_eq!(
-            decision(&value, Split::default(), 0),
-            ProposalDecision::SendBack(ProposalFault::Unreadable { part: Some(key("b")) })
-        );
+        assert_eq!(decision(&value, Split::default(), 0), ProposalDecision::SendBack(fault));
     }
 }
 
