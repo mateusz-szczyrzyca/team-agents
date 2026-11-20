@@ -38,3 +38,37 @@ fn each_task_shows_its_last_snapshot_with_its_number_time_and_size() {
          \x20 snapshot task-20261120-100000-bbbb number 1 at 01:02:05, 30 bytes\n"
     );
 }
+
+#[test]
+fn snapshots_of_reads_the_history_or_reports_when_it_cannot_be_read() {
+    use agent_core::config::AbsolutePath;
+    use agent_core::history::{MaxTextBytes, Record};
+    use agent_runtime::history::{HistoryDb, Store};
+    use agent_runtime::store::Home;
+
+    use super::snapshots_of;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let home = Home::new(&AbsolutePath::from_str(root.to_str().unwrap()).unwrap());
+    let round = RoundId::from_str("round-20261120-100000-r1r1").unwrap();
+
+    let unreadable = snapshots_of(&home, &round, UtcOffset::UTC);
+    assert!(
+        unreadable.starts_with("  snapshots: cannot read the history ("),
+        "{unreadable:?}"
+    );
+
+    let mut db = HistoryDb::open(&home.history_file(), MaxTextBytes::default()).unwrap();
+    db.write(&[
+        Record::Snapshot(Box::new(snapshot("task-20261120-100000-aaaa", 1, 3_600 + 5, 10))),
+        Record::Snapshot(Box::new(snapshot("task-20261120-100000-aaaa", 2, 3_600 + 65, 20))),
+    ])
+    .unwrap();
+    drop(db);
+
+    assert_eq!(
+        snapshots_of(&home, &round, UtcOffset::UTC),
+        "  snapshot task-20261120-100000-aaaa number 2 at 01:01:05, 20 bytes\n"
+    );
+}

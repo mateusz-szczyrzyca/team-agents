@@ -1245,3 +1245,84 @@ pub(super) async fn record_snapshot_events(observed: &mut std::collections::BTre
     );
     observed.insert(LogEvent::SnapshotFailed);
 }
+
+#[tokio::test]
+async fn a_graceful_stop_and_restart_snapshots_the_worktree_shows_it_in_round_status_and_finishes_the_round() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "gated,done"),
+            investigator("inv-r1", "done"),
+            investigator("inv-r2", "done"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["claude-1"], "Finish the work.", MergeMode::Autopilot, None)
+        .await;
+    let task = tasks[0].clone();
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while !rig.worktree(&task).join(".fake-committed-1").exists() {
+        assert!(std::time::Instant::now() < deadline, "first run did not start");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    std::fs::write(
+        rig.worktree(&task).join("uncommitted.txt"),
+        b"kept across graceful stop\n",
+    )
+    .unwrap();
+
+    rig.stop().await.unwrap();
+    rig.start().await;
+    rig.status_is(&task, TaskStatus::Done).await;
+
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let rounds = reader.rounds_of_team(&team).unwrap();
+    let round = rounds.first().expect("the team opened a round").value.round.clone();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let snapshots = loop {
+        let found = reader.snapshots_of_round(&round).unwrap();
+        if found.iter().any(|snapshot| snapshot.task == task) {
+            break found;
+        }
+        assert!(std::time::Instant::now() < deadline, "snapshot was not recorded");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    let ours: Vec<_> = snapshots.iter().filter(|snapshot| snapshot.task == task).collect();
+    assert_eq!(ours.len(), 1, "{snapshots:?}");
+    assert_eq!(ours[0].number, 1);
+
+    let mut connection = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap();
+    let activity = crate::commands::status::Activity::new(rig.home.clone(), time::UtcOffset::UTC);
+    let mut rendered = Vec::new();
+    crate::commands::status::status_active(
+        &mut connection,
+        Some(agent_core::protocol::Target::Round(round.clone())),
+        &activity,
+        &mut rendered,
+    )
+    .await
+    .unwrap();
+    let status_text = String::from_utf8(rendered).unwrap();
+    assert!(
+        status_text.contains(&format!("  snapshot {task} number 1 at ")),
+        "round status must show the task's snapshot: {status_text}"
+    );
+    assert!(
+        status_text.contains(&format!("{} bytes\n", ours[0].bytes)),
+        "round status must show the snapshot's byte count: {status_text}"
+    );
+
+    rig.stop().await.unwrap();
+
+    let listed = std::process::Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", &ours[0].commit.to_string()])
+        .current_dir(rig.worktree(&task))
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&listed.stdout).contains("uncommitted.txt"));
+}
