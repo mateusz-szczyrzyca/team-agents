@@ -2023,9 +2023,13 @@ async fn a_round_is_found_by_its_id_in_status_and_show_an_unknown_one_is_not_fou
 
 /// A bare origin whose main branch initially equals the local base.
 fn base_origin(f: &Fixture) -> PathBuf {
-    let origin = f._dir.path().join("origin.git");
+    let origin = f
+        .repo
+        .parent()
+        .expect("fixture repository has a parent")
+        .join("origin.git");
     git(
-        f._dir.path(),
+        f.repo.parent().expect("fixture repository has a parent"),
         &["init", "--bare", "-q", "-b", "main", origin.to_str().unwrap()],
     );
     git(&f.repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
@@ -2048,9 +2052,13 @@ async fn unpushed_base_is_refused_with_remedies_and_leaves_no_resources() {
         base_commit(&f.repo, "Second unpublished");
         // A remote-only commit makes this a diverged base as well as an ahead base.
         if diverged {
-            let elsewhere = f._dir.path().join("elsewhere");
+            let elsewhere = f
+                .repo
+                .parent()
+                .expect("fixture repository has a parent")
+                .join("elsewhere");
             git(
-                f._dir.path(),
+                f.repo.parent().expect("fixture repository has a parent"),
                 &["clone", "-q", origin.to_str().unwrap(), elsewhere.to_str().unwrap()],
             );
             base_commit(&elsewhere, "Remote-only");
@@ -2066,7 +2074,7 @@ async fn unpushed_base_is_refused_with_remedies_and_leaves_no_resources() {
         assert_eq!(failure.kind, FailureKind::Refused);
         for expected in [
             "2",
-            &first[..7],
+            first.get(..7).expect("commit ID contains seven ASCII characters"),
             "Żółć unpublished",
             "push",
             "git reset --hard origin/main",
@@ -2107,7 +2115,12 @@ async fn allowed_unpushed_base_is_reported_and_survives_daemon_restart() {
         serde_json::json!({"branch":"main","count":1,"first":first,"subject":"Unpublished base"})
     );
     let text = crate::commands::run::render_started(&f.home, before.team(&team).unwrap());
-    for expected in ["1", &first[..7], "Unpublished base", "origin"] {
+    for expected in [
+        "1",
+        first.get(..7).expect("commit ID contains seven ASCII characters"),
+        "Unpublished base",
+        "origin",
+    ] {
         assert!(text.contains(expected), "{text}");
     }
     assert_eq!(git(&f.worktree(&tasks[0]), &["rev-parse", "HEAD"]), first);
@@ -2128,9 +2141,13 @@ async fn base_fetch_preserves_the_local_start_when_equal_behind_or_without_origi
         if remote != "none" {
             let origin = base_origin(&f);
             if remote == "behind" {
-                let elsewhere = f._dir.path().join("elsewhere");
+                let elsewhere = f
+                    .repo
+                    .parent()
+                    .expect("fixture repository has a parent")
+                    .join("elsewhere");
                 git(
-                    f._dir.path(),
+                    f.repo.parent().expect("fixture repository has a parent"),
                     &["clone", "-q", origin.to_str().unwrap(), elsewhere.to_str().unwrap()],
                 );
                 base_commit(&elsewhere, "Only remote");
@@ -2155,7 +2172,11 @@ async fn base_fetch_preserves_the_local_start_when_equal_behind_or_without_origi
 async fn base_fetch_failure_is_refused_even_when_unpushed_commits_are_allowed() {
     let mut f = Fixture::new(&all_agents());
     base_origin(&f);
-    let missing = f._dir.path().join("missing.git");
+    let missing = f
+        .repo
+        .parent()
+        .expect("fixture repository has a parent")
+        .join("missing.git");
     git(&f.repo, &["remote", "set-url", "origin", missing.to_str().unwrap()]);
     f.start().await;
     let mut request = f.request(&["claude-1"], PLAIN, None);
