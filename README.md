@@ -311,6 +311,13 @@ Repeated identical warnings are coalesced with a count. [`docs/log.md`](docs/log
 team/round/task/run scope, redaction, decisions and outside-call records; [`docs/configuration.md`](docs/configuration.md)
 documents the setting.
 
+Two events tell a step of a round that GitHub or git failed: `github_step_waiting` (`warn`), logged once when the step
+starts to wait, with `team`, `operation`, `pr`, `outlook` (`may_pass` or `will_not_pass`), `next_try` and the line
+`agent status` shows; and `github_step_resumed` (`info`), logged once when it goes through, with `team` and
+`operation`. The tries in between log only the `github_call_failed` warnings of the calls themselves. A `history.db`
+made before this version is migrated at the start of the daemon (history version 11) so that it keeps these events;
+it also keeps `build_directory_removed` from then on, which such a file refused before.
+
 Read a round with `target/debug/agent log --round <round-id>`, or a team's rounds with
 `target/debug/agent log --team <team-id>`. Both read the history directly and work with the daemon stopped.
 Use `--prompts` for whole prompts, `--no-steps` to omit individual steps, or `--json` for every record exactly once
