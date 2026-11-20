@@ -485,3 +485,7 @@ mod rounds;
 mod history_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "status/tests/splits.rs"]
+mod split_tests;
