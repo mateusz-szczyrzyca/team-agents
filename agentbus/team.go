@@ -124,8 +124,9 @@ func (b *Bus) wakeFor(st *State, m Message) {
 	}
 }
 
-// isForAgent reports whether a message is for the agent (direct, to its team, or — optionally — to all).
-func isForAgent(st *State, m Message, agent string, broadcast bool) bool {
+// isForAgent reports whether a message is for the agent in the team team ("" outside teams): direct, to its team, or —
+// optionally — to all (a stub of this commit: the team is not read yet).
+func isForAgent(st *State, m Message, agent, team string, broadcast bool) bool {
 	if m.From == agent {
 		return false
 	}
@@ -140,6 +141,26 @@ func isForAgent(st *State, m Message, agent string, broadcast bool) bool {
 }
 
 // ---------------------------------------------------------------- MCP tools: team
+
+// messageCursor is the key of an agent's unread cursor in a team: the agent and the team, so that no two teams share
+// one; "" outside teams for the agent's single cursor.
+func messageCursor(agent, team string) string {
+	if team == "" {
+		return agent
+	}
+	return agent + "/" + team
+}
+
+// cursor is the last message ID the member agent of team team has read. A team that has no cursor of its own, as in a
+// state written before teams kept one, reads by the agent's single cursor.
+func cursor(st *State, agent, team string) int64 {
+	if team != "" {
+		if cur, read := st.Cursors[messageCursor(agent, team)]; read {
+			return cur
+		}
+	}
+	return st.Cursors[agent]
+}
 
 // myTeam returns this agent's team (nil outside team mode).
 func (s *Server) myTeam(st *State) *Team {
@@ -304,7 +325,7 @@ func (s *Server) waitForMessage(from string, timeout int, broadcast bool) (strin
 			}
 			cur := st.Cursors[s.me]
 			for _, m := range msgs {
-				if m.ID > cur && isForAgent(st, m, s.me, broadcast) && (from == "" || m.From == from) {
+				if m.ID > cur && isForAgent(st, m, s.me, s.team, broadcast) && (from == "" || m.From == from) {
 					found = true
 					break
 				}
@@ -313,7 +334,7 @@ func (s *Server) waitForMessage(from string, timeout int, broadcast bool) (strin
 				return nil
 			}
 			for _, m := range msgs {
-				if m.ID > cur && isForAgent(st, m, s.me, true) {
+				if m.ID > cur && isForAgent(st, m, s.me, s.team, true) {
 					sb.WriteString(fmtMsg(m) + "\n")
 				}
 			}
@@ -741,7 +762,7 @@ func setMemberState(b *Bus, st *State, team, agent string, newState MemberState)
 	}
 	cur := st.Cursors[agent]
 	for _, msg := range msgs {
-		if msg.ID > cur && !msg.Quiet && isForAgent(st, msg, agent, false) {
+		if msg.ID > cur && !msg.Quiet && isForAgent(st, msg, agent, team, false) {
 			m.State = MemberWaking
 			logInfo(LogMemberWokenBy, "team", t.ID, "member", agent, "cause", "unread", "message_id", msg.ID, "kind", msg.Kind, "from", msg.From)
 			wakeFn(t, m.Task)

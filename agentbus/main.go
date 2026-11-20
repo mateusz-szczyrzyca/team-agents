@@ -57,6 +57,9 @@ type Message struct {
 	Data  json.RawMessage `json:"data,omitempty"`  // the event's fields as JSON (for log pipelines and tools)
 	Text  string          `json:"text"`            // the rendered text agents and humans read
 	Quiet bool            `json:"quiet,omitempty"` // wakes nobody (a chat sent with wake=false): read on the reader's next run
+	// Team is the team a direct message is bound to: it is for the named agent in that team only. Empty in a broadcast,
+	// a "team:<id>" message and the messages of older versions, which are read by the name as before.
+	Team string `json:"team,omitempty"`
 }
 
 // quietEvent is an event that may ask to wake nobody (a chat sent with wake=false).
@@ -320,8 +323,14 @@ func (s *Server) readMessage(id int) (string, *ReadMessageError) {
 	return "", opErr(ReadMessageNoSuchMessage, "no message #%d", id)
 }
 
-// post appends an event to messages.jsonl (caller holds the lock) and wakes sleeping recipients.
+// post appends an event to messages.jsonl (caller holds the lock) and wakes sleeping recipients; its direct messages
+// are bound to no team.
 func (b *Bus) post(st *State, from, to string, ev busEvent) (Message, *StorageError) {
+	return b.postIn(st, "", from, to, ev)
+}
+
+// postIn appends an event whose direct messages are bound to the team team, and wakes its sleeping recipients.
+func (b *Bus) postIn(st *State, team, from, to string, ev busEvent) (Message, *StorageError) {
 	data, err := json.Marshal(ev)
 	if err != nil {
 		return Message{}, storageErr(err, "cannot encode a %s event", ev.Kind())
@@ -473,7 +482,7 @@ func (s *Server) unreadCount() (int, *StorageError) {
 		}
 		cur := st.Cursors[s.me]
 		for _, m := range msgs {
-			if m.ID > cur && isForAgent(st, m, s.me, true) {
+			if m.ID > cur && isForAgent(st, m, s.me, s.team, true) {
 				n++
 			}
 		}
@@ -584,7 +593,7 @@ func (s *Server) read(history int) (string, *ReadMessagesError) {
 		cur := st.Cursors[s.me]
 		n := 0
 		for _, m := range msgs {
-			if m.ID > cur && isForAgent(st, m, s.me, true) {
+			if m.ID > cur && isForAgent(st, m, s.me, s.team, true) {
 				sb.WriteString(fmtMsg(m) + "\n")
 				n++
 			}

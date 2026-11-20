@@ -8,6 +8,7 @@ package main
 import (
 	_ "embed"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -64,4 +65,117 @@ func TestMessagesBeforeTheTeamOfASenderLoad(t *testing.T) {
 	if len(msgs) != 3 || msgs[2].To != "member" || msgs[2].Text != "please take B1" {
 		t.Fatalf("the old messages did not load as written: %v", msgs)
 	}
+}
+
+// twoTeams sets up the agent "codex-1" in two open teams, each with its own lead and task: "A" (lead-a) and "B"
+// (lead-b), made in that order, with the tasks an installation gives two teams of one agent.
+func twoTeams(t *testing.T, b *Bus) {
+	t.Helper()
+	for _, team := range []string{"A", "B"} {
+		lead := "lead-" + strings.ToLower(team)
+		members := map[string]*TeamMember{}
+		for _, m := range []*TeamMember{
+			{Agent: lead, Task: "task-" + lead, Tier: TierNormal, State: MemberActive},
+			{Agent: "codex-1", Task: "task-codex-1-" + strings.ToLower(team), Tier: TierNormal, State: MemberSleeping},
+		} {
+			members[m.Agent] = m
+		}
+		mustWith(t, b, func(st *State) { st.Teams[team] = &Team{ID: team, Repo: "repo", Members: members} })
+	}
+}
+
+func TestADirectMessageWakesOnlyTheTaskOfTheSendersTeam(t *testing.T) {
+	b := newBus(t)
+	woken := captureWakes(t)
+	twoTeams(t, b)
+
+	chk(t).ok(toolResult(server(b, "lead-b", inTeam("B")).send("codex-1", "take item 1.2 of team B")))
+
+	if got := *woken; len(got) != 1 || got[0] != "task-codex-1-b" {
+		t.Fatalf("woken %v, want only the task of team B", got)
+	}
+}
+
+func TestADirectMessageIsReadOnlyInTheSendersTeam(t *testing.T) {
+	b := newBus(t)
+	captureWakes(t)
+	twoTeams(t, b)
+	chk(t).ok(toolResult(server(b, "lead-b", inTeam("B")).send("codex-1", "take item 1.2 of team B")))
+
+	// what team A's session would read, without moving its cursor: the message of team B is not for it
+	mustWith(t, b, func(st *State) {
+		msgs, serr := b.messages()
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		for _, m := range msgs {
+			if isForAgent(st, m, "codex-1", "A", true) {
+				t.Fatalf("team A has the message meant for team B: %s", fmtMsg(m))
+			}
+			if !isForAgent(st, m, "codex-1", "B", true) {
+				t.Fatalf("team B does not have its message: %s", fmtMsg(m))
+			}
+		}
+	})
+}
+
+func TestAMessageToTheTeamIsReadAndWokenAsBefore(t *testing.T) {
+	b := newBus(t)
+	woken := captureWakes(t)
+	twoTeams(t, b)
+
+	chk(t).ok(toolResult(server(b, "lead-b", inTeam("B")).send("team", "status meeting of team B")))
+
+	if got := *woken; len(got) != 1 || got[0] != "task-codex-1-b" {
+		t.Fatalf("woken %v, want only the task of team B", got)
+	}
+	mustWith(t, b, func(st *State) {
+		msgs, serr := b.messages()
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		for _, m := range msgs {
+			if !isForAgent(st, m, "codex-1", "B", true) || isForAgent(st, m, "codex-1", "A", true) {
+				t.Fatalf("%s: for A, want for B only", fmtMsg(m))
+			}
+		}
+	})
+}
+
+func TestAMessageWithoutATeamIsForTheNamedAgentInTheTeamItIsReadIn(t *testing.T) {
+	b := legacyBus(t)
+
+	// a direct message without a team (an older one) and the team's notices are for the member of the team
+	mustWith(t, b, func(st *State) {
+		msgs, serr := b.messages()
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		if got := len(msgs); !isForAgent(st, msgs[got-1], "member", "T", true) {
+			t.Fatalf("the old direct message is not for the member of its team: %s", fmtMsg(msgs[got-1]))
+		}
+	})
+	if out := readOutput(t, b, "member", "T"); !strings.Contains(out, "please take B1") {
+		t.Fatalf("the old direct message is not read as before:\n%s", out)
+	}
+}
+
+// readOutput is what the session of agent name in team reads now ("No new messages." when nothing waits).
+func readOutput(t *testing.T, b *Bus, name, team string) string {
+	t.Helper()
+	var out string
+	chk(t).ok(toolResult(server(b, name, inTeam(team)).read(0)))
+	mustWith(t, b, func(st *State) {
+		msgs, serr := b.messages()
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		cur := cursor(st, name, team)
+		for _, m := range msgs {
+			if m.ID > cur && isForAgent(st, m, name, team, true) {
+				out += fmtMsg(m) + "\n"
+			}
+		}
+	})
+	return out
 }
