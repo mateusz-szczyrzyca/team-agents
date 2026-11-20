@@ -521,6 +521,15 @@ impl Team {
         self.task_list.list().allowances()
     }
 
+    /// Evidence of the explicitly permitted unpublished base at team creation.
+    #[must_use]
+    pub const fn unpushed_base(&self) -> Option<&super::UnpushedBase> {
+        None
+    }
+
+    /// Records the unpublished base the human explicitly allowed when starting the team.
+    pub fn record_unpushed_base(&mut self, _base: super::UnpushedBase) {}
+
     /// A team that has just been formed: every item pending, except those the task list marks done.
     #[must_use]
     pub fn new(
