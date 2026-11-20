@@ -153,7 +153,8 @@ split
 ```
 ````
 
-All fields are required; additional fields are errors. There must be 2–26 parts, each with a nonblank title,
+The fields shown above are required; additional fields are errors except the optional `estimate` and `tier`
+fields described below. There must be 2–26 parts, each with a nonblank title,
 deliverable and checks. Checks are criteria for any independently deliverable work, not necessarily code or tests.
 Keys are assigned in declaration order: the example's parts are `1.1a` and `1.1b`. Dependencies name single lowercase
 letters within that plan. Forward references are allowed; duplicate dependencies, unknown parts and cycles are errors.
@@ -171,3 +172,39 @@ Its prompt identifies that part's deliverable and checks, excludes the other par
 open until every part merges, including with `--no-merge`. Plans and part progress survive daemon restarts.
 `agent status` lists every part as done, in progress, waiting for named dependencies, or to do.
 Assignment and one-open-team-per-agent rules remain unchanged.
+
+
+### Coordinator proposal form: core preparation
+
+This release adds the reader, policy and durable storage for coordinator proposals. The daemon does not yet
+consume proposal files; continue using the questions-file approval above. Members report an oversized item to
+their coordinator, who alone requests its split.
+
+A proposal is a raw JSON object with `parent`, `scope` and `parts`. Parts have the same fields as an approving
+verdict, plus a required `estimate` and an optional `tier`:
+
+```json
+{
+  "parent": "1.1",
+  "scope": {"kind": "unchanged"},
+  "parts": [
+    {"title":"Draft the guide","delivers":"Worked examples","checks":"A reviewer follows them","depends_on":[],"estimate":{"amount":12.5,"unit":"pages"},"tier":"investigator"},
+    {"title":"Publish the guide","delivers":"A release bundle","checks":"The guide is in the bundle","depends_on":["a"],"estimate":{"amount":2,"unit":"pages"}}
+  ]
+}
+```
+
+`amount` is a nonnegative JSON number, including fractions; `unit` is nonblank text, such as `lines`, `pages`
+or `images`. Numeric strings are rejected. `tier` is `investigator`, `normal` or `worker`; omission means
+`normal`. Approved human verdicts and stored plans may omit both new fields and keep their previous meaning.
+When supplied in a verdict, these fields are retained with the approved plan. This part does not change assignment.
+
+`scope.kind` is `unchanged`, or `less`, `more` or `different` with a nonblank `reason` explaining the change.
+Unknown fields and values are rejected. The text reader uses the questions-file size bound.
+
+The pure policy approves only a whole valid plan with checks on every part, no dependency cycle, an independent
+first part, and no estimate above `[split] part_limit` in the supplied repository unit. Forward references that
+form no cycle are allowed. It returns distinct faults for unreadable structure, missing checks, cycles and
+estimates above the limit, naming the affected part where recoverable. A fault is sent back while corrections
+remain; otherwise a human decision is requested. A structurally valid scope change also needs a human decision.
+The daemon wiring and correction/question prompts follow in the next part of this change.
