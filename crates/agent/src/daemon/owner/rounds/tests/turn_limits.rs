@@ -214,3 +214,29 @@ async fn after_its_last_turn_limit_resume_a_task_goes_on_in_a_new_session() {
     assert_eq!(renewals.used(), 1);
     assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::TurnLimit);
 }
+
+// Rule: with the default configuration, the new session after the last turn-limit resume is given the briefing, and
+// the task is started anew once.
+#[tokio::test]
+async fn the_new_session_after_the_last_turn_limit_resume_is_briefed_once() {
+    let mut rig = rig("turn-limit,turn-limit,done", 1).await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["claude-1"], "Finish the work.", MergeMode::Autopilot, None)
+        .await;
+
+    let briefing = rig.prompt(&tasks[0], 3).await;
+    done_without_failure(&rig).await;
+    let state = rig.state();
+    rig.stop().await.unwrap();
+
+    assert!(
+        briefing.starts_with("# A NEW SESSION ON A TASK THAT WAS ALREADY STARTED"),
+        "{briefing}"
+    );
+    assert!(briefing.contains("recorded why as\n`turn_limit`"), "{briefing}");
+    assert!(briefing.contains("Finish the work."), "{briefing}");
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert_eq!(member.runs().len(), 3);
+    assert_eq!(member.renewals().map(agent_core::state::Renewals::used), Some(1));
+}
