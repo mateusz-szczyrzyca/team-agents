@@ -1,8 +1,13 @@
 //! Validated plans for splitting a task-list item, independent of how its parts are executed.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::ids::ItemId;
+
+/// Supported part keys; their order defines stable names without changing task-list IDs.
+const PART_KEYS: &str = "abcdefghijklmnopqrstuvwxyz";
 
 /// Position of a part in its split, shown as a lowercase letter from `a` through `z`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -18,8 +23,12 @@ impl std::fmt::Display for PartKey {
 impl TryFrom<String> for PartKey {
     type Error = InvalidPartKey;
 
-    fn try_from(_raw: String) -> Result<Self, Self::Error> {
-        Ok(Self('a'))
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        let mut chars = raw.chars();
+        match (chars.next(), chars.next()) {
+            (Some(letter), None) if letter.is_ascii_lowercase() => Ok(Self(letter)),
+            _ => Err(InvalidPartKey { raw }),
+        }
     }
 }
 
@@ -163,13 +172,64 @@ impl SplitPlan {
     ///
     /// # Errors
     /// [`SplitError`] for missing text, an invalid part count, repeated or unknown dependencies, or a cycle.
-    pub fn new(_parent: ItemId, parts: Vec<PartDefinition>) -> Result<Self, SplitError> {
-        Err(SplitError::Count { count: parts.len() })
+    pub fn new(parent: ItemId, parts: Vec<PartDefinition>) -> Result<Self, SplitError> {
+        if !(2..=PART_KEYS.len()).contains(&parts.len()) {
+            return Err(SplitError::Count { count: parts.len() });
+        }
+        let plan = Self { parent, parts };
+        let known: BTreeSet<PartKey> = plan.entries().map(|(id, _)| id.key).collect();
+        for (id, part) in plan.entries() {
+            for (field, text) in [
+                (PartField::Title, &part.title),
+                (PartField::Deliverable, &part.delivers),
+                (PartField::Checks, &part.checks),
+            ] {
+                if text.trim().is_empty() {
+                    return Err(SplitError::Empty { part: id.key, field });
+                }
+            }
+            let mut seen = BTreeSet::new();
+            for dependency in &part.depends_on {
+                if !known.contains(dependency) {
+                    return Err(SplitError::UnknownDependency {
+                        part: id.key,
+                        dependency: *dependency,
+                    });
+                }
+                if !seen.insert(*dependency) {
+                    return Err(SplitError::DuplicateDependency {
+                        part: id.key,
+                        dependency: *dependency,
+                    });
+                }
+            }
+        }
+        plan.check_acyclic()?;
+        Ok(plan)
+    }
+
+    /// Resolves at most 26 nodes iteratively; forward references are allowed but cycles never are.
+    fn check_acyclic(&self) -> Result<(), SplitError> {
+        let mut resolved = BTreeSet::new();
+        loop {
+            let before = resolved.len();
+            for (id, part) in self.entries() {
+                if part.depends_on.iter().all(|key| resolved.contains(key)) {
+                    resolved.insert(id.key);
+                }
+            }
+            if resolved.len() == self.parts.len() {
+                return Ok(());
+            }
+            if resolved.len() == before {
+                return Err(SplitError::Cycle);
+            }
+        }
     }
 
     /// Parts paired with their stable identities in declaration order.
     pub fn entries(&self) -> impl Iterator<Item = (PartId, &PartDefinition)> {
-        self.parts.iter().zip("".chars()).map(|(part, letter)| {
+        self.parts.iter().zip(PART_KEYS.chars()).map(|(part, letter)| {
             (
                 PartId {
                     parent: self.parent,
