@@ -44,7 +44,7 @@ impl Default for Requirements {
 
 /// An explicit declaration of how the split relates to the original item.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(from = "ScopeWire", tag = "kind", rename_all = "snake_case")]
 pub enum ScopeChange {
     /// All of the original scope is retained.
     Unchanged,
@@ -63,6 +63,39 @@ pub enum ScopeChange {
         /// What changes and why.
         reason: String,
     },
+}
+
+/// Struct variants enforce unknown-field rejection even for unchanged scope.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum ScopeWire {
+    /// No scope changes.
+    Unchanged {},
+    /// Reduced scope.
+    Less {
+        /// Explanation.
+        reason: String,
+    },
+    /// Expanded scope.
+    More {
+        /// Explanation.
+        reason: String,
+    },
+    /// Replaced scope.
+    Different {
+        /// Explanation.
+        reason: String,
+    },
+}
+impl From<ScopeWire> for ScopeChange {
+    fn from(wire: ScopeWire) -> Self {
+        match wire {
+            ScopeWire::Unchanged {} => Self::Unchanged,
+            ScopeWire::Less { reason } => Self::Less { reason },
+            ScopeWire::More { reason } => Self::More { reason },
+            ScopeWire::Different { reason } => Self::Different { reason },
+        }
+    }
 }
 
 /// Complete proposal input, before semantic checks of the parts and dependencies.
@@ -141,8 +174,30 @@ pub enum ReadProposalError {
 ///
 /// # Errors
 /// Returns [`ReadProposalError`] for invalid structure or incomplete estimate/scope fields.
-pub fn read_proposal(_text: &str) -> Result<Proposal, ReadProposalError> {
-    Err(ReadProposalError::TooLarge)
+pub fn read_proposal(text: &str) -> Result<Proposal, ReadProposalError> {
+    if text.len() > crate::questions::MAX_QUESTIONS_BYTES {
+        return Err(ReadProposalError::TooLarge);
+    }
+    let proposal: Proposal = serde_json::from_str(text).map_err(|source| ReadProposalError::Json { source })?;
+    for (index, part) in proposal.parts.iter().enumerate() {
+        let valid = part.estimate.as_ref().is_some_and(|estimate| {
+            !estimate.unit.trim().is_empty() && estimate.amount.as_f64().is_some_and(|amount| amount >= 0.0)
+        });
+        if !valid {
+            return Err(ReadProposalError::Estimate {
+                part: index.saturating_add(1),
+            });
+        }
+    }
+    match &proposal.scope {
+        ScopeChange::Unchanged => {}
+        ScopeChange::Less { reason } | ScopeChange::More { reason } | ScopeChange::Different { reason } => {
+            if reason.trim().is_empty() {
+                return Err(ReadProposalError::ScopeReason);
+            }
+        }
+    }
+    Ok(proposal)
 }
 
 impl Proposal {
