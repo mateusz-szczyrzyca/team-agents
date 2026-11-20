@@ -582,7 +582,7 @@ impl Owner {
         }
         self.hangs.extend(recovery.hangs);
         self.record_recovered_ends(&recovery.interrupted);
-        self.snapshot_interrupted(&recovery.interrupted).await?;
+        self.snapshot_interrupted(&recovery.interrupted, now).await;
         for task in &recovery.exhausted {
             let located = self.locate(task)?;
             self.commit(task, &located, now, Vec::new(), Some(Notice::NoStatus { exit: None }))
