@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.32.0 — 20.11.2026 — PR #149
+## 0.33.0 — 20.11.2026 — PR #150
 
 ### New features
 - [agent] [agent-runtime] When the daemon starts, every task whose run was cut by the restart gets a snapshot of its worktree if its round is still open: all uncommitted, staged, deleted and untracked files (binary ones too; ignored files are left out) are kept as a commit under `refs/agents/snapshots/<round>/<task>/<n>`, without changing the worktree, its index or its files.
@@ -14,6 +14,12 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Enhancements
 - [agent-runtime] Snapshots are recorded in the history database (`snapshots`) and can be read back by round.
+
+## 0.32.0 — 20.11.2026 — PR #149
+
+### Enhancements
+- [agent-core] The core can now read, write back and compare the plan of steps a task will keep in its worktree;
+  nothing the daemon or the CLI does changes yet.
 
 ## 0.31.0 — 20.11.2026 — PR #148
 
