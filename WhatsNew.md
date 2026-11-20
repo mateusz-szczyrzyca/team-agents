@@ -9,7 +9,10 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Bug fixes
 - [agent] [agent-core] When a round has findings only you may allow and findings the team can fix, you are asked
-  about your part before the team starts its next pass. Your question uses no team pass.
+  about your part before the team starts its next pass. Your question uses no team pass and does not give the team
+  more passes than it had.
+- [agent] [agent-core] What you allowed for a file is asked about again when the team changes that file afterwards.
+  Allowing a protected file no longer allows a lint suppression or another finding of the team's added to it.
 
 ## 0.27.0 — 20.11.2026 — PR #143
 
