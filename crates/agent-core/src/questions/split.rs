@@ -1,6 +1,7 @@
 //! Explicit human approval of a whole split; free-text answers never create partial plans.
 
-use crate::state::split::{SplitError, SplitPlan};
+use crate::ids::ItemId;
+use crate::state::split::{PartDefinition, SplitError, SplitPlan};
 
 use super::Verdict;
 
@@ -34,8 +35,48 @@ pub enum ReadSplitError {
 ///
 /// # Errors
 /// Returns [`ReadSplitError`] for oversized input or a malformed explicit approval.
-pub fn read_split(_verdict: &Verdict) -> Result<Option<SplitPlan>, ReadSplitError> {
-    Ok(None)
+pub fn read_split(verdict: &Verdict) -> Result<Option<SplitPlan>, ReadSplitError> {
+    let Verdict::Own(answer) = verdict else {
+        return Ok(None);
+    };
+    let text = answer.as_str();
+    if text.len() > super::MAX_QUESTIONS_BYTES {
+        return Err(ReadSplitError::TooLarge);
+    }
+    let mut lines = text.lines();
+    if lines.next() != Some("split") {
+        return Ok(None);
+    }
+    let Some(open) = lines.next() else {
+        return Ok(None);
+    };
+    if !open.starts_with("```") {
+        return Ok(None);
+    }
+    if open != "```json" {
+        return Err(ReadSplitError::Shape);
+    }
+    let rest = lines.collect::<Vec<_>>();
+    let Some((close, body)) = rest.split_last() else {
+        return Err(ReadSplitError::Shape);
+    };
+    if *close != "```" || body.iter().any(|line| line.starts_with("```")) {
+        return Err(ReadSplitError::Shape);
+    }
+    let wire: Approval = serde_json::from_str(&body.join("\n")).map_err(|source| ReadSplitError::Json { source })?;
+    SplitPlan::new(wire.parent, wire.parts)
+        .map(Some)
+        .map_err(|source| ReadSplitError::Invalid { source })
+}
+
+/// Complete human input; graph validation retains its typed cause separately from JSON errors.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Approval {
+    /// Existing task-list item to split.
+    parent: ItemId,
+    /// All parts in their permanent letter order.
+    parts: Vec<PartDefinition>,
 }
 
 #[cfg(test)]
