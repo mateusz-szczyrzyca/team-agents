@@ -208,8 +208,14 @@ impl Owner {
             Client::Cli => AnsweredVia::Command,
             Client::Dashboard { .. } => AnsweredVia::Dashboard,
         };
-        self.record_answer(&task, &open, via, &answered).await?;
-        Ok(Ok(Reply::Applied { tasks: vec![task] }))
+        let split = self.record_answer(&task, &open, via, &answered).await?;
+        Ok(Ok(match split {
+            Some(split) => Reply::Answered {
+                tasks: vec![task],
+                split,
+            },
+            None => Reply::Applied { tasks: vec![task] },
+        }))
     }
 
     /// The questions `task` waits for answers to, or why there are none.
@@ -277,10 +283,10 @@ impl Owner {
         };
         match questions::judge(&loaded.file) {
             Judgement::NotYet => Ok(()),
-            Judgement::Answered => {
-                self.record_answer(&saved.task, &open, AnsweredVia::SavedFile, &loaded.file)
-                    .await
-            }
+            Judgement::Answered => self
+                .record_answer(&saved.task, &open, AnsweredVia::SavedFile, &loaded.file)
+                .await
+                .map(|acknowledgement| drop(acknowledgement)),
             Judgement::Incomplete { problems } => {
                 let text = questions::describe(&loaded.file, &problems);
                 {
@@ -350,7 +356,7 @@ impl Owner {
         open: &WaitingQuestions,
         via: AnsweredVia,
         file: &agent_core::questions::QuestionsFile,
-    ) -> Result<(), OwnerError> {
+    ) -> Result<Option<String>, OwnerError> {
         let decision = {
             let team = self
                 .parts
@@ -370,7 +376,7 @@ impl Owner {
                 })?
                 .activate_split(plan)?;
         }
-        if let Some(acknowledgement) = decision.acknowledgement {
+        if let Some(acknowledgement) = &decision.acknowledgement {
             tracing::info!(event = LogEvent::QuestionsAnswered.as_str(), task = %task, %acknowledgement, "the split answer was interpreted");
         }
         let now = Timestamp::now(&self.parts.clock)?;
@@ -429,7 +435,7 @@ impl Owner {
             "the questions are answered"
         );
         self.look_at(&open.located.team);
-        Ok(())
+        Ok(decision.acknowledgement)
     }
 }
 

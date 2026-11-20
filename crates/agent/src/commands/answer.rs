@@ -220,6 +220,13 @@ async fn send(
                 open.number
             ),
         ),
+        Ok(Reply::Answered { split, .. }) => say(
+            out,
+            &format!(
+                "Answered questions number {} of {task}: it goes on with your answers.\n{split}\n",
+                open.number
+            ),
+        ),
         Ok(other) => Err(AnswerError::UnexpectedReply {
             kind: kind_of(&other),
             wanted: "the task that took the answers",

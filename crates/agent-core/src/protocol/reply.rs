@@ -92,6 +92,13 @@ pub enum Reply {
         /// The tasks that changed or received it.
         tasks: Vec<TaskId>,
     },
+    /// `answer`: the reached tasks and the interpretation of a split verdict.
+    Answered {
+        /// The tasks whose questions were answered.
+        tasks: Vec<TaskId>,
+        /// Which parts were recorded, or why the split was refused.
+        split: String,
+    },
     /// `gate`: what the gate said, without the state of the tree. The daemon answers with [`Reply::GateRecorded`]
     /// instead; this reply stays so that a client that knows it is still read.
     Gate {
