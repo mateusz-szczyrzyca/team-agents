@@ -977,7 +977,8 @@ impl Owner {
     }
 
     /// A run that was stopped: by the human, whose word sets the status of the task, or because the daemon shuts down, when
-    /// the run is recorded as interrupted and queued, unless its no-status retry budget is exhausted.
+    /// the run is recorded as interrupted and queued, unless its no-status retry budget is exhausted and the ladder has no
+    /// new session for it.
     async fn interrupted(&mut self, task: &TaskId, session: Option<CliSessionId>) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
         let now = Timestamp::now(&self.parts.clock)?;
@@ -997,7 +998,11 @@ impl Owner {
                 .state
                 .find_task(task)
                 .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
-            let status = interrupted_status(located.role, found.member);
+            let mut status = interrupted_status(located.role, found.member);
+            // The retries of the session are used up: the ladder may still start the task in a new session.
+            if status == TaskStatus::Failed && self.restart_anew(task, &located)? {
+                status = TaskStatus::Queued;
+            }
             self.move_to(task, &located.team, status, &mut events)?;
             let notice = (status == TaskStatus::Failed).then_some(Notice::NoStatus { exit: None });
             self.commit(task, &located, now, events, notice).await?;
@@ -1355,8 +1360,8 @@ impl Owner {
         Ok(next)
     }
 
-    /// Whether the ladder starts `task`, which a restart found with the no-status retries of its session used up, in a
-    /// new session; the renewal is recorded when it does.
+    /// Whether the ladder starts `task`, which a restart or a stop of the daemon left with the no-status retries of its
+    /// session used up, in a new session; the renewal is recorded when it does.
     fn restart_anew(&mut self, task: &TaskId, located: &Located) -> Result<bool, OwnerError> {
         let count = self
             .parts
