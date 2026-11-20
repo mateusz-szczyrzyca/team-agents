@@ -12,7 +12,10 @@ const PART_KEYS: &str = "abcdefghijklmnopqrstuvwxyz";
 /// Position of a part in its split, shown as a lowercase letter from `a` through `z`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub struct PartKey(char);
+pub struct PartKey(
+    /// Validated single lowercase ASCII letter.
+    char,
+);
 
 impl std::fmt::Display for PartKey {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

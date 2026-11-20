@@ -1184,3 +1184,19 @@ turn limit ignore it and never emit this outcome. The owner saves the end and qu
 next launch. It derives the consecutive count from the suffix of persisted run endings, so a restart between
 settlement and scheduling neither resets the budget nor duplicates the continuation. Without a resumable session
 the task fails instead of silently starting over. The resumed run records `why = turn_limit` in the history.
+
+### Split-plan preparation
+
+`agent-core::state::split` validates whole plans and assigns lettered `PartId`s separately from task-list `ItemId`s.
+Teams retain immutable approved plans and reject unknown or repeated parent items. Schema 13 migrates schema 12
+without reconstructing or renaming history; older migrations remain supported. The fixture and whole-document
+comparison are described in [state.md](state.md#approved-split-definitions).
+
+`questions::split::read_split` reads only an explicit human verdict, retaining typed validation causes. A bare `ok`
+or free-text split answer returns no plan. `decide::split::next_parts` takes a plan and the set of merged keys and
+returns eligible identities in declaration order, or completion when all parts are merged. It performs no I/O;
+callers must not use it to reopen work already assigned in an active round.
+
+These APIs are not connected to the daemon in this preparatory part. Answer acknowledgement, durable per-part
+execution progress, merge handling, round/branch allocation, prompts and status rendering belong to the activation
+part. Existing item and round lifecycle decisions, including delivery through another pull request, stay unchanged.
