@@ -49,10 +49,12 @@ const (
 
 // Message is one entry in the append-only message log (messages.jsonl).
 type Message struct {
-	ID    int64           `json:"id"`              // monotonically increasing; read cursors compare against it
-	TS    Timestamp       `json:"ts"`              // local time, "2006-01-02 15:04:05"
-	From  string          `json:"from"`            // sender: agent name, "agentbus" for system notices, or the human's user name
-	To    string          `json:"to"`              // recipient: agent name, "all", or "team:<team id>"
+	ID   int64     `json:"id"`   // monotonically increasing; read cursors compare against it
+	TS   Timestamp `json:"ts"`   // local time, "2006-01-02 15:04:05"
+	From string    `json:"from"` // sender: agent name, "agentbus" for system notices, or the human's user name
+	// To is the recipient: an agent's name, the ID of a member's task (a direct message to that task, written from
+	// outside teams), "all", or "team:<team id>".
+	To    string          `json:"to"`
 	Kind  MessageKind     `json:"kind,omitempty"`  // event type (see events.go); "" in messages of older versions = chat
 	Data  json.RawMessage `json:"data,omitempty"`  // the event's fields as JSON (for log pipelines and tools)
 	Text  string          `json:"text"`            // the rendered text agents and humans read
@@ -129,10 +131,13 @@ type Investigation struct {
 // State is the whole shared bus state, persisted in state.json and always accessed under
 // the bus lock (Bus.with). Map keys are IDs/names as strings.
 type State struct {
-	NextID         int64                     `json:"next_id"`        // next message ID
-	Agents         map[string]*Presence      `json:"agents"`         // running agents by name
-	Reservations   map[string]*Reservation   `json:"reservations"`   // taken resources by resource name
-	Cursors        map[string]int64          `json:"cursors"`        // last read message ID per agent
+	NextID       int64                   `json:"next_id"`      // next message ID
+	Agents       map[string]*Presence    `json:"agents"`       // running agents by name
+	Reservations map[string]*Reservation `json:"reservations"` // taken resources by resource name
+	// Cursors is the last read message ID per session: "<agent>/<team id>" for a session in a team, "<agent>" outside
+	// teams. A session in a team that has no cursor of its own yet starts from "<agent>", the one cursor that states of
+	// older versions kept per agent.
+	Cursors        map[string]int64          `json:"cursors"`
 	NextInvID      int64                     `json:"next_inv_id"`    // last investigation ID issued
 	Investigations map[string]*Investigation `json:"investigations"` // by ID
 	Teams          map[string]*Team          `json:"teams"`          // by team ID
