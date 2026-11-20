@@ -1,12 +1,12 @@
 # The Rust `agent` — architecture
 
-`bin/agent` (Bash) is being rewritten in Rust, as a Cargo workspace in this repository, item by item of the plan
-"Rewrite `bin/agent` in Rust". This file describes the workspace's layout, its process model and the rules every
+`agent` is a Cargo workspace in this repository, built item by item of the plan "Rewrite `bin/agent` in Rust"
+(`rust-agent-plan.md`, `rounds/`). This file describes the workspace's layout, its process model and the rules every
 item of the plan follows. Read it before you change anything under `crates/`; [`AGENTS.md`](../AGENTS.md) ("Rust")
 points here.
 
-Until the cutover (feature 10 of the plan) the old implementation runs the installation and the new one runs
-nowhere but in tests and trials.
+The implementation it replaced — `bin/agent` (Bash), `agent/` (an unfinished Go version) and `live/` (the terminal
+panel and the old dashboard) — was removed from the repository in 0.25.0; git's history has it.
 
 ## Layout
 
@@ -1079,9 +1079,10 @@ the developer rules also come in a variant for workers (a delegated task instead
 - **Every item stands alone:** it compiles and passes the whole gate on `main` without the other items of its
   feature, and uses only code from the features its feature's "Depends on" line names, all of them merged. Items of
   one feature are taken in order; features whose dependencies are merged run in parallel.
-- **The old implementation is a reference only.** `bin/agent` (Bash), `agent/` (the unfinished Go version) and
-  `live/` (the old dashboard) show how it worked. Nothing is ported line by line, linked, called or kept compatible:
-  no shared files, no shared state format, no shared commands. `agentbus/` (Go) stays and is used as it is.
+- **The old implementation is gone.** `bin/agent` (Bash), `agent/` (the unfinished Go version) and `live/` (the old
+  dashboard) were removed in 0.25.0; where the plan names them, git's history shows how they worked. Nothing is
+  ported line by line or kept compatible: no shared files, no shared state format, no shared commands. `agentbus/`
+  (Go) stays and is used as it is.
 - **No prompt text in `.rs` files, ever.** Everything a model reads, and everything written into a file a human
   answers (questions-file instructions, notification texts), lives in `prompts/` as a template with `{{name}}`
   variables. Error messages of the CLI and log events stay in code.
@@ -1119,8 +1120,8 @@ cargo test --workspace --all-features --locked          # doctests included, und
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
 ```
 
-`make gate` runs it alone: the Bash and Go suites of the old implementation are steps of `make gate-full`, which
-only the human runs. It is also a step of `make test` and `make lint`. The existing CI workflow
+`make gate` runs it alone: the lints and the tests of `agentbus` (Go) are steps of `make gate-full`, for a change of
+`agentbus/` or the tools. It is also a step of `make test` and `make lint`. The existing CI workflow
 ([`.github/workflows/test.yml`](../.github/workflows/test.yml)) runs `make lint`, so it also runs the complete Rust
 gate. The Ubuntu runner supplies rustup; the first cargo command installs the pinned toolchain and its components.
 No workflow edit is needed. This also avoids requiring the investigation token to have the `workflow` scope.

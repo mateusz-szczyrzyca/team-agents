@@ -11,31 +11,33 @@ gives them a protocol (the prompts), a shared bus for coordination (an MCP serve
 through question files and notifications.
 
 **This repository is developed mostly by its own agents.** You are probably running inside a team-agents
-installation right now, started by the same `agent` script you are about to change. Keep that in mind (see
+installation right now, started by the same `agent` binary you are about to change. Keep that in mind (see
 "Never" below).
 
 ### Components
 
 | Component | Where | Language | Role |
 |---|---|---|---|
-| `agent` | `bin/agent` | Bash | the CLI and the runner: tasks, teams, git worktrees, systemd units, prompts, watchdog, notifications, archives |
-| `agentbus` | `agentbus/` | Go, standard library only | the MCP server every agent run talks to (messages, reservations, investigations, teams, board, notebook, checkpoints) and CLI subcommands the script uses; shared state in `~/agents/bus/` under `flock` |
-| `agentlive` | `live/` | Go + Bubble Tea; the web interface: Go standard library + vendored htmx | the terminal panel `agent live`, and `agent web` (`live/web*.go`, templates and static files in `live/web/`; never edit `live/web/static/vendor/` by hand — `tools/update-web-vendor.sh`) |
-| prompts | `prompts/*.md` | Markdown | the protocol given to the agents; `{{PLACEHOLDERS}}` are filled by `build_prompt` in `bin/agent` |
+| `agent` | `Cargo.toml`, `crates/` | Rust | the CLI and the daemon ([`docs/architecture.md`](docs/architecture.md)): `agent-core` (pure decisions, the state, the prompts' catalog), `agent-runtime` (files, processes, git, GitHub, agentbus), `agent` (the commands and the daemon), `agent-web` |
+| `agentbus` | `agentbus/` | Go, standard library only | the MCP server every agent run talks to (messages, reservations, investigations, teams, board, notebook, checkpoints) and the CLI subcommands the daemon calls; its own state in the bus directory under `flock` |
+| prompts | `prompts/` | Markdown | the texts given to the agents and to the human; every file is an entry of the catalog in `crates/agent-core/src/prompt.rs`, which names its variables |
 | `errgen` | `tools/errgen/` | Go | generates the per-operation error types `agentbus/errors_gen.go` from `agentbus/errors.json` |
-| `doccheck` | `tools/doccheck/` | Go | fails when a constant, variable, type or struct field has no comment |
-| Rust workspace | `Cargo.toml`, `crates/` | Rust | the rewrite of `bin/agent` ([`docs/architecture.md`](docs/architecture.md)): `agent-core`, `agent-runtime`, `agent`, `agent-web`; runs only in tests until its cutover |
-| tests | `agentbus/*_test.go`, `live/*_test.go`, `tests/unit/` (bats with stub CLIs), `tests/integration/` (real CLIs, opt-in) | | |
+| `doccheck` | `tools/doccheck/` | Go | fails when a constant, variable, type or struct field of `agentbus` has no comment |
+| the gate | `Makefile`, `tools/gate.sh`, `tools/test-lock.sh` | Make, Bash | what `agent gate` runs, with short output, one test run at a time on the machine |
+| tests | `crates/**/tests.rs`, `crates/*/tests/` (fake CLIs and a fake GitHub, no network), `agentbus/*_test.go` | | |
+
+The Bash implementation (`bin/agent`), its rewrite in Go (`agent/`), the terminal panel and the old web interface
+(`live/`) and their Bats suite were removed in 0.25.0. Do not bring them back and do not write new Bash or Go for
+what the Rust workspace does.
 
 ### How the parts talk
 
-`agent run` creates a task (directory `~/agents/tasks/<id>/` with `meta.env`), a git worktree and a branch,
-and starts a transient systemd unit running `agent _runner`. The runner builds the prompt, starts the agent CLI
-with an MCP configuration that spawns `agentbus serve` for that run, normalizes the CLI's event stream into
-`activity.jsonl` (`agentbus normalize`) and acts on the `STATUS:` line of the agent's final message. Every
-`agentbus` process reads and writes the same `bus/state.json` and `bus/messages.jsonl` under an exclusive lock.
-The script calls `agentbus` subcommands (`team-get`, `inv-next`, …) and relies on their output format and exit
-codes.
+The human starts one daemon per `AGENTS_HOME` (`agent daemon`; `config/systemd/agent-daemon.service`). It owns
+`state.json`, the history (`history.db`) and every run; the other commands (`agent run`, `status`, `answer`, `stop`,
+...) talk to it through `agent.sock`. `agent run` creates a task or a team with a git worktree and a branch for each
+task. The daemon builds the prompt of a run from `prompts/`, starts the agent CLI with an MCP configuration that
+spawns `agentbus serve` for that run, records what the CLI does in `tasks/<task>/` and acts on the `STATUS:` line of
+the agent's final message. The daemon calls `agentbus` subcommands and relies on their output format and exit codes.
 
 ## Never
 
@@ -43,35 +45,36 @@ These rules have no exceptions unless the human explicitly asks for it in the ta
 
 The precheck before a round's review holds rules 1, 2 and 6 on the round's own diff: an existing test or check
 changed, removed or renamed, production code that looks at whether it runs under test, a change to `AGENTS.md`,
-`CLAUDE.md` or `.github/workflows/` sends the round back — only the human allows it (`agent allow <team> <path>`), and
+`CLAUDE.md` or `.github/workflows/` sends the round back — only the human allows it (his answer to the check's
+question, or an `Allow:` line of the task list where one is possible), and
 an `--autopilot` decision is not the human's. A lint suppression (`//nolint`, `#nosec`, `# shellcheck disable=`,
 `# noqa`, `# type: ignore`, `@ts-ignore`, `eslint-disable`, `#[allow(...)]`) passes when the PR description names its
 file and why; a skipped test belongs in the PR's `## Skipped tests` section, with its reason.
 
 1. **Never modify existing tests.** Do not change, delete, rename, skip or weaken any existing test, test helper
-   or stub behaviour (`*_test.go`, `tests/**`), and do not change expected values to make a test pass. When a
+   or fake behaviour (`tests.rs`, `crates/*/tests/**`, `*_test.go`), and do not change expected values to make a test pass. When a
    test fails, the code is wrong until proven otherwise. If the task requires behaviour that an existing test
    forbids, stop and ask the human in your questions file; wait for the answer. **Adding new tests is required**
-   (see "Tests"); adding a new action to a stub CLI is allowed, changing an existing one is not.
+   (see "Tests"); adding a new action to a fake CLI is allowed, changing an existing one is not.
 2. **Never change `AGENTS.md` or `CLAUDE.md`.** Record what you learned in the repository notebook
    (`notebook_append`) and suggest changes to this file in your report.
-3. **Never stop, restart or reinstall the running installation.** No `agent stop`, `agent stop --running`,
-   `install.sh`, `systemctl --user stop|restart agent-*`, no edits in `~/agents/` and no `make install`-like
-   commands against your own home. You and the other agents run inside it. Test only in isolated temporary
-   homes — the bats suite does that for you.
-4. **Never run real agent CLIs or `make integration`** unless the task asks for it: they cost the human money
-   and quota.
+3. **Never stop, restart or reinstall the running installation.** No `agent stop`, `agent pause`, no stopping or
+   restarting of the daemon (`systemctl --user stop|restart agent-*`, signals), no replacing of its binary and no
+   edits in its `AGENTS_HOME`. You and the other agents run inside it. Test only against a temporary `AGENTS_HOME`
+   of your own — the tests do that for you.
+4. **Never run real agent CLIs** unless the task asks for it: they cost the human money and quota.
 5. **Never edit `agentbus/errors_gen.go` by hand.** Edit `agentbus/errors.json` and run `make generate`.
 6. **Never change `.github/workflows/`.** You do not have permission, and CI runs with secrets. Propose changes
    in the PR description.
 7. **Never commit secrets** — tokens, keys, `secrets.env`, real host names or e-mail addresses of the human. Test
    data uses `example.com` and invented names.
-8. **Never add a dependency** (Go module, system package used by the script) without the human's approval.
+8. **Never add a dependency** (a crate, a Go module, a system package) without the human's approval.
    `agentbus` uses the standard library only.
 9. **Never break compatibility silently.** These are interfaces with existing installations: the files in
-   `~/agents/` (`bus/state.json`, `bus/messages.jsonl`, `tasks/*/meta.env`, `activity.jsonl`, checkpoints,
-   notebooks), the output and exit codes of `agentbus` subcommands that `bin/agent` parses, the `agent` CLI,
-   the configuration variables in `agents.conf`, the MCP tool names and arguments, the log event names. A change
+   `AGENTS_HOME` (`state.json` and its schema — [`docs/state.md`](docs/state.md) —, `history.db`, the files of a
+   task, the bus's state and messages, checkpoints, notebooks), the output and exit codes of `agentbus` subcommands
+   that the daemon parses, the `agent` CLI and the protocol of its socket, the keys of `agents.toml` and
+   `secrets.toml`, the MCP tool names and arguments, the log event names. A change
    to any of them needs backward compatibility (old data still readable) or a migration, tests for both, and a
    README update. Say it in the PR description. `agentbus/testdata/state-legacy.json` is a bus state written
    by an earlier version: it must keep loading (`TestLegacyStateLoads`). When you change a persisted type, add a
@@ -80,15 +83,14 @@ file and why; a skipped test belongs in the PR's `## Skipped tests` section, wit
 
 ## Setup
 
-- Go (the version in `agentbus/go.mod` or newer), `bash` ≥ 5, `jq`, `git`, `bats`, `7z` (`p7zip-full`),
-  `ssh-keygen` (`openssh-client`).
-- Linters, pinned and checksum-verified: **`make tools`** installs `golangci-lint`, `staticcheck` and
-  `shellcheck` into `~/.local/bin` without sudo. If `make lint` says a linter is missing, run `make tools` —
-  do not skip the check and do not install other versions. Missing system packages: install them only if the
-  prompt says you have sudo; otherwise report what is missing.
-- The `live` module downloads its dependencies (Bubble Tea) through the Go module proxy on first build.
 - Rust: `rustup` (no sudo, `~/.cargo/bin` in `PATH`). The first cargo command in the repository installs the toolchain
   of `rust-toolchain.toml` with `rustfmt` and `clippy`; cargo downloads the crates of `Cargo.lock` on first build.
+- Go (the version in `agentbus/go.mod` or newer): the tests of the Rust workspace build `agentbus` from its source.
+  `bash` ≥ 5, `git`, `make`.
+- Linters of `agentbus` and the scripts, pinned and checksum-verified: **`make tools`** installs `golangci-lint`,
+  `staticcheck` and `shellcheck` into `~/.local/bin` without sudo. If `make lint` says a linter is missing, run
+  `make tools` — do not skip the check and do not install other versions. Missing system packages: install them
+  only if the prompt says you have sudo; otherwise report what is missing.
 
 ## Workflow and checks
 
@@ -108,33 +110,33 @@ need more, read the log with `grep -n` or `tail` — never print a whole log: ev
 your context and is read again at every later step. While you work, run single tests and clippy on the crate you
 change, not the gate: a RED commit fails it by design.
 
-**The suites of the old implementation are not yours to run.** The Rust workspace replaces `bin/agent` (Bash) and
-`agent/` (Go), and no round changes them any more. Never run `make gate-full`, `make test`, `make lint`,
-`make unit-bats`, `make harness`, `make unit-agent-bats` or `bats`: they take minutes of every run and check code
-you do not touch. A failure in them is not a finding, not a blocker and not yours to fix, look into or report.
-Only the human runs them (`make gate-full`), for a change of `bin/agent`, `agentbus/` or the tools.
+**The checks of `agentbus` are not part of the gate.** A round of the Rust workspace does not change `agentbus/` or
+`tools/`, so do not run `make gate-full`, `make test`, `make lint` or `make unit-go` for it: they take minutes and
+check code you do not touch. A change of `agentbus/` or of the tools — only when the task asks for it — must pass
+`make gate-full` as well (the Go lints, `doccheck`, the generated errors, `go test`).
 
 One test run at a time on the machine: every target that runs tests (`gate`, `gate-full`, `test`, `unit-go`,
-`unit-bats`, `harness`, `unit-agent-bats`, `rust`) holds a lock (`tools/test-lock.sh`, `/tmp/.make.command.lck`). A busy lock refuses with
+`rust`) holds a lock (`tools/test-lock.sh`, `/tmp/.make.command.lck`). A busy lock refuses with
 `another tests are running now - please wait before you try again` (exit 75) and names who holds it; wait and try
 again, or run `GATE_WAIT=1 make gate` to wait in line. Never run the tests around it. A run that died frees the lock at
 once; one alive past `TEST_LOCK_STALE_MIN` (10) minutes is taken for hung and stopped.
 
 - A single Rust test: `cargo test -p agent-core <name>`; one crate's lints:
   `cargo clippy -p agent-core --all-targets --all-features --locked -- -D warnings`.
-- For the human, on a change of the old implementation (`make gate-full` runs all of it): `make lint` —
-  `shellcheck -S warning` on every Bash script, `gofmt`, `golangci-lint` (configuration: `.golangci.yml`) and
-  `staticcheck` on every Go module, `doccheck`, and a check that `errors_gen.go` matches `errors.json`; `make test`
-  — `go vet` and `go test` for the Go modules, and the bats suite (`tests/unit`, stub CLIs, no network, no real
-  accounts); after changing `agentbus/errors.json`: `make generate`.
-- All checks must pass with **zero** findings. Fix the cause; do not add `//nolint` or `# shellcheck disable`
-  without a comment on the same line explaining why the finding does not apply, and mention every such
-  suppression in the PR description.
+- On a change of `agentbus/` or the tools (`make gate-full` runs all of it): `make lint` — `shellcheck -S warning`
+  on the scripts, `gofmt`, `golangci-lint` (configuration: `.golangci.yml`) and `staticcheck` on every Go module,
+  `doccheck`, a check that `errors_gen.go` matches `errors.json`, and the Rust gate; `make unit-go` — `go vet` and
+  `go test` for `agentbus`; after changing `agentbus/errors.json`: `make generate`.
+- All checks must pass with **zero** findings. Fix the cause; a suppression (`#[expect(..., reason = "...")]`,
+  `//nolint`, `# shellcheck disable`) carries on the same line why the finding does not apply, and every one is
+  named in the PR description.
 
 Do not push code that fails `make gate`. If the gate fails for a reason outside your change (a broken tool, a
 flaky test), do not work around it: describe it in your report and ask.
 
-## Go
+## Go (`agentbus/`, `tools/errgen`, `tools/doccheck`)
+
+`agentbus` is the only Go program left. These rules hold for it; nothing new is written in Go.
 
 ### Errors — the model
 
@@ -189,7 +191,7 @@ func (s *Server) quizStart(question string) (string, *QuizStartError)
 
 - `log/slog` through `logInfo` / `logWarn` / `logError` with a `LogEvent` constant (snake_case, stable: dashboards
   and alerts use the names). New events are added to the `LogEvent` list with a comment.
-- Records share one schema with the script and the panel: `ts`, `level`, `component`, `event` plus fields. No
+- Records share one schema with the daemon ([`docs/log.md`](docs/log.md)): `ts`, `level`, `component`, `event` plus fields. No
   `fmt.Print*` for diagnostics; stdout of subcommands is a parsed interface (use `cliWriter` / `printJSON`).
 
 ### Style
@@ -209,28 +211,25 @@ func (s *Server) quizStart(question string) (string, *QuizStartError)
 4. Tests: every cause (`failsWith(t, <Op><Cause>)(...)`), the success path, and the dispatcher.
 5. Document it in the README ("MCP tools available to agents") and, if agents should use it, in the prompts.
 
-## Bash (`bin/agent`, scripts)
+## Shell scripts (`tools/`, `examples/`)
+
+Only the gate's own scripts and the examples are Bash; the harness is not. No new script for what the Rust
+workspace can do.
 
 - `#!/usr/bin/env bash` with `set -euo pipefail`; `shellcheck -S warning` clean with the pinned version.
 - Quote every expansion; use arrays for argument lists; `local` for every function variable; a one-line comment
   above every function saying what it does and its arguments.
-- **No silent errors.** No bare `|| true`, `2>/dev/null` or `|| :`. Use `try <event> cmd ...` (runs a command,
-  logs a failure as a warning, continues) or `jq_soft` for JSON that may be malformed; when a non-zero exit is
-  an expected answer (e.g. `grep` finding nothing, `agentbus` exit code `BUS_NOT_FOUND`), handle that code
-  explicitly and comment it.
-- Log with `log_info` / `log_warn` / `log_error <event> key=value...` (snake_case event names). Publish events
-  for agents on the bus with `notice <kind> ...` (typed script notices), not free text.
-- Configuration variables get a default with `${VAR:-default}` and a comment, and appear in
-  `config/agents.conf` and the README.
+- **No silent errors.** No bare `|| true`, `2>/dev/null` or `|| :`; when a non-zero exit is an expected answer
+  (e.g. `grep` finding nothing), handle that code explicitly and comment it.
 
 ## Rust (`Cargo.toml`, `crates/`)
 
-The Rust rewrite of `bin/agent` is a Cargo workspace beside the old implementation. Read
-[`docs/architecture.md`](docs/architecture.md) before you change anything under `crates/`: its layout, its process
-model and the rules every item of the plan "Rewrite `bin/agent` in Rust" follows.
+The harness is a Cargo workspace. Read [`docs/architecture.md`](docs/architecture.md) before you change anything
+under `crates/`: its layout, its process model and the rules every item of the plan (`rust-agent-plan.md`,
+`rounds/`) follows.
 
 - **Rules:** each role is given its own rules by the harness — the developer rules to write Rust, the review rules to
-  review it — cited by rule ID (ERR-2, PR-1, ...). For code under `crates/` they take the place of the Go and Bash sections of this
+  review it — cited by rule ID (ERR-2, PR-1, ...). For code under `crates/` they take the place of the Go section of this
   file; the rules of "Never", "Tests", "Commits and pull requests" and "Definition of done" still hold.
 - **Size of a PR of the Rust plan:** PR-1 and PR-2 as written, with no relaxation: a PR is planned for at most
   **1500** changed lines, tests not counted, and never passes **2000** — the 500 between them are a reserve for what
@@ -245,14 +244,17 @@ model and the rules every item of the plan "Rewrite `bin/agent` in Rust" follows
   are compiling stubs that return a wrong value, never `todo!()`. A test is frozen once its RED commit exists: later
   commits add tests, and a wrong test is corrected only by a `TEST-FIX:` commit of its own, listed in the PR under
   `## Tests changed after RED`. The unit tests of a new module go into its `tests.rs` (TDD-10).
-- **Never the live installation:** new code runs and is tested against its own `AGENTS_HOME`, never `~/agents`.
+- **Never the live installation:** code runs and is tested against its own temporary `AGENTS_HOME`, never the one of
+  the installation you run in.
 
-## Prompts (`prompts/*.md`)
+## Prompts (`prompts/`)
 
-- English. Placeholders `{{NAME}}` must be set in `build_prompt` (`R[...]`); a placeholder that is not set stays
-  in the prompt — a bats test checks that rendered prompts contain no `{{`.
-- Keep the protocol consistent across `protocol.md`, `team.md`, `investigator.md`, `helper.md` and `review.md`;
-  when you change a rule in one, check the others.
+- English; a translation of a text the human reads goes under `prompts/lang/<language>/`. Every file is an entry of
+  the catalog (`PromptId` in `crates/agent-core/src/prompt.rs`), which names who reads it and the `{{variables}}` it
+  may use; a test checks that every entry exists and renders with them. A new text is a new entry — never a text
+  built in the code.
+- Keep the protocol consistent across the texts of one audience (`harness/team/`, `harness/review/`,
+  `harness/run/`, ...): when you change a rule in one, check the others, and the golden files of the tests.
 - Prompts are instructions for other models: short, unambiguous, imperative; say what to do when something
   fails.
 
@@ -267,16 +269,17 @@ model and the rules every item of the plan "Rewrite `bin/agent` in Rust" follows
   the error, `expectToolError` for dispatcher errors) or with `errors.Is` / `errors.As` — never by comparing
   message texts (the helper `missing(...)` is the one message that is part of a contract). Use `newBus(t)`
   (temporary state directory), `server(...)`, `createTeam(...)`, `captureLogs(t)`.
-- bats: every test runs in a temporary `$HOME` with stub CLIs (`tests/unit/stubs/`). Drive the fake agent with
-  `scenario '{"<agent>": {"new": "<action>"}}'`; wait with `wait_status` / `wait_grep`, never with a bare
-  `sleep`; assert on files, `jq` queries over logs and git, not on timing.
+- Rust: as the developer rules say (TDD-*): unit tests in the module's `tests.rs`, tests of a whole process in
+  `crates/*/tests/` against a temporary `AGENTS_HOME` with the fake CLIs and the fake GitHub of the fixtures; wait
+  for a state, never with a bare sleep; assert on the state, the history, the files and git, not on timing.
 - Tests are deterministic, need no network and no real accounts, and clean up after themselves.
 
 ## Documentation
 
 - Every user-visible change updates the README in the same PR: commands, configuration, files, MCP tools, log
   events, exit codes, security implications.
-- `config/agents.conf` and `config/secrets.env.example` are templates: keep them in sync with the code.
+- `config/agents.example.toml` is the template of the configuration and [`docs/configuration.md`](docs/configuration.md)
+  its reference: keep them in sync with the code (a test reads the template).
 - Write for someone who installs team-agents for the first time.
 
 ## Commits and pull requests
@@ -312,23 +315,21 @@ model and the rules every item of the plan "Rewrite `bin/agent` in Rust" follows
 
 ## Rounds
 
-A PR changes at most 3000 lines (added + deleted, tests included, generated and vendored files not counted; aim for
-2000). A bigger task is planned as rounds — see the "Rounds" part of your prompt and README "Rounds". After every
-round `main` builds and passes `make gate`; unfinished work is dead code or a stub returning a typed "not
-implemented" error; no test is written ahead of its round, and a skip is an exception
-with a reason outside the code, listed in the PR's `## Skipped tests` section (`docs/tdd.md`, "Skipped tests").
-Check the size with `agent round-size <task>`. A PR of the Rust plan counts and limits its size as PR-1 does (section
-"Rust").
+A PR is planned for at most **1500** changed lines, tests not counted, and never passes **2000** (PR-1, PR-2; section
+"Rust"). A bigger task is split before coding and planned as rounds — see the "Rounds" part of your prompt. After
+every round `main` builds and passes `make gate`; unfinished work is dead code or a stub returning a typed "not
+implemented" error; no test is written ahead of its round, and a skip is an exception with a reason outside the
+code, listed in the PR's `## Skipped tests` section (`docs/tdd.md`, "Skipped tests").
 
 ## Definition of done
 
 - [ ] `make gate` passes with zero findings, on the commit handed over.
 - [ ] New behaviour has tests, written first (or a `Test-First: not possible` reason); no existing test was changed.
-- [ ] The PR is within the round limit (`agent round-size <task>`); every skip it adds is listed with its reason
-      in the PR's `## Skipped tests` section.
+- [ ] The PR is within the limit of its size (PR-1); every skip it adds is listed with its reason in the PR's
+      `## Skipped tests` section.
 - [ ] Errors are typed per operation; nothing is ignored; enums instead of string literals; every declaration
       has a comment.
-- [ ] README, `config/agents.conf` and prompts updated where the change is visible to users or agents.
+- [ ] README, `config/agents.example.toml`, `docs/` and prompts updated where the change is visible to users or agents.
 - [ ] `WhatsNew.md` says, simply and briefly, what the new version brings ("Commits and pull requests").
 - [ ] Compatibility of on-disk formats, subcommand output and exit codes kept (or migrated, tested and
       documented).

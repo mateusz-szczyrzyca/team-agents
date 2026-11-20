@@ -1,4 +1,0 @@
-{{define "content"}}{{with .Data}}
-<p class="dim">{{.Queue}}</p>
-{{range .Rows}}{{template "inv-card" .}}{{else}}<p class="dim">No investigations yet.</p>{{end}}
-{{end}}{{end}}
