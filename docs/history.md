@@ -358,6 +358,25 @@ The rounds a daemon log entry belongs to, oldest first. Key `(log, position)`, `
 | `position` | INTEGER ≥ 1 | its place in the list |
 | `round` | TEXT | the round |
 
+### `plan_versions`
+
+The versions of a task's plan ([`plan.md`](plan.md)) the daemon kept, and what it read when it read none. A row is
+written at the end of a run of a task, when what was read differs from the task's last row: a version whose text is
+the same as the last one is not written again.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | INTEGER key | the order the versions were written in, counted from 1 |
+| `task` | TEXT | the task whose plan it is |
+| `team` | TEXT | the task's team |
+| `run` | TEXT, nullable | the run at whose end it was read; `NULL` when the daemon read it outside a run |
+| `at` | TEXT | when it was read |
+| `kind` | `version` \| `missing` \| `unreadable` | a plan as written, a task with no `.agent/plan.md`, or a file that does not parse |
+| `text` | TEXT, nullable | the plan as written, for `version` |
+| `detail` | TEXT, nullable | what is wrong, in a line, for `unreadable` |
+
+`(kind = 'version')` is exactly `text` not `NULL`, and `(kind = 'unreadable')` is exactly `detail` not `NULL`.
+
 ## Indexes
 
 | Index | On | For |
@@ -375,6 +394,8 @@ The rounds a daemon log entry belongs to, oldest first. Key `(log, position)`, `
 | `daemon_logs_by_level` | `daemon_logs (level, id)` | the daemon log entries of a severity level |
 | `daemon_logs_warn_coalescing` | `daemon_logs (event, team, task, run, message, fields, cut)`, where `level` is `warn` | indexed lookup of a repeated warning; the writer also compares its ordered round list exactly |
 | `daemon_log_rounds_by_round` | `daemon_log_rounds (round, log)` | the daemon log entries of a round |
+| `plan_versions_by_task` | `plan_versions (task, id)` | the plan versions of a task, in the order they were read |
+| `plan_versions_by_team` | `plan_versions (team, id)` | the plan versions of a team, in the order they were read |
 
 The key of each table is an index too: `WITHOUT ROWID` tables are stored in the order of their key.
 
@@ -489,6 +510,8 @@ change nothing in the file; opening one for writing applies the migrations. A pr
 Migration `11` rebuilds `daemon_logs` with a `CHECK` that lists every event of the daemon: `github_step_waiting`,
 `github_step_resumed`, and `build_directory_removed`, which an edit of migration `4` gave only to new files. The rows keep
 their ids, rounds and search entries; the table's indexes and triggers are made again.
+Migration `12` (this version) adds `plan_versions` and changes no row the history already has: the plans of the runs
+that ended before it were not read, and the migration does not invent them.
 
 ## Asking with `sqlite3`
 

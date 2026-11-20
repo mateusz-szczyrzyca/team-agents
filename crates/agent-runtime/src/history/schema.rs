@@ -395,4 +395,5 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
     Migration { version: 9, sql: include_str!("009-second-opinions.sql") },
     Migration { version: 10, sql: include_str!("010-opinion-ends.sql") },
     Migration { version: 11, sql: include_str!("011-daemon-log-events.sql") },
+    Migration { version: 12, sql: include_str!("012-plan-versions.sql") },
 ];
