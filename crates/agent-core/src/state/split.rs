@@ -275,6 +275,7 @@ impl SplitPlan {
     }
 
     /// Requested agent tier and estimate of an existing part; unknown keys return none.
+    #[must_use]
     pub fn requirements(&self, key: PartKey) -> Option<proposal::Requirements> {
         self.entries()
             .find(|(id, _)| id.key() == key)

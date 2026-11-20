@@ -80,14 +80,17 @@ impl ProposalKeeping {
         })
     }
     /// Saved input, including syntax faults.
+    #[must_use]
     pub fn text(&self) -> &str {
         &self.text
     }
     /// Completed corrections, retained across submissions.
+    #[must_use]
     pub const fn corrections(&self) -> u32 {
         self.corrections
     }
     /// Current decision progress.
+    #[must_use]
     pub const fn stage(&self) -> &ProposalStage {
         &self.stage
     }

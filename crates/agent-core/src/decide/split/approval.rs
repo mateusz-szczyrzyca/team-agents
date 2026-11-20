@@ -79,32 +79,31 @@ pub fn decide_proposal(read: ProposalRead<'_>, policy: Split, unit: &str, correc
     };
     let plan = match proposal.plan() {
         Ok(plan) => plan,
-        Err(error) => return fault(plan_fault(proposal, error), policy, corrections),
+        Err(error) => return fault(plan_fault(proposal, &error), policy, corrections),
     };
-    if let Some((id, first)) = plan.entries().next() {
-        if !first.depends_on.is_empty() {
-            return fault(ProposalFault::Unreadable { part: Some(id.key()) }, policy, corrections);
-        }
+    if let Some((id, first)) = plan.entries().next()
+        && !first.depends_on.is_empty()
+    {
+        return fault(ProposalFault::Unreadable { part: Some(id.key()) }, policy, corrections);
     }
     for (key, part) in proposal.entries() {
-        if let Some(estimate) = &part.estimate {
-            if policy.part_limit != 0
-                && estimate.unit == unit
-                && estimate
-                    .amount
-                    .as_f64()
-                    .is_some_and(|amount| amount > f64::from(policy.part_limit))
-            {
-                return fault(
-                    ProposalFault::AboveLimit {
-                        part: key,
-                        estimate: estimate.clone(),
-                        limit: policy.part_limit,
-                    },
-                    policy,
-                    corrections,
-                );
-            }
+        if let Some(estimate) = &part.estimate
+            && policy.part_limit != 0
+            && estimate.unit == unit
+            && estimate
+                .amount
+                .as_f64()
+                .is_some_and(|amount| amount > f64::from(policy.part_limit))
+        {
+            return fault(
+                ProposalFault::AboveLimit {
+                    part: key,
+                    estimate: estimate.clone(),
+                    limit: policy.part_limit,
+                },
+                policy,
+                corrections,
+            );
         }
     }
     match proposal.scope() {
@@ -123,19 +122,19 @@ fn fault(fault: ProposalFault, policy: Split, corrections: u32) -> ProposalDecis
     }
 }
 
-fn plan_fault(proposal: &Proposal, error: SplitError) -> ProposalFault {
+fn plan_fault(proposal: &Proposal, error: &SplitError) -> ProposalFault {
     match error {
         SplitError::Count { .. } => ProposalFault::Unreadable { part: None },
         SplitError::Empty {
             part,
             field: PartField::Checks,
-        } => ProposalFault::MissingChecks { part },
+        } => ProposalFault::MissingChecks { part: *part },
         SplitError::Empty {
             part,
             field: PartField::Title | PartField::Deliverable,
         }
         | SplitError::UnknownDependency { part, .. }
-        | SplitError::DuplicateDependency { part, .. } => ProposalFault::Unreadable { part: Some(part) },
+        | SplitError::DuplicateDependency { part, .. } => ProposalFault::Unreadable { part: Some(*part) },
         SplitError::Cycle => match cycle_member(proposal) {
             Some(part) => ProposalFault::Cycle { part },
             // Preserve rejection even if a future plan validator reports a cycle with no witness.
@@ -153,10 +152,10 @@ fn cycle_member(proposal: &Proposal) -> Option<PartKey> {
             if key == start {
                 return Some(start);
             }
-            if visited.insert(key) {
-                if let Some((_, next)) = proposal.entries().find(|(candidate, _)| *candidate == key) {
-                    pending.extend(&next.depends_on);
-                }
+            if visited.insert(key)
+                && let Some((_, next)) = proposal.entries().find(|(candidate, _)| *candidate == key)
+            {
+                pending.extend(&next.depends_on);
             }
         }
     }

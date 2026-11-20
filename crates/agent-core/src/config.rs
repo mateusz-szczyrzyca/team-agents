@@ -1026,6 +1026,7 @@ impl Config {
     }
 
     /// Policy for approval of split proposals; daemon use is added separately.
+    #[must_use]
     pub fn split(&self) -> Split {
         self.split
     }

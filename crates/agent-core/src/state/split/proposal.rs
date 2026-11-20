@@ -30,6 +30,10 @@ pub struct Requirements {
 fn normal() -> Tier {
     Tier::Normal
 }
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if callbacks require a shared reference"
+)]
 fn is_normal(tier: &Tier) -> bool {
     *tier == Tier::Normal
 }
@@ -232,10 +236,12 @@ impl Proposal {
     }
 
     /// Original item named in the proposal.
+    #[must_use]
     pub const fn parent(&self) -> ItemId {
         self.parent
     }
     /// Scope declaration retained for a human decision.
+    #[must_use]
     pub const fn scope(&self) -> &ScopeChange {
         &self.scope
     }

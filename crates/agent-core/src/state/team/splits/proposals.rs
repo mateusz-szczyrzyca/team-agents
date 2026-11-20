@@ -6,6 +6,7 @@ use crate::state::split::keeping::ProposalKeeping;
 
 impl Team {
     /// Pending proposal and correction progress for an original item, if any.
+    #[must_use]
     pub fn split_proposal(&self, item: ItemId) -> Option<&ProposalKeeping> {
         self.split_proposals.get(&item)
     }
