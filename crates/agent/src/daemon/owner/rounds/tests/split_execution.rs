@@ -25,7 +25,7 @@ async fn approved_parts_merge_in_distinct_rounds_and_branches_and_close_only_the
     let mut rig = Rig::new(
         &[
             investigator("inv-lead", "ask,integrate"),
-            normal("claude-1", "work,ask,work"),
+            normal("claude-1", "work,ask-here,work"),
             investigator("inv-r1", "done:VERDICT: APPROVE"),
             investigator("inv-r2", "done:VERDICT: APPROVE"),
         ],
