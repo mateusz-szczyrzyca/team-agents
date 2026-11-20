@@ -347,8 +347,8 @@ async fn the_next_try_is_counted_from_the_end_of_the_failed_call() {
         .unwrap();
     let last_call = rows
         .iter()
-        .filter(|row| row.event() == LogEvent::GithubCallFailed && row.id() < waiting.id())
-        .map(agent_core::log::LogEntry::at)
+        .filter(|row| row.event() == LogEvent::GithubCallFailed && row.first_at() <= waiting.first_at())
+        .map(agent_core::log::LogEntry::first_at)
         .max()
         .unwrap();
     let next_try: agent_core::state::Timestamp = waiting
