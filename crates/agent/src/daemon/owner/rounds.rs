@@ -800,6 +800,10 @@ mod joined_pass_tests;
 mod verification_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/reviewer_activities.rs"]
+mod reviewer_activity_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/wake_ups.rs"]
 mod wake_ups_tests;
 

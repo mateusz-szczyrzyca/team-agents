@@ -100,7 +100,9 @@ lists, and terminal task outcomes before saving. Migration from schemas 1–10 r
 crew, item review/fix-pass history and opinion attempts, with deterministic timestamp fallbacks where older
 schemas kept no exact time. The pure `decide::investigator::choose` consumes configured names, free names,
 activity facts, the target team, permanent exclusions and a nonzero request size. It performs no I/O and uses
-neither a clock nor a random generator. No persisted or protocol fields are added by selection.
+neither a clock nor a random generator. Selection adds no persisted or protocol fields. What the record shows — the
+reviewers' lines of `agent status --running` and the view of `agent status --investigators` — is described below
+("What the investigators did").
 
 ### The prompt catalog and the CLI contract (`agent-core`)
 
@@ -739,6 +741,21 @@ command says when the round started and, once it is closed, how long it took; fo
 open, which the state does not keep — the daemon and the protocol are the same as before. `agent status <round>` (the protocol's `show` of a round) shows its item, its state, the tasks that worked for it with their
 role, agent, worktree and branch and their runs, its pull request and its review passes (the reviews of the pass that was approved are
 not kept once the item is done: the history of a later item has them).
+
+**What the investigators did.** The summary of a team in the daemon's answer to `status` carries the team's recorded
+activities (`TeamSummary::activities`, optional and absent while a team has none, so that an answer without them is the
+one a daemon before this change writes): each activity's investigator, task, rounds, request, when it was asked and how it
+ended. `agent status` reads them from that answer and nothing else; nothing on disk changed. The lines of the coordinators,
+members and workers stay those of their status; the line of a reviewer is its newest activity by the time it was asked — a
+review that goes (`working`, with the last activity of its run), a report (`done, <n>th review finished <time>`, the
+ordinal counting the reviews the investigator gave for the round) or an assignment that ended without a report, stopped or
+failed, with the time and the reason the daemon kept (that outcome takes precedence over the status of the task, which is
+`waiting` between reviews). A reviewer task without a recorded activity keeps the word of its status. `agent status
+--investigators` (a view of its own, which takes no target and no `--running`) shows, for every investigator of
+`[investigators.NAME]`, the last two of its activities in the teams that are not closed (a team with a round that goes on,
+as for `--running`), newest first (`agent_core::kinds::ActivityKind` names the kind of each): `done at <time>, <what>`,
+`working`, or `stopped at <time>, reason: …` in the words of a reviewer's line, and `free, no activity in an open team` for
+one that has none. The ordinal counts the reviews that gave their report.
 
 ### Round checks before the review
 

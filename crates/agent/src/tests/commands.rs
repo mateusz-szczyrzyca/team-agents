@@ -74,6 +74,7 @@ async fn status_prints_the_teams_the_daemon_lists() {
         Command::Status(StatusArgs {
             target: None,
             running: false,
+            investigators: false,
         }),
         &mut out,
     )
@@ -85,6 +86,54 @@ async fn status_prints_the_teams_the_daemon_lists() {
         daemon.requests()[0].command,
         Request::Status(StatusRequest { target: None })
     );
+}
+
+// Rule: `--investigators` is a view of its own: it asks the daemon for the teams and lists what the configuration's
+// investigators did, not the tasks of a team.
+#[tokio::test]
+async fn investigators_prints_the_configured_investigators_and_not_the_teams() {
+    let dir = tempfile::tempdir().unwrap();
+    let listed = vec![agent_core::protocol::TeamSummary::from(&team_state().teams()[0])];
+    let daemon = FakeDaemon::serve(&dir.path().join("agent.sock"), move |request| {
+        lines(request, Reply::Teams { teams: listed.clone() })
+    });
+    std::fs::write(
+        dir.path().join("agents.toml"),
+        "[agents.claude-1]\ncli = \"claude\"\n\n[investigators.inv-codex]\ncli = \"codex\"\n\n\
+         [tiers]\nnormal = [\"claude-1\"]\nworkers = []\n\
+         [binaries]\nclaude = \"claude\"\ncodex = \"codex\"\nagentbus = \"agentbus\"\n",
+    )
+    .unwrap();
+    let mut out = Vec::new();
+
+    let result = execute(
+        &environment(&dir),
+        Command::Status(StatusArgs {
+            target: None,
+            running: false,
+            investigators: true,
+        }),
+        &mut out,
+    )
+    .await;
+
+    result.unwrap();
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "inv-codex  free, no activity in an open team\n"
+    );
+    assert_eq!(
+        daemon.requests()[0].command,
+        Request::Status(StatusRequest { target: None })
+    );
+}
+
+// Rule: a view and a target cannot be asked together: the target would be looked at and left out.
+#[test]
+fn the_investigator_view_takes_no_target() {
+    let refused = Cli::try_parse_from(["agent", "status", "team-20261111-153000-t5m8", "--investigators"]).unwrap_err();
+
+    assert_eq!(refused.kind(), clap::error::ErrorKind::ArgumentConflict);
 }
 
 #[test]

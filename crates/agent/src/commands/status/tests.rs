@@ -58,6 +58,33 @@ fn teams_are_separated_by_nothing_but_their_own_lines() {
     assert_eq!(text.lines().count(), 10);
 }
 
+/// The answer of the daemon: the sample team `n` with a round of item 1.1, opened at 1 second, that `close` closes as
+/// abandoned at 90 seconds or leaves open, and with `activities`.
+pub(super) fn team(n: u32, close: bool, activities: Vec<agent_core::state::Activity>) -> TeamSummary {
+    let state = team_state();
+    let mut round = state.teams()[0].clone();
+    round
+        .open_round(
+            "round-20261111-153001-q1w2".parse().unwrap(),
+            Some("1.1".parse().unwrap()),
+            at(1),
+        )
+        .unwrap();
+    if close {
+        round
+            .close_round(
+                &"round-20261111-153001-q1w2".parse().unwrap(),
+                at(90),
+                RoundEnd::Abandoned,
+            )
+            .unwrap();
+    }
+    let mut summary = TeamSummary::from(&round);
+    summary.id = format!("team-20261111-1530{n:02}-t5m8").parse().unwrap();
+    summary.activities = activities;
+    summary
+}
+
 fn socket(dir: &tempfile::TempDir) -> std::path::PathBuf {
     dir.path().join("agent.sock")
 }
@@ -177,6 +204,77 @@ async fn a_closed_output_is_an_error_not_a_panic() {
         matches!(&error, StatusError::Output(e) if e.kind() == io::ErrorKind::BrokenPipe),
         "{error:?}"
     );
+}
+
+// ---- investigators -------------------------------------------------------------------------------------------------
+
+/// A home in `dir` whose `agents.toml` configures the investigators `inv-gemini` and `inv-codex`, and a daemon on its socket
+/// that answers `reply` to anything.
+fn investigators_home(dir: &std::path::Path, reply: Reply) -> FakeDaemon {
+    std::fs::write(
+        dir.join("agents.toml"),
+        "[agents.claude-1]\ncli = \"claude\"\n\n[investigators.inv-gemini]\ncli = \"claude\"\n\n\
+         [investigators.inv-codex]\ncli = \"codex\"\n\n[tiers]\nnormal = [\"claude-1\"]\nworkers = []\n\
+         [binaries]\nclaude = \"claude\"\ncodex = \"codex\"\nagentbus = \"agentbus\"\n",
+    )
+    .unwrap();
+    FakeDaemon::serve(&dir.join("agent.sock"), move |request| {
+        Answer::Lines(vec![
+            Frame::Response(Response::ok(request.id, reply.clone()))
+                .to_line()
+                .unwrap(),
+        ])
+    })
+}
+
+// Rule: `--investigators` lists the configured investigators with what the daemon answers a status request for the teams.
+#[tokio::test]
+async fn the_investigator_view_asks_the_daemon_and_lists_the_configured_investigators() {
+    let dir = tempfile::tempdir().unwrap();
+    let listed = vec![team(1, true, Vec::new()), team(0, false, Vec::new())];
+    let daemon = investigators_home(dir.path(), Reply::Teams { teams: listed.clone() });
+    let home = Home::new(&AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap());
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+    let mut out = Vec::new();
+
+    status_investigators(&mut connection, &home, UtcOffset::UTC, &mut out)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        investigators::render(
+            &listed,
+            &["inv-codex".parse().unwrap(), "inv-gemini".parse().unwrap()],
+            UtcOffset::UTC
+        )
+    );
+    assert_eq!(
+        daemon.requests()[0].command,
+        Command::Status(StatusRequest { target: None })
+    );
+}
+
+// Rule: a home whose configuration cannot be read cannot tell which investigators to show, and says so.
+#[tokio::test]
+async fn the_investigator_view_says_why_a_configuration_it_cannot_read_lists_nobody() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = FakeDaemon::serve(&socket(&dir), |request| {
+        Answer::Lines(vec![
+            Frame::Response(Response::ok(request.id, Reply::Teams { teams: Vec::new() }))
+                .to_line()
+                .unwrap(),
+        ])
+    });
+    let home = Home::new(&AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap());
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+
+    let error = status_investigators(&mut connection, &home, UtcOffset::UTC, &mut Vec::new())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, StatusError::Settings(_)), "{error:?}");
+    assert!(daemon.requests().is_empty(), "the daemon is not asked");
 }
 
 // ---- rounds --------------------------------------------------------------------------------------------------------
@@ -607,4 +705,439 @@ fn disk_line_appears_below_limit_and_not_above() {
 
     std::fs::write(home.free_space_file(), (150 * 1024 * 1024 * 1024u64).to_string()).unwrap();
     assert_eq!(activity.disk_line(), None);
+}
+
+// ---- the reviewer's line -------------------------------------------------------------------------------------------
+
+use agent_core::state::{ActivityEnd, ActivityOutcome, ActivityRequest, RunEnd};
+
+/// An activity of `investigator` in task `n`, in the round of item 1.1, asked `asked` seconds after 19:15:00 UTC, whose
+/// outcome is `outcome`.
+fn review_activity(
+    investigator: &str,
+    n: u32,
+    asked: u32,
+    request: &ActivityRequest,
+    outcome: &ActivityOutcome,
+) -> agent_core::state::Activity {
+    serde_json::from_value(serde_json::json!({
+        "investigator": investigator,
+        "task": task(n),
+        "rounds": ["round-20261111-153001-q1w2"],
+        "request": request,
+        "asked_at": at(asked),
+        "outcome": outcome,
+    }))
+    .unwrap()
+}
+
+/// The line of the reviewer task `n`, whose recorded activities are `activities`, in the status of the sample team with
+/// those activities in its round of item 1.1, whose task `n` `runs` when it does; a task that runs is printed with
+/// `last activity 23:10:11`.
+fn reviewer_line(n: u32, activities: Vec<agent_core::state::Activity>) -> String {
+    reviewer_line_of(n, activities, None)
+}
+
+/// [`reviewer_line`] for the reviewer whose task runs at `running`.
+fn reviewer_line_of(n: u32, activities: Vec<agent_core::state::Activity>, running: Option<u32>) -> String {
+    let mut teams = sample();
+    teams[0].activities = activities;
+    for member in &mut teams[0].members {
+        if Some(member.task.clone()) == running.map(task) {
+            member.status = TaskStatus::Running;
+        }
+    }
+    let said = |_: &TaskId| Some("last activity 23:10:11".to_owned());
+    let text = render_active(&teams, &said);
+    let prefix = format!("  {}  reviewer", task(n));
+    text.lines()
+        .find(|line| line.starts_with(&prefix))
+        .map_or_else(|| panic!("the reviewer {n} has a line: {text}"), str::to_owned)
+}
+
+// Rule: between its reviews a reviewer's line says what it did, with the ordinal of the review it gave for the round;
+// a reviewer whose work is going or queued says that, with when it was last active; a stopped or failed one says when
+// and why.
+#[test]
+fn a_reviewers_line_says_what_it_did_or_does_rather_than_that_it_waits() {
+    let finished = |at| ActivityOutcome::Finished {
+        at,
+        end: ActivityEnd::Reported,
+    };
+    let tables: Vec<(Vec<agent_core::state::Activity>, Option<u32>, &str)> = vec![
+        (
+            vec![
+                review_activity("inv-codex", 4, 20, &ActivityRequest::FirstReview, &finished(at(30))),
+                review_activity(
+                    "inv-codex",
+                    4,
+                    40,
+                    &ActivityRequest::Verification { pass: NonZeroU32::MIN },
+                    &finished(at(50)),
+                ),
+            ],
+            None,
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 19:15:50",
+        ),
+        (
+            vec![review_activity(
+                "inv-codex",
+                4,
+                20,
+                &ActivityRequest::FirstReview,
+                &finished(at(30)),
+            )],
+            None,
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 19:15:30",
+        ),
+        (
+            vec![review_activity(
+                "inv-codex",
+                4,
+                20,
+                &ActivityRequest::FirstReview,
+                &ActivityOutcome::Working,
+            )],
+            Some(4),
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  working, last activity 23:10:11",
+        ),
+        (
+            vec![review_activity(
+                "inv-codex",
+                4,
+                20,
+                &ActivityRequest::FirstReview,
+                &ActivityOutcome::Finished {
+                    at: at(30),
+                    end: ActivityEnd::Stopped,
+                },
+            )],
+            None,
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: the human stopped it",
+        ),
+        (
+            vec![review_activity(
+                "inv-codex",
+                4,
+                20,
+                &ActivityRequest::FirstReview,
+                &ActivityOutcome::Finished {
+                    at: at(30),
+                    end: ActivityEnd::Failed {
+                        reason: Some(RunEnd::Hung),
+                    },
+                },
+            )],
+            None,
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: the run showed no activity for too long",
+        ),
+    ];
+    for (activities, running, line) in tables {
+        // The task of the reviewer waits between its reviews: its status says nothing of what it did.
+        assert_eq!(reviewer_line_of(4, activities, running), line);
+    }
+}
+
+// Rule: the ordinal counts the reviews that the investigator gave for the round: a review of another round, or of
+// another investigator, is not counted.
+#[test]
+fn the_ordinal_of_a_review_counts_only_the_reviews_this_investigator_gave_for_the_round() {
+    let finished = |at| ActivityOutcome::Finished {
+        at,
+        end: ActivityEnd::Reported,
+    };
+    let other_round = serde_json::from_value(serde_json::json!({
+        "investigator": "inv-codex",
+        "task": task(5),
+        "rounds": ["round-20261111-153002-q1w2"],
+        "request": {"kind": "first_review"},
+        "asked_at": at(10),
+        "outcome": {"status": "finished", "at": at(15), "end": {"kind": "reported"}},
+    }))
+    .unwrap();
+    let activities = vec![
+        other_round,
+        review_activity("inv-codex", 4, 20, &ActivityRequest::FirstReview, &finished(at(30))),
+        review_activity("inv-gemini", 5, 25, &ActivityRequest::FirstReview, &finished(at(35))),
+    ];
+
+    assert_eq!(
+        reviewer_line(4, activities),
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 19:15:30"
+    );
+}
+
+// Rule: the ordinal of a review is an English ordinal: the suffix is `st`, `nd`, `rd` or `th` — `th` for 11, 12 and 13,
+// and for every number whose last digit is 0 or 4 to 9.
+#[test]
+fn the_ordinal_of_a_review_is_an_english_ordinal() {
+    let cases: [(u32, &str); 16] = [
+        (1, "1st"),
+        (2, "2nd"),
+        (3, "3rd"),
+        (4, "4th"),
+        (5, "5th"),
+        (10, "10th"),
+        (11, "11th"),
+        (12, "12th"),
+        (13, "13th"),
+        (14, "14th"),
+        (21, "21st"),
+        (22, "22nd"),
+        (23, "23rd"),
+        (24, "24th"),
+        (111, "111th"),
+        (112, "112th"),
+    ];
+    for (count, text) in cases {
+        // The `count` reviews, the last one the newest and the one the line tells, reported one second apart.
+        let activities: Vec<_> = (0..count)
+            .map(|index| {
+                review_activity(
+                    "inv-codex",
+                    4,
+                    20 + index,
+                    &ActivityRequest::FirstReview,
+                    &ActivityOutcome::Finished {
+                        at: at(20 + index),
+                        end: ActivityEnd::Reported,
+                    },
+                )
+            })
+            .collect();
+        let line = reviewer_line(4, activities);
+        let said: Vec<&str> = line.split_whitespace().skip(3).collect();
+        assert_eq!(
+            (said.first(), said.get(1), said.get(2)),
+            (Some(&"done,"), Some(&text), Some(&"review")),
+            "{line}"
+        );
+    }
+}
+
+// Rule: a review that ended without a report — a second opinion abandoned, or a failure with no reason the daemon
+// knows — says that it stopped, and why.
+#[test]
+fn a_review_that_ended_without_a_report_says_when_and_why_it_stopped() {
+    for (end, reason) in [
+        (
+            ActivityEnd::OpinionFailed {
+                reason: agent_core::state::OpinionFailure::MissingReport,
+            },
+            "its second opinion was abandoned: the corrections ran out without an opinion",
+        ),
+        (ActivityEnd::Failed { reason: None }, "it failed"),
+    ] {
+        let activities = vec![review_activity(
+            "inv-codex",
+            4,
+            20,
+            &ActivityRequest::FirstReview,
+            &ActivityOutcome::Finished { at: at(30), end },
+        )];
+
+        assert_eq!(
+            reviewer_line(4, activities),
+            format!("  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: {reason}")
+        );
+    }
+}
+
+// Rule: a reviewer whose review is queued, and whose task does not run, says `working` without a last activity.
+#[test]
+fn a_reviewer_whose_task_does_not_run_says_working_without_a_last_activity() {
+    let activities = vec![review_activity(
+        "inv-codex",
+        4,
+        20,
+        &ActivityRequest::FirstReview,
+        &ActivityOutcome::Working,
+    )];
+
+    assert_eq!(
+        reviewer_line(4, activities),
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  working"
+    );
+}
+
+// Rule: a failure says the end of the run the daemon kept, in the words of its status.
+#[test]
+fn a_review_that_failed_says_the_end_of_its_run() {
+    for (end, reason) in [
+        (
+            RunEnd::NoStatus { exit_code: Some(1) },
+            "the run ended without a status",
+        ),
+        (
+            RunEnd::QuotaExhausted { resets_at: None },
+            "the account's quota was used up",
+        ),
+        (RunEnd::RateLimited, "the provider limited the rate of requests"),
+        (RunEnd::TurnLimit, "the run used up its turn budget"),
+        (RunEnd::Stopped, "the run was stopped"),
+    ] {
+        let activities = vec![review_activity(
+            "inv-codex",
+            4,
+            20,
+            &ActivityRequest::FirstReview,
+            &ActivityOutcome::Finished {
+                at: at(30),
+                end: ActivityEnd::Failed { reason: Some(end) },
+            },
+        )];
+
+        assert_eq!(
+            reviewer_line(4, activities),
+            format!("  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: {reason}")
+        );
+    }
+}
+
+// Rule: a reviewer with no recorded activity keeps the line it had.
+#[test]
+fn a_reviewer_without_a_recorded_activity_keeps_the_line_of_its_status() {
+    assert_eq!(
+        reviewer_line(4, Vec::new()),
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  queued"
+    );
+}
+
+// Rule: the lines of the coordinator, the members and the workers are those of their status, also when the team has
+// recorded activities of them.
+#[test]
+fn the_lines_of_the_crew_and_the_workers_do_not_change() {
+    let mut teams = sample();
+    teams[0].activities = vec![
+        review_activity(
+            "inv-opus",
+            1,
+            20,
+            &ActivityRequest::TeamMember,
+            &ActivityOutcome::Working,
+        ),
+        review_activity(
+            "claude-1",
+            2,
+            20,
+            &ActivityRequest::TeamMember,
+            &ActivityOutcome::Working,
+        ),
+    ];
+
+    let text = render_active(&teams, &|_| None);
+
+    assert_eq!(
+        text,
+        "\
+team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 in review, 0 approved, 0 done
+  task-20261111-153001-k3x9  coordinator  inv-opus   queued
+  task-20261111-153002-k3x9  member       claude-1   queued
+  task-20261111-153003-k3x9  worker       glm-1      queued
+  task-20261111-153004-k3x9  reviewer     inv-codex  queued
+"
+    );
+}
+
+// Rule: the ordinal of a reviewer's line counts the reviews the investigator gave: an earlier review of the round that
+// ended without its report is not one of them.
+#[test]
+fn a_reviewers_ordinal_leaves_out_a_review_that_ended_without_its_report() {
+    let activities = vec![
+        review_activity(
+            "inv-codex",
+            4,
+            20,
+            &ActivityRequest::FirstReview,
+            &ActivityOutcome::Finished {
+                at: at(25),
+                end: ActivityEnd::Stopped,
+            },
+        ),
+        review_activity(
+            "inv-codex",
+            4,
+            40,
+            &ActivityRequest::Verification { pass: NonZeroU32::MIN },
+            &ActivityOutcome::Finished {
+                at: at(50),
+                end: ActivityEnd::Reported,
+            },
+        ),
+    ];
+
+    assert_eq!(
+        reviewer_line(4, activities),
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 19:15:50"
+    );
+}
+
+// Rule: a first review and the verification after it may be asked of one task in the same second: the verification is
+// the later review, so the reviewer's line tells it, and it is the second review the investigator gave.
+#[test]
+fn a_verification_asked_in_the_second_of_the_first_review_is_its_second_review() {
+    let activities = vec![
+        review_activity(
+            "inv-codex",
+            4,
+            20,
+            &ActivityRequest::FirstReview,
+            &ActivityOutcome::Finished {
+                at: at(30),
+                end: ActivityEnd::Reported,
+            },
+        ),
+        review_activity(
+            "inv-codex",
+            4,
+            20,
+            &ActivityRequest::Verification { pass: NonZeroU32::MIN },
+            &ActivityOutcome::Finished {
+                at: at(40),
+                end: ActivityEnd::Reported,
+            },
+        ),
+    ];
+
+    assert_eq!(
+        reviewer_line(4, activities),
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 19:15:40"
+    );
+}
+
+// Rule: an abandoned second opinion says the reason the daemon recorded for it.
+#[test]
+fn an_abandoned_second_opinion_says_the_reason_the_daemon_recorded() {
+    use agent_core::state::OpinionFailure;
+    for (failure, reason) in [
+        (OpinionFailure::Failed, "the run failed"),
+        (OpinionFailure::NoStatus, "the run ended without a status"),
+        (
+            OpinionFailure::MissingReport,
+            "the corrections ran out without an opinion",
+        ),
+        (OpinionFailure::Silent, "the investigator stayed silent too long"),
+        (OpinionFailure::Interrupted, "the task can no longer be resumed"),
+    ] {
+        let activities = vec![review_activity(
+            "inv-codex",
+            4,
+            20,
+            &ActivityRequest::SecondOpinion {
+                pass: NonZeroU32::MIN,
+                finding: NonZeroU32::MIN,
+            },
+            &ActivityOutcome::Finished {
+                at: at(30),
+                end: ActivityEnd::OpinionFailed { reason: failure },
+            },
+        )];
+
+        assert_eq!(
+            reviewer_line(4, activities),
+            format!(
+                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: its second opinion was abandoned: {reason}"
+            )
+        );
+    }
 }

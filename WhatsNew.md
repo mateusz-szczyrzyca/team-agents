@@ -5,15 +5,13 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.23.0 — 19.11.2026 — PR pending
+## 0.23.0 — 20.11.2026 — PR #140
 
-### Bug fixes
-- [agent] A coordinator or member whose run sleeps can review another team while remaining excluded from its own.
-- [agent-core] Reviewer stories no longer claim that deterministic assignments were random.
+### New features
+- [agent] [agent-core] `agent status --investigators` lists every configured investigator with its last two activities in the teams that are not closed, newest first, for example `task-…  reviewer  inv-opus  for team-…  done at 12:15:15, 2nd review finished`; one with nothing to do shows `free, no activity in an open team`.
 
 ### Enhancements
-- [agent] [agent-core] Reviews, verifications and second opinions choose investigators in a fixed order: first those who have not worked for the team, then those asked longest ago, with work for other teams breaking ties.
-- [agent] [agent-core] A round without enough reviewers says it waits for a free independent investigator.
+- [agent] [agent-core] A reviewer's line in `agent status` and `agent status --running` no longer says `waiting` between reviews: it says `working`, `done, 1st review finished 12:08:17`, or `stopped at 12:10:00, reason: the human stopped it`.
 
 ## 0.22.0 — 19.11.2026 — PR #137
 
