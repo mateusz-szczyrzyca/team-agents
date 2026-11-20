@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -176,7 +177,7 @@ impl Git {
     async fn staged_regular_files(
         &self,
         overrides: &[OsString],
-    ) -> Result<BTreeMap<String, (String, String)>, GitError> {
+    ) -> Result<BTreeMap<OsString, (String, String)>, GitError> {
         let operation = GitOperation::LsFiles;
         let captured = self
             .run_scratch(operation, overrides, &[arg("ls-files"), arg("-z"), arg("-s")])
@@ -184,13 +185,21 @@ impl Git {
         let listed = whole(operation, &captured.stdout, self.limits)?;
         let mut files = BTreeMap::new();
         for entry in listed.split(|byte| *byte == 0).filter(|entry| !entry.is_empty()) {
-            let line = String::from_utf8(entry.to_vec()).map_err(|source| GitError::NotUtf8 { operation, source })?;
-            let Some((meta, path)) = line.split_once('\t') else {
+            let Some(tab_pos) = entry.iter().position(|byte| *byte == b'\t') else {
                 return Err(GitError::Unexpected {
                     operation,
                     output: diagnostic(entry),
                 });
             };
+            let (meta_bytes, rest) = entry.split_at(tab_pos);
+            let Some((_, path_bytes)) = rest.split_first() else {
+                return Err(GitError::Unexpected {
+                    operation,
+                    output: diagnostic(entry),
+                });
+            };
+            let meta =
+                String::from_utf8(meta_bytes.to_vec()).map_err(|source| GitError::NotUtf8 { operation, source })?;
             let mut parts = meta.split_whitespace();
             let (Some(mode), Some(oid)) = (parts.next(), parts.next()) else {
                 return Err(GitError::Unexpected {
@@ -199,14 +208,17 @@ impl Git {
                 });
             };
             if mode == "100644" || mode == "100755" {
-                files.insert(path.to_owned(), (mode.to_owned(), oid.to_owned()));
+                files.insert(
+                    OsStr::from_bytes(path_bytes).to_owned(),
+                    (mode.to_owned(), oid.to_owned()),
+                );
             }
         }
         Ok(files)
     }
 
     /// The worktree paths that are modified or untracked (excluding ignored files) relative to the scratch index.
-    async fn worktree_dirty_paths(&self, overrides: &[OsString]) -> Result<BTreeSet<String>, GitError> {
+    async fn worktree_dirty_paths(&self, overrides: &[OsString]) -> Result<BTreeSet<OsString>, GitError> {
         let operation = GitOperation::LsFiles;
         let captured = self
             .run_scratch(
@@ -224,8 +236,7 @@ impl Git {
         let listed = whole(operation, &captured.stdout, self.limits)?;
         let mut paths = BTreeSet::new();
         for entry in listed.split(|byte| *byte == 0).filter(|entry| !entry.is_empty()) {
-            let path = String::from_utf8(entry.to_vec()).map_err(|source| GitError::NotUtf8 { operation, source })?;
-            paths.insert(path);
+            paths.insert(OsStr::from_bytes(entry).to_owned());
         }
         Ok(paths)
     }
@@ -236,8 +247,8 @@ impl Git {
     async fn store_verbatim_blobs(
         &self,
         overrides: &[OsString],
-        head_entries: &BTreeMap<String, (String, String)>,
-        dirty_paths: &BTreeSet<String>,
+        head_entries: &BTreeMap<OsString, (String, String)>,
+        dirty_paths: &BTreeSet<OsString>,
     ) -> Result<(), GitError> {
         let current = self.staged_regular_files(overrides).await?;
         for (path, (mode, oid)) in current {
@@ -256,16 +267,17 @@ impl Git {
                         arg("-w"),
                         arg("--no-filters"),
                         arg("--"),
-                        arg(&path),
+                        path.as_os_str(),
                     ],
                 )
                 .await?;
             if raw_oid != oid {
-                let cacheinfo = format!("{mode},{raw_oid},{path}");
+                let mut cacheinfo = OsString::from(format!("{mode},{raw_oid},"));
+                cacheinfo.push(&path);
                 self.run_scratch(
                     GitOperation::UpdateIndex,
                     overrides,
-                    &[arg("update-index"), arg("--cacheinfo"), arg(&cacheinfo)],
+                    &[arg("update-index"), arg("--cacheinfo"), cacheinfo.as_os_str()],
                 )
                 .await?;
             }
