@@ -153,6 +153,10 @@ split
 ```
 ````
 
+An `estimate` is `{"amount": N, "unit": "text"}` with a nonnegative number and a nonblank unit, and a scope
+`reason` is nonblank: they are checked wherever they are read — a proposal, a verdict, a stored plan — and a verdict
+with `{"amount": -7, "unit": " "}` is refused as a JSON error.
+
 The fields shown above are required; additional fields are errors except the optional `estimate` and `tier`
 fields described below. There must be 2–26 parts, each with a nonblank title,
 deliverable and checks. Checks are criteria for any independently deliverable work, not necessarily code or tests.
@@ -204,7 +208,9 @@ Unknown fields and values are rejected. The text reader uses the questions-file 
 
 The pure policy approves only a whole valid plan with checks on every part, no dependency cycle, an independent
 first part, and no estimate above `[split] part_limit` in the supplied repository unit. Forward references that
-form no cycle are allowed. It returns distinct faults for unreadable structure, missing checks, cycles and
-estimates above the limit, naming the affected part where recoverable. A fault is sent back while corrections
+form no cycle are allowed. It returns distinct faults — a first part with a dependency, an unknown or repeated dependency, an empty title or
+deliverable, the wrong number of parts, missing checks, a cycle, an estimate above the limit, input that does not
+read — naming the affected part and, where there is one, the dependency. Units are compared ignoring case, spaces and
+a plural `s`. A fault is sent back while corrections
 remain; otherwise a human decision is requested. A structurally valid scope change also needs a human decision.
 The daemon wiring and correction/question prompts follow in the next part of this change.

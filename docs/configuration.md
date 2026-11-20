@@ -162,7 +162,7 @@ It does not yet read coordinator proposal files or automatically approve them.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `part_limit` | `1500` | maximum estimate when its unit exactly matches the repository unit supplied to the policy; `0` disables this check. Other units are retained without conversion |
+| `part_limit` | `1500` | maximum estimate when its unit matches the repository unit — case, surrounding spaces and a plural `s` are ignored (`Lines`, `line`); `0` disables this check. The repository unit is an argument of the decision, not a key: the daemon will supply it when it starts using proposals. Other units are retained without conversion |
 | `corrections` | `2` | send-backs allowed before a faulty proposal needs a human decision; `0` asks on the first fault. A valid proposal remains eligible after the budget is exhausted |
 
 Both are nonnegative integers through `4294967295`. Missing tables or keys use the defaults; unknown keys,
