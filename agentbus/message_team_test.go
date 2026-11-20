@@ -160,23 +160,11 @@ func TestAMessageWithoutATeamIsForTheNamedAgentInTheTeamItIsReadIn(t *testing.T)
 	}
 }
 
-// readOutput is what the session of agent name in team reads now ("No new messages." when nothing waits).
+// readOutput is what the session of agent name in team has to read now: the messages the read returns, as the state
+// held them before it advanced the session's cursor.
 func readOutput(t *testing.T, b *Bus, name, team string) string {
 	t.Helper()
-	var out string
-	chk(t).ok(toolResult(server(b, name, inTeam(team)).read(0)))
-	mustWith(t, b, func(st *State) {
-		msgs, serr := b.messages()
-		if serr != nil {
-			t.Fatal(serr)
-		}
-		cur := cursor(st, name, team)
-		for _, m := range msgs {
-			if m.ID > cur && isForAgent(st, m, name, team, true) {
-				out += fmtMsg(m) + "\n"
-			}
-		}
-	})
+	out := chk(t).ok(toolResult(server(b, name, inTeam(team)).read(0)))
 	return out
 }
 
