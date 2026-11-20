@@ -204,7 +204,11 @@ impl Owner {
         log_initial_lifecycle(&formed);
         self.record_team_start(&request, &id);
         self.publish_team_started(&id, &tasks, started)?;
-        Ok(Ok(Reply::Started { team: id, tasks }))
+        Ok(Ok(Reply::Started {
+            team: id,
+            tasks,
+            shared: Vec::new(),
+        }))
     }
 
     /// Publishes the initial events and logs when a team starts.

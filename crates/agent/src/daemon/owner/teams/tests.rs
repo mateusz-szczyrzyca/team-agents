@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use agent_core::config::{AbsolutePath, Program};
 use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::log::LogEvent;
-use agent_core::protocol::{AgentList, Client, Command, FailureKind, Reply, RunRequest, StatusRequest, Target};
+use agent_core::protocol::{
+    AgentList, Client, Command, FailureKind, Reply, RunRequest, SharedAgent, StatusRequest, Target,
+};
 use agent_core::state::{ItemPhase, MergeMode, PrNumber, PullRequest, State, TaskListText, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{
@@ -2196,4 +2198,45 @@ async fn base_fetch_failure_is_refused_even_when_unpushed_commits_are_allowed() 
     );
     assert_nothing_started(&f);
     assert_eq!(std::fs::read_dir(f.home.tasks_dir()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn a_team_that_takes_an_agent_of_another_open_team_names_it_and_its_task_there() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+    ]);
+    f.start().await;
+    let (first, _) = f.start_team(&["claude-1", "inv-opus"], PARALLEL).await;
+    let claude_task = f
+        .state()
+        .team(&first)
+        .unwrap()
+        .crew()
+        .roster()
+        .into_iter()
+        .find(|(_, member)| member.agent().name() == "claude-1")
+        .map(|(_, member)| member.task().clone())
+        .unwrap();
+
+    let reply = f
+        .run(&["claude-1", "claude-2"], PARALLEL, Some("claude-2"))
+        .await
+        .unwrap();
+
+    let Reply::Started { shared, .. } = reply else {
+        panic!("{reply:?}")
+    };
+    assert_eq!(
+        shared,
+        vec![SharedAgent {
+            agent: "claude-1".parse().unwrap(),
+            team: first,
+            task: claude_task,
+        }]
+    );
+    f.stop().await.unwrap();
 }
