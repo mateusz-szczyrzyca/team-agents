@@ -21,8 +21,8 @@ The work is on branch {{branch}}, forked from {{base}}.
 
 ## What is uncommitted
 
-Everything the worktree had when the last run before yours began is kept as a snapshot, {{snapshot}}. The worktree
-keeps it all, but none of it is in your branch until you commit it.
+Everything the worktree held when the session before yours ended is kept as a snapshot, {{snapshot}}. The worktree
+still holds it all; none of it is on your branch until you commit it.
 
 {{uncommitted}}
 
@@ -32,7 +32,8 @@ keeps it all, but none of it is in your branch until you commit it.
 
 ## What to do now
 
-1. Find where the work stands: read the files above, the end of the branch's history and the task's own prompt.
-2. Go on with what is left of the task, in the same worktree, the same branch and the same task.
-3. Follow your rules: test first, small commits, and only the work of this task.
-4. End your turn with a `STATUS:` line, as your first message says.
+1. Read the messages of your team first, if you have the tools of the bus (`read_messages`).
+2. Find where the work stands: the files above, the end of the branch's history and the task's own prompt.
+3. Go on with what is left of the task, in the same worktree, the same branch and the same task; follow the rules of
+   the task's prompt and do only the work of this task.
+4. End your turn with a `STATUS:` line, as the task's prompt says.

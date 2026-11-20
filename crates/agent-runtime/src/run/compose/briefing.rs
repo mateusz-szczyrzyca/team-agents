@@ -60,7 +60,7 @@ pub struct Briefing<'a> {
 }
 
 /// What the briefing says of a branch with no commit yet.
-const NO_COMMITS: &str = "Nothing of the branch is committed yet: its first commit is the first thing you do.";
+const NO_COMMITS: &str = "The branch has no commit of its own yet.";
 
 /// What the briefing says of a worktree with no file left uncommitted.
 const NO_UNCOMMITTED: &str = "No file of the worktree is left uncommitted.";
@@ -130,15 +130,6 @@ pub fn briefing_variables(facts: &Briefing<'_>) -> Result<Variables, VariablesEr
     pairs
         .iter()
         .try_fold(Variables::new(), |values, (name, value)| values.with(name, *value))
-}
-
-/// The briefing of `facts`, rendered through `render`, which fills a text of the catalog with its variables.
-#[must_use]
-pub fn briefing(render: &dyn Fn(&str, &Variables) -> String, facts: &Briefing<'_>) -> String {
-    match briefing_variables(facts) {
-        Ok(values) => render("harness/run/briefing.md", &values),
-        Err(_) => String::new(),
-    }
 }
 
 /// `lines` joined, under `title` and the blank line after it when there is a title, or `empty` when there is no line.
