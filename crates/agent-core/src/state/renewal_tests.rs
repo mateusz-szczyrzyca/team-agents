@@ -177,3 +177,16 @@ fn a_renewal_keeps_why_the_task_was_started_anew_across_a_restart() {
     let found = loaded.find_task(&task()).expect("the task");
     assert_eq!(found.member.renewals().map(Renewals::reason), Some(Trouble::Hang));
 }
+
+#[test]
+fn a_task_whose_bad_run_started_at_the_instant_of_the_renewal_starts_a_new_session() {
+    let mut state = old_state();
+    let (_, mut member) = state.find_task_mut(&task()).expect("the task");
+    let last_start = member.runs().last().expect("a run").started_at();
+
+    let renewed = member.renew(Trouble::NoStatus, last_start);
+
+    assert_eq!(renewed, Ok(true));
+    assert_eq!(member.last_session(), None, "the bad run's session is not resumed");
+    assert_eq!(member.bad_runs_since_renewal(), 0);
+}
