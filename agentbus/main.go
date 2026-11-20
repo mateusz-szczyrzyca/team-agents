@@ -1348,6 +1348,7 @@ func cmdSend(args []string) {
 	to := fs.String("to", "all", "recipient (agent, task, all or team:<id>)")
 	task := fs.String("task", "", "a task of the recipient: the open team it is in is the one written to")
 	team := fs.String("team", "", "the open team of the recipient the message is written to")
+	forTask := fs.String("for-task", "", "the task whose session alone reads the message (a solo task too)")
 	notice := fs.String("notice", "", "script event kind (see ScriptNotice); empty = chat message")
 	fields := fieldFlags{}
 	fs.Var(fields, "field", "key=value detail of a script event (repeatable)")
@@ -1365,17 +1366,36 @@ func cmdSend(args []string) {
 	b := &Bus{dir: *dir}
 	var out cliWriter
 	exitOn(transact(b, CmdSendStorage, func(st *State) *CmdSendError {
-		recipient, bound, refusal := bindSend(st, *from, *to, strings.TrimSpace(*task), strings.TrimSpace(*team))
+		m, refusal := postSend(b, st, sendRequest{from: *from, to: *to, task: strings.TrimSpace(*task),
+			team: strings.TrimSpace(*team), forTask: strings.TrimSpace(*forTask)}, ev)
 		if refusal != nil {
 			return refusal
-		}
-		m, serr := b.postIn(st, bound, *from, recipient, ev)
-		if serr != nil {
-			return fromStorage(CmdSendStorage, serr)
 		}
 		out.println(fmtMsg(m))
 		return fromStorage(CmdSendStorage, out.err)
 	}).asError())
+}
+
+// sendRequest is what `agentbus send` is asked to write to: the sender, the recipient and what names its session.
+type sendRequest struct {
+	from    string // the sender
+	to      string // the recipient: an agent, all or team:<id>
+	task    string // --task: a task of the recipient in an open team ("" = none)
+	team    string // --team: an open team of the recipient ("" = none)
+	forTask string // --for-task: the task whose session alone reads the message ("" = none)
+}
+
+// postSend posts what `agentbus send` writes, bound as its request says, or says why it is refused.
+func postSend(b *Bus, st *State, req sendRequest, ev busEvent) (Message, *CmdSendError) {
+	recipient, bound, refusal := bindSend(st, req.from, req.to, req.task, req.team)
+	if refusal != nil {
+		return Message{}, refusal
+	}
+	m, serr := b.postIn(st, bound, req.from, recipient, ev)
+	if serr != nil {
+		return Message{}, fromStorage(CmdSendStorage, serr)
+	}
+	return m, nil
 }
 
 // log: prints the last N messages.

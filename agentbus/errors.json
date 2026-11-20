@@ -681,6 +681,11 @@
      "name": "ToSelf",
      "class": "InvalidArgument",
      "doc": "--task or --team is given and the sender writes to itself"
+    },
+    {
+     "name": "TwoBindings",
+     "class": "InvalidArgument",
+     "doc": "--for-task is given with --task or --team: it names the session alone"
     }
    ]
   },
