@@ -18,7 +18,7 @@ mod github;
 #[cfg(test)]
 mod tests;
 
-pub(in crate::daemon::owner) use self::github::{Failure, Step, Wait, Waits, outlook_of};
+pub(in crate::daemon::owner) use self::github::{Failure, Step, Wait, WaitingStep, Waits, outlook_of};
 #[cfg(test)]
 #[path = "waiting/tests/github.rs"]
 mod github_tests;
@@ -36,7 +36,7 @@ impl Owner {
         &mut self,
         step: &Step,
         team: &TeamId,
-        operation: &str,
+        which: WaitingStep,
         pr: Option<PrNumber>,
         error: &PublishError,
         now: Timestamp,
@@ -46,14 +46,14 @@ impl Owner {
         let (failure, wait) = self
             .watch
             .github_waits
-            .failed(step, team, operation, pr, error_chain(error), outlook, now)
+            .failed(step, team, which, pr, error_chain(error), outlook, now)
             .map_err(|missed| missed.owner_error())?;
         let starts = matches!(failure, Failure::First | Failure::Starts);
         if starts {
             tracing::warn!(
                 event = LogEvent::GithubStepWaiting.as_str(),
                 team = %team,
-                operation,
+                operation = %which,
                 pr = pr.map_or_else(String::new, |number| number.to_string()),
                 outlook = match outlook {
                     Outlook::MayPass => "may_pass",
@@ -67,31 +67,37 @@ impl Owner {
             );
         }
         if outlook == Outlook::WillNotPass && starts {
-            self.tell_refused(team, operation, &wait, now)?;
+            self.tell_refused(team, which, &wait, now)?;
         }
         Ok(())
     }
 
     /// Records that `step` of `team` went through: a step that waited is done, logged once.
-    pub(in crate::daemon::owner) fn github_step_done(&mut self, step: &Step, team: &TeamId, operation: &str) {
-        if self.watch.github_waits.done(step, operation) {
+    pub(in crate::daemon::owner) fn github_step_done(&mut self, step: &Step, team: &TeamId, which: WaitingStep) {
+        if self.watch.github_waits.done(step, which) {
             tracing::info!(
                 event = LogEvent::GithubStepResumed.as_str(),
                 team = %team,
-                operation,
+                operation = %which,
                 "the step of the round that waited for GitHub went through"
             );
         }
     }
 
     /// Tells the lead of `team` that GitHub refuses a step of its round, once for the step, and how to try again.
-    fn tell_refused(&mut self, team: &TeamId, operation: &str, wait: &Wait, now: Timestamp) -> Result<(), OwnerError> {
+    fn tell_refused(
+        &mut self,
+        team: &TeamId,
+        which: WaitingStep,
+        wait: &Wait,
+        now: Timestamp,
+    ) -> Result<(), OwnerError> {
         let Some(pulls) = self.pulls.clone() else {
             return Ok(());
         };
         let announcement = Announcement::GithubRefused {
             team: team.clone(),
-            operation: operation.to_owned(),
+            operation: which,
         };
         if !self.watch.announced.insert(announcement) {
             return Ok(());
@@ -99,7 +105,7 @@ impl Owner {
         let lead = self.lead_of(team)?;
         let values = Variables::new()
             .with("team", team.as_str())
-            .and_then(|values| values.with("operation", operation))
+            .and_then(|values| values.with("operation", which.operation()))
             .and_then(|values| values.with("answer", wait.answer.as_str()));
         self.tell_human(&pulls, AutopilotNotice::GithubRefused, values, &lead, now);
         Ok(())

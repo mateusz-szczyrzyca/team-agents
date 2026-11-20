@@ -203,11 +203,11 @@ impl Wait {
         match self.next_at {
             Some(at) => format!(
                 "{}, tried {tried} time{}, next try {}",
-                self.step,
+                self.operation,
                 if tried == 1 { "" } else { "s" },
                 minute_shown(at, offset)
             ),
-            None => format!("{}, refused: {}", self.step, self.answer),
+            None => format!("{}, refused: {}", self.operation, self.answer),
         }
     }
 }
