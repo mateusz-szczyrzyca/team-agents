@@ -320,3 +320,83 @@ async fn a_verification_review_after_a_conflict_pass_is_recorded_and_posted_as_p
         assert!(rig.home.review_report_file(reviewer.task(), pr, 1).is_file());
     }
 }
+
+#[tokio::test]
+async fn a_conflict_pass_whose_lead_fails_asks_the_human_once_in_a_questions_file() {
+    use agent_core::state::MergeConflict;
+    use agent_core::status::TaskStatus;
+    use std::num::NonZeroU32;
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,fail,ask-here"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    rig.status_is(&task, TaskStatus::Questions).await;
+    let state = rig.state();
+    rig.stop().await.unwrap();
+
+    assert!(rig.home.questions_file(&task, NonZeroU32::MIN).is_file());
+    assert!(matches!(
+        state.teams()[0].item("1.1".parse().unwrap()).unwrap().merge_conflict(),
+        Some(MergeConflict::AskingHuman { .. })
+    ));
+}
+
+#[tokio::test]
+async fn a_pull_request_merged_by_the_human_while_a_conflict_question_is_open_completes_the_item() {
+    use agent_core::status::TaskStatus;
+    use std::io::Write as _;
+    use std::num::NonZeroU32;
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,merge-base,ask-here"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    {
+        let mut config = std::fs::OpenOptions::new()
+            .append(true)
+            .open(rig.home.config_file())
+            .unwrap();
+        writeln!(config, "[merge]\nconflict_passes = 1").unwrap();
+    }
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    rig.state_where("the lead is sent to merge the base", in_conflict_pass)
+        .await;
+
+    move_base(&rig);
+    std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+
+    rig.status_is(&task, TaskStatus::Questions).await;
+    assert!(rig.home.questions_file(&task, NonZeroU32::MIN).is_file());
+
+    rig.github.merged_by_a_human(1);
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+    assert!(matches!(item.phase(), ItemPhase::Done { .. }));
+    assert_eq!(item.merge_conflict(), None);
+}

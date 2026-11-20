@@ -20,6 +20,15 @@ use super::{Lead, PublishError};
 use crate::daemon::merge::{items_of, ran_since};
 use crate::daemon::team::Why;
 
+/// What the daemon starts on an approved pull request after a conflict refusal or a conflict pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ConflictStep {
+    /// The lead merges the base branch into the pull request's branch.
+    MergeBase,
+    /// The lead asks the human once in its questions file.
+    AskHuman,
+}
+
 /// What the advance of a pass decided for this look.
 enum Judgement {
     /// Nothing can be decided yet: the lead works, or a gate of the harness runs.
@@ -40,16 +49,17 @@ impl Owner {
         &mut self,
         team: &TeamId,
         items: &[ItemId],
-        ask: bool,
+        step: ConflictStep,
         head: &CommitId,
         now: Timestamp,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
         self.each_item(team, items, |item| {
-            if ask {
-                item.ask_human_about_merge_conflict(now);
-            } else {
-                item.begin_merge_conflict(head.clone(), now);
+            match step {
+                ConflictStep::AskHuman => item.ask_human_about_merge_conflict(now),
+                ConflictStep::MergeBase => {
+                    item.begin_merge_conflict(head.clone(), now);
+                }
             }
             Ok(())
         })?;
@@ -97,7 +107,7 @@ impl Owner {
                 &format!("{decided:?}"),
             );
             return self
-                .start_merge_conflict(team, &items, true, &approved_head, now, look)
+                .start_merge_conflict(team, &items, ConflictStep::AskHuman, &approved_head, now, look)
                 .await;
         }
         let judged = match self.judge_tip(&lead, &pr, &approved_head).await {
@@ -117,7 +127,7 @@ impl Owner {
             Judgement::Wait => return Ok(()),
             Judgement::Ask => {
                 return self
-                    .start_merge_conflict(team, &items, true, &approved_head, now, look)
+                    .start_merge_conflict(team, &items, ConflictStep::AskHuman, &approved_head, now, look)
                     .await;
             }
             Judgement::Tip(tip) => tip,
@@ -215,7 +225,7 @@ impl Owner {
             }
             AfterLead::AskHuman => {
                 return self
-                    .start_merge_conflict(team, items, true, approved_head, now, look)
+                    .start_merge_conflict(team, items, ConflictStep::AskHuman, approved_head, now, look)
                     .await;
             }
         }

@@ -16,6 +16,7 @@ use super::super::teams::Look;
 use crate::daemon::merge::items_of;
 
 use super::super::{Owner, OwnerError};
+use super::conflicts::ConflictStep;
 use super::publish::Site;
 use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 
@@ -58,11 +59,11 @@ pub(super) enum Merge {
     },
     /// It is not merged and is left as it is for now.
     Waits,
-    /// GitHub refused it for a conflict and the lead merges the base, or the human is asked (`ask`). `head` is the head
+    /// GitHub refused it for a conflict and the lead merges the base, or the human is asked (`step`). `head` is the head
     /// the refusal was for.
     Conflict {
-        /// Whether the passes are spent: the human is asked instead of the lead merging the base.
-        ask: bool,
+        /// What the daemon starts on the items of the pull request.
+        step: ConflictStep,
         /// The head GitHub refused to merge.
         head: CommitId,
     },
@@ -142,8 +143,8 @@ impl Owner {
                     .await?;
                 }
                 Ok(Merge::Waits) => {}
-                Ok(Merge::Conflict { ask, head }) => {
-                    self.start_merge_conflict(team_id, &items, ask, &head, now, look)
+                Ok(Merge::Conflict { step, head }) => {
+                    self.start_merge_conflict(team_id, &items, step, &head, now, look)
                         .await?;
                 }
                 Err(error) => {
@@ -306,7 +307,10 @@ impl Owner {
                             Ok(Merge::Waits)
                         }
                         after @ (AfterRefusal::LeadMergesBase | AfterRefusal::AskHuman) => Ok(Merge::Conflict {
-                            ask: after == AfterRefusal::AskHuman,
+                            step: match after {
+                                AfterRefusal::AskHuman => ConflictStep::AskHuman,
+                                AfterRefusal::LeadMergesBase | AfterRefusal::TellHuman => ConflictStep::MergeBase,
+                            },
                             head: head.clone(),
                         }),
                     }
