@@ -591,6 +591,13 @@ impl Owner {
         self.snapshot_interrupted(&recovery.interrupted, now).await;
         for task in &recovery.exhausted {
             let located = self.locate(task)?;
+            // The retries of the session are used up: the ladder may still start the task in a new session.
+            if self.restart_anew(task, &located)? {
+                let mut events = Vec::new();
+                self.move_to(task, &located.team, TaskStatus::Queued, &mut events)?;
+                self.commit(task, &located, now, events, None).await?;
+                continue;
+            }
             self.commit(task, &located, now, Vec::new(), Some(Notice::NoStatus { exit: None }))
                 .await?;
             self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)?;
@@ -1346,6 +1353,19 @@ impl Owner {
             }
         };
         Ok(next)
+    }
+
+    /// Whether the ladder starts `task`, which a restart found with the no-status retries of its session used up, in a
+    /// new session; the renewal is recorded when it does.
+    fn restart_anew(&mut self, task: &TaskId, located: &Located) -> Result<bool, OwnerError> {
+        let count = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
+            .member
+            .bad_runs_since_renewal();
+        Ok(self.climb(task, located.role, Trouble::NoStatus, count)? == LadderStep::NewSession)
     }
 
     /// The ladder's step for `task` of `role`, whose last `count` runs in a row went bad with `trouble`. A new session
