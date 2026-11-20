@@ -116,6 +116,12 @@ impl Team {
             })
     }
 
+    /// The rounds whose accepted delivery still waits for its PR to merge: open ones, and ones abandoned by a stop of the
+    /// team while their item is still in progress.
+    pub fn delivery_waits(&self) -> impl Iterator<Item = &Round> {
+        std::iter::empty()
+    }
+
     /// Records a claim after the caller verifies the item's clean git tree and ancestry.
     ///
     /// # Errors

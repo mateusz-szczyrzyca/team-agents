@@ -199,3 +199,52 @@ fn split_delivery_keeps_parent_pending_until_its_last_delivered_part() {
         );
     }
 }
+
+fn waiting_ids(team: &Team) -> Vec<RoundId> {
+    team.delivery_waits().map(|round| round.id().clone()).collect()
+}
+
+#[test]
+fn an_accepted_delivery_waits_while_its_round_is_open_and_after_a_stop_abandoned_it() {
+    let mut team = working();
+    assert_eq!(waiting_ids(&team), Vec::<RoundId>::new());
+    team.deliver_round(&round_id(2), pr(7).number).unwrap();
+    assert_eq!(waiting_ids(&team), vec![round_id(2)]);
+    team.close_round(&round_id(2), at(30), RoundEnd::Abandoned).unwrap();
+    assert_eq!(waiting_ids(&team), vec![round_id(2)]);
+}
+
+#[test]
+fn an_abandoned_delivery_completes_with_its_pr_and_keeps_its_round_closed_as_abandoned() {
+    let mut team = working();
+    let item = "2.1".parse().unwrap();
+    team.deliver_round(&round_id(2), pr(7).number).unwrap();
+    team.close_round(&round_id(2), at(30), RoundEnd::Abandoned).unwrap();
+    team.complete_delivery(&round_id(2), at(40)).unwrap();
+    assert_eq!(
+        team.item(item).unwrap().phase(),
+        &ItemPhase::Done {
+            completion: Completion::Merged { pr: pr(7), at: at(40) }
+        }
+    );
+    let round = team.round(&round_id(2)).unwrap();
+    assert_eq!(round.ended(), Some(RoundEnd::Abandoned));
+    assert_eq!(round.delivered_by(), Some(&pr(7)));
+    assert_eq!(waiting_ids(&team), Vec::<RoundId>::new());
+    assert_eq!(
+        serde_json::from_str::<Team>(&serde_json::to_string(&team).unwrap()).unwrap(),
+        team
+    );
+}
+
+#[test]
+fn an_abandoned_round_without_a_claim_cannot_complete_a_delivery() {
+    let mut team = working();
+    team.close_round(&round_id(2), at(30), RoundEnd::Abandoned).unwrap();
+    let abandoned = team.clone();
+    assert_eq!(
+        team.complete_delivery(&round_id(2), at(40)),
+        Err(CompleteDeliveryError::NotWaiting { round: round_id(2) })
+    );
+    assert_eq!(team, abandoned);
+}
