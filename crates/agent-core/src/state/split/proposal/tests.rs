@@ -165,3 +165,36 @@ fn legacy_approvals_and_new_requirements_survive_round_trip_without_changing_leg
         "images"
     );
 }
+
+#[test]
+fn serde_cannot_bypass_the_proposal_field_invariants() {
+    let expected = read_proposal(&proposal().to_string()).expect("valid proposal");
+    assert_eq!(
+        serde_json::from_value::<Proposal>(proposal()).expect("deserialize"),
+        expected
+    );
+    for value in [
+        {
+            let mut value = proposal();
+            value["parts"][0].as_object_mut().unwrap().remove("estimate");
+            value
+        },
+        {
+            let mut value = proposal();
+            value["parts"][0]["estimate"]["amount"] = json!(-1);
+            value
+        },
+        {
+            let mut value = proposal();
+            value["scope"] = json!({"kind":"less","reason":" "});
+            value
+        },
+    ] {
+        assert_eq!(
+            serde_json::from_value::<Proposal>(value)
+                .expect_err("same boundary")
+                .classify(),
+            serde_json::error::Category::Data
+        );
+    }
+}
