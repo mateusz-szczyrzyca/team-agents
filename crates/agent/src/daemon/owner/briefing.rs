@@ -295,3 +295,6 @@ const fn state_text(state: StepState) -> &'static str {
         StepState::GivenUp => "[-]",
     }
 }
+
+#[cfg(test)]
+mod tests;
