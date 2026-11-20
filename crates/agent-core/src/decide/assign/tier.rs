@@ -24,11 +24,16 @@ pub enum TierChoice<'a> {
 #[must_use]
 pub fn choose_agent<'a>(
     required: Option<Tier>,
-    _members: &'a [Participant],
-    _coordinator: Option<&'a Participant>,
+    members: &'a [Participant],
+    coordinator: Option<&'a Participant>,
 ) -> TierChoice<'a> {
-    TierChoice::NoAgent {
-        required: required.unwrap_or(Tier::Normal),
+    let required = required.unwrap_or(Tier::Normal);
+    if let Some(member) = members.iter().find(|member| member.tier() >= required) {
+        return TierChoice::Member(member);
+    }
+    match coordinator {
+        Some(coordinator) if coordinator.tier() >= required => TierChoice::Coordinator(coordinator),
+        Some(_) | None => TierChoice::NoAgent { required },
     }
 }
 
