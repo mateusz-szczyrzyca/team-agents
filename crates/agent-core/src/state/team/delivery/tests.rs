@@ -45,44 +45,44 @@ fn delivery_refusals_leave_team_unchanged() {
     let mut team = original.clone();
     assert_eq!(
         team.deliver_round(&round_id(3), pr(7).number),
-        Err(DeliveryError::NoSuchRound { round: round_id(3) })
+        Err(DeliverRoundError::NoSuchRound { round: round_id(3) })
     );
     assert_eq!(
         team.deliver_round(&round_id(1), pr(7).number),
-        Err(DeliveryError::NotWorking { round: round_id(1) })
+        Err(DeliverRoundError::NotWorking { round: round_id(1) })
     );
     assert_eq!(
         team.deliver_round(&round_id(2), pr(99).number),
-        Err(DeliveryError::NoTeamPr { number: pr(99).number })
+        Err(DeliverRoundError::NoTeamPr { number: pr(99).number })
     );
     assert_eq!(
         team.complete_delivery(&round_id(2), at(40)),
-        Err(DeliveryError::NotWaiting { round: round_id(2) })
+        Err(CompleteDeliveryError::NotWaiting { round: round_id(2) })
     );
     assert_eq!(
         team.complete_delivery(&round_id(3), at(40)),
-        Err(DeliveryError::NoSuchRound { round: round_id(3) })
+        Err(CompleteDeliveryError::NoSuchRound { round: round_id(3) })
     );
     assert_eq!(
         team.complete_delivery(&round_id(1), at(40)),
-        Err(DeliveryError::NotWorking { round: round_id(1) })
+        Err(CompleteDeliveryError::NotWorking { round: round_id(1) })
     );
     assert_eq!(team, original);
     team.deliver_round(&round_id(2), pr(7).number).unwrap();
     let waiting = team.clone();
     assert_eq!(
         team.deliver_round(&round_id(2), pr(7).number),
-        Err(DeliveryError::AlreadyDelivered { round: round_id(2) })
+        Err(DeliverRoundError::AlreadyDelivered { round: round_id(2) })
     );
     assert!(
-        matches!(team.complete_delivery(&round_id(2), at(0)), Err(DeliveryError::BeforeOpening(ClosedBeforeOpened { at: found, .. })) if found == at(0))
+        matches!(team.complete_delivery(&round_id(2), at(0)), Err(CompleteDeliveryError::BeforeOpening(ClosedBeforeOpened { at: found, .. })) if found == at(0))
     );
     assert_eq!(team, waiting);
     team.complete_delivery(&round_id(2), at(40)).unwrap();
     let done = team.clone();
     assert_eq!(
         team.complete_delivery(&round_id(2), at(41)),
-        Err(DeliveryError::NotWorking { round: round_id(2) })
+        Err(CompleteDeliveryError::NotWorking { round: round_id(2) })
     );
     assert_eq!(team, done);
 }
@@ -97,14 +97,14 @@ fn delivery_does_not_repurpose_pending_listed_or_closed_rounds() {
     let pending = team.clone();
     assert_eq!(
         team.deliver_round(&round_id(2), pr(7).number),
-        Err(DeliveryError::NotWorking { round: round_id(2) })
+        Err(DeliverRoundError::NotWorking { round: round_id(2) })
     );
     assert_eq!(team, pending);
     team.close_round(&round_id(2), at(40), RoundEnd::Abandoned).unwrap();
     let closed = team.clone();
     assert_eq!(
         team.deliver_round(&round_id(2), pr(7).number),
-        Err(DeliveryError::NotWorking { round: round_id(2) })
+        Err(DeliverRoundError::NotWorking { round: round_id(2) })
     );
     assert_eq!(team, closed);
 }
