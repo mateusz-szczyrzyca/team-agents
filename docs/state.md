@@ -274,7 +274,8 @@ the `**ANSWERED**` marker, `dashboard`). **The questions and the answers are in 
 
 #### Items
 
-An item's progress is `{id, phase, fix_passes?, gate?, findings?, merge_passes?}`. `merge_passes` counts the lead passes
+An item's progress is `{id, phase, fix_passes?, gate?, findings?, merge_passes?, merge_conflict?}`. `merge_conflict` is
+`{status: "merging_base", approved_head, at}` while the lead merges the base after a refused merge, or `{status: "asking_human", at}` once the human is to be asked; it is absent otherwise, and an approved item without it is merged as before. `merge_passes` counts the lead passes
 spent on a merge that GitHub refused for a conflict, compared with `[merge] conflict_passes`; it is absent while none is spent,
 so states written before it read as none spent and keep the schema version. The `phase` carries exactly the data of that phase:
 

@@ -249,12 +249,14 @@ prunes the snapshots yet: their commits stay under `refs/agents/snapshots/` in t
 
 ### `[merge]`
 
-What happens when GitHub refuses to merge an approved pull request because it conflicts with its base. The key is read
-now; the lead's passes that use it are not run yet, so for the time being a conflict is told to you as before.
+What happens when GitHub refuses to merge an approved pull request because it conflicts with its base (a 405 that says the
+pull request has merge conflicts, is not mergeable, or whose base branch was modified). The lead of the round is sent to
+merge the base into its branch, the result is gated and pushed, and the merge is tried again. A change to files the task
+does not allow (`Allow:`) is reviewed again before the merge. Every other refusal is told to you as before.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `conflict_passes` | `3` | lead passes per round to merge the base after a conflict; `0` tells you at once. Not used yet |
+| `conflict_passes` | `3` | lead passes per round to merge the base after a conflict; when they are used up, or the lead gives no result, the lead asks you in its questions file. `0` tells you at once, as before |
 
 ## `secrets.toml`
 
