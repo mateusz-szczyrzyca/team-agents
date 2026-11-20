@@ -26,6 +26,8 @@ pub enum AutopilotPrompt {
     WaitInvestigator,
     /// Describe an idle round in status output.
     WaitGate,
+    /// Describe an idle round in status output.
+    WaitMerge,
     /// Ask an independent investigator to check one finding at the handed-over commit.
     ReviewOpinionRequest,
     /// Return an unchanged fix pass that requires a commit.
@@ -221,6 +223,7 @@ impl AutopilotPrompt {
     pub const ALL: &'static [Self] = &[
         Self::ReviewOpinionRequest,
         Self::WaitGate,
+        Self::WaitMerge,
         Self::WaitReview,
         Self::WaitInvestigator,
         Self::WaitOpinion,
@@ -370,6 +373,7 @@ impl AutopilotPrompt {
             Self::WaitInvestigator => "harness/pr/wait-investigator.md",
             Self::WaitReview => "harness/pr/wait-review.md",
             Self::WaitGate => "harness/pr/wait-gate.md",
+            Self::WaitMerge => "harness/pr/wait-merge.md",
             Self::ReviewFixNoCommit => "harness/review/fix-no-commit.md",
             Self::ReviewFixNoCommitReason => "harness/review/fix-no-commit-reason.md",
             Self::ReviewFixNoCommitUndone => "harness/review/fix-no-commit-undone.md",
@@ -467,42 +471,53 @@ impl AutopilotPrompt {
         }
     }
 
+    /// Whether this text has no context variables.
+    const fn has_no_variables(self) -> bool {
+        matches!(
+            self,
+            Self::PrGateRetry
+                | Self::PrNoLead
+                | Self::ReviewFixNoCommitUndone
+                | Self::WaitNothing
+                | Self::WaitCorrection
+                | Self::WaitHuman
+                | Self::WaitOpinion
+                | Self::WaitInvestigator
+                | Self::WaitReview
+                | Self::WaitGate
+                | Self::WaitMerge
+                | Self::ReviewOpinionCorrection
+                | Self::ReviewOpinionOffer
+                | Self::ReviewResponseOpinion
+                | Self::ReviewIndependent
+                | Self::ReviewResponseNumbers
+                | Self::ReviewResponseExplain
+                | Self::ReviewResponseFixed
+                | Self::ReviewSeverityBlocker
+                | Self::ReviewSeverityMajor
+                | Self::ReviewSeverityMinor
+                | Self::ReviewMistakeVerdict
+                | Self::ReviewMistakeMalformed
+                | Self::ReviewMistakeAfterFindings
+                | Self::ReviewMistakeMissing
+                | Self::ReviewMistakeForbidden
+                | Self::ReviewMistakeAfterStatus
+                | Self::ReviewMistakeDuplicate
+                | Self::ReviewMistakeUnknown
+                | Self::ReviewRaiseMajor
+                | Self::ReviewRaiseBlocker
+                | Self::ReviewVerifierPending
+                | Self::ReviewVerifierResolved
+                | Self::ReviewVerdictMissing
+        )
+    }
+
     /// The context required to render this text.
     const fn variables(self) -> &'static [&'static str] {
+        if self.has_no_variables() {
+            return &[];
+        }
         match self {
-            Self::PrGateRetry
-            | Self::PrNoLead
-            | Self::ReviewFixNoCommitUndone
-            | Self::WaitNothing
-            | Self::WaitCorrection
-            | Self::WaitHuman
-            | Self::WaitOpinion
-            | Self::WaitInvestigator
-            | Self::WaitReview
-            | Self::WaitGate
-            | Self::ReviewOpinionCorrection
-            | Self::ReviewOpinionOffer
-            | Self::ReviewResponseOpinion
-            | Self::ReviewIndependent
-            | Self::ReviewResponseNumbers
-            | Self::ReviewResponseExplain
-            | Self::ReviewResponseFixed
-            | Self::ReviewSeverityBlocker
-            | Self::ReviewSeverityMajor
-            | Self::ReviewSeverityMinor
-            | Self::ReviewMistakeVerdict
-            | Self::ReviewMistakeMalformed
-            | Self::ReviewMistakeAfterFindings
-            | Self::ReviewMistakeMissing
-            | Self::ReviewMistakeForbidden
-            | Self::ReviewMistakeAfterStatus
-            | Self::ReviewMistakeDuplicate
-            | Self::ReviewMistakeUnknown
-            | Self::ReviewRaiseMajor
-            | Self::ReviewRaiseBlocker
-            | Self::ReviewVerifierPending
-            | Self::ReviewVerifierResolved
-            | Self::ReviewVerdictMissing => &[],
             Self::ReviewFixNoCommit => &["branch", "tip", "sent", "limit"],
             Self::ReviewFixNoCommitReason => &["tip"],
             Self::NoticeHandoverHeld => &["team", "items", "reason", "rounds", "task"],
@@ -568,6 +583,7 @@ impl AutopilotPrompt {
             Self::NoticeNoVerdict => &["reviewer", "pr", "task", "why"],
             Self::NoticeReviewRotation => &["reviews"],
             Self::NoticeDecision => &["team", "pr", "passes", "additional_passes", "findings"],
+            _ => &[],
         }
     }
 }
