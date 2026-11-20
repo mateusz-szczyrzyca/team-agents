@@ -32,8 +32,10 @@ mod changes;
 mod deadline_tests;
 mod range;
 mod size;
+mod snapshot;
 
 pub use changes::WorkChanges;
+pub use snapshot::Snapshot;
 
 /// How long a local git command may run before its group is killed.
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -251,6 +253,15 @@ pub enum GitOperation {
     /// `git ls-tree`, to list the files in a commit tree.
     #[strum(serialize = "ls-tree")]
     LsTree,
+    /// `git write-tree`, to write the tree of the scratch index of a snapshot.
+    #[strum(serialize = "write-tree")]
+    WriteTree,
+    /// `git commit-tree`, to write the commit that holds a snapshot.
+    #[strum(serialize = "commit-tree")]
+    CommitTree,
+    /// `git for-each-ref`, to count the snapshots a task has.
+    #[strum(serialize = "for-each-ref")]
+    ForEachRef,
 }
 
 /// Why the scratch area of a read of the uncommitted changes cannot be made.
