@@ -287,7 +287,6 @@ pub(super) const fn kind_of(reply: &Reply) -> &'static str {
         Reply::Round { .. } => "round",
         Reply::Task { .. } => "task",
         Reply::Applied { .. } => "applied",
-        Reply::Answered { .. } => "answered",
         Reply::Gate { .. } => "gate",
         Reply::GateRecorded { .. } => "gate_recorded",
         Reply::Subscribed { .. } => "subscribed",

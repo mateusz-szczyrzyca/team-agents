@@ -102,6 +102,15 @@ pub(super) enum Message {
         /// Where the answer goes.
         reply: oneshot::Sender<Result<Reply, Failure>>,
     },
+    /// An answer request whose split interpretation accompanies the ordinary reply.
+    Answer {
+        /// Who supplies the answers.
+        client: Client,
+        /// The answers to record.
+        request: agent_core::protocol::AnswerRequest,
+        /// Where the ordinary reply and optional split interpretation go.
+        reply: oneshot::Sender<Result<(Reply, Option<String>), Failure>>,
+    },
     /// A subscription: the teams as they are, and the events from then on.
     Subscribe {
         /// The team to follow; every team when `None`.
@@ -1415,7 +1424,10 @@ impl Owner {
                     };
                     let answer = match command {
                         Command::Run(request) => self.run_request(request).await?,
-                        Command::Answer(request) => self.answer_request(&client, request).await?,
+                        Command::Answer(request) => self
+                            .answer_request(&client, request)
+                            .await?
+                            .map(|(reply, _split)| reply),
                         Command::Stop(request) => self.control_request(&client, Steer::Stop, &request.target).await?,
                         Command::Pause(request) => self.control_request(&client, Steer::Pause, &request.target).await?,
                         Command::Unpause(request) => {
@@ -1447,6 +1459,17 @@ impl Owner {
                             event = LogEvent::PeerGone.as_str(),
                             "the connection of a request closed before the answer"
                         );
+                    }
+                }
+                Message::Answer { client, request, reply } => {
+                    let answer = self.answer_request(&client, request).await?;
+                    if let Err(ref failure) = answer {
+                        tracing::warn!(event = LogEvent::RequestRefused.as_str(),
+                            kind = ?failure.kind, reason = %failure.message, "an answer request was refused");
+                    }
+                    if reply.send(answer).is_err() {
+                        // The connection closed while the answer was being recorded: there is nobody left to notify.
+                        tracing::debug!(event = LogEvent::PeerGone.as_str(), "the answer connection closed");
                     }
                 }
                 Message::Subscribe { team, reply } => {

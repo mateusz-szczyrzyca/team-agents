@@ -166,7 +166,7 @@ impl Owner {
         &mut self,
         client: &Client,
         request: AnswerRequest,
-    ) -> Result<Result<Reply, Failure>, OwnerError> {
+    ) -> Result<Result<(Reply, Option<String>), Failure>, OwnerError> {
         let AnswerRequest { task, number, answers } = request;
         let open = match self.waiting_questions(&task) {
             Ok(open) => open,
@@ -209,13 +209,7 @@ impl Owner {
             Client::Dashboard { .. } => AnsweredVia::Dashboard,
         };
         let split = self.record_answer(&task, &open, via, &answered).await?;
-        Ok(Ok(match split {
-            Some(split) => Reply::Answered {
-                tasks: vec![task],
-                split,
-            },
-            None => Reply::Applied { tasks: vec![task] },
-        }))
+        Ok(Ok((Reply::Applied { tasks: vec![task] }, split)))
     }
 
     /// The questions `task` waits for answers to, or why there are none.

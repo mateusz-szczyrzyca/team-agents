@@ -95,9 +95,16 @@ pub(crate) struct Connection {
     writer: OwnedWriteHalf,
     /// The ID of the next request.
     next_id: u64,
+    /// Split interpretation attached to the latest response.
+    split: Option<String>,
 }
 
 impl Connection {
+    /// The split interpretation of the latest response, when it answered a split proposal.
+    pub(crate) fn split_acknowledgement(&self) -> Option<&str> {
+        self.split.as_deref()
+    }
+
     /// Connects to the daemon at `socket`.
     ///
     /// # Errors
@@ -136,6 +143,7 @@ impl Connection {
             reader: BufReader::new(read),
             writer,
             next_id: FIRST_REQUEST,
+            split: None,
         })
     }
 
@@ -186,6 +194,7 @@ impl Connection {
             },
             None => conversation.await?,
         };
+        self.split = response.split;
         match response.result {
             Outcome::Ok { reply } => Ok(reply),
             Outcome::Error { error } => Err(ClientError::Refused(error)),

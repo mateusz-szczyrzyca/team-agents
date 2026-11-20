@@ -397,11 +397,24 @@ async fn answer(
         tracing::Span::current().record("request_id", id.0);
         let client = request.client;
         let result = match request.command {
-            Command::Subscribe(subscribe) => subscribe_to(inbox, subscribe.team, subscription).await,
-            command => ask(inbox, client, command).await,
+            Command::Subscribe(subscribe) => subscribe_to(inbox, subscribe.team, subscription)
+                .await
+                .map(|reply| (reply, None)),
+            Command::Answer(request) => {
+                let (reply, answer) = oneshot::channel();
+                match inbox.send(Message::Answer { client, request, reply }).await {
+                    Ok(()) => answer.await.map_err(|_dropped| gone()).and_then(std::convert::identity),
+                    Err(_closed) => Err(gone()),
+                }
+            }
+            command => ask(inbox, client, command).await.map(|reply| (reply, None)),
         };
         let response = match result {
-            Ok(reply) => Response::ok(id, reply),
+            Ok((reply, split)) => {
+                let mut response = Response::ok(id, reply);
+                response.split = split;
+                response
+            }
             Err(failure) => Response::error(id, failure),
         };
         respond(write, response).await

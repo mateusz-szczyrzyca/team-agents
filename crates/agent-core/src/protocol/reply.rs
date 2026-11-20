@@ -26,6 +26,9 @@ pub struct Response {
     pub id: RequestId,
     /// What came of it.
     pub result: Outcome,
+    /// Which split parts an answer recorded, or why it recorded none; absent for ordinary answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split: Option<String>,
 }
 
 /// What came of a request.
@@ -91,13 +94,6 @@ pub enum Reply {
     Applied {
         /// The tasks that changed or received it.
         tasks: Vec<TaskId>,
-    },
-    /// `answer`: the reached tasks and the interpretation of a split verdict.
-    Answered {
-        /// The tasks whose questions were answered.
-        tasks: Vec<TaskId>,
-        /// Which parts were recorded, or why the split was refused.
-        split: String,
     },
     /// `gate`: what the gate said, without the state of the tree. The daemon answers with [`Reply::GateRecorded`]
     /// instead; this reply stays so that a client that knows it is still read.
@@ -443,6 +439,7 @@ impl Response {
             protocol: ProtocolVersion,
             id,
             result: Outcome::Ok { reply },
+            split: None,
         }
     }
 
@@ -453,6 +450,7 @@ impl Response {
             protocol: ProtocolVersion,
             id,
             result: Outcome::Error { error },
+            split: None,
         }
     }
 }
