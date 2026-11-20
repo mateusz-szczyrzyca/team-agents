@@ -771,8 +771,13 @@ impl Owner {
                 source,
             })?;
         // The run's prompt has the reason it was sent back for its plan, if any: no later run is told it again.
+        // So are the answers about its plan that no run asked for.
         if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
-            drop(member.take_plan_reason());
+            let reason = member.take_plan_reason();
+            let answers = member.take_unread_plan_answers();
+            if reason.is_some() || answers.is_some() {
+                tracing::debug!(task = %task, ?reason, ?answers, "the run is told what waited for it of its plan");
+            }
         }
         events.push(EventKind::RunStarted {
             team: located.team.clone(),

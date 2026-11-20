@@ -341,10 +341,14 @@ fn with_plan(
 }
 
 /// The questions the human answered and no run has read since: the last questions are answered, and the latest run
-/// that read its prompt ended asking. A run that did not read it (it crashed, was stopped, hung, hit a limit) leaves the
-/// answers to the next one. It is worked out from the state, so that it holds after a restart.
+/// that read its prompt ended asking, or they are the answers about the task's plan that no run was given yet. A run
+/// that did not read it (it crashed, was stopped, hung, hit a limit) leaves the answers to the next one. It is worked out from the state, so that it holds after a restart.
 fn answered_questions(member: &Member) -> Option<&Question> {
     let question = member.questions().last().filter(|question| !question.is_open())?;
+    // The question about the plan was put by the harness after a run that ended done: no run asked it.
+    if member.plan().and_then(PlanKeeping::unread_answers) == Some(question.number()) {
+        return Some(question);
+    }
     for run in member.runs().iter().rev() {
         match run.state() {
             RunState::Ended {
