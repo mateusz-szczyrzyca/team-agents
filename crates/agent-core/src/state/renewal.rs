@@ -13,9 +13,11 @@ use crate::decide::ladder::Trouble;
 pub struct Renewals {
     /// How many times the task was started in a new session again.
     used: u32,
-    /// When the last renewal happened: the runs that started at or after this time belong to the new session, the
-    /// session the task had before it is not resumed any more.
+    /// When the last renewal happened.
     at: Timestamp,
+    /// How many runs the task had when it was last started anew: the runs after them belong to the new session, and
+    /// the session the task had before it is not resumed any more.
+    after_runs: usize,
     /// Why the task was last started anew.
     reason: Trouble,
 }
@@ -39,31 +41,30 @@ impl Renewals {
         self.reason
     }
 
-    /// The renewals of a task started anew for the first time, at `at`, for `reason`.
-    pub(super) const fn first(at: Timestamp, reason: Trouble) -> Self {
-        Self { used: 1, at, reason }
+    /// The renewals of a task started anew for the first time, at `at`, for `reason`, after its first `after_runs` runs.
+    pub(super) const fn first(at: Timestamp, reason: Trouble, after_runs: usize) -> Self {
+        Self {
+            used: 1,
+            at,
+            reason,
+            after_runs,
+        }
     }
 
-    /// The renewal the member records: one more was used, at `at`, for `reason`.
-    pub(super) fn record(&mut self, at: Timestamp, reason: Trouble) {
+    /// The renewal the member records: one more was used, at `at`, for `reason`, after its first `after_runs` runs.
+    pub(super) fn record(&mut self, at: Timestamp, reason: Trouble, after_runs: usize) {
         self.used = self.used.saturating_add(1);
         self.at = at;
         self.reason = reason;
+        self.after_runs = after_runs;
     }
 }
 
-/// The runs from the first that started at or after `since`, or all of them when `since` is none: the run that carries
-/// a renewal starts at its time and belongs to the new session.
-pub(super) fn runs_since(runs: &[Run], since: Option<Timestamp>) -> &[Run] {
-    match since {
+/// The runs of the session the task was last started anew in, or all of them when `renewals` is none.
+pub(super) fn runs_since<'a>(runs: &'a [Run], renewals: Option<&Renewals>) -> &'a [Run] {
+    match renewals {
         None => runs,
-        Some(since) => {
-            let first = runs
-                .iter()
-                .position(|run| run.started_at().as_utc() >= since.as_utc())
-                .unwrap_or(runs.len());
-            runs.get(first..).unwrap_or(&[])
-        }
+        Some(renewals) => runs.get(renewals.after_runs..).unwrap_or(&[]),
     }
 }
 
@@ -148,7 +149,7 @@ pub enum RenewalError {
 pub(super) fn check_renewals(renewals: &Renewals, runs: &[Run]) -> Result<(), RenewalError> {
     let at = renewals.at();
     match runs.first() {
-        Some(first) if first.started_at().as_utc() < at.as_utc() => Ok(()),
+        Some(first) if first.started_at().as_utc() <= at.as_utc() && renewals.after_runs <= runs.len() => Ok(()),
         Some(_) | None => Err(RenewalError::BeforeEveryRun { at }),
     }
 }
@@ -164,8 +165,8 @@ pub(super) fn trouble_of(end: &RunEnd) -> Option<Trouble> {
 }
 
 /// How many runs since the last renewal ended with `trouble` in a row.
-pub(super) fn bad_runs_in_a_row(runs: &[Run], since: Option<Timestamp>, trouble: Trouble) -> u32 {
-    let count = runs_since(runs, since)
+pub(super) fn bad_runs_in_a_row(runs: &[Run], renewals: Option<&Renewals>, trouble: Trouble) -> u32 {
+    let count = runs_since(runs, renewals)
         .iter()
         .rev()
         .take_while(|run| match run.state() {

@@ -358,10 +358,7 @@ impl Member {
     getter!(
         "The session of the latest run since the task was last started anew that has one: the one a new run resumes. \
          No session of a run before that renewal is resumed.",
-        pub fn last_session(&self) -> Option<&SessionId> = renewal::runs_since(
-            &self.runs,
-            self.renewals.as_ref().map(renewal::Renewals::at)
-        )
+        pub fn last_session(&self) -> Option<&SessionId> = renewal::runs_since(&self.runs, self.renewals.as_ref())
         .iter()
         .rev()
         .find_map(Run::session)
@@ -455,15 +452,16 @@ impl Member {
         let Some(last) = self.runs.last() else {
             return Ok(false);
         };
-        if last.started_at().as_utc() >= at.as_utc() {
+        if last.started_at().as_utc() > at.as_utc() {
             return Err(renewal::RenewalError::NotAfterTheLastRun {
                 at,
                 started_at: last.started_at(),
             });
         }
+        let after_runs = self.runs.len();
         match &mut self.renewals {
-            Some(renewals) => renewals.record(at, trouble),
-            None => self.renewals = Some(renewal::Renewals::first(at, trouble)),
+            Some(renewals) => renewals.record(at, trouble, after_runs),
+            None => self.renewals = Some(renewal::Renewals::first(at, trouble, after_runs)),
         }
         Ok(true)
     }
@@ -527,7 +525,7 @@ impl Member {
             return 0;
         };
         renewal::trouble_of(end).map_or(0, |trouble| {
-            renewal::bad_runs_in_a_row(&self.runs, self.renewals.as_ref().map(renewal::Renewals::at), trouble)
+            renewal::bad_runs_in_a_row(&self.runs, self.renewals.as_ref(), trouble)
         })
     }
 
