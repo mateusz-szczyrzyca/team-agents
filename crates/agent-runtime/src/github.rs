@@ -29,6 +29,11 @@ use serde::de::{DeserializeOwned, Error as _};
 use serde_json::{Value, json};
 use tracing::Instrument;
 
+#[cfg(test)]
+mod outlook;
+
+pub use self::outlook::Outlook;
+
 /// The base URL of the public GitHub API.
 const PUBLIC_API: &str = "https://api.github.com";
 
