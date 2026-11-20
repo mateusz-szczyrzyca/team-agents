@@ -367,3 +367,21 @@ fn ending_a_delivery_refuses_each_invalid_transition_without_mutation() {
     );
     assert_eq!(team, before);
 }
+
+#[test]
+fn persisted_ended_delivery_requires_a_claim_abandoned_round_and_valid_time() {
+    let mut team = working();
+    team.deliver_round(&round_id(2), pr(7).number).unwrap();
+    team.end_delivery(&round_id(2), at(40)).unwrap();
+    let valid = serde_json::to_value(&team).unwrap();
+    for (field, value) in [
+        ("delivery", serde_json::Value::Null),
+        ("state", serde_json::json!({"status":"open"})),
+        ("delivery_closed_at", serde_json::to_value(at(0)).unwrap()),
+    ] {
+        let mut invalid = valid.clone();
+        invalid["rounds"][1][field] = value;
+        let result = serde_json::from_value::<Team>(invalid);
+        assert_eq!(result.expect_err(field).classify(), serde_json::error::Category::Data);
+    }
+}

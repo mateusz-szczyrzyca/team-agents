@@ -164,3 +164,37 @@ fn snapshot_warnings_are_kept_in_the_daemon_log() {
         ]
     );
 }
+
+#[test]
+fn delivery_close_warning_migrates_old_history_without_losing_logs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(include_str!("fixtures/history-before-delivery-close.sql"))
+        .unwrap();
+    let warning = |event| LogRecord {
+        at: at(5, 0),
+        module: "agent::daemon::owner".to_owned(),
+        event,
+        team: None,
+        task: None,
+        message: "delivery lifecycle".to_owned(),
+        fields: BTreeMap::new(),
+        cut: Cut::default(),
+    };
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+    db.write_logs(&[warning(LogEvent::SnapshotLarge), warning(LogEvent::DeliveryClosed)])
+        .expect("both warning events are stored");
+    drop(db);
+    let logs = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    assert_eq!(
+        logs.iter()
+            .map(|entry| (entry.event(), entry.level()))
+            .collect::<Vec<_>>(),
+        vec![
+            (LogEvent::SnapshotLarge, LogLevel::Warn),
+            (LogEvent::DeliveryClosed, LogLevel::Warn)
+        ]
+    );
+}
