@@ -1267,25 +1267,28 @@ impl Owner {
         Ok(next)
     }
 
-    /// Decide continuation from the persisted suffix, so a restart never resets its budget.
-    fn turn_limit(&self, task: &TaskId) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+    /// Decide continuation from the persisted suffix of the session, so a restart never resets its budget: the same
+    /// session up to `turn_limit_resumes` times, then the ladder's new session, then the human.
+    fn turn_limit(&mut self, task: &TaskId) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+        let role = self.locate(task)?.role;
         let found = self
             .parts
             .state
             .find_task(task)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
-        let count = consecutive_turn_limits(found.member.runs());
+        let count = consecutive_turn_limits(found.member.session_runs());
         let session = found.member.runs().last().and_then(|run| run.session());
         let limits = self.parts.settings.config.limits();
+        let limit = limits.turn_limit_resumes;
         let next = match after_turn_limit(count, session, limits) {
             AfterTurnLimit::Resume => (TaskStatus::Queued, None),
-            AfterTurnLimit::Exhausted => (
-                TaskStatus::Failed,
-                Some(Notice::TurnLimitExhausted {
-                    count,
-                    limit: limits.turn_limit_resumes,
-                }),
-            ),
+            // After the resumes of its session the task goes up the ladder: a new session, or the human.
+            AfterTurnLimit::Exhausted => {
+                match self.climb(task, role, Trouble::TurnLimit, u32::try_from(count).unwrap_or(u32::MAX))? {
+                    LadderStep::SameSession | LadderStep::NewSession => (TaskStatus::Queued, None),
+                    LadderStep::GiveUp => (TaskStatus::Failed, Some(Notice::TurnLimitExhausted { count, limit })),
+                }
+            }
             AfterTurnLimit::NoSession => (TaskStatus::Failed, Some(Notice::TurnLimitNoSession)),
         };
         Ok(next)
