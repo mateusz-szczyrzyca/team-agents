@@ -556,7 +556,11 @@ func (s *Server) sendMessage(to, text string, wake bool) (string, *SendMessageEr
 	var out string
 	err := transact(s.bus, SendMessageStorage, func(st *State) *SendMessageError {
 		s.touch(st)
-		m, serr := s.bus.postIn(st, s.team, s.me, to, EventChat{Body: text, Quiet: !wake})
+		recipient, team, refusal := s.delivery(st, to)
+		if refusal != nil {
+			return refusal
+		}
+		m, serr := s.bus.postIn(st, team, s.me, recipient, EventChat{Body: text, Quiet: !wake})
 		if serr != nil {
 			return fromStorage(SendMessageStorage, serr)
 		}

@@ -115,7 +115,7 @@ func (b *Bus) wakeFor(st *State, m Message) {
 			if mem.State != MemberSleeping || name == m.From {
 				continue
 			}
-			direct := m.To == name && (m.Team == "" || m.Team == t.ID)
+			direct := (m.To == name || m.To == mem.Task) && (m.Team == "" || m.Team == t.ID)
 			if direct || m.To == teamRecipient(t.ID) {
 				mem.State = MemberWaking
 				logInfo(LogMemberWokenBy, "team", t.ID, "member", name, "cause", "message", "message_id", m.ID, "kind", m.Kind, "from", m.From)
@@ -131,6 +131,125 @@ func taskOf(st *State, agent, team string) string {
 		return t.Members[agent].Task
 	}
 	return ""
+}
+
+// knowsOutside reports whether the bus knows name outside teams: the human, the agentbus, a running agent or a configured
+// one, and the worker of a request the agent sent.
+func knowsOutside(st *State, peers []string, agent, name string) bool {
+	if name == "human" || name == "agentbus" || st.Agents[name] != nil {
+		return true
+	}
+	for _, p := range peers {
+		if p == name {
+			return true
+		}
+	}
+	for _, h := range st.Helpers {
+		if h.From == agent && h.Worker == name {
+			return true
+		}
+	}
+	return false
+}
+
+// delivery finds where a direct message of this session to "to" goes: the recipient it is posted to — the agent's name,
+// or the ID of a task for an outside sender — and the team it is bound to. A session of a team writes to a member of its
+// team, by name or by task, and to the recipients the bus knows outside teams; a session outside teams writes to a task
+// it names, to the one open team of the agent, or to anyone outside teams. Anything else is refused with what to send.
+func (s *Server) delivery(st *State, to string) (recipient, team string, refusal *SendMessageError) {
+	if to == "all" || strings.HasPrefix(to, "team:") {
+		return to, "", nil // a broadcast and a team are for every task of their readers
+	}
+	if s.team != "" {
+		t := st.Teams[s.team]
+		switch {
+		case to == s.me || to == taskOf(st, s.me, s.team):
+			return "", "", opErr(SendMessageToSelf, "do not send messages to yourself")
+		case t != nil && t.Members[to] != nil:
+			return to, s.team, nil
+		}
+		for name, m := range t.Members {
+			if m.Task == to {
+				return name, s.team, nil
+			}
+		}
+		if knowsOutside(st, s.peers, s.me, to) {
+			return to, "", nil
+		}
+		members := ""
+		if t != nil {
+			members = strings.Join(t.names(), ", ")
+		}
+		return "", "", opErr(SendMessageNotInYourTeam, "%s is not in your team (%s) — send to one of its members, by name or task, to team, to all, or to the human", to, members)
+	}
+	switch {
+	case to == s.me:
+		return "", "", opErr(SendMessageToSelf, "do not send messages to yourself")
+	case to == "human" || to == "agentbus" || st.Agents[to] != nil:
+		return to, "", nil
+	}
+	if team := memberOfTask(st, to); team != "" {
+		return to, team, nil // a task of an agent, in the team it is in
+	}
+	tasks := tasksOf(st, to)
+	switch len(tasks) {
+	case 0:
+		return to, "", nil
+	case 1:
+		return to, tasks[0].team, nil
+	}
+	pairs := make([]string, 0, len(tasks))
+	for _, of := range tasks {
+		pairs = append(pairs, "task "+of.task+" (team "+of.team+")")
+	}
+	return "", "", opErr(SendMessageAmbiguousAgent, "%s is in %d open teams: %s — put one of its task IDs in to", to, len(tasks), strings.Join(pairs, ", "))
+}
+
+// memberOfTask finds the open team the task is the task of a member in ("" when no member has it).
+func memberOfTask(st *State, task string) string {
+	ids := make([]string, 0, len(st.Teams))
+	for id := range st.Teams {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		t := st.Teams[id]
+		if t.Done {
+			continue
+		}
+		for _, m := range t.Members {
+			if m.Task == task {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+// taskRef is a task of an agent and the team it is in.
+type taskRef struct {
+	task string // the task ID
+	team string // its team
+}
+
+// tasksOf lists the tasks of the agent in the open teams, oldest team first.
+func tasksOf(st *State, agent string) []taskRef {
+	ids := make([]string, 0, len(st.Teams))
+	for id := range st.Teams {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var out []taskRef
+	for _, id := range ids {
+		t := st.Teams[id]
+		if t.Done {
+			continue
+		}
+		if m := t.Members[agent]; m != nil {
+			out = append(out, taskRef{task: m.Task, team: id})
+		}
+	}
+	return out
 }
 
 // isForAgent reports whether a message is for the agent in the team team ("" outside teams): a direct message — the
