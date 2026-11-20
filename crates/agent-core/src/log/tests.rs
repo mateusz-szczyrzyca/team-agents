@@ -416,3 +416,9 @@ fn log_entry_try_new_accepts_valid_parts_and_refuses_every_broken_invariant() {
         })
     );
 }
+
+#[test]
+fn closed_delivery_has_its_own_warning_event() {
+    assert_eq!(LogEvent::DeliveryClosed.as_str(), "delivery_closed");
+    assert_eq!(LogEvent::DeliveryClosed.level(), LogLevel::Warn);
+}

@@ -158,6 +158,8 @@ pub enum LogEvent {
     TeamChanged,
     /// A round is opened or closed.
     RoundChanged,
+    /// An accepted delivery ended because its pull request was closed without merging.
+    DeliveryClosed,
     /// An item's phase changes.
     ItemPhaseChanged,
     /// A task's status changes.
@@ -245,6 +247,7 @@ impl LogEvent {
             | Self::RequestRefused
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
+            | Self::DeliveryClosed
             | Self::RoundChanged
             | Self::ItemPhaseChanged
             | Self::TaskStatusChanged
