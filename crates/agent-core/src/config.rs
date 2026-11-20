@@ -962,12 +962,13 @@ impl Config {
         &self.log
     }
 
-    /// The dashboard's address and logins.
+    /// Which roles keep a plan of their task, and how often a run goes back for it.
     #[must_use]
     pub fn plan(&self) -> &Plan {
         &self.plan
     }
 
+    /// The dashboard's address and logins.
     #[must_use]
     pub fn web(&self) -> &Web {
         &self.web
