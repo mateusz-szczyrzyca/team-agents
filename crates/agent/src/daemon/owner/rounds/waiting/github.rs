@@ -15,8 +15,9 @@ use agent_runtime::git::{GitError, GitOperation};
 use agent_runtime::github::Outlook;
 use time::Duration;
 
-/// How many steps may wait for GitHub at once: the owner's memory stays bounded whatever fails. Beyond it the wait with
-/// the smallest key (step, round) gives way; that step is then tried at its next look, as after a start of the daemon.
+/// How many steps that may pass are kept waiting at once. Beyond it the one of them with the smallest key (step, round)
+/// gives way and is tried at its next look, as after a start of the daemon. A refusal is never given up for room: it
+/// waits for the human's resume, and there is at most one per step of a round or team the state has.
 pub(in crate::daemon::owner) const MAX_WAITS: usize = 256;
 
 /// Whether a failed step may pass at a later try, from what it failed with: a GitHub failure says so itself, and a
@@ -219,12 +220,14 @@ fn named(step: WaitingStep, pr: Option<PrNumber>) -> String {
     }
 }
 
-/// The minute a time shows, rounded up: 25 seconds past 00:04 shows 00:05, as the human reads a time in the log.
+/// The minute a time shows, rounded up: 25 seconds past 00:04 shows 00:05, and 00:05 exactly shows 00:05, so that the
+/// shown minute is never before the try.
 fn minute_shown(at: Timestamp, offset: time::UtcOffset) -> String {
-    let second = i64::from(at.as_utc().second());
-    let shown = at
-        .as_utc()
-        .saturating_add(Duration::seconds(60_i64.saturating_sub(second)));
+    let utc = at.as_utc();
+    if utc.second() == 0 && utc.nanosecond() == 0 {
+        return clock_time(at, offset);
+    }
+    let shown = utc.saturating_add(Duration::seconds(60_i64.saturating_sub(i64::from(utc.second()))));
     match Timestamp::from_utc(shown) {
         Ok(shown) => clock_time(shown, offset),
         // A next try in the last minute a time records is shown as it is: there is no later minute to round to.
@@ -308,8 +311,18 @@ impl Waits {
             }
             None => Wait::first(team.clone(), step, pr, answer, outlook, now, pause(NonZeroU32::MIN))?,
         };
-        if self.steps.len() >= MAX_WAITS
-            && let Some(oldest) = self.steps.keys().next().cloned()
+        let passing = self
+            .steps
+            .values()
+            .filter(|kept| kept.outlook == Outlook::MayPass)
+            .count();
+        if outlook == Outlook::MayPass
+            && passing >= MAX_WAITS
+            && let Some(oldest) = self
+                .steps
+                .iter()
+                .find(|(_, kept)| kept.outlook == Outlook::MayPass)
+                .map(|(key, _)| key.clone())
         {
             self.steps.remove(&oldest);
         }
