@@ -1222,8 +1222,10 @@ impl AgentBus {
         message: &Outgoing,
     ) -> Result<SentMessage, AgentBusError> {
         let mut args = Args::new().flag("--from", from.as_str()).flag("--to", to.to_string());
-        if let Recipient::Member { team, .. } = to {
-            args = args.flag("--team", team.to_string());
+        match to {
+            Recipient::Member { team, .. } => args = args.flag("--team", team.to_string()),
+            Recipient::Task { task, .. } => args = args.flag("--for-task", task.to_string()),
+            Recipient::All | Recipient::Agent(_) | Recipient::Team(_) => {}
         }
         let text = match message {
             Outgoing::Chat { text } => text,

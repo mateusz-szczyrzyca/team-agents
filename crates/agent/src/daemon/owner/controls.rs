@@ -408,16 +408,14 @@ impl Owner {
                 if on_bus {
                     return Ok(vec![Recipient::Team(team.clone())]);
                 }
-                hearing
-                    .iter()
-                    .map(|task| self.agent_of(task).map(Recipient::Agent))
-                    .collect()
+                hearing.iter().map(|task| self.recipient_of(task)).collect()
             }
         }
     }
 
-    /// Who a word to `task` is for: its agent, in the team of the task when that team is on the bus — an agent in
-    /// several open teams has a session in each, and the bus refuses a message that does not say which.
+    /// Who a word to `task` is for: its agent, in the team of the task when that team is on the bus, else in the task
+    /// itself (a solo task) — an agent in several teams has a session in each, and the bus must not bind the words to
+    /// the agent's other team or refuse them for it.
     fn recipient_of(&self, task: &TaskId) -> Result<Recipient, OwnerError> {
         let agent = self.agent_of(task)?;
         let team = self
@@ -428,7 +426,10 @@ impl Owner {
             .map(|found| found.team.id().clone());
         Ok(match team {
             Some(team) => Recipient::Member { agent, team },
-            None => Recipient::Agent(agent),
+            None => Recipient::Task {
+                agent,
+                task: task.clone(),
+            },
         })
     }
 
