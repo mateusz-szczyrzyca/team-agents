@@ -5,6 +5,21 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.33.0 — 20.11.2026 — PR #151
+
+### New features
+- [agent] [agent-core] [agent-runtime] The harness can check a coordinator's report that an item is delivered by
+  another pull request of its team (`DELIVERED: #N`). It accepts it only when that pull request belongs to the team and
+  the item's branch holds nothing outside it or the base branch; otherwise the lead is told why. An accepted item opens
+  no pull request, `agent status` shows `delivered by PR #N, waits for its merge`, and when #N is merged the item is
+  done as `done, delivered by PR #N`. A stop and a resume of the team in between change nothing: the item still
+  waits, opens no second pull request and closes at the merge, also when it is a part of a split item. Coordinators are not told about the report yet: that and the return to work when
+  #N is closed without a merge come in the next version.
+
+### Enhancements
+- [agent-core] The state file is now schema 14 and still reads every state written by earlier versions; an older `agent`
+  cannot read a state written by this one, so keep a backup from before the upgrade.
+
 ## 0.32.0 — 20.11.2026 — PR #149
 
 ### Enhancements
