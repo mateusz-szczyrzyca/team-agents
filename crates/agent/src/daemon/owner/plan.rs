@@ -339,7 +339,7 @@ impl Owner {
                 role: located.role,
                 end,
                 read: &found.read,
-                previous: previous.as_ref(),
+                earlier: previous.as_slice(),
                 keeping: member.plan(),
                 policy: self.parts.settings.config.plan(),
             })

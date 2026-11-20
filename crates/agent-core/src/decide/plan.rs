@@ -69,8 +69,8 @@ pub struct PlanFacts<'a> {
     pub end: &'a RunEnd,
     /// What the daemon read at the end of the run.
     pub read: &'a PlanRead,
-    /// The last version of the plan kept from an earlier run, when one was.
-    pub previous: Option<&'a Plan>,
+    /// The versions of the plan kept from earlier runs, oldest first; empty when none was.
+    pub earlier: &'a [Plan],
     /// What the task keeps of its plan; `None` for a task created before plans.
     pub keeping: Option<&'a PlanKeeping>,
     /// The `[plan]` table of the configuration.
@@ -122,7 +122,7 @@ pub fn decide_plan(facts: PlanFacts<'_>) -> PlanVerdict {
     if limit == 0 {
         return PlanVerdict::Accept;
     }
-    let Some(reason) = fault(facts.read, facts.previous) else {
+    let Some(reason) = fault(facts.read, facts.earlier.last()) else {
         return PlanVerdict::Accept;
     };
     if keeping.sent_back() < limit {

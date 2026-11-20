@@ -84,7 +84,7 @@ fn a_run_that_reports_done_with_a_clean_plan_goes_on() {
         role: Role::Member,
         end: &end,
         read: &read,
-        previous: Some(&previous),
+        earlier: std::slice::from_ref(&previous),
         keeping: Some(&fixing),
         policy: &policy(),
     });
@@ -111,7 +111,7 @@ fn a_run_that_ends_with_another_status_is_never_sent_back_for_its_plan() {
             role: Role::Member,
             end: &end,
             read: &missing,
-            previous: None,
+            earlier: &[],
             keeping: Some(&keeping),
             policy: &policy(),
         });
@@ -131,7 +131,7 @@ fn a_role_outside_the_plan_roles_is_never_sent_back() {
             role,
             end: &end,
             read: &missing,
-            previous: None,
+            earlier: &[],
             keeping: Some(&keeping),
             policy: &policy(),
         });
@@ -149,7 +149,7 @@ fn a_task_created_before_plans_is_never_sent_back() {
         role: Role::Solo,
         end: &end,
         read: &missing,
-        previous: None,
+        earlier: &[],
         keeping: None,
         policy: &policy(),
     });
@@ -168,7 +168,7 @@ fn a_limit_of_zero_never_sends_a_run_back() {
         role: Role::Member,
         end: &end,
         read: &missing,
-        previous: None,
+        earlier: &[],
         keeping: Some(&keeping),
         policy: &policy,
     });
@@ -186,7 +186,7 @@ fn a_released_plan_is_never_sent_back_and_a_clean_one_is_accepted() {
         role: Role::Member,
         end: &end,
         read: &missing,
-        previous: None,
+        earlier: &[],
         keeping: Some(&keeping),
         policy: &policy(),
     });
@@ -234,7 +234,7 @@ fn each_fault_of_a_plan_goes_back_with_its_own_reason() {
             role: Role::Member,
             end: &end,
             read: &read,
-            previous: previous.as_ref(),
+            earlier: previous.as_slice(),
             keeping: Some(&keeping),
             policy: &policy(),
         });
@@ -253,7 +253,7 @@ fn an_unfinished_plan_names_every_step_to_do_or_in_hand_in_its_order() {
         role: Role::Member,
         end: &end,
         read: &read,
-        previous: None,
+        earlier: &[],
         keeping: Some(&keeping),
         policy: &policy(),
     });
@@ -273,7 +273,7 @@ fn an_unreadable_plan_with_a_fault_of_the_whole_text_names_no_line() {
         role: Role::Member,
         end: &end,
         read: &read,
-        previous: None,
+        earlier: &[],
         keeping: Some(&keeping),
         policy: &policy(),
     });
@@ -298,7 +298,7 @@ fn a_lost_step_is_reported_before_a_step_still_to_do() {
         role: Role::Member,
         end: &end,
         read: &now,
-        previous: Some(&previous),
+        earlier: std::slice::from_ref(&previous),
         keeping: Some(&keeping),
         policy: &policy(),
     });
@@ -327,7 +327,7 @@ fn after_the_limit_the_human_is_asked_once_and_not_again() {
         role: Role::Coordinator,
         end: &end,
         read: &missing,
-        previous: None,
+        earlier: &[],
         keeping: Some(&open),
         policy: &policy(),
     });
@@ -335,7 +335,7 @@ fn after_the_limit_the_human_is_asked_once_and_not_again() {
         role: Role::Coordinator,
         end: &end,
         read: &missing,
-        previous: None,
+        earlier: &[],
         keeping: Some(&asked),
         policy: &policy(),
     });
@@ -359,7 +359,7 @@ fn a_send_back_the_human_granted_raises_the_limit() {
         role: Role::Member,
         end: &end,
         read: &missing,
-        previous: None,
+        earlier: &[],
         keeping: Some(&granted),
         policy: &policy(),
     });
@@ -378,7 +378,7 @@ fn the_plan_roles_the_file_names_are_the_ones_sent_back() {
         role: Role::Coordinator,
         end: &end,
         read: &missing,
-        previous: None,
+        earlier: &[],
         keeping: Some(&keeping),
         policy: &policy,
     });
@@ -386,7 +386,7 @@ fn the_plan_roles_the_file_names_are_the_ones_sent_back() {
         role: Role::Member,
         end: &end,
         read: &missing,
-        previous: None,
+        earlier: &[],
         keeping: Some(&keeping),
         policy: &policy,
     });
@@ -405,7 +405,7 @@ fn the_last_send_back_before_the_limit_still_goes_back() {
         role: Role::Solo,
         end: &end,
         read: &missing,
-        previous: None,
+        earlier: &[],
         keeping: Some(&last),
         policy: &policy(),
     });
