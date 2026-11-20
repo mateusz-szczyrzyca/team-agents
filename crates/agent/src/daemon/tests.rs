@@ -1455,3 +1455,42 @@ async fn after_the_last_strike_the_task_goes_on_once_in_a_new_session() {
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("Note: claude-1 is hung"), "{}", notes[0]);
 }
+
+// Rule: a restart that ends the third run after two endings without a status goes up the ladder: the task is started
+// anew in a new session when the default configuration allows one, instead of failing.
+#[tokio::test]
+async fn a_restart_that_exhausts_the_retries_of_a_session_starts_the_task_in_a_new_session() {
+    let mut state = solo_state();
+    {
+        let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+        for n in 1..=2 {
+            member.transition(TaskStatus::Running).unwrap();
+            member
+                .begin_run(run_id(n), at(10 * n), Some("ses-1".parse().unwrap()))
+                .unwrap();
+            member
+                .end_run(at(10 * n + 5), RunEnd::NoStatus { exit_code: Some(0) })
+                .unwrap();
+            member.transition(TaskStatus::Queued).unwrap();
+        }
+        member.transition(TaskStatus::Running).unwrap();
+        member
+            .begin_run(run_id(3), at(30), Some("ses-1".parse().unwrap()))
+            .unwrap();
+    }
+    let mut f = Fixture::new(&state, 3, "done");
+
+    f.start().await;
+    let state = f.status_is(TaskStatus::Done).await;
+    f.stop().await.unwrap();
+
+    let member = member_one(&state);
+    assert_eq!(
+        member.runs().len(),
+        4,
+        "three runs of the first session, then the new one"
+    );
+    assert_ne!(member.runs()[3].session(), member.runs()[2].session());
+    assert_eq!(member.renewals().map(agent_core::state::Renewals::used), Some(1));
+    assert_eq!(f.notifications(), Vec::<String>::new());
+}
