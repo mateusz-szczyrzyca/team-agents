@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use agent_core::ids::TeamId;
 use agent_core::protocol::{
-    Client, Command, Event, EventKind, Failure, FailureKind, Frame, MAX_REQUEST_BYTES, ProtocolError, Reply, Request,
-    RequestId, Response, TeamSummary,
+    Client, Command, Event, EventKind, Failure, FailureKind, Frame, MAX_REQUEST_BYTES, ProtocolError, Reply,
+    ReplyFormat, Request, RequestId, Response, TeamSummary,
 };
 use agent_runtime::process::error_chain;
 use agent_runtime::store::Home;
@@ -209,6 +209,8 @@ struct Subscription {
     team: Option<TeamId>,
     /// The events.
     events: broadcast::Receiver<Event>,
+    /// The format selected by the subscribing request.
+    format: ReplyFormat,
 }
 
 /// What a connection waited for and got.
@@ -342,7 +344,10 @@ async fn forward(
     if !wanted {
         return Ok(());
     }
-    send(write, &Frame::Event(event)).await
+    match subscription {
+        Some(subscription) => send_for(write, &Frame::Event(event), subscription.format).await,
+        None => Ok(()),
+    }
 }
 
 /// The callsite for directly constructed socket request spans.
@@ -378,7 +383,7 @@ async fn answer(
 ) -> Result<(), LineError> {
     let span = server_request_span();
     async move {
-        let request = match Request::from_line(line) {
+        let (request, format) = match Request::from_line_negotiated(line) {
             Ok(request) => request,
             Err(error) => {
                 let failure = Failure {
@@ -397,7 +402,7 @@ async fn answer(
         tracing::Span::current().record("request_id", id.0);
         let client = request.client;
         let result = match request.command {
-            Command::Subscribe(subscribe) => subscribe_to(inbox, subscribe.team, subscription)
+            Command::Subscribe(subscribe) => subscribe_to(inbox, subscribe.team, subscription, format)
                 .await
                 .map(|reply| (reply, None)),
             Command::Answer(request) => {
@@ -417,7 +422,7 @@ async fn answer(
             }
             Err(failure) => Response::error(id, failure),
         };
-        respond(write, response).await
+        send_for(write, &Frame::Response(response), format).await
     }
     .instrument(span)
     .await
@@ -448,6 +453,7 @@ async fn subscribe_to(
     inbox: &mpsc::Sender<Message>,
     team: Option<TeamId>,
     subscription: &mut Option<Subscription>,
+    format: ReplyFormat,
 ) -> Result<Reply, Failure> {
     let (reply, answer) = oneshot::channel();
     inbox
@@ -458,7 +464,7 @@ async fn subscribe_to(
         .await
         .map_err(|_closed| gone())?;
     let (teams, events): (Vec<TeamSummary>, broadcast::Receiver<Event>) = answer.await.map_err(|_dropped| gone())?;
-    *subscription = Some(Subscription { team, events });
+    *subscription = Some(Subscription { team, events, format });
     Ok(Reply::Subscribed { teams })
 }
 
@@ -477,7 +483,16 @@ async fn respond(write: &mut tokio::net::unix::OwnedWriteHalf, response: Respons
 
 /// Writes a frame as one line.
 async fn send(write: &mut tokio::net::unix::OwnedWriteHalf, frame: &Frame) -> Result<(), LineError> {
-    let line = frame.to_line().map_err(|error| {
+    send_for(write, frame, ReplyFormat::Legacy).await
+}
+
+/// Writes a frame using the recipient's negotiated version.
+async fn send_for(
+    write: &mut tokio::net::unix::OwnedWriteHalf,
+    frame: &Frame,
+    format: ReplyFormat,
+) -> Result<(), LineError> {
+    let line = frame.to_line_for(format).map_err(|error| {
         // A frame of the daemon's own types cannot fail to encode; if one does, the connection ends.
         LineError::Write(io::Error::new(io::ErrorKind::InvalidData, error))
     })?;
