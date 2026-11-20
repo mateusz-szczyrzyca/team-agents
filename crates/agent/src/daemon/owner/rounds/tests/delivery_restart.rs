@@ -397,17 +397,42 @@ async fn delivery_bus_failure_keeps_owner_running_and_retries_the_saved_notice()
     let bus = rig.home.root().join("recoverable-agentbus");
     let actual = step.owner.parts.settings.config.binaries().agentbus.clone();
     step.owner.parts.bus = AgentBus::new(bus.to_str().unwrap().parse().unwrap(), rig.home.absolute_root().clone());
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::layer::SubscriberExt;
+    let layer = agent_runtime::history::HistoryLayer::new(
+        agent_core::log::LogLevel::Info,
+        rig.history_test_clock(),
+        agent_core::config::Secrets::default(),
+        Some(step.owner.history.clone()),
+    );
+    let subscriber = tracing_subscriber::registry().with(layer);
     let shutdown = step.owner.shutdown.clone();
     let (sender, inbox) = mpsc::channel(8);
     let running = step.owner.run(inbox);
+    let running = running.with_subscriber(subscriber);
     tokio::pin!(running);
     tokio::select! {
         result = &mut running => panic!("owner exited during a retryable bus outage: {result:?}"),
-        _ = rig.state_where("the closed claim to be saved during the bus outage", |state| {
-            state.team(&team).unwrap().round(&old).unwrap().delivery_closed_at().is_some()
+        _ = rig.wait_for("the saved claim notice to fail on the unavailable bus", || {
+            agent_runtime::history::Reader::open(&rig.home.history_file())
+                .unwrap()
+                .daemon_logs()
+                .unwrap()
+                .iter()
+                .any(|row| row.event() == agent_core::log::LogEvent::BusDown
+                    && row.team() == Some(&team) && row.fields().contains_key("pr"))
         }) => {}
     }
     let saved = rig.state();
+    assert!(
+        saved
+            .team(&team)
+            .unwrap()
+            .round(&old)
+            .unwrap()
+            .delivery_closed_at()
+            .is_some()
+    );
     assert_eq!(
         saved
             .team(&team)
@@ -428,6 +453,19 @@ async fn delivery_bus_failure_keeps_owner_running_and_retries_the_saved_notice()
     running.await.unwrap();
     drop(sender);
     crate::daemon::history::close(step.writer).await;
+    let rows = agent_runtime::history::Reader::open(&rig.home.history_file())
+        .unwrap()
+        .daemon_logs()
+        .unwrap();
+    let warning = rows
+        .iter()
+        .find(|row| {
+            row.event() == agent_core::log::LogEvent::BusDown
+                && row.team() == Some(&team)
+                && row.fields().contains_key("pr")
+        })
+        .expect("the pending delivery notice logs its bus failure");
+    assert_eq!(warning.level(), agent_core::log::LogLevel::Warn);
     let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
     assert!(messages.contains("PR #1 was closed without merging"), "{messages}");
 }
