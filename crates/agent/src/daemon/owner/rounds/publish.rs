@@ -417,27 +417,8 @@ impl Owner {
                 Attempt::Nothing
             });
         }
-        let split = ids.iter().any(|id| {
-            self.parts
-                .state
-                .team(team)
-                .and_then(|team| team.round_of(*id))
-                .is_some_and(|round| round.part().is_some())
-        });
-        let published_branch;
-        let head_branch = if split {
-            // Keep each reviewed part on an immutable snapshot of the integrated, gated tip.
-            published_branch = format!("{head_branch}-{}", ready.tip).parse()?;
-            if ready.git.branch_tip(&published_branch).await?.is_none() {
-                ready
-                    .git
-                    .branch_create(&published_branch, &Revision::Commit(ready.tip.clone()))
-                    .await?;
-            }
-            &published_branch
-        } else {
-            head_branch
-        };
+        let published_branch = self.publication_branch(team, &ids, head_branch, ready).await?;
+        let head_branch = published_branch.as_ref();
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
         let existing = github.find_open_pull_request(head_branch).await?;
         carry(ready, head_branch, existing.as_ref().map(|found| &found.head)).await?;
@@ -522,6 +503,34 @@ impl Owner {
             carried: remote.head,
             items: ids,
         }))
+    }
+
+    /// Keeps each split part on its own immutable snapshot of the integrated, gated tip.
+    async fn publication_branch<'a>(
+        &self,
+        team: &TeamId,
+        ids: &[ItemId],
+        head: &'a BranchName,
+        ready: &Ready,
+    ) -> Result<std::borrow::Cow<'a, BranchName>, PublishError> {
+        let split = ids.iter().any(|id| {
+            self.parts
+                .state
+                .team(team)
+                .and_then(|team| team.round_of(*id))
+                .is_some_and(|round| round.part().is_some())
+        });
+        if !split {
+            return Ok(std::borrow::Cow::Borrowed(head));
+        }
+        let published: BranchName = format!("{head}-{}", ready.tip).parse()?;
+        if ready.git.branch_tip(&published).await?.is_none() {
+            ready
+                .git
+                .branch_create(&published, &Revision::Commit(ready.tip.clone()))
+                .await?;
+        }
+        Ok(std::borrow::Cow::Owned(published))
     }
 
     /// Whether the update of a pull request whose items `fixing` are fixed waits: the lead's fix response to the pull

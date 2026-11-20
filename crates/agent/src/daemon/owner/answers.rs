@@ -280,7 +280,7 @@ impl Owner {
             Judgement::Answered => self
                 .record_answer(&saved.task, &open, AnsweredVia::SavedFile, &loaded.file)
                 .await
-                .map(|acknowledgement| drop(acknowledgement)),
+                .map(drop),
             Judgement::Incomplete { problems } => {
                 let text = questions::describe(&loaded.file, &problems);
                 {
