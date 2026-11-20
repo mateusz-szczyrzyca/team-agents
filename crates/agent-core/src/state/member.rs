@@ -15,7 +15,7 @@ use super::strict::checked;
 use super::values::{SessionId, Timestamp};
 use crate::decide::ladder;
 use crate::ids::{AgentName, InvestigatorName, RoundId, RunId, TaskId};
-use crate::kinds::Tier;
+use crate::kinds::{Role, Tier};
 use crate::status::{InvalidTransition, StatusMachine, TaskStatus};
 
 /// Who works in a task: a normal agent, a worker or an investigator, by the tier of the configuration they are in.
@@ -546,13 +546,30 @@ impl Member {
     /// [`RenewalError::NotAfterTheLastRun`] when no run of the task started before `at`.
     pub fn renew_after(
         &mut self,
-        _trouble: ladder::Trouble,
-        _at: Timestamp,
-        _renewals: ladder::Renewals,
-        _watchdog: &crate::config::Watchdog,
-        _limits: &crate::config::Limits,
+        trouble: ladder::Trouble,
+        at: Timestamp,
+        renewals: ladder::Renewals,
+        watchdog: &crate::config::Watchdog,
+        limits: &crate::config::Limits,
     ) -> Result<ladder::LadderStep, renewal::RenewalError> {
-        Ok(ladder::LadderStep::GiveUp)
+        let used = self.renewals.map_or(0, |renewals| renewals.used());
+        let renewals = ladder::Renewals {
+            used,
+            allowed: renewals.allowed,
+        };
+        let step = ladder::next_step(
+            role_of(self.agent.tier()),
+            trouble,
+            self.bad_runs_since_renewal(),
+            self.last_session(),
+            renewals,
+            watchdog,
+            limits,
+        );
+        if step == ladder::LadderStep::NewSession && self.renew(trouble, at)? {
+            return Ok(ladder::LadderStep::NewSession);
+        }
+        Ok(step)
     }
 
     /// See [`Member::renew`], and how many of the latest runs went bad in a row since the task was started anew.
@@ -665,6 +682,15 @@ fn check_questions(task: &TaskId, questions: &[Question]) -> Result<(), MemberEr
         previous = Some(question);
     }
     Ok(())
+}
+
+/// The place of an agent of `tier` in its task: a worker works, and an investigator leads or reviews.
+const fn role_of(tier: Tier) -> Role {
+    match tier {
+        Tier::Normal => Role::Member,
+        Tier::Worker => Role::Worker,
+        Tier::Investigator => Role::Coordinator,
+    }
 }
 
 /// Checks the run, question and renewal invariants of a complete member.
