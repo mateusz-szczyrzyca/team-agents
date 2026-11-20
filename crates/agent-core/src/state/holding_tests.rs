@@ -57,7 +57,7 @@ fn a_state_with_two_holders_is_written_and_read_back() {
             handed_at(),
         );
         member.held_task(
-            Participant::Investigator("inv-opus".parse().expect("an investigator name")),
+            Participant::Investigator("inv-kimi".parse().expect("an investigator name")),
             handed_at(),
         );
     }
@@ -68,7 +68,7 @@ fn a_state_with_two_holders_is_written_and_read_back() {
     let found = loaded.find_task(&task()).expect("the task");
     assert_eq!(
         found.member.agent(),
-        &Participant::Investigator("inv-opus".parse().expect("an investigator name"))
+        &Participant::Investigator("inv-kimi".parse().expect("an investigator name"))
     );
     assert_eq!(found.member.past_holders().len(), 2);
     assert_eq!(loaded, state);
