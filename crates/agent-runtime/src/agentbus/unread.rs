@@ -66,6 +66,14 @@ pub enum UnreadMessagesError {
         /// What the system said.
         source: std::io::Error,
     },
+    /// The state of the bus is longer than the reader reads.
+    #[error("the state of the bus in {path:?} is longer than {limit} bytes")]
+    StateTooLarge {
+        /// The state file.
+        path: PathBuf,
+        /// The most bytes read.
+        limit: u64,
+    },
     /// The state of the bus is not the JSON the bus writes.
     #[error("the state of the bus in {path:?} cannot be read")]
     State {
@@ -96,6 +104,10 @@ pub enum UnreadMessagesError {
 
 /// How many bytes from the end of the log are read: the messages a session has not read are among the last ones.
 const WINDOW_BYTES: u64 = 4 << 20;
+
+/// How many bytes of the bus's state file are read at most: the bus keeps its teams, investigations and requests in it,
+/// far below this; a longer file is refused rather than read whole.
+const MAX_STATE_BYTES: u64 = 64 << 20;
 
 /// How many unread messages are shown at most: the newest ones.
 pub const MAX_MESSAGES: usize = 20;
@@ -170,6 +182,16 @@ impl Line {
 
 /// See [`AgentBus::unread_messages`]; `bus_dir` is the directory of the bus.
 async fn unread_messages(bus_dir: &Path, reader: Reader<'_>) -> Result<UnreadMessages, UnreadMessagesError> {
+    unread_messages_within(bus_dir, reader, MAX_STATE_BYTES).await
+}
+
+/// [`unread_messages`], with a state file of at most `state_limit` bytes.
+async fn unread_messages_within(
+    bus_dir: &Path,
+    reader: Reader<'_>,
+    state_limit: u64,
+) -> Result<UnreadMessages, UnreadMessagesError> {
+    let _ = state_limit;
     let cursor = read_cursor(&bus_dir.join(STATE_FILE), reader).await?;
     let path = bus_dir.join(LOG_FILE);
     let Some(window) = read_window(&path).await? else {

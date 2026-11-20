@@ -258,3 +258,27 @@ async fn a_log_that_cannot_be_opened_is_a_read_error() {
 
     assert!(matches!(error, UnreadMessagesError::Read { .. }), "{error:?}");
 }
+
+#[tokio::test]
+async fn a_state_longer_than_the_limit_is_refused_without_reading_it_whole() {
+    let dir = bus(
+        &[line(1, "inv-opus", "deepseek-1", "fine", "")],
+        Some(r#"{"deepseek-1":0}"#),
+    );
+    let size = std::fs::metadata(dir.path().join("state.json")).unwrap().len();
+    let (agent, team, task) = (agent(), team(), task());
+    let reader = Reader {
+        agent: &agent,
+        team: &team,
+        task: &task,
+    };
+
+    let refused = unread_messages_within(dir.path(), reader, size - 1).await;
+    let read = unread_messages_within(dir.path(), reader, size).await;
+
+    assert!(
+        matches!(&refused, Err(UnreadMessagesError::StateTooLarge { limit, .. }) if *limit == size - 1),
+        "{refused:?}"
+    );
+    assert_eq!(ids(&read.unwrap()), vec![1]);
+}
