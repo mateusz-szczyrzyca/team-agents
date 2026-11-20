@@ -29,8 +29,10 @@ use serde::de::{DeserializeOwned, Error as _};
 use serde_json::{Value, json};
 use tracing::Instrument;
 
+mod merge_refusal;
 mod outlook;
 
+pub use self::merge_refusal::{MergeRefusalKind, merge_refusal_kind};
 pub use self::outlook::Outlook;
 
 /// The base URL of the public GitHub API.
