@@ -998,12 +998,69 @@ impl Git {
     /// [`GitError::EmptyMessage`]; [`GitError::Failed`] when git refuses (no repository, a commit that cannot be
     /// made); [`GitError::Run`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and the errors of
     /// [`Git::rev_parse`].
-    pub async fn untrack(&self, _path: &RepoPath, message: &str) -> Result<Untracked, GitError> {
+    pub async fn untrack(&self, path: &RepoPath, message: &str) -> Result<Untracked, GitError> {
         if message.trim().is_empty() {
-            Ok(Untracked::NotTracked)
-        } else {
-            Err(GitError::EmptyMessage)
+            return Err(GitError::EmptyMessage);
         }
+        // A literal pathspec: a `*` or `?` in the path is a character of the name, not a pattern.
+        let spec = format!(":(literal){}", path.as_str());
+        let listed = self
+            .names(
+                GitOperation::LsFiles,
+                &[arg("ls-files"), arg("-z"), arg("--cached"), arg("--"), arg(&spec)],
+            )
+            .await?;
+        if listed.is_empty() {
+            return Ok(Untracked::NotTracked);
+        }
+        let staged = self.staged_names().await?;
+        if staged.iter().any(|name| name != path.as_str()) {
+            return Ok(Untracked::OtherChangesStaged);
+        }
+        self.run_ok(
+            GitOperation::RmCached,
+            Reach::Local,
+            &[arg("rm"), arg("--cached"), arg("--quiet"), arg("--"), arg(&spec)],
+        )
+        .await?;
+        // What is staged now is the path's removal from `HEAD`: nothing when it was in the index only.
+        if self.staged_names().await?.is_empty() {
+            return Ok(Untracked::Unstaged);
+        }
+        self.run_ok(
+            GitOperation::Commit,
+            Reach::Local,
+            &[
+                arg("commit"),
+                arg("--quiet"),
+                arg("--no-verify"),
+                arg("-m"),
+                arg(message),
+            ],
+        )
+        .await?;
+        let commit = self.rev_parse(&Revision::Head).await?;
+        Ok(Untracked::Removed { commit })
+    }
+
+    /// The paths of the index that differ from `HEAD`.
+    async fn staged_names(&self) -> Result<Vec<String>, GitError> {
+        self.names(
+            GitOperation::Diff,
+            &[arg("diff"), arg("--cached"), arg("--name-only"), arg("-z")],
+        )
+        .await
+    }
+
+    /// The NUL-separated names `args` print.
+    async fn names(&self, operation: GitOperation, args: &[&OsStr]) -> Result<Vec<String>, GitError> {
+        let captured = self.run_ok(operation, Reach::Local, args).await?;
+        let printed = text(operation, &captured.stdout)?;
+        Ok(printed
+            .split('\0')
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect())
     }
 
     /// The root directory of the checkout this handle runs in, from whatever directory of it.
