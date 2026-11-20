@@ -2404,3 +2404,99 @@ async fn a_plan_committed_by_mistake_leaves_the_branch_keeps_its_file_and_the_ta
         "Plan — zażółć.\n"
     );
 }
+
+// ---- the plan in a team, held to it ------------------------------------------------------------------------------
+
+/// Holds the runs of `f`'s home to their plan `bounces` times, and writes the scripts of the stand-in CLI that write
+/// the plans `plans` (a name and a text each) into the worktree they run in.
+fn held_to_plans(f: &Fixture, bounces: u32, plans: &[(&str, &str)]) {
+    let config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    std::fs::write(
+        f.home.config_file(),
+        config.replace("[plan]\nbounces = 0\n", &format!("[plan]\nbounces = {bounces}\n")),
+    )
+    .unwrap();
+    let scripts = f.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    for (name, plan) in plans {
+        std::fs::write(
+            scripts.join(format!("{name}.sh")),
+            format!("mkdir -p .agent\ncat > .agent/plan.md <<'PLAN'\n{plan}PLAN\n"),
+        )
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_coordinators_done_while_its_members_hold_items_is_not_sent_back_for_its_open_steps() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "script:open"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        normal("claude-2", "sleep"),
+    ]);
+    held_to_plans(
+        &f,
+        3,
+        &[(
+            "open",
+            "Lead it — zażółć.\n\n1. Integrate\n[ ] 1.1 Merge one\n[ ] 1.2 Merge two\n",
+        )],
+    );
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1", "claude-2"], PARALLEL).await;
+    let state = f
+        .state_where("the coordinator to wait after its first DONE", |state| {
+            let coordinator = state.find_task(&tasks[0]).unwrap().member;
+            coordinator.status() == TaskStatus::Waiting && coordinator.runs().len() == 1
+        })
+        .await;
+    f.stop().await.unwrap();
+
+    let keeping = state.find_task(&tasks[0]).unwrap().member.plan().unwrap().clone();
+    assert_eq!((keeping.sent_back(), keeping.pending()), (0, None));
+    assert_eq!(f.runs(&tasks[0]), 1);
+}
+
+#[tokio::test]
+async fn a_member_in_a_team_is_sent_back_for_its_plan_and_its_coordinator_is_told_once_it_settles() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "script:open,script:settled"),
+        normal("claude-2", "sleep"),
+    ]);
+    held_to_plans(
+        &f,
+        3,
+        &[
+            ("open", "Do one.\n\n1. Work\n[x] 1.1 Write it\n[ ] 1.2 Check it\n"),
+            ("settled", "Do one.\n\n1. Work\n[x] 1.1 Write it\n[x] 1.2 Check it\n"),
+        ],
+    );
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1", "claude-2"], PARALLEL).await;
+    let second = f.prompt(&tasks[1], 2).await;
+    f.state_where("the member to wait after its second DONE", |state| {
+        let member = state.find_task(&tasks[1]).unwrap().member;
+        member.status() == TaskStatus::Waiting && member.runs().len() == 2
+    })
+    .await;
+    f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert!(
+        second.contains("are still to do or in hand: 1.2. Finish each"),
+        "{second}"
+    );
+    let messages = f.messages();
+    let finished = messages
+        .lines()
+        .filter(|line| line.contains("\"notice\":\"member_finished\""))
+        .count();
+    assert_eq!(finished, 1, "{messages}");
+}
