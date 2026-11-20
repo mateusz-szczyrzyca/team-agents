@@ -172,19 +172,20 @@ mod checks_record {
     fn allowed_matching_invalidates_when_content_binding_differs() {
         use std::collections::BTreeMap;
         let mut record = ChecksRecord::default();
+        let path: agent_core::repo_path::RepoPath = "tests/a.rs".parse().unwrap();
         let mut bindings = BTreeMap::new();
-        bindings.insert(file("tests/a.rs"), Some("hash1".to_string()));
-        record.allow_with_bindings(&[item("1.1")], &[file("tests/a.rs")], &bindings);
+        bindings.insert(path.clone(), Some("hash1".to_string()));
+        record.allow_with_bindings(&[item("1.1")], &[Subject::Path(path.clone())], &bindings);
 
         let mut current_same = BTreeMap::new();
-        current_same.insert(file("tests/a.rs"), Some("hash1".to_string()));
+        current_same.insert(path.clone(), Some("hash1".to_string()));
         assert_eq!(
             record.allowed_matching(&[item("1.1")], &current_same),
-            [file("tests/a.rs")]
+            [Subject::Path(path.clone())]
         );
 
         let mut current_different = BTreeMap::new();
-        current_different.insert(file("tests/a.rs"), Some("hash2".to_string()));
+        current_different.insert(path.clone(), Some("hash2".to_string()));
         assert_eq!(record.allowed_matching(&[item("1.1")], &current_different), []);
     }
 }

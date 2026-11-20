@@ -115,6 +115,26 @@ fn scripts(rig: &Rig) {
         "edit-test-and-code",
         "sed -i 2d tests/existing.txt\necho 'fn a() {}' > src/a.txt\ngit add tests/existing.txt src/a.txt\ncommit -m 'Edit test and add code'\n",
     );
+    script(
+        rig,
+        "edit-test-again-and-add-test",
+        "echo 'another change' >> tests/existing.txt\necho case > tests/new.txt\ngit add tests/existing.txt tests/new.txt\ncommit -m 'Edit test again and add test'\n",
+    );
+    let root = rig.home.root().display();
+    script(
+        rig,
+        "edit-test-held",
+        &format!(
+            "sed -i 2d tests/existing.txt\ngit add tests/existing.txt\ncommit -m 'Change the existing test'\ntouch \"{root}/.fake-committed\"\nwhile [ ! -f \"{root}/.fake-release\" ]; do sleep 0.05; done\n"
+        ),
+    );
+    script(
+        rig,
+        "add-test-held",
+        &format!(
+            "echo case > tests/new.txt\ngit add tests/new.txt\ncommit -m 'Add a test'\ntouch \"{root}/.fake-committed\"\nwhile [ ! -f \"{root}/.fake-release\" ]; do sleep 0.05; done\n"
+        ),
+    );
 }
 
 /// Answers questions number `number` of `task` with the verdict `text`.
@@ -916,13 +936,7 @@ async fn a_head_pushed_to_an_existing_draft_after_the_checks_sent_it_back_is_rec
 
 #[tokio::test]
 async fn with_both_kinds_the_human_is_asked_in_the_first_check_and_the_team_fixes_its_part_at_the_same_time() {
-    let mut rig = checking_rig(
-        "script:edit-test-and-code,script:add-test,questions,done",
-        2,
-        SILENT,
-        SILENT,
-    )
-    .await;
+    let mut rig = checking_rig("script:edit-test-and-code,script:add-test,done", 2, SILENT, SILENT).await;
     scripts(&rig);
     rig.start().await;
 
@@ -949,7 +963,6 @@ async fn with_both_kinds_the_human_is_asked_in_the_first_check_and_the_team_fixe
         file.entries()[0].title()
     );
 
-    rig.status_is(&tasks[0], TaskStatus::Questions).await;
     answer(&rig, &tasks[0], 1, "allow").await;
     reviews_asked(&rig).await;
     rig.stop().await.unwrap();
@@ -964,7 +977,7 @@ async fn with_both_kinds_the_human_is_asked_in_the_first_check_and_the_team_fixe
 #[tokio::test]
 async fn with_both_kinds_what_the_human_refuses_goes_back_to_the_team_with_the_refusal() {
     let mut rig = checking_rig(
-        "script:edit-test-and-code,script:add-test,questions,done,script:restore-test",
+        "script:edit-test-and-code,script:add-test,script:restore-test",
         2,
         SILENT,
         SILENT,
@@ -974,15 +987,14 @@ async fn with_both_kinds_what_the_human_refuses_goes_back_to_the_team_with_the_r
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.prompt(&tasks[0], 2).await;
     answer(&rig, &tasks[0], 1, "refuse").await;
-    reviews_asked(&rig).await;
-    let fix = rig.prompt(&tasks[0], 4).await;
-    rig.stop().await.unwrap();
-
+    let fix = rig.prompt(&tasks[0], 3).await;
     assert!(fix.contains("refused to allow"), "{fix}");
     assert!(fix.contains("`tests/existing.txt`"), "{fix}");
     assert_eq!(record(&rig, &tasks[0]).await.allowed_of(&["1.1".parse().unwrap()]), []);
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
 }
 
 // ---- the story of a round the checks held back --------------------------------------------------------------------------
@@ -1362,12 +1374,14 @@ async fn task_allowances_cover_version_and_golden_changes_in_successive_rounds()
 
 #[tokio::test]
 async fn the_team_is_clean_first_while_the_human_has_not_answered_the_round_waits_and_agent_status_says_so() {
-    let mut rig = checking_rig("script:edit-test-and-code,script:add-test,questions", 2, SILENT, SILENT).await;
+    let mut rig = checking_rig("script:edit-test-and-code,script:add-test,done", 2, SILENT, SILENT).await;
     scripts(&rig);
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.prompt(&tasks[0], 2).await;
+
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
 
     let state = rig.state();
     let round = state.teams()[0].round_of("1.1".parse().unwrap()).unwrap().id().clone();
@@ -1479,19 +1493,11 @@ async fn when_a_second_item_changes_an_allowed_path_again_the_human_is_asked_aga
 
 #[tokio::test]
 async fn with_both_kinds_check_passes_are_not_used_up_by_the_human_question() {
-    let mut rig = checking_rig(
-        "script:edit-test-and-code,script:add-test,questions,done",
-        2,
-        SILENT,
-        SILENT,
-    )
-    .await;
+    let mut rig = checking_rig("script:edit-test-and-code,script:add-test,done", 2, SILENT, SILENT).await;
     scripts(&rig);
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    rig.status_is(&tasks[0], TaskStatus::Questions).await;
-
     let prompt = rig.prompt(&tasks[0], 2).await;
     assert!(prompt.contains("check 1"), "{prompt}");
     assert!(prompt.contains("2 such returns are allowed"), "{prompt}");
@@ -1504,24 +1510,21 @@ async fn with_both_kinds_check_passes_are_not_used_up_by_the_human_question() {
 
 #[tokio::test]
 async fn restart_of_the_daemon_in_the_waiting_for_human_and_team_pass_states_round_trips() {
-    let mut rig = checking_rig(
-        "script:edit-test-and-code,script:add-test,questions,done",
-        2,
-        SILENT,
-        SILENT,
-    )
-    .await;
+    let mut rig = checking_rig("script:edit-test-and-code,script:add-test,done", 2, SILENT, SILENT).await;
     scripts(&rig);
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let _prompt = rig.prompt(&tasks[0], 2).await;
     assert!(rig.home.questions_file(&tasks[0], NonZeroU32::MIN).exists());
+
+    // Team finishes pass 1 clean and waits for human
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
 
     rig.stop().await.unwrap();
     rig.start().await;
 
-    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
     answer(&rig, &tasks[0], 1, "allow").await;
     reviews_asked(&rig).await;
     rig.stop().await.unwrap();
@@ -1535,11 +1538,26 @@ async fn restart_of_the_daemon_in_the_waiting_for_human_and_team_pass_states_rou
 
 #[tokio::test]
 async fn a_round_sent_back_with_an_open_human_only_finding_gets_the_question_at_the_first_check() {
-    let mut rig = checking_rig("script:edit-test,questions,done", 2, SILENT, SILENT).await;
+    let mut rig = checking_rig("script:edit-test-held,questions,done", 2, SILENT, SILENT).await;
     scripts(&rig);
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let committed = rig.home.root().join(".fake-committed");
+    rig.wait_for("commit completed", || committed.exists()).await;
+
+    // Seed checks.json with round sent back by old daemon (passes: 1, asked: None).
+    let seeded = r#"{"items":{"1.1":{"passes":1,"allowed":[]}},"asked":null,"sent":{"at":"2026-11-13T10:00:00Z","pass":1,"of":2,"text":"previous message"}}"#;
+    tokio::fs::write(rig.home.checks_file(&tasks[0]), seeded).await.unwrap();
+    tokio::fs::write(rig.home.root().join(".fake-release"), "ok")
+        .await
+        .unwrap();
+
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+
+    // Restart while question is open.
+    rig.stop().await.unwrap();
+    rig.start().await;
     rig.status_is(&tasks[0], TaskStatus::Questions).await;
 
     let file = questions_of(&rig, &tasks[0], 1);
@@ -1547,6 +1565,86 @@ async fn a_round_sent_back_with_an_open_human_only_finding_gets_the_question_at_
     assert!(file.entries()[0].title().contains("`tests/existing.txt`"));
 
     answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn team_modifying_already_allowed_path_during_its_pass_asks_the_human_again() {
+    let mut rig = checking_rig(
+        "script:edit-test-and-code,script:edit-test-again-and-add-test,questions,done",
+        2,
+        SILENT,
+        SILENT,
+    )
+    .await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.prompt(&tasks[0], 2).await;
+    // Human allows tests/existing.txt while the team is working on pass 1
+    answer(&rig, &tasks[0], 1, "allow").await;
+
+    // Pass 1 ran edit-test-again, modifying tests/existing.txt to a different blob.
+    // Check 2 invalidates the prior allowance and asks the human again.
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let file2 = questions_of(&rig, &tasks[0], 2);
+    assert_eq!(file2.entries().len(), 1);
+    assert!(file2.entries()[0].title().contains("`tests/existing.txt`"));
+
+    answer(&rig, &tasks[0], 2, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn restart_after_early_answer_while_team_works_retains_allowance_and_reaches_review() {
+    let mut rig = checking_rig(
+        "script:edit-test-and-code,script:add-test,script:add-test",
+        2,
+        SILENT,
+        SILENT,
+    )
+    .await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let _prompt = rig.prompt(&tasks[0], 2).await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+
+    // Restart daemon after early answer while team is still in pass 1
+    rig.stop().await.unwrap();
+    rig.start().await;
+
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    let kept = record(&rig, &tasks[0]).await;
+    assert_eq!(
+        kept.allowed_of(&["1.1".parse().unwrap()]),
+        [Subject::Path("tests/existing.txt".parse().unwrap())]
+    );
+}
+
+#[tokio::test]
+async fn restart_with_sent_record_and_no_asked_continues_properly() {
+    let mut rig = checking_rig("script:code-only,script:add-test,script:add-test", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let _prompt = rig.prompt(&tasks[0], 2).await;
+
+    let rec = record(&rig, &tasks[0]).await;
+    assert!(rec.sent.is_some());
+    assert!(rec.asked.is_none());
+
+    // Team was sent back on pass 1 (sent is Some, asked is None). Restart daemon.
+    rig.stop().await.unwrap();
+    rig.start().await;
+
     reviews_asked(&rig).await;
     rig.stop().await.unwrap();
 }
