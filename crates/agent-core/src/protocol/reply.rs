@@ -968,3 +968,6 @@ mod split_tests;
 
 #[cfg(test)]
 mod legacy_split_tests;
+
+#[cfg(test)]
+mod executor_tests;
