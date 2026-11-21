@@ -1789,7 +1789,7 @@ async fn a_file_allowed_without_a_head_covers_the_commits_of_that_day_and_not_a_
 #[tokio::test]
 async fn a_file_refused_without_a_head_is_a_refusal_of_the_commits_of_that_day_and_not_a_later_one() {
     let (kept, file, [first, second, third]) =
-        a_legacy_record_and_then_a_new_edit(r#"{"items":{"1.1":{"passes":0,"refused":[{"path":"tests/new.txt"}]}}}"#)
+        a_legacy_record_and_then_a_new_edit(r#"{"items":{"1.1":{"passes":0,"allowed":[],"refused":[{"path":"tests/new.txt"}]}}}"#)
             .await;
 
     assert_eq!(kept.asked.as_ref().unwrap().subjects, [edit_of(&third)]);
