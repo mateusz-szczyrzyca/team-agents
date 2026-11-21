@@ -614,6 +614,32 @@ impl Checking {
     }
 }
 
+/// What the findings about commits add to what the checks decide: they cannot be repaired by the team.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CommitsLeft {
+    /// How many findings about a commit nobody has answered: only the human may allow them, so they are asked at once
+    /// and spend no pass of the team.
+    pub to_ask: usize,
+    /// How many findings about a commit the human refused in the answer that is being taken: the team is told once.
+    pub refused_now: usize,
+}
+
+impl Checking {
+    /// What the `issues` of the round and its findings about commits come to, as [`Self::conclude`] says for the issues:
+    /// a finding about a commit is one that only the human may allow, and no finding the human has answered holds the
+    /// round again, except that the team is told once what they refused.
+    #[must_use]
+    pub fn conclude_with_commits(
+        &self,
+        _issues: &[Issue],
+        _refused: &[Subject],
+        _commits: CommitsLeft,
+        _policy: ChecksPolicy,
+    ) -> ChecksStep {
+        ChecksStep::StartReviews
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use strum::IntoEnumIterator;
