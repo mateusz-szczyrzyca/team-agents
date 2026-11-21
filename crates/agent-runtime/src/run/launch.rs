@@ -105,39 +105,6 @@ async fn write_file(path: &Path, content: &str) -> Result<(), RunError> {
     tokio::fs::write(path, content).await.map_err(lay_down)
 }
 
-/// The environment of an agent run or a task step check.
-///
-/// # Errors
-/// [`RunError::AgentPath`], [`RunError::PathNotUtf8`], [`RunError::EnvName`].
-pub fn agent_launch_env(
-    secrets: &agent_core::config::Secrets,
-    agent_binary_dir: &Path,
-    agent_path: &[AbsolutePath],
-    home_root: &Path,
-    identity: Option<&CommitIdentity>,
-    incremental: bool,
-) -> Result<BTreeMap<EnvName, String>, RunError> {
-    let mut env = BTreeMap::new();
-    for (name, secret) in secrets.agent_env() {
-        env.insert(name.clone(), secret.expose().to_owned());
-    }
-    let directories = agent_path_directories(agent_binary_dir, agent_path);
-    let joined = std::env::join_paths(directories).map_err(|source| RunError::AgentPath { source })?;
-    let path_str = joined
-        .into_string()
-        .map_err(|path| RunError::PathNotUtf8 { path: path.into() })?;
-    env.insert(env_name(PATH_VARIABLE)?, path_str);
-    env.insert(env_name(HOME_VARIABLE)?, utf8(home_root)?.to_owned());
-    if let Some(identity) = identity {
-        for (name, value) in identity_env(identity)? {
-            env.insert(env_name(name)?, value);
-        }
-    }
-    let incremental = if incremental { "1" } else { "0" };
-    env.insert(env_name("CARGO_INCREMENTAL")?, incremental.to_owned());
-    Ok(env)
-}
-
 /// Makes `job` ready: the prompt, the adapter's run, its files, what it keeps out of git, its process.
 pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch, RunError> {
     let run_dir = parts.store.home().run_dir(&job.task, &job.run);
@@ -168,17 +135,20 @@ pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch,
             worktree: spec.working_dir.as_path().to_path_buf(),
             source,
         })?;
-    let mut env = agent_launch_env(
-        &parts.secrets,
-        parts.agent_binary_dir.as_path(),
-        &parts.config.binaries().agent_path,
-        parts.store.home().root(),
-        Some(&job.identity),
-        false,
-    )?;
+    let mut env = BTreeMap::new();
+    for (name, secret) in parts.secrets.agent_env() {
+        env.insert(name.clone(), secret.expose().to_owned());
+    }
+    env.insert(env_name(PATH_VARIABLE)?, agent_path(parts)?);
+    // The `agent` commands the run starts (`agent gate`) find the daemon of this home.
+    env.insert(env_name(HOME_VARIABLE)?, utf8(parts.store.home().root())?.to_owned());
+    // The commits of the run are the agent's: this wins over a secret of the same name.
+    for (name, value) in identity_env(&job.identity)? {
+        env.insert(env_name(name)?, value);
+    }
     // What the adapter sets is what its CLI needs to work: it wins over a secret of the same name.
     env.extend(spec.env);
-    // The configured cache policy wins over inherited and secret environment values and adapter settings.
+    // The configured cache policy wins over inherited and secret environment values.
     let incremental = if parts.config.build().incremental { "1" } else { "0" };
     env.insert(env_name("CARGO_INCREMENTAL")?, incremental.to_owned());
     Ok(Launch {
@@ -225,6 +195,15 @@ pub fn agent_path_directories<'a>(agent_binary_dir: &'a Path, agent_path: &'a [A
         }
     }
     directories
+}
+
+/// The `PATH` of the agents: the daemon executable directory, then the directories of `[binaries] agent_path`, in order.
+fn agent_path(parts: &EngineParts) -> Result<String, RunError> {
+    let directories = agent_path_directories(parts.agent_binary_dir.as_path(), &parts.config.binaries().agent_path);
+    let joined = std::env::join_paths(directories).map_err(|source| RunError::AgentPath { source })?;
+    joined
+        .into_string()
+        .map_err(|path| RunError::PathNotUtf8 { path: path.into() })
 }
 
 /// Git in `worktree`, to read from: no commit is made, but a handle has an identity.

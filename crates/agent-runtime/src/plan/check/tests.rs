@@ -160,22 +160,22 @@ async fn check_refused_gate_command_remains_declared() {
 
     assert_eq!(result.state, JudgementState::Declared);
     assert_eq!(result.check_line.as_deref(), Some("agent gate --fast"));
+    assert_eq!(result.reason.as_deref(), Some("refused gate command"));
+    assert_eq!(result.tail, "");
+    assert!(result.output_path.is_none());
     assert!(result.gate_refused);
 }
 
 #[tokio::test]
-async fn check_command_is_executed_and_confirmed() {
+async fn check_command_remains_declared_in_part_a() {
     let env = TestEnv::new();
     let step = parse_first_step("[x] 1.1 First item\n    Check: echo passed check\n");
     let ctx = env.context(120, &[]);
     let result = execute_step_check(&ctx, &step).await.unwrap();
 
-    assert_eq!(result.state, JudgementState::Confirmed);
+    assert_eq!(result.state, JudgementState::Declared);
     assert_eq!(result.check_line.as_deref(), Some("echo passed check"));
-    assert_eq!(
-        result.output_path.as_deref(),
-        Some("checks/run-20261121-010000-abcd/1.1.log")
-    );
+    assert!(result.output_path.is_none());
 }
 
 #[test]
@@ -189,7 +189,9 @@ async fn check_command_confirms_on_success_and_logs_output() {
     let env = TestEnv::new();
     let step = parse_first_step("[x] 1.1 First item\n    Check: echo check-success-output\n");
     let ctx = env.context(60, &[]);
-    let result = execute_step_check(&ctx, &step).await.unwrap();
+    let result = super::execute_command_check(&ctx, &step, "echo check-success-output")
+        .await
+        .unwrap();
 
     assert_eq!(result.state, JudgementState::Confirmed);
     assert_eq!(result.check_line.as_deref(), Some("echo check-success-output"));
@@ -206,7 +208,9 @@ async fn check_command_mismatches_on_failure_with_tail() {
     let env = TestEnv::new();
     let step = parse_first_step("[x] 1.1 First item\n    Check: /bin/sh -c 'echo failure-detail; exit 2'\n");
     let ctx = env.context(60, &[]);
-    let result = execute_step_check(&ctx, &step).await.unwrap();
+    let result = super::execute_command_check(&ctx, &step, "/bin/sh -c 'echo failure-detail; exit 2'")
+        .await
+        .unwrap();
 
     assert_eq!(result.state, JudgementState::Mismatch);
     assert!(result.reason.as_deref().unwrap().contains("exit code 2"));
@@ -220,9 +224,11 @@ async fn check_command_mismatches_on_failure_with_tail() {
 #[tokio::test]
 async fn check_command_mismatches_on_timeout() {
     let env = TestEnv::new();
-    let step = parse_first_step("[x] 1.1 First item\n    Check: sleep 5\n");
+    let script_file = env.worktree.join("hang.sh");
+    fs::write(&script_file, "#!/bin/sh\nwhile true; do sleep 1; done\n").unwrap();
+    let step = parse_first_step("[x] 1.1 First item\n    Check: sh hang.sh\n");
     let ctx = env.context(1, &[]);
-    let result = execute_step_check(&ctx, &step).await.unwrap();
+    let result = super::execute_command_check(&ctx, &step, "sh hang.sh").await.unwrap();
 
     assert_eq!(result.state, JudgementState::Mismatch);
     assert_eq!(result.reason.as_deref(), Some("ran past 1 seconds"));
@@ -233,7 +239,7 @@ async fn check_command_disabled_when_seconds_zero() {
     let env = TestEnv::new();
     let step = parse_first_step("[x] 1.1 First item\n    Check: echo hello\n");
     let ctx = env.context(0, &[]);
-    let result = execute_step_check(&ctx, &step).await.unwrap();
+    let result = super::execute_command_check(&ctx, &step, "echo hello").await.unwrap();
 
     assert_eq!(result.state, JudgementState::Declared);
     assert!(result.output_path.is_none());
@@ -252,7 +258,9 @@ async fn check_command_receives_environment_and_has_no_stdin() {
         check_refuse: &[],
         envs: &envs,
     };
-    let result = execute_step_check(&ctx, &step).await.unwrap();
+    let result = super::execute_command_check(&ctx, &step, "test \"$MY_VAR\" = \"magic\" && ! read dummy")
+        .await
+        .unwrap();
 
     assert_eq!(result.state, JudgementState::Confirmed);
 }
@@ -262,7 +270,9 @@ async fn check_command_mismatches_on_command_not_found() {
     let env = TestEnv::new();
     let step = parse_first_step("[x] 1.1 Missing binary\n    Check: /nonexistent/binary\n");
     let ctx = env.context(60, &[]);
-    let result = execute_step_check(&ctx, &step).await.unwrap();
+    let result = super::execute_command_check(&ctx, &step, "/nonexistent/binary")
+        .await
+        .unwrap();
 
     assert_eq!(result.state, JudgementState::Mismatch);
     assert!(result.reason.as_deref().unwrap().contains("exit code 127"));
@@ -275,12 +285,18 @@ async fn check_command_large_output_keeps_bounded_tail() {
         "[x] 1.1 Big output\n    Check: python3 -c 'for i in range(1000): print(f\"line {i}\")'; exit 1\n",
     );
     let ctx = env.context(60, &[]);
-    let result = execute_step_check(&ctx, &step).await.unwrap();
+    let cmd = "python3 -c 'for i in range(1000): print(f\"line {i}\")'; exit 1";
+    let result = super::execute_command_check(&ctx, &step, cmd).await.unwrap();
 
     assert_eq!(result.state, JudgementState::Mismatch);
     let lines: Vec<&str> = result.tail.lines().collect();
-    assert!(lines.len() <= 40);
-    assert!(result.tail.contains("line 999"));
+    assert_eq!(lines.len(), 40);
+    assert_eq!(lines.last().copied(), Some("line 999"));
+    assert_eq!(lines.first().copied(), Some("line 960"));
+
+    let log_path = env.task_dir.join(result.output_path.as_ref().unwrap());
+    let full_content = fs::read_to_string(&log_path).unwrap();
+    assert_eq!(full_content.lines().count(), 1000);
 }
 
 #[tokio::test]
@@ -289,7 +305,8 @@ async fn check_command_invalid_utf8_is_lossy_decoded() {
     let step =
         parse_first_step("[x] 1.1 Invalid utf8\n    Check: /bin/sh -c 'printf \"\\xff\\xfehello\\n\"; exit 1'\n");
     let ctx = env.context(60, &[]);
-    let result = execute_step_check(&ctx, &step).await.unwrap();
+    let cmd = "/bin/sh -c 'printf \"\\xff\\xfehello\\n\"; exit 1'";
+    let result = super::execute_command_check(&ctx, &step, cmd).await.unwrap();
 
     assert_eq!(result.state, JudgementState::Mismatch);
     assert!(result.tail.contains("hello"));
@@ -300,11 +317,10 @@ async fn check_command_kills_descendant_processes_in_group() {
     let env = TestEnv::new();
     let pid_file = env.worktree.join("child.pid");
     let pid_str = pid_file.to_str().unwrap();
-    let step = parse_first_step(&format!(
-        "[x] 1.1 Child proc\n    Check: /bin/sh -c 'sleep 300 & echo $! > {pid_str}; exit 0'\n"
-    ));
+    let cmd = format!("/bin/sh -c 'sleep 300 & echo $! > {pid_str}; exit 0'");
+    let step = parse_first_step(&format!("[x] 1.1 Child proc\n    Check: {cmd}\n"));
     let ctx = env.context(60, &[]);
-    let result = execute_step_check(&ctx, &step).await.unwrap();
+    let result = super::execute_command_check(&ctx, &step, &cmd).await.unwrap();
     assert_eq!(result.state, JudgementState::Confirmed);
 
     let pid_text = fs::read_to_string(&pid_file).unwrap();
@@ -320,6 +336,35 @@ async fn check_command_kills_descendant_processes_in_group() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert!(!path.exists(), "descendant process must be killed");
+}
+
+#[tokio::test]
+async fn check_command_guard_cleans_up_process_group_on_cancellation() {
+    let env = TestEnv::new();
+    let pid_file = env.worktree.join("cancel-child.pid");
+    let pid_str = pid_file.to_str().unwrap();
+    let cmd = format!("/bin/sh -c 'sleep 300 & echo $! > {pid_str}; sleep 10'");
+    let step = parse_first_step(&format!("[x] 1.1 Cancel proc\n    Check: {cmd}\n"));
+    let ctx = env.context(60, &[]);
+
+    // Run check future and cancel it by dropping before completion
+    let check_future = super::execute_command_check(&ctx, &step, &cmd);
+    let _res = tokio::time::timeout(std::time::Duration::from_millis(50), check_future).await;
+
+    if let Ok(pid_text) = fs::read_to_string(&pid_file)
+        && let Ok(pid) = pid_text.trim().parse::<i32>()
+    {
+        let proc_path = format!("/proc/{pid}");
+        let path = std::path::Path::new(&proc_path);
+        let start = std::time::Instant::now();
+        while path.exists() && start.elapsed() < std::time::Duration::from_secs(5) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            !path.exists(),
+            "guard drop must kill spawned descendant processes on cancellation"
+        );
+    }
 }
 
 #[tokio::test]

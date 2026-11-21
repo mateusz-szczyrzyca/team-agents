@@ -276,12 +276,43 @@ async fn wait_child_outcome(
     }
 }
 
-async fn execute_command_check(
+async fn resolve_mismatch_tail(state: JudgementState, log_path: &Path) -> String {
+    if state == JudgementState::Mismatch {
+        match read_tail(log_path).await {
+            Ok(tail) => tail,
+            Err(error) => {
+                tracing::warn!(path = %log_path.display(), %error, "cannot read check output tail");
+                String::new()
+            }
+        }
+    } else {
+        String::new()
+    }
+}
+
+/// Executes a command check for `step` within `context`.
+///
+/// Prepared command execution engine for plan step command checks.
+///
+/// # Errors
+/// Returns [`CheckError`] if check execution management fails.
+pub async fn execute_command_check(
     context: &CheckContext<'_>,
     step: &Step,
     command_str: &str,
 ) -> Result<JudgementResult, CheckError> {
     let start = Instant::now();
+    if context.check_seconds == 0 {
+        return Ok(JudgementResult {
+            state: JudgementState::Declared,
+            check_line: Some(command_str.to_owned()),
+            reason: None,
+            duration_ms: 0,
+            output_path: None,
+            tail: String::new(),
+            gate_refused: false,
+        });
+    }
     let checks_dir = context.task_dir.join("checks");
     if let Err(error) = fs::create_dir_all(&checks_dir).await {
         return Ok(JudgementResult {
@@ -357,17 +388,7 @@ async fn execute_command_check(
 
     let (state, reason) = wait_child_outcome(child, group_pid, context.check_seconds).await;
 
-    let tail = if state == JudgementState::Mismatch {
-        match read_tail(&log_path).await {
-            Ok(tail) => tail,
-            Err(error) => {
-                tracing::warn!(path = %log_path.display(), %error, "cannot read check output tail");
-                String::new()
-            }
-        }
-    } else {
-        String::new()
-    };
+    let tail = resolve_mismatch_tail(state, &log_path).await;
 
     let duration_ms = duration_millis(start.elapsed())?;
     Ok(JudgementResult {
@@ -410,29 +431,20 @@ pub async fn execute_step_check(context: &CheckContext<'_>, step: &Step) -> Resu
             gate_refused: false,
         }),
         Check::Command(cmd) => {
-            if refuse_command(cmd, context.check_refuse) {
-                return Ok(JudgementResult {
-                    state: JudgementState::Declared,
-                    check_line: Some(cmd.clone()),
-                    reason: Some("refused gate command".to_owned()),
-                    duration_ms: 0,
-                    output_path: None,
-                    tail: String::new(),
-                    gate_refused: true,
-                });
-            }
-            if context.check_seconds == 0 {
-                return Ok(JudgementResult {
-                    state: JudgementState::Declared,
-                    check_line: Some(cmd.clone()),
-                    reason: None,
-                    duration_ms: 0,
-                    output_path: None,
-                    tail: String::new(),
-                    gate_refused: false,
-                });
-            }
-            execute_command_check(context, step, cmd).await
+            let is_refused = refuse_command(cmd, context.check_refuse);
+            Ok(JudgementResult {
+                state: JudgementState::Declared,
+                check_line: Some(cmd.clone()),
+                reason: if is_refused {
+                    Some("refused gate command".to_owned())
+                } else {
+                    None
+                },
+                duration_ms: 0,
+                output_path: None,
+                tail: String::new(),
+                gate_refused: is_refused,
+            })
         }
         Check::Exists(repo_path) => check_exists(context.worktree, repo_path, check.to_string()).await,
     }
