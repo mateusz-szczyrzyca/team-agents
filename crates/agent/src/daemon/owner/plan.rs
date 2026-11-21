@@ -770,19 +770,18 @@ fn step_summary(
     let is_done = step.state() == StepState::Done;
     let (state, reason) = if is_done {
         match judgements.get(&step.id()) {
-            Some(j) if j.state == JudgementState::Confirmed => {
+            Some(j) => {
                 let step_at_run = j
                     .run
                     .as_ref()
                     .and_then(|r| earlier_by_run.get(r))
                     .and_then(|p| p.step(&step.id()));
                 if step_at_run == Some(step) {
-                    (Some(JudgementState::Confirmed), None)
+                    (Some(j.state), j.reason.clone())
                 } else {
                     (None, None)
                 }
             }
-            Some(j) => (Some(j.state), j.reason.clone()),
             None => (None, None),
         }
     } else {
