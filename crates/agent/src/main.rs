@@ -238,7 +238,7 @@ struct LogArgs {
     /// Print every prompt whole, not its first lines.
     #[arg(long)]
     prompts: bool,
-    /// Leave the steps of the runs out of the text.
+    /// Leave the steps of the runs out of the text, also out of the rows of a scope.
     #[arg(long)]
     no_steps: bool,
     /// Print the records as JSON lines, each exactly once, whole: `--prompts` and `--no-steps` do not change them.
@@ -745,8 +745,14 @@ fn execute_log(environment: &Environment, args: LogArgs, out: &mut impl Write) -
         })
     };
     if args.rows.requested() || args.round.is_some() == args.team.is_some() {
-        args.rows
-            .print(&home.history_file(), args.round, args.team, format, out)?;
+        args.rows.print(
+            &home.history_file(),
+            &home.socket_file(),
+            args.round,
+            args.team,
+            format,
+            out,
+        )?;
         return Ok(());
     }
     let request = LogRequest::new(args.round, args.team, format)?;

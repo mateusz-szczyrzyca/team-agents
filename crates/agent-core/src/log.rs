@@ -1,6 +1,7 @@
 //! The daemon's own structured log: its levels ([`LogLevel`]), its fixed event names ([`LogEvent`]), and the records it
 //! writes to `history.db` ([`LogRecord`], [`LogEntry`]); see `docs/log.md`.
 
+pub mod render;
 #[cfg(test)]
 mod tests;
 
