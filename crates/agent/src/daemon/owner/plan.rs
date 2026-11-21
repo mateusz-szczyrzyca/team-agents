@@ -13,7 +13,7 @@ use agent_core::ids::{AgentName, BranchName, InvalidName, ItemId, TaskId, TeamId
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::plan::judge::{JudgementState, steps_to_judge_with};
-use agent_core::plan::{PLAN_FILE, Plan, PlanError, StepState, parse_plan};
+use agent_core::plan::{PLAN_FILE, Plan, PlanError, Step, StepState, parse_plan};
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::protocol::PlanStepSummary;
 use agent_core::questions::{Entry, QuestionsFile, Verdict, quote};
@@ -29,6 +29,7 @@ use agent_runtime::history::{
 };
 use agent_runtime::plan::check::{CheckContext, JudgementResult, execute_step_check};
 use agent_runtime::process::error_chain;
+use agent_runtime::run::RunError;
 use agent_runtime::run::agent_launch_env;
 use agent_runtime::run::compose::ComposeError;
 use agent_runtime::text_file::{ReplaceError, TextFileError, read_text_file, replace_text_file};
@@ -476,6 +477,54 @@ impl Owner {
         (plans, by_run)
     }
 
+    /// Records judgements for steps when environment preparation fails.
+    async fn record_env_failures(
+        &self,
+        task: &TaskId,
+        located: &Located,
+        run: Option<&RunId>,
+        to_judge: &[&Step],
+        error: &RunError,
+        mut previous: HashMap<ItemId, JudgementRecord>,
+    ) -> Result<(HashMap<ItemId, JudgementRecord>, Option<PlanReason>), OwnerError> {
+        let reason_text = format!("cannot prepare agent environment: {}", error_chain(error));
+        tracing::warn!(task = %task, error = %reason_text, "check environment construction failed");
+        let mut first_mismatch = None;
+        let mut records = Vec::new();
+        for step in to_judge {
+            let result = JudgementResult {
+                state: JudgementState::Mismatch,
+                check_line: step.check().map(ToString::to_string),
+                reason: Some(reason_text.clone()),
+                duration_ms: 0,
+                output_path: None,
+                tail: String::new(),
+                gate_refused: false,
+            };
+            if first_mismatch.is_none() {
+                first_mismatch = Some(PlanReason::Mismatch {
+                    step: step.id(),
+                    title: step.title().to_owned(),
+                    check: result.check_line.clone(),
+                    reason: result.reason.clone(),
+                    tail: result.tail.clone(),
+                });
+            }
+            let at = Timestamp::now(&self.parts.clock)?;
+            records.push(result.into_record(task.clone(), located.team.clone(), run.cloned(), at, step.id()));
+        }
+        for record in &records {
+            previous.insert(record.step, record.clone());
+        }
+        if !records.is_empty()
+            && self.history.is_writing()
+            && let Err(err) = self.history.persist_judgements(records).await
+        {
+            tracing::warn!(task = %task, error = %error_chain(&err), "failed to persist environment failure judgements");
+        }
+        Ok((previous, first_mismatch))
+    }
+
     /// Executes and records the step checks of `plan` that are to be judged at the end of `run`.
     async fn judge_steps_at_end(
         &mut self,
@@ -510,57 +559,23 @@ impl Owner {
             Err(_) => None,
         };
         let plan_config = self.parts.settings.config.plan();
-        let agent_envs_result = agent_launch_env(
+        let agent_envs: Vec<(String, String)> = match agent_launch_env(
             &self.parts.settings.secrets,
             self.parts.engine.parts().agent_binary_dir.as_path(),
             &self.parts.settings.config.binaries().agent_path,
             self.parts.store.home().root(),
             identity.as_ref(),
             self.parts.settings.config.build().incremental,
-        );
-        let task_dir = self.parts.store.home().task_dir(task);
-        let mut first_mismatch = None;
-        let mut records = Vec::new();
-
-        let agent_envs: Vec<(String, String)> = match agent_envs_result {
+        ) {
             Ok(envs) => envs.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
             Err(error) => {
-                let reason_text = format!("cannot prepare agent environment: {}", error_chain(&error));
-                tracing::warn!(task = %task, error = %reason_text, "check environment construction failed");
-                for step in to_judge {
-                    let result = JudgementResult {
-                        state: JudgementState::Mismatch,
-                        check_line: step.check().map(ToString::to_string),
-                        reason: Some(reason_text.clone()),
-                        duration_ms: 0,
-                        output_path: None,
-                        tail: String::new(),
-                        gate_refused: false,
-                    };
-                    if first_mismatch.is_none() {
-                        first_mismatch = Some(PlanReason::Mismatch {
-                            step: step.id(),
-                            title: step.title().to_owned(),
-                            check: result.check_line.clone(),
-                            reason: result.reason.clone(),
-                            tail: result.tail.clone(),
-                        });
-                    }
-                    let at = Timestamp::now(&self.parts.clock)?;
-                    records.push(result.into_record(task.clone(), located.team.clone(), run.cloned(), at, step.id()));
-                }
-                for record in &records {
-                    previous.insert(record.step, record.clone());
-                }
-                if !records.is_empty() && self.history.is_writing() {
-                    if let Err(error) = self.history.persist_judgements(records).await {
-                        tracing::warn!(task = %task, error = %error_chain(&error), "failed to persist environment failure judgements");
-                    }
-                }
-                return Ok((previous, first_mismatch));
+                return self
+                    .record_env_failures(task, located, run, &to_judge, &error, previous)
+                    .await;
             }
         };
 
+        let task_dir = self.parts.store.home().task_dir(task);
         let context = CheckContext {
             worktree: worktree.as_path(),
             task_dir: &task_dir,
@@ -569,6 +584,8 @@ impl Owner {
             check_refuse: plan_config.check_refuse(),
             envs: &agent_envs,
         };
+        let mut first_mismatch = None;
+        let mut records = Vec::new();
         for step in to_judge {
             let result = match execute_step_check(&context, step).await {
                 Ok(res) => res,
