@@ -454,24 +454,13 @@ impl Owner {
                 return (Vec::new(), HashMap::new());
             }
         };
-        let mut plans = Vec::new();
-        for record in records.iter().filter(|record| record.run.as_ref() != run) {
-            let HistoryPlanRead::Version { text } = &record.read else {
-                continue;
-            };
-            match parse_plan(text) {
-                Ok(plan) => {
-                    plans.push(plan);
-                }
-                Err(error) => tracing::warn!(
-                    event = LogEvent::HistoryRecordIncomplete.as_str(),
-                    task = %task,
-                    %error,
-                    "a plan kept before does not parse: its steps are not looked for"
-                ),
-            }
-        }
-        let by_run = expand_plans_by_run(&task_runs, &records);
+        let parsed: Vec<_> = records.iter().map(|record| (record, retained_plan(record))).collect();
+        let plans = parsed
+            .iter()
+            .filter(|(record, _)| record.run.as_ref() != run)
+            .filter_map(|(_, plan)| plan.clone())
+            .collect();
+        let by_run = expand_plans_by_run(&task_runs, &parsed);
         (plans, by_run)
     }
 
@@ -700,18 +689,8 @@ impl Owner {
                     let reader = Reader::open(&path)?;
                     let latest = reader.latest_judgements(&task_id)?;
                     let records = reader.plan_versions(&task_id)?;
-                    for record in &records {
-                        if let (Some(_), HistoryPlanRead::Version { text }) = (&record.run, &record.read)
-                            && let Err(error) = parse_plan(text)
-                        {
-                            tracing::warn!(
-                                task = %task_id,
-                                error = %error_chain(&error),
-                                "cannot parse retained plan for snapshot"
-                            );
-                        }
-                    }
-                    let by_run = expand_plans_by_run(&task_runs, &records);
+                    let parsed: Vec<_> = records.iter().map(|record| (record, retained_plan(record))).collect();
+                    let by_run = expand_plans_by_run(&task_runs, &parsed);
                     Ok::<_, ReadError>((latest, by_run))
                 })
                 .await;
@@ -817,45 +796,49 @@ fn step_summary(
     }
 }
 
-/// Expands deduplicated plan version records across chronological task runs, carrying forward the active plan.
-fn expand_plans_by_run(task_runs: &[RunId], records: &[PlanRecord]) -> HashMap<RunId, Plan> {
+/// Parses a retained plan, logging why an invalid version cannot supply a snapshot.
+fn retained_plan(record: &PlanRecord) -> Option<Plan> {
+    match &record.read {
+        HistoryPlanRead::Missing | HistoryPlanRead::Unreadable { .. } => None,
+        HistoryPlanRead::Version { text } => match parse_plan(text) {
+            Ok(plan) => Some(plan),
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %record.task,
+                    error = %error_chain(&error),
+                    "cannot parse retained plan for snapshot"
+                );
+                None
+            }
+        },
+    }
+}
+
+/// Expands deduplicated plan versions across chronological runs, carrying forward the active plan.
+fn expand_plans_by_run(task_runs: &[RunId], records: &[(&PlanRecord, Option<Plan>)]) -> HashMap<RunId, Plan> {
     let mut by_run = HashMap::new();
     let mut active_plan: Option<Plan> = None;
     let mut record_iter = records.iter().peekable();
 
     for run_id in task_runs {
-        while let Some(record) = record_iter.peek() {
+        while let Some((record, plan)) = record_iter.peek() {
             match &record.run {
-                None => {
-                    active_plan = match &record.read {
-                        HistoryPlanRead::Version { text } => parse_plan(text).ok(),
-                        _ => None,
-                    };
-                    record_iter.next();
-                }
-                Some(r) if r == run_id => {
-                    active_plan = match &record.read {
-                        HistoryPlanRead::Version { text } => parse_plan(text).ok(),
-                        _ => None,
-                    };
-                    record_iter.next();
-                }
+                None => active_plan.clone_from(plan),
+                Some(r) if r == run_id => active_plan.clone_from(plan),
                 Some(_) => break,
             }
+            record_iter.next();
         }
         if let Some(plan) = &active_plan {
             by_run.insert(run_id.clone(), plan.clone());
         }
     }
-
-    for record in records {
-        if let (Some(run_id), HistoryPlanRead::Version { text }) = (&record.run, &record.read)
-            && let Ok(plan) = parse_plan(text)
-        {
-            by_run.entry(run_id.clone()).or_insert(plan);
+    for (record, plan) in records {
+        if let (Some(run_id), Some(plan)) = (&record.run, plan) {
+            by_run.entry(run_id.clone()).or_insert_with(|| plan.clone());
         }
     }
-
     by_run
 }
 
