@@ -101,6 +101,7 @@ pub(in crate::daemon::owner) enum Addition {
 ///
 /// # Errors
 /// [`SectionError`].
+#[cfg(test)]
 pub(in crate::daemon::owner) async fn sections_for(
     ctx: &Context<'_>,
     texts: &AutopilotPrompts,
@@ -108,7 +109,22 @@ pub(in crate::daemon::owner) async fn sections_for(
     working: &std::path::Path,
     why: Option<&Why>,
 ) -> Result<Option<Addition>, SectionError> {
-    let addition = round_sections_for(ctx, texts, found, working, why).await?;
+    sections_for_in(ctx, texts, found, working, why, Zone::Utc).await
+}
+
+/// What the autopilot adds to the prompt of the run of `found` in `zone`.
+///
+/// # Errors
+/// [`SectionError`].
+pub(in crate::daemon::owner) async fn sections_for_in(
+    ctx: &Context<'_>,
+    texts: &AutopilotPrompts,
+    found: &TaskRef<'_>,
+    working: &std::path::Path,
+    why: Option<&Why>,
+    zone: Zone,
+) -> Result<Option<Addition>, SectionError> {
+    let addition = round_sections_for(ctx, texts, found, working, why, zone).await?;
     if !matches!(found.role, Role::Solo | Role::Coordinator) {
         return Ok(addition);
     }
@@ -134,6 +150,7 @@ async fn round_sections_for(
     found: &TaskRef<'_>,
     working: &std::path::Path,
     why: Option<&Why>,
+    zone: Zone,
 ) -> Result<Option<Addition>, SectionError> {
     if let Some((id, number, opinion)) = crate::daemon::review::pending_opinion(found.team, found.member.task()) {
         if matches!(why, Some(Why::VerdictMissing)) {
@@ -183,7 +200,9 @@ async fn round_sections_for(
             let text = texts.render(AutopilotPrompt::ReviewVerdictMissing, &Variables::new())?;
             Ok(Some(Addition::Replace(text.trim_end().to_owned())))
         }
-        (Role::Reviewer, _) => Ok(review_request(ctx, texts, found, working).await?.map(Addition::Append)),
+        (Role::Reviewer, _) => Ok(review_request(ctx, texts, found, working, zone)
+            .await?
+            .map(Addition::Append)),
         // The gate comes before everything else of the round: a branch whose gate has not passed is not looked at further.
         (Role::Solo | Role::Coordinator, Some(Why::Gate(text) | Why::Asleep(text))) => {
             Ok(Some(Addition::Append(text.clone())))
@@ -506,6 +525,7 @@ pub(super) async fn review_request(
     texts: &AutopilotPrompts,
     found: &TaskRef<'_>,
     working: &std::path::Path,
+    zone: Zone,
 ) -> Result<Option<String>, SectionError> {
     let team = found.team;
     let task = found.member.task();
@@ -571,7 +591,7 @@ pub(super) async fn review_request(
     } else {
         vec![texts.render(AutopilotPrompt::ReviewRequest, &values)?]
     };
-    sections.push(review_gate_in(texts, &head, record.as_ref(), Zone::Utc)?);
+    sections.push(review_gate_in(texts, &head, record.as_ref(), zone)?);
     if crate::daemon::review::independent_first_review(team, task) {
         sections.push(texts.render(AutopilotPrompt::ReviewIndependent, &Variables::new())?);
     }
@@ -666,14 +686,14 @@ fn review_gate_in(
     texts: &AutopilotPrompts,
     head: &CommitId,
     record: Option<&agent_core::state::GateRecord>,
-    _zone: Zone,
+    zone: Zone,
 ) -> Result<String, SectionError> {
     let values = Variables::new().with("head", head.as_str())?;
     let (prompt, values) = if let Some(record) = record.filter(|record| record.result.head == *head) {
         (
             AutopilotPrompt::ReviewGate,
             values
-                .with("finished", record.result.finished_at.to_string())?
+                .with("finished", zone.stamp(record.result.finished_at))?
                 .with("result", record.summary())?
                 .with("log", record.result.log.as_path().display().to_string())?,
         )

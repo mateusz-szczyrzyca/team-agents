@@ -39,7 +39,7 @@ use agent_runtime::team_prompts::TeamPrompts;
 use rand::{Rng, RngExt};
 
 use super::briefing::BriefingFacts;
-use super::rounds::{Addition, SectionError, sections_for};
+use super::rounds::{Addition, SectionError, sections_for_in};
 use crate::daemon::questions::{self, QuestionsProblem, TextError};
 use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape_with_answers, task_branch};
 
@@ -200,6 +200,7 @@ async fn compose_run_prompt(
     working: &Path,
     kind: PromptKind,
     prompt: String,
+    zone: agent_core::local_time::Zone,
 ) -> Result<(String, Option<String>), StartProblem> {
     if matches!(
         kind,
@@ -211,7 +212,7 @@ async fn compose_run_prompt(
         let answers = answers_text(ctx, found.member).await?;
         let prompt = team_prompt(ctx, texts, found, prompt, answers.as_deref())?;
         let (prompt, addition) = match ctx.autopilot {
-            Some(autopilot) => match sections_for(ctx, autopilot, found, working, ctx.why).await? {
+            Some(autopilot) => match sections_for_in(ctx, autopilot, found, working, ctx.why, zone).await? {
                 Some(Addition::Append(sections)) => (format!("{}\n\n{sections}", prompt.trim_end()), Some(sections)),
                 Some(Addition::Replace(text)) => (format!("{text}\n"), Some(text)),
                 None => (prompt, None),
@@ -228,6 +229,7 @@ async fn compose_run_prompt(
 /// [`StartProblem`].
 pub(super) async fn plan(
     ctx: &Context<'_>,
+    zone: agent_core::local_time::Zone,
     rng: &mut impl Rng,
     task: &TaskId,
     briefing: Option<&BriefingFacts>,
@@ -283,7 +285,7 @@ pub(super) async fn plan(
         rules: ctx.rules,
     };
     let prompt = compose(&texts, &input)?;
-    let (prompt, addition) = compose_run_prompt(ctx, &texts, &found, &working, kind, prompt).await?;
+    let (prompt, addition) = compose_run_prompt(ctx, &texts, &found, &working, kind, prompt, zone).await?;
     let prompt = with_plan(ctx, role, member, kind, prompt)?;
     let prompt = super::split::with_correction(ctx.team_texts, team, role, prompt)?;
     let prompt = match briefing {

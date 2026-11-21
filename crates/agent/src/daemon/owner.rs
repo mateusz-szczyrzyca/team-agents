@@ -365,7 +365,7 @@ pub(super) struct OwnerParts {
     pub(super) notices: mpsc::Sender<Delivery>,
     /// Where the events go.
     pub(super) events: broadcast::Sender<Event>,
-    /// The machine's offset from UTC.
+    /// The zone of the host: the times the daemon writes for a person are shown in it, with the offset of each moment.
     pub(super) zone: Zone,
     /// How often paused tasks are looked at.
     pub(super) tick: Duration,
@@ -794,7 +794,7 @@ impl Owner {
                 autopilot: self.pulls.as_ref().map(Pulls::texts),
                 checks: self.pulls.as_ref().map(Pulls::checks),
             };
-            plan(&context, &mut self.parts.rng, &task, briefing.as_ref()).await
+            plan(&context, self.parts.zone, &mut self.parts.rng, &task, briefing.as_ref()).await
         };
         let plan = match planned {
             Ok(plan) => plan,
@@ -1892,7 +1892,7 @@ impl Owner {
                 detail.waiting = self
                     .watch
                     .github_waits
-                    .line_of(team.id(), round, self.parts.zone)
+                    .line_of(team.id(), round, Zone::Utc)
                     .map(|line| format!("GitHub: {line}"))
                     .or_else(|| self.waiting_for(team, found).map(|wait| wait.text().to_owned()));
                 Ok(Reply::Round {

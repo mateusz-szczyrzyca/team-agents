@@ -74,7 +74,7 @@ pub(crate) fn measured_sections_in(
     size: usize,
     gate: &GateRecord,
     previous: Option<&GateRecord>,
-    _zone: agent_core::local_time::Zone,
+    zone: agent_core::local_time::Zone,
 ) -> Result<String, PullTextError> {
     let size = texts.render(
         AutopilotPrompt::PrSize,
@@ -82,7 +82,7 @@ pub(crate) fn measured_sections_in(
     )?;
     let values = Variables::new()
         .with("head", gate.result.head.as_str())?
-        .with("finished", gate.result.finished_at.to_string())?
+        .with("finished", zone.stamp(gate.result.finished_at))?
         .with("result", gate.summary())?
         .with("log", gate.result.log.as_path().display().to_string())?;
     let mut sections = vec![size, texts.render(AutopilotPrompt::PrGate, &values)?];

@@ -47,26 +47,26 @@ pub(crate) enum StatusError {
     Json(#[source] serde_json::Error),
 }
 
-/// Where `agent status` reads when a task that runs was last active, and the offset it tells the time in.
+/// Where `agent status` reads when a task that runs was last active, and the zone it tells the time in.
 #[derive(Debug, Clone)]
 pub(crate) struct Activity {
     /// The home whose runs are looked at.
     home: Home,
-    /// The machine's offset from UTC.
-    offset: Zone,
+    /// The zone the times are written in.
+    zone: Zone,
 }
 
 impl Activity {
-    /// The activity of the tasks of `home`, told in the local time `offset` gives.
-    pub(crate) const fn new(home: Home, offset: Zone) -> Self {
-        Self { home, offset }
+    /// The activity of the tasks of `home`, told in the local time `zone` gives.
+    pub(crate) const fn new(home: Home, zone: Zone) -> Self {
+        Self { home, zone }
     }
 
     /// What the line of the running task `task` says of its last activity: the time the output of its runs last changed,
     /// or that it cannot be told; `None` when its runs have written nothing yet.
     fn of(&self, task: &TaskId) -> Option<String> {
         match last_activity(&self.home, task) {
-            Ok(Some(changed)) => Some(format!("last activity {}", clock_time(changed, self.offset))),
+            Ok(Some(changed)) => Some(format!("last activity {}", clock_time(changed, self.zone))),
             Ok(None) => None,
             Err(error) => Some(format!("last activity unknown ({})", error_chain(&error))),
         }
@@ -116,10 +116,29 @@ impl Activity {
 
 /// `at` as a person reads it in `zone`: the date, the time with its seconds and the zone.
 pub(crate) fn clock_time(at: SystemTime, zone: Zone) -> String {
-    match Timestamp::from_utc(time::UtcDateTime::from(at)) {
+    let utc = time::UtcDateTime::from(at);
+    match Timestamp::from_utc(utc) {
         Ok(at) => zone.stamp(at),
-        // A time the state cannot hold (outside the years 0 to 9999) is shown as the system's own text.
-        Err(_) => time::OffsetDateTime::from(at).to_string(),
+        // A time the state cannot hold (outside the years 0 to 9999) is shown in UTC and marked as UTC.
+        Err(
+            agent_core::state::InvalidTimestamp::YearOutOfRange { .. }
+            | agent_core::state::InvalidTimestamp::NotRfc3339 { .. },
+        ) => {
+            let year = utc.year();
+            let year_text = if year < 0 {
+                format!("-{:04}", year.unsigned_abs())
+            } else {
+                format!("{year:04}")
+            };
+            format!(
+                "{year_text}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+                u8::from(utc.month()),
+                utc.day(),
+                utc.hour(),
+                utc.minute(),
+                utc.second(),
+            )
+        }
     }
 }
 
@@ -148,7 +167,7 @@ pub(crate) async fn status_active(
         &teams,
         &|task| activity.of(task),
         &|round| told.of(round),
-        activity.offset,
+        activity.zone,
     );
     write(
         out,
@@ -181,14 +200,14 @@ pub(crate) async fn status(
 pub(crate) async fn status_investigators(
     connection: &mut Connection,
     home: &Home,
-    offset: Zone,
+    zone: Zone,
     out: &mut impl Write,
 ) -> Result<(), StatusError> {
     let settings = Settings::load(home).await.map_err(StatusError::Settings)?;
     // The configuration keeps the investigators by name: the view lists them in that order.
     let configured: Vec<_> = settings.config.investigators().keys().cloned().collect();
     let (teams, _) = teams(connection, None).await?;
-    let text = investigators::render(&teams, &configured, offset);
+    let text = investigators::render(&teams, &configured, zone);
     out.write_all(text.as_bytes()).map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)
 }
@@ -219,7 +238,7 @@ pub(crate) async fn status_running(
             View::Running,
             &|task| activity.of(task),
             &|round| told.of(round),
-            activity.offset,
+            activity.zone,
         );
         format!("{text}{}", told.unread())
     };
@@ -319,10 +338,10 @@ async fn show_round(
     out: &mut impl Write,
 ) -> Result<(), StatusError> {
     let detail = round_detail(connection, round.clone()).await?;
-    let zone = activity.map_or(Zone::Fixed(UtcOffset::UTC), |activity| activity.offset);
+    let zone = activity.map_or(Zone::Fixed(UtcOffset::UTC), |activity| activity.zone);
     let mut text = render_round_in(&detail, zone);
     if let Some(activity) = activity {
-        text.push_str(&snapshots::snapshots_of(&activity.home, &round, activity.offset));
+        text.push_str(&snapshots::snapshots_of(&activity.home, &round, activity.zone));
     }
     out.write_all(text.as_bytes()).map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)
@@ -368,15 +387,15 @@ fn render_with(
     render_at(teams, activity, rounds, Zone::Fixed(UtcOffset::UTC))
 }
 
-/// [`render_active`] with what `rounds` says of each round after its line, the times of the recorded activities told at
-/// `offset` from UTC.
+/// [`render_active`] with what `rounds` says of each round after its line, the times of the recorded activities told in
+/// `zone`.
 fn render_at(
     teams: &[TeamSummary],
     activity: &dyn Fn(&TaskId) -> Option<String>,
     rounds: &dyn Fn(&Round) -> String,
-    offset: Zone,
+    zone: Zone,
 ) -> String {
-    render_in(teams, View::Full, activity, rounds, offset)
+    render_in(teams, View::Full, activity, rounds, zone)
 }
 
 /// What a view of the status prints, the running view being the same teams with their open rounds only.
@@ -405,7 +424,7 @@ fn render_in(
     view: View,
     activity: &dyn Fn(&TaskId) -> Option<String>,
     rounds: &dyn Fn(&Round) -> String,
-    offset: Zone,
+    zone: Zone,
 ) -> String {
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
@@ -469,7 +488,7 @@ fn render_in(
                 .map_or_else(String::new, |said| format!(", {said}"));
             let status = match member.role {
                 Role::Reviewer => {
-                    reviewer::status(member, &team.activities, offset).unwrap_or_else(|| member.status.to_string())
+                    reviewer::status(member, &team.activities, zone).unwrap_or_else(|| member.status.to_string())
                 }
                 Role::Solo | Role::Coordinator | Role::Member | Role::Worker => member.status.to_string(),
             };
@@ -537,10 +556,9 @@ pub(crate) fn render_round(detail: &RoundDetail) -> String {
 /// A round in full as text: its line, the item, the pull request, the review passes, and the tasks that worked for it
 /// with where they work and their runs, its times in `zone`.
 pub(crate) fn render_round_in(detail: &RoundDetail, zone: Zone) -> String {
-    let waiting = detail
-        .waiting
-        .as_ref()
-        .map_or_else(String::new, |waiting| format!(", waits for {waiting}"));
+    let waiting = detail.waiting.as_deref().map_or_else(String::new, |waiting| {
+        format!(", waits for {}", zone.stamp_waiting(waiting))
+    });
     let mut lines = vec![format!("{}  team {}{waiting}", round_line(&detail.round), detail.team)];
     lines.push(format!("  opened {}", zone.stamp(detail.round.opened_at())));
     if let RoundLife::Closed { at, how } = detail.round.life() {

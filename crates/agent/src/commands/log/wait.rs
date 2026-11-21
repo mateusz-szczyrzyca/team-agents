@@ -31,9 +31,9 @@ pub(crate) fn wait_text(round: &RoundId, asked: &Asked) -> String {
 }
 
 /// The line that tells `asked` of `round`, with any retry timestamp formatted in `zone`.
-pub(crate) fn wait_text_in(round: &RoundId, asked: &Asked, _zone: Zone) -> String {
+pub(crate) fn wait_text_in(round: &RoundId, asked: &Asked, zone: Zone) -> String {
     match asked {
-        Asked::Waits(what) => format!("round {round} waits for {what}"),
+        Asked::Waits(what) => format!("round {round} waits for {}", zone.stamp_waiting(what)),
         Asked::Nothing => format!("round {round} waits for nothing: a run of it goes on, or it is closed"),
         Asked::Unknown(why) => {
             format!("round {round}: what it waits for is not known, the daemon was not asked: {why}")

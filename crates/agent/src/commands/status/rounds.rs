@@ -40,8 +40,8 @@ pub(super) struct Told {
     works: HashMap<RoundId, RoundWork>,
     /// The findings waiting for independent investigators.
     opinions: HashMap<RoundId, String>,
-    /// The machine's offset from UTC: the times are local.
-    offset: Zone,
+    /// The zone of the process: the times are local.
+    zone: Zone,
     /// Why the history could not say whether a draft is open, when it could not.
     unread: Option<String>,
 }
@@ -49,10 +49,10 @@ pub(super) struct Told {
 impl Told {
     /// What follows the line of `round`.
     pub(super) fn of(&self, round: &Round) -> String {
-        let mut suffix = suffix(round, self.works.get(round.id()).copied(), self.offset);
+        let mut suffix = suffix(round, self.works.get(round.id()).copied(), self.zone);
         if let Some(waiting) = self.waiting.get(round.id()) {
             suffix.push_str(", waits for ");
-            suffix.push_str(waiting);
+            suffix.push_str(&self.zone.stamp_waiting(waiting));
         }
         match self.opinions.get(round.id()) {
             Some(opinions) => format!("{suffix}{opinions}"),
@@ -121,7 +121,7 @@ pub(super) async fn told(
         waiting: HashMap::new(),
         works: HashMap::new(),
         opinions: HashMap::new(),
-        offset: activity.offset,
+        zone: activity.zone,
         unread: None,
     };
     let going = teams
@@ -144,18 +144,18 @@ pub(super) async fn told(
         if let Some(work) = round_work(&detail, draft) {
             told.works.insert(round.id().clone(), work);
             told.opinions
-                .insert(round.id().clone(), opinion_waits(&detail, activity.offset));
+                .insert(round.id().clone(), opinion_waits(&detail, activity.zone));
         }
     }
     Ok(told)
 }
 
-/// What follows the line of `round`: where its work is, when it started in the local time `offset` gives and, for a
+/// What follows the line of `round`: where its work is, when it started in the local time `zone` gives and, for a
 /// round that is closed, how long it took.
-fn suffix(round: &Round, work: Option<RoundWork>, offset: Zone) -> String {
+fn suffix(round: &Round, work: Option<RoundWork>, zone: Zone) -> String {
     let work = work.map_or_else(String::new, |work| format!(", {work}"));
     let opened = round.opened_at();
-    let started = format!("started {}", offset.stamp_minute(opened));
+    let started = format!("started {}", zone.stamp_minute(opened));
     let length = match round.life() {
         RoundLife::Open => String::new(),
         RoundLife::Closed { at, .. } => {
@@ -185,7 +185,7 @@ fn took(seconds: u64) -> String {
 }
 
 /// Describes each unanswered opinion independently of the round's general work label.
-fn opinion_waits(detail: &agent_core::protocol::RoundDetail, offset: Zone) -> String {
+fn opinion_waits(detail: &agent_core::protocol::RoundDetail, zone: Zone) -> String {
     use agent_core::state::OpinionStage;
     let mut text = String::new();
     for (number, opinion) in &detail.opinions {
@@ -199,7 +199,7 @@ fn opinion_waits(detail: &agent_core::protocol::RoundDetail, offset: Zone) -> St
                     .and_then(|attempt| attempt.asked_at);
                 let time = match since {
                     Some(at) => {
-                        format!("since {}", offset.stamp_minute(at))
+                        format!("since {}", zone.stamp_minute(at))
                     }
                     None => "(assignment time unavailable)".to_owned(),
                 };

@@ -112,7 +112,13 @@ impl Zone {
     /// Formats any retry timestamp in a daemon `waiting` line (`..., next try <timestamp>`) in this zone.
     #[must_use]
     pub fn stamp_waiting(&self, waiting: &str) -> String {
-        waiting.to_owned()
+        let Some((before, raw)) = waiting.rsplit_once(", next try ") else {
+            return waiting.to_owned();
+        };
+        let Ok(at) = self.parse_typed(raw) else {
+            return waiting.to_owned();
+        };
+        format!("{before}, next try {}", self.stamp_minute(at))
     }
 
     /// The moment `at` in this zone, written as the person reads it: `2026-11-21 17:29:53 +01:00`. The zone is always
