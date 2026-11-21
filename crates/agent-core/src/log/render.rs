@@ -2,6 +2,7 @@
 //!
 //! The line is a pure function of a stored row and of its run; nothing here reads a clock, a file or the state.
 
+pub mod steps;
 #[cfg(test)]
 mod tests;
 
