@@ -93,6 +93,14 @@ pub fn dispatch(team: &Team) -> Dispatch {
 /// The item's minimum capability, defaulting to normal for an omitted directive.
 #[must_use]
 pub fn required_tier(team: &Team, item: ItemId) -> Tier {
+    if let Some((part, _)) = team.next_part(item) {
+        return team
+            .splits()
+            .iter()
+            .find(|plan| plan.parent() == item)
+            .and_then(|plan| plan.requirements(part.key()))
+            .map_or(Tier::Normal, |requirements| requirements.tier);
+    }
     team.task_list().list().required_tier(item).unwrap_or(Tier::Normal)
 }
 
@@ -101,6 +109,20 @@ mod tests;
 
 /// Working items whose assignee cannot deliver their current part's tier.
 #[must_use]
-pub fn underqualified(_team: &Team) -> Vec<ItemId> {
-    Vec::new()
+pub fn underqualified(team: &Team) -> Vec<ItemId> {
+    team.items()
+        .iter()
+        .filter_map(|item| {
+            let crate::state::ItemPhase::InProgress { assignee, .. } = item.phase() else {
+                return None;
+            };
+            let required = required_tier(team, item.id());
+            team.crew()
+                .roster()
+                .iter()
+                .find(|(_, member)| member.agent().name() == assignee.as_str())
+                .filter(|(_, member)| member.agent().tier() < required)
+                .map(|_| item.id())
+        })
+        .collect()
 }
