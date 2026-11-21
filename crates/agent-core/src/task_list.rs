@@ -27,7 +27,7 @@ use std::str::FromStr;
 
 use crate::ids::{AgentName, InvalidItemId, InvalidName, ItemId};
 use crate::kinds::{Tier, UnknownKeyword};
-use crate::task_title::derived_short_desc;
+use crate::task_title::{MAX_SHORT_DESC_CHARS, derived_short_desc};
 
 /// Largest task list accepted, in bytes: a bound on untrusted input, far above any real list.
 pub const MAX_TASK_LIST_BYTES: usize = 1 << 20;
@@ -40,6 +40,9 @@ const COORDINATOR_PREFIX: &str = "Coordinator:";
 
 /// The text that starts a line naming a path or glob that the task's rounds may change.
 const ALLOW_PREFIX: &str = "Allow:";
+
+/// The text that starts the line giving the short description of the task, in the header.
+const SHORT_DESC_PREFIX: &str = "Short desc:";
 
 /// The text that starts the line listing the features a feature waits for.
 const DEPENDS_ON_PREFIX: &str = "Depends on:";
@@ -737,6 +740,8 @@ struct Parser<'a> {
     allow_lines: AllowLines,
     /// Root-relative permissions given in the header.
     allowances: Vec<crate::task_allowance::TaskAllowance>,
+    /// The `Short desc:` line read so far: its line and its text.
+    short_desc: Option<(NonZeroUsize, String)>,
     /// The lines before the first feature.
     brief: Vec<&'a str>,
     /// The features read so far; the last one is the current one.
@@ -767,9 +772,12 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
         }
-        if self.allow_lines == AllowLines::Permissions
-            && self.features.is_empty()
-            && self.brief.iter().all(|line| line.trim().is_empty())
+        if self.in_header()
+            && let Some(desc) = text.strip_prefix(SHORT_DESC_PREFIX)
+        {
+            return self.short_desc_line(line, desc);
+        }
+        if self.in_header()
             && let Some(pattern) = text.strip_prefix(ALLOW_PREFIX)
         {
             let pattern = pattern.trim();
@@ -806,6 +814,37 @@ impl<'a> Parser<'a> {
             LineKind::Text if self.features.is_empty() => self.brief.push(text),
             LineKind::Text => return Err(TaskListError::UnexpectedLine { line }),
         }
+        Ok(())
+    }
+
+    /// Whether a header line is possible now: its lines are read as such, and neither the brief nor a feature began.
+    fn in_header(&self) -> bool {
+        self.allow_lines == AllowLines::Permissions
+            && self.features.is_empty()
+            && self.brief.iter().all(|line| line.trim().is_empty())
+    }
+
+    /// The `Short desc:` line `line` with the text `desc` after its label.
+    fn short_desc_line(&mut self, line: NonZeroUsize, desc: &str) -> Result<(), TaskListError> {
+        if let Some((first_line, _)) = &self.short_desc {
+            return Err(TaskListError::ShortDescTwice {
+                line,
+                first_line: *first_line,
+            });
+        }
+        let desc = desc.trim();
+        if desc.is_empty() {
+            return Err(TaskListError::ShortDescEmpty { line });
+        }
+        let len = desc.chars().count();
+        if len > MAX_SHORT_DESC_CHARS {
+            return Err(TaskListError::ShortDescTooLong {
+                line,
+                len,
+                max: MAX_SHORT_DESC_CHARS,
+            });
+        }
+        self.short_desc = Some((line, desc.to_owned()));
         Ok(())
     }
 
@@ -964,7 +1003,7 @@ impl<'a> Parser<'a> {
         Ok(TaskList {
             coordinator: self.coordinator,
             allowances: self.allowances,
-            short_desc: None,
+            short_desc: self.short_desc.map(|(_, text)| text),
             brief,
             features: self.features,
             tiers: self.tiers,
