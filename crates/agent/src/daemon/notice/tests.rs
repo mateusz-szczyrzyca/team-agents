@@ -153,15 +153,19 @@ fn layout_as_a_table_every_field_present() {
     assert_eq!(notification.title(), "✅✅ team-agents");
     let expected_body = "\
 Repo: team-agents
-Agent: codex-1 (codex, o3-mini)
 Time: 2026-11-11 21:15
-Task: task-20261111-191500-1111
+Task: Fix the typo in the README.
+Agent: codex-1 (codex, o3-mini)
+Task ID: task-20261111-191500-1111
 Team: team-20261111-153001-t5m8
 Status: ✅✅ approved: ready to merge
 Note: Pull request 42 of team-agents is approved
 PR: https://github.com/org/team-agents/pull/42
 
-Both reviewers approved pull request #42.";
+Both reviewers approved pull request #42.
+
+TASK (task-20261111-191500-1111):
+Fix the typo in the README. It has one.";
 
     assert_eq!(notification.body(), expected_body);
 }
@@ -191,13 +195,17 @@ fn layout_optional_fields_absent() {
     assert_eq!(notification.title(), "❌ team-agents");
     let expected_body = "\
 Repo: team-agents
-Agent: codex-1 (codex)
 Time: 2026-11-11 19:15
-Task: task-20261111-191500-1111
+Task: Fix the typo in the README.
+Agent: codex-1 (codex)
+Task ID: task-20261111-191500-1111
 Status: ❌ failed
 Note: codex-1 ended without a status (task-20261111-191500-1111)
 
-The run ended without a status line.";
+The run ended without a status line.
+
+TASK (task-20261111-191500-1111):
+Fix the typo in the README. It has one.";
 
     assert_eq!(notification.body(), expected_body);
 }
@@ -227,11 +235,15 @@ fn layout_empty_body() {
     assert_eq!(notification.title(), "❌ team-agents");
     let expected_body = "\
 Repo: team-agents
-Agent: codex-1 (codex)
 Time: 2026-11-11 19:15
-Task: task-20261111-191500-1111
+Task: Fix the typo in the README.
+Agent: codex-1 (codex)
+Task ID: task-20261111-191500-1111
 Status: ❌ failed
-Note: Single line notice title with no body";
+Note: Single line notice title with no body
+
+TASK (task-20261111-191500-1111):
+Fix the typo in the README. It has one.";
 
     assert_eq!(notification.body(), expected_body);
 }
