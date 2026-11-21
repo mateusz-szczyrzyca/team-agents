@@ -35,14 +35,14 @@ impl Owner {
             return Ok(Takeover::Nobody);
         };
         let at = self.after_last_run(task)?;
-        let held = self
-            .parts
-            .state
-            .find_task(task)
-            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
-            .member
-            .agent()
-            .clone();
+        let (held, team) = {
+            let found = self
+                .parts
+                .state
+                .find_task(task)
+                .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+            (found.member.agent().clone(), found.team.id().clone())
+        };
         let takeover = match chosen {
             Chosen::Agent(name) => {
                 self.hand_task_over(task, &name, &held, trouble, at)?;
@@ -51,11 +51,13 @@ impl Owner {
                     &format!("task={task}, from={}", held.name()),
                     &format!("agent={name}"),
                 );
+                handed_over(&team, task, held.name(), name.as_str());
                 Takeover::Agent
             }
             Chosen::Lead => {
                 self.to_lead.insert(task.clone(), trouble);
-                log_decision("takeover", &format!("task={task}, from={}", held.name()), "lead");
+                log_decision("takeover", &format!("task={task}, from={}", held.name()), LEAD);
+                handed_over(&team, task, held.name(), LEAD);
                 Takeover::Lead
             }
         };
@@ -235,6 +237,21 @@ impl Owner {
             .map(|member| member.agent().name())
             .collect()
     }
+}
+
+/// What `task_handed_over` names as the new holder when a member's work goes to its team's lead.
+const LEAD: &str = "lead";
+
+/// Logs that `task` of `team` was handed over from the agent `from` to `to`: an agent's name, or [`LEAD`].
+fn handed_over(team: &agent_core::ids::TeamId, task: &TaskId, from: &str, to: &str) {
+    tracing::info!(
+        event = agent_core::log::LogEvent::TaskHandedOver.as_str(),
+        team = %team,
+        task = %task,
+        from,
+        to,
+        "a task whose runs went bad is handed over"
+    );
 }
 
 /// What `[replacement]` chose for a task, before the state is changed.
