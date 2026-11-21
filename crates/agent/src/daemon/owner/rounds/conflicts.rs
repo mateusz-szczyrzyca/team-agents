@@ -17,9 +17,10 @@ use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
-use super::publish::Own;
-use super::{Lead, PublishError};
+use super::publish::{Own, Site};
+use super::{Lead, PublishError, Pulls};
 use crate::daemon::merge::{items_of, ran_since};
+use crate::daemon::pr::{Joining, Publication, Publish};
 use crate::daemon::team::Why;
 
 /// What the daemon starts on an approved pull request after a conflict refusal or a conflict pass.
@@ -121,6 +122,7 @@ impl Owner {
     /// [`OwnerError`] when the state cannot be saved or is found inconsistent.
     pub(super) async fn advance_merge_conflicts(
         &mut self,
+        pulls: &Pulls,
         team: &TeamId,
         look: &mut Look,
         now: Timestamp,
@@ -186,14 +188,24 @@ impl Owner {
         let changed = match self.read_change(&lead, &pr, &approved_head, &tip).await {
             Ok(changed) => changed,
             Err(error) => {
-                tracing::warn!(
-                    event = LogEvent::GitCallFailed.as_str(),
-                    team = %team,
-                    pr = %pr.number,
-                    error = %error_chain(&error),
-                    "the change of the merge conflict pass cannot be read yet: it is looked at again in a while"
-                );
-                return Ok(());
+                let publication = Publication {
+                    head_branch: pr.branch.clone(),
+                    publish: Publish::Open {
+                        items: items
+                            .iter()
+                            .map(|id| Joining {
+                                item: *id,
+                                branch: pr.branch.clone(),
+                            })
+                            .collect(),
+                    },
+                };
+                let site = Site {
+                    pulls,
+                    lead: &lead,
+                    team,
+                };
+                return self.publish_failed(site, &publication, &error, now, look).await;
             }
         };
         self.record_event_at(
@@ -278,6 +290,12 @@ impl Owner {
         let end = LeadEnd::Result { changed };
         let decided = after_lead(&end, &allowances);
         log_decision("after_lead", &format!("pr={pr}, end={end:?}"), &format!("{decided:?}"));
+        self.each_item(team, items, |item| {
+            item.record_published_conflict_pass();
+            item.reset_publish_tries();
+            item.clear_publish_question();
+            Ok(())
+        })?;
         match decided {
             AfterLead::RetryMerge => {
                 self.end_pass(team, items, pr)?;
@@ -403,12 +421,12 @@ impl Owner {
                     && &record.result.head != approved_head
                 {
                     record.result.head.clone()
-                } else if let Ok(head) = git.rev_parse(&Revision::Head).await
-                    && &head != approved_head
-                {
-                    head
                 } else {
-                    return Ok(Judgement::Ask);
+                    let head = git.rev_parse(&Revision::Head).await?;
+                    if &head == approved_head {
+                        return Ok(Judgement::Ask);
+                    }
+                    head
                 }
             }
         };
@@ -449,8 +467,18 @@ impl Owner {
         tip: &CommitId,
     ) -> Result<Vec<RepoPath>, PublishError> {
         let git: Git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        git.push_commit(&pr.branch, tip).await?;
-        git.branch_point_if_unheld(&pr.branch, tip).await?;
+        let branches = agent_core::decide::publish::PublicationBranches {
+            task: &pr.branch,
+            part: None,
+            pr: Some(&pr.branch),
+        };
+        let decided = agent_core::decide::publish::publish_decision(
+            agent_core::decide::publish::RoundPublication::ConflictPass,
+            &branches,
+            agent_core::decide::publish::RemoteState::Behind,
+        );
+        git.push_commit(decided.branch, tip).await?;
+        git.branch_point_if_unheld(decided.branch, tip).await?;
         let base = self.base_branch(&lead.repo)?;
         let merged_base = git
             .merge_base(&Revision::Commit(tip.clone()), &Revision::RemoteBranch(base))
@@ -488,7 +516,7 @@ impl Owner {
     }
 
     /// Changes each of `items` of `team` with `change`.
-    fn each_item(
+    pub(crate) fn each_item(
         &mut self,
         team: &TeamId,
         items: &[ItemId],
