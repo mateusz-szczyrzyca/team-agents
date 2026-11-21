@@ -19,7 +19,6 @@ use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
 use agent_runtime::notify::{InvalidNotification, Notification};
 
 pub(crate) use words::TaskWords;
-pub(crate) use words::item_line;
 
 /// Every notice that can be sent to the human.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -169,31 +168,49 @@ pub(super) fn layout_notification(
         format!("{} {client}", context.agent)
     };
 
-    let mut body = format!(
-        "Repo: {}\nAgent: {agent_str}\nTime: {time_str}\nTask: {}",
-        context.repo, context.task
+    let mut head = format!(
+        "Repo: {}\nTime: {time_str}\nTask: {}\nAgent: {agent_str}\nTask ID: {}",
+        context.repo,
+        context.words.short_desc(),
+        context.task
     );
     if let Some(team) = context.team {
-        body.push_str("\nTeam: ");
-        body.push_str(team.as_str());
+        head.push_str("\nTeam: ");
+        head.push_str(team.as_str());
     }
-    body.push_str("\nStatus: ");
-    body.push_str(status.icon());
-    body.push(' ');
-    body.push_str(status.label());
-    body.push_str("\nNote: ");
-    body.push_str(note);
+    head.push_str("\nStatus: ");
+    head.push_str(status.icon());
+    head.push(' ');
+    head.push_str(status.label());
+    head.push_str("\nNote: ");
+    head.push_str(note);
     if let Some(pr) = context.pr {
-        body.push_str("\nPR: ");
-        body.push_str(pr);
+        head.push_str("\nPR: ");
+        head.push_str(pr);
     }
 
-    if !original_body.is_empty() {
-        body.push_str("\n\n");
-        body.push_str(original_body);
-    }
+    let tail = task_tail(context);
+    let sections = [
+        Some(head.as_str()),
+        context.words.item(),
+        Some(original_body),
+        tail.as_deref(),
+    ];
+    let body = sections
+        .into_iter()
+        .flatten()
+        .filter(|section| !section.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
 
     Notification::new(&title, &body)
+}
+
+/// The block that ends every notification: the first sentences of the task's brief, under its ID; none when the
+/// brief has no words.
+fn task_tail(context: &NoticeContext<'_>) -> Option<String> {
+    let excerpt = context.words.excerpt();
+    (!excerpt.is_empty()).then(|| format!("TASK ({}):\n{excerpt}", context.task))
 }
 
 /// What the human is told about a task.
