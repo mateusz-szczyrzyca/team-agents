@@ -1608,7 +1608,8 @@ impl Owner {
             }
         };
 
-        self.prepare_publish_question_file(site, publication, &path, reason).await?;
+        self.prepare_publish_question_file(site, publication, &path, reason)
+            .await?;
 
         let (_, mut member) = self.member_mut(&site.lead.task)?;
         member
