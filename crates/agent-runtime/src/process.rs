@@ -380,7 +380,7 @@ async fn open_output(path: &Path) -> Result<std::fs::File, ProcessError> {
 }
 
 /// The ID of the leader `child` and its process group (the same number: the leader made the group).
-pub(crate) fn leader_of(child: &Child) -> Result<(NonZeroU32, Pid), PidError> {
+fn leader_of(child: &Child) -> Result<(NonZeroU32, Pid), PidError> {
     let raw = child.id().ok_or(PidError::Reaped)?;
     let signed = i32::try_from(raw).map_err(|source| PidError::OutOfRange { pid: raw, source })?;
     let group = Pid::from_raw(signed).ok_or(PidError::Zero)?;
