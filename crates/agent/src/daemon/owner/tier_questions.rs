@@ -81,8 +81,10 @@ impl Owner {
         let mut waiting = String::new();
         for (item, tier) in team.unasked_tier_waits() {
             let label = team
-                .round_of(item)
+                .open_rounds()
+                .find(|round| round.item() == Some(item))
                 .and_then(agent_core::state::Round::part)
+                .or_else(|| team.next_part(item).map(|(id, _)| id.key()))
                 .map_or_else(|| item.to_string(), |part| format!("{item}{part}"));
             let values = Variables::new()
                 .with("item", label)

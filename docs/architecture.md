@@ -1371,8 +1371,9 @@ Split activation and executor runs retain `Team::part_assignments` by round ID. 
 cannot replace another member's executor record. The CLI and PR publisher use the same projection of the
 approved plan, round history and assignments, including sibling PRs already published, authority and tier.
 Legacy absence stays explicitly unknown. The PR publisher owns its `Split` section and strips a conflicting
-section supplied by the lead. Optional team status metadata needs a matching CLI; older strict clients reject
-nonempty executor maps, so upgrade the CLI and daemon together.
+section supplied by the lead. Socket protocol 6 carries executor assignments and capability waits. Protocols
+3, 4 and 5 omit both maps so older strict clients can still read status. Status and show negotiate versions
+6, 5, 4 and 3 in order, using read-only probes and reconnecting after an unsupported format.
 
 After assignment the owner refreshes capability waits and asks an idle lead about any unasked waits. The pure
 `Team::tier_question_task` decision defers while the lead works or already asks a question. Catalog texts render

@@ -971,3 +971,6 @@ mod legacy_split_tests;
 
 #[cfg(test)]
 mod executor_tests;
+
+#[cfg(test)]
+mod executor_negotiation_tests;

@@ -184,7 +184,7 @@ impl Connection {
         self.converse(client, command, None).await
     }
 
-    /// Requests plan-aware version-five replies.
+    /// Requests executor-aware status, falling back to earlier supported formats.
     pub(crate) async fn request_plan(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
         let (format, probe_reply) = self.negotiate_plan(&client).await?;
         if matches!(
@@ -205,41 +205,43 @@ impl Connection {
             .await
     }
 
-    /// Probes with a plan-aware request, falling back to split or legacy format when unsupported.
+    /// Probes executor and plan formats before falling back to split or legacy replies.
     async fn negotiate_plan(&mut self, client: &Client) -> Result<(ReplyFormat, Option<Reply>), ClientError> {
         if let Some(format) = self.format {
             return Ok((format, None));
         }
-        let probe = Command::Status(agent_core::protocol::StatusRequest { target: None });
-        let format = match self
-            .converse_format(client.clone(), probe, Some(REQUEST_TIMEOUT), ReplyFormat::Plan)
-            .await
-        {
-            Ok(reply) => {
-                self.format = Some(ReplyFormat::Plan);
-                return Ok((ReplyFormat::Plan, Some(reply)));
-            }
-            Err(error)
-                if matches!(
-                    &error,
-                    ClientError::Closed
-                        | ClientError::WrongAnswer {
-                            found: RequestId(0),
-                            ..
-                        }
-                        | ClientError::Refused(Failure {
-                            kind: agent_core::protocol::FailureKind::Invalid,
-                            ..
-                        })
-                ) =>
+        for format in [ReplyFormat::Executor, ReplyFormat::Plan] {
+            let probe = Command::Status(agent_core::protocol::StatusRequest { target: None });
+            match self
+                .converse_format(client.clone(), probe, Some(REQUEST_TIMEOUT), format)
+                .await
             {
-                tracing::debug!(error = %agent_runtime::process::error_chain(&error), "daemon refused plan protocol; falling back to split protocol");
-                *self = Self::connect(&self.socket).await?;
-                self.negotiate(client).await?
+                Ok(reply) => {
+                    self.format = Some(format);
+                    return Ok((format, Some(reply)));
+                }
+                Err(error)
+                    if matches!(
+                        &error,
+                        ClientError::Closed
+                            | ClientError::WrongAnswer {
+                                found: RequestId(0),
+                                ..
+                            }
+                            | ClientError::Refused(Failure {
+                                kind: agent_core::protocol::FailureKind::Invalid,
+                                ..
+                            })
+                    ) =>
+                {
+                    tracing::debug!(error = %agent_runtime::process::error_chain(&error), ?format,
+                        "daemon refused status protocol; reconnecting for an older format");
+                    *self = Self::connect(&self.socket).await?;
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
-        };
-        self.format = Some(format);
+        }
+        let format = self.negotiate(client).await?;
         Ok((format, None))
     }
 
@@ -327,7 +329,7 @@ impl Connection {
                 .ok_or(ClientError::Closed)?;
             let frame = match format {
                 ReplyFormat::Legacy => Frame::from_line(&line)?,
-                ReplyFormat::Split | ReplyFormat::Plan => Frame::from_line_negotiated(&line)?,
+                ReplyFormat::Split | ReplyFormat::Plan | ReplyFormat::Executor => Frame::from_line_negotiated(&line)?,
             };
             match frame {
                 Frame::Response(response) if response.id == id => return Ok(response),
