@@ -52,7 +52,7 @@ mod control;
 mod gate;
 mod history;
 mod merge;
-pub(crate) mod notice;
+mod notice;
 mod notifier;
 mod opener;
 mod owner;
