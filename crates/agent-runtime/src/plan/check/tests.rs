@@ -319,10 +319,7 @@ async fn check_command_kills_descendant_processes_in_group() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    assert!(
-        !path.exists(),
-        "descendant process must be killed"
-    );
+    assert!(!path.exists(), "descendant process must be killed");
 }
 
 #[tokio::test]
