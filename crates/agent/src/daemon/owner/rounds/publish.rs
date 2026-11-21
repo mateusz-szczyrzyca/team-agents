@@ -600,6 +600,28 @@ impl Owner {
         }
     }
 
+    /// Member branches that must be integrated before the existing pull request can be updated.
+    fn member_fix_branches(&self, team: &TeamId, fixing: &[ItemId], lead: &Lead) -> Vec<Joining> {
+        self.parts
+            .state
+            .team(team)
+            .into_iter()
+            .flat_map(|team| fixing.iter().filter_map(|id| team.item(*id)))
+            .filter_map(|item| match item.phase() {
+                ItemPhase::Fixing { assignee, branch, .. } if assignee != &lead.agent => Some(Joining {
+                    item: item.id(),
+                    branch: branch.clone(),
+                }),
+                ItemPhase::Pending
+                | ItemPhase::InProgress { .. }
+                | ItemPhase::InReview { .. }
+                | ItemPhase::Fixing { .. }
+                | ItemPhase::Approved { .. }
+                | ItemPhase::Done { .. } => None,
+            })
+            .collect()
+    }
+
     /// Updates the pull request `pr` whose items `fixing` were fixed: pushes the branch, tells the reviewers in a comment,
     /// and takes the finished `joining` items whose branches `ready.tip` contains in with it.
     async fn update_pull_request(
@@ -611,6 +633,10 @@ impl Owner {
         now: Timestamp,
     ) -> Result<Attempt, PublishError> {
         let Site { pulls, team, lead } = site;
+        let member_fixes = self.member_fix_branches(team, fixing, lead);
+        if contained(&ready.git, &member_fixes, &ready.tip).await?.len() != member_fixes.len() {
+            return Ok(Attempt::Nothing);
+        }
         let joined = contained(&ready.git, joining, &ready.tip).await?;
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
         let before = github.get_pull_request(pr.number).await?;

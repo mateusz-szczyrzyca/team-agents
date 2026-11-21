@@ -234,6 +234,7 @@ mod protocol_lines {
             members: Vec::new(),
             activities: Vec::new(),
             task_plans,
+            tier_waits: std::collections::BTreeMap::new(),
         };
 
         let frame = Frame::Response(Response::ok(RequestId(1), Reply::Teams { teams: vec![summary] }));
@@ -278,6 +279,7 @@ mod protocol_lines {
             members: Vec::new(),
             activities: Vec::new(),
             task_plans,
+            tier_waits: std::collections::BTreeMap::new(),
         };
 
         let frame = Frame::Response(Response::ok(RequestId(1), Reply::Teams { teams: vec![summary] }));
@@ -345,6 +347,7 @@ mod protocol_lines {
             members: Vec::new(),
             activities: Vec::new(),
             task_plans,
+            tier_waits: std::collections::BTreeMap::new(),
         };
 
         let frame = Frame::Response(Response::ok(RequestId(1), Reply::Teams { teams: vec![summary] }));

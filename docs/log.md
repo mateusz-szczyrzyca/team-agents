@@ -277,7 +277,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `team_not_started` | `error` | A team that was formed is not started because of a fault of the daemon (the state refuses it, its events cannot be made, or forming it failed inside); the client is told to see this log. |
 | `notification_failed` | `error` | A notification for the human cannot be made, timed, queued or delivered. |
 | `history_record_incomplete` | `warn` | A record of the history cannot be made as it should: it is left out, counted as lost, or made with a fallback (such as a run's reason recorded as a continuation). Plan snapshot recovery also uses this event when retained judgements or plan versions cannot be read, with the task and error cause chain; check output is never logged whole. |
-| `team_changed` | `info` | A team is started or closed. |
+| `team_changed` | `info` | A team is started or closed, or enters a capability wait (`kind=tier_wait`, `item`, `required_tier`). Each retained wait is logged once, including across restarts. |
 | `round_changed` | `info` | A round is opened or closed. Checked delivery changes carry `change=delivery_accepted` or `delivery_merged` at `info`, and `delivery_refused` or `delivery_poll_failed` as a `warn` record of the same event. Records name `team`, the known `round` and `pr`, and an `error` cause chain for failed checks or observations. |
 | `delivery_closed` | `warn` | An accepted delivery PR was observed closed without merging; the claim ends and the item returns to its member. Fields: `team`, `round`, `pr`. |
 | `item_phase_changed` | `info` | An item's phase changes. |

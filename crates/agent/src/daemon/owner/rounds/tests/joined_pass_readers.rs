@@ -203,3 +203,36 @@ async fn a_confirmed_blocker_of_the_pull_requests_pass_is_returned_for_every_ite
         .collect();
     assert_eq!(answered, vec![0, 0]);
 }
+
+#[tokio::test]
+async fn a_confirmed_blocker_returns_to_the_assigned_member_instead_of_the_coordinator() {
+    let findings = ledger(
+        &json!([entry(1, "BLOCKER", "open")]),
+        &json!({}),
+        &opinion("confirmed"),
+        &json!({}),
+    );
+    let mut state = fixing(&findings);
+    for id in items() {
+        state
+            .team_mut(&team())
+            .unwrap()
+            .item_mut(id)
+            .unwrap()
+            .reassign("member-bob".parse().unwrap(), "agents/member-bob/fix".parse().unwrap())
+            .unwrap();
+    }
+    let (_daemon, mut owner, _sinks, pulls) = owner_of(&state).await;
+    let coordinator = owner.lead_of(&team()).unwrap().task;
+    let member: TaskId = "task-20261119-131420-nni1".parse().unwrap();
+
+    owner.continue_opinions(&pulls, &team(), &mut Look::default()).unwrap();
+
+    assert_eq!(
+        (
+            owner.reasons.contains_key(&member),
+            owner.reasons.contains_key(&coordinator)
+        ),
+        (true, false),
+    );
+}

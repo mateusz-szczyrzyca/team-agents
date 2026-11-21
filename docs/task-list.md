@@ -77,8 +77,10 @@ Depends on: 1
   directives are errors at their line. The directive is not part of the item's description or checks; an indented
   `Tier:` remains ordinary item text. In a brief it is ordinary brief text. `TaskList::required_tier` exposes the
   requirement without changing existing `Item` fields. Capability comparisons order investigator above normal
-  above worker. This release prepares parsing and pure assignment decisions; the daemon still uses its existing
-  assignment policy until the enforcement part lands.
+  above worker. The daemon enforces the requirement for initial items and every split part, including the first.
+  Split parts use their own tier (default `normal`), rather than inheriting the parent item's tier. A qualified
+  busy member is awaited; the coordinator is a fallback only when no member in the crew meets the tier. Missing
+  capability leaves the item pending across restarts and is shown by `agent status`.
 - **The description** — the indented lines (spaces or tabs) after the item line, until the next line at column 0. The
   smallest indentation of the item's lines is removed; relative indentation, blank lines inside, and non-ASCII text are
   kept; blank lines at the start and the end are dropped.

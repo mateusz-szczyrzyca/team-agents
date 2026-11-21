@@ -379,3 +379,42 @@ async fn a_member_is_told_that_its_worktree_and_branch_are_the_only_ones_it_may_
 }
 
 mod split_scope;
+
+#[tokio::test]
+async fn assigned_members_and_coordinator_fallbacks_are_told_the_tier_and_reason() {
+    let texts = texts().await;
+    for (directive, expected) in [
+        (
+            "",
+            "Minimum tier: **normal**. Selected agent: **claude-1** (normal).\nYou are an available member who meets this item's required tier.\n",
+        ),
+        (
+            "Tier: investigator\n",
+            "Minimum tier: **investigator**. Selected agent: **inv-opus** (investigator).\nYou are the coordinator; no member in this team meets this item's required tier.\n",
+        ),
+    ] {
+        let mut team = crew_of(&format!("Brief.\n\n1. Feature\n[ ] 1.1 Item\n{directive}"), 1, 0);
+        let assigned = crate::daemon::team::assign::assignable(&team).unwrap().remove(0);
+        crate::daemon::team::assign::start_item(&mut team.item_mut(assigned.item).unwrap(), &assigned).unwrap();
+        let (role, _) = team.find(&assigned.task).unwrap();
+        let prompt = shape_with_answers(
+            &texts.team,
+            &PromptTexts {
+                harness: &texts.harness,
+                rules: &texts.rules,
+            },
+            &TeamRun {
+                team: &team,
+                role,
+                branch: &assigned.branch,
+                base: &branch("main"),
+                why: None,
+                new_session: false,
+            },
+            String::new(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(prompt, expected);
+    }
+}
