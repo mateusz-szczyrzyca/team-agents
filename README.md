@@ -751,12 +751,22 @@ A merge is checked against its first parent, on paths the round itself changes a
 brings no edit of a frozen test of its own; `git merge -s ours` changes nothing. An edit made inside a merge, including a
 conflict resolution that removes a frozen test line, still counts.
 
-A round that changes code without adding tests, edits the test of its own `RED:` commit, or adds a skipped test, a lint
-suppression or code that asks whether it runs under test goes back to the team with the reasons, `[review] check_passes` times
-(2), and then you are asked. If a check also finds changes that only you may allow, you are asked about those
+A round that changes code without adding tests, or adds a skipped test, a lint suppression or code that asks whether it
+runs under test goes back to the team with the reasons, `[review] check_passes` times (2), and then you are asked. If a check also finds changes that only you may allow, you are asked about those
 changes first, before the team starts its next pass. After your answer, the remaining findings go back to the team;
 the question itself uses no team pass, and what you allowed is asked again if the team changes that file
 afterwards. If the passes are already used up, you are asked about all remaining findings.
+A commit that takes lines out of a test its `RED:` commit froze, and is not a `TEST-FIX:` commit of test files only, is a
+finding the team cannot repair: the commit is in the branch for good and published history is never rewritten. Such a
+finding is never sent back to the team and spends none of its passes: you are asked about it at once, all the commits of
+the round in one question that shows each commit's subject, its author and the lines it added to and took out of the
+test. What you answer is kept for the item until it is closed, by the commit and the path: `allow` is not asked again
+through fix passes, merges of the base, a split into parts or a restart of the daemon, and `refuse` is told to the team
+once and is not asked again either. A new commit that changes a frozen test is a new question, which says what was allowed
+before. A file you allowed before this was so (`checks.json` of an earlier version) covers the commits that were in the
+round then. A `TEST-FIX:` commit that also changes a file that is not a test (by the `test_paths` of the repository) is
+no test fix: it is such a finding too. Answer with `allow` or `refuse`; `allow except` names paths and does not apply to
+commits.
 It is "Round checks before the review" in [`docs/architecture.md`](docs/architecture.md).
 
 A gate is run with `agent gate`, by an agent in its worktree (the human can run it too):
