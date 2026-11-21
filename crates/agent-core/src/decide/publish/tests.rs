@@ -308,3 +308,29 @@ fn publish_decision_table() {
         assert_eq!(decision.action, expected_action, "round={round:?}, remote={remote:?}");
     }
 }
+
+#[test]
+fn publish_decision_without_pr_branch() {
+    let task_branch: BranchName = "agents/lead/task-1".parse().unwrap();
+    let part_branch: BranchName = "agents/lead/task-1-1.1a".parse().unwrap();
+
+    let branches = PublicationBranches {
+        task: &task_branch,
+        part: Some(&part_branch),
+        pr: None,
+    };
+
+    assert_eq!(
+        publish_decision(RoundPublication::Item, &branches, RemoteState::Behind).branch,
+        &task_branch
+    );
+    assert_eq!(
+        publish_decision(RoundPublication::Part, &branches, RemoteState::Behind).branch,
+        &part_branch
+    );
+    assert_eq!(
+        publish_decision(RoundPublication::ConflictPass, &branches, RemoteState::Behind).branch,
+        &part_branch
+    );
+}
+
