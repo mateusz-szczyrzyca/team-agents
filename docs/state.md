@@ -785,7 +785,8 @@ executor's run record the assignment; later coordinator integration or review do
 the round representation unchanged and keeps the historical executor available after an item changes phase.
 Missing legacy assignments are displayed as `not recorded`, without guessing an executor from current progress.
 The optional map also appears in protocol-6 team status replies and events, alongside `tier_waits`. Older
-protocols omit both maps; newer clients can fall back to older daemons without executor metadata.
+protocols omit both maps and the private `tier_questions` marker in full team replies; newer clients can fall
+back to older daemons without executor metadata.
 
 The optional `tier_questions` object maps original item IDs to the tiers already asked about in the current
 `tier_waits`. The question and markers are saved together. Answering queues the lead through the usual answer

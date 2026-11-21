@@ -229,6 +229,7 @@ fn strip_split_fields(value: &mut serde_json::Value) -> bool {
                 "part",
                 "part_assignments",
                 "tier_waits",
+                "tier_questions",
                 "task_plans",
             ] {
                 changed |= object.remove(key).is_some();
@@ -280,7 +281,7 @@ fn strip_plan_fields(value: &mut serde_json::Value) -> bool {
 fn strip_executor_fields(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(object) => {
-            object.retain(|key, _| key != "part_assignments" && key != "tier_waits");
+            object.retain(|key, _| key != "part_assignments" && key != "tier_waits" && key != "tier_questions");
             for nested in object.values_mut() {
                 strip_executor_fields(nested);
             }
