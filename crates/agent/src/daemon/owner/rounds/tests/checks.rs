@@ -1448,6 +1448,17 @@ fn frozen_test_scripts(rig: &Rig) {
     );
 }
 
+/// Whether the second question of `task` is written and the record already waits on it: the daemon writes the file before
+/// it saves the record, so a test that reads the record must wait for both.
+fn second_question_recorded(rig: &Rig, task: &TaskId) -> bool {
+    let second = NonZeroU32::new(2).unwrap();
+    rig.home.questions_file(task, second).exists()
+        && std::fs::read_to_string(rig.home.checks_file(task)).is_ok_and(|text| {
+            serde_json::from_str::<ChecksRecord>(&text)
+                .is_ok_and(|record| record.asked.is_some_and(|asked| asked.number == second))
+        })
+}
+
 /// The commit of `task`'s worktree whose subject starts with `subject`.
 fn commit_of(rig: &Rig, task: &TaskId, subject: &str) -> agent_core::state::CommitId {
     git(
@@ -1588,7 +1599,7 @@ async fn a_new_commit_in_a_fix_pass_is_asked_alone_and_the_question_says_what_wa
     rig.status_is(&tasks[0], TaskStatus::Questions).await;
     answer(&rig, &tasks[0], 1, "allow").await;
     rig.wait_for("the second question of the checks", || {
-        rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists()
+        second_question_recorded(&rig, &tasks[0])
     })
     .await;
     let (first, second, third) = (
@@ -1752,7 +1763,7 @@ async fn a_legacy_record_and_then_a_new_edit(
     rig.start().await;
     answer(&rig, &tasks[0], 1, "allow").await;
     rig.wait_for("the second question of the checks", || {
-        rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists()
+        second_question_recorded(&rig, &tasks[0])
     })
     .await;
     let commits = [
