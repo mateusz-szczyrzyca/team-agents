@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use super::{Issue, RoundFacts, Subject};
+use super::{Issue, Lines, RoundFacts, Subject};
 use crate::repo_path::RepoPath;
 use crate::state::CommitId;
 use crate::task_allowance::TaskAllowance;
@@ -128,6 +128,58 @@ fn reaches(facts: &RoundFacts, head: &CommitId, commit: &CommitId) -> bool {
         }
     }
     false
+}
+
+/// What the human is shown about a [`CommitFinding`] besides its commit and its path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitNote {
+    /// The finding.
+    pub finding: CommitFinding,
+    /// The first line of the commit's message.
+    pub subject: String,
+    /// The name of the commit's author.
+    pub author: String,
+    /// What the commit did to the lines of the test.
+    pub lines: Lines,
+}
+
+/// Why a finding cannot be described.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum NoteError {
+    /// The commit is not among the commits of the round.
+    #[error("commit {commit} is not a commit of the round")]
+    NoCommit {
+        /// The commit.
+        commit: CommitId,
+    },
+    /// The commit did not change the test.
+    #[error("commit {commit} did not change {path}")]
+    NoFile {
+        /// The commit.
+        commit: CommitId,
+        /// The test.
+        path: RepoPath,
+    },
+    /// Nobody is known to have written the commit.
+    #[error("the author of commit {commit} is not known")]
+    NoAuthor {
+        /// The commit.
+        commit: CommitId,
+    },
+}
+
+/// Describes `finding` from the commits of the round and the `authors` git named.
+///
+/// # Errors
+/// [`NoteError`] when the commit is not in the round, did not change the test, or has no known author.
+pub fn describe(
+    finding: &CommitFinding,
+    _facts: &RoundFacts,
+    _authors: &BTreeMap<CommitId, String>,
+) -> Result<CommitNote, NoteError> {
+    Err(NoteError::NoCommit {
+        commit: finding.commit.clone(),
+    })
 }
 
 #[cfg(test)]

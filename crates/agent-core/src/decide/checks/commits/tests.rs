@@ -251,3 +251,70 @@ fn only_the_findings_nobody_has_answered_are_asked_and_each_is_asked_once() {
 
     assert_eq!(settled.ask, [finding('4', "tests/a.rs")]);
 }
+
+fn merging(digit: char, parents: &str, against_each: Vec<Vec<FileChange>>) -> CommitFacts {
+    CommitFacts {
+        files: Vec::new(),
+        merge_files: against_each,
+        ..commit(digit, parents)
+    }
+}
+
+fn authors() -> BTreeMap<CommitId, String> {
+    BTreeMap::from([(id('2'), "Ada Author".to_owned()), (id('4'), "Żółta Gęś".to_owned())])
+}
+
+#[test]
+fn a_finding_is_described_by_the_subject_the_author_and_the_lines_of_its_commit() {
+    let mut round = facts();
+    "RED: Fix the case".clone_into(&mut round.commits[1].subject);
+
+    let note = describe(&finding('2', "tests/a.rs"), &round, &authors()).unwrap();
+
+    assert_eq!(
+        note,
+        CommitNote {
+            finding: finding('2', "tests/a.rs"),
+            subject: "RED: Fix the case".to_owned(),
+            author: "Ada Author".to_owned(),
+            lines: Lines::Text { added: 1, removed: 1 },
+        }
+    );
+}
+
+#[test]
+fn the_lines_of_a_merge_are_those_it_changed_against_its_first_parent() {
+    let mut round = facts();
+    let against_first = vec![FileChange {
+        path: path("tests/a.rs"),
+        change: Change::Modified,
+        lines: Lines::Text { added: 0, removed: 3 },
+    }];
+    round.commits[4] = merging('4', "39", vec![against_first, Vec::new()]);
+
+    let note = describe(&finding('4', "tests/a.rs"), &round, &authors()).unwrap();
+
+    assert_eq!(note.lines, Lines::Text { added: 0, removed: 3 });
+    assert_eq!(note.author, "Żółta Gęś");
+}
+
+#[test]
+fn a_finding_that_cannot_be_described_says_what_is_missing() {
+    let round = facts();
+
+    assert_eq!(
+        describe(&finding('7', "tests/a.rs"), &round, &authors()),
+        Err(NoteError::NoCommit { commit: id('7') })
+    );
+    assert_eq!(
+        describe(&finding('2', "tests/other.rs"), &round, &authors()),
+        Err(NoteError::NoFile {
+            commit: id('2'),
+            path: path("tests/other.rs")
+        })
+    );
+    assert_eq!(
+        describe(&finding('3', "tests/a.rs"), &round, &authors()),
+        Err(NoteError::NoAuthor { commit: id('3') })
+    );
+}
