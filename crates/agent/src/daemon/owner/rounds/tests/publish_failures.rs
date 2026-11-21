@@ -717,6 +717,8 @@ async fn publish_with_diverged_remote_branch_refuses_push_and_leaves_remote_unch
         .unwrap();
 
     // The daemon attempts publication, classifies remote as Diverged, and refuses to push.
+    // Wait until claude-1 finishes work and waits:
+    rig.status_is(&task, TaskStatus::Waiting).await;
     let note = rig.notification_with("origin refused the push of").await;
     assert!(
         note.contains("origin refused the push of"),
@@ -732,4 +734,58 @@ async fn publish_with_diverged_remote_branch_refuses_push_and_leaves_remote_unch
         current_origin_head, diverged_head,
         "remote PR branch must remain unchanged at diverged head on publication refusal"
     );
+}
+
+#[tokio::test]
+async fn existing_pr_equal_head_publication_takes_uptodate_and_skips_push() {
+    const R1_CHANGES: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — see `HEAD` for issue → fix it\\n   CHECK: read `HEAD`,verify:VERDICT: APPROVE\\nSUMMARY: fixed in `HEAD`";
+    const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,fix-work-pushed"),
+            investigator("inv-r1", R1_CHANGES),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let _task = tasks[0].clone();
+
+    // Wait until round 1 is published and in review:
+    rig.item_where("1.1", "in review", |phase| matches!(phase, ItemPhase::InReview { .. }))
+        .await;
+
+    // Install pre-receive hook in origin to log any push attempts:
+    let hook_path = rig.origin.join("hooks/pre-receive");
+    std::fs::create_dir_all(hook_path.parent().unwrap()).unwrap();
+    std::fs::write(&hook_path, "#!/bin/sh\nprintf 'push\\n' >> \"$GIT_DIR/push-log\"\n").unwrap();
+    std::fs::set_permissions(&hook_path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    // The fix pass runs fix-work-pushed, which pushes the fix to origin itself before ending.
+    // When the daemon publishes the update, it observes existing PR carried == gated tip (Equal),
+    // takes PublishAction::UpToDate, calls adopt_pushed, and does NOT execute a push.
+    let state = rig
+        .item_where("1.1", "approved or done", |phase| {
+            matches!(phase, ItemPhase::Approved { .. } | ItemPhase::Done { .. })
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    // Exactly one push reached origin: the push from fix-work-pushed in the fake-cli, and zero from the daemon.
+    let push_log = std::fs::read_to_string(rig.origin.join("push-log")).unwrap_or_default();
+    assert_eq!(
+        push_log.lines().count(),
+        1,
+        "origin must receive exactly one push (from the agent CLI), proving daemon took UpToDate and skipped push: {push_log}"
+    );
+    let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+    assert!(matches!(
+        item.phase(),
+        ItemPhase::Approved { .. } | ItemPhase::Done { .. }
+    ));
 }
