@@ -10,6 +10,7 @@ use crate::config::{AbsolutePath, RepoName};
 use crate::history::HistoryHealth;
 use crate::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
 use crate::kinds::Role;
+use crate::plan::judge::JudgementState;
 use crate::state::{
     GateRecord, GateResult, ItemPhase, ItemProgress, Member, MergeMode, Participant, PullRequest, Question, Review,
     Round, Run, Team, Timestamp,
@@ -172,6 +173,9 @@ pub struct TeamSummary {
     /// What the team's investigators did, absent from a daemon before it kept them and from a team that has none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub activities: Vec<crate::state::Activity>,
+    /// Plans of the tasks of the team, keyed by task ID.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub task_plans: std::collections::BTreeMap<TaskId, Vec<PlanStepSummary>>,
 }
 
 /// An agent of a team that has just started and that works in another open team too: `agent run` names it, since
@@ -227,6 +231,9 @@ pub struct RoundDetail {
     /// The review passes of the pull request, oldest first: each fix pass, then the reviews of the pass that is going.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub review_passes: Vec<ReviewPass>,
+    /// Plans of the tasks of the round, keyed by task ID.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub task_plans: std::collections::BTreeMap<TaskId, Vec<PlanStepSummary>>,
 }
 
 /// The item of a round in short.
@@ -265,6 +272,24 @@ pub struct RoundTask {
 pub struct ReviewPass {
     /// The reviews, in the order asked.
     pub reviews: Vec<Review>,
+}
+
+/// A step of a task's plan in short, for status displays.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanStepSummary {
+    /// The step ID.
+    pub id: ItemId,
+    /// The mark character (`' '`, `'>'`, `'x'`, `'-'`).
+    pub mark: char,
+    /// The step's title.
+    pub title: String,
+    /// The settled state for a done step, if judged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<JudgementState>,
+    /// Why it was settled this way, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// How many items of a task list are in each status.
@@ -404,6 +429,7 @@ impl RoundDetail {
             tasks,
             pr,
             review_passes,
+            task_plans: std::collections::BTreeMap::new(),
             opinion_attempts: progress
                 .and_then(ItemProgress::findings)
                 .map(|ledger| {
@@ -454,6 +480,7 @@ impl From<&Team> for TeamSummary {
                 .map(|(role, member)| MemberSummary::of(role, member))
                 .collect(),
             activities: team.activities().to_vec(),
+            task_plans: std::collections::BTreeMap::new(),
         }
     }
 }

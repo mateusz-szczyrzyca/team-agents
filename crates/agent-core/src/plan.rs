@@ -346,6 +346,19 @@ pub enum StepState {
     GivenUp,
 }
 
+impl StepState {
+    /// The mark character representing this state: `' '` for `Todo`, `'>'` for `InHand`, `'x'` for `Done`, `'-'` for `GivenUp`.
+    #[must_use]
+    pub const fn mark(&self) -> char {
+        match self {
+            Self::Todo => ' ',
+            Self::InHand => '>',
+            Self::Done => 'x',
+            Self::GivenUp => '-',
+        }
+    }
+}
+
 /// How a step is shown to be done, by the line that follows `Check:`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Check {

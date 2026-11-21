@@ -358,3 +358,73 @@ async fn a_restart_of_the_daemon_keeps_the_count_of_the_send_backs() {
     assert_eq!(member.plan().map(PlanKeeping::sent_back), Some(2));
     assert_eq!(member.questions().len(), 1);
 }
+
+#[tokio::test]
+async fn a_done_step_whose_check_fails_is_judged_mismatch_and_recorded_in_history() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists absent.txt\n",
+    )
+    .unwrap();
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    assert_eq!(
+        judgements.get(&"1.1".parse::<ItemId>().unwrap()).map(|j| j.state),
+        Some(agent_core::plan::judge::JudgementState::Mismatch)
+    );
+}
+
+#[tokio::test]
+async fn a_done_step_with_a_passing_check_is_judged_confirmed() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists ok.txt\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("ok.txt"), "content").unwrap();
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    assert_eq!(
+        judgements.get(&"1.1".parse::<ItemId>().unwrap()).map(|j| j.state),
+        Some(agent_core::plan::judge::JudgementState::Confirmed)
+    );
+}
+
+#[tokio::test]
+async fn a_refused_gate_check_is_judged_declared_and_recorded_in_history() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: make gate\n",
+    )
+    .unwrap();
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    assert_eq!(
+        judgements.get(&"1.1".parse::<ItemId>().unwrap()).map(|j| j.state),
+        Some(agent_core::plan::judge::JudgementState::Declared)
+    );
+}

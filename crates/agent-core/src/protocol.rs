@@ -19,8 +19,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub use event::{ControlAction, Event, EventKind};
 pub use reply::{
-    Failure, FailureKind, ItemCounts, MemberSummary, Outcome, Reply, Response, ReviewPass, RoundDetail, RoundItem,
-    RoundTask, SharedAgent, TeamSummary,
+    Failure, FailureKind, ItemCounts, MemberSummary, Outcome, PlanStepSummary, Reply, Response, ReviewPass,
+    RoundDetail, RoundItem, RoundTask, SharedAgent, TeamSummary,
 };
 pub use request::{
     AgentList, AgentListError, AnswerInput, AnswerList, AnswerListError, AnswerRequest, Client, Command,
