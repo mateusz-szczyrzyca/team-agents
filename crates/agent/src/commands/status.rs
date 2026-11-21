@@ -241,19 +241,24 @@ pub(crate) fn running(teams: Vec<TeamSummary>) -> Vec<TeamSummary> {
 /// # Errors
 /// [`StatusError`].
 pub(crate) async fn status_json(
-    _connection: &mut Connection,
-    _target: Option<Target>,
-    _out: &mut impl Write,
+    connection: &mut Connection,
+    target: Option<Target>,
+    out: &mut impl Write,
 ) -> Result<(), StatusError> {
-    Ok(())
+    let (teams, _) = teams(connection, target).await?;
+    out.write_all(render_json(&teams)?.as_bytes())
+        .map_err(StatusError::Output)?;
+    out.flush().map_err(StatusError::Output)
 }
 
 /// The teams as one JSON array and a newline.
 ///
 /// # Errors
 /// [`StatusError::Json`] when the teams cannot be written as JSON.
-pub(crate) fn render_json(_teams: &[TeamSummary]) -> Result<String, StatusError> {
-    Ok(String::new())
+pub(crate) fn render_json(teams: &[TeamSummary]) -> Result<String, StatusError> {
+    let mut text = serde_json::to_string(teams).map_err(StatusError::Json)?;
+    text.push('\n');
+    Ok(text)
 }
 
 /// The teams the daemon answers a status request for `target` with, and what it says of the history.
