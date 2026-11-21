@@ -693,7 +693,12 @@ impl Git {
     ///
     /// # Errors
     /// [`GitError::Failed`]; [`GitError::Run`].
-    pub async fn branch_point_if_unheld(&self, _branch: &BranchName, _commit: &CommitId) -> Result<bool, GitError> {
+    pub async fn branch_point_if_unheld(&self, branch: &BranchName, commit: &CommitId) -> Result<bool, GitError> {
+        let held = self.held_branches().await?;
+        if held.contains(branch) {
+            return Ok(false);
+        }
+        self.branch_point(branch, commit).await?;
         Ok(true)
     }
 
@@ -702,7 +707,24 @@ impl Git {
     /// # Errors
     /// [`GitError::Failed`]; [`GitError::Run`].
     pub async fn held_branches(&self) -> Result<HashSet<BranchName>, GitError> {
-        Ok(HashSet::new())
+        let operation = GitOperation::WorktreeList;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[arg("worktree"), arg("list"), arg("--porcelain")],
+            )
+            .await?;
+        let printed = text(operation, &captured.stdout)?;
+        let mut held = HashSet::new();
+        for line in printed.lines() {
+            if let Some(branch_ref) = line.strip_prefix("branch refs/heads/")
+                && let Ok(branch) = branch_ref.parse()
+            {
+                held.insert(branch);
+            }
+        }
+        Ok(held)
     }
 
     /// Deletes `branch`.
@@ -917,12 +939,21 @@ impl Git {
     /// [`GitError::Failed`] when there is no `origin` or the credentials fail; [`GitError::UnknownRevision`] when
     /// there is no such branch; [`GitError::Run`], for example when the command ran over its time.
     pub async fn push(&self, branch: &BranchName) -> Result<(), GitError> {
-        let operation = GitOperation::Push;
         let tip = self.rev_parse(&Revision::Branch(branch.clone())).await?;
-        let reference = format!("refs/heads/{branch}:refs/heads/{branch}");
+        self.push_commit(branch, &tip).await
+    }
+
+    /// Pushes `commit` directly to `branch` on `origin`.
+    ///
+    /// # Errors
+    /// [`GitError::PushRefused`] when `origin` has commits of the branch the harness did not push;
+    /// [`GitError::Failed`] when there is no `origin` or the credentials fail; [`GitError::Run`].
+    pub async fn push_commit(&self, branch: &BranchName, commit: &CommitId) -> Result<(), GitError> {
+        let operation = GitOperation::Push;
+        let reference = format!("{commit}:refs/heads/{branch}");
         // The lease names the commit `origin` must still have: git writes over that one and over no other.
         let lease = self
-            .rewritten_since_pushed(branch, &tip)
+            .rewritten_since_pushed(branch, commit)
             .await?
             .map(|pushed| format!("--force-with-lease=refs/heads/{branch}:{pushed}"));
         let mut args = vec![arg("push"), arg("--set-upstream")];
@@ -941,16 +972,7 @@ impl Git {
                 other => other,
             });
         }
-        self.keep(&Revision::Published(branch.clone()), &tip).await
-    }
-
-    /// Pushes `commit` directly to `branch` on `origin`.
-    ///
-    /// # Errors
-    /// [`GitError::PushRefused`] when `origin` has commits of the branch the harness did not push;
-    /// [`GitError::Failed`] when there is no `origin` or the credentials fail; [`GitError::Run`].
-    pub async fn push_commit(&self, _branch: &BranchName, _commit: &CommitId) -> Result<(), GitError> {
-        Ok(())
+        self.keep(&Revision::Published(branch.clone()), commit).await
     }
 
     /// Takes `tip` as pushed by the harness: `origin` has it on `branch` already, whoever pushed it there, and it is
