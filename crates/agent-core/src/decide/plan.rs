@@ -137,22 +137,9 @@ pub enum PlanVerdict {
     AskHuman(PlanReason),
 }
 
-/// Decides what happens to the plan of a task whose run ended as `end`, with what the task kept and what was read.
-///
-/// The rules, in this order:
-///
-/// 1. a run that did not report `STATUS: DONE` is accepted, whatever its plan says;
-/// 2. a role outside `[plan] roles` is accepted: it keeps no plan, though one it wrote is recorded;
-/// 3. a task created before plans, or whose plan the human released, is accepted;
-/// 4. a limit of `0` accepts every run;
-/// 5. a plan without a fault is accepted;
-/// 6. a step of an earlier version that is gone, or renamed since the newest one, is a `LostStep`, before a step still
-///    to do (`Unfinished`);
-/// 7. a send-back below `[plan] bounces` plus what the human granted is a `SendBack`;
-/// 8. otherwise the human is asked — `AskHuman` for a task that is not asked already, and for one that is, the same
-///    answer: the task waits for the human's reply either way.
+/// Decides what happens to the plan of a task whose run ended as `end`, taking into account any step check mismatch.
 #[must_use]
-pub fn decide_plan(facts: PlanFacts<'_>) -> PlanVerdict {
+pub fn decide_plan_with_mismatch(facts: PlanFacts<'_>, mismatch: Option<PlanReason>) -> PlanVerdict {
     if !matches!(
         facts.end,
         RunEnd::Reported {
@@ -172,7 +159,7 @@ pub fn decide_plan(facts: PlanFacts<'_>) -> PlanVerdict {
     if limit == 0 {
         return PlanVerdict::Accept;
     }
-    let Some(reason) = fault(facts.read, facts.earlier) else {
+    let Some(reason) = fault(facts.read, facts.earlier).or(mismatch) else {
         return PlanVerdict::Accept;
     };
     if keeping.sent_back() < limit {
@@ -180,6 +167,25 @@ pub fn decide_plan(facts: PlanFacts<'_>) -> PlanVerdict {
     } else {
         PlanVerdict::AskHuman(reason)
     }
+}
+
+/// Decides what happens to the plan of a task whose run ended as `end`, with what the task kept and what was read.
+///
+/// The rules, in this order:
+///
+/// 1. a run that did not report `STATUS: DONE` is accepted, whatever its plan says;
+/// 2. a role outside `[plan] roles` is accepted: it keeps no plan, though one it wrote is recorded;
+/// 3. a task created before plans, or whose plan the human released, is accepted;
+/// 4. a limit of `0` accepts every run;
+/// 5. a plan without a fault is accepted;
+/// 6. a step of an earlier version that is gone, or renamed since the newest one, is a `LostStep`, before a step still
+///    to do (`Unfinished`);
+/// 7. a send-back below `[plan] bounces` plus what the human granted is a `SendBack`;
+/// 8. otherwise the human is asked — `AskHuman` for a task that is not asked already, and for one that is, the same
+///    answer: the task waits for the human's reply either way.
+#[must_use]
+pub fn decide_plan(facts: PlanFacts<'_>) -> PlanVerdict {
+    decide_plan_with_mismatch(facts, None)
 }
 
 /// Why the plan a task read has a fault, the first of them being the one reported; `None` when it has none.

@@ -1,0 +1,3 @@
+## Step 1.1 check was refused
+
+The check for step 1.1 (`agent gate`) was not executed because the repository gate is never run as a step check. The step remains declared. Correct its check in `.agent/plan.md`, then end your turn as before.

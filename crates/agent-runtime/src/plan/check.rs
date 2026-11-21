@@ -1,17 +1,24 @@
 //! Execution of plan step checks.
 
-use std::io;
-use std::path::Path;
-use std::time::Instant;
+use std::collections::BTreeMap;
+use std::io::{self, SeekFrom};
+use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::time::{Duration, Instant};
 
+use agent_core::config::{AbsolutePath, EnvName, Program};
 use agent_core::ids::{ItemId, RunId, TaskId, TeamId};
 use agent_core::plan::judge::{JudgementState, refuse_command};
 use agent_core::plan::{Check, Step};
 use agent_core::repo_path::RepoPath;
 use agent_core::state::Timestamp;
 use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::time::timeout;
 
 use crate::history::JudgementRecord;
+use crate::process::{ExitReport, ProcessSpec, RunningProcess, Supervisor};
 
 #[cfg(test)]
 mod tests;
@@ -25,6 +32,35 @@ pub enum CheckError {
         /// The integer conversion error.
         #[source]
         source: std::num::TryFromIntError,
+    },
+}
+
+/// Errors that can happen while preparing a command check process spec.
+#[derive(Debug, thiserror::Error)]
+enum CommandPreparationError {
+    /// The worktree path is not valid UTF-8.
+    #[error("worktree path is not valid UTF-8: {}", path.display())]
+    NonUtf8WorktreePath {
+        /// The non-UTF-8 path.
+        path: PathBuf,
+    },
+    /// The worktree path cannot be parsed as an absolute path.
+    #[error("invalid worktree path {}", path.display())]
+    InvalidWorktreePath {
+        /// The invalid path.
+        path: PathBuf,
+        /// The underlying value error.
+        #[source]
+        source: agent_core::config::InvalidValue,
+    },
+    /// An environment variable name is invalid.
+    #[error("invalid environment variable name {name:?}")]
+    InvalidEnvName {
+        /// The invalid variable name.
+        name: String,
+        /// The underlying value error.
+        #[source]
+        source: agent_core::config::InvalidValue,
     },
 }
 
@@ -146,10 +182,279 @@ async fn check_exists(
     })
 }
 
+/// Maximum number of bytes read from the end of a command's log file for tail extraction.
+const TAIL_BYTES: u64 = 64 * 1024;
+/// Maximum number of trailing lines returned in a mismatch tail.
+const TAIL_LINES: usize = 40;
+
+/// Reads the last [`TAIL_LINES`] lines (up to [`TAIL_BYTES`]) from `path`.
+async fn read_tail(path: &Path) -> Result<String, io::Error> {
+    let mut file = fs::File::open(path).await?;
+    let metadata = file.metadata().await?;
+    let length = metadata.len();
+    let start = length.saturating_sub(TAIL_BYTES);
+    file.seek(SeekFrom::Start(start)).await?;
+    let mut bytes = Vec::new();
+    file.take(TAIL_BYTES).read_to_end(&mut bytes).await?;
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines: Vec<&str> = text.lines().collect();
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0);
+    }
+    let keep = lines.len().saturating_sub(TAIL_LINES);
+    Ok(lines.into_iter().skip(keep).collect::<Vec<_>>().join("\n"))
+}
+
+/// Resolves the absolute log file path and task-relative output path for `step_id`.
+async fn check_log_paths(checks_dir: &Path, run_id: Option<&RunId>, step_id: ItemId) -> io::Result<(PathBuf, String)> {
+    let (target_dir, rel_path) = match run_id {
+        Some(run) => (
+            checks_dir.join(run.as_str()),
+            format!("checks/{}/{step_id}.log", run.as_str()),
+        ),
+        None => (checks_dir.to_path_buf(), format!("checks/{step_id}.log")),
+    };
+    fs::create_dir_all(&target_dir).await?;
+    let log_path = target_dir.join(format!("{step_id}.log"));
+    Ok((log_path, rel_path))
+}
+
+/// Keeps the primary mismatch reason when process cleanup also fails.
+fn with_cleanup_result(reason: String, cleanup: Result<(), crate::process::ProcessError>) -> String {
+    match cleanup {
+        Ok(()) => reason,
+        Err(error) => format!("{reason}; process cleanup failed: {error}"),
+    }
+}
+
+/// Waits for `process` to exit or reach `check_seconds`, returning the state and reason.
+/// Cleanup failure prevents confirmation to ensure no unmanaged processes survive.
+async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> (JudgementState, Option<String>) {
+    let check_duration = Duration::from_secs(check_seconds);
+    match timeout(check_duration, process.wait()).await {
+        Ok(Ok(exit)) => {
+            if let Err(error) = process.stop(Duration::ZERO).await {
+                return (
+                    JudgementState::Mismatch,
+                    Some(format!("process cleanup failed: {error}")),
+                );
+            }
+            match exit {
+                ExitReport::Exited { code: 0 } => (JudgementState::Confirmed, None),
+                ExitReport::Exited { code } => (
+                    JudgementState::Mismatch,
+                    Some(format!("check failed with exit code {code}")),
+                ),
+                ExitReport::Signaled { signal } => (
+                    JudgementState::Mismatch,
+                    Some(format!("check terminated by signal {signal}")),
+                ),
+            }
+        }
+        Ok(Err(error)) => {
+            let cleanup = process.stop(Duration::ZERO).await.map(|_report| ());
+            (
+                JudgementState::Mismatch,
+                Some(with_cleanup_result(format!("check wait failed: {error}"), cleanup)),
+            )
+        }
+        Err(_elapsed) => {
+            let cleanup = process.stop(Duration::from_secs(5)).await.map(|_report| ());
+            (
+                JudgementState::Mismatch,
+                Some(with_cleanup_result(
+                    format!("ran past {check_seconds} seconds"),
+                    cleanup,
+                )),
+            )
+        }
+    }
+}
+
+/// Extracts mismatch output, retaining an output-read failure alongside the primary reason.
+async fn resolve_mismatch_tail(state: JudgementState, log_path: &Path, reason: &mut Option<String>) -> String {
+    if state != JudgementState::Mismatch {
+        return String::new();
+    }
+    match read_tail(log_path).await {
+        Ok(tail) => tail,
+        Err(error) => {
+            let failure = format!("cannot read check output {}: {error}", log_path.display());
+            *reason = Some(match reason.take() {
+                Some(primary) => format!("{primary}; {failure}"),
+                None => failure,
+            });
+            String::new()
+        }
+    }
+}
+
+/// Prepares the [`ProcessSpec`] for running `command_str` in a shell with output redirected.
+fn prepare_process_spec(
+    context: &CheckContext<'_>,
+    command_str: &str,
+    log_path: PathBuf,
+) -> Result<ProcessSpec, CommandPreparationError> {
+    let program = Program::posix_shell();
+    let worktree_str = context
+        .worktree
+        .to_str()
+        .ok_or_else(|| CommandPreparationError::NonUtf8WorktreePath {
+            path: context.worktree.to_path_buf(),
+        })?;
+    let working_dir =
+        AbsolutePath::from_str(worktree_str).map_err(|source| CommandPreparationError::InvalidWorktreePath {
+            path: context.worktree.to_path_buf(),
+            source,
+        })?;
+    let mut env_map = BTreeMap::new();
+    for (key, val) in context.envs {
+        let name = EnvName::from_str(key).map_err(|source| CommandPreparationError::InvalidEnvName {
+            name: key.clone(),
+            source,
+        })?;
+        env_map.insert(name, val.clone());
+    }
+    Ok(ProcessSpec {
+        program,
+        args: vec!["-c".to_owned(), command_str.to_owned()],
+        env: env_map,
+        working_dir,
+        stdout_file: log_path.clone(),
+        stderr_file: log_path,
+    })
+}
+
+/// Executes a command check for `step` within `context`.
+///
+/// Prepared command execution engine for plan step command checks.
+///
+/// # Errors
+/// [`CheckError::DurationOverflow`] if the measured check duration exceeds `u64` milliseconds.
+pub async fn execute_command_check(
+    context: &CheckContext<'_>,
+    step: &Step,
+    command_str: &str,
+) -> Result<JudgementResult, CheckError> {
+    let start = Instant::now();
+    if refuse_command(command_str, context.check_refuse) {
+        return Ok(JudgementResult {
+            state: JudgementState::Declared,
+            check_line: Some(command_str.to_owned()),
+            reason: Some("refused gate command".to_owned()),
+            duration_ms: 0,
+            output_path: None,
+            tail: String::new(),
+            gate_refused: true,
+        });
+    }
+    if context.check_seconds == 0 {
+        return Ok(JudgementResult {
+            state: JudgementState::Declared,
+            check_line: Some(command_str.to_owned()),
+            reason: None,
+            duration_ms: 0,
+            output_path: None,
+            tail: String::new(),
+            gate_refused: false,
+        });
+    }
+    let checks_dir = context.task_dir.join("checks");
+    if let Err(error) = fs::create_dir_all(&checks_dir).await {
+        return Ok(JudgementResult {
+            state: JudgementState::Mismatch,
+            check_line: Some(command_str.to_owned()),
+            reason: Some(format!("cannot create checks directory: {error}")),
+            duration_ms: duration_millis(start.elapsed())?,
+            output_path: None,
+            tail: String::new(),
+            gate_refused: false,
+        });
+    }
+
+    let (log_path, rel_output_path) = match check_log_paths(&checks_dir, context.run, step.id()).await {
+        Ok(paths) => paths,
+        Err(error) => {
+            return Ok(JudgementResult {
+                state: JudgementState::Mismatch,
+                check_line: Some(command_str.to_owned()),
+                reason: Some(format!("cannot create check log path: {error}")),
+                duration_ms: duration_millis(start.elapsed())?,
+                output_path: None,
+                tail: String::new(),
+                gate_refused: false,
+            });
+        }
+    };
+
+    let spec = match prepare_process_spec(context, command_str, log_path.clone()) {
+        Ok(spec) => spec,
+        Err(error) => {
+            return Ok(JudgementResult {
+                state: JudgementState::Mismatch,
+                check_line: Some(command_str.to_owned()),
+                reason: Some(format!("cannot prepare check command: {error}")),
+                duration_ms: duration_millis(start.elapsed())?,
+                output_path: None,
+                tail: String::new(),
+                gate_refused: false,
+            });
+        }
+    };
+
+    // The supervisor appends output, so initialize this attempt's artifact before spawning.
+    if let Err(error) = fs::write(&log_path, []).await {
+        return failure_without_output(command_str, format!("cannot create check output: {error}"), start);
+    }
+
+    let supervisor = Supervisor::new(NonZeroUsize::MIN);
+    let process = match supervisor.spawn(&spec).await {
+        Ok(proc) => proc,
+        Err(error) => {
+            return Ok(JudgementResult {
+                state: JudgementState::Mismatch,
+                check_line: Some(command_str.to_owned()),
+                reason: Some(format!("cannot start check: {error}")),
+                duration_ms: duration_millis(start.elapsed())?,
+                output_path: Some(rel_output_path),
+                tail: String::new(),
+                gate_refused: false,
+            });
+        }
+    };
+
+    let (state, mut reason) = wait_child_outcome(process, context.check_seconds).await;
+    let tail = resolve_mismatch_tail(state, &log_path, &mut reason).await;
+    let duration_ms = duration_millis(start.elapsed())?;
+
+    Ok(JudgementResult {
+        state,
+        check_line: Some(command_str.to_owned()),
+        reason,
+        duration_ms,
+        output_path: Some(rel_output_path),
+        tail,
+        gate_refused: false,
+    })
+}
+
+/// Reports a preparation failure without claiming that an output artifact exists.
+fn failure_without_output(command: &str, reason: String, start: Instant) -> Result<JudgementResult, CheckError> {
+    Ok(JudgementResult {
+        state: JudgementState::Mismatch,
+        check_line: Some(command.to_owned()),
+        reason: Some(reason),
+        duration_ms: duration_millis(start.elapsed())?,
+        output_path: None,
+        tail: String::new(),
+        gate_refused: false,
+    })
+}
+
 /// Executes the check for `step` within `context`.
 ///
 /// # Errors
-/// Returns [`CheckError`] if check management fails.
+/// [`CheckError::DurationOverflow`] if check duration calculation overflows.
 pub async fn execute_step_check(context: &CheckContext<'_>, step: &Step) -> Result<JudgementResult, CheckError> {
     let check = step.check();
     let Some(check) = check else {

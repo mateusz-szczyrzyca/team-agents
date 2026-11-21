@@ -1191,9 +1191,13 @@ socket. One owner, no file races (CON-3).
 ## Plan-step judgements
 
 `agent-core::plan::judge` selects done steps that need judgement and defines `confirmed`, `declared` and `mismatch`.
-`agent-runtime::plan::check` checks file and directory existence asynchronously, resolving paths inside the worktree.
-The owner runs these checks sequentially after reading a plan at every run's end, independently of role and outcome,
-and awaits durable history acknowledgement before settling the run. Commands stay declared in this part.
+`agent-runtime::plan::check` checks file and directory existence asynchronously, resolving paths inside the worktree,
+and provides `execute_command_check` for sequential command check execution with agent environment variables, closed input,
+process group isolation, output logging to `checks/<run_id>/<step_id>.log`, and a configurable `[plan] check_seconds` timeout
+(commands matching `[plan] check_refuse` are refused before spawn and remain declared).
+The owner runs existence checks sequentially after reading a plan at every run's end, independently of role and outcome,
+and awaits durable history acknowledgement before settling the run. In the daemon, commands stay declared pending durable
+owner background lifecycle; durable command execution with mismatch bounce handling follows in a dedicated task.
 Task and round status use cached plan summaries; their read path does no filesystem or database work.
 History schema 17 adds append-only step judgements and migrates older databases.
 

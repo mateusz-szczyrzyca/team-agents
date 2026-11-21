@@ -15,7 +15,7 @@ use super::run::{Run, RunEnd, RunError, RunState};
 use super::strict::checked;
 use super::values::{SessionId, Timestamp};
 use crate::decide::ladder;
-use crate::ids::{AgentName, InvestigatorName, RoundId, RunId, TaskId};
+use crate::ids::{AgentName, InvestigatorName, ItemId, RoundId, RunId, TaskId};
 use crate::kinds::Tier;
 use crate::status::{InvalidTransition, StatusMachine, TaskStatus};
 
@@ -264,6 +264,16 @@ impl CheckedMut<'_, Member> {
         self.value.take_plan_reason()
     }
 
+    /// See [`Member::add_plan_refused_gate`].
+    pub fn add_plan_refused_gate(&mut self, step: ItemId, command: String) {
+        self.value.add_plan_refused_gate(step, command);
+    }
+
+    /// See [`Member::take_plan_refused_gate`].
+    pub fn take_plan_refused_gate(&mut self) -> Vec<(ItemId, String)> {
+        self.value.take_plan_refused_gate()
+    }
+
     /// See [`Member::send_back_once_more`].
     pub fn send_back_once_more(&mut self) {
         self.value.send_back_once_more();
@@ -481,6 +491,18 @@ impl Member {
     /// run is. `None` when nothing waits, and for a task created before plans.
     pub fn take_plan_reason(&mut self) -> Option<PlanReason> {
         self.plan.as_mut().and_then(PlanKeeping::take_pending)
+    }
+
+    /// Adds a refused gate command check notice on the member's plan keeping.
+    pub fn add_plan_refused_gate(&mut self, step: ItemId, command: String) {
+        if let Some(keeping) = &mut self.plan {
+            keeping.add_refused_gate(step, command);
+        }
+    }
+
+    /// Takes the refused gate command notices from the member's plan keeping, clearing them for future runs.
+    pub fn take_plan_refused_gate(&mut self) -> Vec<(ItemId, String)> {
+        self.plan.as_mut().map_or_else(Vec::new, PlanKeeping::take_refused_gate)
     }
 
     /// The human said to send the run back once more: one more send-back is granted and counted, and the plan's
