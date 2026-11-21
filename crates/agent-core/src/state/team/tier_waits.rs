@@ -9,11 +9,17 @@ impl Team {
     /// Capability waits that still need a human question.
     #[must_use]
     pub fn unasked_tier_waits(&self) -> Vec<(ItemId, Tier)> {
-        Vec::new()
+        self.tier_waits
+            .iter()
+            .filter(|(item, tier)| self.tier_questions.get(item) != Some(tier))
+            .map(|(item, tier)| (*item, *tier))
+            .collect()
     }
 
     /// Records that the current capability waits were asked of the human.
-    pub fn mark_tier_questions(&mut self) {}
+    pub fn mark_tier_questions(&mut self) {
+        self.tier_questions.clone_from(&self.tier_waits);
+    }
 
     /// Items waiting for a capability absent from the crew; empty in older states.
     #[must_use]
@@ -58,12 +64,18 @@ impl Team {
             .filter(|(item, tier)| self.tier_waits.get(item) != Some(tier))
             .map(|(item, tier)| (*item, *tier))
             .collect();
+        self.tier_questions.retain(|item, tier| next.get(item) == Some(tier));
         self.tier_waits = next;
         entered
     }
 }
 
 impl CheckedMut<'_, Team> {
+    /// See [`Team::mark_tier_questions`].
+    pub fn mark_tier_questions(&mut self) {
+        self.value.mark_tier_questions();
+    }
+
     /// See [`Team::refresh_tier_waits`].
     pub fn refresh_tier_waits(&mut self) -> Vec<(ItemId, Tier)> {
         self.value.refresh_tier_waits()

@@ -426,6 +426,9 @@ pub struct Team {
     /// Ready items blocked by absent crew capability; missing in older teams.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     tier_waits: std::collections::BTreeMap<ItemId, Tier>,
+    /// Capability waits already asked of the human; absent in older teams.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    tier_questions: std::collections::BTreeMap<ItemId, Tier>,
     /// Executors keyed by split round; absent in teams written before provenance.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     part_assignments: std::collections::BTreeMap<RoundId, crate::ids::AgentName>,
@@ -470,6 +473,9 @@ struct TeamWire {
     /// Older teams have no recorded capability waits.
     #[serde(default)]
     tier_waits: std::collections::BTreeMap<ItemId, Tier>,
+    /// Older teams have not asked a capability question.
+    #[serde(default)]
+    tier_questions: std::collections::BTreeMap<ItemId, Tier>,
     /// Optional executor metadata from newer teams.
     #[serde(default)]
     part_assignments: std::collections::BTreeMap<RoundId, crate::ids::AgentName>,
@@ -608,6 +614,7 @@ impl Team {
             splits: Vec::new(),
             split_proposals: std::collections::BTreeMap::new(),
             tier_waits: std::collections::BTreeMap::new(),
+            tier_questions: std::collections::BTreeMap::new(),
             part_assignments: std::collections::BTreeMap::new(),
         };
         team.record_activities(created_at);
