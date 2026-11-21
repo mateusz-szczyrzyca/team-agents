@@ -359,6 +359,7 @@ impl AutopilotPrompt {
                 | Self::NoticeResponseRefused
                 | Self::NoticeReportRefused
                 | Self::NoticePublishFailed
+                | Self::NoticePublishQuestion
                 | Self::NoticeMergeFailed
                 | Self::NoticeGithubRefused
                 | Self::NoticeClosed
@@ -418,8 +419,8 @@ impl AutopilotPrompt {
             Self::PrSplit => "harness/pr/split.md",
             Self::PrMergeConflict => "harness/pr/merge-conflict.md",
             Self::PrMergeConflictAsk => "harness/pr/merge-conflict-ask.md",
-            Self::PublishFailed => "harness/pr/wrong-publish-failed.md",
-            Self::NoticePublishQuestion => "harness/pr/wrong-notice-publish-question.md",
+            Self::PublishFailed => "harness/pr/publish-failed.md",
+            Self::NoticePublishQuestion => "harness/pr/notice-publish-question.md",
             Self::PrGate => "harness/pr/gate.md",
             Self::PrGateRetry => "harness/pr/gate-retry.md",
             Self::PrNoLead => "harness/pr/no-lead.md",
@@ -558,7 +559,8 @@ impl AutopilotPrompt {
             Self::PrUnpushedBase => &["base", "count", "first", "subject"],
             Self::PrSplit => &["split"],
             Self::PrMergeConflict => &["pr", "base", "branch", "pass", "passes"],
-            Self::PublishFailed | Self::NoticePublishQuestion => &[],
+            Self::PublishFailed => &["branch", "reason"],
+            Self::NoticePublishQuestion => &["task", "items", "branch", "reason"],
             Self::PrMergeConflictAsk => &["pr", "base", "passes"],
             Self::PrGate | Self::ReviewGate => &["head", "finished", "result", "log"],
             Self::PrLeadInstructions => &["description_file"],

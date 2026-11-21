@@ -1757,8 +1757,7 @@ workers = ["qwen", "qwen"]"#,
 
     #[test]
     fn configuration_with_publish_reads_the_tries() {
-        let text =
-            "[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n\n[publish]\ntries = 5\n";
+        let text = "[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n\n[publish]\ntries = 5\n";
         let config = Config::from_toml_str(text).unwrap();
         assert_eq!(config.publish().tries, 5);
     }

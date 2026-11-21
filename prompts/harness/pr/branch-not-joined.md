@@ -5,7 +5,7 @@ the pull request for the finished items whose branches your branch contains, and
 
 {{missing}}
 
-Merge each of these branches into `{{branch}}` (switch to it first when your worktree has another one out):
+Merge each of these branches into `{{branch}}` (do not switch your worktree to another branch):
 `git merge <branch>`, and settle the conflicts. If you did an item's work over on your own branch and its changes must
 not come in a second time, record its branch as merged with `git merge -s ours <branch>` and say in the commit message
 why. An ours merge changes no files; the checks judge other merges against their first parent on the round's own paths.

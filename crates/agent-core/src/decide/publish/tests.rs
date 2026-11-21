@@ -228,18 +228,78 @@ fn publish_decision_table() {
     };
 
     let cases = [
-        (RoundPublication::Item, RemoteState::Behind, &task_branch, PublishAction::Push),
-        (RoundPublication::Item, RemoteState::Equal, &task_branch, PublishAction::UpToDate),
-        (RoundPublication::Item, RemoteState::Diverged, &task_branch, PublishAction::Refused),
-        (RoundPublication::Part, RemoteState::Behind, &part_branch, PublishAction::Push),
-        (RoundPublication::Part, RemoteState::Equal, &part_branch, PublishAction::UpToDate),
-        (RoundPublication::Part, RemoteState::Diverged, &part_branch, PublishAction::Refused),
-        (RoundPublication::ConflictPass, RemoteState::Behind, &pr_branch, PublishAction::Push),
-        (RoundPublication::ConflictPass, RemoteState::Equal, &pr_branch, PublishAction::UpToDate),
-        (RoundPublication::ConflictPass, RemoteState::Diverged, &pr_branch, PublishAction::Refused),
-        (RoundPublication::FixPass, RemoteState::Behind, &pr_branch, PublishAction::Push),
-        (RoundPublication::FixPass, RemoteState::Equal, &pr_branch, PublishAction::UpToDate),
-        (RoundPublication::FixPass, RemoteState::Diverged, &pr_branch, PublishAction::Refused),
+        (
+            RoundPublication::Item,
+            RemoteState::Behind,
+            &task_branch,
+            PublishAction::Push,
+        ),
+        (
+            RoundPublication::Item,
+            RemoteState::Equal,
+            &task_branch,
+            PublishAction::UpToDate,
+        ),
+        (
+            RoundPublication::Item,
+            RemoteState::Diverged,
+            &task_branch,
+            PublishAction::Refused,
+        ),
+        (
+            RoundPublication::Part,
+            RemoteState::Behind,
+            &part_branch,
+            PublishAction::Push,
+        ),
+        (
+            RoundPublication::Part,
+            RemoteState::Equal,
+            &part_branch,
+            PublishAction::UpToDate,
+        ),
+        (
+            RoundPublication::Part,
+            RemoteState::Diverged,
+            &part_branch,
+            PublishAction::Refused,
+        ),
+        (
+            RoundPublication::ConflictPass,
+            RemoteState::Behind,
+            &pr_branch,
+            PublishAction::Push,
+        ),
+        (
+            RoundPublication::ConflictPass,
+            RemoteState::Equal,
+            &pr_branch,
+            PublishAction::UpToDate,
+        ),
+        (
+            RoundPublication::ConflictPass,
+            RemoteState::Diverged,
+            &pr_branch,
+            PublishAction::Refused,
+        ),
+        (
+            RoundPublication::FixPass,
+            RemoteState::Behind,
+            &pr_branch,
+            PublishAction::Push,
+        ),
+        (
+            RoundPublication::FixPass,
+            RemoteState::Equal,
+            &pr_branch,
+            PublishAction::UpToDate,
+        ),
+        (
+            RoundPublication::FixPass,
+            RemoteState::Diverged,
+            &pr_branch,
+            PublishAction::Refused,
+        ),
     ];
 
     for (round, remote, expected_branch, expected_action) in cases {
