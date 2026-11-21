@@ -345,3 +345,44 @@ async fn a_later_investigator_part_moves_from_the_normal_member_to_the_coordinat
     assert!(matches!(team.items()[0].phase(), ItemPhase::InProgress {assignee, ..} if assignee.as_str() == "inv-lead"));
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn an_investigator_item_receives_its_fix_pass_on_the_investigator_member() {
+    let mut rig = Rig::new(
+        &[
+            normal("lead", "integrate"),
+            investigator("inv-member", "work,ask-here"),
+            investigator("inv-r1", "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — untested → add coverage\\n   CHECK: read src/lib.rs:7"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ], 5, true,
+    ).await;
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(
+            &["lead", "inv-member"],
+            &format!("{ONE}\nTier: investigator\n"),
+            MergeMode::Autopilot,
+            Some("lead"),
+        )
+        .await;
+    let state = rig
+        .state_where("investigator review fix", |state| {
+            matches!(state.team(&id).unwrap().items()[0].phase(), ItemPhase::Fixing { .. })
+        })
+        .await;
+    let team = state.team(&id).unwrap();
+    assert!(matches!(team.items()[0].phase(), ItemPhase::Fixing { assignee, pr, .. }
+        if assignee.as_str() == "inv-member" && pr.number.get().get() == 1));
+    assert_eq!(team.rounds().len(), 1);
+    let round = team.rounds()[0].id().clone();
+    let prompt = rig.prompt(&tasks[1], 2).await;
+    assert!(prompt.contains("THE REVIEWERS ASKED FOR CHANGES"), "{prompt}");
+    assert!(prompt.contains("untested → add coverage"), "{prompt}");
+    let state = rig.status_is(&tasks[1], TaskStatus::Questions).await;
+    assert_eq!(state.team(&id).unwrap().rounds()[0].id(), &round);
+    assert!(
+        matches!(state.team(&id).unwrap().items()[0].phase(), ItemPhase::Fixing { assignee, .. }
+        if assignee.as_str() == "inv-member")
+    );
+    rig.stop().await.unwrap();
+}
