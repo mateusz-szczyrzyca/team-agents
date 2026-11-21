@@ -13,6 +13,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent-core] The assignment text now says which tier was asked for and why this agent was chosen.
 
 ### Enhancements
+- [agent] [agent-core] A fix pass after a review that asks for changes goes to an agent of at least the tier of its item or part, too: the coordinator keeps it when it qualifies, otherwise a qualified member does it on the same pull request and round, and with nobody qualified the item waits. `agent status` shows the wait of a ready later part before its round opens.
 - [agent] A coordinator that is not of the tier of a part is no longer told to take that part over, and an unassigned coordinator is not given the delivery scope of a part.
 
 ## 0.45.0 — 21.11.2026 — PR #163
