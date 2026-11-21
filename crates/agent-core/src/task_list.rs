@@ -62,6 +62,17 @@ pub enum AllowLines {
     Brief,
 }
 
+/// How a line `Short desc:` before the brief of a task list is read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ShortDescLines {
+    /// The line gives the description of the task, as a task list of this version means it.
+    #[default]
+    Header,
+    /// The line is text of the brief, as every version before the line existed read it: a state of such a version may
+    /// hold a brief that starts with it, whatever it says.
+    Brief,
+}
+
 /// Whether an item is marked as done in the text: `[ ]` or `[x]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemMark {
@@ -397,6 +408,19 @@ impl TaskList {
     /// # Errors
     /// The [`TaskListError`] of [`TaskList::parse`].
     pub fn parse_with(text: &str, allow_lines: AllowLines) -> Result<Self, TaskListError> {
+        Self::parse_with_short_desc(text, allow_lines, ShortDescLines::Header)
+    }
+
+    /// Parses a task list whose `Allow:` and `Short desc:` lines before the brief are read as `allow_lines` and
+    /// `short_desc_lines` say.
+    ///
+    /// # Errors
+    /// The [`TaskListError`] of [`TaskList::parse`].
+    pub fn parse_with_short_desc(
+        text: &str,
+        allow_lines: AllowLines,
+        short_desc_lines: ShortDescLines,
+    ) -> Result<Self, TaskListError> {
         if text.len() > MAX_TASK_LIST_BYTES {
             return Err(TaskListError::TooLarge {
                 len: text.len(),
@@ -406,6 +430,7 @@ impl TaskList {
         let text = text.strip_prefix(BYTE_ORDER_MARK).unwrap_or(text);
         let mut parser = Parser {
             allow_lines,
+            short_desc_lines,
             ..Parser::default()
         };
         for (index, line) in text.lines().enumerate() {
@@ -738,6 +763,8 @@ struct Parser<'a> {
     coordinator: Option<AgentName>,
     /// How a line `Allow:` before the brief is read.
     allow_lines: AllowLines,
+    /// How a line `Short desc:` before the brief is read.
+    short_desc_lines: ShortDescLines,
     /// Root-relative permissions given in the header.
     allowances: Vec<crate::task_allowance::TaskAllowance>,
     /// The `Short desc:` line read so far: its line and its text.
@@ -773,6 +800,7 @@ impl<'a> Parser<'a> {
             }
         }
         if self.in_header()
+            && self.short_desc_lines == ShortDescLines::Header
             && let Some(desc) = text.strip_prefix(SHORT_DESC_PREFIX)
         {
             return self.short_desc_line(line, desc);

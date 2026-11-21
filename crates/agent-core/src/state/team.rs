@@ -13,7 +13,7 @@ use super::values::Timestamp;
 use crate::config::RepoName;
 use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::{Keyword, Role, Tier, UnknownKeyword};
-use crate::task_list::{AllowLines, ItemMark, TaskList, TaskListError};
+use crate::task_list::{AllowLines, ItemMark, ShortDescLines, TaskList, TaskListError};
 
 mod activities;
 mod delivery;
@@ -106,6 +106,10 @@ enum TaskListWire {
         text: String,
         /// How its `Allow:` lines are read.
         allow_lines: AllowLines,
+        /// Whether its `Short desc:` line is the description of the task: written only for a text that has one, so a
+        /// stored text without the marker, as every version before the line wrote it, reads the line as brief.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        short_desc_header: bool,
     },
 }
 
@@ -140,35 +144,38 @@ impl TryFrom<TaskListWire> for TaskListText {
     type Error = TaskListError;
 
     fn try_from(wire: TaskListWire) -> Result<Self, Self::Error> {
-        match wire {
-            TaskListWire::Text(text) => match TaskList::parse(&text) {
-                Ok(list) => Ok(Self {
-                    text,
-                    list: Box::new(list),
-                    allow_lines: AllowLines::Permissions,
-                }),
-                // A state of an earlier version may hold a text whose first lines are a `Short desc:` line that
-                // this version refuses: that line was brief then, and one refused value must not make the state
-                // unreadable.
-                Err(
-                    TaskListError::ShortDescEmpty { .. }
-                    | TaskListError::ShortDescTooLong { .. }
-                    | TaskListError::ShortDescTwice { .. },
-                ) => Self::with_allow_lines(text, AllowLines::Brief),
-                Err(error) => Err(error),
-            },
-            TaskListWire::Marked { text, allow_lines } => Self::with_allow_lines(text, allow_lines),
-        }
+        let (text, allow_lines, short_desc_lines) = match wire {
+            // Written by every version before the line existed, and by this one for a list without a description.
+            TaskListWire::Text(text) => (text, AllowLines::Permissions, ShortDescLines::Brief),
+            TaskListWire::Marked {
+                text,
+                allow_lines,
+                short_desc_header: true,
+            } => (text, allow_lines, ShortDescLines::Header),
+            TaskListWire::Marked {
+                text,
+                allow_lines,
+                short_desc_header: false,
+            } => (text, allow_lines, ShortDescLines::Brief),
+        };
+        let list = TaskList::parse_with_short_desc(&text, allow_lines, short_desc_lines)?;
+        Ok(Self {
+            text,
+            list: Box::new(list),
+            allow_lines,
+        })
     }
 }
 
 impl From<TaskListText> for TaskListWire {
     fn from(value: TaskListText) -> Self {
+        let short_desc_header = value.list.short_desc().is_some();
         match value.allow_lines {
-            AllowLines::Permissions => Self::Text(value.text),
-            AllowLines::Brief => Self::Marked {
+            AllowLines::Permissions if !short_desc_header => Self::Text(value.text),
+            allow_lines @ (AllowLines::Permissions | AllowLines::Brief) => Self::Marked {
                 text: value.text,
-                allow_lines: AllowLines::Brief,
+                allow_lines,
+                short_desc_header,
             },
         }
     }
