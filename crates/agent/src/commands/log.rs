@@ -4,6 +4,7 @@ pub(crate) mod rows;
 pub(crate) mod steps;
 #[cfg(test)]
 mod tests;
+mod timeline;
 mod views;
 
 use std::io::Write;
