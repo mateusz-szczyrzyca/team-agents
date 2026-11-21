@@ -427,3 +427,111 @@ async fn configured_unit_decides_which_estimates_the_limit_applies_to() {
     assert!(prompt.contains("Part b estimates 1501 pages"), "{prompt}");
     assert_eq!(rig.state().team(&id).unwrap().splits().len(), 0);
 }
+
+#[tokio::test]
+async fn split_publication_records_approval_and_executor_across_restart() {
+    use crate::client::Connection;
+    use crate::daemon::owner::fixture::{answers, n};
+    use agent_core::protocol::{AnswerRequest, Client, Command};
+    use agent_core::state::split::SplitApproval;
+
+    let mut actual = Vec::new();
+    let mut expected = Vec::new();
+    for (authority, name, script) in [
+        (SplitApproval::Harness, "harness", "proposal:published,integrate"),
+        (SplitApproval::Human, "human", "ask,integrate"),
+    ] {
+        let mut rig = Rig::new(
+            &[
+                investigator("inv-lead", script),
+                normal("claude-1", "work,ask-here,work"),
+                investigator("inv-r1", "done:VERDICT: APPROVE"),
+                investigator("inv-r2", "done:VERDICT: APPROVE"),
+            ],
+            5,
+            true,
+        )
+        .await;
+        let proposed = proposal("Read first");
+        put(&rig, "published", &proposed);
+        rig.start().await;
+        let (id, tasks) = rig
+            .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+            .await;
+        if authority == SplitApproval::Human {
+            rig.status_is(&tasks[0], TaskStatus::Questions).await;
+            rig.status_is(&tasks[1], TaskStatus::Waiting).await;
+            let verdict = format!(
+                "split\n```json\n{}\n```",
+                serde_json::json!({"parent":"1.1", "parts":proposed["parts"]})
+            );
+            Connection::connect(&rig.home.socket_file())
+                .await
+                .unwrap()
+                .request(
+                    Client::Cli,
+                    Command::Answer(AnswerRequest {
+                        task: tasks[0].clone(),
+                        number: n(1),
+                        answers: answers(&[(1, &verdict)]),
+                    }),
+                )
+                .await
+                .unwrap();
+        }
+        let state = rig.status_is(&tasks[1], TaskStatus::Questions).await;
+        let recorded = state.team(&id).unwrap().splits()[0].approved_by();
+        let pulls = rig.github.pulls();
+        assert_eq!(pulls.len(), 1);
+        assert_eq!(pulls[0].body.matches("## Split").count(), 1);
+        let first = pulls[0]
+            .body
+            .split("## Split\n\n")
+            .nth(1)
+            .unwrap()
+            .split("\n\n")
+            .next()
+            .unwrap();
+        actual.push((recorded, first.to_owned()));
+        expected.push((
+            Some(authority),
+            include_str!("split-first.txt").trim().replace("{{approval}}", name),
+        ));
+        rig.stop().await.unwrap();
+        rig.start().await;
+        Connection::connect(&rig.home.socket_file())
+            .await
+            .unwrap()
+            .request(
+                Client::Cli,
+                Command::Answer(AnswerRequest {
+                    task: tasks[1].clone(),
+                    number: n(1),
+                    answers: answers(&[(1, "ok")]),
+                }),
+            )
+            .await
+            .unwrap();
+        rig.status_is(&tasks[0], TaskStatus::Done).await;
+        let state = rig.state();
+        let recorded = state.team(&id).unwrap().splits()[0].approved_by();
+        let pulls = rig.github.pulls();
+        assert_eq!(pulls.len(), 2);
+        assert_eq!(pulls[1].body.matches("## Split").count(), 1);
+        let second = pulls[1]
+            .body
+            .split("## Split\n\n")
+            .nth(1)
+            .unwrap()
+            .split("\n\n")
+            .next()
+            .unwrap();
+        actual.push((recorded, second.to_owned()));
+        expected.push((
+            Some(authority),
+            include_str!("split-second.txt").trim().replace("{{approval}}", name),
+        ));
+        rig.stop().await.unwrap();
+    }
+    assert_eq!(actual, expected);
+}
