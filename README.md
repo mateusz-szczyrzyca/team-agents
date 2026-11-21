@@ -306,8 +306,12 @@ run evidence. The activity record also supplies the investigator selection order
 
 Task-list items can declare an optional column-zero [`Tier:` directive](docs/task-list.md#the-lines), defaulting
 to `normal`. Core decisions compare capabilities as investigator > normal > worker and prefer a fitting member
-before a fitting coordinator. Approved split plans can retain who approved them. These are preparatory APIs;
-the daemon's enforcement of tier requirements and its recording of approval authority follow in the next part.
+before a fitting coordinator. The daemon applies the requirement to initial items and every split part,
+including the first. A busy qualified member keeps its place; the coordinator takes an item only when no member
+in the crew meets its tier. If capability is absent, the item stays pending across restarts and `agent status`
+says, for example, `1.1  waiting for investigator agent`. Assignment prompts name the required tier and the
+selected agent. A failed member’s work also keeps its required tier when offered to the coordinator. Workers
+remain available through delegation. Approved split plans can retain who approved them.
 
 A coordinator can submit a [split proposal](docs/task-list.md#coordinator-proposal-form) by writing
 `split-proposal-<item>.json` in its task directory and reporting `SPLIT: <item>` before `STATUS: SLEEPING`.

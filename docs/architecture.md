@@ -1335,12 +1335,18 @@ adds optional split plans, and answer responses carry an optional split acknowle
 `applied` reply; the CLI derives the four part states from plans and durable rounds. Recovery reads this
 same state, so neither the gap between parts nor an open part requires a separate restart mechanism.
 
-### Tier requirement preparation
+### Tier-aware assignment
 
 `agent-core::kinds::Tier` has a total capability order: investigator > normal > worker, independent of the
 stable keyword declaration order. Task-list `Tier:` directives default to normal and are exposed through
 `TaskList::required_tier`. The pure `decide::assign::tier::choose_agent` takes offered members in preference order
 and an optional coordinator; it returns a fitting member, a fitting coordinator only if no member fits, or an
-explicit missing-tier result. Availability and waiting remain the caller's responsibility. The existing daemon
-assignment path is unchanged in this preparatory part. Split plans optionally retain their approval authority;
+explicit missing-tier result. `decide::assign::dispatch` combines this choice with dependency readiness,
+availability and reservations within one snapshot. A fitting but busy member prevents coordinator fallback.
+The daemon uses this decision for initial assignment and subsequent parts. Activating a split may leave an
+underqualified parent assignee; before assigning work, the owner returns that item to pending and chooses again.
+Missing capability is retained in the team's optional `tier_waits` map, refreshed atomically with assignment.
+Entering a wait logs `team_changed` with `kind=tier_wait`; restored waits do not log again. The status reply
+exposes this optional map, and assignment prompts explain the minimum tier and selection. Coordinator takeover
+after a failed run checks the working items’ requirements too. Split plans optionally retain their approval authority;
 legacy plans leave it unknown until recorded explicitly.

@@ -43,6 +43,10 @@ pub enum TeamPrompt {
     Part,
     /// What a member that already has a session is told when it is given its next item.
     Assignment,
+    /// The selected member meets the minimum capability.
+    TierMember,
+    /// The coordinator is the only fitting participant in the crew.
+    TierCoordinator,
     /// What a member whose sleep a message ended is told.
     Wake,
     /// What a worker is told when it is given a request of a member.
@@ -104,6 +108,8 @@ impl TeamPrompt {
         Self::SplitUnreadable,
         Self::Part,
         Self::Assignment,
+        Self::TierMember,
+        Self::TierCoordinator,
         Self::Wake,
         Self::Delegation,
         Self::MemberFinished,
@@ -183,6 +189,8 @@ impl TeamPrompt {
                 Audience::Model,
                 &["item_id", "branch", "base"],
             ),
+            Self::TierMember => tier_spec("harness/team/tier-member.md"),
+            Self::TierCoordinator => tier_spec("harness/team/tier-coordinator.md"),
             Self::Wake => PromptSpec::new("harness/team/wake.md", Audience::Model, &["team"]),
             Self::Delegation => delegation_spec(),
             Self::MemberFinished => PromptSpec::new(
@@ -279,4 +287,9 @@ const fn split_question_spec() -> PromptSpec {
         Audience::Human,
         &["task", "item", "reason", "proposal", "example"],
     )
+}
+
+/// The capability explanation has the same inputs for a member and coordinator.
+const fn tier_spec(path: &'static str) -> PromptSpec {
+    PromptSpec::new(path, Audience::Model, &["required", "agent", "tier"])
 }

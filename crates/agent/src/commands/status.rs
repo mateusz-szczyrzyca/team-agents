@@ -359,6 +359,19 @@ fn render_at(
                 .map(|round| format!("  {}{}", round_line(round), rounds(round))),
         );
         lines.extend(splits::lines(team));
+        for (item, tier) in &team.tier_waits {
+            if team.splits.iter().any(|plan| plan.parent() == *item) {
+                continue;
+            }
+            let part = team
+                .rounds
+                .iter()
+                .rev()
+                .find(|round| round.item() == Some(*item) && round.is_open())
+                .and_then(agent_core::state::Round::part);
+            let suffix = part.map_or_else(String::new, |key| key.to_string());
+            lines.push(format!("    {item}{suffix}  waiting for {tier} agent"));
+        }
         for member in &team.members {
             let waiting = member.open_question.map_or_else(String::new, |number| {
                 format!(", questions number {number} wait for answers")

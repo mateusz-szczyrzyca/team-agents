@@ -167,6 +167,9 @@ pub struct TeamSummary {
     /// Approved split plans, absent from replies written before split execution.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub splits: Vec<crate::state::split::SplitPlan>,
+    /// Items blocked by a capability absent from the crew; omitted by older daemons.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub tier_waits: std::collections::BTreeMap<crate::ids::ItemId, crate::kinds::Tier>,
     /// The crew and the reviewers.
     pub members: Vec<MemberSummary>,
     /// What the team's investigators did, absent from a daemon before it kept them and from a team that has none.
@@ -454,6 +457,7 @@ impl From<&Team> for TeamSummary {
             items,
             rounds: team.rounds().to_vec(),
             splits: team.splits().to_vec(),
+            tier_waits: team.tier_waits().clone(),
             members: crew
                 .chain(reviewers)
                 .map(|(role, member)| MemberSummary::of(role, member))
