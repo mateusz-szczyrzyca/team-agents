@@ -766,6 +766,9 @@ mod history_stories_tests;
 #[path = "rounds/tests/merge_conflict.rs"]
 mod merge_conflict_tests;
 #[cfg(test)]
+#[path = "rounds/tests/publish_failures.rs"]
+mod publish_failures_tests;
+#[cfg(test)]
 #[path = "rounds/tests/review_head.rs"]
 mod review_head_tests;
 #[cfg(test)]
