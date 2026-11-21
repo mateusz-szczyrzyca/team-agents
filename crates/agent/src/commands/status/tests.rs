@@ -1474,6 +1474,17 @@ fn a_status_time_and_a_log_time_of_one_moment_in_one_zone_are_the_same_text() {
 }
 
 #[test]
+fn a_round_in_full_writes_the_time_it_was_opened_in_the_zone_given() {
+    let state = team_with_rounds();
+    let zone = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("a literal offset is valid"));
+
+    let text = render_round_in(&detail(&state), zone);
+
+    assert!(text.contains("  opened 2026-11-11 20:15:"), "{text}");
+    assert!(text.contains(" +01:00\n"), "{text}");
+}
+
+#[test]
 fn a_round_is_shown_with_its_times_in_the_zone_given() {
     use agent_core::local_time::Zone;
     let mut state = team_with_rounds();
@@ -1506,5 +1517,41 @@ fn a_round_is_shown_with_its_times_in_the_zone_given() {
             "    run-20261111-153001-r7q2  started 2026-11-11 20:15:21 +01:00  ended 2026-11-11 20:15:30 +01:00\n"
         ),
         "{text}"
+    );
+}
+
+#[test]
+fn clock_time_outside_four_digit_years_falls_back_to_marked_utc() {
+    use std::time::{Duration, SystemTime};
+    let before_year_zero = SystemTime::UNIX_EPOCH - Duration::from_secs(62_167_219_201);
+    let zone = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("valid"));
+
+    assert_eq!(clock_time(before_year_zero, zone), "-0001-12-31 23:59:59 UTC");
+}
+
+#[test]
+fn a_round_with_a_github_retry_wait_shows_its_next_try_in_the_client_zone() {
+    let state = team_with_rounds();
+    let mut shown = detail(&state);
+    shown.waiting = Some(
+        "GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21T00:07:00Z".to_owned(),
+    );
+    let east = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("valid"));
+    let west = Zone::Fixed(time::UtcOffset::from_hms(-5, 0, 0).expect("valid"));
+
+    let east_text = render_round_in(&shown, east);
+    let west_text = render_round_in(&shown, west);
+
+    assert!(
+        east_text.contains(
+            ", waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21 01:07 +01:00\n"
+        ),
+        "{east_text}"
+    );
+    assert!(
+        west_text.contains(
+            ", waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-20 19:07 -05:00\n"
+        ),
+        "{west_text}"
     );
 }

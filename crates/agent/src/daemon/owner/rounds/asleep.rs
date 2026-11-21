@@ -110,6 +110,11 @@ struct Standing {
     line: String,
 }
 
+/// How the task of `member` ended, in a line for the lead and the human in `zone`.
+fn line_in(role: Role, member: &Member, _zone: agent_core::local_time::Zone) -> String {
+    line(role, member)
+}
+
 /// How the task of `member` ended, in a line for the lead and the human.
 fn line(role: Role, member: &Member) -> String {
     let how = match member.runs().last().map(agent_core::state::Run::state) {
@@ -195,7 +200,10 @@ impl Owner {
         Some(Found {
             unfinished,
             statuses: roster.iter().map(|(_, member)| member.status()).collect(),
-            tasks: roster.iter().map(|(role, member)| line(*role, member)).collect(),
+            tasks: roster
+                .iter()
+                .map(|(role, member)| line_in(*role, member, self.parts.zone))
+                .collect(),
             quiet_since: ended.and_then(|times| times.into_iter().max()),
             standings,
         })

@@ -58,11 +58,23 @@ fn without_sections(text: &str, names: &[&str]) -> String {
 }
 
 /// Renders the measured size and recorded gate, including a preceding failure at this head.
+#[cfg(test)]
 pub(crate) fn measured_sections(
     texts: &AutopilotPrompts,
     size: usize,
     gate: &GateRecord,
     previous: Option<&GateRecord>,
+) -> Result<String, PullTextError> {
+    measured_sections_in(texts, size, gate, previous, agent_core::local_time::Zone::Utc)
+}
+
+/// Renders the measured size and recorded gate in `zone`, including a preceding failure at this head.
+pub(crate) fn measured_sections_in(
+    texts: &AutopilotPrompts,
+    size: usize,
+    gate: &GateRecord,
+    previous: Option<&GateRecord>,
+    _zone: agent_core::local_time::Zone,
 ) -> Result<String, PullTextError> {
     let size = texts.render(
         AutopilotPrompt::PrSize,

@@ -7,6 +7,7 @@ use std::str::FromStr;
 use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
 use agent_core::ids::InvalidName;
 use agent_core::kinds::Role;
+use agent_core::local_time::Zone;
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
 use agent_core::state::{
     CommitId, Findings, ItemPhase, ItemProgress, MergeConflict, PrNumber, QuestionState, Review, ReviewOutcome,
@@ -570,7 +571,7 @@ pub(super) async fn review_request(
     } else {
         vec![texts.render(AutopilotPrompt::ReviewRequest, &values)?]
     };
-    sections.push(review_gate(texts, &head, record.as_ref())?);
+    sections.push(review_gate_in(texts, &head, record.as_ref(), Zone::Utc)?);
     if crate::daemon::review::independent_first_review(team, task) {
         sections.push(texts.render(AutopilotPrompt::ReviewIndependent, &Variables::new())?);
     }
@@ -651,10 +652,21 @@ pub(super) async fn verification_changes(
 }
 
 /// Supplies only a gate recorded at the reviewed head; otherwise requests the normal gate.
+#[cfg(test)]
 fn review_gate(
     texts: &AutopilotPrompts,
     head: &CommitId,
     record: Option<&agent_core::state::GateRecord>,
+) -> Result<String, SectionError> {
+    review_gate_in(texts, head, record, Zone::Utc)
+}
+
+/// Supplies only a gate recorded at the reviewed head, formatted in `zone`; otherwise requests the normal gate.
+fn review_gate_in(
+    texts: &AutopilotPrompts,
+    head: &CommitId,
+    record: Option<&agent_core::state::GateRecord>,
+    _zone: Zone,
 ) -> Result<String, SectionError> {
     let values = Variables::new().with("head", head.as_str())?;
     let (prompt, values) = if let Some(record) = record.filter(|record| record.result.head == *head) {

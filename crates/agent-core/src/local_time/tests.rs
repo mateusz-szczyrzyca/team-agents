@@ -255,3 +255,20 @@ fn a_minute_stamp_writes_the_date_the_hour_and_the_minute_with_the_zone() {
     assert_eq!(Zone::Lookup(unknown).stamp_minute(at), "2026-11-21 12:50 UTC");
     assert_eq!(Zone::Utc.stamp_minute(at), "2026-11-21T12:50:02Z");
 }
+
+#[test]
+fn waiting_lines_reformat_their_retry_minute_into_the_zone() {
+    let line = "GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21T00:07:00Z";
+    let east = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid"));
+    let west = Zone::Fixed(UtcOffset::from_hms(-5, 0, 0).expect("valid"));
+    assert_eq!(
+        east.stamp_waiting(line),
+        "GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21 01:07 +01:00"
+    );
+    assert_eq!(
+        west.stamp_waiting(line),
+        "GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-20 19:07 -05:00"
+    );
+    assert_eq!(Zone::Utc.stamp_waiting(line), line);
+    assert_eq!(east.stamp_waiting("an answer of the human"), "an answer of the human");
+}

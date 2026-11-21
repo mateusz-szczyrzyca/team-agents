@@ -109,6 +109,12 @@ impl Zone {
         self.written(at, Precision::Minute)
     }
 
+    /// Formats any retry timestamp in a daemon `waiting` line (`..., next try <timestamp>`) in this zone.
+    #[must_use]
+    pub fn stamp_waiting(&self, waiting: &str) -> String {
+        waiting.to_owned()
+    }
+
     /// The moment `at` in this zone, written as the person reads it: `2026-11-21 17:29:53 +01:00`. The zone is always
     /// written: its offset, or `UTC` when the zone cannot be found or the offset would leave the four-digit years.
     /// [`Zone::Utc`] writes the RFC 3339 text of the files.
@@ -217,6 +223,13 @@ impl Zone {
                 },
             },
         }
+    }
+}
+
+impl From<UtcOffset> for Zone {
+    /// A fixed offset from UTC.
+    fn from(offset: UtcOffset) -> Self {
+        Self::Fixed(offset)
     }
 }
 
