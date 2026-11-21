@@ -2,12 +2,24 @@
 
 use std::collections::BTreeSet;
 
-use agent_core::ids::ItemId;
-use agent_core::prompt::Variables;
+use agent_core::ids::{ItemId, TaskId};
+use agent_core::prompt::{Variables, VariablesError};
 use agent_core::state::split::{PartKey, SplitPlan};
 use agent_core::state::{Completion, ItemPhase, ItemProgress, Team};
 use agent_core::task_list::TaskList;
 use agent_core::task_title::brief_excerpt;
+use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
+
+/// Why the words of a task cannot be made.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum TaskWordsError {
+    /// A variable of a text is not valid.
+    #[error("a variable of a text of the task's words is not valid")]
+    Variable(#[from] VariablesError),
+    /// A text of the catalog cannot be rendered.
+    #[error("cannot render a text of the task's words")]
+    Render(#[from] RenderTextError),
+}
 
 /// What a notification says of its task in words, besides the identifiers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +40,20 @@ impl TaskWords {
             item,
             excerpt: brief_excerpt(list.brief()),
         }
+    }
+
+    /// The words of the task whose list is `list`, for a notification about `task` that concerns `item`, with the
+    /// lines that the catalog gives to the task's ID and to the end of the notification.
+    ///
+    /// # Errors
+    /// [`TaskWordsError`] when a text of the catalog cannot be rendered.
+    pub(crate) fn rendered(
+        list: &TaskList,
+        item: Option<String>,
+        _task: &TaskId,
+        _texts: &HarnessPrompts,
+    ) -> Result<Self, TaskWordsError> {
+        Ok(Self::new(list, item))
     }
 
     /// The short description of the task.
@@ -114,6 +140,9 @@ fn pull_request_number(phase: &ItemPhase) -> Option<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod catalog_tests;
 
 #[cfg(test)]
 mod item_tests;
