@@ -965,10 +965,8 @@ async fn try_publish_while_own_gate_running_does_not_load_stale_or_invalid_gate_
         },
     };
     std::fs::write(&gate_file, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
-    tx.send(Ok(agent_core::protocol::Reply::GateRecorded {
-        record: record.clone(),
-    }))
-    .unwrap();
+    tx.send(Ok(agent_core::protocol::Reply::GateRecorded { record: record.clone() }))
+        .unwrap();
 
     let attempt_completed = owner.try_publish(site, publication, now).await;
     assert!(
