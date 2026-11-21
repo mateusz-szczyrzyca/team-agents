@@ -6,12 +6,14 @@ use std::num::NonZeroU32;
 use std::path::Path;
 
 use agent_core::decide::ladder::Trouble;
-use agent_core::decide::replacement::ReplacementMode;
+use agent_core::decide::last_step::{
+    AfterLastStep, Asked as AskedBefore, HeldBefore, LastStepAnswer, MembersWork, after_last_step, last_step_answer,
+};
 use agent_core::ids::TaskId;
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
-use agent_core::questions::{Entry, QuestionsFile, Verdict};
+use agent_core::questions::{Entry, QuestionsFile};
 use agent_core::state::{ItemPhase, Team, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::harness_prompts::RenderTextError;
@@ -29,15 +31,6 @@ const QUESTIONS_MODE: u32 = 0o600;
 
 /// What the text of the question says of a task that no agent held before the one that holds it.
 const NOBODY_BEFORE: &str = "none";
-
-/// What the human's answer to the question after the last step says.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LastStepAnswer {
-    /// `a`: the task starts once more, in the new session its question began.
-    OnceMore,
-    /// `b`, or the recommendation accepted: the task stops.
-    Stop,
-}
 
 /// Why the question after the last step cannot be written.
 #[derive(Debug, thiserror::Error)]
@@ -122,26 +115,30 @@ impl Owner {
         Ok(Some(next))
     }
 
-    /// Whether `task` of `role` is asked after its last step: not in mode `off`, not asked once already, and either
-    /// handed over before or a coordinator holding the item of a member whose task stopped.
+    /// Whether `task` of `role` is asked after its last step, as [`after_last_step`] decides from the state.
     fn asks_after_last_step(&self, task: &TaskId, role: Role) -> Result<bool, OwnerError> {
-        if self.parts.settings.config.replacement().mode() == ReplacementMode::Off {
-            return Ok(false);
-        }
         let found = self
             .parts
             .state
             .find_task(task)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
-        if found.member.asked_after_last_step().is_some() {
-            return Ok(false);
-        }
-        let asked = match role {
-            Role::Solo | Role::Member => !found.member.past_holders().is_empty(),
-            Role::Coordinator => !found.member.past_holders().is_empty() || holds_work_of_a_stopped_member(found.team),
-            Role::Worker | Role::Reviewer => false,
+        let asked = if found.member.asked_after_last_step().is_some() {
+            AskedBefore::Once
+        } else {
+            AskedBefore::Never
         };
-        Ok(asked)
+        let held = if found.member.past_holders().is_empty() {
+            HeldBefore::Nobody
+        } else {
+            HeldBefore::Others
+        };
+        let work = if holds_work_of_a_stopped_member(found.team) {
+            MembersWork::OfAStoppedMember
+        } else {
+            MembersWork::None
+        };
+        let mode = self.parts.settings.config.replacement().mode();
+        Ok(after_last_step(mode, role, asked, held, work) == AfterLastStep::AskHuman)
     }
 
     /// Renders the question after the last step of `task` — the agent that holds it and those before it in `values` —
@@ -194,7 +191,7 @@ impl Owner {
             return Ok(TaskStatus::Queued);
         }
         let reason = found.member.renewals().map(agent_core::state::Renewals::reason);
-        let answer = last_step_answer(file);
+        let answer = last_step_answer(file.entries().first().and_then(Entry::verdict));
         log_decision("last_step_answer", &task.as_str(), &format!("{answer:?}"));
         match answer {
             LastStepAnswer::OnceMore => Ok(TaskStatus::Queued),
@@ -227,13 +224,4 @@ fn holds_work_of_a_stopped_member(team: &Team) -> bool {
                 | ItemPhase::Done { .. } => false,
             })
         })
-}
-
-/// What the answer in `file` says: `a` starts the task once more; `b`, the recommendation accepted, or any other answer
-/// stops it, so that nothing more runs on a task nobody asked to go on.
-fn last_step_answer(file: &QuestionsFile) -> LastStepAnswer {
-    match file.entries().first().and_then(Entry::verdict) {
-        Some(Verdict::Own(text)) if super::plan::starts_as_option_a(text.as_str()) => LastStepAnswer::OnceMore,
-        Some(Verdict::Accept | Verdict::Own(_)) | None => LastStepAnswer::Stop,
-    }
 }

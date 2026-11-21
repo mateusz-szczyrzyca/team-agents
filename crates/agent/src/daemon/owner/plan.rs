@@ -549,7 +549,7 @@ fn plan_answer(file: &QuestionsFile) -> PlanAnswer {
 }
 
 /// Whether `answer` names the option `a`: `a` alone, or `a` followed by what is not a letter or a digit (`a)`, `a —`).
-pub(super) fn starts_as_option_a(answer: &str) -> bool {
+fn starts_as_option_a(answer: &str) -> bool {
     let mut chars = answer.trim_start().chars();
     matches!(chars.next(), Some('a' | 'A')) && chars.next().is_none_or(|next| !next.is_alphanumeric())
 }
