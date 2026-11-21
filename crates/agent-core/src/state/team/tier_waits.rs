@@ -6,6 +6,12 @@ use crate::kinds::Tier;
 use std::collections::BTreeMap;
 
 impl Team {
+    /// The idle lead to ask about unstaffed capability waits, if any.
+    #[must_use]
+    pub fn tier_question_task(&self) -> Option<crate::ids::TaskId> {
+        None
+    }
+
     /// Capability waits that still need a human question.
     #[must_use]
     pub fn unasked_tier_waits(&self) -> Vec<(ItemId, Tier)> {

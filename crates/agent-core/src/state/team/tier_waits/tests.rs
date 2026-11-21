@@ -112,3 +112,48 @@ fn tier_questions_are_once_per_wait_and_survive_reload() {
     old.mark_tier_questions();
     assert_eq!(old.unasked_tier_waits(), vec![]);
 }
+
+#[test]
+fn tier_question_recipient_waits_for_an_idle_lead_and_an_unasked_wait() {
+    use crate::state::fixtures::task;
+    use crate::status::TaskStatus;
+    for status in [
+        TaskStatus::Queued,
+        TaskStatus::Running,
+        TaskStatus::Waiting,
+        TaskStatus::Questions,
+        TaskStatus::Paused,
+        TaskStatus::Stopped,
+        TaskStatus::Failed,
+        TaskStatus::Done,
+    ] {
+        for asked in [false, true] {
+            let mut lead = member(1, normal("lead"));
+            if status != TaskStatus::Queued {
+                lead.transition(TaskStatus::Running).unwrap();
+                if status != TaskStatus::Running {
+                    lead.transition(status).unwrap();
+                }
+            }
+            let mut team = Team::new(
+                team_id(1),
+                "example".parse().unwrap(),
+                at(0),
+                MergeMode::Autopilot,
+                TaskListText::new("Brief.\n\n1. Feature\n[ ] 1.1 Item\nTier: investigator\n".into()).unwrap(),
+                Crew::solo(lead).unwrap(),
+            );
+            assert_eq!(team.tier_question_task(), None);
+            team.refresh_tier_waits();
+            if asked {
+                team.mark_tier_questions();
+            }
+            let expected = if !asked && matches!(status, TaskStatus::Queued | TaskStatus::Waiting) {
+                Some(task(1))
+            } else {
+                None
+            };
+            assert_eq!(team.tier_question_task(), expected, "{status:?}, asked={asked}");
+        }
+    }
+}
