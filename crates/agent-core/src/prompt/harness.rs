@@ -282,7 +282,7 @@ impl HarnessPrompt {
             Self::PlanMismatch => PromptSpec::new(
                 "harness/run/plan-mismatch.md",
                 Audience::Model,
-                &["check", "output", "step"],
+                &["check", "output", "reason", "step", "title"],
             ),
             Self::PlanGateRefused => PromptSpec::new(
                 "harness/run/plan-gate-refused.md",

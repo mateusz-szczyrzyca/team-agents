@@ -1,6 +1,6 @@
-## Step {{step}} check failed
+## Step {{step}} ({{title}}) check failed
 
-You ended your turn with `STATUS: DONE`, but the check of step {{step}} (`{{check}}`) failed:
+You ended your turn with `STATUS: DONE`, but the check of step {{step}} (`{{check}}`) failed: {{reason}}
 
 ```text
 {{output}}

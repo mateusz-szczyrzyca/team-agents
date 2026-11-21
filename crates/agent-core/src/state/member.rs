@@ -264,13 +264,13 @@ impl CheckedMut<'_, Member> {
         self.value.take_plan_reason()
     }
 
-    /// See [`Member::set_plan_refused_gate`].
-    pub fn set_plan_refused_gate(&mut self, step: ItemId, command: String) {
-        self.value.set_plan_refused_gate(step, command);
+    /// See [`Member::add_plan_refused_gate`].
+    pub fn add_plan_refused_gate(&mut self, step: ItemId, command: String) {
+        self.value.add_plan_refused_gate(step, command);
     }
 
     /// See [`Member::take_plan_refused_gate`].
-    pub fn take_plan_refused_gate(&mut self) -> Option<(ItemId, String)> {
+    pub fn take_plan_refused_gate(&mut self) -> Vec<(ItemId, String)> {
         self.value.take_plan_refused_gate()
     }
 
@@ -493,16 +493,16 @@ impl Member {
         self.plan.as_mut().and_then(PlanKeeping::take_pending)
     }
 
-    /// Sets a refused gate command check notice on the member's plan keeping.
-    pub fn set_plan_refused_gate(&mut self, step: ItemId, command: String) {
+    /// Adds a refused gate command check notice on the member's plan keeping.
+    pub fn add_plan_refused_gate(&mut self, step: ItemId, command: String) {
         if let Some(keeping) = &mut self.plan {
-            keeping.set_refused_gate(step, command);
+            keeping.add_refused_gate(step, command);
         }
     }
 
-    /// Takes the refused gate command notice from the member's plan keeping, clearing it for future runs.
-    pub fn take_plan_refused_gate(&mut self) -> Option<(ItemId, String)> {
-        self.plan.as_mut().and_then(PlanKeeping::take_refused_gate)
+    /// Takes the refused gate command notices from the member's plan keeping, clearing them for future runs.
+    pub fn take_plan_refused_gate(&mut self) -> Vec<(ItemId, String)> {
+        self.plan.as_mut().map_or_else(Vec::new, PlanKeeping::take_refused_gate)
     }
 
     /// The human said to send the run back once more: one more send-back is granted and counted, and the plan's

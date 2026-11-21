@@ -495,7 +495,7 @@ impl Plan {
 const DEFAULT_PLAN_BOUNCES: u32 = 3;
 
 /// Default timeout in seconds for command checks.
-const DEFAULT_PLAN_CHECK_SECONDS: u64 = 60;
+const DEFAULT_PLAN_CHECK_SECONDS: u64 = 120;
 
 fn default_plan_check_refuse() -> Vec<String> {
     vec!["agent gate".to_owned(), "make gate".to_owned()]
@@ -1406,13 +1406,13 @@ cli = "claude"
     #[test]
     fn plan_check_defaults_and_configured_values() {
         let default_plan = config("").plan().clone();
-        assert_eq!(default_plan.check_seconds(), 60);
+        assert_eq!(default_plan.check_seconds(), 120);
         assert_eq!(default_plan.check_refuse(), ["agent gate", "make gate"]);
 
-        let configured = config("[plan]\ncheck_seconds = 120\ncheck_refuse = [\"cargo test\"]\n")
+        let configured = config("[plan]\ncheck_seconds = 30\ncheck_refuse = [\"cargo test\"]\n")
             .plan()
             .clone();
-        assert_eq!(configured.check_seconds(), 120);
+        assert_eq!(configured.check_seconds(), 30);
         assert_eq!(configured.check_refuse(), ["cargo test"]);
     }
 

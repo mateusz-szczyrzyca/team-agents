@@ -153,7 +153,7 @@ history; a run of a role here that ends `STATUS: DONE` against its plan is sent 
 |---|---|---|
 | `roles` | `["solo", "member", "coordinator"]` | the roles whose runs are sent back for their plan. Only these three: a worker or a reviewer keeps no plan, and naming one is refused (`PlanRole`), as is a role named twice (`PlanRoleTwice`). A file without `[plan]` has these roles |
 | `bounces` | `3` | how many times a task's runs go back for its plan before the human is asked once, in a questions file. `0` never sends a run back; its plan is still recorded |
-| `check_seconds` | `60` | timeout in seconds for executing a done step's command check; `0` disables command checks, keeping them declared |
+| `check_seconds` | `120` | timeout in seconds for executing a done step's command check; `0` disables command checks, keeping them declared |
 | `check_refuse` | `["agent gate", "make gate"]` | command prefixes refused as step checks so that recursive gate runs are never executed; refused steps remain declared |
 
 A task created before the daemon first ran with plans keeps none of this: its plan, if it writes one, is recorded, and

@@ -154,55 +154,66 @@ async fn check_exists(
 }
 
 const TAIL_BYTES: u64 = 64 * 1024;
-const TAIL_LINES: usize = 20;
+const TAIL_LINES: usize = 40;
 
-async fn read_tail(path: &Path) -> String {
-    let Ok(mut file) = fs::File::open(path).await else {
-        return String::new();
+async fn read_tail(path: &Path) -> Result<String, io::Error> {
+    let mut file = match fs::File::open(path).await {
+        Ok(file) => file,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(err) => return Err(err),
     };
-    let Ok(metadata) = file.metadata().await else {
-        return String::new();
-    };
+    let metadata = file.metadata().await?;
     let length = metadata.len();
     let start = length.saturating_sub(TAIL_BYTES);
-    if file.seek(SeekFrom::Start(start)).await.is_err() {
-        return String::new();
-    }
+    file.seek(SeekFrom::Start(start)).await?;
     let mut bytes = Vec::new();
-    if file.take(TAIL_BYTES).read_to_end(&mut bytes).await.is_err() {
-        return String::new();
-    }
+    file.take(TAIL_BYTES).read_to_end(&mut bytes).await?;
     let text = String::from_utf8_lossy(&bytes);
     let mut lines: Vec<&str> = text.lines().collect();
     if start > 0 && !lines.is_empty() {
         lines.remove(0);
     }
     let keep = lines.len().saturating_sub(TAIL_LINES);
-    lines.into_iter().skip(keep).collect::<Vec<_>>().join("\n")
+    Ok(lines.into_iter().skip(keep).collect::<Vec<_>>().join("\n"))
 }
 
-fn open_check_logs(
+async fn open_check_logs(
     checks_dir: &Path,
+    run_id: Option<&RunId>,
     step_id: ItemId,
-) -> io::Result<(std::path::PathBuf, std::fs::File, std::fs::File)> {
-    let log_path = checks_dir.join(format!("{step_id}.log"));
-    let std_file = std::fs::OpenOptions::new()
+) -> io::Result<(std::path::PathBuf, String, std::fs::File, std::fs::File)> {
+    let (target_dir, rel_path) = match run_id {
+        Some(run) => (
+            checks_dir.join(run.as_str()),
+            format!("checks/{}/{step_id}.log", run.as_str()),
+        ),
+        None => (checks_dir.to_path_buf(), format!("checks/{step_id}.log")),
+    };
+    fs::create_dir_all(&target_dir).await?;
+    let log_path = target_dir.join(format!("{step_id}.log"));
+    let std_file = fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
-        .open(&log_path)?;
+        .open(&log_path)
+        .await?
+        .into_std()
+        .await;
     let err_file = std_file.try_clone()?;
-    Ok((log_path, std_file, err_file))
+    Ok((log_path, rel_path, std_file, err_file))
 }
 
 async fn wait_child_outcome(
     mut child: tokio::process::Child,
-    group: Option<Pid>,
+    group: Pid,
     check_seconds: u64,
 ) -> (JudgementState, Option<String>) {
     let check_duration = std::time::Duration::from_secs(check_seconds);
     match timeout(check_duration, child.wait()).await {
         Ok(Ok(status)) => {
+            if let Err(error) = signal_group(group, GroupSignal::Kill) {
+                tracing::warn!(%error, "cannot kill process group after check completion");
+            }
             if status.success() {
                 (JudgementState::Confirmed, None)
             } else if let Some(code) = status.code() {
@@ -222,15 +233,24 @@ async fn wait_child_outcome(
                 )
             }
         }
-        Ok(Err(error)) => (JudgementState::Mismatch, Some(format!("check wait failed: {error}"))),
-        Err(_elapsed) => {
-            if let Some(group) = group {
-                drop(signal_group(group, GroupSignal::Kill));
+        Ok(Err(error)) => {
+            if let Err(err) = signal_group(group, GroupSignal::Kill) {
+                tracing::warn!(%err, "cannot kill process group after check wait error");
             }
-            drop(timeout(std::time::Duration::from_secs(5), child.wait()).await);
+            (JudgementState::Mismatch, Some(format!("check wait failed: {error}")))
+        }
+        Err(_elapsed) => {
+            if let Err(error) = signal_group(group, GroupSignal::Kill) {
+                tracing::warn!(%error, "cannot kill process group on check timeout");
+            }
+            match timeout(std::time::Duration::from_secs(5), child.wait()).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(err)) => tracing::warn!(%err, "error reaping timed out check process"),
+                Err(_) => tracing::warn!("reaping timed out check process exceeded grace"),
+            }
             (
                 JudgementState::Mismatch,
-                Some(format!("check timed out after {check_seconds} seconds")),
+                Some(format!("ran past {check_seconds} seconds")),
             )
         }
     }
@@ -255,21 +275,21 @@ async fn execute_command_check(
         });
     }
 
-    let rel_output_path = format!("checks/{}.log", step.id());
-    let (log_path, std_file, err_file) = match open_check_logs(&checks_dir, step.id()) {
-        Ok(files) => files,
-        Err(error) => {
-            return Ok(JudgementResult {
-                state: JudgementState::Mismatch,
-                check_line: Some(command_str.to_owned()),
-                reason: Some(format!("cannot open check output file: {error}")),
-                duration_ms: duration_millis(start.elapsed())?,
-                output_path: None,
-                tail: String::new(),
-                gate_refused: false,
-            });
-        }
-    };
+    let (log_path, rel_output_path, std_file, err_file) =
+        match open_check_logs(&checks_dir, context.run, step.id()).await {
+            Ok(files) => files,
+            Err(error) => {
+                return Ok(JudgementResult {
+                    state: JudgementState::Mismatch,
+                    check_line: Some(command_str.to_owned()),
+                    reason: Some(format!("cannot open check output file: {error}")),
+                    duration_ms: duration_millis(start.elapsed())?,
+                    output_path: None,
+                    tail: String::new(),
+                    gate_refused: false,
+                });
+            }
+        };
 
     let mut cmd = Command::new("/bin/sh");
     cmd.arg("-c")
@@ -278,7 +298,8 @@ async fn execute_command_check(
         .stdin(Stdio::null())
         .stdout(std_file)
         .stderr(err_file)
-        .process_group(0);
+        .process_group(0)
+        .kill_on_drop(true);
 
     for (key, val) in context.envs {
         cmd.env(key, val);
@@ -299,16 +320,31 @@ async fn execute_command_check(
         }
     };
 
-    let raw_pid = child.id();
-    let group_pid = raw_pid.and_then(|raw| {
-        let signed = i32::try_from(raw).ok()?;
-        Pid::from_raw(signed)
-    });
+    let (_id, group_pid) = match crate::process::leader_of(&child) {
+        Ok(ids) => ids,
+        Err(error) => {
+            return Ok(JudgementResult {
+                state: JudgementState::Mismatch,
+                check_line: Some(command_str.to_owned()),
+                reason: Some(format!("cannot identify check process leader: {error}")),
+                duration_ms: duration_millis(start.elapsed())?,
+                output_path: Some(rel_output_path),
+                tail: String::new(),
+                gate_refused: false,
+            });
+        }
+    };
 
     let (state, reason) = wait_child_outcome(child, group_pid, context.check_seconds).await;
 
     let tail = if state == JudgementState::Mismatch {
-        read_tail(&log_path).await
+        match read_tail(&log_path).await {
+            Ok(tail) => tail,
+            Err(error) => {
+                tracing::warn!(path = %log_path.display(), %error, "cannot read check output tail");
+                String::new()
+            }
+        }
     } else {
         String::new()
     };
@@ -365,7 +401,7 @@ pub async fn execute_step_check(context: &CheckContext<'_>, step: &Step) -> Resu
                     gate_refused: true,
                 });
             }
-            if context.check_seconds == 0 || cmd == "echo passed check" {
+            if context.check_seconds == 0 {
                 return Ok(JudgementResult {
                     state: JudgementState::Declared,
                     check_line: Some(cmd.clone()),

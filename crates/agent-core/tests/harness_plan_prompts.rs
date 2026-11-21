@@ -66,7 +66,9 @@ mod harness_plan_prompts {
                 HarnessPrompt::PlanMismatch,
                 &[
                     ("step", "1.2"),
+                    ("title", "Run tests"),
                     ("check", "cargo test"),
+                    ("reason", "check failed with exit code 1"),
                     ("output", "failures:\n    test_something"),
                 ],
                 "plan-mismatch.txt",

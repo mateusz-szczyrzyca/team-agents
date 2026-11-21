@@ -148,11 +148,11 @@ not checked again. Steps to do, in hand or given up are never judged.
 
 Existence checks use asynchronous filesystem operations and follow symlinks only to targets inside the worktree.
 Command checks run sequentially in the task's worktree with the agent's environment variables (`agent_env`), closed stdin,
-and a process group timeout set by `[plan] check_seconds` (default 60; `0` disables commands and keeps them declared).
+and a process group timeout set by `[plan] check_seconds` (default 120; `0` disables commands and keeps them declared).
 Commands matching a prefix in `[plan] check_refuse` (default `["agent gate", "make gate"]`) are refused, remaining declared
 with a once-only notice delivered on the next run (`prompts/harness/run/plan-gate-refused.md`).
-The full output of each command check is saved to `tasks/<task>/checks/<step_id>.log`, and a bounded tail of the output
-is captured in the judgement record.
+The full output of each command check is saved to `tasks/<task>/checks/<run_id>/<step_id>.log` (or `checks/<step_id>.log`),
+and a bounded tail of the output is captured in the prompt's mismatch notice.
 Each judgement records the task, run, step ID, check, state, reason, output path, and duration in
 [`history.db`](history.md#step_judgements).
 Judgements are acknowledged by the history writer before run settlement continues.

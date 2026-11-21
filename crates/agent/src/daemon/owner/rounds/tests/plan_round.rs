@@ -786,7 +786,7 @@ async fn a_command_check_mismatch_sends_the_run_back_and_passes_when_repaired() 
         .await;
     rig.stop().await.unwrap();
 
-    assert!(second.contains("Step 1.1 check failed"), "{second}");
+    assert!(second.contains("Step 1.1 (Run command) check failed"), "{second}");
     assert!(second.contains("failing-step-output"), "{second}");
 
     let reader = Reader::open(&rig.home.history_file()).unwrap();
@@ -914,7 +914,7 @@ async fn exhaustion_of_bounces_creates_questions_file_naming_step_and_check() {
         .questions_file(&tasks[0], std::num::NonZeroU32::new(1).unwrap());
     assert!(questions_file.exists(), "questions file must exist");
     let content = std::fs::read_to_string(questions_file).unwrap();
-    assert!(content.contains("Step 1.1 check failed"), "{content}");
+    assert!(content.contains("Step 1.1 (Failing step) check failed"), "{content}");
     assert!(content.contains("fail-exhaust-marker"), "{content}");
 }
 
@@ -962,7 +962,7 @@ async fn command_check_timeout_kills_child_and_judges_mismatch() {
     .await;
     rig.stop().await.unwrap();
 
-    assert!(second.contains("Step 1.1 check failed"), "{second}");
+    assert!(second.contains("Step 1.1 (Long check) check failed"), "{second}");
 
     let reader = Reader::open(&rig.home.history_file()).unwrap();
     let judgements = reader.step_judgements(&tasks[0]).unwrap();
@@ -973,12 +973,99 @@ async fn command_check_timeout_kills_child_and_judges_mismatch() {
         step_judgements[0].state,
         agent_core::plan::judge::JudgementState::Mismatch
     );
-    assert_eq!(
-        step_judgements[0].reason.as_deref(),
-        Some("check timed out after 1 seconds")
-    );
+    assert_eq!(step_judgements[0].reason.as_deref(), Some("ran past 1 seconds"));
     assert_eq!(
         step_judgements[1].state,
         agent_core::plan::judge::JudgementState::Confirmed
     );
+}
+
+#[tokio::test]
+async fn excluded_role_or_zero_bounces_does_not_bounce_on_mismatch() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:first"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    plan_script(
+        &rig,
+        "first",
+        "Do one.\n\n1. Work\n[x] 1.1 Run command\n    Check: sh -c \"echo failing-output >&2; exit 1\"\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["claude-1"], "Test zero bounces.", MergeMode::NoMerge, None)
+        .await;
+    let _state = rig
+        .state_where("the task settled after 1 run", |state| {
+            state
+                .find_task(&tasks[0])
+                .is_some_and(|found| found.member.status() == TaskStatus::Done && found.member.runs().len() == 1)
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let judgements = reader.step_judgements(&tasks[0]).unwrap();
+    let step = "1.1".parse::<agent_core::ids::ItemId>().unwrap();
+    let step_judgements: Vec<_> = judgements.iter().filter(|j| j.step == step).collect();
+    assert_eq!(step_judgements.len(), 1);
+    assert_eq!(
+        step_judgements[0].state,
+        agent_core::plan::judge::JudgementState::Mismatch
+    );
+}
+
+#[tokio::test]
+async fn sequential_command_execution_and_environment_e2e() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:seq"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let seq_plan = "\
+Do seq.
+
+1. Work
+[x] 1.1 First
+    Check: sh -c \"echo first-done > step1.txt; exit 0\"
+[x] 1.2 Second
+    Check: sh -c \"test -f step1.txt && echo second-done; exit 0\"
+";
+    plan_script(&rig, "seq", seq_plan);
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["claude-1"], "Test seq command execution.", MergeMode::NoMerge, None)
+        .await;
+    let _state = rig
+        .state_where("task finished run 1", |state| {
+            state
+                .find_task(&tasks[0])
+                .is_some_and(|found| found.member.status() == TaskStatus::Done && found.member.runs().len() == 1)
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let judgements = reader.step_judgements(&tasks[0]).unwrap();
+    let s1 = "1.1".parse::<agent_core::ids::ItemId>().unwrap();
+    let s2 = "1.2".parse::<agent_core::ids::ItemId>().unwrap();
+    let j1 = judgements.iter().find(|j| j.step == s1).unwrap();
+    let j2 = judgements.iter().find(|j| j.step == s2).unwrap();
+    assert_eq!(j1.state, agent_core::plan::judge::JudgementState::Confirmed);
+    assert_eq!(j2.state, agent_core::plan::judge::JudgementState::Confirmed);
+    assert!(j1.output_path.is_some());
+    assert!(j2.output_path.is_some());
 }

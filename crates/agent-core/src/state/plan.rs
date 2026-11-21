@@ -53,9 +53,17 @@ pub enum PlanReason {
     Mismatch {
         /// The step ID.
         step: ItemId,
+        /// The step title.
+        #[serde(default)]
+        title: String,
         /// The check that was executed, if any.
+        #[serde(default)]
         check: Option<String>,
+        /// Why the check failed.
+        #[serde(default)]
+        reason: Option<String>,
         /// The trailing lines of the check's output.
+        #[serde(default)]
         tail: String,
     },
 }
@@ -80,9 +88,9 @@ pub struct PlanKeeping {
     /// The questions about the plan the human answered and no run has been given yet; `None` when there are none.
     #[serde(skip_serializing_if = "Option::is_none")]
     unread_answers: Option<NonZeroU32>,
-    /// A step check that was refused because it ran the gate, to be told on the next run.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    refused_gate: Option<(ItemId, String)>,
+    /// Step checks that were refused because they ran the gate, to be told on the next run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    refused_gate: Vec<(ItemId, String)>,
 }
 
 impl PlanKeeping {
@@ -161,18 +169,23 @@ impl PlanKeeping {
     }
 
     /// Records that `command` of `step` was refused because it ran the gate.
-    pub(super) fn set_refused_gate(&mut self, step: ItemId, command: String) {
-        self.refused_gate = Some((step, command));
+    pub(super) fn add_refused_gate(&mut self, step: ItemId, command: String) {
+        if !self.refused_gate.iter().any(|(s, c)| *s == step && *c == command) {
+            self.refused_gate.push((step, command));
+        }
     }
 
-    /// The refused gate notice for the next run, if any.
+    /// The refused gate notices for the next run, if any.
     #[must_use]
-    pub fn refused_gate(&self) -> Option<&(ItemId, String)> {
-        self.refused_gate.as_ref()
+    pub fn refused_gate(&self) -> &[(ItemId, String)] {
+        &self.refused_gate
     }
 
-    /// The refused gate notice for the next run, taken out.
-    pub(super) fn take_refused_gate(&mut self) -> Option<(ItemId, String)> {
-        self.refused_gate.take()
+    /// The refused gate notices for the next run, taken out.
+    pub(super) fn take_refused_gate(&mut self) -> Vec<(ItemId, String)> {
+        std::mem::take(&mut self.refused_gate)
     }
 }
+
+#[cfg(test)]
+mod tests;

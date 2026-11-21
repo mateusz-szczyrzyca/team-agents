@@ -1,6 +1,6 @@
-## Step 1.2 check failed
+## Step 1.2 (Run tests) check failed
 
-You ended your turn with `STATUS: DONE`, but the check of step 1.2 (`cargo test`) failed:
+You ended your turn with `STATUS: DONE`, but the check of step 1.2 (`cargo test`) failed: check failed with exit code 1
 
 ```text
 failures:

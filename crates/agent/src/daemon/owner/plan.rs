@@ -29,6 +29,7 @@ use agent_runtime::history::{
 };
 use agent_runtime::plan::check::{CheckContext, JudgementResult, execute_step_check};
 use agent_runtime::process::error_chain;
+use agent_runtime::run::agent_launch_env;
 use agent_runtime::run::compose::ComposeError;
 use agent_runtime::text_file::{ReplaceError, TextFileError, read_text_file, replace_text_file};
 
@@ -505,14 +506,16 @@ impl Owner {
             |id| previous.get(id).map(|j| j.state),
         );
         let plan_config = self.parts.settings.config.plan();
-        let agent_envs: Vec<(String, String)> = self
-            .parts
-            .settings
-            .secrets
-            .agent_env()
-            .iter()
-            .map(|(name, secret)| (name.to_string(), secret.expose().to_string()))
-            .collect();
+        let agent_envs: Vec<(String, String)> = agent_launch_env(
+            &self.parts.settings.secrets,
+            self.parts.engine.parts().agent_binary_dir.as_path(),
+            &self.parts.settings.config.binaries().agent_path,
+            self.parts.store.home().root(),
+            None,
+            self.parts.settings.config.build().incremental,
+        )
+        .map(|envs| envs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+        .unwrap_or_default();
         let task_dir = self.parts.store.home().task_dir(task);
         let context = CheckContext {
             worktree: worktree.as_path(),
@@ -541,12 +544,14 @@ impl Owner {
                 && let Some(cmd) = &result.check_line
                 && let Some((_, mut member)) = self.parts.state.find_task_mut(task)
             {
-                member.set_plan_refused_gate(step.id(), cmd.clone());
+                member.add_plan_refused_gate(step.id(), cmd.clone());
             }
             if result.state == JudgementState::Mismatch && first_mismatch.is_none() {
                 first_mismatch = Some(PlanReason::Mismatch {
                     step: step.id(),
+                    title: step.title().to_owned(),
                     check: result.check_line.clone(),
+                    reason: result.reason.clone(),
                     tail: result.tail.clone(),
                 });
             }
@@ -971,11 +976,19 @@ pub(super) fn correction(texts: &HarnessPrompts, reason: &PlanReason) -> Result<
             HarnessPrompt::PlanLostStep,
             &Variables::new().with("steps", steps(ids))?,
         )?,
-        PlanReason::Mismatch { step, check, tail } => texts.render(
+        PlanReason::Mismatch {
+            step,
+            title,
+            check,
+            reason,
+            tail,
+        } => texts.render(
             HarnessPrompt::PlanMismatch,
             &Variables::new()
                 .with("step", step.to_string())?
+                .with("title", title.as_str())?
                 .with("check", check.as_deref().unwrap_or("-"))?
+                .with("reason", reason.as_deref().unwrap_or("-"))?
                 .with("output", tail.as_str())?,
         )?,
     };

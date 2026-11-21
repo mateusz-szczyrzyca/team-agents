@@ -532,7 +532,9 @@ fn a_step_mismatch_sends_a_done_run_back_below_the_limit() {
     let keeping = keeping(0, PlanStage::Open);
     let mismatch = PlanReason::Mismatch {
         step: item("1.1"),
+        title: "First step".to_owned(),
         check: Some("cargo test".to_owned()),
+        reason: Some("check failed with exit code 1".to_owned()),
         tail: "error in test".to_owned(),
     };
 
@@ -558,7 +560,9 @@ fn a_step_mismatch_asks_the_human_when_the_limit_is_reached() {
     let keeping = keeping(3, PlanStage::Open);
     let mismatch = PlanReason::Mismatch {
         step: item("1.1"),
+        title: "First step".to_owned(),
         check: Some("cargo test".to_owned()),
+        reason: Some("check failed with exit code 1".to_owned()),
         tail: "error in test".to_owned(),
     };
 
@@ -583,7 +587,9 @@ fn a_step_mismatch_does_not_bounce_for_failed_run_or_unplanned_role_or_legacy() 
     let open_keeping = keeping(0, PlanStage::Open);
     let mismatch = PlanReason::Mismatch {
         step: item("1.1"),
+        title: "First step".to_owned(),
         check: Some("cargo test".to_owned()),
+        reason: Some("check failed with exit code 1".to_owned()),
         tail: "error in test".to_owned(),
     };
 

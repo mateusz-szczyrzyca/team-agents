@@ -863,7 +863,7 @@ impl Owner {
             let reason = member.take_plan_reason();
             let answers = member.take_unread_plan_answers();
             let refused = member.take_plan_refused_gate();
-            if reason.is_some() || answers.is_some() || refused.is_some() {
+            if reason.is_some() || answers.is_some() || !refused.is_empty() {
                 tracing::debug!(task = %task, ?reason, ?answers, ?refused, "the run is told what waited for it of its plan");
             }
         }
