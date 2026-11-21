@@ -14,6 +14,9 @@ mod findings;
 #[cfg(test)]
 pub(crate) mod fixtures;
 mod gate;
+mod holding;
+#[cfg(test)]
+mod holding_tests;
 mod item;
 mod member;
 mod migrate;
@@ -39,6 +42,7 @@ pub use findings::{
     RaisedFinding, Reconciled, RecordedFinding, SecondOpinion, Verification, VerifierAnswers, reconcile,
 };
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
+pub use holding::{HandOverError, Holding};
 pub use item::{
     AdvanceError, AskReviewsError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut,
     ItemPhase, ItemProgress, MergeConflict, NotWorkedOn, PhaseKind, PullRequest, ReplaceReviewError, Review,
@@ -346,6 +350,66 @@ impl State {
             task: task.clone(),
             source,
         })
+    }
+
+    /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
+    /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
+    /// that the state it leaves loads again.
+    ///
+    /// # Errors
+    /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
+    /// `holder` is of a lower tier than the agent that holds it or is in its team, or a run of it is going.
+    pub fn hand_over_task(&mut self, task: &TaskId, holder: Participant, at: Timestamp) -> Result<(), HandOverError> {
+        let no_task = || HandOverError::NoTask { task: task.clone() };
+        let team = self
+            .teams
+            .iter_mut()
+            .find(|team| team.find(task).is_some())
+            .ok_or_else(no_task)?;
+        let (role, held_by) = team
+            .find(task)
+            .map(|(role, member)| (role, member.agent().clone()))
+            .ok_or_else(no_task)?;
+        match role {
+            Role::Solo | Role::Coordinator | Role::Member => {}
+            Role::Worker | Role::Reviewer => {
+                return Err(HandOverError::Role {
+                    task: task.clone(),
+                    role,
+                });
+            }
+        }
+        if held_by == holder {
+            return Err(HandOverError::SameHolder { task: task.clone() });
+        }
+        // A task is never given to a lower tier; for a solo agent's, a coordinator's or a member's task, the tiers
+        // left are the ones the crew allows it.
+        if crate::decide::replacement::rank(holder.tier()) < crate::decide::replacement::rank(held_by.tier()) {
+            return Err(HandOverError::LowerTier {
+                task: task.clone(),
+                holder: holder.tier(),
+                held: held_by.tier(),
+            });
+        }
+        let in_team = team
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member)
+            .chain(team.reviewers())
+            .any(|member| member.agent().name() == holder.name());
+        if in_team {
+            return Err(HandOverError::InTeam {
+                task: task.clone(),
+                agent: holder.name().to_owned(),
+            });
+        }
+        let (_, mut member) = team.find_mut(task).ok_or_else(no_task)?;
+        if member.current_run().is_some() {
+            return Err(HandOverError::InRun { task: task.clone() });
+        }
+        member.held_task(holder, at);
+        Ok(())
     }
 
     /// The round `round` with its team.
