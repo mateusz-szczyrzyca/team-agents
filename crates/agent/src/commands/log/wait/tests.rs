@@ -1,9 +1,8 @@
 //! The line after the end of a run.
 
 use agent_core::ids::RoundId;
-use agent_core::local_time::Zone;
 
-use super::{Asked, wait_text, wait_text_in};
+use super::{Asked, wait_text};
 
 /// The round of the lines.
 fn round() -> RoundId {
@@ -39,6 +38,8 @@ fn a_round_the_daemon_could_not_be_asked_about_says_why() {
 
 #[test]
 fn a_github_retry_wait_is_formatted_in_the_client_zone() {
+    use agent_core::local_time::Zone;
+
     let asked = Asked::Waits(
         "GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21T00:07:00Z".to_owned(),
     );
@@ -46,11 +47,11 @@ fn a_github_retry_wait_is_formatted_in_the_client_zone() {
     let west = Zone::Fixed(time::UtcOffset::from_hms(-5, 0, 0).expect("valid"));
 
     assert_eq!(
-        wait_text_in(&round(), &asked, east),
+        super::wait_text_in(&round(), &asked, east),
         "round round-20261121-132909-q1w2 waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21 01:07 +01:00"
     );
     assert_eq!(
-        wait_text_in(&round(), &asked, west),
+        super::wait_text_in(&round(), &asked, west),
         "round round-20261121-132909-q1w2 waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-20 19:07 -05:00"
     );
 }
