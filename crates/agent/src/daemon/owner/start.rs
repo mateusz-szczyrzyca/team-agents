@@ -343,18 +343,6 @@ fn with_plan(
     if let Some(reason) = keeping.and_then(PlanKeeping::pending) {
         sections.push(super::plan::correction(ctx.texts, reason)?);
     }
-    if let Some(refusals) = keeping.map(PlanKeeping::refused_gate) {
-        for (step, cmd) in refusals {
-            sections.push(
-                ctx.texts.render(
-                    HarnessPrompt::PlanGateRefused,
-                    &Variables::new()
-                        .with("step", step.to_string())?
-                        .with("command", cmd.as_str())?,
-                )?,
-            );
-        }
-    }
     if sections.is_empty() {
         return Ok(prompt);
     }

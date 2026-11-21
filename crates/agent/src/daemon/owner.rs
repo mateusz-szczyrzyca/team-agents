@@ -37,7 +37,7 @@ use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
 use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
 use agent_core::history::{HistoryEvent, RunWhy};
-use agent_core::ids::{AgentName, GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
+use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::protocol::{
@@ -387,7 +387,7 @@ struct Located {
     /// The task's role.
     role: Role,
     /// The agent's name.
-    agent: AgentName,
+    agent: String,
 }
 
 /// What follows a run of a task that went bad: a step of the ladder, or who takes the task over when it has none left.
@@ -862,13 +862,12 @@ impl Owner {
                 source,
             })?;
         // The run's prompt has the reason it was sent back for its plan, if any: no later run is told it again.
-        // So are the answers about its plan that no run asked for and any refused gate notice.
+        // So are the answers about its plan that no run asked for.
         if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
             let reason = member.take_plan_reason();
             let answers = member.take_unread_plan_answers();
-            let refused = member.take_plan_refused_gate();
-            if reason.is_some() || answers.is_some() || !refused.is_empty() {
-                tracing::debug!(task = %task, ?reason, ?answers, ?refused, "the run is told what waited for it of its plan");
+            if reason.is_some() || answers.is_some() {
+                tracing::debug!(task = %task, ?reason, ?answers, "the run is told what waited for it of its plan");
             }
         }
         events.push(EventKind::RunStarted {
@@ -1111,7 +1110,7 @@ impl Owner {
                     item: id,
                 })?;
                 if matches!(item.phase(), agent_core::state::ItemPhase::Fixing { assignee, .. }
-                    if assignee.as_str() == located.agent.as_str())
+                    if assignee.as_str() == located.agent)
                     && let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut())
                 {
                     context.lead_message =
@@ -1949,7 +1948,7 @@ impl Owner {
         Ok(Located {
             team: found.team.id().clone(),
             role: found.role,
-            agent: found.member.agent().agent_name(),
+            agent: found.member.agent().name().to_owned(),
         })
     }
 
