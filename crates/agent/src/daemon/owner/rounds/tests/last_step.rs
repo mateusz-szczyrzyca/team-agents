@@ -355,3 +355,192 @@ async fn a_members_work_given_to_its_lead_is_logged_as_handed_over_to_the_lead()
     assert_eq!(rows[0].fields().get("from"), Some(&serde_json::json!("claude-1")));
     assert_eq!(rows[0].fields().get("to"), Some(&serde_json::json!("lead")));
 }
+
+/// The texts the bus of `rig` keeps, every file of its directory read as text.
+fn bus_texts(rig: &Rig) -> String {
+    let mut texts = String::new();
+    let mut dirs = vec![rig.home.root().join("bus")];
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if let Ok(text) = std::fs::read_to_string(&path) {
+                texts.push_str(&text);
+            }
+        }
+    }
+    texts
+}
+
+/// Stops `task` as the human does with `agent stop <task>`.
+async fn stop_task(rig: &Rig, task: &TaskId) {
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Stop(agent_core::protocol::ControlRequest {
+                target: agent_core::protocol::Target::Task(task.clone()),
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "unexpected reply: {reply:?}");
+}
+
+/// The heading of the message a lead is given a member's work with.
+const LEAD_TEXT: &str = "WORK OF A MEMBER THAT IS GONE";
+
+/// The heading of the briefing that follows that message.
+const LEAD_BRIEFING: &str = "## What the member's runs left";
+
+/// A team of `inv-lead` (running `lead`) and the member claude-1, which goes bad in both its sessions and is taken over
+/// by claude-3, which goes bad too; started and waiting for the human's answer about the member's task.
+async fn member_replacement_gone_bad(lead: &'static str) -> (Rig, Vec<TaskId>) {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", lead),
+            normal("claude-1", BAD_IN_BOTH_SESSIONS),
+            normal("claude-3", "nostatus"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    configure(&rig, "[replacement]\nagents = [\"claude-3\"]\n");
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Questions).await;
+    (rig, tasks)
+}
+
+// Rule: a taken-over member whose new holder goes bad too is asked about; the answer `b` stops it, and its lead is told
+// on the bus that the work is its own, with the briefing of what the member's runs left.
+#[tokio::test]
+async fn a_taken_over_members_answer_b_stops_it_and_its_lead_gets_the_work_with_the_briefing() {
+    let (mut rig, tasks) = member_replacement_gone_bad("sleep").await;
+    assert!(questions(&rig, &tasks[1], 1).is_some(), "the member's question");
+
+    answer(&rig, &tasks[1], 1, "b").await;
+    let state = rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+    rig.wait_for("the lead's text on the bus", || {
+        let bus = bus_texts(&rig);
+        bus.contains(LEAD_TEXT) && bus.contains(LEAD_BRIEFING)
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    let member = state.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(member.agent().name(), "claude-3");
+    assert_eq!(member.runs().len(), 9);
+}
+
+// Rule: a coordinator given a member's work that goes bad too, and answered `a`, starts once more in a new session; one
+// answered `b` stops.
+#[tokio::test]
+async fn a_coordinator_answered_a_starts_once_more_and_one_answered_b_stops() {
+    for (verdict, lead) in [
+        ("a", "sleep,nostatus,nostatus,nostatus,nostatus,nostatus,nostatus,sleep"),
+        ("b", "sleep,nostatus"),
+    ] {
+        let mut rig = Rig::new(
+            &[
+                investigator("inv-lead", lead),
+                normal("claude-1", BAD_IN_BOTH_SESSIONS),
+                investigator("inv-r1", APPROVE),
+                investigator("inv-r2", APPROVE),
+            ],
+            5,
+            true,
+        )
+        .await;
+        configure(&rig, "[replacement]\nagents = [\"inv-lead\"]\n");
+        rig.start().await;
+        let (_, tasks) = rig
+            .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+            .await;
+        rig.status_is(&tasks[0], TaskStatus::Questions).await;
+
+        answer(&rig, &tasks[0], 1, verdict).await;
+        let state = if verdict == "a" {
+            let lead_task = tasks[0].clone();
+            rig.state_where("the lead's run after the answer", |state| {
+                let lead = state.find_task(&lead_task).unwrap().member;
+                lead.runs().len() == 8 && lead.current_run().is_none()
+            })
+            .await
+        } else {
+            rig.status_is(&tasks[0], TaskStatus::Stopped).await
+        };
+        rig.stop().await.unwrap();
+
+        let lead = state.find_task(&tasks[0]).unwrap().member;
+        if verdict == "a" {
+            let sessions: Vec<_> = lead.runs().iter().map(|run| run.session().cloned()).collect();
+            assert_ne!(sessions[7], sessions[6], "a new session of the lead: {sessions:?}");
+            assert_ne!(lead.status(), TaskStatus::Stopped);
+        } else {
+            assert_eq!(lead.runs().len(), 7, "nothing more runs");
+        }
+    }
+}
+
+// Rule: in mode `off` a coordinator holding the work of a member the human stopped fails as before, unasked.
+#[tokio::test]
+async fn in_mode_off_a_coordinator_holding_a_stopped_members_work_fails_unasked() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,nostatus"),
+            normal("claude-1", "hold"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    configure(&rig, "[replacement]\nmode = \"off\"\n");
+    rig.wake_sleeping_teams();
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Running).await;
+
+    stop_task(&rig, &tasks[1]).await;
+    let state = rig.status_is(&tasks[0], TaskStatus::Failed).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(state.find_task(&tasks[0]).unwrap().member.questions().len(), 0);
+    assert!(questions(&rig, &tasks[0], 1).is_none(), "no questions file");
+}
+
+// Rule: a restart of the daemon while the question after the last step is open keeps it open, and its answer still does
+// what it says.
+#[tokio::test]
+async fn a_restart_while_the_question_is_open_keeps_it_and_its_answer_still_applies() {
+    let (mut rig, task) = replacement_gone_bad("done,done,done,done,done,done,nostatus,nostatus,nostatus,work").await;
+
+    rig.stop().await.unwrap();
+    rig.start().await;
+    rig.status_is(&task, TaskStatus::Questions).await;
+    answer(&rig, &task, 1, "a").await;
+    let state = rig
+        .item_where("1.1", "merged after the answer", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let member = state.find_task(&task).unwrap().member;
+    assert_eq!(member.runs().len(), 10);
+    assert_eq!(member.asked_after_last_step(), NonZeroU32::new(1));
+}
