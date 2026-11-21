@@ -73,7 +73,9 @@ recorded, one line each and cut like the rows. They are the steps the story of a
 so a value the history masks is masked here. The rows and the steps are one text of the newest `-n` lines (`100` unless
 given), in the order of their times; a run is told once before its first line, with its agent, task, team and round, and a
 line names its agent when the scope covers more than one agent. `--agent` covers every run of that agent, in every team.
-`--no-steps` leaves the steps out. `--round` and `--team` with `-f` cover the runs of the round or of the team.
+`--no-steps` leaves the steps out. `--round` and `--team` with `-f` cover the runs of the round or of the team. The steps obey
+the filters of the rows that can apply to them: `--since` and `--until` by the time of the step, `--grep` by a case-insensitive
+search of the phrase in what the step says; `--level` and `--event` name only the daemon's rows, so with either no step is printed.
 
 `-f` with such a scope prints the newest lines, then, as they are recorded, the new rows and the new steps of the runs of
 the scope, each once: a row by its ID, a step by its number in its run. A run that starts later is followed from its first
