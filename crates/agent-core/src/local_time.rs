@@ -94,14 +94,28 @@ impl TypedTime {
 
 impl Zone {
     /// The moment `at` in this zone, written as the person reads it: `2026-11-21 17:29:53 +01:00`. The zone is always
-    /// written: its offset, or `UTC` when the zone cannot be found. [`Zone::Utc`] writes the RFC 3339 text of the files.
+    /// written: its offset, or `UTC` when the zone cannot be found or the offset would leave the four-digit years.
+    /// [`Zone::Utc`] writes the RFC 3339 text of the files.
     #[must_use]
     pub fn stamp(&self, at: Timestamp) -> String {
         if matches!(self, Self::Utc) {
             return at.to_string();
         }
+        let utc = OffsetDateTime::from(at.as_utc());
         let resolved = self.resolve(at.as_utc());
-        let local = at.as_utc().to_offset(resolved.offset);
+        let (local, resolved) = match utc
+            .checked_to_offset(resolved.offset)
+            .filter(|local| (0..=9999).contains(&local.year()))
+        {
+            Some(local) => (local, resolved),
+            None => (
+                utc,
+                Resolved {
+                    offset: UtcOffset::UTC,
+                    marked: true,
+                },
+            ),
+        };
         let date = local.date();
         let time = local.time();
         format!(

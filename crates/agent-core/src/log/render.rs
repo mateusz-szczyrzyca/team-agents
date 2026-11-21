@@ -9,7 +9,6 @@ mod tests;
 use crate::history::RunStart;
 use crate::local_time::Zone;
 use crate::log::{LogEntry, LogEvent};
-use crate::state::Timestamp;
 
 /// Longest value a line shows, in characters; a longer one is cut and ends with [`CUT_MARK`].
 const MAX_VALUE_CHARS: usize = 120;
@@ -177,7 +176,7 @@ fn words_end(end: &serde_json::Value, zone: &Zone) -> String {
             None => "no STATUS line (ended by a signal)".to_owned(),
         },
         "QuotaExhausted" => match text.split_once("resets_at: Some(") {
-            Some((_, at)) => format!("quota exhausted (back at {})", back_at(&text_before(at), zone)),
+            Some((_, at)) => format!("quota exhausted (back at {})", back_at(at, zone)),
             None => "quota exhausted".to_owned(),
         },
         "RateLimited" => "rate limited".to_owned(),
@@ -188,11 +187,20 @@ fn words_end(end: &serde_json::Value, zone: &Zone) -> String {
     }
 }
 
-/// The time a quota is back at, in `zone` when it is a time of the files, else as it was written.
-fn back_at(text: &str, zone: &Zone) -> String {
-    match text.parse::<Timestamp>() {
+/// The time a quota is back at, from the text after `resets_at: Some(`, in `zone` when it is a time of the files or its
+/// `Debug` form, else as it was written.
+fn back_at(rest: &str, zone: &Zone) -> String {
+    let inner = rest.trim_start().strip_prefix("Timestamp(").unwrap_or(rest);
+    let raw = text_before(inner);
+    let cleaned = raw
+        .strip_suffix(" +00:00:00")
+        .or_else(|| raw.strip_suffix(" +00:00"))
+        .or_else(|| raw.strip_suffix(" +00"))
+        .or_else(|| raw.strip_suffix(" UTC"))
+        .unwrap_or(&raw);
+    match Zone::Utc.parse_typed(cleaned) {
         Ok(at) => zone.stamp(at),
-        Err(_) => text.to_owned(),
+        Err(_) => raw,
     }
 }
 
