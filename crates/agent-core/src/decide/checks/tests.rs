@@ -575,8 +575,14 @@ fn a_commit_that_is_not_a_test_fix_is_not_excused_by_being_named() {
     ];
     for (subject, files) in cases {
         let facts = test_fix(subject, files, &description);
+        let issues = found(&facts);
 
-        assert_eq!(found(&facts).len(), 1, "{subject}");
+        // a test fix that changes other files is a finding about its commit too (Rule: commits the team cannot repair)
+        let edits = issues
+            .iter()
+            .filter(|issue| !matches!(issue, Issue::Tried { .. }))
+            .count();
+        assert_eq!(edits, 1, "{subject}");
     }
 }
 
@@ -604,7 +610,8 @@ fn a_test_fix_that_touches_a_file_that_is_not_a_test_is_a_finding_about_the_comm
     for (other, files) in cases {
         let issues = found(&test_fix_touching(files));
 
-        // the commit takes a line out of the test of the `RED:` commit as well: that finding stays, for the team
+        // the commit that takes a line out of the test of the `RED:` commit is a finding for the team as well: it comes
+        // before the commit's own
         let tried = Issue::Tried {
             commit: id('2'),
             fault: CommitFault::FixTouchesOther {
