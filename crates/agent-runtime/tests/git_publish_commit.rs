@@ -126,4 +126,40 @@ mod git_publish_commit {
         assert!(moved_unheld);
         assert_eq!(raw(&repo, &["rev-parse", unheld.as_str()]), second.to_string());
     }
+
+    #[tokio::test]
+    async fn pushing_diverged_commit_is_refused_and_remote_branch_stays_unchanged() {
+        let (_tmp, repo, origin) = repository_with_origin();
+        let first = commit(&raw(&repo, &["rev-parse", "HEAD"]));
+        let target_branch = branch("agents/gemini-1/task-1-1.1a");
+        let git = handle(&repo);
+
+        // Push initial commit to remote branch:
+        git.push_commit(&target_branch, &first).await.unwrap();
+
+        // Advance remote branch with an independent commit:
+        let remote_third = commit_file(&repo, "c.txt", "remote three\n");
+        raw(&repo, &["push", "-q", "origin", &format!("{remote_third}:refs/heads/{target_branch}")]);
+        assert_eq!(
+            raw(&origin, &["rev-parse", &format!("refs/heads/{target_branch}")]),
+            remote_third.to_string()
+        );
+
+        // Reset local repo back to first and create a diverged commit:
+        raw(&repo, &["reset", "--hard", &first.to_string()]);
+        let local_diverged = commit_file(&repo, "d.txt", "diverged local\n");
+
+        // Attempting to push diverged commit directly to target_branch must be refused:
+        let result = git.push_commit(&target_branch, &local_diverged).await;
+        assert!(
+            matches!(result, Err(agent_runtime::git::GitError::PushRefused { .. })),
+            "expected PushRefused, got {result:?}"
+        );
+
+        // Remote branch on origin must stay at remote_third, completely unchanged:
+        assert_eq!(
+            raw(&origin, &["rev-parse", &format!("refs/heads/{target_branch}")]),
+            remote_third.to_string()
+        );
+    }
 }

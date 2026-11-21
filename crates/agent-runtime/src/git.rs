@@ -718,9 +718,11 @@ impl Git {
         let printed = text(operation, &captured.stdout)?;
         let mut held = HashSet::new();
         for line in printed.lines() {
-            if let Some(branch_ref) = line.strip_prefix("branch refs/heads/")
-                && let Ok(branch) = branch_ref.parse()
-            {
+            if let Some(branch_ref) = line.strip_prefix("branch refs/heads/") {
+                let branch: BranchName = branch_ref.parse().map_err(|source| GitError::Unexpected {
+                    operation,
+                    output: format!("invalid branch name in worktree list {branch_ref:?}: {source}"),
+                })?;
                 held.insert(branch);
             }
         }
@@ -974,16 +976,7 @@ impl Git {
     pub async fn push_commit(&self, branch: &BranchName, commit: &CommitId) -> Result<(), GitError> {
         let operation = GitOperation::Push;
         let reference = format!("{commit}:refs/heads/{branch}");
-        // The lease names the commit `origin` must still have: git writes over that one and over no other.
-        let lease = self
-            .rewritten_since_pushed(branch, commit)
-            .await?
-            .map(|pushed| format!("--force-with-lease=refs/heads/{branch}:{pushed}"));
-        let mut args = vec![arg("push")];
-        if let Some(lease) = &lease {
-            args.push(arg(lease));
-        }
-        args.extend([arg(REMOTE), arg(&reference)]);
+        let args = [arg("push"), arg(REMOTE), arg(&reference)];
         let captured = self.run(operation, Reach::Network, &args).await?;
         if captured.exit != (ExitReport::Exited { code: 0 }) {
             let error = failed(operation, &captured);
