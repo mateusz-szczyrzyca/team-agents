@@ -50,8 +50,6 @@ impl<'a> Timeline<'a> {
     /// The text of the steps of the agents `followed`, in `teams`, the teams the rows stand for.
     pub(crate) fn new(rows: Vec<&'a LogEntry>, steps: Vec<&'a TimedStep>, followed: Vec<AgentName>) -> Self {
         let order = if rows.is_empty() {
-            let places: Vec<Place> = rows.iter().map(|_| Place::First).collect();
-            let _ = places;
             order_of(&rows, &steps, &unplaced(&steps))
         } else {
             order_of(&rows, &steps, &places(&rows, &steps))
@@ -98,8 +96,8 @@ impl<'a> Timeline<'a> {
     ///
     /// The text has its rows with `teams`: a row's run is looked up in the team the row belongs to.
     fn row_line(&self, row: &LogEntry) -> String {
-        let run = Some(row)
-            .and_then(|_| row.team())
+        let run = row
+            .team()
             .and_then(|team| self.teams.iter().find(|made| &made.team == team))
             .and_then(|team| team.run_of(row.run()))
             .cloned();
@@ -108,15 +106,6 @@ impl<'a> Timeline<'a> {
 ",
             record_line(row, run.as_ref())
         )
-    }
-
-    /// The run of `row`, when the text knows its team.
-    fn run(&self, row: &LogEntry) -> Option<&agent_core::history::RunStart> {
-        let team = row.team()?;
-        self.teams
-            .iter()
-            .find(|made| &made.team == team)
-            .and_then(|made| made.run_of(row.run()))
     }
 
     /// The things of the text that were not printed yet, oldest first.

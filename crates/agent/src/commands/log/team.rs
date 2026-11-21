@@ -3,8 +3,7 @@
 use std::collections::BTreeMap;
 
 use agent_core::history::RunStart;
-use agent_core::ids::{AgentName, RoundId, RunId, TaskId, TeamId};
-use agent_core::state::Timestamp;
+use agent_core::ids::{RunId, TeamId};
 use agent_runtime::history::{ReadError, Reader};
 
 /// A team with what its history says of its runs, in one order.
@@ -12,8 +11,6 @@ use agent_runtime::history::{ReadError, Reader};
 pub(crate) struct Team {
     /// The team.
     pub(crate) team: TeamId,
-    /// When it was formed.
-    pub(crate) at: Timestamp,
     /// Its runs by ID, each with the rounds it works for.
     runs: BTreeMap<RunId, RunStart>,
 }
@@ -34,7 +31,6 @@ pub(crate) fn teams(reader: &Reader) -> Result<Vec<Team>, ReadError> {
     for team in reader.teams()? {
         let mut made = Team {
             team: team.value.team.clone(),
-            at: team.value.at,
             runs: BTreeMap::new(),
         };
         for run in reader.runs_of_team(&team.value.team)? {
@@ -43,26 +39,4 @@ pub(crate) fn teams(reader: &Reader) -> Result<Vec<Team>, ReadError> {
         teams.push(made);
     }
     Ok(teams)
-}
-
-/// The rounds that `run` names, from `rounds` when the run says none of it.
-pub(crate) fn rounds_of(run: &RunStart, rounds: &[RoundId]) -> Vec<RoundId> {
-    let _ = (run, rounds);
-    Vec::new()
-}
-
-/// The agents of `teams` that run `task`, when there is more than one.
-pub(crate) fn agents_of(teams: &[Team], task: &TaskId) -> Vec<AgentName> {
-    let mut agents: Vec<AgentName> = Vec::new();
-    for team in teams {
-        for run in team.runs.values().filter(|run| &run.task == task) {
-            match run.agent.name.parse() {
-                Ok(agent) => agents.push(agent),
-                Err(source) => tracing::warn!(%source, "a run has no agent name the log can show"),
-            }
-        }
-    }
-    agents.sort();
-    agents.dedup();
-    agents
 }
