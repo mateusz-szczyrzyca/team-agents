@@ -662,3 +662,25 @@ fn the_item_of_a_failed_member_waits_even_when_the_coordinator_reported_done() {
 
     assert_eq!(plan_publications(&team).unwrap(), []);
 }
+
+#[tokio::test]
+async fn split_description_records_authority_tier_executor_and_sibling_pull_requests() {
+    let texts = texts().await;
+    let mut team = solo(LIST);
+    team.open_round("round-20261111-153001-q1w2".parse().unwrap(), Some(item("1.1")), at(0))
+        .unwrap();
+    start(&mut team, "1.1", "claude-1", "part-a");
+    let plan = serde_json::from_value(serde_json::json!({
+        "parent":"1.1", "approved_by":"harness", "parts":[
+            {"title":"Résumé", "delivers":"Guide", "checks":"Read", "depends_on":[], "tier":"normal"},
+            {"title":"Second", "delivers":"Guide", "checks":"Read", "depends_on":["a"], "tier":"investigator"}
+        ]
+    }))
+    .unwrap();
+    team.activate_split(plan).unwrap();
+    let body = pull_text(&texts, &team, &repo(), &[item("1.1")], &gate(GateOutcome::Passed))
+        .unwrap()
+        .body;
+    let section = body.split_once("## Split").map(|(_, tail)| format!("## Split{tail}\n"));
+    assert_eq!(section.as_deref(), Some(include_str!("description/split.md")));
+}
