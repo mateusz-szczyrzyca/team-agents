@@ -29,8 +29,9 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Checks;
+use crate::decide::round::AskReason;
 use crate::repo_path::RepoPath;
-use crate::state::CommitId;
+use crate::state::{Basis, CommitId, Covers};
 use crate::task_allowance::TaskAllowance;
 
 pub mod markers;
@@ -396,6 +397,17 @@ impl Issue {
         }
     }
 
+    /// Whether the round's own diff no longer holds this finding, a finding about a commit of the round
+    /// ([`Subject::Commit`]): the commit is not one the round added — it came with a merge of the base branch, or with
+    /// the part of a split that carries it. What the human said about it does not hold any more.
+    #[must_use]
+    pub fn gone_from_round(&self, facts: &RoundFacts) -> bool {
+        match self.subject() {
+            Subject::Commit(commit) => commit_paths(facts, &commit).is_empty(),
+            Subject::Path(_) | Subject::NoTests => false,
+        }
+    }
+
     /// The task header that permits this path change; markers and missing tests always need their own decision.
     #[must_use]
     pub fn allowed_beforehand<'a>(
@@ -594,6 +606,75 @@ fn commit_paths<'a>(facts: &'a RoundFacts, commit: &CommitId) -> Vec<&'a RepoPat
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The fault of a finding about a commit, whatever the team did to it afterwards: the question to the human about
+/// commits frames them all the same way.
+#[must_use]
+pub fn commit_fault(issue: &Issue) -> Option<CommitFaultRef<'_>> {
+    match issue {
+        Issue::Tried { fault, .. } => Some(CommitFaultRef::Named(fault)),
+        Issue::EditedTest { path, red, .. } => Some(CommitFaultRef::Edited { path, red }),
+        Issue::TestChanged { .. }
+        | Issue::ProtectedChanged { .. }
+        | Issue::RedTestEdited { .. }
+        | Issue::NoTests
+        | Issue::Marker { .. } => None,
+    }
+}
+
+/// The fault of a finding about a commit, borrowed or made from its fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitFaultRef<'a> {
+    /// A [`CommitFault::FixTouchesOther`].
+    Named(&'a CommitFault),
+    /// A [`CommitFault::TestEdited`], which names its test and the `RED:` commit that committed it.
+    Edited {
+        /// The test.
+        path: &'a RepoPath,
+        /// The `RED:` commit.
+        red: &'a CommitId,
+    },
+}
+
+impl CommitFaultRef<'_> {
+    /// The path the fault names beside its commit.
+    #[must_use]
+    pub fn path(&self) -> &RepoPath {
+        match self {
+            Self::Named(CommitFault::FixTouchesOther { other, .. }) => other,
+            Self::Named(CommitFault::TestEdited { path, .. }) => path,
+            Self::Edited { path, .. } => *path,
+        }
+    }
+
+    /// The fault itself.
+    #[must_use]
+    pub fn fault(&self) -> CommitFault {
+        match self {
+            Self::Named(fault) => (**fault).clone(),
+            Self::Edited { path, red } => CommitFault::TestEdited {
+                path: (*path).clone(),
+                red: (*red).clone(),
+            },
+        }
+    }
+}
+
+/// What the question about `issues` covers, besides its subjects, at the `head` it was put about: the commits the team
+/// cannot repair, when they are all the question finds; everything that the passes of the team used to settle.
+#[must_use]
+pub fn basis_of(issues: &[&Issue], reason: AskReason, head: &CommitId) -> Basis {
+    let commits_only = issues.iter().all(|issue| commit_fault(issue).is_some());
+    let covers = match (reason, commits_only) {
+        (AskReason::OnlyTheHumanMayAllow, true) => Covers::Tried,
+        (AskReason::OnlyTheHumanMayAllow | AskReason::PassesUsed, false) => Covers::Everything,
+        (AskReason::PassesUsed, true) => Covers::Everything,
+    };
+    Basis {
+        head: head.clone(),
+        covers,
+    }
 }
 
 /// The protected paths `file` touches: where it was when it moved out of one and where it is when it is in one, each
