@@ -512,7 +512,7 @@ impl Program {
     /// The POSIX shell command, resolved through the run environment PATH.
     #[must_use]
     pub fn posix_shell() -> Self {
-        Self::literal("false")
+        Self::literal("sh")
     }
 
     /// The program, as a command name or an absolute path.

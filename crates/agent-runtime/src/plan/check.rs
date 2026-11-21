@@ -38,15 +38,6 @@ pub enum CheckError {
 /// Errors that can happen while preparing a command check process spec.
 #[derive(Debug, thiserror::Error)]
 enum CommandPreparationError {
-    /// The program name cannot be parsed as a valid program.
-    #[error("cannot parse program {program:?}")]
-    InvalidProgram {
-        /// The program string that could not be parsed.
-        program: String,
-        /// The underlying value error.
-        #[source]
-        source: agent_core::config::InvalidValue,
-    },
     /// The worktree path is not valid UTF-8.
     #[error("worktree path is not valid UTF-8: {}", path.display())]
     NonUtf8WorktreePath {
@@ -304,10 +295,7 @@ fn prepare_process_spec(
     command_str: &str,
     log_path: PathBuf,
 ) -> Result<ProcessSpec, CommandPreparationError> {
-    let program = Program::from_str("sh").map_err(|source| CommandPreparationError::InvalidProgram {
-        program: "sh".to_owned(),
-        source,
-    })?;
+    let program = Program::posix_shell();
     let worktree_str = context
         .worktree
         .to_str()
