@@ -464,7 +464,7 @@ impl Owner {
             self.publish(
                 at,
                 EventKind::TeamUpdated {
-                    summary: Box::new(TeamSummary::from(found)),
+                    summary: Box::new(TeamSummary::described(found)),
                 },
             );
         }

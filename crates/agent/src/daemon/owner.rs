@@ -1761,7 +1761,7 @@ impl Owner {
             .iter()
             .filter(|known| team.is_none_or(|wanted| known.id() == wanted))
             .map(|known| {
-                let mut summary = TeamSummary::from(known);
+                let mut summary = TeamSummary::described(known);
                 for member in &summary.members {
                     let steps = self.task_plan_summary(&member.task);
                     if !steps.is_empty() {
@@ -1819,7 +1819,7 @@ impl Owner {
                     .parts
                     .state
                     .find_task(task)
-                    .map(|found| TeamSummary::from(found.team))
+                    .map(|found| TeamSummary::described(found.team))
                     .ok_or_else(|| not_found(format!("there is no task {task}")))?;
                 let steps = self.task_plan_summary(task);
                 if !steps.is_empty() {
@@ -1832,7 +1832,7 @@ impl Owner {
                     .parts
                     .state
                     .find_round(round)
-                    .map(|(team, _)| TeamSummary::from(team))
+                    .map(|(team, _)| TeamSummary::described(team))
                     .ok_or_else(|| not_found(format!("there is no round {round}")))?;
                 if let Some((team, _)) = self.parts.state.find_round(round) {
                     for (_role, member) in team.members_in(round) {
@@ -2161,7 +2161,7 @@ impl Owner {
             self.publish(
                 at,
                 EventKind::TeamUpdated {
-                    summary: Box::new(TeamSummary::from(team)),
+                    summary: Box::new(TeamSummary::described(team)),
                 },
             );
         }
