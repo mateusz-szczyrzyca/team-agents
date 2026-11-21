@@ -172,9 +172,6 @@ pub(crate) enum OwnerError {
     /// Recovery on start failed.
     #[error("cannot recover the state")]
     Recovery(#[from] RecoveryError),
-    /// Step judgements could not be persisted to history.
-    #[error("cannot persist step judgements to history")]
-    PersistJudgements(#[from] agent_runtime::history::PersistJudgementsError),
     /// Removing the plan file from delivery failed or worktree could not be located.
     #[error(transparent)]
     OutOfDelivery(#[from] plan::OutOfDeliveryError),

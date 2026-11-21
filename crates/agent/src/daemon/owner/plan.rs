@@ -544,18 +544,15 @@ impl Owner {
         if !records.is_empty() && self.history.is_writing() {
             match self.history.persist_judgements(records).await {
                 Ok(()) => {}
-                Err(error @ agent_runtime::history::PersistJudgementsError::Unavailable)
-                    if !self.history.is_writing() =>
-                {
+                Err(error) => {
                     // History degradation keeps the task running; the cached judgement is not durable.
                     tracing::warn!(
                         event = LogEvent::HistoryRecordIncomplete.as_str(),
                         task = %task,
                         error = %error_chain(&error),
-                        "plan judgements remain only in memory because history became unavailable"
+                        "plan judgements remain only in memory because history could not keep them"
                     );
                 }
-                Err(error) => return Err(OwnerError::PersistJudgements(error)),
             }
         }
         Ok((results, previous))
