@@ -530,7 +530,7 @@ async fn observe_machine(
 /// Machine presentation context captured by the CLI before it starts async workers.
 #[derive(Debug, Clone)]
 pub struct DebugLocation {
-    /// Machine's current offset from UTC.
+    /// The zone the times a person reads in the debug bundle are written in.
     pub zone: agent_core::local_time::Zone,
     /// Clone from which diagnostics were requested, when known.
     pub checkout: Option<PathBuf>,

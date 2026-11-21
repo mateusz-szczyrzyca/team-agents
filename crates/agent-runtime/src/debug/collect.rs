@@ -44,7 +44,7 @@ pub(super) struct Collection {
     pub(super) checkout: Option<PathBuf>,
     /// Notice for merged worktrees whose retained branches were read in the clone.
     pub(super) git_notice: Option<String>,
-    /// Local timezone offset for presentation; defaults to UTC.
+    /// Zone for human-facing timestamps; defaults to UTC.
     pub(super) zone: agent_core::local_time::Zone,
     /// Relative artifact paths and their unredacted bytes; never logged.
     artifacts: Vec<(PathBuf, Vec<u8>)>,

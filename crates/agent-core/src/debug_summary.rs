@@ -1,7 +1,7 @@
 //! Pure bounded summary renderer for `agent debug`.
 //!
-//! Renders `SUMMARY.md` from collected facts in strict specification order, with UTC and local
-//! times, task tables, and byte-safe bounded truncation (< 100,000 bytes) preserving section headings.
+//! Renders `SUMMARY.md` from collected facts in strict specification order, with local times in one
+//! form with their zone, task tables, and byte-safe bounded truncation (< 100,000 bytes) preserving section headings.
 
 #[cfg(test)]
 mod tests;
