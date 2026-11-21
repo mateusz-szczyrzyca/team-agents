@@ -263,11 +263,13 @@ async fn a_first_part_waiting_for_an_absent_tier_survives_restart() {
     assert_eq!(team.item(item).unwrap().phase(), &ItemPhase::Pending);
     assert_eq!(team.rounds().len(), 1);
     assert_eq!(team.rounds()[0].id(), &round);
-    assert!(
+    assert_eq!(
         team.crew()
             .roster()
             .iter()
-            .all(|(_, member)| member.questions().is_empty())
+            .map(|(_, member)| member.questions().len())
+            .sum::<usize>(),
+        1
     );
     rig.stop().await.unwrap();
 }
