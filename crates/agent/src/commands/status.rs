@@ -348,7 +348,7 @@ fn render_at(
 
 /// What a view of the status prints, the running view being the same teams with their open rounds only.
 #[cfg(test)]
-fn render_running(teams: &[TeamSummary]) -> String {
+pub(crate) fn render_running(teams: &[TeamSummary]) -> String {
     render_in(teams, View::Running, &|_| None, &|_| String::new(), UtcOffset::UTC)
 }
 
