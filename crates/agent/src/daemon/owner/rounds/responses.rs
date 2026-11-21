@@ -22,6 +22,23 @@ use agent_core::state::{ItemPhase, RunEnd, RunState, Timestamp};
 use agent_core::status::RunOutcome;
 
 impl Owner {
+    /// The actual holders of outstanding fix responses, in crew order.
+    fn response_holders(&self, team_id: &TeamId) -> Result<Vec<super::Lead>, OwnerError> {
+        let team = self
+            .parts
+            .state
+            .team(team_id)
+            .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+        team.crew().roster().iter()
+            .filter(|(_, member)| team.items().iter().any(|item|
+                matches!(item.phase(), ItemPhase::Fixing { assignee, .. } if assignee.as_str() == member.agent().name())))
+            .map(|(_, member)| Ok(super::Lead {
+                repo: team.repo().clone(), task: member.task().clone(),
+                agent: member.agent().name().parse()?,
+                done: true,
+            })).collect()
+    }
+
     /// Reads the handed-over tip before accepting a second-opinion response.
     pub(in crate::daemon::owner) async fn read_fix_responses(
         &mut self,
@@ -29,34 +46,45 @@ impl Owner {
         team: &TeamId,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
-        let lead = self.lead_of(team)?;
-        let rotating = self.parts.state.team(team).and_then(|team| {
-            let run = response_run(team, &lead.task)?;
+        if self.parts.state.team(team).is_some_and(|team| {
             team.items()
                 .iter()
-                .find(|item| {
-                    needs_response(item, run, crate::daemon::merge::pull_passes(team, item))
-                        && item.findings().is_some_and(|ledger| ledger.verification().is_some())
-                })
-                .map(|item| {
-                    let pr = match item.phase() {
-                        ItemPhase::InReview { pr, .. }
-                        | ItemPhase::Approved { pr, .. }
-                        | ItemPhase::Fixing { pr, .. } => Some(pr.number),
-                        ItemPhase::Pending | ItemPhase::InProgress { .. } | ItemPhase::Done { .. } => None,
-                    };
-                    (item.id(), pr)
-                })
-        });
-        let Some((item, pr)) = rotating else {
+                .all(|item| item.findings().is_none_or(|ledger| ledger.verification().is_none()))
+        }) {
             return self.check_fix_responses(pulls, team, look);
-        };
-        let place = self.place_of(team, &[item]);
-        let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent);
-        let Some(head) = self.head_of(&place, team, WaitingStep::ReadFixHead, pr, git).await? else {
-            return Ok(());
-        };
-        self.check_responses(pulls, team, look, Some(&head))
+        }
+        for lead in self.response_holders(team)? {
+            let rotating = self.parts.state.team(team).and_then(|team| {
+                let run = response_run(team, &lead.task)?;
+                team.items()
+                    .iter()
+                    .find(|item| {
+                        matches!(item.phase(), ItemPhase::Fixing { assignee, .. } if assignee == &lead.agent)
+                            && needs_response(item, run, crate::daemon::merge::pull_passes(team, item))
+                            && item.findings().is_some_and(|ledger| ledger.verification().is_some())
+                    })
+                    .map(|item| {
+                        let pr = match item.phase() {
+                            ItemPhase::InReview { pr, .. }
+                            | ItemPhase::Approved { pr, .. }
+                            | ItemPhase::Fixing { pr, .. } => Some(pr.number),
+                            ItemPhase::Pending | ItemPhase::InProgress { .. } | ItemPhase::Done { .. } => None,
+                        };
+                        (item.id(), pr)
+                    })
+            });
+            let Some((item, pr)) = rotating else {
+                self.check_responses(pulls, team, look, None, &lead)?;
+                continue;
+            };
+            let place = self.place_of(team, &[item]);
+            let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent);
+            let Some(head) = self.head_of(&place, team, WaitingStep::ReadFixHead, pr, git).await? else {
+                return Ok(());
+            };
+            self.check_responses(pulls, team, look, Some(&head), &lead)?;
+        }
+        Ok(())
     }
 
     /// Validates legacy responses without the independent-opinion protocol.
@@ -66,7 +94,10 @@ impl Owner {
         team: &TeamId,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
-        self.check_responses(pulls, team, look, None)
+        for lead in self.response_holders(team)? {
+            self.check_responses(pulls, team, look, None, &lead)?;
+        }
+        Ok(())
     }
 
     /// Validates the latest completed fix response once, without consuming another fix pass.
@@ -76,8 +107,8 @@ impl Owner {
         team_id: &TeamId,
         look: &mut Look,
         head: Option<&agent_core::state::CommitId>,
+        lead: &super::Lead,
     ) -> Result<(), OwnerError> {
-        let lead = self.lead_of(team_id)?;
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
@@ -90,7 +121,10 @@ impl Owner {
             .items()
             .iter()
             .map(|item| (item.clone(), crate::daemon::merge::pull_passes(team, item)))
-            .filter(|(item, pass)| needs_response(item, &run, *pass))
+            .filter(|(item, pass)| {
+                matches!(item.phase(), ItemPhase::Fixing { assignee, .. } if assignee == &lead.agent)
+                    && needs_response(item, &run, *pass)
+            })
             .collect();
         let mut explained = std::collections::HashSet::new();
         for (item, pass) in fixing {
@@ -116,7 +150,7 @@ impl Owner {
                     if let ItemPhase::Fixing { pr, .. } = item.phase()
                         && explained.insert(pr.number)
                     {
-                        self.record_explanations(team_id, &item, pass, &lead, responses);
+                        self.record_explanations(team_id, &item, pass, lead, responses);
                     }
                     None
                 }
@@ -160,7 +194,25 @@ impl Owner {
         bounces: u32,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
-        let lead = self.lead_of(team_id)?;
+        let holder = self
+            .parts
+            .state
+            .team(team_id)
+            .and_then(|team| team.item(id))
+            .and_then(|item| {
+                if let ItemPhase::Fixing { assignee, .. } = item.phase() {
+                    Some(assignee.clone())
+                } else {
+                    None
+                }
+            });
+        let Some(lead) = self
+            .response_holders(team_id)?
+            .into_iter()
+            .find(|lead| Some(&lead.agent) == holder.as_ref())
+        else {
+            return Ok(());
+        };
         tracing::warn!(event = LogEvent::ChecksDecided.as_str(), task = %lead.task, bounces, "invalid lead finding response: verification remains held");
         if bounces <= super::verdicts::MAX_VERDICT_BOUNCES {
             self.release(&lead.task, Why::Gate(text), look)?;

@@ -1091,8 +1091,7 @@ impl Owner {
 
     /// Retains the lead's bounded fix response alongside its verification context.
     fn remember_fix_message(&mut self, located: &Located, message: Option<&str>) -> Result<(), OwnerError> {
-        if matches!(located.role, Role::Solo | Role::Coordinator)
-            && let Some(message) = message
+        if let Some(message) = message
             && let Some(mut team) = self.parts.state.team_mut(&located.team)
         {
             let ids: Vec<_> = team.items().iter().map(agent_core::state::ItemProgress::id).collect();
@@ -1101,7 +1100,8 @@ impl Owner {
                     team: located.team.clone(),
                     item: id,
                 })?;
-                if matches!(item.phase(), agent_core::state::ItemPhase::Fixing { .. })
+                if matches!(item.phase(), agent_core::state::ItemPhase::Fixing { assignee, .. }
+                    if assignee.as_str() == located.agent)
                     && let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut())
                 {
                     context.lead_message =

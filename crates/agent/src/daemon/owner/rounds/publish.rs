@@ -611,6 +611,28 @@ impl Owner {
         now: Timestamp,
     ) -> Result<Attempt, PublishError> {
         let Site { pulls, team, lead } = site;
+        let member_fixes: Vec<_> = self
+            .parts
+            .state
+            .team(team)
+            .into_iter()
+            .flat_map(|team| fixing.iter().filter_map(|id| team.item(*id)))
+            .filter_map(|item| match item.phase() {
+                ItemPhase::Fixing { assignee, branch, .. } if assignee != &lead.agent => Some(Joining {
+                    item: item.id(),
+                    branch: branch.clone(),
+                }),
+                ItemPhase::Pending
+                | ItemPhase::InProgress { .. }
+                | ItemPhase::InReview { .. }
+                | ItemPhase::Fixing { .. }
+                | ItemPhase::Approved { .. }
+                | ItemPhase::Done { .. } => None,
+            })
+            .collect();
+        if contained(&ready.git, &member_fixes, &ready.tip).await?.len() != member_fixes.len() {
+            return Ok(Attempt::Nothing);
+        }
         let joined = contained(&ready.git, joining, &ready.tip).await?;
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
         let before = github.get_pull_request(pr.number).await?;

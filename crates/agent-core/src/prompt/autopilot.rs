@@ -126,6 +126,8 @@ pub enum AutopilotPrompt {
     ReviewVerdictRequestChanges,
     /// What the lead of a team is told when the reviewers asked for changes.
     ReviewFixPass,
+    /// Explains how a qualified member hands its fixes back to the integration lead.
+    ReviewMemberFix,
     /// The one-time explanation protocol.
     ReviewExplanationVote,
     /// The one-time explanation protocol.
@@ -284,6 +286,7 @@ impl AutopilotPrompt {
         Self::ReviewVerdictApprove,
         Self::ReviewVerdictRequestChanges,
         Self::ReviewFixPass,
+        Self::ReviewMemberFix,
         Self::ReviewExplanationVote,
         Self::ReviewExplanation,
         Self::ReviewDisputes,
@@ -432,6 +435,7 @@ impl AutopilotPrompt {
             Self::ReviewComment => "harness/review/comment.md",
             Self::ReviewVerdictApprove => "harness/review/verdict-approve.md",
             Self::ReviewVerdictRequestChanges => "harness/review/verdict-request-changes.md",
+            Self::ReviewMemberFix => "harness/review/member-fix.md",
             Self::ReviewFixPass => "harness/review/fix-pass.md",
             Self::ReviewFixResponse => "harness/review/fix-response.md",
             Self::ReviewFixPassOpen => "harness/review/fix-pass-open.md",
@@ -565,6 +569,7 @@ impl AutopilotPrompt {
             Self::ReviewVerificationRewritten => &["base"],
             Self::ReviewComment => &["reviewer", "client", "verdict", "pass", "commit", "report"],
             Self::ReviewVerdictApprove | Self::ReviewVerdictRequestChanges => &["icon"],
+            Self::ReviewMemberFix => &["integration"],
             Self::ReviewFixPass | Self::ReviewFixResponse => FIX_PASS_VARIABLES,
             Self::ReviewFixPassOpen => &["pr", "pass"],
             Self::ReviewResponseInvalid => &["line", "number", "allowed"],
