@@ -141,7 +141,22 @@ impl TryFrom<TaskListWire> for TaskListText {
 
     fn try_from(wire: TaskListWire) -> Result<Self, Self::Error> {
         match wire {
-            TaskListWire::Text(text) => Self::new(text),
+            TaskListWire::Text(text) => match TaskList::parse(&text) {
+                Ok(list) => Ok(Self {
+                    text,
+                    list: Box::new(list),
+                    allow_lines: AllowLines::Permissions,
+                }),
+                // A state of an earlier version may hold a text whose first lines are a `Short desc:` line that
+                // this version refuses: that line was brief then, and one refused value must not make the state
+                // unreadable.
+                Err(
+                    TaskListError::ShortDescEmpty { .. }
+                    | TaskListError::ShortDescTooLong { .. }
+                    | TaskListError::ShortDescTwice { .. },
+                ) => Self::with_allow_lines(text, AllowLines::Brief),
+                Err(error) => Err(error),
+            },
             TaskListWire::Marked { text, allow_lines } => Self::with_allow_lines(text, allow_lines),
         }
     }
