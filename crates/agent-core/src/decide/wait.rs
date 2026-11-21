@@ -28,7 +28,7 @@ pub enum Obligation {
     Human,
     /// The lead must correct its handover or answer.
     LeadCorrection,
-    /// A task of the round is queued, or waits for a free agent or a limit of runs, and its run advances the round.
+    /// A task of the round is queued, or waits for a free agent or a limit of runs, and its run starts the round.
     QueuedRun,
 }
 
@@ -55,7 +55,7 @@ impl Waiting {
             Self::For(Obligation::SecondOpinion) => include_str!("../../../../prompts/harness/pr/wait-opinion.md"),
             Self::For(Obligation::Human) => include_str!("../../../../prompts/harness/pr/wait-human.md"),
             Self::For(Obligation::LeadCorrection) => include_str!("../../../../prompts/harness/pr/wait-correction.md"),
-            Self::For(Obligation::QueuedRun) => include_str!("../../../../prompts/harness/pr/wait-correction.md"),
+            Self::For(Obligation::QueuedRun) => include_str!("../../../../prompts/harness/pr/wait-queued.md"),
             Self::Defect => include_str!("../../../../prompts/harness/pr/wait-nothing.md"),
         }
     }
