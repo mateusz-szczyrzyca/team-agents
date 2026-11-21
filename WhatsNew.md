@@ -5,6 +5,15 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.45.0 — 21.11.2026 — PR #163
+
+### New features
+- [agent] [agent-core] [agent-runtime] `agent status <task>` and `agent status <round>` show plan steps with their marks and a done step's settlement: `confirmed`, `declared` or `mismatch`. The daemon checks `exists PATH` inside the worktree and retains judgements across restarts; steps without checks, reviewer checks and command checks remain declared.
+- [agent-runtime] **Action:** history upgrades automatically to schema 17 while retaining older records. Keep a backup before upgrading if you may need to return to an older binary.
+
+### Enhancements
+- [agent] [agent-core] Plan status uses socket protocol 5. Older `agent` CLIs using protocols 3 and 4 still talk to the new daemon, without plan summaries; the new CLI falls back when talking to older daemons.
+
 ## 0.44.0 — 21.11.2026 — PR #161
 
 ### New features
