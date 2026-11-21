@@ -1439,7 +1439,7 @@ fn frozen_test_scripts(rig: &Rig) {
     script(
         rig,
         "third-edit",
-        "echo 'z' >> tests/new.txt\nsed -i 1d tests/new.txt\ngit add tests/new.txt\ncommit -m 'Tidy the test a third time'\n",
+        "printf 'w\\n' > tests/new.txt\ngit add tests/new.txt\ncommit -m 'Tidy the test a third time'\n",
     );
     script(
         rig,
@@ -1456,6 +1456,13 @@ fn commit_of(rig: &Rig, task: &TaskId, subject: &str) -> agent_core::state::Comm
     )
     .parse()
     .unwrap()
+}
+
+/// The findings about the commits `commits` that took lines out of `tests/new.txt`, in the order the record keeps them.
+fn edits_of(commits: &[&agent_core::state::CommitId]) -> Vec<Subject> {
+    let mut edits: Vec<Subject> = commits.iter().map(|commit| edit_of(commit)).collect();
+    edits.sort();
+    edits
 }
 
 /// The finding about the commit `commit` that took lines out of `tests/new.txt`.
@@ -1488,8 +1495,14 @@ async fn two_published_commits_that_edit_a_frozen_test_get_one_question_and_no_b
     assert_eq!(file.entries().len(), 1);
     assert_eq!(file.entries()[0].title(), "Commits that changed frozen tests: 2");
     let body = file.entries()[0].body();
-    assert!(body.contains("Tidy the test once more\" by Fake"), "{body}");
-    assert!(body.contains("GREEN: code a, tidied test\" by Fake"), "{body}");
+    assert!(
+        body.contains("Tidy the test once more\" by claude-1 (team-agents)"),
+        "{body}"
+    );
+    assert!(
+        body.contains("GREEN: code a, tidied test\" by claude-1 (team-agents)"),
+        "{body}"
+    );
     assert_eq!(
         kept.asked.as_ref().unwrap().subjects,
         [edit_of(&first), edit_of(&second)]
@@ -1522,10 +1535,7 @@ async fn allowing_the_commits_starts_the_review_and_keeps_each_commit_and_path_f
 
     assert!(!rig.github.pulls()[0].draft);
     let kept = record(&rig, &tasks[0]).await;
-    assert_eq!(
-        kept.allowed_of(&["1.1".parse().unwrap()]),
-        [edit_of(&first), edit_of(&second)]
-    );
+    assert_eq!(kept.allowed_of(&["1.1".parse().unwrap()]), edits_of(&[&first, &second]));
     assert_eq!(kept.refused_of(&["1.1".parse().unwrap()]), []);
     assert_eq!(kept.asked, None);
     assert_eq!(rig.runs(&tasks[0]), 3);
@@ -1598,10 +1608,7 @@ async fn a_new_commit_in_a_fix_pass_is_asked_alone_and_the_question_says_what_wa
         let short: String = earlier.as_str().chars().take(7).collect();
         assert!(body.contains(&format!("- commit {short} in `tests/new.txt`")), "{body}");
     }
-    assert_eq!(
-        kept.allowed_of(&["1.1".parse().unwrap()]),
-        [edit_of(&first), edit_of(&second)]
-    );
+    assert_eq!(kept.allowed_of(&["1.1".parse().unwrap()]), edits_of(&[&first, &second]));
     assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
 }
 
@@ -1650,10 +1657,7 @@ async fn a_refusal_about_commits_is_told_once_and_kept() {
     assert!(told.contains("THE ROUND IS NOT READY FOR ITS REVIEW"), "{told}");
     assert!(told.contains("refused to allow"), "{told}");
     let kept = record(&rig, &tasks[0]).await;
-    assert_eq!(
-        kept.refused_of(&["1.1".parse().unwrap()]),
-        [edit_of(&first), edit_of(&second)]
-    );
+    assert_eq!(kept.refused_of(&["1.1".parse().unwrap()]), edits_of(&[&first, &second]));
     assert_eq!(kept.allowed_of(&["1.1".parse().unwrap()]), []);
     assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 1);
     assert!(!rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists());
