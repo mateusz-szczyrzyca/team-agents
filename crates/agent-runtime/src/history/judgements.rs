@@ -58,9 +58,9 @@ fn query(source: rusqlite::Error) -> ReadError {
 /// [`WriteError`]: a row of a task that is not in the history, or a refusal of the database.
 pub(super) fn insert(tx: &Transaction<'_>, records: &[JudgementRecord]) -> Result<(), WriteError> {
     for record in records {
-        let duration_ms = i64::try_from(record.duration_ms).map_err(|_err| WriteError::Rule {
+        let duration_ms = i64::try_from(record.duration_ms).map_err(|source| WriteError::Number {
             record: RecordKind::Judgement,
-            rule: "duration_ms must fit in signed 64-bit integer",
+            source,
         })?;
         let added = tx
             .execute(
