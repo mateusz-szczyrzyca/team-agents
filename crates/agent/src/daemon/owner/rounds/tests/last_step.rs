@@ -258,3 +258,100 @@ async fn a_restart_after_a_takeover_goes_on_with_the_agent_that_took_it_over() {
         "it resumes claude-2's own session: {sessions:?}"
     );
 }
+
+/// The rows of `task_handed_over` the daemon logged in the history of `rig`, after a takeover in a rig started with an
+/// `info` log layer.
+fn handed_over_rows(rig: &Rig) -> Vec<agent_core::log::LogEntry> {
+    agent_runtime::history::Reader::open(&rig.home.history_file())
+        .unwrap()
+        .daemon_logs()
+        .unwrap()
+        .into_iter()
+        .filter(|row| row.event() == agent_core::log::LogEvent::TaskHandedOver)
+        .collect()
+}
+
+/// A daemon of `rig` that logs `info` and up into its history.
+async fn start_logging(rig: &mut Rig) {
+    rig.start_with_log_layer(agent_runtime::history::HistoryLayer::deferred(
+        agent_core::log::LogLevel::Info,
+        rig.history_test_clock(),
+        agent_core::config::Secrets::default(),
+    ))
+    .await;
+}
+
+/// Records the `task_handed_over` of a real takeover — claude-1 to claude-2 — into `observed`, after checking its row.
+pub(super) async fn record_task_handed_over(observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>) {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", BAD_IN_BOTH_SESSIONS),
+            normal("claude-2", "work"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        false,
+    )
+    .await;
+    configure(&rig, "[replacement]\nagents = [\"claude-2\"]\n");
+    start_logging(&mut rig).await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "merged after the takeover", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+    rig.wait_for("the hand-over in the history", || !handed_over_rows(&rig).is_empty())
+        .await;
+    rig.stop().await.unwrap();
+
+    let rows = handed_over_rows(&rig);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(row.level(), agent_core::log::LogLevel::Info);
+    assert_eq!(row.task(), Some(&tasks[0]));
+    assert_eq!(row.fields().get("from"), Some(&serde_json::json!("claude-1")));
+    assert_eq!(row.fields().get("to"), Some(&serde_json::json!("claude-2")));
+    observed.insert(agent_core::log::LogEvent::TaskHandedOver);
+}
+
+// Rule: a takeover is logged as `task_handed_over`, with the agent it was taken from and the agent that holds it now.
+#[tokio::test]
+async fn a_takeover_is_logged_with_the_agent_before_and_the_agent_after() {
+    let mut observed = std::collections::BTreeSet::new();
+
+    record_task_handed_over(&mut observed).await;
+
+    assert!(observed.contains(&agent_core::log::LogEvent::TaskHandedOver));
+}
+
+// Rule: a member's work given to its lead is logged as `task_handed_over` to `lead`.
+#[tokio::test]
+async fn a_members_work_given_to_its_lead_is_logged_as_handed_over_to_the_lead() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep"),
+            normal("claude-1", BAD_IN_BOTH_SESSIONS),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    configure(&rig, "[replacement]\nagents = [\"inv-lead\"]\n");
+    start_logging(&mut rig).await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+    rig.wait_for("the hand-over in the history", || !handed_over_rows(&rig).is_empty())
+        .await;
+    rig.stop().await.unwrap();
+
+    let rows = handed_over_rows(&rig);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].task(), Some(&tasks[1]));
+    assert_eq!(rows[0].fields().get("from"), Some(&serde_json::json!("claude-1")));
+    assert_eq!(rows[0].fields().get("to"), Some(&serde_json::json!("lead")));
+}

@@ -174,6 +174,7 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         (LogEvent::PeerGone, "peer_gone", LogLevel::Debug),
         (LogEvent::GithubStepWaiting, "github_step_waiting", LogLevel::Warn),
         (LogEvent::GithubStepResumed, "github_step_resumed", LogLevel::Info),
+        (LogEvent::TaskHandedOver, "task_handed_over", LogLevel::Info),
     ];
 
     assert_eq!(LogEvent::ALL.len(), expected.len());

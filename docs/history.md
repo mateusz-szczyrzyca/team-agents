@@ -776,3 +776,7 @@ History version 15 admits `split_decision` event records. The migration preserve
 records, round links, search entries and log cursors. The event keeps the task, parent item, outcome
 (`approved`, `corrected`, `asked`), correction count, optional question number and reason. The previous schema
 is retained as `crates/agent-runtime/tests/fixtures/history-before-split-decisions.sql` and tested on upgrade.
+
+History version 16 admits the `task_handed_over` event of the daemon's log. Its migration preserves existing daemon
+logs, their links, search entries and cursors. The previous schema is retained as
+`crates/agent-runtime/tests/fixtures/history-before-handover-events.sql` and tested on upgrade.

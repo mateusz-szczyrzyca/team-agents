@@ -56,6 +56,8 @@ mod turn_limit;
 mod disputes;
 
 #[cfg(test)]
+mod handover_events;
+#[cfg(test)]
 mod opinions;
 #[cfg(test)]
 mod plans;

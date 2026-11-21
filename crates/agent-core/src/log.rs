@@ -202,6 +202,9 @@ pub enum LogEvent {
     GithubStepWaiting,
     /// A step of the owner that waited for GitHub or git goes through.
     GithubStepResumed,
+    /// A task whose runs went bad after the last new session is handed over: to another agent, which holds it from now
+    /// on, or, for a member's work, to its team's lead.
+    TaskHandedOver,
 }
 
 impl Keyword for LogEvent {
@@ -265,7 +268,8 @@ impl LogEvent {
             | Self::ReviewReportLate
             | Self::NotificationSent
             | Self::QuestionsFileOpened
-            | Self::BuildDirectoryRemoved => LogLevel::Info,
+            | Self::BuildDirectoryRemoved
+            | Self::TaskHandedOver => LogLevel::Info,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
     }
