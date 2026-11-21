@@ -8,7 +8,7 @@ use super::ProtocolVersion;
 use super::request::RequestId;
 use crate::config::{AbsolutePath, RepoName};
 use crate::history::HistoryHealth;
-use crate::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
+use crate::ids::{AgentName, BranchName, ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
 use crate::plan::judge::JudgementState;
 use crate::state::{
@@ -168,6 +168,9 @@ pub struct TeamSummary {
     /// Approved split plans, absent from replies written before split execution.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub splits: Vec<crate::state::split::SplitPlan>,
+    /// Executors of split rounds, retained after their parent advances.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub part_assignments: std::collections::BTreeMap<RoundId, AgentName>,
     /// Items blocked by a capability absent from the crew; omitted by older daemons.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub tier_waits: std::collections::BTreeMap<crate::ids::ItemId, crate::kinds::Tier>,
@@ -484,6 +487,7 @@ impl From<&Team> for TeamSummary {
             rounds: team.rounds().to_vec(),
             splits: team.splits().to_vec(),
             tier_waits: team.tier_waits().clone(),
+            part_assignments: team.part_assignments().clone(),
             members: crew
                 .chain(reviewers)
                 .map(|(role, member)| MemberSummary::of(role, member))

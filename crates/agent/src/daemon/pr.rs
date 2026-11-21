@@ -325,7 +325,7 @@ pub(super) fn pull_text(
     for id in items {
         if let Some(key) = team.round_of(*id).and_then(agent_core::state::Round::part)
             && let Some(plan) = team.splits().iter().find(|plan| plan.parent() == *id)
-            && let Some((_, context)) = crate::split_context::lines(plan, team.rounds())
+            && let Some((_, context)) = crate::split_context::lines(plan, team.rounds(), team.part_assignments())
                 .into_iter()
                 .find(|(part, _)| *part == key)
         {

@@ -112,6 +112,7 @@ impl Team {
             unpushed_base: None,
             splits: Vec::new(),
             split_proposals: std::collections::BTreeMap::new(),
+            part_assignments: std::collections::BTreeMap::new(),
             tier_waits: std::collections::BTreeMap::new(),
         };
         check_team(&team)?;

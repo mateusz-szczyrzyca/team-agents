@@ -246,6 +246,12 @@ fn describe_item(item: &Option<PhaseKind>) -> String {
 }
 
 impl Team {
+    /// Latest executor of each split round, retained after review and completion.
+    #[must_use]
+    pub fn part_assignments(&self) -> &std::collections::BTreeMap<RoundId, crate::ids::AgentName> {
+        &self.part_assignments
+    }
+
     getter!("The rounds of the team, oldest first.", pub fn rounds(&self) -> &[Round] = &self.rounds);
 
     /// The round `id`.
@@ -438,9 +444,7 @@ impl Team {
             .ok_or_else(|| BeginRunError::UnknownTask { task: task.clone() })?;
         member.value.begin_run_for(id, at, session, rounds)?;
         for (id, agent) in assignments {
-            if let Some(round) = self.rounds.iter_mut().find(|round| round.id() == &id) {
-                round.assign_part(agent);
-            }
+            self.part_assignments.insert(id, agent);
         }
         Ok(())
     }

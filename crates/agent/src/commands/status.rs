@@ -364,7 +364,7 @@ fn render_at(
         lines.extend(splits::lines(team));
         for plan in &team.splits {
             lines.extend(
-                crate::split_context::lines(plan, &team.rounds)
+                crate::split_context::lines(plan, &team.rounds, &team.part_assignments)
                     .into_iter()
                     .map(|(_, text)| format!("      {text}")),
             );
