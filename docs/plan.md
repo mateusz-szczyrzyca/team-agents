@@ -277,3 +277,5 @@ Make the six screenshots of the dashboard the README shows, in the dark theme an
     Files: README.md, docs/images/dashboard.png, docs/images/dashboard-teams.png
     Check: reviewer
 ```
+
+With history disabled or unavailable, checks still update the current in-memory status. Their settlements cannot survive a restart, so recovery shows the plan without a durable settlement and the next run judges it again. A history failure is reported through the existing history diagnostics.

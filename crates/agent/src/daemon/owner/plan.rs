@@ -552,7 +552,17 @@ impl Owner {
         if !records.is_empty() && self.history.is_writing() {
             match self.history.persist_judgements(records).await {
                 Ok(()) => {}
-                Err(agent_runtime::history::PersistJudgementsError::Unavailable) if !self.history.is_writing() => {}
+                Err(error @ agent_runtime::history::PersistJudgementsError::Unavailable)
+                    if !self.history.is_writing() =>
+                {
+                    // History degradation keeps the task running; the cached judgement is not durable.
+                    tracing::warn!(
+                        event = LogEvent::HistoryRecordIncomplete.as_str(),
+                        task = %task,
+                        error = %error_chain(&error),
+                        "plan judgements remain only in memory because history became unavailable"
+                    );
+                }
                 Err(error) => return Err(OwnerError::PersistJudgements(error)),
             }
         }
@@ -609,8 +619,20 @@ impl Owner {
 
     /// Reads and parses the plan file in the worktree of `task` for snapshot recovery.
     async fn read_worktree_plan(&self, task: &TaskId) -> Option<Plan> {
-        let located = self.locate(task).ok()?;
-        let worktree = self.worktree_of(task, &located).ok()?;
+        let located = match self.locate(task) {
+            Ok(located) => located,
+            Err(error) => {
+                tracing::warn!(task = %task, error = %error_chain(&error), "cannot locate task for plan snapshot");
+                return None;
+            }
+        };
+        let worktree = match self.worktree_of(task, &located) {
+            Ok(worktree) => worktree,
+            Err(error) => {
+                tracing::warn!(task = %task, error = %error_chain(&error), "cannot locate worktree for plan snapshot");
+                return None;
+            }
+        };
         let plan_file = worktree.as_path().join(PLAN_FILE);
         let text = match read_text_file(&plan_file, MAX_TASK_LIST_BYTES).await {
             Ok(Some(file)) => file.text,
@@ -662,7 +684,7 @@ impl Owner {
         for (task, plan) in parsed_tasks {
             let has_done = plan.steps().any(|s| s.state() == StepState::Done);
 
-            let (judgements, earlier_by_run) = if has_done && is_writing && history_path.exists() {
+            let (judgements, earlier_by_run) = if has_done && is_writing {
                 let path = history_path.clone();
                 let task_id = task.clone();
                 let looked = tokio::task::spawn_blocking(move || {
@@ -671,10 +693,17 @@ impl Owner {
                     let records = reader.plan_versions(&task_id)?;
                     let mut by_run = HashMap::new();
                     for record in records {
-                        if let (Some(run_id), HistoryPlanRead::Version { text }) = (record.run, record.read)
-                            && let Ok(plan) = parse_plan(&text)
-                        {
-                            by_run.insert(run_id, plan);
+                        if let (Some(run_id), HistoryPlanRead::Version { text }) = (record.run, record.read) {
+                            match parse_plan(&text) {
+                                Ok(plan) => {
+                                    by_run.insert(run_id, plan);
+                                }
+                                Err(error) => tracing::warn!(
+                                    task = %task_id,
+                                    error = %error_chain(&error),
+                                    "cannot parse retained plan for snapshot"
+                                ),
+                            }
                         }
                     }
                     Ok::<_, ReadError>((latest, by_run))

@@ -3,7 +3,8 @@
 //!
 //! A client sends one [`Request`] per line; the daemon answers each with a [`Response`] and, to a client that
 //! subscribed, sends [`Event`]s as the state changes — a [`Frame`] is either. The strict legacy APIs use
-//! [`PROTOCOL_VERSION`]; negotiated APIs also accept [`SPLIT_PROTOCOL_VERSION`] for split-aware clients.
+//! [`PROTOCOL_VERSION`]; negotiated APIs also accept [`SPLIT_PROTOCOL_VERSION`] for split-aware clients and
+//! [`PLAN_PROTOCOL_VERSION`] for plan status snapshots.
 //! Unsupported tags are refused before the message body is decoded.
 //! The types here only describe lines and read and write them; the socket is the daemon's.
 

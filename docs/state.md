@@ -483,13 +483,15 @@ version-3 replies and events. A version-3 `show` of a full split team returns an
 protocol 4 is required: removing part identities would make historical rounds invalid. Ordinary version-3 frames
 retain their existing encoding. State schema 13 is unchanged.
 
-The CLI negotiates before sending split-aware commands: it sends a read-only version-4 `status` probe, then sends
+Version 5 adds `task_plans` to status snapshots. Versions 3 and 4 omit this field, so strict older clients remain compatible. Plan-aware status and show requests first probe version 5, falling back to version 4 and then version 3 when needed. Status uses cached summaries; it performs no filesystem or history reads.
+
+The CLI negotiates before sending other split-aware commands: it sends a read-only version-4 `status` probe, then sends
 the intended command in version 4. If an older daemon rejects the probe or closes the connection, it reconnects
 once and uses version 3 instead; no mutating command is retried. The choice is cached on that connection. Older
 clients continue to send version 3 directly.
 
 A reader checks the version before decoding the message body. Strict legacy `Request::from_line` and
-`Frame::from_line` retain version-3-only behavior; their negotiated counterparts accept 3 and 4. Other versions
+`Frame::from_line` retain version-3-only behavior; their negotiated counterparts accept 3, 4 and 5. Other versions
 return `ProtocolError::UnsupportedVersion`. A line without a usable version, or invalid JSON, is `Malformed`;
 a line over the direction's limit is `TooLong`. A message change that old peers cannot read raises the version.
 
