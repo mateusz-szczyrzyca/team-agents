@@ -1523,7 +1523,7 @@ impl Owner {
     }
 
     /// Prepares and writes the questions file for publication failure if not already present with answers.
-    async fn prepare_publish_question_file(
+    pub(super) async fn prepare_publish_question_file(
         &self,
         site: Site<'_>,
         publication: &Publication,
