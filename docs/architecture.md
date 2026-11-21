@@ -424,8 +424,7 @@ token), the open pull request of the branch is found or opened as a draft with a
 expected result and checks) and the gate's summary, and marked ready; the round machine checks that GitHub says the pull request
 carries the commit the gate passed on, and the items are `in_review` (`pull_request_opened`). A branch has one pull request at a
 time: items integrated into the same head share it and move together; a finished item waits while another is in review on the
-same branch (a solo agent's items each have a branch). A branch that cannot be published is tried again after a minute, and the
-human is told once.
+same branch (a solo agent's items each have a branch). A branch that cannot be published is tried again after a minute, bounded by `[publish] tries` (default 3; `0` asks immediately). When retries cannot succeed, the lead is told once, and if it still fails the human is asked once in a questions file with options to retry or stop.
 
 **Description ownership** (`daemon/pr/description.rs`, `owner/rounds/publish.rs`). The lead writes
 `tasks/<lead>/description.md`, a bounded UTF-8 file (at most 1 MiB), outside the worktree. Its initial and resumed

@@ -5,6 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.49.0 — 21.11.2026 — PR #166
+
+### New features
+- [agent] [agent-core] [agent-runtime] `[publish] tries` (default 3; `0` asks immediately) bounds publication retries when a pull request branch cannot be pushed. When publication cannot succeed, the lead is told once with what is wrong, and if it still fails the human is asked once in a questions file with options to retry or stop.
+- [agent] [agent-runtime] A round's gated work reaches the branch of its pull request without forcing, even when the branch or another branch is checked out in a worktree, and after a conflict pass of a part of a split.
+
 ## 0.48.0 — 21.11.2026 — PR #165
 
 ### New features
