@@ -147,6 +147,7 @@ fn decode<T: DeserializeOwned>(line: &str, max: usize) -> Result<T, ProtocolErro
 fn encode_split<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
     strip_plan_fields(&mut value);
+    strip_executor_fields(&mut value);
     if let Some(protocol) = value.get_mut("protocol") {
         *protocol = serde_json::Value::from(SPLIT_PROTOCOL_VERSION);
     }
@@ -156,8 +157,18 @@ fn encode_split<T: Serialize>(message: &T) -> Result<String, EncodeError> {
 /// Serializes one of the protocol's object-shaped messages with the plan-aware version tag.
 fn encode_plan<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    strip_executor_fields(&mut value);
     if let Some(protocol) = value.get_mut("protocol") {
         *protocol = serde_json::Value::from(PLAN_PROTOCOL_VERSION);
+    }
+    encode(&value)
+}
+
+/// Serializes executor-aware messages without downgrading their metadata.
+fn encode_executor<T: Serialize>(message: &T) -> Result<String, EncodeError> {
+    let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    if let Some(protocol) = value.get_mut("protocol") {
+        *protocol = serde_json::Value::from(EXECUTOR_PROTOCOL_VERSION);
     }
     encode(&value)
 }
@@ -192,6 +203,16 @@ fn decode_negotiated<T: DeserializeOwned>(line: &str, max: usize) -> Result<(T, 
                 .map(|message| (message, ReplyFormat::Plan))
                 .map_err(|source| ProtocolError::Malformed { source })
         }
+        version if version == u64::from(EXECUTOR_PROTOCOL_VERSION) => {
+            let mut value: serde_json::Value =
+                serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
+            if let Some(protocol) = value.get_mut("protocol") {
+                *protocol = serde_json::Value::from(PROTOCOL_VERSION);
+            }
+            serde_json::from_value(value)
+                .map(|message| (message, ReplyFormat::Executor))
+                .map_err(|source| ProtocolError::Malformed { source })
+        }
         found => Err(UnsupportedVersion { found }.into()),
     }
 }
@@ -201,7 +222,14 @@ fn strip_split_fields(value: &mut serde_json::Value) -> bool {
     match value {
         serde_json::Value::Object(object) => {
             let mut changed = false;
-            for key in ["split", "splits", "part", "part_assignments", "task_plans"] {
+            for key in [
+                "split",
+                "splits",
+                "part",
+                "part_assignments",
+                "tier_waits",
+                "task_plans",
+            ] {
                 changed |= object.remove(key).is_some();
             }
             for nested in object.values_mut() {
@@ -247,6 +275,27 @@ fn strip_plan_fields(value: &mut serde_json::Value) -> bool {
     }
 }
 
+/// Removes metadata introduced by protocol six from older negotiated formats.
+fn strip_executor_fields(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            object.retain(|key, _| key != "part_assignments" && key != "tier_waits");
+            for nested in object.values_mut() {
+                strip_executor_fields(nested);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for nested in values {
+                strip_executor_fields(nested);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
+}
+
 impl Frame {
     /// The frame as one line ending with a newline.
     ///
@@ -287,7 +336,7 @@ impl Frame {
             ReplyFormat::Legacy => self.to_line(),
             ReplyFormat::Split => encode_split(self),
             ReplyFormat::Plan => encode_plan(self),
-            ReplyFormat::Executor => encode_plan(self),
+            ReplyFormat::Executor => encode_executor(self),
         }
     }
 

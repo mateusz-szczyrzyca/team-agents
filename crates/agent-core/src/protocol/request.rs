@@ -423,7 +423,7 @@ impl Request {
             super::ReplyFormat::Legacy => self.to_line(),
             super::ReplyFormat::Split => super::encode_split(self),
             super::ReplyFormat::Plan => super::encode_plan(self),
-            super::ReplyFormat::Executor => super::encode_plan(self),
+            super::ReplyFormat::Executor => super::encode_executor(self),
         }
     }
 
