@@ -273,6 +273,9 @@ impl<'a> Normalized<'a> {
             if let Some(length) = time_length(&rest) {
                 out.push_str("<time>");
                 at += length;
+            } else if let Some(length) = zone_time_length(&rest) {
+                out.push_str("<time>");
+                at += length;
             } else if let Some(length) = minute_time_length(&rest) {
                 out.push_str("<time>");
                 at += length;
@@ -358,6 +361,37 @@ fn time_length(text: &str) -> Option<usize> {
         }
     }
     (bytes.get(length) == Some(&b'Z')).then_some(length + 1)
+}
+
+/// The length of a time of a person that `agent log` writes in a zone: `YYYY-MM-DD HH:MM:SS` and then the offset, such as
+/// `+01:00`, or `UTC` when the machine's zone cannot be found. The zone is the machine's, so the whole time is one placeholder.
+fn zone_time_length(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let digits = |from: usize, count: usize| {
+        bytes
+            .get(from..from + count)
+            .is_some_and(|part| part.iter().all(u8::is_ascii_digit))
+    };
+    let shape = digits(0, 4)
+        && bytes.get(4) == Some(&b'-')
+        && digits(5, 2)
+        && bytes.get(7) == Some(&b'-')
+        && digits(8, 2)
+        && bytes.get(10) == Some(&b' ')
+        && digits(11, 2)
+        && bytes.get(13) == Some(&b':')
+        && digits(14, 2)
+        && bytes.get(16) == Some(&b':')
+        && digits(17, 2)
+        && bytes.get(19) == Some(&b' ');
+    if !shape {
+        return None;
+    }
+    let offset = match bytes.get(20) {
+        Some(b'+' | b'-') => (digits(21, 2) && bytes.get(23) == Some(&b':') && digits(24, 2)).then_some(26),
+        _ => None,
+    };
+    offset.or_else(|| (text.get(20..23) == Some("UTC")).then_some(23))
 }
 
 /// The length of a minute-precision local time `text` starts with: `YYYY-MM-DD HH:MM`.
