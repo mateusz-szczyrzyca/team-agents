@@ -375,18 +375,11 @@ impl Issue {
     #[must_use]
     pub fn allowed_subject(&self, facts: &RoundFacts, allowances: &[TaskAllowance]) -> Option<Subject> {
         match self.subject() {
-            Subject::Commit(commit) => {
-                let permitting: Vec<&RepoPath> = allowances
-                    .iter()
-                    .flat_map(|allowance| {
-                        commit_paths(facts, &commit)
-                            .into_iter()
-                            .filter(move |path| allowance.matches(path))
-                    })
-                    .collect();
-                let first = permitting.first()?;
-                Some(Subject::Path((*first).clone()))
-            }
+            Subject::Commit(commit) => commit_paths(facts, &commit)
+                .into_iter()
+                .filter(|path| allowances.iter().any(|allowance| allowance.matches(path)))
+                .map(|path| Subject::Path(path.clone()))
+                .min(),
             subject @ (Subject::Path(_) | Subject::NoTests) => {
                 let permitted = match &subject {
                     Subject::Path(path) => allowances.iter().any(|allowance| allowance.matches(path)),
