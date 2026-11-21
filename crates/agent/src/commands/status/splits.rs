@@ -16,6 +16,17 @@ pub(super) fn lines(team: &TeamSummary) -> Vec<String> {
             .filter(|round| round.part_pull_request().is_some())
             .filter_map(|round| round.part())
             .collect();
+        let waiting_part = rounds
+            .iter()
+            .find(|round| round.is_open())
+            .and_then(|round| round.part())
+            .or_else(|| {
+                plan.entries()
+                    .find(|(id, definition)| {
+                        !merged.contains(&id.key()) && definition.depends_on.iter().all(|key| merged.contains(key))
+                    })
+                    .map(|(id, _)| id.key())
+            });
         for (id, definition) in plan.entries() {
             let waiting: Vec<_> = definition
                 .depends_on
@@ -25,6 +36,10 @@ pub(super) fn lines(team: &TeamSummary) -> Vec<String> {
                 .collect();
             let status = if merged.contains(&id.key()) {
                 "done".to_owned()
+            } else if waiting_part == Some(id.key()) && team.tier_waits.contains_key(&plan.parent()) {
+                team.tier_waits
+                    .get(&plan.parent())
+                    .map_or_else(|| "to do".to_owned(), |tier| format!("waiting for {tier} agent"))
             } else if rounds
                 .iter()
                 .any(|round| round.part() == Some(id.key()) && round.is_open())

@@ -757,6 +757,16 @@ for its in-progress item, the daemon still owes the member a fresh round. After 
 that new round makes recovery complete. Restarting at either boundary preserves the obligation and never revives
 the ended claim, even if GitHub reopens its PR. The marker timestamp cannot precede the opening of the round.
 
+### Capability waits
+
+Teams and status summaries may contain `tier_waits`, an object mapping original item IDs to minimum tier
+keywords. Each key must name an item in the team’s task list. Empty maps are omitted; older records without this field load with no retained waits. The fixture
+`crates/agent-core/tests/fixtures/team-before-tier-waits.json` preserves a team written before this field.
+The owner recomputes waits from ready pending items and review fixes awaiting a qualified assignee: only
+absence of qualified crew is retained, not temporary busyness. The map and assignment changes are saved together. A newly entered wait is logged once; restarting
+with the same wait does not announce it again. A split uses the original item ID while its active round keeps
+the part identity. No schema migration is needed for this optional field.
+
 ### Plan-step status snapshots
 
 Step judgements live in history schema 17, not `state.json`; state schema 14 is unchanged.

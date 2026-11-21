@@ -159,14 +159,19 @@ pub(in crate::daemon) fn shape_with_answers(
 ) -> Result<String, TeamPromptError> {
     let Some(answers) = answers else {
         let shaped = shape(texts, harness, run, composed)?;
-        return with_part(texts, run, shaped);
+        return with_assignment(texts, run, shaped);
     };
     if run.new_session {
         let shaped = shape(texts, harness, run, composed)?;
-        return with_part(texts, run, join_sections(&shaped, answers));
+        return with_assignment(texts, run, join_sections(&shaped, answers));
     }
     let reason = shape(texts, harness, run, String::new())?;
-    with_part(texts, run, join_sections(answers, &reason))
+    with_assignment(texts, run, join_sections(answers, &reason))
+}
+
+/// Adds assignment context after the resumed or new-session prompt.
+fn with_assignment(texts: &TeamPrompts, run: &TeamRun<'_>, prompt: String) -> Result<String, TeamPromptError> {
+    with_tier(texts, run, with_part(texts, run, prompt)?)
 }
 
 /// Adds the approved part scope even when the session resumes with only an answer or assignment.
@@ -183,7 +188,7 @@ fn with_part(texts: &TeamPrompts, run: &TeamRun<'_>, mut prompt: String) -> Resu
             | agent_core::state::ItemPhase::Approved { .. }
             | agent_core::state::ItemPhase::Done { .. } => false,
         });
-        if run.role != Role::Coordinator && !assigned {
+        if !assigned {
             continue;
         }
         let Some(plan) = run.team.splits().iter().find(|plan| plan.parent() == parent) else {
@@ -216,6 +221,36 @@ fn with_part(texts: &TeamPrompts, run: &TeamRun<'_>, mut prompt: String) -> Resu
             .with("checks", &part.checks)?
             .with("previous", if previous.is_empty() { "none" } else { &previous })?;
         prompt = join_sections(&prompt, &texts.render(TeamPrompt::Part, &values)?);
+    }
+    Ok(prompt)
+}
+
+/// Explains the capability choice only to the run holding the assignment branch.
+fn with_tier(texts: &TeamPrompts, run: &TeamRun<'_>, prompt: String) -> Result<String, TeamPromptError> {
+    for (role, member) in run.team.crew().roster() {
+        let assigned = run.team.items().iter().find(|item| match item.phase() {
+            agent_core::state::ItemPhase::InProgress { assignee, branch }
+            | agent_core::state::ItemPhase::Fixing { assignee, branch, .. } => {
+                branch == run.branch && assignee.as_str() == member.agent().name()
+            }
+            agent_core::state::ItemPhase::Pending
+            | agent_core::state::ItemPhase::InReview { .. }
+            | agent_core::state::ItemPhase::Approved { .. }
+            | agent_core::state::ItemPhase::Done { .. } => false,
+        });
+        let Some(item) = assigned else {
+            continue;
+        };
+        let required = agent_core::decide::assign::dispatch::required_tier(run.team, item.id());
+        let values = Variables::new()
+            .with("required", required.as_str())?
+            .with("agent", member.agent().name())?
+            .with("tier", member.agent().tier().as_str())?;
+        let text = match role {
+            Role::Coordinator => TeamPrompt::TierCoordinator,
+            Role::Solo | Role::Member | Role::Worker | Role::Reviewer => TeamPrompt::TierMember,
+        };
+        return Ok(join_sections(&prompt, &texts.render(text, &values)?));
     }
     Ok(prompt)
 }

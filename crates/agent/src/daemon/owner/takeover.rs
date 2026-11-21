@@ -115,7 +115,8 @@ impl Owner {
             .collect();
         let chosen = match choose(role, held.tier(), &candidates, replacement.mode()) {
             Handover::Agent(name) => Some(Chosen::Agent(name.clone())),
-            Handover::Lead => Some(Chosen::Lead),
+            Handover::Lead => agent_core::decide::assign::dispatch::coordinator_can_take_over(found.team, member)
+                .then_some(Chosen::Lead),
             // The question to the human after the last step is not asked yet: the task fails as before.
             Handover::Human => None,
         };

@@ -202,7 +202,10 @@ async fn round_sections_for(
             };
             Ok(text.map(Addition::Append))
         }
-        (Role::Member | Role::Worker, _) => Ok(None),
+        (Role::Member | Role::Worker, Some(Why::Gate(text))) => Ok(Some(Addition::Append(text.clone()))),
+        (Role::Member | Role::Worker, _) => Ok(fix_pass(ctx, texts, found, matches!(why, Some(Why::Woken)))
+            .await?
+            .map(Addition::Append)),
     }
 }
 
@@ -358,19 +361,26 @@ pub(super) async fn fix_pass(
         .with("passes", ctx.settings.config.review().fix_passes.to_string())?
         .with("branch", branch.as_str())?
         .with("findings", findings.join("\n\n"))?;
-    Ok(Some(
-        texts
-            .render(
-                if progress.findings().is_some_and(|l| l.disputes().is_some()) {
-                    AutopilotPrompt::ReviewFixResponse
-                } else {
-                    AutopilotPrompt::ReviewFixPass
-                },
-                &values,
-            )?
-            .trim_end()
-            .to_owned(),
-    ))
+    let mut text = texts
+        .render(
+            if progress.findings().is_some_and(|l| l.disputes().is_some()) {
+                AutopilotPrompt::ReviewFixResponse
+            } else {
+                AutopilotPrompt::ReviewFixPass
+            },
+            &values,
+        )?
+        .trim_end()
+        .to_owned();
+    if matches!(found.role, Role::Member | Role::Worker) {
+        let integration = texts.render(
+            AutopilotPrompt::ReviewMemberFix,
+            &Variables::new().with("integration", pr.branch.as_str())?,
+        )?;
+        text.push_str("\n\n");
+        text.push_str(integration.trim_end());
+    }
+    Ok(Some(text))
 }
 
 /// The request to the lead `found` to put the question to the human, when a pull request of the team waits for it: the

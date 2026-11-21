@@ -88,6 +88,31 @@ pub(super) fn plan_publications(team: &Team) -> Result<Vec<Publication>, PlanErr
     if lead.status() != TaskStatus::Waiting {
         return Ok(Vec::new());
     }
+    // A member's earlier delivery cannot publish a new fix before that fix run finishes.
+    if team.items().iter().any(|item| {
+        let ItemPhase::Fixing { assignee, branch, pr } = item.phase() else {
+            return false;
+        };
+        if assignee.as_str() == lead.agent().name() || branch == &pr.branch {
+            return false;
+        }
+        let holder = roster
+            .iter()
+            .find(|(_, member)| member.agent().name() == assignee.as_str());
+        !holder.is_some_and(|(_, member)| {
+            member.status() == TaskStatus::Waiting
+                && reported_done(member)
+                && member.runs().last().is_some_and(|run| {
+                    item.fix_passes().last().is_some_and(|pass| {
+                        pass.requested_by
+                            .iter()
+                            .all(|review| review.requested_at <= run.started_at())
+                    })
+                })
+        })
+    }) {
+        return Ok(Vec::new());
+    }
     let team_branch = match role {
         Role::Solo => None,
         Role::Coordinator | Role::Member | Role::Worker | Role::Reviewer => {

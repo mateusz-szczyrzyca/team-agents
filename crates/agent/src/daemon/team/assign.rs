@@ -1,10 +1,8 @@
 //! Which item goes to which member next, and the branch names that go with it.
 
-use agent_core::decide::assign::{AssignError, AssignmentRequest, next_assignments};
+use agent_core::decide::assign::dispatch::dispatch;
 use agent_core::ids::{AgentName, BranchName, InvalidBranchName, InvalidName, ItemId, TaskId};
-use agent_core::kinds::Role;
 use agent_core::state::{AdvanceError, ItemMut, ItemPhase, Participant, Team};
-use agent_core::status::TaskStatus;
 
 /// An item given to a member, with the branch the member works on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,9 +20,6 @@ pub(in crate::daemon) struct Assigned {
 /// Why the assignments of a team cannot be decided.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum AssignmentError {
-    /// The progress does not fit the task list.
-    #[error("cannot decide which item goes to which member")]
-    Decide(#[from] AssignError),
     /// A member's name is not an agent name.
     #[error("the name of a member of the team is not an agent name")]
     Name(#[from] InvalidName),
@@ -59,31 +54,20 @@ pub(in crate::daemon) fn agent_name(participant: &Participant) -> Result<AgentNa
 /// # Errors
 /// [`AssignmentError`].
 pub(in crate::daemon) fn assignable(team: &Team) -> Result<Vec<Assigned>, AssignmentError> {
-    // Whoever takes items and is not at work: a member that waits for its next item, or has not started yet. A member
-    // that is running would not see an item given now; it is looked at again when its run ends.
     let takers = team
         .crew()
         .roster()
         .into_iter()
-        .filter(|(role, member)| {
-            matches!(role, Role::Solo | Role::Member)
-                && matches!(member.status(), TaskStatus::Queued | TaskStatus::Waiting)
-        })
         .map(|(_, member)| Ok((agent_name(member.agent())?, member.task())))
         .collect::<Result<Vec<_>, InvalidName>>()?;
     let available: Vec<AgentName> = takers.iter().map(|(name, _)| name.clone()).collect();
-    let decided = next_assignments(&AssignmentRequest {
-        list: team.task_list().list(),
-        progress: team.items(),
-        merge: team.merge(),
-        available: &available,
-    })?;
+    let decided = dispatch(team).assigned;
     if !decided.is_empty() {
         let span = tracing::error_span!("team", team = %team.id());
         let _entered = span.enter();
         let formatted: Vec<String> = decided
             .iter()
-            .map(|given| format!("{} -> {}", given.item, given.member))
+            .map(|(item, agent)| format!("{item} -> {}", agent.name()))
             .collect();
         agent_runtime::history::log_decision(
             "assignable",
@@ -93,27 +77,26 @@ pub(in crate::daemon) fn assignable(team: &Team) -> Result<Vec<Assigned>, Assign
     }
     decided
         .into_iter()
-        .map(|given| {
+        .map(|(item, agent)| {
+            let member = agent_name(&agent)?;
             let task = takers
                 .iter()
-                .find(|(name, _)| *name == given.member)
+                .find(|(name, _)| *name == member)
                 .map(|(_, task)| *task)
-                .ok_or_else(|| AssignmentError::UnknownMember {
-                    member: given.member.clone(),
-                })?;
-            let branch = match team.next_part(given.item) {
-                Some((part, _)) => format!("agents/{}/{task}-{part}", given.member).parse(),
-                None => item_branch(&given.member, task, given.item),
+                .ok_or_else(|| AssignmentError::UnknownMember { member: member.clone() })?;
+            let branch = match team.next_part(item) {
+                Some((part, _)) => format!("agents/{member}/{task}-{part}").parse(),
+                None => item_branch(&member, task, item),
             }
             .map_err(|source| AssignmentError::Branch {
-                item: given.item,
+                item,
                 task: task.clone(),
                 source,
             })?;
             Ok(Assigned {
-                item: given.item,
+                item,
                 task: task.clone(),
-                agent: given.member,
+                agent: member,
                 branch,
             })
         })

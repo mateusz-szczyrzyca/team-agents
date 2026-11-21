@@ -672,17 +672,62 @@ impl Owner {
         Ok(())
     }
 
+    /// Keeps a qualified integration lead, otherwise gives the fixes to a qualified member on its own branch.
+    pub(super) fn fix_assignment(
+        &self,
+        team_id: &TeamId,
+        id: ItemId,
+        pr: &PullRequest,
+    ) -> Result<Option<(AgentName, agent_core::ids::BranchName)>, OwnerError> {
+        let team = self
+            .parts
+            .state
+            .team(team_id)
+            .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+        let Some(member) = agent_core::decide::assign::dispatch::fixer(team, id) else {
+            return Ok(None);
+        };
+        let name: AgentName = member.agent().name().parse()?;
+        let roster = team.crew().roster();
+        if roster.first().is_some_and(|(_, lead)| lead.task() == member.task()) {
+            return Ok(Some((name, pr.branch.clone())));
+        }
+        let suffix = team
+            .round_of(id)
+            .and_then(agent_core::state::Round::part)
+            .map_or_else(String::new, |key| key.to_string());
+        let branch = format!("agents/{name}/{}-{id}{suffix}", member.task())
+            .parse()
+            .map_err(|source| OwnerError::Assign {
+                team: team_id.clone(),
+                source: crate::daemon::team::AssignmentError::Branch {
+                    item: id,
+                    task: member.task().clone(),
+                    source,
+                },
+            })?;
+        Ok(Some((name, branch)))
+    }
+
     /// Does what the verdict led to, in every item of the pull request.
     pub(super) fn apply_next(
         &mut self,
         team_id: &TeamId,
-        lead: &Lead,
+        _lead: &Lead,
         asked: &Asked,
         next: Next,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
         let mut approved = false;
         for id in &asked.items {
+            let assignment = if matches!(next, Next::FixPass { .. }) {
+                let Some(assignment) = self.fix_assignment(team_id, *id, &asked.pr)? else {
+                    continue;
+                };
+                Some(assignment)
+            } else {
+                None
+            };
             let mut team_mut = self
                 .parts
                 .state
@@ -698,11 +743,12 @@ impl Owner {
             let after = match next {
                 Next::Wait | Next::AskHuman => continue,
                 Next::Merge | Next::HandToHuman => ItemPhase::Approved { pr, reviews },
-                Next::FixPass { .. } => ItemPhase::Fixing {
-                    assignee: lead.agent.clone(),
-                    branch: pr.branch.clone(),
-                    pr,
-                },
+                Next::FixPass { .. } => {
+                    let Some((assignee, branch)) = assignment else {
+                        continue;
+                    };
+                    ItemPhase::Fixing { assignee, branch, pr }
+                }
             };
             let status = after.kind().status();
             item.advance(after).map_err(|source| OwnerError::Item {
