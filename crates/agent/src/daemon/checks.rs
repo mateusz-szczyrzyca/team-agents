@@ -296,50 +296,13 @@ pub(super) fn questions_with_commits(
     }
     if !commits.notes.is_empty() {
         let number = NonZeroU32::MIN.saturating_add(u32::try_from(entries.len())?);
-        let finding_subjects: Vec<Subject> = commits.notes.iter().map(|note| note.finding.subject()).collect();
-        for subject in &finding_subjects {
+        let (entry, finding_subjects) = commits_entry(texts, number, commits, why.trim(), recommendation.trim())?;
+        for subject in finding_subjects {
             if seen.insert(subject.clone()) {
-                subjects.push(subject.clone());
+                subjects.push(subject);
             }
         }
-        let title = texts.render(
-            ChecksPrompt::QuestionTitleCommits,
-            &Variables::new().with("count", commits.notes.len().to_string())?,
-        )?;
-        let lines: Vec<String> = commits
-            .notes
-            .iter()
-            .map(|note| commit_line(texts, note).map(|line| format!("- {line}")))
-            .collect::<Result<_, _>>()?;
-        let before = if commits.before.is_empty() {
-            String::new()
-        } else {
-            let named: Vec<String> = commits
-                .before
-                .iter()
-                .map(|subject| named(texts, subject).map(|name| format!("- {name}")))
-                .collect::<Result<_, _>>()?;
-            let told = texts.render(
-                ChecksPrompt::QuestionBefore,
-                &Variables::new().with("subjects", named.join("\n"))?,
-            )?;
-            format!("\n{}\n", told.trim())
-        };
-        let body = texts.render(
-            ChecksPrompt::QuestionBodyCommits,
-            &Variables::new()
-                .with("why", why.trim())?
-                .with("commits", lines.join("\n"))?
-                .with("before", before)?
-                .with("allow", ALLOW_WORD)?
-                .with("refuse", REFUSE_WORD)?,
-        )?;
-        entries.push(
-            Entry::new(number, title.trim())?
-                .with_body(body.trim())?
-                .recommend(recommendation.trim())?
-                .with_check_subjects(&finding_subjects),
-        );
+        entries.push(entry);
     }
     let title = texts.render(
         ChecksPrompt::QuestionsTitle,
@@ -353,6 +316,54 @@ pub(super) fn questions_with_commits(
         &Variables::new().with("task", task.as_str())?,
     )?);
     Ok(Questions { file, subjects })
+}
+
+/// The question about the findings about commits of `commits`, numbered `number`, and the subjects it is about.
+fn commits_entry(
+    texts: &ChecksPrompts,
+    number: NonZeroU32,
+    commits: &CommitQuestion,
+    why: &str,
+    recommendation: &str,
+) -> Result<(Entry, Vec<Subject>), ChecksTextError> {
+    let finding_subjects: Vec<Subject> = commits.notes.iter().map(|note| note.finding.subject()).collect();
+    let title = texts.render(
+        ChecksPrompt::QuestionTitleCommits,
+        &Variables::new().with("count", commits.notes.len().to_string())?,
+    )?;
+    let lines: Vec<String> = commits
+        .notes
+        .iter()
+        .map(|note| commit_line(texts, note).map(|line| format!("- {line}")))
+        .collect::<Result<_, _>>()?;
+    let before = if commits.before.is_empty() {
+        String::new()
+    } else {
+        let named: Vec<String> = commits
+            .before
+            .iter()
+            .map(|subject| named(texts, subject).map(|name| format!("- {name}")))
+            .collect::<Result<_, _>>()?;
+        let told = texts.render(
+            ChecksPrompt::QuestionBefore,
+            &Variables::new().with("subjects", named.join("\n"))?,
+        )?;
+        format!("\n{}\n", told.trim())
+    };
+    let body = texts.render(
+        ChecksPrompt::QuestionBodyCommits,
+        &Variables::new()
+            .with("why", why)?
+            .with("commits", lines.join("\n"))?
+            .with("before", before)?
+            .with("allow", ALLOW_WORD)?
+            .with("refuse", REFUSE_WORD)?,
+    )?;
+    let entry = Entry::new(number, title.trim())?
+        .with_body(body.trim())?
+        .recommend(recommendation)?
+        .with_check_subjects(&finding_subjects);
+    Ok((entry, finding_subjects))
 }
 
 /// What the human is told of one commit of the question about commits.

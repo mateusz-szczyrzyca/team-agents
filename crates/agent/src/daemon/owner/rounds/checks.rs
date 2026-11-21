@@ -103,7 +103,7 @@ impl Owner {
         reviewing: &Reviewing<'_>,
         now: Timestamp,
     ) -> Result<Option<Held>, PublishError> {
-        let Site { pulls, team, lead } = site;
+        let lead = site.lead;
         let Some(rules) = self
             .parts
             .settings
@@ -141,27 +141,8 @@ impl Owner {
                 }
             }
         }
-        let written = self.written_description(site, reviewing).await?;
-        let gathered = self.gather(lead, reviewing, &written).await?;
-        let team_allowances = self
-            .parts
-            .state
-            .find_task(&lead.task)
-            .ok_or(PublishError::Lost)?
-            .team
-            .allowances()
-            .to_vec();
-        // A file the human allowed before the findings about commits had a subject of their own covers the commits that
-        // were in the round then: they are kept as they are before the file's allowance may be taken back.
-        let inherited = judge(&gathered, &rules, &record, reviewing.items, &team_allowances)
-            .settled
-            .inherited;
-        if !inherited.is_empty() {
-            record.allow(reviewing.items, &inherited);
-            self.parts.store.save_checks_record(&lead.task, &record).await?;
-        }
-        self.revoke_changed_allowances(site, reviewing, &mut record).await?;
-        let Assessed { issues, settled } = judge(&gathered, &rules, &record, reviewing.items, &team_allowances);
+        let (gathered, assessed) = self.assess_round(site, reviewing, &mut record, &rules).await?;
+        let Assessed { issues, settled } = assessed;
         // What the human refused about a file keeps the round back until the team undoes it; what they refused about a
         // commit is told to the team once, when they refuse it: the team cannot undo a commit.
         let refused: Vec<Subject> = record
@@ -197,48 +178,15 @@ impl Owner {
         match step {
             ChecksStep::StartReviews => Ok(None),
             ChecksStep::BackToTeam { pass } => {
-                // The team is told what the human refused just now, and what they refused before about a file that
-                // the round still changes.
-                let told: Vec<Subject> = refused_now
-                    .iter()
-                    .chain(
-                        refused
-                            .iter()
-                            .filter(|subject| issues.iter().any(|issue| issue.subject() == **subject)),
-                    )
-                    .cloned()
-                    .collect::<std::collections::BTreeSet<Subject>>()
-                    .into_iter()
-                    .collect();
-                let text = team_message(pulls.checks(), reviewing.pr, pass, policy.check_passes, &issues, &told)?;
-                record.send_back(reviewing.items, pass.get());
-                record.sent = Some(Sent {
-                    at: now,
-                    pass: pass.get(),
-                    of: policy.check_passes,
-                    text,
-                });
-                self.parts.store.save_checks_record(&lead.task, &record).await?;
-                let lines = issue_lines(pulls, &issues)?;
-                self.record_checked(
-                    team,
-                    reviewing,
-                    lines,
-                    CheckOutcome::SentBack {
-                        pass,
-                        of: policy.check_passes,
-                    },
-                );
-                tracing::info!(
-                    event = agent_core::log::LogEvent::ChecksDecided.as_str(),
-                    outcome = "sent_back",
-                    team = %team,
-                    pr = %reviewing.pr,
-                    pass = pass.get(),
-                    issues = issues.len(),
-                    "the checks send the round back to the team"
-                );
-                Ok(Some(Held::WakeLead))
+                let told = told_to_team(&refused_now, &refused, &issues);
+                let back = Back {
+                    issues: &issues,
+                    told: &told,
+                    pass,
+                    policy,
+                };
+                self.send_back_for_checks(site, reviewing, &mut record, &back, now)
+                    .await
             }
             ChecksStep::AskHuman { reason } => {
                 let asking = Putting {
@@ -250,6 +198,86 @@ impl Owner {
                     .await
             }
         }
+    }
+
+    /// What the checks find in the round of `reviewing`, with what the human and the task list allowed taken away.
+    async fn assess_round(
+        &self,
+        site: Site<'_>,
+        reviewing: &Reviewing<'_>,
+        record: &mut ChecksRecord,
+        rules: &agent_core::config::Checks,
+    ) -> Result<(Gathered, Assessed), PublishError> {
+        let lead = site.lead;
+        let written = self.written_description(site, reviewing).await?;
+        let gathered = self.gather(lead, reviewing, &written).await?;
+        let team_allowances = self
+            .parts
+            .state
+            .find_task(&lead.task)
+            .ok_or(PublishError::Lost)?
+            .team
+            .allowances()
+            .to_vec();
+        // A file the human allowed before the findings about commits had a subject of their own covers the commits that
+        // were in the round then: they are kept as they are before the file's allowance may be taken back.
+        let inherited = judge(&gathered, rules, record, reviewing.items, &team_allowances)
+            .settled
+            .inherited;
+        if !inherited.is_empty() {
+            record.allow(reviewing.items, &inherited);
+            self.parts.store.save_checks_record(&lead.task, record).await?;
+        }
+        self.revoke_changed_allowances(site, reviewing, record).await?;
+        let assessed = judge(&gathered, rules, record, reviewing.items, &team_allowances);
+        Ok((gathered, assessed))
+    }
+
+    /// Sends the round back to its lead with what `back` says.
+    async fn send_back_for_checks(
+        &mut self,
+        site: Site<'_>,
+        reviewing: &Reviewing<'_>,
+        record: &mut ChecksRecord,
+        back: &Back<'_>,
+        now: Timestamp,
+    ) -> Result<Option<Held>, PublishError> {
+        let Site { pulls, team, lead } = site;
+        let Back {
+            issues,
+            told,
+            pass,
+            policy,
+        } = *back;
+        let text = team_message(pulls.checks(), reviewing.pr, pass, policy.check_passes, issues, told)?;
+        record.send_back(reviewing.items, pass.get());
+        record.sent = Some(Sent {
+            at: now,
+            pass: pass.get(),
+            of: policy.check_passes,
+            text,
+        });
+        self.parts.store.save_checks_record(&lead.task, record).await?;
+        let lines = issue_lines(pulls, issues)?;
+        self.record_checked(
+            team,
+            reviewing,
+            lines,
+            CheckOutcome::SentBack {
+                pass,
+                of: policy.check_passes,
+            },
+        );
+        tracing::info!(
+            event = agent_core::log::LogEvent::ChecksDecided.as_str(),
+            outcome = "sent_back",
+            team = %team,
+            pr = %reviewing.pr,
+            pass = pass.get(),
+            issues = issues.len(),
+            "the checks send the round back to the team"
+        );
+        Ok(Some(Held::WakeLead))
     }
 
     /// Takes the human's answer to the questions of the checks: what they allowed and what they refused is kept for the
@@ -580,6 +608,35 @@ impl Owner {
             }
         }
     }
+}
+
+/// What the team is sent back with.
+#[derive(Clone, Copy)]
+struct Back<'a> {
+    /// The issues whose reasons the team is given.
+    issues: &'a [Issue],
+    /// What the human refused, which the team is told.
+    told: &'a [Subject],
+    /// Which pass of the checks this is.
+    pass: std::num::NonZeroU32,
+    /// How many passes the checks have.
+    policy: ChecksPolicy,
+}
+
+/// What the team is told the human refused: what they refused just now, and what they refused before about a file that
+/// the round still changes.
+fn told_to_team(refused_now: &[Subject], refused: &[Subject], issues: &[Issue]) -> Vec<Subject> {
+    refused_now
+        .iter()
+        .chain(
+            refused
+                .iter()
+                .filter(|subject| issues.iter().any(|issue| issue.subject() == **subject)),
+        )
+        .cloned()
+        .collect::<std::collections::BTreeSet<Subject>>()
+        .into_iter()
+        .collect()
 }
 
 /// What git says about a round.
