@@ -23,6 +23,6 @@ pub(super) use self::jobs::{
     BusJob, DoneNoticeError, NoticeRenderError, failure_reason, render_notice, team_done_notification,
 };
 pub(super) use self::prompts::{TeamPromptError, TeamRun, Why, shape_with_answers};
-pub(super) use self::react::{BusNotice, NoticeError, RequestOutcome, notice_for, request_outcome};
+pub(super) use self::react::{BusNotice, NoticeError, RequestOutcome, lead_takes_work, notice_for, request_outcome};
 pub(super) use self::shared::shared_agents;
 pub(super) use self::sync::reconcile;

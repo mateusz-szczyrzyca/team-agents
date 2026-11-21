@@ -62,6 +62,8 @@ pub(in crate::daemon) enum BusNotice {
         /// The branch it worked on.
         branch: BranchName,
     },
+    /// The work of a member whose new session went bad too, and which no other agent can take over, is its lead's now.
+    LeadTakesWork(LeadWork),
     /// A worker finished a request of a member: the result goes to the member.
     HelperResult {
         /// The request.
@@ -80,6 +82,21 @@ pub(in crate::daemon) enum BusNotice {
         /// Why, for the requester.
         reason: String,
     },
+}
+
+/// The work of a member that its lead is given: whose it was and where it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::daemon) struct LeadWork {
+    /// The member.
+    pub(in crate::daemon) member: AgentName,
+    /// The member's task, which stopped.
+    pub(in crate::daemon) task: TaskId,
+    /// The branch with the member's work: its item's, or its task's.
+    pub(in crate::daemon) branch: BranchName,
+    /// The member's worktree, as a path.
+    pub(in crate::daemon) worktree: String,
+    /// What the member's runs left, rendered for the lead; `None` when it could not be gathered.
+    pub(in crate::daemon) briefing: Option<String>,
 }
 
 /// How a request for a worker ended, for the requester.
@@ -154,8 +171,9 @@ pub(in crate::daemon) fn notice_for(
     let Some(coordinator) = team.crew().coordinator() else {
         return Ok(None);
     };
-    let to = agent_name(coordinator.agent())?;
-    let who = agent_name(member.agent())?;
+    // The coordinator and the member are named as the team's bus knows them: by the agent each task was first given to.
+    let to = agent_name(coordinator.bus_agent())?;
+    let who = agent_name(member.bus_agent())?;
     if let Some((item, _branch)) = worked_on(team, member)
         && message.is_some_and(|text| text.lines().any(|line| line.trim() == format!("SPLIT: {item}")))
     {
@@ -214,6 +232,39 @@ pub(in crate::daemon) fn notice_for(
         | RunEnd::NoStatus { .. } => return Ok(None),
     };
     Ok(Some(Told { to, notice }))
+}
+
+/// What the lead of `team` is told when the work of `member`, whose task stopped, is its own now; `worktree` is the
+/// member's worktree and `briefing` what its runs left. Both are named as the team's bus knows them. `None` for a team
+/// without a lead.
+///
+/// # Errors
+/// [`NoticeError`].
+pub(in crate::daemon) fn lead_takes_work(
+    team: &Team,
+    member: &Member,
+    worktree: &std::path::Path,
+    briefing: Option<String>,
+) -> Result<Option<Told>, NoticeError> {
+    let Some(coordinator) = team.crew().coordinator() else {
+        return Ok(None);
+    };
+    // The task's own branch and its name on the bus are those of its first agent, whoever holds the task now.
+    let who = agent_name(member.bus_agent())?;
+    let branch = match worked_on(team, member) {
+        Some((_, branch)) => branch,
+        None => task_branch(&who, member.task())?,
+    };
+    Ok(Some(Told {
+        to: agent_name(coordinator.bus_agent())?,
+        notice: BusNotice::LeadTakesWork(LeadWork {
+            member: who,
+            task: member.task().clone(),
+            branch,
+            worktree: worktree.display().to_string(),
+            briefing,
+        }),
+    }))
 }
 
 /// How the request a worker served ended, given the end `end` of the worker's run and the status `status` its task has

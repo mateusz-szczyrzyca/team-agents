@@ -164,3 +164,89 @@ fn a_members_task_may_be_handed_over_to_an_investigator_and_the_state_loads_agai
         &investigator("inv-kimi")
     );
 }
+
+/// The state of the 1.1 fixture with its failed member handed over to `claude-9` and its session begun for it.
+fn handed_over_and_begun() -> State {
+    let mut state = old_state();
+    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+    let begun = state
+        .begin_holder_session(&task(), crate::decide::ladder::Trouble::NoStatus, at())
+        .unwrap();
+    assert!(begun, "a task with runs begins a session for its new holder");
+    state
+}
+
+#[test]
+fn a_task_handed_over_resumes_no_session_of_the_agent_before_and_its_next_run_is_briefed() {
+    let state = handed_over_and_begun();
+
+    let member = state.find_task(&task()).unwrap().member;
+    assert_eq!(
+        member.last_session(),
+        None,
+        "no session of codex-1 is resumed by claude-9"
+    );
+    assert_eq!(member.session_runs().len(), 0);
+    assert_eq!(
+        member.bad_runs_since_renewal(),
+        0,
+        "the bad runs of codex-1 are not counted against claude-9"
+    );
+    assert!(member.awaits_new_session(), "claude-9's first run is briefed");
+    let renewals = member.renewals().expect("the session boundary is recorded");
+    assert_eq!(renewals.reason(), crate::decide::ladder::Trouble::NoStatus);
+}
+
+#[test]
+fn a_hand_over_is_not_counted_as_a_new_session_of_the_agent() {
+    let mut state = old_state();
+    state
+        .renew_task(&task(), crate::decide::ladder::Trouble::NoStatus, at())
+        .unwrap();
+    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+
+    state
+        .begin_holder_session(&task(), crate::decide::ladder::Trouble::NoStatus, at())
+        .unwrap();
+
+    let loaded = State::from_json(&state.to_json().unwrap()).expect("the state loads again");
+    let renewals = *loaded.find_task(&task()).unwrap().member.renewals().unwrap();
+    assert_eq!(renewals.used(), 1, "the one new session of codex-1, not the hand-over");
+    let fresh = handed_over_and_begun();
+    let renewals = fresh.find_task(&task()).unwrap().member.renewals().copied().unwrap();
+    assert_eq!(renewals.used(), 0, "a hand-over alone counts no new session");
+}
+
+#[test]
+fn a_session_is_begun_only_for_a_task_in_the_state_that_is_not_a_workers_or_a_reviewers() {
+    let mut state = old_state();
+    let unknown: TaskId = "task-20261121-000000-zzzz".parse().unwrap();
+    let worker: TaskId = "task-20261111-193003-k3x9".parse().unwrap();
+
+    let trouble = crate::decide::ladder::Trouble::Hang;
+    assert!(matches!(
+        state.begin_holder_session(&unknown, trouble, at()),
+        Err(crate::state::RenewTaskError::NoTask { task }) if task == unknown
+    ));
+    assert!(matches!(
+        state.begin_holder_session(&worker, trouble, at()),
+        Err(crate::state::RenewTaskError::Role { task, role: Role::Worker }) if task == worker
+    ));
+}
+
+#[test]
+fn a_task_is_known_on_its_teams_bus_by_the_agent_it_was_first_given_to() {
+    let mut state = old_state();
+    assert_eq!(state.find_task(&task()).unwrap().member.bus_agent(), &normal("codex-1"));
+
+    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+    state.hand_over_task(&task(), investigator("inv-kimi"), at()).unwrap();
+
+    let member = state.find_task(&task()).unwrap().member;
+    assert_eq!(member.agent(), &investigator("inv-kimi"));
+    assert_eq!(
+        member.bus_agent(),
+        &normal("codex-1"),
+        "the bus keeps the name of the first holder"
+    );
+}

@@ -25,6 +25,10 @@ use agent_runtime::text_file::read_text_file;
 
 use super::Owner;
 use super::start::{StartProblem, work_branch};
+use crate::daemon::team::{BusJob, lead_takes_work};
+
+/// The variable of the briefing that holds the task's own prompt, which a lead's text leaves out.
+const PROMPT_VARIABLE: &str = "prompt";
 
 /// One megabyte, in bytes: the unit of `[snapshot] warn_mb`.
 const MEGABYTE: u64 = 1024 * 1024;
@@ -107,8 +111,19 @@ impl Owner {
         let Some(renewals) = found.member.renewals().filter(|_| found.member.awaits_new_session()) else {
             return Ok(None);
         };
-        let (team, member) = (found.team, found.member);
         let reason = renewals.reason();
+        self.gather_facts(task, reason).await
+    }
+
+    /// The facts of what the runs of `task` left, which went bad with `reason`, with the snapshot of its worktree taken
+    /// and recorded first; `None` for a task that works for no open round.
+    ///
+    /// # Errors
+    /// [`BriefingProblem`] when a fact cannot be read.
+    async fn gather_facts(&mut self, task: &TaskId, reason: Trouble) -> Result<Option<BriefingFacts>, BriefingProblem> {
+        let no_task = || BriefingProblem::NoTask { task: task.clone() };
+        let found = self.parts.state.find_task(task).ok_or_else(no_task)?;
+        let (team, member) = (found.team, found.member);
         let config = &self.parts.settings.config;
         let base = config
             .repo(team.repo())
@@ -143,7 +158,8 @@ impl Owner {
             task: task.clone(),
             source,
         })?;
-        let reader = (agent.clone(), team.id().clone());
+        // The messages are those to the name the task has on its team's bus, whoever holds it now.
+        let reader = (AgentName::from_str(member.bus_agent().name())?, team.id().clone());
         let git = Git::new(worktree.clone(), CommitIdentity::for_agent(config.git(), &agent));
         let snapshot = self.snapshot(&worktree, &round, task).await?;
         let head = git.rev_parse(&Revision::Head).await?;
@@ -178,6 +194,52 @@ impl Owner {
         }))
     }
 
+    /// Tells the leads of the member tasks of [`Owner::lead_briefings`] that the member's work is their own, each with the
+    /// briefing of what the member's runs left. A briefing that cannot be gathered is left out and logged, and the message
+    /// goes all the same: the lead still has the branch and the worktree of the work.
+    pub(super) async fn brief_leads(&mut self) {
+        for (task, trouble) in std::mem::take(&mut self.lead_briefings) {
+            let briefing = match self.gather_facts(&task, trouble).await {
+                Ok(Some(facts)) => match facts.render_for_lead(&self.parts.texts, &task) {
+                    Ok(text) => Some(text),
+                    Err(error) => {
+                        tracing::warn!(event = LogEvent::HistoryRecordIncomplete.as_str(), task = %task,
+                            error = %error_chain(&error), "the briefing of a member's work cannot be written for its lead");
+                        None
+                    }
+                },
+                Ok(None) => None,
+                Err(error) => {
+                    tracing::warn!(event = LogEvent::HistoryRecordIncomplete.as_str(), task = %task,
+                        error = %error_chain(&error), "the briefing of a member's work cannot be gathered for its lead");
+                    None
+                }
+            };
+            let Some(found) = self.parts.state.find_task(&task) else {
+                tracing::warn!(event = LogEvent::BusDown.as_str(), task = %task,
+                    "the lead of a task that left the state is not told of its work");
+                continue;
+            };
+            let team = found.team.id().clone();
+            let worktree = self.parts.store.home().worktree_dir(found.team.repo(), &task);
+            match lead_takes_work(found.team, found.member, &worktree, briefing) {
+                Ok(Some(told)) => self.tell_bus(
+                    &team,
+                    BusJob::Tell {
+                        to: told.to,
+                        notice: told.notice,
+                    },
+                ),
+                // A team without a lead has nobody to give the work to; the ladder gives it to none.
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(event = LogEvent::BusDown.as_str(), task = %task, error = %error_chain(&error),
+                        "the lead of a member's task cannot be told of its work");
+                }
+            }
+        }
+    }
+
     /// Takes the snapshot of `worktree` for `task` of `round`, records it in the history, and returns its reference.
     async fn snapshot(
         &mut self,
@@ -200,6 +262,28 @@ impl BriefingFacts {
     /// # Errors
     /// [`ComposeError`] when the text of the briefing cannot be filled.
     pub(super) fn render(&self, texts: &HarnessPrompts, task: &TaskId, prompt: &str) -> Result<String, ComposeError> {
+        let values = self.variables(texts, task, prompt)?;
+        Ok(texts.render(HarnessPrompt::Briefing, &values)?)
+    }
+
+    /// What a lead given the work of `task` is told the runs of the task left, rendered through `texts`: the facts of the
+    /// briefing, without the task's prompt, which the lead's own list holds.
+    ///
+    /// # Errors
+    /// [`ComposeError`] when the text cannot be filled.
+    pub(super) fn render_for_lead(&self, texts: &HarnessPrompts, task: &TaskId) -> Result<String, ComposeError> {
+        let all = self.variables(texts, task, "")?;
+        let mut values = Variables::new();
+        for name in all.names().filter(|name| name.as_str() != PROMPT_VARIABLE) {
+            if let Some(value) = all.get(name) {
+                values = values.with(name.as_str(), value)?;
+            }
+        }
+        Ok(texts.render(HarnessPrompt::LeadBriefing, &values)?)
+    }
+
+    /// The values of the briefing of `task`, whose own prompt is `prompt`.
+    fn variables(&self, texts: &HarnessPrompts, task: &TaskId, prompt: &str) -> Result<Variables, ComposeError> {
         let commits: Vec<String> = self.commits.iter().map(|commit| commit.id.to_string()).collect();
         let listed: Vec<BriefingCommit<'_>> = self
             .commits
@@ -245,8 +329,7 @@ impl BriefingFacts {
             left_out: left_out.as_deref(),
             snapshot: &self.snapshot,
         };
-        let values = briefing_variables(&facts)?;
-        Ok(texts.render(HarnessPrompt::Briefing, &values)?)
+        Ok(briefing_variables(&facts)?)
     }
 }
 

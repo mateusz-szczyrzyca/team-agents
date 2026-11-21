@@ -239,7 +239,8 @@ fn context(texts: &TeamPrompts, run: &TeamRun<'_>) -> Result<String, TeamPromptE
             .roster()
             .into_iter()
             .filter(|(of, _)| *of == role)
-            .map(|(_, member)| member.agent().name())
+            // The names the team's bus knows, which its members write to.
+            .map(|(_, member)| member.bus_agent().name())
             .collect();
         if named.is_empty() {
             NOBODY.to_owned()

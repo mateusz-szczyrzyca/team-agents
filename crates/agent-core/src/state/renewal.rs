@@ -13,12 +13,13 @@ use crate::kinds::Role;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Renewals {
-    /// How many times the task was started in a new session again.
+    /// How many times the task was started in a new session of its agent again; a hand-over to another agent begins a
+    /// session too, and is not counted here.
     used: u32,
-    /// When the last renewal happened.
+    /// When the last renewal or hand-over happened.
     at: Timestamp,
-    /// How many runs the task had when it was last started anew: the runs after them belong to the new session, and
-    /// the session the task had before it is not resumed any more.
+    /// How many runs the task had when it was last started anew or handed over: the runs after them belong to the new
+    /// session, and the session the task had before it is not resumed any more.
     after_runs: usize,
     /// Why the task was last started anew.
     reason: Trouble,
@@ -56,6 +57,25 @@ impl Renewals {
             reason,
             after_runs,
         }
+    }
+
+    /// The session boundary of a task handed over to another agent for the first time at `at`, after `reason` made its
+    /// first `after_runs` runs go bad: no new session of the task's agent is counted.
+    pub(super) const fn handed_over(at: Timestamp, reason: Trouble, after_runs: usize) -> Self {
+        Self {
+            used: 0,
+            at,
+            reason,
+            after_runs,
+        }
+    }
+
+    /// The session boundary a hand-over records at `at`, for `reason`, after the first `after_runs` runs: the count of
+    /// new sessions stays.
+    pub(super) const fn hand_over(&mut self, at: Timestamp, reason: Trouble, after_runs: usize) {
+        self.at = at;
+        self.reason = reason;
+        self.after_runs = after_runs;
     }
 
     /// The renewal the member records: one more was used, at `at`, for `reason`, after its first `after_runs` runs.
