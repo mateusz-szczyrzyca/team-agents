@@ -47,7 +47,7 @@ Top-level key and tables:
 | `[review]` | table | `fix_passes = 5`, `check_passes = 2`, `replace_after_minutes = 15` | the review loop, the checks before it and the reviewers that cannot work |
 | `[split]` | table | `part_limit = 1500`, `corrections = 2`, `unit = "lines"` | automatic coordinator proposal policy |
 | `[plan]` | table | `roles = ["solo", "member", "coordinator"]`, `bounces = 3` | whose runs keep a plan of their task, and how often one goes back for it |
-| `[replacement]` | table | `new_sessions = 1` | how many times a task whose runs went bad is started in a new session of its agent |
+| `[replacement]` | table | `new_sessions = 1`, `replacements = 1`, `mode = "auto"`, `agents = []` | how a task whose runs went bad is kept going: in a new session, then by another agent, by the team's lead, or by the human |
 | `[git]` | table | see below | the identity of the agents' commits |
 | `[github]` | table | none trusted, public API | whose words on GitHub are instructions, and where the API is |
 | `[notifications]` | table | files only | how the human is told |
@@ -187,11 +187,25 @@ and a member are started anew; a worker and a reviewer are not.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `new_sessions` | `1` | how many new sessions of its agent a task is started in after its runs went bad; `0` turns them off and the task fails as before; at most `10`. The count is kept in the state, so it survives a restart of the daemon |
+| `new_sessions` | `1` | how many new sessions of its agent a task is started in after its runs went bad; `0` turns them off; at most `10`. The count is kept in the state, so it survives a restart of the daemon |
+| `agents` | `[]` | the agents that may take a task over when its new session went bad too, in the order to try them: names from `[agents.NAME]` or `[investigators.NAME]`. A name that is not configured, or given twice, is refused. With an empty list and `mode = "auto"` the task fails as before |
+| `mode` | `"auto"` | how far the harness goes without you: `auto` — another agent of `agents`, then, for a member, the team's lead, then you; `lead` — a member's work goes to the team's lead at once, other tasks fail; `off` — the task fails at once, as before `agents` existed |
+| `replacements` | `1` | how many times a task is taken over by another agent; `0` takes none over; at most `10`. The count is in the state |
+
+When the new session goes bad too — after its own retries — the task is given to the first agent of `agents` that is not in
+the task's team, not in the middle of a run, and of the same or a higher place than the agent it replaces: an investigator
+above a normal agent, which is above a worker. It works in the same worktree, on the same branch and on the same task, and
+its first run is briefed like a new session (see above), with retries of its own. The state keeps who held the task
+before (`past_holders`), and the daemon's log the choice (`decision_taken` with `decision` `takeover`).
+
+With no agent to take it, a member's task is stopped and the team's lead is told on the bus that the work is its own now:
+whose it was, its branch and its worktree. The lead integrates the branch, finishes the work and ends `DONE`, and the
+item is published as the lead's. A solo task and a coordinator's have no lead: they fail and you are told, as before.
+The new agent is not added to the team on the bus: messages of the team still name the agent that started the task.
 
 The new session works in the same worktree, on the same branch and on the same task. The state keeps the restart and its
 reason, the history the snapshot, the daemon's log the decision (`decision_taken` with `decision` `ladder`), and
-`agent status` says `in a new session` on the task's line. A task that works for no open round (a state of an older
+`agent status` says `in a new session` on the task's line, and `, for AGENT` when another agent took the task over. A task that works for no open round (a state of an older
 version) is started in a new session without the briefing.
 
 ### `[git]`
