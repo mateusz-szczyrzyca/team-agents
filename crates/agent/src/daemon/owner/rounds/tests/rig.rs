@@ -174,6 +174,7 @@ pub(super) struct Rig {
     daemon: Option<JoinHandle<Result<(), DaemonError>>>,
     clock: TickingClock,
     pub(super) free_space: agent_runtime::disk::FakeFreeSpace,
+    zone: agent_core::local_time::Zone,
 }
 
 impl Rig {
@@ -211,6 +212,11 @@ impl Rig {
         std::fs::write(&secrets, "github_token = \"ghp_test_token_0123\"\n").unwrap();
         std::fs::set_permissions(&secrets, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
         let free_space = agent_runtime::disk::FakeFreeSpace::new(200 * 1024 * 1024 * 1024);
+        let zone = if bus && agents.iter().any(|agent| agent.scenario.starts_with("fail")) {
+            agent_core::local_time::Zone::Utc
+        } else {
+            agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC)
+        };
         Self {
             _dir: dir,
             home,
@@ -221,6 +227,7 @@ impl Rig {
             daemon: None,
             clock: TickingClock::new(),
             free_space,
+            zone,
         }
     }
 
@@ -238,7 +245,7 @@ impl Rig {
             home: self.home.clone(),
             prompts_dir: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
             clock: SharedClock::new(self.clock.clone()),
-            zone: agent_core::local_time::Zone::Utc,
+            zone: self.zone,
             timings: Some(Timings {
                 tick: Duration::from_millis(25),
                 run: RunTimings {
