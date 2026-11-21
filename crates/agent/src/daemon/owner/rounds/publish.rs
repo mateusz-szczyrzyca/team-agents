@@ -400,13 +400,13 @@ impl Owner {
     ) -> Result<Attempt, PublishError> {
         let lead = site.lead;
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        let record = self.parts.store.load_gate_record(&lead.task).await?;
         let tip = git.rev_parse(&Revision::Head).await?;
         // A gate of the harness that still runs decides nothing yet; the record is read after it, so that it is not older.
         let own = self.own_gate_state(&lead.task, &tip);
         if own == Own::Running {
             return Ok(Attempt::Nothing);
         }
+        let record = self.parts.store.load_gate_record(&lead.task).await?;
         let base = Revision::Branch(self.base_branch(&lead.repo)?);
         let waiting = Waiting {
             tip: &tip,
