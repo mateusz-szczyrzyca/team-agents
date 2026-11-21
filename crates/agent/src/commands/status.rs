@@ -395,7 +395,7 @@ fn render_in(
                 .map(|round| format!("  {}{}", round_line(round), rounds(round))),
         );
         lines.extend(splits::lines_of(team, view));
-        for plan in &team.splits {
+        for (plan, _) in splits::shown(team, view) {
             lines.extend(
                 crate::split_context::lines(plan, &team.rounds, &team.part_assignments)
                     .into_iter()
