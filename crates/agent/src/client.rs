@@ -186,7 +186,14 @@ impl Connection {
 
     /// Requests plan-aware version-five replies.
     pub(crate) async fn request_plan(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
-        let format = self.negotiate_plan(&client).await?;
+        let (format, probe_reply) = self.negotiate_plan(&client).await?;
+        if matches!(
+            &command,
+            Command::Status(agent_core::protocol::StatusRequest { target: None })
+        ) && let Some(reply) = probe_reply
+        {
+            return Ok(reply);
+        }
         self.converse_format(client, command, Some(REQUEST_TIMEOUT), format)
             .await
     }
@@ -199,16 +206,19 @@ impl Connection {
     }
 
     /// Probes with a plan-aware request, falling back to split or legacy format when unsupported.
-    async fn negotiate_plan(&mut self, client: &Client) -> Result<ReplyFormat, ClientError> {
+    async fn negotiate_plan(&mut self, client: &Client) -> Result<(ReplyFormat, Option<Reply>), ClientError> {
         if let Some(format) = self.format {
-            return Ok(format);
+            return Ok((format, None));
         }
         let probe = Command::Status(agent_core::protocol::StatusRequest { target: None });
         let format = match self
             .converse_format(client.clone(), probe, Some(REQUEST_TIMEOUT), ReplyFormat::Plan)
             .await
         {
-            Ok(_) => ReplyFormat::Plan,
+            Ok(reply) => {
+                self.format = Some(ReplyFormat::Plan);
+                return Ok((ReplyFormat::Plan, Some(reply)));
+            }
             Err(error)
                 if matches!(
                     &error,
@@ -230,7 +240,7 @@ impl Connection {
             Err(error) => return Err(error),
         };
         self.format = Some(format);
-        Ok(format)
+        Ok((format, None))
     }
 
     /// Probes with a read-only status request, so a closed connection never retries a mutating command.
