@@ -5,6 +5,9 @@
 
 mod words;
 
+#[cfg(test)]
+pub(crate) mod sample;
+
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use time::UtcOffset;
