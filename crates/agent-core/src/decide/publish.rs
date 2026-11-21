@@ -19,6 +19,7 @@
 use std::fmt;
 
 use crate::config::AbsolutePath;
+use crate::ids::BranchName;
 use crate::state::{CommitId, GateOutcome, GateRecord};
 
 /// What is known of the branch of a lead that waits.
@@ -146,6 +147,82 @@ pub fn gate_step(waiting: &Waiting<'_>) -> GateStep {
         }),
         None => GateStep::Run,
     }
+}
+
+/// The nature of the round or pass publishing its work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoundPublication {
+    /// A standalone or initial round of an item.
+    Item,
+    /// A round delivering a part of a split item.
+    Part,
+    /// A merge conflict pass on an approved pull request.
+    ConflictPass,
+    /// A review fix pass updating an existing pull request.
+    FixPass,
+}
+
+/// The relationship between the gated commit and the remote branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteState {
+    /// Remote branch is behind the gated commit (fast-forward push needed).
+    Behind,
+    /// Remote branch already points to the gated commit (up to date).
+    Equal,
+    /// Remote branch has diverged from the gated commit (non-fast-forward).
+    Diverged,
+}
+
+/// How the gated commit is published to the target branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishAction {
+    /// Push the gated commit to the remote branch.
+    Push,
+    /// The remote branch already carries the gated commit; adopt without pushing.
+    UpToDate,
+    /// The remote branch has diverged; publication cannot proceed automatically.
+    Refused,
+}
+
+/// The available branch names of the task, part, and open pull request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublicationBranches<'a> {
+    /// The branch of the task.
+    pub task: &'a BranchName,
+    /// The branch of the part, when the round is part of a split item.
+    pub part: Option<&'a BranchName>,
+    /// The branch of the open pull request, when one exists.
+    pub pr: Option<&'a BranchName>,
+}
+
+/// The result of the publication decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublishDecision<'a> {
+    /// The branch that receives the gated commit.
+    pub branch: &'a BranchName,
+    /// How the commit is brought to that branch.
+    pub action: PublishAction,
+}
+
+/// Which branch a round publishes to and how.
+#[must_use]
+pub fn publish_decision<'a>(
+    round: RoundPublication,
+    branches: &PublicationBranches<'a>,
+    remote: RemoteState,
+) -> PublishDecision<'a> {
+    let branch = branches.pr.unwrap_or_else(|| match round {
+        RoundPublication::Item => branches.task,
+        RoundPublication::Part | RoundPublication::ConflictPass | RoundPublication::FixPass => {
+            branches.part.unwrap_or(branches.task)
+        }
+    });
+    let action = match remote {
+        RemoteState::Behind => PublishAction::Push,
+        RemoteState::Equal => PublishAction::UpToDate,
+        RemoteState::Diverged => PublishAction::Refused,
+    };
+    PublishDecision { branch, action }
 }
 
 #[cfg(test)]

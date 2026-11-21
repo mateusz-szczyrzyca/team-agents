@@ -1763,6 +1763,16 @@ mod tests {
     }
 
     #[test]
+    fn beginning_merge_conflict_spends_pass() {
+        let mut item = progress_in(PhaseKind::Approved);
+        assert_eq!(item.merge_passes(), 0);
+
+        let head: CommitId = "26b65de7e4076596768ca96b48a7f94799c93874".parse().unwrap();
+        assert_eq!(item.begin_merge_conflict(head, at(10)), 1);
+        assert_eq!(item.merge_passes(), 1);
+    }
+
+    #[test]
     fn completed_review_passes_counts_both_fix_passes_and_merge_conflict_passes() {
         let mut item = progress_in(PhaseKind::Fixing);
         assert_eq!(item.completed_review_passes(), 1);

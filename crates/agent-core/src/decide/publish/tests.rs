@@ -214,3 +214,208 @@ fn the_reasons_say_what_is_wrong_and_where_to_look() {
         "{not_at_tip}"
     );
 }
+
+#[test]
+fn publish_decision_table() {
+    let task_branch: BranchName = "agents/lead/task-1".parse().unwrap();
+    let part_branch: BranchName = "agents/lead/task-1-1.1a".parse().unwrap();
+    let pr_branch: BranchName = "agents/lead/task-1-1.1a".parse().unwrap();
+
+    let branches = PublicationBranches {
+        task: &task_branch,
+        part: Some(&part_branch),
+        pr: Some(&pr_branch),
+    };
+
+    let cases = [
+        (
+            RoundPublication::Item,
+            RemoteState::Behind,
+            &pr_branch,
+            PublishAction::Push,
+        ),
+        (
+            RoundPublication::Item,
+            RemoteState::Equal,
+            &pr_branch,
+            PublishAction::UpToDate,
+        ),
+        (
+            RoundPublication::Item,
+            RemoteState::Diverged,
+            &pr_branch,
+            PublishAction::Refused,
+        ),
+        (
+            RoundPublication::Part,
+            RemoteState::Behind,
+            &part_branch,
+            PublishAction::Push,
+        ),
+        (
+            RoundPublication::Part,
+            RemoteState::Equal,
+            &part_branch,
+            PublishAction::UpToDate,
+        ),
+        (
+            RoundPublication::Part,
+            RemoteState::Diverged,
+            &part_branch,
+            PublishAction::Refused,
+        ),
+        (
+            RoundPublication::ConflictPass,
+            RemoteState::Behind,
+            &pr_branch,
+            PublishAction::Push,
+        ),
+        (
+            RoundPublication::ConflictPass,
+            RemoteState::Equal,
+            &pr_branch,
+            PublishAction::UpToDate,
+        ),
+        (
+            RoundPublication::ConflictPass,
+            RemoteState::Diverged,
+            &pr_branch,
+            PublishAction::Refused,
+        ),
+        (
+            RoundPublication::FixPass,
+            RemoteState::Behind,
+            &pr_branch,
+            PublishAction::Push,
+        ),
+        (
+            RoundPublication::FixPass,
+            RemoteState::Equal,
+            &pr_branch,
+            PublishAction::UpToDate,
+        ),
+        (
+            RoundPublication::FixPass,
+            RemoteState::Diverged,
+            &pr_branch,
+            PublishAction::Refused,
+        ),
+    ];
+
+    for (round, remote, expected_branch, expected_action) in cases {
+        let decision = publish_decision(round, &branches, remote);
+        assert_eq!(decision.branch, expected_branch, "round={round:?}, remote={remote:?}");
+        assert_eq!(decision.action, expected_action, "round={round:?}, remote={remote:?}");
+    }
+}
+
+#[test]
+fn publish_decision_without_pr_branch() {
+    let task_branch: BranchName = "agents/lead/task-1".parse().unwrap();
+    let part_branch: BranchName = "agents/lead/task-1-1.1a".parse().unwrap();
+
+    let branches = PublicationBranches {
+        task: &task_branch,
+        part: Some(&part_branch),
+        pr: None,
+    };
+
+    assert_eq!(
+        publish_decision(RoundPublication::Item, &branches, RemoteState::Behind).branch,
+        &task_branch
+    );
+    assert_eq!(
+        publish_decision(RoundPublication::Part, &branches, RemoteState::Behind).branch,
+        &part_branch
+    );
+    assert_eq!(
+        publish_decision(RoundPublication::ConflictPass, &branches, RemoteState::Behind).branch,
+        &part_branch
+    );
+}
+
+#[test]
+fn publish_decision_distinct_branches_table() {
+    let task_branch: BranchName = "agents/lead/task-branch".parse().unwrap();
+    let part_branch: BranchName = "agents/lead/part-branch".parse().unwrap();
+    let pr_branch: BranchName = "agents/lead/pr-branch".parse().unwrap();
+
+    let branches = PublicationBranches {
+        task: &task_branch,
+        part: Some(&part_branch),
+        pr: Some(&pr_branch),
+    };
+
+    // When an existing PR branch exists, all publication kinds must target the PR branch.
+    let rounds = [
+        RoundPublication::Item,
+        RoundPublication::Part,
+        RoundPublication::ConflictPass,
+        RoundPublication::FixPass,
+    ];
+    let remotes = [
+        (RemoteState::Behind, PublishAction::Push),
+        (RemoteState::Equal, PublishAction::UpToDate),
+        (RemoteState::Diverged, PublishAction::Refused),
+    ];
+
+    for round in rounds {
+        for (remote, expected_action) in remotes {
+            let decision = publish_decision(round, &branches, remote);
+            assert_eq!(
+                decision.branch, &pr_branch,
+                "round={round:?}, remote={remote:?} must select existing PR branch"
+            );
+            assert_eq!(
+                decision.action, expected_action,
+                "round={round:?}, remote={remote:?} must select expected action"
+            );
+        }
+    }
+
+    // Fallbacks when PR branch is None:
+    let no_pr = PublicationBranches {
+        task: &task_branch,
+        part: Some(&part_branch),
+        pr: None,
+    };
+    assert_eq!(
+        publish_decision(RoundPublication::Item, &no_pr, RemoteState::Behind).branch,
+        &task_branch
+    );
+    assert_eq!(
+        publish_decision(RoundPublication::Part, &no_pr, RemoteState::Behind).branch,
+        &part_branch
+    );
+    assert_eq!(
+        publish_decision(RoundPublication::ConflictPass, &no_pr, RemoteState::Behind).branch,
+        &part_branch
+    );
+    assert_eq!(
+        publish_decision(RoundPublication::FixPass, &no_pr, RemoteState::Behind).branch,
+        &part_branch
+    );
+
+    // Fallbacks when both PR and Part branches are None:
+    let task_only = PublicationBranches {
+        task: &task_branch,
+        part: None,
+        pr: None,
+    };
+    assert_eq!(
+        publish_decision(RoundPublication::Item, &task_only, RemoteState::Behind).branch,
+        &task_branch
+    );
+    assert_eq!(
+        publish_decision(RoundPublication::Part, &task_only, RemoteState::Behind).branch,
+        &task_branch
+    );
+    assert_eq!(
+        publish_decision(RoundPublication::ConflictPass, &task_only, RemoteState::Behind).branch,
+        &task_branch
+    );
+    assert_eq!(
+        publish_decision(RoundPublication::FixPass, &task_only, RemoteState::Behind).branch,
+        &task_branch
+    );
+}

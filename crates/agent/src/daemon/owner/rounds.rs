@@ -338,6 +338,12 @@ enum PublishError {
     /// A branch name is not valid.
     #[error("a branch name is not valid")]
     Branch(#[from] InvalidBranchName),
+    /// Publication to the branch was refused (e.g. diverged remote).
+    #[error("publication to {branch} was refused: remote has diverged")]
+    Refused {
+        /// The branch.
+        branch: BranchName,
+    },
     /// The notification cannot be made.
     #[error("the notification is not valid")]
     Notification(#[from] InvalidNotification),
@@ -489,7 +495,7 @@ impl Owner {
             }
         }
         self.take_held_verdicts(team).await?;
-        self.advance_merge_conflicts(team, look, now).await?;
+        self.advance_merge_conflicts(&pulls, team, look, now).await?;
         self.merge_approved(&pulls, team, look).await?;
         self.poll_deliveries(&pulls, team, look).await?;
         self.read_fix_responses(&pulls, team, look).await?;
@@ -769,6 +775,9 @@ mod history_stories_tests;
 #[cfg(test)]
 #[path = "rounds/tests/merge_conflict.rs"]
 mod merge_conflict_tests;
+#[cfg(test)]
+#[path = "rounds/tests/publish_failures.rs"]
+mod publish_failures_tests;
 #[cfg(test)]
 #[path = "rounds/tests/queued_run.rs"]
 mod queued_run_tests;

@@ -4,7 +4,7 @@ All reviews of your pull request are in, and at least one asks for changes. The 
 
 {{findings}}
 
-Switch to your branch `{{branch}}`. Fix every [BLOCKER] in code. Fix a [MAJOR] in code or explain its deviation once.
+Fix every [BLOCKER] in code, on your branch `{{branch}}` (do not switch your worktree to another branch). Fix a [MAJOR] in code or explain its deviation once.
 Before STATUS, answer every open blocking number exactly once:
 `FINDING 3: FIXED` or `FINDING 4: EXPLAINED — why the deviation is right`. After FIXED, optionally add ` — reason`, ` - reason`, or `: reason`.
 A finding with any retained explanation cannot be explained again. All verifiers must accept an explanation;

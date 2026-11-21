@@ -18,8 +18,9 @@ use agent_runtime::process::error_chain;
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
 use super::publish::Own;
-use super::{Lead, PublishError};
+use super::{Lead, PublishError, Pulls};
 use crate::daemon::merge::{items_of, ran_since};
+use crate::daemon::pr::{Joining, Publication, Publish};
 use crate::daemon::team::Why;
 
 /// What the daemon starts on an approved pull request after a conflict refusal or a conflict pass.
@@ -121,6 +122,7 @@ impl Owner {
     /// [`OwnerError`] when the state cannot be saved or is found inconsistent.
     pub(super) async fn advance_merge_conflicts(
         &mut self,
+        pulls: &Pulls,
         team: &TeamId,
         look: &mut Look,
         now: Timestamp,
@@ -161,7 +163,7 @@ impl Owner {
                 .start_merge_conflict(team, &items, ConflictStep::AskHuman, &approved_head, now, look)
                 .await;
         }
-        let judged = match self.judge_tip(&lead, &pr, &approved_head).await {
+        let judged = match self.judge_tip(&lead, &approved_head).await {
             Ok(judged) => judged,
             Err(error) => {
                 tracing::warn!(
@@ -186,14 +188,19 @@ impl Owner {
         let changed = match self.read_change(&lead, &pr, &approved_head, &tip).await {
             Ok(changed) => changed,
             Err(error) => {
-                tracing::warn!(
-                    event = LogEvent::GitCallFailed.as_str(),
-                    team = %team,
-                    pr = %pr.number,
-                    error = %error_chain(&error),
-                    "the change of the merge conflict pass cannot be read yet: it is looked at again in a while"
-                );
-                return Ok(());
+                let publication = Publication {
+                    head_branch: pr.branch.clone(),
+                    publish: Publish::Open {
+                        items: items
+                            .iter()
+                            .map(|id| Joining {
+                                item: *id,
+                                branch: pr.branch.clone(),
+                            })
+                            .collect(),
+                    },
+                };
+                return self.publish_failed(pulls, team, &lead, &publication, &error, now);
             }
         };
         self.record_event_at(
@@ -387,17 +394,11 @@ impl Owner {
 
     /// Whether the lead's tip of `pr` is the commit to push: it merged the base, and the gate of the harness or of the
     /// lead passed at it.
-    async fn judge_tip(
-        &mut self,
-        lead: &Lead,
-        pr: &PullRequest,
-        approved_head: &CommitId,
-    ) -> Result<Judgement, PublishError> {
+    async fn judge_tip(&mut self, lead: &Lead, approved_head: &CommitId) -> Result<Judgement, PublishError> {
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let base = self.base_branch(&lead.repo)?;
-        let Some(tip) = git.branch_tip(&pr.branch).await? else {
-            return Ok(Judgement::Ask);
-        };
+        let record = self.parts.store.load_gate_record(&lead.task).await?;
+        let tip = git.rev_parse(&Revision::Head).await?;
         if &tip == approved_head
             || !git
                 .is_ancestor(&Revision::RemoteBranch(base), &Revision::Commit(tip.clone()))
@@ -409,7 +410,6 @@ impl Owner {
         if own == Own::Running {
             return Ok(Judgement::Wait);
         }
-        let record = self.parts.store.load_gate_record(&lead.task).await?;
         if record
             .as_ref()
             .is_some_and(|record| record.result.head == tip && record.counts_as_pass())
@@ -436,7 +436,40 @@ impl Owner {
         tip: &CommitId,
     ) -> Result<Vec<RepoPath>, PublishError> {
         let git: Git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        git.push(&pr.branch).await?;
+        let branches = agent_core::decide::publish::PublicationBranches {
+            task: &pr.branch,
+            part: None,
+            pr: Some(&pr.branch),
+        };
+        let remote_state = if approved_head == tip {
+            agent_core::decide::publish::RemoteState::Equal
+        } else if git
+            .is_ancestor(&Revision::Commit(approved_head.clone()), &Revision::Commit(tip.clone()))
+            .await?
+        {
+            agent_core::decide::publish::RemoteState::Behind
+        } else {
+            agent_core::decide::publish::RemoteState::Diverged
+        };
+        let decided = agent_core::decide::publish::publish_decision(
+            agent_core::decide::publish::RoundPublication::ConflictPass,
+            &branches,
+            remote_state,
+        );
+        match decided.action {
+            agent_core::decide::publish::PublishAction::UpToDate => {
+                git.adopt_pushed(decided.branch, tip).await?;
+            }
+            agent_core::decide::publish::PublishAction::Push => {
+                git.push_commit(decided.branch, tip).await?;
+            }
+            agent_core::decide::publish::PublishAction::Refused => {
+                return Err(PublishError::Refused {
+                    branch: decided.branch.clone(),
+                });
+            }
+        }
+        git.branch_point_if_unheld(decided.branch, tip).await?;
         let base = self.base_branch(&lead.repo)?;
         let merged_base = git
             .merge_base(&Revision::Commit(tip.clone()), &Revision::RemoteBranch(base))
