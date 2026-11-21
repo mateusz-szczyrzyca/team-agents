@@ -1,6 +1,6 @@
 //! A task whose new session went bad too is given to another agent of `[replacement] agents` — in its worktree, on its
-//! branch, with the briefing — or, with nobody fitting, its work goes to the team's lead; mode `off` and a file without
-//! `[replacement] agents` fail it as before.
+//! branch, with the briefing — or, with nobody fitting or listed, its work goes to the team's lead; mode `off` fails it
+//! as before.
 
 use agent_core::state::{ItemPhase, MergeMode, State};
 use agent_core::status::TaskStatus;
@@ -260,9 +260,10 @@ async fn mode_off_fails_the_task_as_before() {
     assert_eq!(member.runs().len(), 6);
 }
 
-// Rule: a file without `[replacement] agents` fails the task after its new session, as before.
+// Rule: a file without `[replacement] agents`, in the default mode `auto`, gives a member's work to its lead after the
+// member's new session went bad too: with nobody listed, `auto` behaves as `lead`.
 #[tokio::test]
-async fn without_replacement_agents_the_task_fails_as_before() {
+async fn without_replacement_agents_a_members_work_goes_to_its_lead() {
     let mut rig = Rig::new(
         &[
             investigator("inv-lead", "sleep"),
@@ -279,16 +280,19 @@ async fn without_replacement_agents_the_task_fails_as_before() {
         .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
         .await;
 
-    let state = rig.status_is(&tasks[1], TaskStatus::Failed).await;
-    let bus = bus_texts(&rig);
+    let state = rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+    rig.wait_for("the lead's text on the bus", || {
+        bus_texts(&rig).contains("WORK OF A MEMBER THAT IS GONE")
+    })
+    .await;
     rig.stop().await.unwrap();
 
     let member = state.find_task(&tasks[1]).unwrap().member;
     assert_eq!(member.agent().name(), "claude-1");
-    assert_eq!(member.past_holders().len(), 0, "nothing was handed over");
-    assert!(
-        !bus.contains("WORK OF A MEMBER THAT IS GONE"),
-        "the lead is not given the work: {bus}"
+    assert_eq!(
+        member.past_holders().len(),
+        0,
+        "nothing was handed over to another agent"
     );
 }
 
