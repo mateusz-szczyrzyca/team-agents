@@ -155,7 +155,10 @@ history; a run of a role here that ends `STATUS: DONE` against its plan is sent 
 | `bounces` | `3` | how many times a task's runs go back for its plan before the human is asked once, in a questions file. `0` never sends a run back; its plan is still recorded |
 
 A task created before the daemon first ran with plans keeps none of this: its plan, if it writes one, is recorded, and
-its runs are never sent back.
+its runs are never sent back. Done steps are nevertheless judged for all roles and outcomes, even with
+`bounces = 0`: existence checks run, while no-check, reviewer and command steps are declared. Mismatches do not
+consume this budget in part a. Command settings (`check_seconds`, `check_refuse`) belong to part b and are not
+configuration keys in this release. Existing configurations need no changes.
 
 ### `[split]`
 

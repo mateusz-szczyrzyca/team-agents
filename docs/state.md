@@ -748,3 +748,10 @@ An observed delivery closure is saved on the abandoned round before recovery. Wh
 for its in-progress item, the daemon still owes the member a fresh round. After opening it and queuing the member,
 that new round makes recovery complete. Restarting at either boundary preserves the obligation and never revives
 the ended claim, even if GitHub reopens its PR. The marker timestamp cannot precede the opening of the round.
+
+### Plan-step status snapshots
+
+Step judgements live in history schema 16, not `state.json`; state schema 14 is unchanged.
+The daemon caches plan-step summaries for task and round status and rebuilds them on startup.
+A summary includes the mark, step ID and title, plus a done step's settlement and optional reason.
+The optional `task_plans` map in team and round replies is absent when there is no readable plan.

@@ -132,6 +132,33 @@ its title says, and a title it takes on is reported on its own. `Plan::compare` 
 of the plan, as written, when it differs from the task's last one; a missing file; a file that does not parse, with the
 error. An unchanged plan makes no new record.
 
+## Judging done steps
+
+After reading the plan at every run's end, the daemon judges steps marked done, for every role and outcome,
+including tasks created before plan enforcement. It judges a newly done step, a changed step (title, check, files
+or notes), a previous mismatch, or a step with no previous judgement. An unchanged confirmed or declared step is
+not checked again. Steps to do, in hand or given up are never judged.
+
+| Check | Settlement in this release |
+|---|---|
+| no `Check:` line | `declared` |
+| `reviewer` | `declared`; a later item will connect a reviewer's verdict to a step |
+| `exists PATH` | `confirmed` when a file or directory resolves inside the task's worktree; `mismatch` when absent, inaccessible, or resolving outside it |
+| a command | `declared`; commands are not executed until part b |
+
+Existence checks use asynchronous filesystem operations and follow symlinks only to targets inside the worktree.
+Each judgement records the task, run, step ID, check, state, reason and duration in
+[`history.db`](history.md#step_judgements). This part creates no command-output files.
+Judgements are acknowledged by the history writer before run settlement continues.
+
+`agent status <task>` and `agent status <round>` show the plan's step marks and the settlement of done steps,
+for example `[x] 1.1 Write the guide (confirmed)` or `[x] 1.2 Add images (mismatch: …)`.
+The daemon serves cached snapshots so status requests do not read plans or SQLite. A task without a readable
+plan keeps its previous status format. Mismatches are recorded and displayed in this part; they do not send a run
+back and do not consume the plan's bounce budget. The existing rules below still apply to unfinished plans.
+
+## Enforcing the plan
+
 **Sent back.** A run of a role named in [`[plan] roles`](configuration.md#plan) (default: solo, member, coordinator)
 that ends `STATUS: DONE` goes back to the same agent, in the same session, when its plan says it is not done. There are
 four reasons, in this order, each with its own text of the catalog (`prompts/harness/run/plan-*.md`):

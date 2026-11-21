@@ -401,8 +401,10 @@ the same as the last one is not written again.
 
 ### `step_judgements`
 
-The judgements of plan steps ([`plan.md`](plan.md)) executed and checked at the end of runs, added by migration `16`.
-A row is written for every step judged at the end of a run.
+The judgements of done plan steps ([`plan.md`](plan.md)) at the end of runs, added by migration `16`.
+A row is written for every step judged at the end of a run. These rows are stored separately from the general
+ledger and are available through `Reader::step_judgements` and `Reader::latest_judgements`.
+The daemon waits for the history writer to acknowledge the transaction before settling the run.
 
 | Column | Type | Meaning |
 |---|---|---|
@@ -416,7 +418,7 @@ A row is written for every step judged at the end of a run.
 | `check_line` | TEXT, nullable | the check command or instruction line |
 | `reason` | TEXT, nullable | explanation of the judgement, required for mismatch |
 | `duration_ms` | INTEGER ≥ 0 | how long check execution took in milliseconds |
-| `output_path` | TEXT, nullable | task-relative path to check output log file |
+| `output_path` | TEXT, nullable | reserved for command-output files in part b; always `NULL` in part a |
 
 ## Indexes
 
