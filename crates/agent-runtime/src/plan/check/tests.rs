@@ -494,3 +494,56 @@ async fn execute_command_check_mismatches_on_non_utf8_worktree() {
             .contains("worktree path is not valid UTF-8")
     );
 }
+
+#[tokio::test]
+async fn preparation_failure_does_not_claim_an_output_file() {
+    let env = TestEnv::new();
+    let step = parse_first_step("[x] 1.1 Check\n    Check: true\n");
+    let envs = [("INVALID=NAME".to_owned(), "value".to_owned())];
+    let mut context = env.context(60, &[]);
+    context.envs = &envs;
+    let result = super::execute_command_check(&context, &step, "true").await.unwrap();
+    assert_eq!(result.state, JudgementState::Mismatch);
+    assert_eq!(result.output_path, None);
+    assert!(
+        !env.task_dir
+            .join("checks")
+            .join(env.run.as_str())
+            .join("1.1.log")
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn repeated_command_checks_replace_previous_output() {
+    let env = TestEnv::new();
+    let step = parse_first_step("[x] 1.1 Check\n    Check: printf current\n");
+    let context = env.context(60, &[]);
+    let first = super::execute_command_check(&context, &step, "printf stale; exit 1")
+        .await
+        .unwrap();
+    assert_eq!(first.state, JudgementState::Mismatch);
+    let second = super::execute_command_check(&context, &step, "printf current; exit 1")
+        .await
+        .unwrap();
+    assert_eq!(second.state, JudgementState::Mismatch);
+    assert_eq!(second.tail, "current");
+    assert_eq!(
+        fs::read_to_string(env.task_dir.join(second.output_path.unwrap())).unwrap(),
+        "current"
+    );
+}
+
+#[tokio::test]
+async fn spawn_failure_reports_only_an_existing_output_file() {
+    let env = TestEnv::new();
+    let step = parse_first_step("[x] 1.1 Check\n    Check: true\n");
+    let missing_worktree = env.worktree.join("missing");
+    let mut context = env.context(60, &[]);
+    context.worktree = &missing_worktree;
+    let result = super::execute_command_check(&context, &step, "true").await.unwrap();
+    assert_eq!(result.state, JudgementState::Mismatch);
+    if let Some(path) = result.output_path {
+        assert!(env.task_dir.join(path).is_file());
+    }
+}
