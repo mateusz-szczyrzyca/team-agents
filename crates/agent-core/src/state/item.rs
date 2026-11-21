@@ -1919,7 +1919,10 @@ mod tests {
         assert_eq!(item.publish_question_number(), Some(num));
 
         let text = serde_json::to_string(&item).unwrap();
-        assert!(text.contains("\"publish_question_task\":\"task-20261111-153001-k3x9\""), "{text}");
+        assert!(
+            text.contains("\"publish_question_task\":\"task-20261111-153001-k3x9\""),
+            "{text}"
+        );
         assert!(text.contains("\"publish_question_number\":3"), "{text}");
 
         let back: ItemProgress = serde_json::from_str(&text).unwrap();

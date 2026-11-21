@@ -205,8 +205,7 @@ impl Owner {
                     .iter()
                     .filter(|item| {
                         item.publish_question().is_some()
-                            && (item.publish_question_task() == Some(task)
-                                || item.publish_question_task().is_none())
+                            && (item.publish_question_task() == Some(task) || item.publish_question_task().is_none())
                             && (item.publish_question_number() == Some(number)
                                 || (item.publish_question_number().is_none()
                                     && self.watch.publish_question.get(task) == Some(&number)))
@@ -301,11 +300,11 @@ fn holds_work_of_a_stopped_member(team: &Team) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU32;
     use crate::daemon::owner::fixture::Daemon;
     use crate::fixtures::{at, member, normal, repo, task, team_id};
     use agent_core::questions::QuestionsFile;
     use agent_core::state::{Crew, ItemPhase, State, TaskListText, Team, TeamMembers};
+    use std::num::NonZeroU32;
 
     fn nz(n: u32) -> NonZeroU32 {
         NonZeroU32::new(n).unwrap()
