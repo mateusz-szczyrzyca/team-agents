@@ -907,3 +907,7 @@ mod delivery_restart_tests;
 #[cfg(test)]
 #[path = "rounds/tests/proposal_execution.rs"]
 mod proposal_execution_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/tier_assignment.rs"]
+mod tier_assignment_tests;
