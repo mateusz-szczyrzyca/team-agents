@@ -191,15 +191,18 @@ impl Owner {
             return Ok(TaskStatus::Queued);
         }
         let reason = found.member.renewals().map(agent_core::state::Renewals::reason);
+        let at = self.after_last_run(task)?;
         let answer = last_step_answer(file.entries().first().and_then(Entry::verdict));
         log_decision("last_step_answer", &task.as_str(), &format!("{answer:?}"));
         match answer {
             LastStepAnswer::OnceMore => Ok(TaskStatus::Queued),
             LastStepAnswer::Stop => {
+                // The work is owed to the lead in the state, which is saved with the answer, so that a restart before the
+                // lead is told tells it all the same.
                 if located.role == Role::Member
                     && let Some(trouble) = reason
                 {
-                    self.lead_briefings.push((task.clone(), trouble));
+                    self.parts.state.owe_lead(task, trouble, at)?;
                 }
                 Ok(TaskStatus::Stopped)
             }

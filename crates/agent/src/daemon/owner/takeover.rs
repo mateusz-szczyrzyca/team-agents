@@ -55,7 +55,8 @@ impl Owner {
                 Takeover::Agent
             }
             Chosen::Lead => {
-                self.to_lead.insert(task.clone(), trouble);
+                // The state owes the work to the lead until it is told, so that a restart before then tells it all the same.
+                self.parts.state.owe_lead(task, trouble, at)?;
                 log_decision("takeover", &format!("task={task}, from={}", held.name()), LEAD);
                 handed_over(&team, task, held.name(), LEAD);
                 Takeover::Lead
