@@ -8,7 +8,7 @@ use crate::fixtures::team_state;
 use crate::testing::{Answer, FakeDaemon};
 
 fn teams() -> Vec<TeamSummary> {
-    vec![TeamSummary::from(&team_state().teams()[0])]
+    vec![crate::fixtures::legacy_summary(&team_state().teams()[0])]
 }
 
 /// What `agent status` prints when the daemon answers `reply`.

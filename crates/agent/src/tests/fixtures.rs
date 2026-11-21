@@ -34,6 +34,14 @@ pub(crate) fn words() -> crate::daemon::notice::TaskWords {
     crate::daemon::notice::TaskWords::new(&list, None)
 }
 
+/// The summary of `team` as a daemon that sends the legacy protocol carries it: without the description, which that
+/// protocol does not have.
+pub(crate) fn legacy_summary(team: &agent_core::state::Team) -> agent_core::protocol::TeamSummary {
+    let mut summary = agent_core::protocol::TeamSummary::from(team);
+    summary.short_desc = None;
+    summary
+}
+
 /// The ID of run number `n` (0 to 59).
 pub(crate) fn run(n: u32) -> RunId {
     format!("run-20261111-1530{n:02}-r7q2").parse().unwrap()

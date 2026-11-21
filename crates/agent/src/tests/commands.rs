@@ -62,7 +62,7 @@ fn status_with_no_daemon_says_it_is_not_running_and_how_to_start_it() {
 #[tokio::test]
 async fn status_prints_the_teams_the_daemon_lists() {
     let dir = tempfile::tempdir().unwrap();
-    let teams = vec![agent_core::protocol::TeamSummary::from(&team_state().teams()[0])];
+    let teams = vec![crate::fixtures::legacy_summary(&team_state().teams()[0])];
     let listed = teams.clone();
     let daemon = FakeDaemon::serve(&dir.path().join("agent.sock"), move |request| {
         lines(request, Reply::Teams { teams: listed.clone() })
