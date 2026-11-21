@@ -24,8 +24,14 @@ pub(crate) enum Asked {
 }
 
 /// The line that tells `asked` of `round`.
-pub(crate) fn wait_text(_round: &RoundId, _asked: &Asked) -> String {
-    String::new()
+pub(crate) fn wait_text(round: &RoundId, asked: &Asked) -> String {
+    match asked {
+        Asked::Waits(what) => format!("round {round} waits for {what}"),
+        Asked::Nothing => format!("round {round} waits for nothing: a run of it goes on, or it is closed"),
+        Asked::Unknown(why) => {
+            format!("round {round}: what it waits for is not known, the daemon was not asked: {why}")
+        }
+    }
 }
 
 /// Asks the daemon at `socket` what `round` waits for, and tells it in a line.
