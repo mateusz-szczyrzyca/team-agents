@@ -360,7 +360,46 @@ impl State {
     /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
     /// `holder` is in its team, or a run of it is going.
     pub fn hand_over_task(&mut self, task: &TaskId, holder: Participant, at: Timestamp) -> Result<(), HandOverError> {
-        let _ = (task, holder, at);
+        let no_task = || HandOverError::NoTask { task: task.clone() };
+        let team = self
+            .teams
+            .iter_mut()
+            .find(|team| team.find(task).is_some())
+            .ok_or_else(no_task)?;
+        let (role, held_by) = team
+            .find(task)
+            .map(|(role, member)| (role, member.agent().clone()))
+            .ok_or_else(no_task)?;
+        match role {
+            Role::Solo | Role::Coordinator | Role::Member => {}
+            Role::Worker | Role::Reviewer => {
+                return Err(HandOverError::Role {
+                    task: task.clone(),
+                    role,
+                });
+            }
+        }
+        if held_by == holder {
+            return Err(HandOverError::SameHolder { task: task.clone() });
+        }
+        let in_team = team
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member)
+            .chain(team.reviewers())
+            .any(|member| member.agent().name() == holder.name());
+        if in_team {
+            return Err(HandOverError::InTeam {
+                task: task.clone(),
+                agent: holder.name().to_owned(),
+            });
+        }
+        let (_, mut member) = team.find_mut(task).ok_or_else(no_task)?;
+        if member.current_run().is_some() {
+            return Err(HandOverError::InRun { task: task.clone() });
+        }
+        member.held_task(holder, at);
         Ok(())
     }
 

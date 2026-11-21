@@ -159,7 +159,7 @@ impl CheckedMut<'_, Member> {
     }
 
     /// See [`Member::held_task`].
-    pub fn held_task(&mut self, holder: Participant, at: Timestamp) {
+    pub(crate) fn held_task(&mut self, holder: Participant, at: Timestamp) {
         self.value.held_task(holder, at);
     }
 
@@ -483,8 +483,9 @@ impl Member {
         Ok(true)
     }
 
-    /// Gives the task to `holder` at `at`, keeping the agent that held it as one of its past and no longer its own.
-    pub fn held_task(&mut self, holder: Participant, at: Timestamp) {
+    /// Gives the task to `holder` at `at`, keeping the agent that held it as one of its past and no longer its own. Only
+    /// [`State::hand_over_task`](super::State::hand_over_task) calls it, after it checked the hand-over against the team.
+    pub(crate) fn held_task(&mut self, holder: Participant, at: Timestamp) {
         let before = std::mem::replace(&mut self.agent, holder);
         self.past_holders.push(holding::Holding {
             agent: before,
