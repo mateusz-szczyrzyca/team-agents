@@ -198,13 +198,19 @@ pub(crate) async fn status_running(
     out: &mut impl Write,
 ) -> Result<(), StatusError> {
     let (teams, history) = teams(connection, None).await?;
-    let teams = running(teams);
-    let text = if teams.is_empty() {
+    // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
+    // part's round is one that is over.
+    let listed: Vec<TeamSummary> = teams
+        .into_iter()
+        .filter(|team| team.rounds.iter().any(|round| *round.life() == RoundLife::Open))
+        .collect();
+    let text = if listed.is_empty() {
         NO_OPEN_ROUNDS.to_owned()
     } else {
-        let told = rounds::told(connection, activity, &teams).await?;
-        let text = render_at(
-            &teams,
+        let told = rounds::told(connection, activity, &listed).await?;
+        let text = render_in(
+            &listed,
+            View::Running,
             &|task| activity.of(task),
             &|round| told.of(round),
             activity.offset,
@@ -215,6 +221,7 @@ pub(crate) async fn status_running(
 }
 
 /// The teams of `teams` that have an open round, each with its open rounds only.
+#[cfg(test)]
 pub(crate) fn running(teams: Vec<TeamSummary>) -> Vec<TeamSummary> {
     teams
         .into_iter()
@@ -328,17 +335,35 @@ fn render_with(
     render_at(teams, activity, rounds, UtcOffset::UTC)
 }
 
-/// What the running view of the status prints.
-#[cfg(test)]
-fn render_running(teams: &[TeamSummary]) -> String {
-    let _ = teams;
-    String::new()
-}
-
 /// [`render_active`] with what `rounds` says of each round after its line, the times of the recorded activities told at
 /// `offset` from UTC.
 fn render_at(
     teams: &[TeamSummary],
+    activity: &dyn Fn(&TaskId) -> Option<String>,
+    rounds: &dyn Fn(&Round) -> String,
+    offset: UtcOffset,
+) -> String {
+    render_in(teams, View::Full, activity, rounds, offset)
+}
+
+/// What a view of the status prints, the running view being the same teams with their open rounds only.
+#[cfg(test)]
+fn render_running(teams: &[TeamSummary]) -> String {
+    render_in(teams, View::Running, &|_| None, &|_| String::new(), UtcOffset::UTC)
+}
+
+/// Which view of the status is printed: the full one, or the running one that limits the round lines to the open ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum View {
+    /// Every round of a team.
+    Full,
+    /// The open rounds only.
+    Running,
+}
+
+fn render_in(
+    teams: &[TeamSummary],
+    view: View,
     activity: &dyn Fn(&TaskId) -> Option<String>,
     rounds: &dyn Fn(&Round) -> String,
     offset: UtcOffset,
@@ -366,9 +391,10 @@ fn render_at(
         lines.extend(
             team.rounds
                 .iter()
+                .filter(|round| view == View::Full || *round.life() == RoundLife::Open)
                 .map(|round| format!("  {}{}", round_line(round), rounds(round))),
         );
-        lines.extend(splits::lines(team));
+        lines.extend(splits::lines_of(team, view));
         for plan in &team.splits {
             lines.extend(
                 crate::split_context::lines(plan, &team.rounds, &team.part_assignments)
