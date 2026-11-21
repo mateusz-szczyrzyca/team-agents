@@ -157,3 +157,28 @@ fn tier_question_recipient_waits_for_an_idle_lead_and_an_unasked_wait() {
         }
     }
 }
+
+#[test]
+fn a_resolved_capability_wait_can_be_asked_again_when_the_requirement_returns() {
+    let item = "1.1".parse().unwrap();
+    let mut team = Team::new(
+        team_id(1),
+        "example".parse().unwrap(),
+        at(0),
+        MergeMode::Autopilot,
+        TaskListText::new("Brief.\n\n1. Feature\n[ ] 1.1 Item\nTier: investigator\n".into()).unwrap(),
+        Crew::solo(member(1, normal("lead"))).unwrap(),
+    );
+    team.refresh_tier_waits();
+    team.mark_tier_questions();
+    let mut stored = serde_json::to_value(&team).unwrap();
+    stored["task_list"] = serde_json::json!("Brief.\n\n1. Feature\n[ ] 1.1 Item\nTier: normal\n");
+    let mut staffed: Team = serde_json::from_value(stored).unwrap();
+    staffed.refresh_tier_waits();
+    assert_eq!(staffed.tier_waits(), &BTreeMap::new());
+    let mut stored = serde_json::to_value(&staffed).unwrap();
+    stored["task_list"] = serde_json::json!("Brief.\n\n1. Feature\n[ ] 1.1 Item\nTier: investigator\n");
+    let mut unstaffed: Team = serde_json::from_value(stored).unwrap();
+    unstaffed.refresh_tier_waits();
+    assert_eq!(unstaffed.unasked_tier_waits(), vec![(item, Tier::Investigator)]);
+}
