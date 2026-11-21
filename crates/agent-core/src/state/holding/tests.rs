@@ -117,3 +117,37 @@ fn a_task_that_is_not_in_the_state_or_is_a_workers_or_a_reviewers_is_not_handed_
         })
     );
 }
+
+#[test]
+fn a_task_is_not_handed_over_to_an_agent_of_a_lower_tier_and_the_state_still_loads() {
+    let coordinator: TaskId = "task-20261111-193001-k3x9".parse().unwrap();
+    let cases = [
+        (
+            task(),
+            Participant::Worker("worker-9".parse::<AgentName>().unwrap()),
+            crate::kinds::Tier::Worker,
+            crate::kinds::Tier::Normal,
+        ),
+        (
+            coordinator,
+            normal("claude-9"),
+            crate::kinds::Tier::Normal,
+            crate::kinds::Tier::Investigator,
+        ),
+    ];
+    for (task, holder, lower, held) in cases {
+        let mut state = old_state();
+
+        let refused = state.hand_over_task(&task, holder, at());
+
+        assert_eq!(
+            refused,
+            Err(HandOverError::LowerTier {
+                task: task.clone(),
+                holder: lower,
+                held,
+            })
+        );
+        State::from_json(&state.to_json().unwrap()).expect("the refused hand-over leaves a state that loads");
+    }
+}

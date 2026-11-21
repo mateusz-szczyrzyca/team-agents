@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::Participant;
 use super::values::Timestamp;
 use crate::ids::TaskId;
-use crate::kinds::Role;
+use crate::kinds::{Role, Tier};
 
 /// A hand-over of one task from one agent to another.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +47,16 @@ pub enum HandOverError {
         task: TaskId,
         /// The agent's name.
         agent: String,
+    },
+    /// The agent named is of a lower tier than the one that holds the task: a task is never given to a lower tier.
+    #[error("task {task} is held by a {held} agent and is not given to a {holder} one")]
+    LowerTier {
+        /// The task.
+        task: TaskId,
+        /// The tier of the agent named.
+        holder: Tier,
+        /// The tier of the agent that holds the task.
+        held: Tier,
     },
     /// A run of the task is going: its agent still works on it.
     #[error("a run of task {task} is going")]
