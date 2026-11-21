@@ -1,8 +1,11 @@
 //! Tier eligibility and availability for dependency-ready items and split parts.
 
+use super::tier::{TierChoice, choose_agent};
 use crate::ids::ItemId;
+use crate::kinds::Role;
 use crate::kinds::Tier;
-use crate::state::{Participant, Team};
+use crate::state::{Member, Participant, Team};
+use crate::status::TaskStatus;
 
 /// Why a ready item cannot start yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,8 +38,62 @@ pub struct Dispatch {
 
 /// Chooses available participants without lowering an item's or part's tier.
 #[must_use]
-pub fn dispatch(_team: &Team) -> Dispatch {
-    Dispatch::default()
+pub fn dispatch(team: &Team) -> Dispatch {
+    let sets = super::ItemSets::of(team.items());
+    let features = team.task_list().list().features();
+    let ready = features
+        .iter()
+        .filter(|feature| super::dependencies_merged(feature, features, &sets))
+        .filter_map(|feature| super::next_item(feature, &sets, team.merge()));
+    let roster = team.crew().roster();
+    let members: Vec<_> = roster
+        .iter()
+        .filter(|(role, _)| matches!(role, Role::Solo | Role::Member))
+        .map(|(_, member)| *member)
+        .collect();
+    let mut reserved = std::collections::HashSet::new();
+    let mut result = Dispatch::default();
+    for item in ready {
+        let required = required_tier(team, item);
+        let fitting_member = members.iter().any(|member| member.agent().tier() >= required);
+        let coordinator = team.crew().coordinator().filter(|_| !fitting_member);
+        let available = |member: &Member| {
+            matches!(member.status(), TaskStatus::Queued | TaskStatus::Waiting)
+                && !sets.busy.iter().any(|name| name.as_str() == member.agent().name())
+                && !reserved.contains(member.agent().name())
+        };
+        let offered: Vec<_> = members
+            .iter()
+            .filter(|member| available(member))
+            .map(|member| member.agent().clone())
+            .collect();
+        match choose_agent(
+            Some(required),
+            &offered,
+            coordinator.filter(|member| available(member)).map(Member::agent),
+        ) {
+            TierChoice::Member(agent) | TierChoice::Coordinator(agent) => {
+                reserved.insert(agent.name().to_owned());
+                result.assigned.push((item, agent.clone()));
+            }
+            TierChoice::NoAgent { required } => result.waiting.push(Waiting {
+                item,
+                required,
+                reason: if fitting_member || coordinator.is_some_and(|member| member.agent().tier() >= required) {
+                    WaitReason::Busy
+                } else {
+                    WaitReason::Absent
+                },
+            }),
+        }
+    }
+    result
+}
+
+/// The item's minimum capability, defaulting to normal for an omitted directive.
+#[must_use]
+pub fn required_tier(team: &Team, item: ItemId) -> Tier {
+    team.task_list().list().required_tier(item).unwrap_or(Tier::Normal)
 }
 
 #[cfg(test)]
