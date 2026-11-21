@@ -6,6 +6,7 @@
 //! checked against each other. The type does no I/O; whoever reads the file passes its text in.
 
 mod replacement;
+#[cfg(test)]
 mod replacement_tests;
 mod split;
 pub use split::Split;

@@ -33,19 +33,19 @@ impl Replacement {
     /// The agents that may take a task over, in the order the file names them; none when the file names none.
     #[must_use]
     pub fn agents(&self) -> &[AgentName] {
-        &[]
+        &self.agents
     }
 
     /// How far the harness goes to keep a task going without the human.
     #[must_use]
     pub const fn mode(&self) -> ReplacementMode {
-        ReplacementMode::Auto
+        self.mode
     }
 
     /// How many times a task is taken over by another agent after its runs went bad; `0` never takes one over.
     #[must_use]
-    pub fn replacements(&self) -> replacements::Limit {
-        replacements::Limit::default()
+    pub const fn replacements(&self) -> replacements::Limit {
+        self.replacements
     }
 }
 
