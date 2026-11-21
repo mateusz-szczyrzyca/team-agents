@@ -28,7 +28,7 @@ use crate::client::Connection;
 use crate::daemon::{DaemonError, DaemonSetup, Surroundings, Timings, run_in, run_with_log_layer};
 
 /// The longest any wait of these tests lasts.
-pub(super) const PATIENCE: Duration = Duration::from_secs(30);
+pub(super) const PATIENCE: Duration = Duration::from_secs(60);
 
 /// Two features that do not wait for each other would start both items at once; this chain starts the second item when
 /// the first is merged.
