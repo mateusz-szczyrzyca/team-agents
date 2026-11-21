@@ -2,6 +2,32 @@
 
 use agent_core::protocol::TeamSummary;
 
+/// What a part of a split is doing, as the daemon schedules it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum PartState {
+    /// A round of the item bound the part and closed: it merged the part's pull request, or gave it up.
+    Done,
+    /// The round bound to the part is open, and the item does not wait for an agent of a tier.
+    InProgress,
+    /// The lead goes on with the part once the parts it depends on have closed; none has to, so it is next.
+    Ready,
+    /// The lead goes on with the part once these parts have closed.
+    WaitingFor(Vec<agent_core::state::split::PartId>),
+    /// The item waits for an agent of the tier it asks for before its next part starts.
+    WaitingForTier,
+}
+
+/// The state of each part of every split of `team`.
+pub(super) fn states(
+    team: &TeamSummary,
+) -> Vec<(
+    &agent_core::state::split::SplitPlan,
+    Vec<(agent_core::state::split::PartId, PartState)>,
+)> {
+    let _ = team;
+    Vec::new()
+}
+
 /// Prints each part from its durable round identity and dependency graph.
 pub(super) fn lines(team: &TeamSummary) -> Vec<String> {
     let mut lines = Vec::new();

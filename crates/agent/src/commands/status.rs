@@ -328,6 +328,13 @@ fn render_with(
     render_at(teams, activity, rounds, UtcOffset::UTC)
 }
 
+/// What the running view of the status prints.
+#[cfg(test)]
+fn render_running(teams: &[TeamSummary]) -> String {
+    let _ = teams;
+    String::new()
+}
+
 /// [`render_active`] with what `rounds` says of each round after its line, the times of the recorded activities told at
 /// `offset` from UTC.
 fn render_at(
@@ -570,3 +577,7 @@ mod split_tests;
 #[cfg(test)]
 #[path = "status/tests/negotiation.rs"]
 mod negotiation_tests;
+
+#[cfg(test)]
+#[path = "status/tests/part_states.rs"]
+mod part_state_tests;
