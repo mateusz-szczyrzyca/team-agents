@@ -198,11 +198,7 @@ const TAIL_LINES: usize = 40;
 
 /// Reads the last [`TAIL_LINES`] lines (up to [`TAIL_BYTES`]) from `path`.
 async fn read_tail(path: &Path) -> Result<String, io::Error> {
-    let mut file = match fs::File::open(path).await {
-        Ok(file) => file,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(String::new()),
-        Err(err) => return Err(err),
-    };
+    let mut file = fs::File::open(path).await?;
     let metadata = file.metadata().await?;
     let length = metadata.len();
     let start = length.saturating_sub(TAIL_BYTES);
@@ -233,8 +229,11 @@ async fn check_log_paths(checks_dir: &Path, run_id: Option<&RunId>, step_id: Ite
 }
 
 /// Keeps the primary mismatch reason when process cleanup also fails.
-fn with_cleanup_result(reason: String, _cleanup: Result<(), crate::process::ProcessError>) -> String {
-    reason
+fn with_cleanup_result(reason: String, cleanup: Result<(), crate::process::ProcessError>) -> String {
+    match cleanup {
+        Ok(()) => reason,
+        Err(error) => format!("{reason}; process cleanup failed: {error}"),
+    }
 }
 
 /// Waits for `process` to exit or reach `check_seconds`, returning the state and reason.
@@ -281,18 +280,21 @@ async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> 
     }
 }
 
-/// Extracts trailing output for a mismatch result if a log exists.
-async fn resolve_mismatch_tail(state: JudgementState, log_path: &Path) -> String {
-    if state == JudgementState::Mismatch {
-        match read_tail(log_path).await {
-            Ok(tail) => tail,
-            Err(error) => {
-                tracing::warn!(path = %log_path.display(), %error, "cannot read check output tail");
-                String::new()
-            }
+/// Extracts mismatch output, retaining an output-read failure alongside the primary reason.
+async fn resolve_mismatch_tail(state: JudgementState, log_path: &Path, reason: &mut Option<String>) -> String {
+    if state != JudgementState::Mismatch {
+        return String::new();
+    }
+    match read_tail(log_path).await {
+        Ok(tail) => tail,
+        Err(error) => {
+            let failure = format!("cannot read check output {}: {error}", log_path.display());
+            *reason = Some(match reason.take() {
+                Some(primary) => format!("{primary}; {failure}"),
+                None => failure,
+            });
+            String::new()
         }
-    } else {
-        String::new()
     }
 }
 
@@ -441,8 +443,8 @@ pub async fn execute_command_check(
         }
     };
 
-    let (state, reason) = wait_child_outcome(process, context.check_seconds).await;
-    let tail = resolve_mismatch_tail(state, &log_path).await;
+    let (state, mut reason) = wait_child_outcome(process, context.check_seconds).await;
+    let tail = resolve_mismatch_tail(state, &log_path, &mut reason).await;
     let duration_ms = duration_millis(start.elapsed())?;
 
     Ok(JudgementResult {
