@@ -21,11 +21,11 @@ const CUT_MARK: &str = "…";
 pub fn step_line(step: &Step, run: Option<&RunStart>, followed: &[AgentName]) -> String {
     let mut line = step.at.to_string();
     line.push(' ');
-    if followed.len() > 1 {
-        if let Some(name) = run.map(|run| run.agent.name.as_str()) {
-            line.push_str(&value(name));
-            line.push(' ');
-        }
+    if followed.len() > 1
+        && let Some(name) = run.map(|run| run.agent.name.as_str())
+    {
+        line.push_str(&value(name));
+        line.push(' ');
     }
     line.push_str(&text(&step.event));
     line
@@ -41,13 +41,13 @@ fn text(event: &ActivityEvent) -> String {
         ActivityEvent::ToolCall { name, summary } => ("tool call: ", format!("{name} {summary}")),
         ActivityEvent::Error(text) => ("error: ", text.clone()),
         ActivityEvent::Info(text) => ("info: ", text.clone()),
-        ActivityEvent::Control { action, by } => ("control: ", format!("{action} {}", client(&by))),
+        ActivityEvent::Control { action, by } => ("control: ", format!("{action} {}", client(by.clone()))),
     };
     format!("{kind}{}", value(&text))
 }
 
 /// Who used a control, in words.
-fn client(client: &Client) -> String {
+fn client(client: Client) -> String {
     match client {
         Client::Cli => "from the terminal".to_owned(),
         Client::Dashboard { login } => format!("through the dashboard as {}", value(login.as_str())),
