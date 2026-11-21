@@ -361,7 +361,7 @@ async fn a_restart_of_the_daemon_keeps_the_count_of_the_send_backs() {
 
 #[tokio::test]
 async fn a_done_step_whose_check_fails_is_judged_mismatch_and_recorded_in_history() {
-    let mut daemon = with_bounces(&solo_state(), 1);
+    let mut daemon = with_bounces(&solo_state(), 0);
     let dir = daemon.scenario(1, "done");
     std::fs::create_dir_all(dir.join(".agent")).unwrap();
     std::fs::write(
@@ -482,6 +482,12 @@ async fn unjudged_intervening_plan_causes_changed_step_to_be_rejudged() {
     }
 
     std::fs::write(dir.join(".agent/plan.md"), plan2_text).unwrap();
+    let cfg = std::fs::read_to_string(daemon.home.config_file()).unwrap();
+    std::fs::write(
+        daemon.home.config_file(),
+        cfg.replace("[plan]\nbounces = 1\n", "[plan]\nbounces = 0\n"),
+    )
+    .unwrap();
 
     daemon.start().await;
     let _state = daemon.status_is(1, TaskStatus::Done).await;
@@ -833,6 +839,12 @@ async fn reopened_step_is_checked_again_when_marked_done() {
 
     std::fs::remove_file(dir.join("ok.txt")).unwrap();
     std::fs::write(dir.join(".agent/plan.md"), plan2_text.replace("[>]", "[x]")).unwrap();
+    let cfg = std::fs::read_to_string(daemon.home.config_file()).unwrap();
+    std::fs::write(
+        daemon.home.config_file(),
+        cfg.replace("[plan]\nbounces = 1\n", "[plan]\nbounces = 0\n"),
+    )
+    .unwrap();
 
     daemon.start().await;
     let _state = daemon.status_is(1, TaskStatus::Done).await;
