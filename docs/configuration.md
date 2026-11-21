@@ -210,8 +210,8 @@ are told, as before.
 
 After the last step — when the agent that took a task over goes bad too, after its own retries, or a lead given a
 member's work goes bad too — you are asked once, in the task's next questions file (`harness/run/notice-last-step.md`):
-`a` starts the task once more in a new session of its agent, briefed; `b`, and `ok` for the recommendation, stop it,
-and a member's work then goes to its lead. A task that goes bad again after its question fails as before. Mode `off`
+`a` starts the task once more in a new session of its agent, briefed; `b`, `ok` for the recommendation, and any other
+answer, free text included, stop it, and a member's work then goes to its lead. A task that goes bad again after its question fails as before. Mode `off`
 asks nothing. Each hand-over is logged as `task_handed_over` (see [log.md](log.md)).
 
 The new session works in the same worktree, on the same branch and on the same task. The state keeps the restart and its

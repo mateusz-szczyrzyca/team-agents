@@ -269,7 +269,7 @@ gets its work in a message on the bus, with a briefing of what the member's runs
 asks for that at once). With `mode = "off"`, and for a solo task or a coordinator's with nobody to take it, the task is
 marked failed and the coordinator or you are notified, as before. When the agent that took a task over goes bad too, or
 a lead given a member's work does, you are asked once, in the task's next questions file: `a` starts it once more in a
-new session, `b` (and `ok`) stop it. Each hand-over is logged as `task_handed_over`.
+new session; `b`, `ok` and any other answer stop it. Each hand-over is logged as `task_handed_over`.
 `agent status` shows such a task as `in a new session`, and as `, for AGENT` when another agent took it over from AGENT. Automatic retries apply only to resumable tasks with a session (solo tasks,
 coordinators, and team members), excluding workers serving requests, reviewers, tasks without a session, or failures
 during startup or execution. Runs ending without a status line upon daemon shutdown or interruption (exit code `None`)
