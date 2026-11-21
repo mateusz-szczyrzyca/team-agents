@@ -1,0 +1,1 @@
+{{member}} {{task}} {{branch}} {{worktree}}
