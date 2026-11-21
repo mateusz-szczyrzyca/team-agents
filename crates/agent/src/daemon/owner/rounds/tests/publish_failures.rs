@@ -106,8 +106,11 @@ async fn split_part_conflict_pass_publishes_gated_commit_to_part_pr_branch() {
     let pr = team.rounds()[0].part_pull_request().unwrap();
     assert_eq!(pr.number.get().get(), 1);
     let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&coordinator)).unwrap()).unwrap();
+    let gated_commit = gate["result"]["head"].as_str().unwrap();
     assert_eq!(
-        remote_head, "0123456789abcdef0123456789abcdef01234567",
+        remote_head, gated_commit,
         "remote PR branch must carry the exact gated commit hash"
     );
 }
@@ -155,8 +158,11 @@ async fn publish_with_checked_out_worktree_publishes_without_forcing() {
         _ => panic!("unexpected phase"),
     };
     let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&task)).unwrap()).unwrap();
+    let gated_commit = gate["result"]["head"].as_str().unwrap();
     assert_eq!(
-        remote_head, "0123456789abcdef0123456789abcdef01234567",
+        remote_head, gated_commit,
         "remote PR branch must carry the exact gated commit hash"
     );
 }
@@ -165,7 +171,7 @@ async fn publish_with_checked_out_worktree_publishes_without_forcing() {
 async fn publish_with_detached_worktree_publishes_gated_commit_without_forcing() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work"),
+            normal("claude-1", "script:detach"),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
         ],
@@ -173,14 +179,17 @@ async fn publish_with_detached_worktree_publishes_gated_commit_without_forcing()
         false,
     )
     .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("detach.sh"),
+        "set -eu\ncommit() { git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q \"$@\"; }\necho 'detached work' > detached.txt\ngit add detached.txt\ncommit -m 'Detached commit'\ngit checkout --detach HEAD\n",
+    )
+    .unwrap();
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let task = tasks[0].clone();
-
-    // Detach HEAD in the task's worktree:
-    let worktree = rig.worktree(&task);
-    git(&worktree, &["checkout", "--detach", "HEAD"]);
 
     let state = rig
         .item_where("1.1", "in review or approved or done", |phase| {
@@ -201,9 +210,18 @@ async fn publish_with_detached_worktree_publishes_gated_commit_without_forcing()
         _ => panic!("unexpected phase"),
     };
     let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&task)).unwrap()).unwrap();
+    let gated_commit = gate["result"]["head"].as_str().unwrap();
     assert_eq!(
-        remote_head, "0123456789abcdef0123456789abcdef01234567",
+        remote_head, gated_commit,
         "remote PR branch must carry the exact gated commit hash"
+    );
+    let worktree = rig.worktree(&task);
+    assert_eq!(
+        git(&worktree, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "HEAD",
+        "worktree must remain detached on HEAD"
     );
 }
 
