@@ -433,3 +433,82 @@ async fn a_member_fix_waits_for_its_response_and_integrates_before_the_existing_
     assert_eq!(state.team(&id).unwrap().items()[0].fix_passes().len(), 1);
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn absent_tier_asks_once_across_restart_and_an_unhelpful_answer() {
+    use crate::client::Connection;
+    use crate::daemon::owner::fixture::{answers, n};
+    use agent_core::protocol::{AnswerRequest, Client, Command};
+    let mut rig = Rig::new(
+        &[
+            normal("lead", "sleep"),
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(
+            &["lead", "claude-1"],
+            &format!("{ONE}\nTier: investigator\n"),
+            MergeMode::Autopilot,
+            Some("lead"),
+        )
+        .await;
+    let state = rig
+        .state_where("idle lead with an absent tier", |state| {
+            let team = state.team(&id).unwrap();
+            !team.tier_waits().is_empty()
+                && matches!(
+                    team.crew().coordinator().unwrap().status(),
+                    TaskStatus::Waiting | TaskStatus::Questions
+                )
+        })
+        .await;
+    assert_eq!(
+        state.team(&id).unwrap().crew().coordinator().unwrap().questions().len(),
+        1
+    );
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    rig.start().await;
+    let state = rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    assert_eq!(
+        state.team(&id).unwrap().crew().coordinator().unwrap().questions().len(),
+        1
+    );
+    assert_eq!(state.team(&id).unwrap().items()[0].phase(), &ItemPhase::Pending);
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: n(1),
+                answers: answers(&[(1, "Keep waiting — résumé")]),
+            }),
+        )
+        .await
+        .unwrap();
+    let state = rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    assert_eq!(state.team(&id).unwrap().items()[0].phase(), &ItemPhase::Pending);
+    assert_eq!(
+        state.team(&id).unwrap().crew().coordinator().unwrap().questions().len(),
+        1
+    );
+    rig.stop().await.unwrap();
+    rig.start().await;
+    let state = rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    assert_eq!(state.team(&id).unwrap().items()[0].phase(), &ItemPhase::Pending);
+    assert_eq!(
+        state.team(&id).unwrap().crew().coordinator().unwrap().questions().len(),
+        1
+    );
+    assert!(!rig.home.questions_file(&tasks[0], n(2)).exists());
+    rig.stop().await.unwrap();
+}
