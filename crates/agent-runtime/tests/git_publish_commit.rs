@@ -9,7 +9,7 @@ mod git_publish_commit {
     use agent_core::config::AbsolutePath;
     use agent_core::ids::BranchName;
     use agent_core::state::CommitId;
-    use agent_runtime::git::{CommitIdentity, Git, Revision, WorktreeBranch};
+    use agent_runtime::git::{CommitIdentity, Git, GitError, GitOperation, Revision, WorktreeBranch};
 
     fn raw(dir: &Path, args: &[&str]) -> String {
         let output = Command::new("git")
@@ -168,6 +168,54 @@ mod git_publish_commit {
         assert_eq!(
             raw(&origin, &["rev-parse", &format!("refs/heads/{target_branch}")]),
             remote_third.to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn held_branches_fails_with_not_a_branch_on_malformed_branch_name() {
+        let (tmp, repo, _origin) = repository_with_origin();
+        let linked = tmp.path().canonicalize().unwrap().join("linked");
+        let head = raw(&repo, &["rev-parse", "HEAD"]);
+        raw(&repo, &["update-ref", "refs/heads/-invalid", &head]);
+        raw(&repo, &["worktree", "add", linked.to_str().unwrap(), &head]);
+        raw(&linked, &["symbolic-ref", "HEAD", "refs/heads/-invalid"]);
+
+        let git = handle(&repo);
+        let error = git.held_branches().await.unwrap_err();
+        assert!(
+            matches!(
+                error,
+                GitError::NotABranch {
+                    operation: GitOperation::WorktreeList,
+                    ref source,
+                } if source.value == "-invalid"
+            ),
+            "expected GitError::NotABranch, got {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn branch_point_if_unheld_propagates_not_a_branch_error() {
+        let (tmp, repo, _origin) = repository_with_origin();
+        let linked = tmp.path().canonicalize().unwrap().join("linked");
+        let head = raw(&repo, &["rev-parse", "HEAD"]);
+        let head_commit = commit(&head);
+        raw(&repo, &["update-ref", "refs/heads/-invalid", &head]);
+        raw(&repo, &["worktree", "add", linked.to_str().unwrap(), &head]);
+        raw(&linked, &["symbolic-ref", "HEAD", "refs/heads/-invalid"]);
+
+        let git = handle(&repo);
+        let target = branch("main");
+        let error = git.branch_point_if_unheld(&target, &head_commit).await.unwrap_err();
+        assert!(
+            matches!(
+                error,
+                GitError::NotABranch {
+                    operation: GitOperation::WorktreeList,
+                    ref source,
+                } if source.value == "-invalid"
+            ),
+            "expected GitError::NotABranch, got {error:?}"
         );
     }
 }

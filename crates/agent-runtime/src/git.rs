@@ -700,6 +700,8 @@ impl Git {
     /// Returns `true` when the branch was moved, or `false` when it was held by a worktree and left alone.
     ///
     /// # Errors
+    /// [`GitError::NotABranch`] when git printed a branch reference that is not a valid branch name;
+    /// [`GitError::NotUtf8`] when git printed non-UTF-8 output;
     /// [`GitError::Failed`]; [`GitError::Run`].
     pub async fn branch_point_if_unheld(&self, branch: &BranchName, commit: &CommitId) -> Result<bool, GitError> {
         let held = self.held_branches().await?;
@@ -713,6 +715,8 @@ impl Git {
     /// Lists all local branches currently checked out in any worktree of this repository.
     ///
     /// # Errors
+    /// [`GitError::NotABranch`] when git printed a branch reference that is not a valid branch name;
+    /// [`GitError::NotUtf8`] when git printed non-UTF-8 output;
     /// [`GitError::Failed`]; [`GitError::Run`].
     pub async fn held_branches(&self) -> Result<HashSet<BranchName>, GitError> {
         let operation = GitOperation::WorktreeList;
