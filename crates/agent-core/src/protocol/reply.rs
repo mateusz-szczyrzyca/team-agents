@@ -474,6 +474,17 @@ impl RoundDetail {
     }
 }
 
+impl TeamSummary {
+    /// The summary of `team` with the description of its task, which the daemon tells: the one its task list gives, or
+    /// the one derived from its brief. [`TeamSummary::from`] leaves it out.
+    #[must_use]
+    pub fn described(team: &Team) -> Self {
+        let mut summary = Self::from(team);
+        summary.short_desc = None;
+        summary
+    }
+}
+
 impl From<&Team> for TeamSummary {
     fn from(team: &Team) -> Self {
         let mut items = ItemCounts::default();
@@ -982,3 +993,6 @@ mod executor_negotiation_tests;
 
 #[cfg(test)]
 mod short_desc_tests;
+
+#[cfg(test)]
+mod described_tests;
