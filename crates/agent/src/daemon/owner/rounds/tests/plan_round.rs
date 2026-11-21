@@ -517,7 +517,7 @@ async fn plan_steps_are_preserved_in_status_after_daemon_restart() {
 
 #[tokio::test]
 async fn plan_steps_with_various_checks_report_declared_and_mismatch() {
-    let mut rig = round_with_changes("script:first,fix-script:second").await;
+    let mut rig = round_with_changes("script:first,fix-script:second,fix-work").await;
     let plan = "\
 Do several.
 
@@ -570,9 +570,10 @@ Do several.
     assert_eq!(steps[1].state, Some(agent_core::plan::judge::JudgementState::Declared));
     assert_eq!(steps[1].reason, None);
 
-    // 1.3 command check -> Declared in Part A
+    // 1.3 command check -> Confirmed
     assert_eq!(steps[2].id, "1.3".parse().unwrap());
-    assert_eq!(steps[2].state, Some(agent_core::plan::judge::JudgementState::Declared));
+    assert_eq!(steps[2].state, Some(agent_core::plan::judge::JudgementState::Confirmed));
+    assert_eq!(steps[2].reason, None);
 
     // 1.4 exists file present -> Confirmed
     assert_eq!(steps[3].id, "1.4".parse().unwrap());
@@ -617,7 +618,7 @@ Do several.
 
 #[tokio::test]
 async fn unchanged_confirmed_steps_are_not_rejudged_across_runs_and_roles() {
-    let mut rig = round_with_changes("script:first,fix-script:second").await;
+    let mut rig = round_with_changes("script:first,fix-script:second,fix-work").await;
     let plan = "\
 Do two.
 
