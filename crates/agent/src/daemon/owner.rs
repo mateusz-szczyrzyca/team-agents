@@ -37,7 +37,7 @@ use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
 use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
 use agent_core::history::{HistoryEvent, RunWhy};
-use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
+use agent_core::ids::{AgentName, GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::protocol::{
@@ -387,7 +387,7 @@ struct Located {
     /// The task's role.
     role: Role,
     /// The agent's name.
-    agent: String,
+    agent: AgentName,
 }
 
 /// What follows a run of a task that went bad: a step of the ladder, or who takes the task over when it has none left.
@@ -1111,7 +1111,7 @@ impl Owner {
                     item: id,
                 })?;
                 if matches!(item.phase(), agent_core::state::ItemPhase::Fixing { assignee, .. }
-                    if assignee.as_str() == located.agent)
+                    if assignee.as_str() == located.agent.as_str())
                     && let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut())
                 {
                     context.lead_message =
@@ -1949,7 +1949,7 @@ impl Owner {
         Ok(Located {
             team: found.team.id().clone(),
             role: found.role,
-            agent: found.member.agent().name().to_owned(),
+            agent: found.member.agent().agent_name(),
         })
     }
 

@@ -9,11 +9,11 @@ use std::str::FromStr;
 use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
 use agent_core::decide::plan::{DoneEnds, PlanFacts, PlanRead, PlanVerdict, decide_plan_with_mismatch, done_ends_with};
 use agent_core::ids::RunId;
-use agent_core::ids::{AgentName, BranchName, InvalidName, ItemId, TaskId, TeamId};
+use agent_core::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::plan::judge::{JudgementState, steps_to_judge_with};
-use agent_core::plan::{PLAN_FILE, Plan, PlanError, Step, StepState, parse_plan};
+use agent_core::plan::{Check, PLAN_FILE, Plan, PlanError, Step, StepState, parse_plan};
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::protocol::PlanStepSummary;
 use agent_core::questions::{Entry, QuestionsFile, Verdict, quote};
@@ -57,13 +57,6 @@ enum OutOfDeliveryError {
         source: Option<InvalidValue>,
     },
     /// The agent's name in the state is not a name of an agent.
-    #[error("the agent {name:?} cannot commit")]
-    Agent {
-        /// The name.
-        name: String,
-        /// What is wrong with it.
-        source: InvalidName,
-    },
     /// The plan's path is not a path of the repository.
     #[error("the plan's path cannot be given to git")]
     PlanPath(#[source] InvalidRepoPath),
@@ -139,13 +132,9 @@ impl Owner {
             Err(source) => return Err(OutOfDeliveryError::Look { path: file, source }),
         }
         let plan = RepoPath::from_str(PLAN_FILE).map_err(OutOfDeliveryError::PlanPath)?;
-        let agent = AgentName::from_str(&located.agent).map_err(|source| OutOfDeliveryError::Agent {
-            name: located.agent.clone(),
-            source,
-        })?;
         let git = Git::new(
             worktree,
-            CommitIdentity::for_agent(self.parts.settings.config.git(), &agent),
+            CommitIdentity::for_agent(self.parts.settings.config.git(), &located.agent),
         );
         let base = self.base_of(located)?;
         if git
@@ -476,32 +465,63 @@ impl Owner {
         let by_run = expand_plans_by_run(&task_runs, &parsed);
         (plans, by_run)
     }
+}
 
+/// Context for recording judgements when agent environment construction fails.
+struct EnvFailureContext<'a> {
+    task: &'a TaskId,
+    located: &'a Located,
+    run: Option<&'a RunId>,
+    worktree: &'a AbsolutePath,
+    error: &'a RunError,
+}
+
+impl Owner {
     /// Records judgements for steps when environment preparation fails.
     async fn record_env_failures(
         &self,
-        task: &TaskId,
-        located: &Located,
-        run: Option<&RunId>,
+        ctx: EnvFailureContext<'_>,
         to_judge: &[&Step],
-        error: &RunError,
         mut previous: HashMap<ItemId, JudgementRecord>,
     ) -> Result<(HashMap<ItemId, JudgementRecord>, Option<PlanReason>), OwnerError> {
-        let reason_text = format!("cannot prepare agent environment: {}", error_chain(error));
-        tracing::warn!(task = %task, error = %reason_text, "check environment construction failed");
+        let reason_text = format!("cannot prepare agent environment: {}", error_chain(ctx.error));
+        tracing::warn!(task = %ctx.task, error = %reason_text, "check environment construction failed");
+        let empty_envs = Vec::new();
+        let fallback_context = CheckContext {
+            worktree: ctx.worktree.as_path(),
+            task_dir: &self.parts.store.home().task_dir(ctx.task),
+            run: ctx.run,
+            check_seconds: 0,
+            check_refuse: &[],
+            envs: &empty_envs,
+        };
         let mut first_mismatch = None;
         let mut records = Vec::new();
         for step in to_judge {
-            let result = JudgementResult {
-                state: JudgementState::Mismatch,
-                check_line: step.check().map(ToString::to_string),
-                reason: Some(reason_text.clone()),
-                duration_ms: 0,
-                output_path: None,
-                tail: String::new(),
-                gate_refused: false,
+            let result = match step.check() {
+                Some(Check::Command(_)) => JudgementResult {
+                    state: JudgementState::Mismatch,
+                    check_line: step.check().map(ToString::to_string),
+                    reason: Some(reason_text.clone()),
+                    duration_ms: 0,
+                    output_path: None,
+                    tail: String::new(),
+                    gate_refused: false,
+                },
+                _ => match execute_step_check(&fallback_context, step).await {
+                    Ok(res) => res,
+                    Err(err) => JudgementResult {
+                        state: JudgementState::Mismatch,
+                        check_line: step.check().map(ToString::to_string),
+                        reason: Some(format!("cannot run check: {}", error_chain(&err))),
+                        duration_ms: 0,
+                        output_path: None,
+                        tail: String::new(),
+                        gate_refused: false,
+                    },
+                },
             };
-            if first_mismatch.is_none() {
+            if result.state == JudgementState::Mismatch && first_mismatch.is_none() {
                 first_mismatch = Some(PlanReason::Mismatch {
                     step: step.id(),
                     title: step.title().to_owned(),
@@ -511,7 +531,13 @@ impl Owner {
                 });
             }
             let at = Timestamp::now(&self.parts.clock)?;
-            records.push(result.into_record(task.clone(), located.team.clone(), run.cloned(), at, step.id()));
+            records.push(result.into_record(
+                ctx.task.clone(),
+                ctx.located.team.clone(),
+                ctx.run.cloned(),
+                at,
+                step.id(),
+            ));
         }
         for record in &records {
             previous.insert(record.step, record.clone());
@@ -520,24 +546,19 @@ impl Owner {
             && self.history.is_writing()
             && let Err(err) = self.history.persist_judgements(records).await
         {
-            tracing::warn!(task = %task, error = %error_chain(&err), "failed to persist environment failure judgements");
+            tracing::warn!(task = %ctx.task, error = %error_chain(&err), "failed to persist environment failure judgements");
         }
         Ok((previous, first_mismatch))
     }
 
-    /// Executes and records the step checks of `plan` that are to be judged at the end of `run`.
-    async fn judge_steps_at_end(
-        &mut self,
-        task: &TaskId,
-        located: &Located,
-        run: Option<&RunId>,
-        plan: &Plan,
-        worktree: &AbsolutePath,
-        earlier: (Option<&Plan>, &HashMap<RunId, Plan>),
-    ) -> Result<(HashMap<ItemId, JudgementRecord>, Option<PlanReason>), OwnerError> {
-        let (earlier_plan, earlier_by_run) = earlier;
-        let mut previous = self.latest_judgements(task).await;
-        let to_judge = steps_to_judge_with(
+    /// Resolves which steps of `plan` are to be judged at the end of `run`.
+    fn steps_to_judge<'a>(
+        plan: &'a Plan,
+        earlier_plan: Option<&'a Plan>,
+        earlier_by_run: &'a HashMap<RunId, Plan>,
+        previous: &HashMap<ItemId, JudgementRecord>,
+    ) -> Vec<&'a Step> {
+        steps_to_judge_with(
             plan,
             |id| {
                 let latest_step = earlier_plan.and_then(|plan| plan.step(id));
@@ -553,11 +574,26 @@ impl Owner {
                 earlier_plan.and_then(|p| p.step(id))
             },
             |id| previous.get(id).map(|j| j.state),
-        );
-        let identity = match AgentName::from_str(&located.agent) {
-            Ok(agent) => Some(CommitIdentity::for_agent(self.parts.settings.config.git(), &agent)),
-            Err(_) => None,
-        };
+        )
+    }
+
+    /// Executes and records the step checks of `plan` that are to be judged at the end of `run`.
+    async fn judge_steps_at_end(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        run: Option<&RunId>,
+        plan: &Plan,
+        worktree: &AbsolutePath,
+        earlier: (Option<&Plan>, &HashMap<RunId, Plan>),
+    ) -> Result<(HashMap<ItemId, JudgementRecord>, Option<PlanReason>), OwnerError> {
+        let (earlier_plan, earlier_by_run) = earlier;
+        let mut previous = self.latest_judgements(task).await;
+        let to_judge = Self::steps_to_judge(plan, earlier_plan, earlier_by_run, &previous);
+        let identity = Some(CommitIdentity::for_agent(
+            self.parts.settings.config.git(),
+            &located.agent,
+        ));
         let plan_config = self.parts.settings.config.plan();
         let agent_envs: Vec<(String, String)> = match agent_launch_env(
             &self.parts.settings.secrets,
@@ -569,9 +605,14 @@ impl Owner {
         ) {
             Ok(envs) => envs.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
             Err(error) => {
-                return self
-                    .record_env_failures(task, located, run, &to_judge, &error, previous)
-                    .await;
+                let ctx = EnvFailureContext {
+                    task,
+                    located,
+                    run,
+                    worktree,
+                    error: &error,
+                };
+                return self.record_env_failures(ctx, &to_judge, previous).await;
             }
         };
 

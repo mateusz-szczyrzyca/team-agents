@@ -229,7 +229,7 @@ impl Owner {
             located: Located {
                 team: found.team.id().clone(),
                 role: found.role,
-                agent: found.member.agent().name().to_owned(),
+                agent: found.member.agent().agent_name(),
             },
             number: question.number(),
             path: question.file().as_path().to_path_buf(),

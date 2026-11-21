@@ -203,14 +203,32 @@ async fn open_check_logs(
     Ok((log_path, rel_path, std_file, err_file))
 }
 
+/// Guard ensuring a process group is terminated when dropped prematurely.
+struct GroupGuard {
+    group: Pid,
+    active: bool,
+}
+
+impl Drop for GroupGuard {
+    fn drop(&mut self) {
+        if self.active
+            && let Err(error) = signal_group(self.group, GroupSignal::Kill)
+        {
+            tracing::warn!(%error, "cannot kill process group on check guard drop");
+        }
+    }
+}
+
 async fn wait_child_outcome(
     mut child: tokio::process::Child,
     group: Pid,
     check_seconds: u64,
 ) -> (JudgementState, Option<String>) {
+    let mut guard = GroupGuard { group, active: true };
     let check_duration = std::time::Duration::from_secs(check_seconds);
     match timeout(check_duration, child.wait()).await {
         Ok(Ok(status)) => {
+            guard.active = false;
             if let Err(error) = signal_group(group, GroupSignal::Kill) {
                 tracing::warn!(%error, "cannot kill process group after check completion");
             }
@@ -234,12 +252,14 @@ async fn wait_child_outcome(
             }
         }
         Ok(Err(error)) => {
+            guard.active = false;
             if let Err(err) = signal_group(group, GroupSignal::Kill) {
                 tracing::warn!(%err, "cannot kill process group after check wait error");
             }
             (JudgementState::Mismatch, Some(format!("check wait failed: {error}")))
         }
         Err(_elapsed) => {
+            guard.active = false;
             if let Err(error) = signal_group(group, GroupSignal::Kill) {
                 tracing::warn!(%error, "cannot kill process group on check timeout");
             }

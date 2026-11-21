@@ -894,3 +894,36 @@ fn edited_recovered_steps_discard_every_previous_judgement_state() {
         assert_eq!((summary.state, summary.reason), (None, None), "{state:?}");
     }
 }
+
+#[test]
+fn steps_to_judge_filters_out_unchanged_confirmed_steps_and_keeps_newly_done_ones() {
+    use agent_core::plan::{judge::JudgementState, parse_plan};
+    use agent_runtime::history::JudgementRecord;
+    use std::collections::HashMap;
+
+    let plan_text = "Finish it.\n\n1. Work\n[x] 1.1 First\n[x] 1.2 Second\n";
+    let plan = parse_plan(plan_text).unwrap();
+    let id_1 = "1.1".parse::<ItemId>().unwrap();
+    let id_2 = "1.2".parse::<ItemId>().unwrap();
+    let run = "run-20261121-010000-abcd".parse::<agent_core::ids::RunId>().unwrap();
+    let earlier_by_run = HashMap::from([(run.clone(), plan.clone())]);
+    let previous = HashMap::from([(
+        id_1,
+        JudgementRecord {
+            task: task(1),
+            team: team_id(1),
+            run: Some(run.clone()),
+            at: at(0),
+            step: id_1,
+            state: JudgementState::Confirmed,
+            check: None,
+            reason: None,
+            duration_ms: 0,
+            output_path: None,
+        },
+    )]);
+
+    let to_judge = super::super::Owner::steps_to_judge(&plan, Some(&plan), &earlier_by_run, &previous);
+    assert_eq!(to_judge.len(), 1);
+    assert_eq!(to_judge[0].id(), id_2);
+}
