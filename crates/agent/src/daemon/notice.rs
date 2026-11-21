@@ -10,11 +10,11 @@ pub(crate) mod sample;
 
 use std::num::NonZeroU32;
 use std::path::PathBuf;
-use time::UtcOffset;
 
 use agent_core::decide::outcome::PauseReason;
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::kinds::CliKind;
+use agent_core::local_time::Zone;
 use agent_core::notice_status::NoticeStatus;
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::state::Timestamp;
@@ -104,7 +104,7 @@ impl NoticeKind {
 }
 
 /// The facts about the task and environment needed to lay out a notification.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(super) struct NoticeContext<'a> {
     /// The repository name.
     pub(super) repo: &'a str,
@@ -116,8 +116,8 @@ pub(super) struct NoticeContext<'a> {
     pub(super) model: Option<&'a str>,
     /// The time the event occurred.
     pub(super) time: Timestamp,
-    /// The host's local offset from UTC.
-    pub(super) offset: UtcOffset,
+    /// The zone of the host: the times a notification shows are written in it, with the offset of each moment.
+    pub(super) zone: Zone,
     /// The task ID.
     pub(super) task: &'a TaskId,
     /// The team ID, if the task belongs to a team.
@@ -154,15 +154,7 @@ pub(super) fn layout_notification(
     let status = notice.status();
     let title = format!("{} {}", status.icon(), context.repo);
 
-    let local_dt = context.time.as_utc().to_offset(context.offset);
-    let time_str = format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}",
-        local_dt.year(),
-        u8::from(local_dt.month()),
-        local_dt.day(),
-        local_dt.hour(),
-        local_dt.minute(),
-    );
+    let time_str = context.zone.stamp_minute(context.time);
 
     let client = client_label(context.cli, context.model);
     let agent_str = if client.is_empty() {

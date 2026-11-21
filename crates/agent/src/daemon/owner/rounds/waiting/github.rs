@@ -10,6 +10,7 @@ use std::num::NonZeroU32;
 
 use agent_core::decide::retry::pause;
 use agent_core::ids::{RoundId, TeamId};
+use agent_core::local_time::Zone;
 use agent_core::state::{InvalidTimestamp, PrNumber, Timestamp};
 use agent_runtime::git::{GitError, GitOperation};
 use agent_runtime::github::Outlook;
@@ -68,9 +69,8 @@ pub(in crate::daemon::owner) fn outlook_of(error: &super::super::PublishError) -
 
 /// The time of day `time` as a reader of the local clock sees it, `HH:MM`.
 #[must_use]
-pub(in crate::daemon::owner) fn clock_time(time: Timestamp, offset: time::UtcOffset) -> String {
-    let local = time.as_utc().to_offset(offset);
-    format!("{:02}:{:02}", local.hour(), local.minute())
+pub(in crate::daemon::owner) fn clock_time(time: Timestamp, zone: Zone) -> String {
+    zone.stamp_minute(time)
 }
 
 /// Which step of a round that calls GitHub waits: its key in the waits, its words in the status and the log, and the
@@ -208,7 +208,7 @@ impl Wait {
 
     /// What `agent status` says of it: `prepare a second opinion #138, tried 4 times, next try 01:07`; for a step the
     /// human resumed `..., tried 4 times, tried again at the next look`; for a refusal `..., refused: <answer>`.
-    pub(super) fn line(&self, offset: time::UtcOffset) -> String {
+    pub(super) fn line(&self, offset: Zone) -> String {
         let tried = self.tries.get();
         let times = if tried == 1 { "time" } else { "times" };
         match (self.outlook, self.next_at) {
@@ -236,7 +236,7 @@ fn named(step: WaitingStep, pr: Option<PrNumber>) -> String {
 
 /// The minute a time shows, rounded up: 25 seconds past 00:04 shows 00:05, and 00:05 exactly shows 00:05, so that the
 /// shown minute is never before the try.
-fn minute_shown(at: Timestamp, offset: time::UtcOffset) -> String {
+fn minute_shown(at: Timestamp, offset: Zone) -> String {
     let utc = at.as_utc();
     if utc.second() == 0 && utc.nanosecond() == 0 {
         return clock_time(at, offset);
@@ -372,12 +372,7 @@ impl Waits {
 
     /// What `agent status` says `round` of `team` waits for: the step of the round itself, else a step of all the
     /// team's rounds; the one tried last when several wait, and a refusal before all of them.
-    pub(in crate::daemon::owner) fn line_of(
-        &self,
-        team: &TeamId,
-        round: &RoundId,
-        offset: time::UtcOffset,
-    ) -> Option<String> {
+    pub(in crate::daemon::owner) fn line_of(&self, team: &TeamId, round: &RoundId, offset: Zone) -> Option<String> {
         let own = Step::Round { round: round.clone() };
         let shared = Step::Team { team: team.clone() };
         self.steps

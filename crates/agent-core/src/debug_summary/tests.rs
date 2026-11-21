@@ -1,3 +1,4 @@
+use crate::local_time::Zone;
 use std::path::PathBuf;
 use time::UtcOffset;
 
@@ -144,9 +145,9 @@ fn sample_input() -> SummaryInput {
 #[test]
 fn sections_in_exact_order_and_present() {
     let input = sample_input();
-    let offset = UtcOffset::from_hms(1, 0, 0).expect("valid offset");
+    let zone = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid offset"));
 
-    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     let mut last_idx = 0;
     for section in SummarySection::ALL {
@@ -163,9 +164,9 @@ fn sections_in_exact_order_and_present() {
 fn anomalies_empty_shows_none_of_the_known_ones() {
     let mut input = sample_input();
     input.anomalies.clear();
-    let offset = UtcOffset::UTC;
+    let zone = Zone::Fixed(UtcOffset::UTC);
 
-    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     assert!(summary.contains("none of the known ones"));
 }
@@ -183,9 +184,9 @@ fn anomalies_with_entries_renders_messages_and_commands() {
             command: None,
         },
     ];
-    let offset = UtcOffset::UTC;
+    let zone = Zone::Fixed(UtcOffset::UTC);
 
-    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     assert!(!summary.contains("none of the known ones"));
     assert!(summary.contains("a task is failed"));
@@ -205,9 +206,9 @@ fn task_table_computes_minutes_since_activity_and_saturates_future() {
     task2.last_activity = Some(ts("2026-11-17T20:05:00Z"));
     input.tasks.push(task2);
 
-    let offset = UtcOffset::UTC;
+    let zone = Zone::Fixed(UtcOffset::UTC);
 
-    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     assert!(summary.contains("| 15 min |"));
     assert!(summary.contains("| 0 min |"));
@@ -218,24 +219,24 @@ fn timestamps_formatted_in_utc_and_local_offset() {
     let input = sample_input();
     // Offset +02:00
     let offset_plus = UtcOffset::from_hms(2, 0, 0).expect("valid offset");
-    let summary_plus = render_summary(&input, offset_plus).expect("mandatory summary facts fit");
+    let summary_plus = render_summary(&input, Zone::Fixed(offset_plus)).expect("mandatory summary facts fit");
 
-    assert!(summary_plus.contains("20:00:00") && summary_plus.contains("22:00:00"));
+    assert!(summary_plus.contains("2026-11-17 22:00:00 +02:00"));
 
     // Offset -05:00
     let offset_minus = UtcOffset::from_hms(-5, 0, 0).expect("valid offset");
-    let summary_minus = render_summary(&input, offset_minus).expect("mandatory summary facts fit");
+    let summary_minus = render_summary(&input, Zone::Fixed(offset_minus)).expect("mandatory summary facts fit");
 
-    assert!(summary_minus.contains("20:00:00") && summary_minus.contains("15:00:00"));
+    assert!(summary_minus.contains("2026-11-17 15:00:00 -05:00"));
 }
 
 #[test]
 fn daemon_unreachable_renders_daemon_does_not_answer() {
     let mut input = sample_input();
     input.daemon = None;
-    let offset = UtcOffset::UTC;
+    let zone = Zone::Fixed(UtcOffset::UTC);
 
-    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     assert!(summary.contains("The daemon does not answer (unreachable).\n"));
 }
@@ -247,9 +248,9 @@ fn large_content_truncated_under_100k_bytes_keeps_tail_and_preserves_headings() 
     let huge_chunk = "Log line entry with multibyte unicode characters 🦀 and details\n".repeat(2000);
     input.daemon_log_lines = Some(vec![huge_chunk]);
 
-    let offset = UtcOffset::UTC;
+    let zone = Zone::Fixed(UtcOffset::UTC);
 
-    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     assert!(
         summary.len() < MAX_SUMMARY_BYTES,
@@ -277,9 +278,9 @@ fn unreadable_parts_named_in_summary() {
         name: "daemon.log".to_owned(),
         reason: "permission denied".to_owned(),
     }];
-    let offset = UtcOffset::UTC;
+    let zone = Zone::Fixed(UtcOffset::UTC);
 
-    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     assert!(summary.contains("daemon.log"));
     assert!(summary.contains("permission denied"));
@@ -288,9 +289,9 @@ fn unreadable_parts_named_in_summary() {
 #[test]
 fn git_commits_include_author() {
     let input = sample_input();
-    let offset = UtcOffset::UTC;
+    let zone = Zone::Fixed(UtcOffset::UTC);
 
-    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     assert!(
         summary.contains("Dev <dev@example.com>"),
@@ -302,12 +303,11 @@ fn git_commits_include_author() {
 fn format_time_includes_local_date_and_handles_midnight_crossing() {
     let mut input = sample_input();
     input.collected_at = ts("2026-11-17T23:30:00Z");
-    let offset = UtcOffset::from_hms(2, 0, 0).expect("valid offset");
+    let zone = Zone::Fixed(UtcOffset::from_hms(2, 0, 0).expect("valid offset"));
 
-    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     // UTC is 2026-11-17, local date after crossing midnight at +02:00 is 2026-11-18
-    assert!(summary.contains("2026-11-17 23:30:00 UTC"));
     assert!(summary.contains("2026-11-18 01:30:00 +02:00"));
 }
 
@@ -324,9 +324,9 @@ fn huge_early_content_keeps_all_12_headings() {
         })
         .collect();
 
-    let offset = UtcOffset::UTC;
+    let zone = Zone::Fixed(UtcOffset::UTC);
 
-    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     assert!(
         summary.len() < MAX_SUMMARY_BYTES,
@@ -351,9 +351,9 @@ fn daemon_log_lines_preserve_boundaries() {
         "2026-11-17 19:00:01 [info] second line".to_owned(),
     ]);
 
-    let offset = UtcOffset::UTC;
+    let zone = Zone::Fixed(UtcOffset::UTC);
 
-    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     assert!(summary.contains("first line\n2026-11-17 19:00:01 [info] second line"));
 }
@@ -369,7 +369,7 @@ fn git_paths_preserve_non_utf8_bytes_in_changed_and_untracked_names() {
     git.uncommitted_files = vec![path.clone()];
     git.newest_untracked.first_mut().expect("untracked file").path = path;
 
-    let summary = render_summary(&input, UtcOffset::UTC).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).expect("mandatory summary facts fit");
 
     assert_eq!(summary.matches(r"log-\xFF").count(), 2);
     assert!(!summary.contains('\u{fffd}'));
@@ -378,9 +378,9 @@ fn git_paths_preserve_non_utf8_bytes_in_changed_and_untracked_names() {
 #[test]
 fn gate_records_include_full_commit_finished_time_and_log_path() {
     let input = sample_input();
-    let offset = UtcOffset::UTC;
+    let zone = Zone::Fixed(UtcOffset::UTC);
 
-    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     assert!(
         summary.contains("0123456789abcdef0123456789abcdef01234567"),
@@ -391,7 +391,7 @@ fn gate_records_include_full_commit_finished_time_and_log_path() {
         "gate section must include gate log path"
     );
     assert!(
-        summary.contains("2026-11-17 19:50:00 UTC"),
+        summary.contains("2026-11-17 19:50:00 +00:00"),
         "gate section must include finished timestamp"
     );
 }
@@ -402,7 +402,7 @@ fn format_time_handles_offset_seconds_and_extreme_timestamp_fallback() {
     input.collected_at = ts("2026-11-17T20:00:00Z");
     let offset_seconds = UtcOffset::from_hms(2, 30, 15).expect("valid offset with seconds");
 
-    let summary = render_summary(&input, offset_seconds).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, Zone::Fixed(offset_seconds)).expect("mandatory summary facts fit");
     assert!(
         summary.contains("+02:30:15"),
         "offset string must include seconds when non-zero"
@@ -411,19 +411,19 @@ fn format_time_handles_offset_seconds_and_extreme_timestamp_fallback() {
     // Extreme timestamps: year 0000 with negative offset underflows
     let early = ts("0000-01-01T00:00:00Z");
     let extreme_neg = UtcOffset::from_hms(-12, 0, 0).expect("valid negative offset");
-    let formatted_early = format_time(early, extreme_neg);
+    let formatted_early = format_time(early, Zone::Fixed(extreme_neg));
     assert!(
-        formatted_early.contains("out of range"),
-        "underflowing local time must produce explicit out of range notice without panicking"
+        formatted_early.ends_with(" UTC"),
+        "a local time the years cannot hold is shown in UTC, marked, without panicking"
     );
 
     // Extreme timestamps: year 9999 with positive offset overflows
     let late = ts("9999-12-31T23:59:59Z");
     let extreme_pos = UtcOffset::from_hms(14, 0, 0).expect("valid positive offset");
-    let formatted_late = format_time(late, extreme_pos);
+    let formatted_late = format_time(late, Zone::Fixed(extreme_pos));
     assert!(
-        formatted_late.contains("out of range"),
-        "overflowing local time must produce explicit out of range notice without panicking"
+        formatted_late.ends_with(" UTC"),
+        "a local time the years cannot hold is shown in UTC, marked, without panicking"
     );
 }
 
@@ -434,9 +434,9 @@ fn filesystem_values_above_100_percent_render_raw_observed() {
         space_percent: Some(105),
         inode_percent: Some(110),
     });
-    let offset = UtcOffset::UTC;
+    let zone = Zone::Fixed(UtcOffset::UTC);
 
-    let summary = render_summary(&input, offset).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     assert!(
         summary.contains("105% space, 110% inodes"),
@@ -452,9 +452,9 @@ fn newer_executable_and_closed_round_are_rendered_with_context() {
         at: ts("2026-11-17T19:55:00Z"),
         how: crate::state::RoundEnd::Approved,
     };
-    let summary = render_summary(&input, UtcOffset::UTC).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).expect("mandatory summary facts fit");
     assert!(summary.contains("  (Warning: binary on disk is newer than running process)\n"));
-    assert!(summary.contains("closed (approved) at 2026-11-17 19:55:00 UTC (2026-11-17 19:55:00 +00:00)"));
+    assert!(summary.contains("closed (approved) at 2026-11-17 19:55:00 +00:00"));
 }
 
 #[test]
@@ -472,14 +472,14 @@ fn gate_tree_outcomes_and_missing_record_are_rendered_exactly() {
         let record = input.gate.first_mut().unwrap().record.as_mut().unwrap();
         record.tree = GateTree::NotClean;
         record.result.outcome = outcome;
-        let summary = render_summary(&input, UtcOffset::UTC).expect("mandatory summary facts fit");
+        let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).expect("mandatory summary facts fit");
         assert!(summary.contains(&format!(
             "- Record: Commit `0123456789abcdef0123456789abcdef01234567`, tree dirty, outcome: {expected}\n"
         )));
     }
     let mut input = sample_input();
     input.gate.first_mut().unwrap().record = None;
-    let summary = render_summary(&input, UtcOffset::UTC).expect("mandatory summary facts fit");
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).expect("mandatory summary facts fit");
     assert!(summary.contains("- Record: none\n- Recent gate outputs:\n"));
 }
 
@@ -493,7 +493,7 @@ fn every_distinct_anomaly_is_retained_once_even_above_old_section_budget() {
         })
         .collect();
     input.anomalies.push(input.anomalies.first().unwrap().clone());
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     for anomaly in &input.anomalies {
         assert_eq!(
             summary
@@ -510,7 +510,7 @@ fn short_document_keeps_text_above_old_per_section_limit_without_cutting() {
     let mut input = sample_input();
     let history = format!("history start\n{}history end", "complete line\n".repeat(1500));
     input.history_tail = Some(history.clone());
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     assert!(summary.contains(&history));
     assert!(!summary.contains(CUT_MARKER));
 }
@@ -539,7 +539,7 @@ fn long_individual_tails_preserve_every_task_gate_record_and_fence() {
     input.daemon_log_lines = Some(vec![format!("{detail}DAEMON-END")]);
     input.bus_messages = vec![format!("{detail}BUS-END")];
     input.notifications = vec![format!("{detail}NOTIFICATION-END")];
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     assert!(summary.len() < MAX_SUMMARY_BYTES);
     assert!(summary.contains(CUT_MARKER));
     for task in &input.tasks {
@@ -575,7 +575,7 @@ fn task_table_header_and_all_rows_survive_large_task_counts() {
             task
         })
         .collect();
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     assert!(
         summary.contains("| Task | Agent | Role | Status | Runs | Started | Ended | Last Activity | Minutes Since |\n")
     );
@@ -592,14 +592,14 @@ fn mandatory_facts_over_budget_return_an_error_instead_of_dropping_anomalies() {
         command: None,
     }];
     assert!(
-        matches!(render_summary(&input, UtcOffset::UTC), Err(SummaryError::RequiredFactsTooLarge { required_bytes }) if required_bytes >= MAX_SUMMARY_BYTES)
+        matches!(render_summary(&input, Zone::Fixed(UtcOffset::UTC)), Err(SummaryError::RequiredFactsTooLarge { required_bytes }) if required_bytes >= MAX_SUMMARY_BYTES)
     );
 }
 
 #[test]
 fn status_and_phase_use_cli_display_spellings() {
     let input = sample_input();
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     assert!(summary.contains("| member | running |"));
     assert!(summary.contains("| in_progress | gemini-1 |"));
 }
@@ -608,7 +608,7 @@ fn status_and_phase_use_cli_display_spellings() {
 fn gate_log_path_escapes_quotes_losslessly() {
     let mut input = sample_input();
     input.gate.first_mut().unwrap().record.as_mut().unwrap().result.log = "/tmp/log-\"quoted\"".parse().unwrap();
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     assert!(summary.contains(r#"Log: `"/tmp/log-\"quoted\""`"#));
 }
 
@@ -625,7 +625,7 @@ fn input_at_minimum_summary_bytes(required_bytes: usize, short_tail: &str) -> Su
         message: String::new(),
         command: None,
     }];
-    let baseline = render_summary(&input, UtcOffset::UTC).unwrap().len();
+    let baseline = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap().len();
     input.anomalies.first_mut().unwrap().message = "a".repeat(required_bytes - baseline - CUT_MARKER.len());
     input.history_tail = Some("history".repeat(MAX_SUMMARY_BYTES));
     input
@@ -635,7 +635,7 @@ fn input_at_minimum_summary_bytes(required_bytes: usize, short_tail: &str) -> Su
 fn summary_budget_one_byte_below_limit_preserves_short_tail_and_exact_cut_marker() {
     for short_tail in ["", "tiny", "🦀"] {
         let input = input_at_minimum_summary_bytes(MAX_SUMMARY_BYTES - 1, short_tail);
-        let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+        let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
         assert_eq!(summary.len(), MAX_SUMMARY_BYTES - 1);
         assert_eq!(summary.matches(CUT_MARKER).count(), 1);
         let bus = summary.split(SummarySection::Bus.heading()).nth(1).unwrap();
@@ -648,7 +648,7 @@ fn summary_budget_at_limit_returns_exact_required_bytes_with_short_and_long_tail
     for short_tail in ["", "tiny", "🦀"] {
         let input = input_at_minimum_summary_bytes(MAX_SUMMARY_BYTES, short_tail);
         assert_eq!(
-            render_summary(&input, UtcOffset::UTC),
+            render_summary(&input, Zone::Fixed(UtcOffset::UTC)),
             Err(SummaryError::RequiredFactsTooLarge {
                 required_bytes: MAX_SUMMARY_BYTES,
             })
@@ -688,7 +688,7 @@ fn machine_section_renders_all_metrics_without_not_collected() {
     input.machine.tasks_dir_bytes = Some(1024);
     input.machine.worktrees_dir_bytes = Some(2048);
 
-    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    let rendered = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     assert!(rendered.contains("Summary renderer"));
     assert!(rendered.contains("none of the known ones"));
     let machine_section = rendered
@@ -742,7 +742,7 @@ fn machine_section_renders_all_metrics_without_not_collected() {
 fn machine_section_renders_none_when_no_daemon_descendants() {
     let mut input = sample_input();
     input.machine.daemon_descendants = vec![];
-    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    let rendered = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     let machine_section = rendered
         .split("## Machine and Resources")
         .nth(1)
@@ -765,7 +765,7 @@ fn machine_section_preserves_collection_failures_without_deferred_notice() {
         name: "loadavg".into(),
         reason: "permission denied".into(),
     });
-    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    let rendered = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     assert!(!rendered.contains("Not collected in this version."));
     assert!(rendered.contains("### Unreadable Parts\n\n- `loadavg`: permission denied"));
     assert!(rendered.contains("- Load average: unknown"));
@@ -775,7 +775,7 @@ fn machine_section_preserves_collection_failures_without_deferred_notice() {
 fn untracked_files_metadata_renders_counts_and_entries() {
     let mut input = sample_input();
     input.git[0].newest_untracked.clear();
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     assert!(!summary.contains("Untracked file metadata: Not collected in this version."));
     assert!(summary.contains("- Untracked files (newest 0):"));
     assert!(summary.contains("Commits over base"));
@@ -788,8 +788,8 @@ fn redacts_optional_text_before_truncation_and_byte_budgeting() {
     let mut expected = input.clone();
     expected.history_tail = Some("<cut>".repeat(100_000));
     assert_eq!(
-        render_redacted_summary(&input, UtcOffset::UTC, |text| text.replace("xy", "<cut>")),
-        render_summary(&expected, UtcOffset::UTC)
+        render_redacted_summary(&input, Zone::Fixed(UtcOffset::UTC), |text| text.replace("xy", "<cut>")),
+        render_summary(&expected, Zone::Fixed(UtcOffset::UTC))
     );
 }
 
@@ -804,7 +804,12 @@ fn redacted_diagnostic_paths_are_plain_and_unread_history_is_named_in_its_sectio
         name: "team history".into(),
         reason: "database unavailable".into(),
     });
-    let summary = render_command_summary(&input, UtcOffset::from_hms(2, 0, 0).unwrap(), str::to_owned).unwrap();
+    let summary = render_command_summary(
+        &input,
+        Zone::Fixed(UtcOffset::from_hms(2, 0, 0).unwrap()),
+        str::to_owned,
+    )
+    .unwrap();
     assert!(summary.contains("Uncommitted files (1): café file.txt"), "{summary}");
     assert!(summary.contains("Log: `/tmp/gate.log`"), "{summary}");
     let history = summary
@@ -826,8 +831,9 @@ fn redacted_diagnostic_paths_are_plain_and_unread_history_is_named_in_its_sectio
 fn removed_worktree_notice_is_once_in_git_section_without_an_anomaly() {
     let input = sample_input();
     let notice = "Worktrees for the merged round were removed; retained branches were read from the clone.";
-    let summary = render_command_summary_with_git_notice(&input, UtcOffset::UTC, str::to_owned, Some(notice))
-        .expect("summary fits");
+    let summary =
+        render_command_summary_with_git_notice(&input, Zone::Fixed(UtcOffset::UTC), str::to_owned, Some(notice))
+            .expect("summary fits");
     let git = summary.split("## Git Worktrees").nth(1).expect("git section");
     assert_eq!(summary.matches(notice).count(), 1);
     assert!(git.starts_with(&format!("\n\n{notice}\n")), "{git}");
@@ -842,7 +848,7 @@ fn review_daemon_bounds_variable_process_text_without_losing_required_facts() {
     daemon.env_var_names = vec!["ENV".repeat(40_000)];
     daemon.exe_path = format!("/{}", "path".repeat(30_000));
 
-    let result = render_summary(&input, UtcOffset::UTC);
+    let result = render_summary(&input, Zone::Fixed(UtcOffset::UTC));
     assert_eq!(result.as_ref().map(|text| text.len() < MAX_SUMMARY_BYTES), Ok(true));
     let text = result.unwrap();
 
@@ -856,7 +862,7 @@ fn review_daemon_explains_an_existing_log_with_no_matching_lines() {
     let mut input = sample_input();
     input.daemon_log_lines = Some(Vec::new());
 
-    let text = render_summary(&input, UtcOffset::UTC).unwrap();
+    let text = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
 
     assert!(text.contains("No daemon log lines about the team and no recent warnings."));
 }
@@ -870,7 +876,7 @@ fn unreadable_sections_use_the_typed_destination_instead_of_the_display_name() {
         name: "retained event archive".into(),
         reason: "permission denied".into(),
     });
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     let history = summary
         .split(SummarySection::HistoryTail.heading())
         .nth(1)
@@ -888,14 +894,14 @@ fn unreadable_sections_use_the_typed_destination_instead_of_the_display_name() {
 #[test]
 fn partial_section_failure_preserves_collected_machine_facts() {
     let input = sample_input();
-    let baseline = render_summary(&input, UtcOffset::UTC).unwrap();
+    let baseline = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     let mut partial = input;
     partial.unreadable_parts.push(UnreadablePartSummary {
         section: SummarySection::Machine,
         name: "swap".into(),
         reason: "permission denied".into(),
     });
-    let summary = render_summary(&partial, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&partial, Zone::Fixed(UtcOffset::UTC)).unwrap();
     let facts = baseline.split("## Machine and Resources\n\n").nth(1).unwrap();
     assert!(summary.contains(facts.trim()), "{summary}");
     assert!(summary.contains("Could not read swap: permission denied"));
@@ -908,7 +914,7 @@ fn summary_shows_command_version_beside_daemon_version() {
     if let Some(d) = input.daemon.as_mut() {
         d.version = "agent 0.1.0".to_owned();
     }
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     assert!(summary.contains("- Command version: agent 0.2.0"), "{summary}");
     assert!(summary.contains("- Daemon version: agent 0.1.0"), "{summary}");
 }
@@ -918,7 +924,7 @@ fn summary_shows_single_command_version_when_daemon_unreachable() {
     let mut input = sample_input();
     input.daemon = None;
     input.command_version = "agent 0.2.0".to_owned();
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     assert!(summary.contains("- Command version: agent 0.2.0"), "{summary}");
     assert!(!summary.contains("- Daemon version:"), "{summary}");
 }
@@ -928,7 +934,7 @@ fn daemon_section_renders_configuration_and_secret_keys() {
     let mut input = sample_input();
     input.configuration = Some("agents.toml".into());
     input.secret_keys = vec!["github_token".into(), "agent_env.API_KEY".into()];
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     let daemon_section = summary
         .split("## Daemon and Versions")
         .nth(1)
@@ -948,7 +954,7 @@ fn unreadable_configuration_preserves_daemon_facts_in_daemon_section() {
         name: "configuration".into(),
         reason: "file missing".into(),
     });
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     let daemon_section = summary
         .split("## Daemon and Versions")
         .nth(1)
@@ -966,7 +972,7 @@ fn daemon_section_renders_configuration_content_with_settings_and_values() {
     let mut input = sample_input();
     input.configuration = Some("[agents.codex-1]\ncli = \"codex\"\nmodel = \"medium\"".into());
     input.secret_keys = vec!["github_token".into()];
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     let daemon_section = summary
         .split("## Daemon and Versions")
         .nth(1)
@@ -992,7 +998,7 @@ fn unreadable_daemon_process_suppresses_unreachable_notice_while_retaining_other
     input.configuration = Some("[tiers]\nnormal = [\"codex-1\"]".into());
     input.secret_keys = vec!["API_KEY".into()];
 
-    let summary = render_summary(&input, UtcOffset::UTC).unwrap();
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     let daemon_section = summary
         .split("## Daemon and Versions")
         .nth(1)
@@ -1026,7 +1032,7 @@ fn bus_and_notifications_sections_coalesce_into_single_tail_preserving_newest_me
         .collect();
     input.notifications = (0..6000).map(|i| format!("Notification {i}: task active")).collect();
 
-    let summary = render_summary(&input, UtcOffset::UTC)
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC))
         .expect("large bus and notification lists must fit within document tail budget without failing");
 
     let bus_section = summary
@@ -1063,7 +1069,7 @@ fn oversized_configuration_is_bounded_by_tail_budget_with_cut_marker() {
     input.configuration = Some(large_config);
     input.secret_keys = vec!["API_KEY".into()];
 
-    let summary = render_summary(&input, UtcOffset::UTC)
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC))
         .expect("oversized configuration must be bounded through tail budget without error");
     let daemon_section = summary
         .split("## Daemon and Versions")
@@ -1088,7 +1094,7 @@ fn machine_descendants_are_unknown_when_their_collection_failed() {
         name: "daemon descendants".to_owned(),
         reason: "procfs permission denied".to_owned(),
     });
-    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    let rendered = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     let descendant_line = rendered.lines().find(|line| line.starts_with("- Daemon descendants:"));
     assert_eq!(descendant_line, Some("- Daemon descendants: unknown"));
     assert!(rendered.contains("procfs permission denied"), "{rendered}");
@@ -1107,7 +1113,7 @@ fn machine_preserves_observed_descendants_when_another_process_cannot_be_read() 
         name: "daemon descendant 102".to_owned(),
         reason: "procfs permission denied".to_owned(),
     });
-    let rendered = render_summary(&input, UtcOffset::UTC).unwrap();
+    let rendered = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).unwrap();
     assert!(rendered.contains("  - PID 101: age 42s, cmdline: agent"), "{rendered}");
     assert!(rendered.contains("procfs permission denied"), "{rendered}");
 }

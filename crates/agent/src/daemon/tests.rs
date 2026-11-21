@@ -94,10 +94,11 @@ impl Fixture {
 
     fn setup(&self) -> DaemonSetup {
         DaemonSetup {
+            local_offset: time::UtcOffset::UTC,
             home: self.home.clone(),
             prompts_dir: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
             clock: SharedClock::new(self.clock.clone()),
-            local_offset: time::UtcOffset::UTC,
+            zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
             timings: Some(timings()),
             agent_binary_dir: None,
         }
@@ -611,10 +612,11 @@ async fn a_home_without_a_configuration_is_refused_with_the_file_named() {
     let dir = tempfile::tempdir().unwrap();
     let home = Home::new(&abs(dir.path()));
     let setup = DaemonSetup {
+        local_offset: time::UtcOffset::UTC,
         home: home.clone(),
         prompts_dir: home.prompts_dir(),
         clock: SharedClock::new(ManualClock::new(at(0))),
-        local_offset: time::UtcOffset::UTC,
+        zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         timings: None,
         agent_binary_dir: None,
     };
@@ -630,10 +632,11 @@ async fn a_prompts_directory_that_lacks_files_is_refused_with_every_problem() {
     let home = Home::new(&abs(dir.path()));
     std::fs::write(home.config_file(), config(3)).unwrap();
     let setup = DaemonSetup {
+        local_offset: time::UtcOffset::UTC,
         home: home.clone(),
         prompts_dir: home.prompts_dir(),
         clock: SharedClock::new(ManualClock::new(at(0))),
-        local_offset: time::UtcOffset::UTC,
+        zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         timings: None,
         agent_binary_dir: None,
     };

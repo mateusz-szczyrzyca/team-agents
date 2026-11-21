@@ -39,6 +39,7 @@ use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_
 use agent_core::history::{HistoryEvent, RunWhy};
 use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
+use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
 use agent_core::protocol::{
     Client, Command, Event, EventKind, Failure, FailureKind, PlanStepSummary, Reply, RoundDetail, RoundTask, Target,
@@ -82,7 +83,6 @@ use super::recovery::{RecoveryError, interrupted_status, recover};
 use super::settle::{Settled, settle};
 use super::team::{AssignmentError, DoneNoticeError, NoticeRenderError, Why};
 use agent_runtime::process::error_chain;
-use time::UtcOffset;
 
 /// How many runs may go at once.
 pub(super) const MAX_RUNS: NonZeroUsize = NonZeroUsize::new(16).unwrap();
@@ -366,7 +366,7 @@ pub(super) struct OwnerParts {
     /// Where the events go.
     pub(super) events: broadcast::Sender<Event>,
     /// The machine's offset from UTC.
-    pub(super) local_offset: UtcOffset,
+    pub(super) zone: Zone,
     /// How often paused tasks are looked at.
     pub(super) tick: Duration,
     /// The notifier that delivers notifications.
@@ -1892,7 +1892,7 @@ impl Owner {
                 detail.waiting = self
                     .watch
                     .github_waits
-                    .line_of(team.id(), round, self.parts.local_offset)
+                    .line_of(team.id(), round, self.parts.zone)
                     .map(|line| format!("GitHub: {line}"))
                     .or_else(|| self.waiting_for(team, found).map(|wait| wait.text().to_owned()));
                 Ok(Reply::Round {
@@ -2015,7 +2015,7 @@ impl Owner {
             cli,
             model,
             time,
-            offset: self.parts.local_offset,
+            zone: self.parts.zone,
             task,
             team,
             pr,

@@ -581,7 +581,7 @@ fn merged_removed_worktree_falls_back_to_checkout() {
     let mut collection =
         Collection::new(&team, "2026-11-17T12:00:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
     collection.checkout = Some(checkout.to_path_buf());
-    collection.local_offset = time::UtcOffset::UTC;
+    collection.zone = agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC);
     runtime.block_on(collection.observe(&home, &team, None)).unwrap();
 
     let member_git = collection
@@ -698,7 +698,7 @@ fn diagnostic_error_formats_git_process_status_and_stderr() {
 }
 
 #[test]
-fn run_detail_formats_prose_with_local_offset() {
+fn run_detail_formats_prose_with_zone() {
     use agent_core::state::RunEnd;
     use agent_core::status::RunOutcome;
 
@@ -710,7 +710,7 @@ fn run_detail_formats_prose_with_local_offset() {
     };
     let offset = time::UtcOffset::from_hms(1, 0, 0).unwrap();
     assert_eq!(
-        run_detail_at(&state, offset),
+        run_detail_at(&state, agent_core::local_time::Zone::Fixed(offset)),
         "ended, reported DONE, at 2026-11-17 12:00:00 UTC (2026-11-17 13:00:00 +01:00)"
     );
 }
@@ -811,7 +811,7 @@ async fn gate_source_timestamp_includes_the_machine_offset() {
         .set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::from(at.as_utc())))
         .unwrap();
     let mut collection = Collection::new(&team, at, Duration::from_secs(120)).unwrap();
-    collection.local_offset = time::UtcOffset::from_hms(5, 30, 0).unwrap();
+    collection.zone = agent_core::local_time::Zone::Fixed(time::UtcOffset::from_hms(5, 30, 0).unwrap());
     collection.task(&home, member, Role::Solo).await.unwrap();
     let output = &collection.summary.gate[0].recent_output_tails[0];
     assert!(output.contains("+05:30"), "{output}");
@@ -889,9 +889,12 @@ async fn long_final_message_preserves_the_last_runs_reason_and_steps() {
         .await
         .unwrap();
     collection.enrich_last_run_details(&records, &team);
-    let summary =
-        agent_core::debug_summary::render_command_summary(&collection.summary, time::UtcOffset::UTC, str::to_owned)
-            .unwrap();
+    let summary = agent_core::debug_summary::render_command_summary(
+        &collection.summary,
+        agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        str::to_owned,
+    )
+    .unwrap();
     assert!(
         summary.contains("Recorded café step"),
         "the step must survive the final-message budget"
@@ -1101,9 +1104,12 @@ async fn redacts_complete_final_message_before_taking_its_tail() {
         [],
     );
     collection.enrich_last_run_details(&records, &team);
-    let summary =
-        agent_core::debug_summary::render_command_summary(&collection.summary, time::UtcOffset::UTC, str::to_owned)
-            .unwrap();
+    let summary = agent_core::debug_summary::render_command_summary(
+        &collection.summary,
+        agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        str::to_owned,
+    )
+    .unwrap();
     assert!(
         !summary.contains("suffix"),
         "a secret suffix must not survive truncation"

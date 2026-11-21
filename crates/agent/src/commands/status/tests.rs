@@ -419,7 +419,10 @@ fn the_last_activity_is_told_as_the_local_time_of_day() {
     let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_794_694_211);
     let warsaw = UtcOffset::from_hms(1, 0, 0).unwrap();
 
-    assert_eq!(clock_time(at, Zone::Fixed(UtcOffset::UTC)), "2026-11-14 22:10:11 +00:00");
+    assert_eq!(
+        clock_time(at, Zone::Fixed(UtcOffset::UTC)),
+        "2026-11-14 22:10:11 +00:00"
+    );
     assert_eq!(clock_time(at, Zone::Fixed(warsaw)), "2026-11-14 23:10:11 +01:00");
 }
 
@@ -944,7 +947,9 @@ fn a_review_that_ended_without_a_report_says_when_and_why_it_stopped() {
 
         assert_eq!(
             reviewer_line(4, activities),
-            format!("  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: {reason}")
+            format!(
+                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: {reason}"
+            )
         );
     }
 }
@@ -995,7 +1000,9 @@ fn a_review_that_failed_says_the_end_of_its_run() {
 
         assert_eq!(
             reviewer_line(4, activities),
-            format!("  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: {reason}")
+            format!(
+                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: {reason}"
+            )
         );
     }
 }
