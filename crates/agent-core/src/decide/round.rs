@@ -631,12 +631,31 @@ impl Checking {
     #[must_use]
     pub fn conclude_with_commits(
         &self,
-        _issues: &[Issue],
-        _refused: &[Subject],
-        _commits: CommitsLeft,
-        _policy: ChecksPolicy,
+        issues: &[Issue],
+        refused: &[Subject],
+        commits: CommitsLeft,
+        policy: ChecksPolicy,
     ) -> ChecksStep {
-        ChecksStep::StartReviews
+        if issues.is_empty() && commits.to_ask == 0 && commits.refused_now == 0 {
+            return ChecksStep::StartReviews;
+        }
+        let back = ChecksStep::BackToTeam {
+            pass: NonZeroU32::MIN.saturating_add(self.passes),
+        };
+        if commits.refused_now > 0 || issues.iter().any(|issue| refused.contains(&issue.subject())) {
+            return back;
+        }
+        let team_can_fix = issues.iter().any(|issue| issue.judge() == Judge::Team);
+        let human_has_a_part = commits.to_ask > 0 || issues.iter().any(|issue| issue.judge() == Judge::Human);
+        match (team_can_fix, self.passes < policy.check_passes, human_has_a_part) {
+            (true, true, false) => back,
+            (true, false, _) => ChecksStep::AskHuman {
+                reason: AskReason::PassesUsed,
+            },
+            (true, true, true) | (false, _, _) => ChecksStep::AskHuman {
+                reason: AskReason::OnlyTheHumanMayAllow,
+            },
+        }
     }
 }
 
