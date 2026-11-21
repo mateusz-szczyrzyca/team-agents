@@ -58,6 +58,10 @@ fn query(source: rusqlite::Error) -> ReadError {
 /// [`WriteError`]: a row of a task that is not in the history, or a refusal of the database.
 pub(super) fn insert(tx: &Transaction<'_>, records: &[JudgementRecord]) -> Result<(), WriteError> {
     for record in records {
+        let duration_ms = i64::try_from(record.duration_ms).map_err(|_err| WriteError::Rule {
+            record: RecordKind::Judgement,
+            rule: "duration_ms must fit in signed 64-bit integer",
+        })?;
         let added = tx
             .execute(
                 "INSERT INTO step_judgements (task, team, run, at, step, state, check_line, reason, duration_ms, output_path) \
@@ -71,7 +75,7 @@ pub(super) fn insert(tx: &Transaction<'_>, records: &[JudgementRecord]) -> Resul
                     record.state.as_str(),
                     record.check.as_deref(),
                     record.reason.as_deref(),
-                    i64::try_from(record.duration_ms).unwrap_or(i64::MAX),
+                    duration_ms,
                     record.output_path.as_deref(),
                 ],
             )
@@ -156,7 +160,7 @@ fn decode(row: &rusqlite::Row<'_>) -> Result<JudgementRecord, ReadError> {
     let check = row.get::<_, Option<String>>(6).map_err(query)?;
     let reason = row.get::<_, Option<String>>(7).map_err(query)?;
     let duration_raw = row.get::<_, i64>(8).map_err(query)?;
-    let duration_ms = u64::try_from(duration_raw).unwrap_or(0);
+    let duration_ms = here.value("duration_ms", u64::try_from(duration_raw))?;
     let output_path = row.get::<_, Option<String>>(9).map_err(query)?;
     Ok(JudgementRecord {
         task,
