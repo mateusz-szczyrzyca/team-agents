@@ -147,3 +147,57 @@ fn negative_duration_is_refused_on_read() {
     let err = reader.step_judgements(&task).unwrap_err();
     assert!(matches!(err, agent_runtime::history::ReadError::Value { column, .. } if column == "duration_ms"));
 }
+
+#[tokio::test]
+async fn judgements_are_persisted_with_awaited_confirmation() {
+    use agent_runtime::history::{DEFAULT_QUEUE, History, PersistJudgementsError, Setup, TracingReporter};
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+
+    let world = complete(1);
+    db.write(&world.records()).unwrap();
+
+    let task = world.runs[0].start.task.clone();
+    let team = world.runs[0].start.team.clone();
+    let run = world.runs[0].start.run.clone();
+
+    let started = History::start(
+        db,
+        Setup {
+            reporter: Arc::new(TracingReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let history = started.history;
+
+    let step = "1.1".parse::<ItemId>().unwrap();
+    let record = JudgementRecord {
+        task: task.clone(),
+        team,
+        run: Some(run),
+        at: at(1_000, 0),
+        step,
+        state: JudgementState::Confirmed,
+        check: Some("exists one.txt".to_owned()),
+        reason: None,
+        duration_ms: 15,
+        output_path: None,
+    };
+
+    history.persist_judgements(vec![record.clone()]).await.unwrap();
+
+    let reader = Reader::open(&path).unwrap();
+    let read_back = reader.step_judgements(&task).unwrap();
+    assert_eq!(read_back, vec![record]);
+
+    started.writer.close().unwrap();
+    let err = history
+        .persist_judgements(vec![read_back[0].clone()])
+        .await
+        .unwrap_err();
+    assert!(matches!(err, PersistJudgementsError::Unavailable));
+}

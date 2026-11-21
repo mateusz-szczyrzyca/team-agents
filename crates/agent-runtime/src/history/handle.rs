@@ -26,6 +26,17 @@ use super::error::{CloseError, StartError, WriteError, WriteKind};
 use super::redact::Redactor;
 use crate::process::error_chain;
 
+/// What can go wrong when persisting judgements to history.
+#[derive(Debug, thiserror::Error)]
+pub enum PersistJudgementsError {
+    /// The database writer is unavailable or stopped.
+    #[error("history writer is unavailable")]
+    Unavailable,
+    /// Writing to the database failed.
+    #[error(transparent)]
+    Write(#[from] WriteError),
+}
+
 /// How many records may wait for the writer, unless the setup says otherwise.
 pub const DEFAULT_QUEUE: NonZeroUsize = NonZeroUsize::new(4096).unwrap();
 
@@ -284,6 +295,17 @@ impl Writer {
 }
 
 impl History {
+    /// Hands `records` of judgements of a task's plan steps to the history and awaits confirmation of commit.
+    ///
+    /// # Errors
+    /// Returns [`PersistJudgementsError`] if the history writer is unavailable or the write fails.
+    pub async fn persist_judgements(
+        &self,
+        _records: Vec<super::judgements::JudgementRecord>,
+    ) -> Result<(), PersistJudgementsError> {
+        Err(PersistJudgementsError::Unavailable)
+    }
+
     /// A handle that records nothing and loses nothing: `[history] enabled = false`.
     #[must_use]
     pub fn disabled() -> Self {

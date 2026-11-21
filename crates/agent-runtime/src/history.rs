@@ -23,7 +23,8 @@ mod write;
 pub use db::{HistoryDb, Store};
 pub use error::{CloseError, OpenError, ReadError, RecordKind, StartError, ValueProblem, WriteError, WriteKind};
 pub use handle::{
-    CaptureKind, Cause, DEFAULT_QUEUE, History, Problem, Reporter, Setup, Started, TracingReporter, Writer,
+    CaptureKind, Cause, DEFAULT_QUEUE, History, PersistJudgementsError, Problem, Reporter, Setup, Started,
+    TracingReporter, Writer,
 };
 pub use judgements::JudgementRecord;
 pub use log::{HistoryLayer, Scoped, ensure_scoped_callsites, install_panic_hook, log_decision, log_outside_call};
