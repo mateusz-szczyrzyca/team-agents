@@ -357,16 +357,43 @@ impl Issue {
     /// as long as the file they allowed is in it.
     #[must_use]
     pub fn allowed_by<'a>(&self, facts: &RoundFacts, allowances: &'a [TaskAllowance]) -> Vec<&'a TaskAllowance> {
-        let _ = facts;
-        allowances.iter().take(0).collect()
+        let subject = self.subject();
+        let permitted: Vec<&RepoPath> = match &subject {
+            Subject::Path(path) => vec![path],
+            Subject::NoTests => return Vec::new(),
+            Subject::Commit(commit) => commit_paths(facts, commit),
+        };
+        allowances
+            .iter()
+            .filter(|allowance| permitted.iter().any(|path| allowance.matches(path)))
+            .collect()
     }
 
     /// The subject the human may allow beforehand for the round, through the `allowances` of the task list: the finding's
     /// own, and for a finding about a commit each path of that commit that an allowance permits.
     #[must_use]
     pub fn allowed_subject(&self, facts: &RoundFacts, allowances: &[TaskAllowance]) -> Option<Subject> {
-        let _ = (facts, allowances);
-        None
+        match self.subject() {
+            Subject::Commit(commit) => {
+                let permitting: Vec<&RepoPath> = allowances
+                    .iter()
+                    .flat_map(|allowance| {
+                        commit_paths(facts, &commit)
+                            .into_iter()
+                            .filter(move |path| allowance.matches(path))
+                    })
+                    .collect();
+                let first = permitting.first()?;
+                Some(Subject::Path((*first).clone()))
+            }
+            subject @ (Subject::Path(_) | Subject::NoTests) => {
+                let permitted = match &subject {
+                    Subject::Path(path) => allowances.iter().any(|allowance| allowance.matches(path)),
+                    Subject::NoTests | Subject::Commit(_) => false,
+                };
+                permitted.then_some(subject)
+            }
+        }
     }
 
     /// The task header that permits this path change; markers and missing tests always need their own decision.

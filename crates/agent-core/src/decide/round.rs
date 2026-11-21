@@ -612,7 +612,14 @@ impl Checking {
         if issues.iter().any(|issue| refused.contains(&issue.subject())) {
             return back;
         }
-        let _ = allowed;
+        let (allowed_issues, rest): (Vec<&Issue>, Vec<&Issue>) =
+            issues.iter().partition(|issue| allowed.contains(&issue.subject()));
+        if !allowed_issues.is_empty() {
+            return ChecksStep::AskHuman {
+                reason: AskReason::OnlyTheHumanMayAllow,
+            };
+        }
+        let issues = rest;
         let team_can_fix = issues.iter().any(|issue| issue.judge() == Judge::Team);
         match (team_can_fix, self.passes < policy.check_passes) {
             (true, true) if issues.iter().any(|issue| issue.judge() == Judge::Human) => ChecksStep::AskHuman {
