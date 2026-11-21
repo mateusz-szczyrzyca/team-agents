@@ -81,6 +81,7 @@ impl Team {
             .filter(|(item, tier)| self.tier_waits.get(item) != Some(tier))
             .map(|(item, tier)| (*item, *tier))
             .collect();
+        self.tier_questions.retain(|item, tier| next.get(item) == Some(tier));
         self.tier_waits = next;
         entered
     }
