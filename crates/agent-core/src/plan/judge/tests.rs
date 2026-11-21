@@ -105,3 +105,11 @@ A task.
     assert_eq!(judged_changed.len(), 1);
     assert_eq!(judged_changed[0].id(), "1.1".parse::<ItemId>().unwrap());
 }
+
+#[test]
+fn unchanged_done_step_without_judgement_is_judged_again() {
+    let plan = parse_plan("A task.\n\n1. Stage\n[x] 1.1 First step\n    Check: exists a.txt\n").unwrap();
+    let judged = steps_to_judge(&plan, Some(&plan), |_| None);
+    let ids: Vec<ItemId> = judged.iter().map(|step| step.id()).collect();
+    assert_eq!(ids, vec!["1.1".parse::<ItemId>().unwrap()]);
+}
