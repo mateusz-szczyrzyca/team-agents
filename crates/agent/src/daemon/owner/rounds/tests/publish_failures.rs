@@ -226,3 +226,121 @@ async fn publish_with_detached_worktree_publishes_gated_commit_without_forcing()
         "worktree must remain detached on HEAD"
     );
 }
+
+#[tokio::test]
+async fn publish_with_detach_before_commit_publishes_gated_commit_and_preserves_checkout() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:detach-first"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("detach-first.sh"),
+        "set -eu\ncommit() { git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q \"$@\"; }\ngit checkout --detach HEAD\necho 'detached work' > detached.txt\ngit add detached.txt\ncommit -m 'Detached commit'\n",
+    )
+    .unwrap();
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+
+    let state = rig
+        .item_where("1.1", "in review or approved or done", |phase| {
+            matches!(
+                phase,
+                ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. }
+            )
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+    let (ItemPhase::InReview { pr, .. }
+    | ItemPhase::Approved { pr, .. }
+    | ItemPhase::Done {
+        completion: agent_core::state::Completion::Merged { pr, .. },
+    }) = item.phase()
+    else {
+        panic!("unexpected phase");
+    };
+    let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&task)).unwrap()).unwrap();
+    let gated_commit = gate["result"]["head"].as_str().unwrap();
+    assert_eq!(
+        remote_head, gated_commit,
+        "remote PR branch must carry the exact gated commit hash"
+    );
+    let worktree = rig.worktree(&task);
+    assert_eq!(
+        git(&worktree, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "HEAD",
+        "worktree must remain detached on HEAD"
+    );
+}
+
+#[tokio::test]
+async fn publish_with_part_checkout_before_commit_publishes_gated_commit_and_preserves_checkout() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:part-first"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("part-first.sh"),
+        "set -eu\ncommit() { git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q \"$@\"; }\ngit checkout -b part-work\necho 'part work' > part.txt\ngit add part.txt\ncommit -m 'Part commit'\n",
+    )
+    .unwrap();
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+
+    let state = rig
+        .item_where("1.1", "in review or approved or done", |phase| {
+            matches!(
+                phase,
+                ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. }
+            )
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+    let (ItemPhase::InReview { pr, .. }
+    | ItemPhase::Approved { pr, .. }
+    | ItemPhase::Done {
+        completion: agent_core::state::Completion::Merged { pr, .. },
+    }) = item.phase()
+    else {
+        panic!("unexpected phase");
+    };
+    let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&task)).unwrap()).unwrap();
+    let gated_commit = gate["result"]["head"].as_str().unwrap();
+    assert_eq!(
+        remote_head, gated_commit,
+        "remote PR branch must carry the exact gated commit hash"
+    );
+    let worktree = rig.worktree(&task);
+    assert_eq!(
+        git(&worktree, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "part-work",
+        "worktree must remain on part-work branch"
+    );
+}

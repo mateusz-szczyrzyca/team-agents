@@ -333,4 +333,3 @@ fn publish_decision_without_pr_branch() {
         &part_branch
     );
 }
-
