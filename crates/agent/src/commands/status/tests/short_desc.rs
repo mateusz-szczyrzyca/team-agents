@@ -40,7 +40,7 @@ fn a_team_without_a_description_has_the_line_it_had() {
 #[test]
 fn each_team_has_its_own_description() {
     let mut other = summary(Some("Second task"));
-    other.id = "team-20261111-153099-t5m8".parse().unwrap();
+    other.id = "team-20261111-153059-t5m8".parse().unwrap();
 
     let text = render(&[summary(Some("First task")), other]);
 
