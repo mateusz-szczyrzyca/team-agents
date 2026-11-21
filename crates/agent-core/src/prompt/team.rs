@@ -17,6 +17,10 @@ pub enum TeamPrompt {
     SplitRequested,
     /// The split proposal notice-question text.
     NoticeSplitQuestion,
+    /// Human instructions for staffing waits that must not use lower-tier agents.
+    NoticeTierQuestion,
+    /// One item and the capability it is waiting for.
+    TierWaiting,
     /// The split proposal correction text.
     SplitCorrection,
     /// The split proposal limit text.
@@ -95,6 +99,8 @@ impl TeamPrompt {
         Self::Context,
         Self::SplitRequested,
         Self::NoticeSplitQuestion,
+        Self::NoticeTierQuestion,
+        Self::TierWaiting,
         Self::SplitCorrection,
         Self::SplitLimit,
         Self::SplitCount,
@@ -135,6 +141,12 @@ impl TeamPrompt {
         match self {
             Self::SplitRequested => split_requested_spec(),
             Self::NoticeSplitQuestion => split_question_spec(),
+            Self::NoticeTierQuestion => PromptSpec::new(
+                "harness/team/notice-tier-question.md",
+                Audience::Human,
+                &["task", "waiting"],
+            ),
+            Self::TierWaiting => PromptSpec::new("harness/team/tier-waiting.md", Audience::Model, &["item", "tier"]),
             Self::SplitCorrection => {
                 PromptSpec::new("harness/team/split-correction.md", Audience::Model, &["item", "reason"])
             }
