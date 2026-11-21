@@ -94,6 +94,16 @@ pub struct PartDefinition {
     pub depends_on: Vec<PartKey>,
 }
 
+/// The authority that approved a complete split plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SplitApproval {
+    /// The harness approved an unchanged, valid proposal under the configured policy.
+    Harness,
+    /// The human approved a split through a verdict.
+    Human,
+}
+
 /// A whole validated split, with stable keys assigned in the given order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "SplitWire", into = "SplitWire")]
@@ -104,6 +114,8 @@ pub struct SplitPlan {
     parts: Vec<PartDefinition>,
     /// Non-default requirements keyed by stable part identity.
     requirements: BTreeMap<PartKey, proposal::Requirements>,
+    /// Optional authority; absent when approval provenance was not recorded.
+    approved_by: Option<SplitApproval>,
 }
 
 /// Serialized plan input, validated through the same constructor as a human verdict.
@@ -114,12 +126,17 @@ struct SplitWire {
     parent: ItemId,
     /// Parts in letter order, including optional requirements.
     parts: Vec<proposal::PartInput>,
+    /// Absent in plans written before approval provenance was retained.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    approved_by: Option<SplitApproval>,
 }
 
 impl TryFrom<SplitWire> for SplitPlan {
     type Error = SplitError;
     fn try_from(wire: SplitWire) -> Result<Self, Self::Error> {
-        Self::from_input(wire.parent, &wire.parts)
+        let mut plan = Self::from_input(wire.parent, &wire.parts)?;
+        plan.approved_by = wire.approved_by;
+        Ok(plan)
     }
 }
 
@@ -142,6 +159,7 @@ impl From<SplitPlan> for SplitWire {
         Self {
             parent: plan.parent,
             parts,
+            approved_by: plan.approved_by,
         }
     }
 }
@@ -218,6 +236,7 @@ impl SplitPlan {
             parent,
             parts,
             requirements: BTreeMap::new(),
+            approved_by: None,
         };
         let known: BTreeSet<PartKey> = plan.entries().map(|(id, _)| id.key).collect();
         for (id, part) in plan.entries() {
@@ -248,6 +267,19 @@ impl SplitPlan {
         }
         plan.check_acyclic()?;
         Ok(plan)
+    }
+
+    /// Recorded approval authority; none for plans whose provenance was not stored.
+    #[must_use]
+    pub const fn approved_by(&self) -> Option<SplitApproval> {
+        self.approved_by
+    }
+
+    /// Attaches the approval authority when the caller records an approved plan.
+    #[must_use]
+    pub const fn with_approval(mut self, approval: SplitApproval) -> Self {
+        self.approved_by = Some(approval);
+        self
     }
 
     /// Resolves at most 26 nodes iteratively; forward references are allowed but cycles never are.
@@ -309,3 +341,6 @@ impl SplitPlan {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod approval_tests;
