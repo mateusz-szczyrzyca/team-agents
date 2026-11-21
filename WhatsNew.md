@@ -5,6 +5,15 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.46.0 — 21.11.2026 — PR pending
+
+### New features
+- [agent] [agent-core] [agent-runtime] Done plan steps with command checks are executed safely in the task's worktree with the agent environment, closed input, and timeout cleanup. `[plan] check_seconds` sets the command timeout (default `60`; `0` disables commands and keeps them declared). Commands matching `[plan] check_refuse` prefixes (default `["agent gate", "make gate"]`) are refused, remaining declared with a once-only notice delivered on the next run.
+- [agent] [agent-core] A run reporting done with a step check mismatch is sent back to the agent with the failed step, check command, and tail output, sharing the `[plan] bounces` budget. Upon bounce exhaustion, the daemon asks the human in the task's questions file.
+
+### Enhancements
+- [agent-runtime] Check outputs are written to `checks/<step_id>.log` under the task directory, and process groups are killed cleanly if a command check times out.
+
 ## 0.45.0 — 21.11.2026 — PR #163
 
 ### New features
