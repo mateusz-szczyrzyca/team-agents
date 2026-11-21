@@ -70,8 +70,11 @@ impl Page {
 }
 
 /// The story of `chosen`, which are the records of `selection` in the order of their time.
-pub(super) fn render(chosen: &[&SequencedRecord], selection: &Selection, options: StoryOptions) -> String {
-    let mut page = Page::default();
+pub(super) fn render(chosen: &[&SequencedRecord], selection: &Selection, options: StoryOptions, zone: Zone) -> String {
+    let mut page = Page {
+        zone,
+        ..Page::default()
+    };
     let team = chosen.first().map(|record| record.team.clone());
     let start = chosen.iter().find_map(|record| match &record.record {
         Record::Team(start) => Some((*record, start.as_ref())),
@@ -233,7 +236,10 @@ fn team_part(
     let (at, repo, base, merge) = (start.at, &start.repo, start.base_branch.as_str(), start.merge);
     page.line(
         0,
-        &format!("Team started {at}: repo {repo}, base branch {base}, merge {merge}"),
+        &format!(
+            "Team started {}: repo {repo}, base branch {base}, merge {merge}",
+            page.zone.stamp(at)
+        ),
     );
     if with_list {
         let (lines, bytes) = (start.task_list.lines().count(), start.task_list.len());
@@ -407,7 +413,8 @@ fn blocks(page: &mut Page, records: &[&SequencedRecord], options: StoryOptions) 
 
 /// The time and the text that open an entry of the story.
 fn entry(page: &mut Page, at: Timestamp, text: &str) {
-    page.line(0, &format!("{at}  {text}"));
+    let when = page.zone.stamp(at);
+    page.line(0, &format!("{when}  {text}"));
 }
 
 /// A run: who, why, where, how long, its prompt, its command, its steps, its end and its changes.
@@ -483,10 +490,13 @@ fn run_rest(page: &mut Page, block: &RunBlock<'_>, start: Option<&RunStart>, opt
     }
     steps(page, block, options);
     for s in &block.sessions {
-        page.line(4, &format!("session {} observed at {}", s.session.as_str(), s.at));
+        page.line(
+            4,
+            &format!("session {} observed at {}", s.session.as_str(), page.zone.stamp(s.at)),
+        );
     }
     if let Some((stored, end)) = block.end {
-        page.line(4, &format!("ended: {}", run_end(&end.end)));
+        page.line(4, &format!("ended: {}", run_end(&end.end, page.zone)));
         if let Some(message) = &end.final_message {
             page.raw(4, "final message", message);
         }
@@ -599,7 +609,10 @@ fn command(page: &mut Page, stored: &SequencedRecord, launch: &Launch, start: Op
         ""
     };
     let (at, dir) = (launch.at, launch.working_dir.as_path().display());
-    page.line(4, &format!("started {at} in {dir}, at commit {head}{in_file}"));
+    page.line(
+        4,
+        &format!("started {} in {dir}, at commit {head}{in_file}", page.zone.stamp(at)),
+    );
     if let Some((lost, _, _)) = block.head_lost {
         page.cut_note(4, lost);
     }
@@ -643,7 +656,7 @@ fn steps(page: &mut Page, block: &RunBlock<'_>, options: StoryOptions) {
                     format!(" (cut: {})", cut.join(", "))
                 };
                 let (n, at, text) = (s.number, s.at, step_text(&s.event));
-                page.line(6, &format!("{n}. {at} {text}{note}"));
+                page.line(6, &format!("{n}. {} {text}{note}", page.zone.stamp(at)));
             }
         }
     }
@@ -678,12 +691,12 @@ fn client(client: &Client) -> String {
 }
 
 /// How a run ended, in words.
-fn run_end(end: &RunEnd) -> String {
+fn run_end(end: &RunEnd, zone: Zone) -> String {
     match end {
         RunEnd::Reported { outcome } => format!("reported {outcome}"),
         RunEnd::NoStatus { exit_code: Some(code) } => format!("no STATUS line (exit code {code})"),
         RunEnd::NoStatus { exit_code: None } => "no STATUS line (ended by a signal)".to_owned(),
-        RunEnd::QuotaExhausted { resets_at: Some(at) } => format!("quota exhausted (back at {at})"),
+        RunEnd::QuotaExhausted { resets_at: Some(at) } => format!("quota exhausted (back at {})", zone.stamp(*at)),
         RunEnd::QuotaExhausted { resets_at: None } => "quota exhausted".to_owned(),
         RunEnd::TurnLimit => "turn limit reached".to_owned(),
         RunEnd::RateLimited => "rate limited".to_owned(),
