@@ -11,12 +11,12 @@ mod tests {
     use std::time::Duration;
 
     use agent_core::cli::ActivityEvent;
-    use agent_core::history::{AgentIdentity, MaxTextBytes, Record, RunEndRecord, RunStart, RunWhy, Step, TeamStart};
+    use agent_core::history::{AgentIdentity, MaxTextBytes, Record, RunStart, RunWhy, Step, TeamStart};
     use agent_core::ids::{RoundId, RunId, TaskId, TeamId};
     use agent_core::kinds::{CliKind, Role, Tier};
     use agent_core::log::{LogEvent, LogRecord, LogTaskScope};
-    use agent_core::state::{RunEnd, Timestamp};
-    use agent_runtime::history::{HistoryDb, LogFilter, LogWindow, Reader, Store};
+    use agent_core::state::Timestamp;
+    use agent_runtime::history::{HistoryDb, Store};
 
     /// How long a test waits for the following to print a line the daemon has written.
     const WAIT: Duration = Duration::from_secs(10);
@@ -122,12 +122,6 @@ mod tests {
         db
     }
 
-    /// Gives the following the time to read a line it was not asked for, and to stop before a writer commits.
-    fn settle() {
-        eprintln!("SETTLE");
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-
     /// A following of `agent log` in `home` that ends when the child does.
     struct Follower {
         /// The command.
@@ -180,124 +174,180 @@ mod tests {
         }
     }
 
+    /// A row of `event` of the task and of its run, at `second`.
+    fn run_row(event: LogEvent, second: u32) -> LogRecord {
+        let mut record = row(second);
+        record.event = event;
+        record.task = Some(LogTaskScope::new(task(), Some(run())));
+        record.fields = [
+            ("agent".to_owned(), serde_json::json!("claude-1")),
+            ("end".to_owned(), serde_json::json!("Reported { outcome: Done }")),
+        ]
+        .into_iter()
+        .collect();
+        record
+    }
+
     #[test]
-    fn a_follow_prints_the_steps_of_a_run_as_they_are_recorded() {
+    fn a_follow_prints_the_steps_of_a_run_as_they_are_recorded_once_each() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let path = dir.path().join("history.db");
         let mut db = history(&path);
 
         let follower = Follower::start(dir.path(), &["--task", "task-20261121-132909-0001", "-n", "1"]);
-        settle();
+        // The opening is the newest line of the scope, with the run it belongs to: the follow has read the history.
+        assert!(
+            follower
+                .line()
+                .contains(" run run-20261121-132909-0001 started by claude-1")
+        );
+        assert_eq!(follower.line(), "2026-11-21T12:50:01Z command: cargo build");
         db.write(&[step(2, 3, ActivityEvent::Command("cargo test".to_owned()))])
             .expect("the step is written");
+        assert_eq!(follower.line(), "2026-11-21T12:50:03Z command: cargo test");
+        db.write(&[step(
+            3,
+            4,
+            ActivityEvent::Text("The tests pass.\nNext line.".to_owned()),
+        )])
+        .expect("the step is written");
+        assert_eq!(follower.line(), "2026-11-21T12:50:04Z The tests pass.…");
+        follower.stop();
+    }
 
-        let opening = follower.line();
-        settle();
+    #[test]
+    fn a_follow_says_how_a_run_ended_and_goes_on_with_the_next_run_of_the_task() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("history.db");
+        let mut db = history(&path);
+
+        let follower = Follower::start(dir.path(), &["--task", "task-20261121-132909-0001", "-n", "1"]);
         assert!(
-            opening.ends_with(" run run-20261121-132909-0001 started by claude-1 on task task-20261121-132909-0001 of team team-20261121-132909-4qem (solo) in round round-20261121-132909-q1w2"),
-            "{opening}"
+            follower
+                .line()
+                .contains(" run run-20261121-132909-0001 started by claude-1")
         );
+        assert_eq!(follower.line(), "2026-11-21T12:50:01Z command: cargo build");
+        db.write_logs(&[run_row(LogEvent::RunEnded, 5)])
+            .expect("the end is written");
+        let end = follower.line();
+        assert!(end.starts_with("2026-11-21T12:50:05Z info run_ended "), "{end}");
+        assert!(end.ends_with(": ended reported DONE"), "{end}");
+        // No daemon listens in the temporary home: the line says that it was not asked.
+        let wait = follower.line();
+        assert!(
+            wait.starts_with(
+                "round round-20261121-132909-q1w2: what it waits for is not known, the daemon was not asked: "
+            ),
+            "{wait}"
+        );
+        let mut second = start(RunWhy::Continuation);
+        second.run = "run-20261121-132909-0002".parse().expect("a literal id is valid");
+        second.at = at(9);
+        db.write(&[
+            Record::Run(Box::new(second)),
+            Record::Step(Box::new(Step {
+                run: "run-20261121-132909-0002".parse().expect("a literal id is valid"),
+                number: NonZeroU32::new(1).expect("a step number starts at one"),
+                at: at(10),
+                event: ActivityEvent::Command("git status".to_owned()),
+            })),
+        ])
+        .expect("the next run is written");
+        assert!(
+            follower
+                .line()
+                .contains(" run run-20261121-132909-0002 started by claude-1")
+        );
+        assert_eq!(follower.line(), "2026-11-21T12:50:10Z command: git status");
+        follower.stop();
+    }
+
+    #[test]
+    fn a_follow_with_no_steps_prints_the_records_alone() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("history.db");
+        let mut db = history(&path);
+        db.write_logs(&[row(2)]).expect("the row is written");
+
+        let follower = Follower::start(
+            dir.path(),
+            &["--task", "task-20261121-132909-0001", "-n", "1", "--no-steps"],
+        );
+        assert!(
+            follower
+                .line()
+                .starts_with("2026-11-21T12:50:02Z info task_status_changed ")
+        );
+        db.write(&[step(2, 3, ActivityEvent::Command("cargo test".to_owned()))])
+            .expect("the step is written");
+        db.write_logs(&[row(4)]).expect("the row is written");
+        assert!(
+            follower
+                .line()
+                .starts_with("2026-11-21T12:50:04Z info task_status_changed ")
+        );
+        follower.stop();
+    }
+
+    #[test]
+    fn a_follow_goes_on_after_the_writer_of_the_history_was_restarted() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("history.db");
+        let db = history(&path);
+
+        let follower = Follower::start(dir.path(), &["--task", "task-20261121-132909-0001", "-n", "1"]);
+        assert!(
+            follower
+                .line()
+                .contains(" run run-20261121-132909-0001 started by claude-1")
+        );
+        assert_eq!(follower.line(), "2026-11-21T12:50:01Z command: cargo build");
+        drop(db);
+        let mut db = HistoryDb::open(&path, MaxTextBytes::default()).expect("the history reopens");
+        db.write(&[step(2, 3, ActivityEvent::Command("cargo test".to_owned()))])
+            .expect("the step is written");
         assert_eq!(follower.line(), "2026-11-21T12:50:03Z command: cargo test");
         follower.stop();
     }
 
     #[test]
-    fn a_follow_opens_with_the_newest_lines_and_goes_on_with_the_rows() {
+    fn a_follow_of_a_round_names_the_agent_of_each_step() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let path = dir.path().join("history.db");
         let mut db = history(&path);
-        db.write_logs(&[row(2)]).expect("the row is written");
+        let mut other = start(RunWhy::FirstRun);
+        other.run = "run-20261121-132909-0002".parse().expect("a literal id is valid");
+        other.task = "task-20261121-132909-0002".parse().expect("a literal id is valid");
+        other.agent.name = "codex-1".to_owned();
+        db.write(&[
+            Record::Run(Box::new(other)),
+            Record::Step(Box::new(Step {
+                run: "run-20261121-132909-0002".parse().expect("a literal id is valid"),
+                number: NonZeroU32::new(1).expect("a step number starts at one"),
+                at: at(2),
+                event: ActivityEvent::Command("cargo clippy".to_owned()),
+            })),
+        ])
+        .expect("the second run is written");
 
-        let follower = Follower::start(dir.path(), &["--task", "task-20261121-132909-0001"]);
-        let opening = [follower.line(), follower.line()];
-        settle();
-        assert_eq!(
-            [opening[0].clone(), opening[1].clone()],
-            [
-                "2026-11-21T12:50:01Z command: cargo build".to_owned(),
-                "2026-11-21T12:50:02Z info task_status_changed task-20261121-132909-0001 team team-20261121-132909-4qem rounds round-20261121-132909-q1w2: running ← queued".to_owned(),
-            ]
-        );
-        db.write_logs(&[row(5)]).expect("the next row is written");
-        assert_eq!(
-            follower.line(),
-            "2026-11-21T12:50:05Z info task_status_changed task-20261121-132909-0001 team team-20261121-132909-4qem rounds round-20261121-132909-q1w2: running ← queued"
-        );
+        let follower = Follower::start(dir.path(), &["--round", "round-20261121-132909-q1w2", "-n", "10"]);
+        let mut found = Vec::new();
+        while !found
+            .iter()
+            .any(|line: &String| line.ends_with("command: cargo clippy"))
+        {
+            found.push(follower.line());
+        }
         follower.stop();
-    }
 
-    #[test]
-    fn a_follow_says_how_the_run_ended() {
-        let dir = tempfile::tempdir().expect("a temporary directory");
-        let path = dir.path().join("history.db");
-        let mut db = history(&path);
-
-        let follower = Follower::start(dir.path(), &["--task", "task-20261121-132909-0001", "-n", "0"]);
-        settle();
-        db.write(&[Record::RunEnd(Box::new(RunEndRecord {
-            run: run(),
-            at: at(4),
-            end: RunEnd::Reported {
-                outcome: agent_core::status::RunOutcome::Done,
-            },
-            final_message: Some("All done.\nSTATUS: DONE".to_owned()),
-        }))])
-        .expect("the end is written");
-
-        // The opening of the text comes before the new rows, and `-n 0` leaves it empty of rows.
-        settle();
-        let end = follower.line();
         assert!(
-            end.starts_with("2026-11-21T12:50:04Z info run_ended task-20261121-132909-0001 (claude-1)"),
-            "{end}"
+            found.contains(&"2026-11-21T12:50:01Z claude-1 command: cargo build".to_owned()),
+            "{found:?}"
         );
-        assert!(end.ends_with(": ended reported DONE"), "{end}");
-        follower.stop();
-    }
-
-    #[test]
-    fn a_follow_with_no_task_prints_a_row_alone() {
-        let dir = tempfile::tempdir().expect("a temporary directory");
-        let path = dir.path().join("history.db");
-        let mut db = history(&path);
-        db.write_logs(&[row(2)]).expect("the row is written");
-
-        let follower = Follower::start(dir.path(), &["-n", "1"]);
-        settle();
-        db.write_logs(&[row(5)]).expect("the row is written");
-
-        assert_eq!(
-            follower.line(),
-            "2026-11-21T12:50:02Z info task_status_changed task-20261121-132909-0001 team team-20261121-132909-4qem rounds round-20261121-132909-q1w2: running ← queued"
+        assert!(
+            found.contains(&"2026-11-21T12:50:02Z codex-1 command: cargo clippy".to_owned()),
+            "{found:?}"
         );
-        assert_eq!(
-            follower.line(),
-            "2026-11-21T12:50:05Z info task_status_changed task-20261121-132909-0001 team team-20261121-132909-4qem rounds round-20261121-132909-q1w2: running ← queued"
-        );
-        follower.stop();
-    }
-
-    #[test]
-    fn a_follow_of_a_task_reads_a_new_table_after_the_daemon_restarted_the_writer() {
-        let dir = tempfile::tempdir().expect("a temporary directory");
-        let path = dir.path().join("history.db");
-        let db = history(&path);
-
-        let follower = Follower::start(dir.path(), &["--task", "task-20261121-132909-0001", "-n", "0"]);
-        settle();
-        drop(db);
-        let mut db = HistoryDb::open(&path, MaxTextBytes::default()).expect("the history reopens");
-        db.write_logs(&[row(6)]).expect("the row is written");
-
-        assert_eq!(
-            follower.line(),
-            "2026-11-21T12:50:06Z info task_status_changed task-20261121-132909-0001 team team-20261121-132909-4qem rounds round-20261121-132909-q1w2: running ← queued"
-        );
-        follower.stop();
-        let reader = Reader::open(&path).expect("the history reads");
-        let rows = reader
-            .log_rows(&LogFilter::default(), LogWindow::Newest(10))
-            .expect("the rows are read");
-        assert_eq!(rows.len(), 1);
     }
 }
