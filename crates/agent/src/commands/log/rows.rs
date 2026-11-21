@@ -6,6 +6,7 @@ use std::path::Path;
 use agent_core::ids::{AgentName, RoundId, RunId, TaskId, TeamId};
 use agent_core::log::{LogEvent, LogLevel, LogView};
 use agent_core::state::Timestamp;
+use agent_core::story::StepView;
 use agent_runtime::history::{LogFilter, LogWindow, Reader};
 use clap::Args;
 
@@ -124,7 +125,14 @@ impl RowArgs {
         match format {
             Format::Json => follow_json(&reader, &filter, limit, runtime.as_ref(), out),
             Format::Text(options) => {
-                let (mut feed, text) = Feed::open(&reader, filter, options.steps, limit)?;
+                // A round or a team without `--follow` is told by its rows (`--show log`) or its story; the steps of
+                // its runs are listed only for a run, a task or an agent, or when following.
+                let steps = if self.follow || self.run.is_some() || self.task.is_some() || self.agent.is_some() {
+                    options.steps
+                } else {
+                    StepView::LeftOut
+                };
+                let (mut feed, text) = Feed::open(&reader, filter, steps, limit)?;
                 out.write_all(text.as_bytes()).map_err(LogError::Output)?;
                 out.flush().map_err(LogError::Output)?;
                 let Some(runtime) = &runtime else {
