@@ -400,7 +400,7 @@ impl Default for Publish {
     /// The default: three tries before the lead is told.
     fn default() -> Self {
         Self {
-            tries: 0,
+            tries: DEFAULT_PUBLISH_TRIES,
         }
     }
 }
