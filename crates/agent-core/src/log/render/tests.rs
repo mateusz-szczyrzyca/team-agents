@@ -3,12 +3,12 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 
-use super::record_line;
 use crate::config::AbsolutePath;
 use crate::history::{AgentIdentity, RunStart, RunWhy};
 use crate::ids::{RoundId, RunId, TaskId, TeamId};
 use crate::kinds::{CliKind, Role, Tier};
-use crate::log::{LogEntry, LogEntryParts, LogEvent};
+use crate::log::render::record_line;
+use crate::log::{LogEntry, LogEntryParts, LogEvent, LogTeamScope};
 
 /// The task every row of the table is about.
 fn task() -> TaskId {
@@ -80,13 +80,13 @@ fn entry(event: LogEvent, message: &str, fields: &[(&str, &str)]) -> LogEntry {
     .expect("the table's rows are valid")
 }
 
-/// The subject of every row: the task, the team, the round and the run.
+/// The subject of every row: the task, the agent, the team, the round and the run.
 fn subject(agent: &str) -> String {
     format!("{} ({agent}) team {} rounds {} run {}", task(), team(), round(), run())
 }
 
 #[test]
-fn record_line_says_what_happened_with_its_subject_and_fields() {
+fn record_line_gives_the_common_events_words_and_every_other_its_fields() {
     let long = "x".repeat(200);
     let cut = format!("{}…", "x".repeat(120));
     let rows: Vec<(LogEntry, String)> = vec![
@@ -94,40 +94,73 @@ fn record_line_says_what_happened_with_its_subject_and_fields() {
             entry(
                 LogEvent::TaskStatusChanged,
                 "task status changed",
-                &[("from", "queued"), ("to", "running")],
+                &[("from", "waiting"), ("to", "queued")],
             ),
-            format!(
-                "2026-11-21T12:50:32Z info task_status_changed {}: queued → running",
-                subject("inv-claude-sonnet")
-            ),
+            format!("{}: queued ← waiting", subject("inv-claude-sonnet")),
+        ),
+        (
+            entry(LogEvent::RunStarted, "run started", &[("agent", "inv-claude-sonnet")]),
+            format!("{}: run started by inv-claude-sonnet", subject("inv-claude-sonnet")),
         ),
         (
             entry(
                 LogEvent::RunStarted,
                 "run started: the bus woke the agent for a message",
-                &[("agent", "inv-claude-sonnet"), ("why", "wake_up"), ("from", "codex-1")],
+                &[
+                    ("agent", "inv-claude-sonnet"),
+                    ("why", "wake_up"),
+                    ("message_id", "1510"),
+                    ("from", "codex-1"),
+                    ("wake_ups", "2"),
+                ],
             ),
             format!(
-                "2026-11-21T12:50:32Z info run_started {}: the bus woke the agent for a message from codex-1",
+                "{}: the bus woke the agent for a message from codex-1",
                 subject("inv-claude-sonnet")
             ),
         ),
         (
-            entry(LogEvent::TeamChanged, "a team is started", &[("kind", "started")]),
+            entry(
+                LogEvent::RunEnded,
+                "run ended",
+                &[("end", "Reported { outcome: Done }")],
+            ),
+            format!("{}: ended reported DONE", subject("inv-claude-sonnet")),
+        ),
+        (
+            entry(
+                LogEvent::RunEnded,
+                "run ended",
+                &[("end", "NoStatus { exit_code: Some(1) }")],
+            ),
+            format!("{}: ended no STATUS line (exit code 1)", subject("inv-claude-sonnet")),
+        ),
+        (
+            entry(
+                LogEvent::RunEnded,
+                "run ended",
+                &[("end", "QuotaExhausted { resets_at: None }")],
+            ),
+            format!("{}: ended quota exhausted", subject("inv-claude-sonnet")),
+        ),
+        (
+            entry(LogEvent::ItemPhaseChanged, "an item changed phase after a review verdict", &[("item", "1.1"), ("phase", "in review"), ("pr", "168"), ("from", "in progress")]),
             format!(
-                "2026-11-21T12:50:32Z info team_changed {}: kind=started",
+                "{}: item 1.1 in review ← in progress after a review verdict, pr=168",
                 subject("inv-claude-sonnet")
             ),
+        ),
+        (
+            entry(LogEvent::NotificationSent, "a notification is delivered", &[("file", "outbox/1.md")]),
+            format!("{}: file=outbox/1.md", subject("inv-claude-sonnet")),
         ),
         (
             entry(LogEvent::BusDown, "agentbus is down", &[("detail", &long)]),
-            format!(
-                "2026-11-21T12:50:32Z warn bus_down {}: detail={cut}",
-                subject("inv-claude-sonnet")
-            ),
+            format!("{}: detail={cut}", subject("inv-claude-sonnet")),
         ),
     ];
-    for (row, expected) in rows {
-        assert_eq!(record_line(&row, Some(&start("inv-claude-sonnet"))), expected);
+    for (row, rest) in rows {
+        let expected = format!("{} {} {} {rest}", row.at(), row.level(), row.event());
+        assert_eq!(record_line(&row, Some(&start("inv-claude-sonnet"))), expected, "{:?}", row.event());
     }
 }
