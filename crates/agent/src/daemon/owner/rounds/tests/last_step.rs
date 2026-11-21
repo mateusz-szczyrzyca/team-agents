@@ -203,3 +203,58 @@ async fn a_lead_given_a_members_work_that_fails_too_asks_the_human() {
     assert_eq!(lead.asked_after_last_step(), NonZeroU32::new(1));
     assert!(text.contains("inv-lead"), "{text}");
 }
+
+// Rule: a restart of the daemon after a takeover keeps who holds the task, who held it and the counts: the task goes on
+// with the agent that took it over, in its own session, and ends DONE.
+#[tokio::test]
+async fn a_restart_after_a_takeover_goes_on_with_the_agent_that_took_it_over() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", BAD_IN_BOTH_SESSIONS),
+            // The task's seventh run is claude-2's first: it works until the daemon stops, then the next run works.
+            normal("claude-2", "work,work,work,work,work,work,hold,work"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        false,
+    )
+    .await;
+    configure(&rig, "[replacement]\nagents = [\"claude-2\"]\n");
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    rig.wait_for("claude-2's first run", || rig.runs(&task) >= 7).await;
+    rig.status_is(&task, TaskStatus::Running).await;
+
+    rig.stop().await.unwrap();
+    std::fs::write(rig.worktree(&task).join(".fake-continue"), "").unwrap();
+    rig.start().await;
+    let state = rig
+        .item_where("1.1", "merged after the restart", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+    let args = std::fs::read_to_string(rig.worktree(&task).join(".fake-args-8")).unwrap();
+    rig.stop().await.unwrap();
+
+    let member = state.find_task(&task).unwrap().member;
+    assert_eq!(member.agent().name(), "claude-2");
+    assert_eq!(member.past_holders().len(), 1);
+    assert_eq!(member.past_holders()[0].agent.name(), "claude-1");
+    assert_eq!(
+        member.renewals().map(Renewals::used),
+        Some(1),
+        "the counts survive the restart"
+    );
+    assert_eq!(member.runs().len(), 8);
+    assert!(
+        args.lines().any(|line| line == "claude-2"),
+        "the run after the restart is claude-2's: {args}"
+    );
+    let sessions: Vec<_> = member.runs().iter().map(|run| run.session().cloned()).collect();
+    assert_eq!(
+        sessions[7], sessions[6],
+        "it resumes claude-2's own session: {sessions:?}"
+    );
+}
