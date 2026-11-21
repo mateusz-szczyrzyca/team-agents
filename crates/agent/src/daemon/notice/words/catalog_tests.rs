@@ -84,13 +84,8 @@ fn another_text_of_the_catalog_gives_another_line_and_another_end() {
     let dir = tempfile::tempdir().unwrap();
     copy_dir(&prompts_dir(), dir.path());
     std::fs::write(
-        dir.path().join("harness/run/notice-task-id.md"),
-        "Zadanie nr {{task}}\n",
-    )
-    .unwrap();
-    std::fs::write(
-        dir.path().join("harness/run/notice-task-tail.md"),
-        "ZADANIE ({{task}}) — {{excerpt}}\n",
+        dir.path().join("harness/run/notice-task.md"),
+        "Zadanie nr {{task}}\nZADANIE ({{task}}) — {{excerpt}}\n",
     )
     .unwrap();
     let task_id = task(1);
