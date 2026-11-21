@@ -3,11 +3,15 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 
+use time::UtcOffset;
+
 use crate::config::AbsolutePath;
 use crate::history::{AgentIdentity, RunStart, RunWhy};
 use crate::ids::{RoundId, RunId, TaskId, TeamId};
 use crate::kinds::{CliKind, Role, Tier};
+use crate::local_time::Zone;
 use crate::log::render::record_line;
+use crate::log::render::record_line_in;
 use crate::log::{LogEntry, LogEntryParts, LogEvent};
 
 /// The task every row of the table is about.
@@ -257,4 +261,23 @@ fn record_line_tells_every_end_of_a_run_and_the_events_of_questions_and_of_a_ref
 /// The level and the event of `row`, as its line starts after the time.
 fn row_prefix(row: &LogEntry) -> String {
     format!("{} {}", row.level(), row.event())
+}
+
+#[test]
+fn record_line_in_writes_the_time_in_the_zone_given_and_the_rest_of_the_line_as_before() {
+    let row = entry(
+        LogEvent::TaskStatusChanged,
+        "task status changed",
+        &[("from", "waiting"), ("to", "queued")],
+    );
+    let zone = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("a literal offset is valid"));
+    let line = record_line_in(&row, Some(&start("inv-claude-sonnet")), &zone);
+    assert_eq!(
+        line,
+        format!(
+            "2026-11-21 13:50:32 +01:00 {} {}: queued ← waiting",
+            row_prefix(&row),
+            subject("inv-claude-sonnet")
+        )
+    );
 }

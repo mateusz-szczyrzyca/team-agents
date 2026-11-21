@@ -7,6 +7,7 @@ pub mod steps;
 mod tests;
 
 use crate::history::RunStart;
+use crate::local_time::Zone;
 use crate::log::{LogEntry, LogEvent};
 
 /// Longest value a line shows, in characters; a longer one is cut and ends with [`CUT_MARK`].
@@ -33,6 +34,12 @@ pub fn record_line(entry: &LogEntry, subject: Option<&RunStart>) -> String {
         line.push_str(&fields);
     }
     line
+}
+
+/// Stub: written in the next commit.
+#[must_use]
+pub fn record_line_in(_entry: &LogEntry, _subject: Option<&RunStart>, _zone: &Zone) -> String {
+    String::new()
 }
 
 /// Who the entry is about and where: the task, the agent's name, the team and rounds, and the run.

@@ -6,6 +6,7 @@ mod tests;
 use crate::cli::ActivityEvent;
 use crate::history::{RunStart, Step};
 use crate::ids::AgentName;
+use crate::local_time::Zone;
 use crate::protocol::Client;
 
 /// Longest text a step's line shows, in characters; a longer one is cut and ends with [`CUT_MARK`].
@@ -29,6 +30,12 @@ pub fn step_line(step: &Step, run: Option<&RunStart>, followed: &[AgentName]) ->
     }
     line.push_str(&text(&step.event));
     line
+}
+
+/// Stub: written in the next commit.
+#[must_use]
+pub fn step_line_in(_step: &Step, _run: Option<&RunStart>, _followed: &[AgentName], _zone: &Zone) -> String {
+    String::new()
 }
 
 /// A step as `kind: what`; a message is its text alone, since that is what its kind means here.
