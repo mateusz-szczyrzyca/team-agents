@@ -165,11 +165,14 @@ fn record_line_gives_the_common_events_words_and_every_other_its_fields() {
                 "a notification is delivered",
                 &[("file", "outbox/1.md")],
             ),
-            format!("{}: file=outbox/1.md", subject("inv-claude-sonnet")),
+            format!(
+                "{}: a notification is delivered file=outbox/1.md",
+                subject("inv-claude-sonnet")
+            ),
         ),
         (
             entry(LogEvent::BusDown, "agentbus is down", &[("detail", &long)]),
-            format!("{}: detail={cut}", subject("inv-claude-sonnet")),
+            format!("{}: agentbus is down detail={cut}", subject("inv-claude-sonnet")),
         ),
     ];
     for (row, rest) in rows {
