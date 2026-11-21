@@ -344,3 +344,88 @@ async fn publish_with_part_checkout_before_commit_publishes_gated_commit_and_pre
         "worktree must remain on part-work branch"
     );
 }
+
+#[tokio::test]
+async fn publish_with_stale_gate_record_and_new_worktree_commit_gates_and_publishes_new_commit() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "ask,done"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    let worktree = rig.worktree(&task);
+
+    // Wait until claude-1 asks questions and waits:
+    rig.status_is(&task, TaskStatus::Questions).await;
+
+    // Create First commit in worktree and record passing gate for it:
+    std::fs::write(worktree.join("first.txt"), "first\n").unwrap();
+    git(&worktree, &["add", "first.txt"]);
+    git(&worktree, &["commit", "-q", "-m", "First commit"]);
+    let first_commit = git(&worktree, &["rev-parse", "HEAD"]).trim().to_string();
+
+    let gate_file = rig.home.gate_record_file(&task);
+    std::fs::create_dir_all(gate_file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &gate_file,
+        format!(
+            "{{\"tree\":\"clean\",\"result\":{{\"head\":\"{first_commit}\",\"finished_at\":\"2026-11-21T10:00:00Z\",\"outcome\":{{\"kind\":\"passed\"}},\"log\":\"/tmp/gate.log\"}}}}"
+        ),
+    )
+    .unwrap();
+
+    // Create Second commit in worktree (worktree HEAD moves ahead of gate record):
+    std::fs::write(worktree.join("second.txt"), "second\n").unwrap();
+    git(&worktree, &["add", "second.txt"]);
+    git(&worktree, &["commit", "-q", "-m", "Second commit"]);
+    let second_commit = git(&worktree, &["rev-parse", "HEAD"]).trim().to_string();
+    assert_ne!(first_commit, second_commit);
+
+    // Answer questions so claude-1 finishes with done:
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: n(1),
+                answers: answers(&[(1, "proceed")]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    let state = rig
+        .item_where("1.1", "in review or approved or done", |phase| {
+            matches!(
+                phase,
+                ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. }
+            )
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+    let (ItemPhase::InReview { pr, .. }
+    | ItemPhase::Approved { pr, .. }
+    | ItemPhase::Done {
+        completion: agent_core::state::Completion::Merged { pr, .. },
+    }) = item.phase()
+    else {
+        panic!("unexpected phase");
+    };
+    let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    assert_eq!(
+        remote_head, second_commit,
+        "remote PR branch must carry the new worktree commit, not the earlier pass"
+    );
+}
