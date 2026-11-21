@@ -7,7 +7,11 @@ use crate::state::fixtures::{LIST, at, team};
 /// The sample team with the header line `Short desc: Given words` in its task list.
 fn team_with_a_description() -> crate::state::Team {
     let mut value = serde_json::to_value(team(1)).unwrap();
-    value["task_list"] = serde_json::json!(LIST.replacen("\n\n", "\nShort desc: Given words\n\n", 1));
+    value["task_list"] = serde_json::json!({
+        "text": LIST.replacen("\n\n", "\nShort desc: Given words\n\n", 1),
+        "allow_lines": "permissions",
+        "short_desc_header": true
+    });
     serde_json::from_value(value).unwrap()
 }
 

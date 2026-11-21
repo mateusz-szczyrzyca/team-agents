@@ -10,8 +10,13 @@ fn too_long_first_line() -> String {
 }
 
 #[test]
-fn a_stored_text_with_a_valid_line_gives_its_description() {
-    let list: TaskListText = serde_json::from_value(json!("Short desc: Fix it\nFix the typo.\n")).unwrap();
+fn a_stored_text_marked_as_having_a_header_description_gives_it() {
+    let list: TaskListText = serde_json::from_value(json!({
+        "text": "Short desc: Fix it\nFix the typo.\n",
+        "allow_lines": "permissions",
+        "short_desc_header": true
+    }))
+    .unwrap();
 
     assert_eq!(list.list().short_desc(), Some("Fix it"));
     assert_eq!(list.list().brief(), "Fix the typo.");
@@ -33,14 +38,14 @@ fn a_stored_text_with_a_refused_line_is_read_as_the_brief_it_was() {
 }
 
 #[test]
-fn a_text_read_that_way_is_written_back_marked_and_read_the_same_again() {
+fn a_text_read_that_way_is_written_back_as_the_plain_string_it_was() {
     let text = too_long_first_line();
     let list: TaskListText = serde_json::from_value(json!(text)).unwrap();
 
     let written = serde_json::to_value(&list).unwrap();
     let again: TaskListText = serde_json::from_value(written.clone()).unwrap();
 
-    assert_eq!(written, json!({ "text": text, "allow_lines": "brief" }));
+    assert_eq!(written, json!(text));
     assert_eq!(again, list);
 }
 

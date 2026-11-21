@@ -110,7 +110,7 @@ fn a_marked_text_that_the_header_rules_refuse_is_a_fault_of_the_state() {
 #[test]
 fn a_state_written_before_the_line_loads_with_its_briefs_and_permissions_unchanged() {
     let state = State::from_json(include_str!("../../tests/fixtures/state-before-short-desc.json")).unwrap();
-    let lists: Vec<_> = state.teams().iter().map(|team| team.task_list()).collect();
+    let lists: Vec<_> = state.teams().iter().map(super::team::Team::task_list).collect();
 
     assert_eq!(lists.len(), 3);
     assert_eq!(lists[0].list().short_desc(), None);
@@ -154,7 +154,7 @@ fn such_a_state_has_a_derived_description_for_every_team_and_is_saved_as_it_was(
     let saved = state.to_json().unwrap();
 
     assert_eq!(described[0], "Short desc: Original brief");
-    assert_eq!(described[1], "Short desc:");
+    assert_eq!(described[1], "Short desc: Fix the typo in the README.");
     assert!(
         described[2].starts_with("Short desc: xxxx") && described[2].ends_with('…'),
         "{described:?}"
