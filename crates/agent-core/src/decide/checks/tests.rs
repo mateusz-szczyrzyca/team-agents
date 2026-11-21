@@ -611,6 +611,42 @@ fn a_commit_that_is_not_a_test_fix_is_not_excused_by_being_named() {
     }
 }
 
+// Rule: a finding the task list covers now leaves the round, under the subject its answer is kept by — the finding's own
+// for a path, the path a commit is covered through for a commit.
+#[test]
+fn the_task_list_leaves_out_what_it_covers_and_names_the_subject_of_the_answer() {
+    let facts = round_touched(vec![commit(
+        '1',
+        "",
+        "TEST-FIX: and more",
+        vec![modified("src/lib.rs", 1, 0)],
+    )]);
+    let tried = Issue::Tried {
+        commit: id('1'),
+        fault: CommitFault::FixTouchesOther {
+            fix: id('1'),
+            other: path("src/lib.rs"),
+        },
+    };
+    let edited = Issue::TestChanged {
+        path: path("tests/a.rs"),
+        how: TestChange::Edited { removed: 1 },
+    };
+
+    assert_eq!(
+        allowed_beforehand(&[tried.clone(), edited.clone()], &facts, &[allowance("src/lib.rs")]),
+        [(tried, Subject::Path(path("src/lib.rs")))]
+    );
+    assert_eq!(
+        allowed_beforehand(&[edited.clone()], &facts, &[allowance("tests/*.rs")]),
+        [(edited, Subject::Path(path("tests/a.rs")))]
+    );
+    assert_eq!(
+        allowed_beforehand(&[Issue::NoTests], &facts, &[allowance("src/lib.rs")]),
+        []
+    );
+}
+
 // ---- commits the team cannot repair ----------------------------------------------------------------------------------
 
 /// The `TEST-FIX:` commit `2` after the `RED:` commit, touching `files`, in a round whose description names it.

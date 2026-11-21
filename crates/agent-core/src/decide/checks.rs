@@ -456,6 +456,21 @@ impl Issue {
     }
 }
 
+/// The subject under which the answer about each of `issues` is kept, for the `allowances` of the task list: the finding's
+/// own, for the ones the task list covers now, or the path a finding about a commit is covered through. A finding the task
+/// list does not cover has none.
+#[must_use]
+pub fn allowed_beforehand(issues: &[Issue], facts: &RoundFacts, allowances: &[TaskAllowance]) -> Vec<(Issue, Subject)> {
+    issues
+        .iter()
+        .filter_map(|issue| {
+            issue
+                .allowed_subject(facts, allowances)
+                .map(|subject| (issue.clone(), subject))
+        })
+        .collect()
+}
+
 /// The issues the checks find in `facts`, under the lists of `rules`, without those about a [`Subject`] in `allowed`:
 /// [`assess_near`] with no line of the files besides the added ones.
 ///
