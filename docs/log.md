@@ -301,3 +301,4 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `peer_gone` | `debug` | The other end of an answer (a client of the socket, or a task of the daemon) was gone before the answer. |
 | `github_step_waiting` | `warn` | A step of a round that calls GitHub or git fails and waits: once when it starts to wait, with `team`, `operation`, `pr`, `outlook` (`may_pass` or `will_not_pass`), `next_try` (empty for a refusal) and the `detail` line `agent status` shows. |
 | `github_step_resumed` | `info` | A step of a round that waited for GitHub goes through, once, with `team` and `operation`. |
+| `task_handed_over` | `info` | A task whose runs went bad after its last new session is handed over (`[replacement]`), with `team`, `task`, `from` (the agent that held it) and `to`: the agent that holds it now, or `lead` when a member's work goes to its team's lead. |

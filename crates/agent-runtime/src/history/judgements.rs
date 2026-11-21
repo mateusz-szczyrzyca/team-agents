@@ -125,7 +125,7 @@ pub(super) fn latest(snapshot: &Transaction<'_>, task: &TaskId) -> Result<HashMa
     Ok(map)
 }
 
-/// Whether the database has `step_judgements`: a file written before migration 16 has none.
+/// Whether the database has `step_judgements`: a file written before migration 17 has none.
 pub(super) fn has_table(snapshot: &Transaction<'_>) -> Result<bool, ReadError> {
     snapshot
         .query_row(

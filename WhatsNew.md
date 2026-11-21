@@ -5,14 +5,24 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.43.0 — 21.11.2026 — PR pending
+## 0.44.0 — 21.11.2026 — PR #161
 
 ### New features
-- [agent] [agent-core] [agent-runtime] `agent status <task>` and `agent status <round>` show plan steps with their marks and a done step's settlement: `confirmed`, `declared` or `mismatch`. The daemon checks `exists PATH` inside the worktree and retains judgements across restarts; steps without checks, reviewer checks and command checks remain declared.
-- [agent-runtime] **Action:** history upgrades automatically to schema 16 while retaining older records. Keep a backup before upgrading if you may need to return to an older binary.
+- [agent] [agent-core] When the agent that took a task over goes bad too, or a lead given a member's work does, you are asked once in the task's questions file instead of the task just failing: answer `a` to start it once more in a new session, briefed; `b`, `ok` or anything else stops it — a member's work then goes to its lead. `[replacement] mode = "off"` asks nothing.
+- [agent] [agent-core] [agent-runtime] Every hand-over of a task is logged as `task_handed_over`, with the agent it was taken from and the one that holds it now, for example `agent log --event task_handed_over`.
 
 ### Enhancements
-- [agent] [agent-core] Plan status uses socket protocol 5. Older `agent` CLIs using protocols 3 and 4 still talk to the new daemon, without plan summaries; the new CLI falls back when talking to older daemons.
+- [agent] A restart of the daemon after a task was taken over goes on with the agent that took it, in its own session.
+- [agent] [agent-core] A lead given a stopped member's work is told of it even when the daemon restarts, or the bus fails, before the lead was told.
+
+## 0.43.0 — 21.11.2026 — PR #158
+
+### New features
+- [agent-core] A task-list item can name the kind of agent it needs with a line `Tier:` (`investigator`, `normal` or `worker`; an item without one asks for `normal`). An unknown tier is refused at its line. A list without `Tier:` lines reads as before. Nothing gives items out by tier yet.
+- [agent-core] The choice of an agent by tier exists: it never picks an agent of a lower tier than asked (investigators above normal agents above workers), prefers a fitting member, takes the coordinator only when no member fits, and says when nobody fits. The daemon does not use it yet.
+
+### Enhancements
+- [agent-core] A recorded split plan can keep who approved it, the harness or you. **Action:** a plan written with this field cannot be read by an older `agent`, so keep a backup of `state.json` from before the upgrade; plans without the field load as before.
 
 ## 0.42.0 — 21.11.2026 — PR #160
 
@@ -21,11 +31,13 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent] [agent-core] **Action:** a team member whose new session goes bad too, with no listed agent that fits — also when you list none — now stops, and the team's lead gets its work in a message on the bus, with its branch, its worktree and a briefing of what its runs left; the item is published when the lead ends `DONE`. Before, the member failed and you were asked. `[replacement] mode = "lead"` gives the work to the lead at once; `mode = "off"` keeps the old behaviour.
 - [agent] [agent-core] `agent status` says from whom a task was taken over, for example `claude-2  queued, for claude-1`.
 
+
 ## 0.41.0 — 21.11.2026 — PR #159
 
 ### New features
 - [agent-core] A pure table decides who takes over a task whose own agent cannot go on: the first idle agent of the same or a higher place (`[replacement] agents`, in the order you name them), otherwise the team's lead, otherwise you. The place of an agent is its tier: a worker below a normal agent below an investigator.
 - [agent-core] The state keeps who held a task before the agent that holds it now, with the time, so that a task given to another agent still shows whose work it is. This part only decides and records; nothing acts on it yet. No migration: an older `state.json` loads as before.
+
 
 ## 0.40.0 — 20.11.2026 — PR #156
 
@@ -36,6 +48,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Bug fixes
 - [agent] An item no longer stands behind a member the human stopped: when the lead ends `STATUS: DONE` with a passed gate, the item is published with the lead's branch.
+
 
 ## 0.39.0 — 20.11.2026 — PR #154
 

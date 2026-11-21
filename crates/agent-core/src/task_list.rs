@@ -26,6 +26,7 @@ use std::num::{NonZeroU16, NonZeroUsize, ParseIntError};
 use std::str::FromStr;
 
 use crate::ids::{AgentName, InvalidItemId, InvalidName, ItemId};
+use crate::kinds::{Tier, UnknownKeyword};
 
 /// Largest task list accepted, in bytes: a bound on untrusted input, far above any real list.
 pub const MAX_TASK_LIST_BYTES: usize = 1 << 20;
@@ -119,6 +120,8 @@ pub struct TaskList {
     brief: String,
     /// The features, in the order written.
     features: Vec<Feature>,
+    /// Explicit item requirements; absent entries request normal agents.
+    tiers: HashMap<ItemId, Tier>,
 }
 
 /// An item part that a label starts: `Expected result:` or `Checks:`.
@@ -171,6 +174,21 @@ pub enum ItemProblem {
 /// carries the number of the line it is on, counted from 1.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TaskListError {
+    /// An item's column-zero `Tier:` directive has an unknown or empty value.
+    #[error("line {line}: invalid tier")]
+    InvalidTier {
+        /// The directive's line.
+        line: NonZeroUsize,
+        /// The refused tier and accepted keywords.
+        #[source]
+        source: UnknownKeyword,
+    },
+    /// An item declares its tier more than once.
+    #[error("line {line}: repeated Tier: directive")]
+    DuplicateTier {
+        /// The repeated directive's line.
+        line: NonZeroUsize,
+    },
     /// An allowance has invalid syntax or could permit a rules file.
     #[error("line {line}: invalid Allow: {text:?}")]
     InvalidAllowance {
@@ -407,6 +425,13 @@ impl TaskList {
     /// Every item, feature by feature, in the order written.
     pub fn items(&self) -> impl Iterator<Item = &Item> {
         self.features.iter().flat_map(|feature| feature.items.iter())
+    }
+
+    /// Requested tier of an existing item; omission means normal, and an unknown item returns none.
+    #[must_use]
+    pub fn required_tier(&self, id: ItemId) -> Option<Tier> {
+        self.item(id)
+            .map(|_| self.tiers.get(&id).copied().unwrap_or(Tier::Normal))
     }
 
     /// The item numbered `id`, if the list has it.
@@ -675,6 +700,8 @@ struct Parser<'a> {
     brief: Vec<&'a str>,
     /// The features read so far; the last one is the current one.
     features: Vec<Feature>,
+    /// Explicit item requirements; absent entries request normal agents.
+    tiers: HashMap<ItemId, Tier>,
     /// The lines of the features' headings, by number, to refuse a repeated number.
     feature_lines: HashMap<NonZeroU16, NonZeroUsize>,
     /// The lines of the item lines, by number, to refuse a repeated number.
@@ -713,6 +740,20 @@ impl<'a> Parser<'a> {
                         source,
                     }
                 })?);
+            return Ok(());
+        }
+        if let Some(open) = &self.item
+            && let Some(value) = text.strip_prefix("Tier:")
+        {
+            let id = open.line.id;
+            if self.tiers.contains_key(&id) {
+                return Err(TaskListError::DuplicateTier { line });
+            }
+            let tier = value
+                .trim()
+                .parse()
+                .map_err(|source| TaskListError::InvalidTier { line, source })?;
+            self.tiers.insert(id, tier);
             return Ok(());
         }
         match classify(text) {
@@ -884,6 +925,7 @@ impl<'a> Parser<'a> {
             allowances: self.allowances,
             brief,
             features: self.features,
+            tiers: self.tiers,
         })
     }
 }
@@ -1555,3 +1597,6 @@ Depends on: 2,3,1,
 #[cfg(test)]
 #[path = "task_list/allowances_tests.rs"]
 mod allowances_tests;
+
+#[cfg(test)]
+mod tier_tests;

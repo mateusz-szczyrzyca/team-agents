@@ -258,7 +258,7 @@ delivery". See [configuration](docs/configuration.md#plan).
 At every run's end, the daemon also judges done steps, for every role and outcome. `exists PATH` confirms a file or
 folder inside the worktree; an absent path or a symlink outside it is a mismatch. Steps without checks, with
 `reviewer`, or with commands remain declared. `agent status <task>` and `agent status <round>` show these states
-beside the steps. Judgements are retained in history schema 16, which automatically upgrades older histories;
+beside the steps. Judgements are retained in history schema 17, which automatically upgrades older histories;
 keep a backup before upgrading if you need to return to an older daemon. This release records mismatches without
 sending runs back for them; command execution and mismatch bounces follow in the next part.
 
@@ -275,7 +275,9 @@ none over; a takeover is not counted among the new sessions). On the team's bus 
 was first given to. With no such agent — also when no `agents` are listed — a member's task stops and the team's lead
 gets its work in a message on the bus, with a briefing of what the member's runs left (`[replacement] mode = "lead"`
 asks for that at once). With `mode = "off"`, and for a solo task or a coordinator's with nobody to take it, the task is
-marked failed and the coordinator or you are notified, as before.
+marked failed and the coordinator or you are notified, as before. When the agent that took a task over goes bad too, or
+a lead given a member's work does, you are asked once, in the task's next questions file: `a` starts it once more in a
+new session; `b`, `ok` and any other answer stop it. Each hand-over is logged as `task_handed_over`.
 `agent status` shows such a task as `in a new session`, and as `, for AGENT` when another agent took it over from AGENT. Automatic retries apply only to resumable tasks with a session (solo tasks,
 coordinators, and team members), excluding workers serving requests, reviewers, tasks without a session, or failures
 during startup or execution. Runs ending without a status line upon daemon shutdown or interruption (exit code `None`)
@@ -309,6 +311,11 @@ run for assignment and its last run ending for completion, falling back to team 
 run evidence. The activity record also supplies the investigator selection order below and the view
 `agent status --investigators`. See the
 [activity record](docs/state.md#investigator-activities).
+
+Task-list items can declare an optional column-zero [`Tier:` directive](docs/task-list.md#the-lines), defaulting
+to `normal`. Core decisions compare capabilities as investigator > normal > worker and prefer a fitting member
+before a fitting coordinator. Approved split plans can retain who approved them. These are preparatory APIs;
+the daemon's enforcement of tier requirements and its recording of approval authority follow in the next part.
 
 A coordinator can submit a [split proposal](docs/task-list.md#coordinator-proposal-form) by writing
 `split-proposal-<item>.json` in its task directory and reporting `SPLIT: <item>` before `STATUS: SLEEPING`.

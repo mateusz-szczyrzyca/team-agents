@@ -56,6 +56,7 @@ mod turn_limit;
 mod disputes;
 
 #[cfg(test)]
+mod handover_events;
 mod judgements;
 #[cfg(test)]
 mod judgements_before;

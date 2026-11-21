@@ -13,6 +13,7 @@ mod disk;
 mod fixture;
 mod gate;
 mod history;
+mod last_step;
 mod plan;
 mod round_state;
 mod rounds;
@@ -448,12 +449,10 @@ pub(super) struct Owner {
     hangs: HashMap<TaskId, u32>,
     /// Why a queued task of a team starts now; read when its run is made ready.
     reasons: HashMap<TaskId, Why>,
-    /// The member tasks whose work goes to the team's lead, with the trouble of their last runs: the lead is told when
-    /// the end of their run is settled.
-    to_lead: HashMap<TaskId, Trouble>,
-    /// The member tasks whose run's end is settled and whose lead is to be told, with its briefing, that their work is
-    /// its own; told at the next turn of the loop, and before the daemon ends.
-    lead_briefings: Vec<(TaskId, Trouble)>,
+    /// The member tasks whose work the state owes to their lead and whose message, with its briefing, waits in the outbox:
+    /// not briefed again until the bus took it, when the state is told so. Empty after a restart, so that what is still
+    /// owed is told again.
+    leads_being_told: HashSet<TaskId>,
     /// How often each task was woken for the newest message that waits for it.
     wake_counts: HashMap<TaskId, wakes::WakeCount>,
     /// What the log line of the run of a task that was woken says of the wake-up; read when the run starts.
@@ -541,8 +540,7 @@ impl Owner {
             wakes: HashMap::new(),
             hangs: HashMap::new(),
             reasons: HashMap::new(),
-            to_lead: HashMap::new(),
-            lead_briefings: Vec::new(),
+            leads_being_told: HashSet::new(),
             wake_counts: HashMap::new(),
             wake_notes: HashMap::new(),
             outbox: VecDeque::new(),
@@ -1323,6 +1321,13 @@ impl Owner {
             settled,
             progress,
         } = ended;
+        // The troubles of the ladder: a task whose last step went bad with one may be asked about instead of failing.
+        let trouble = match settled {
+            Settled::NoStatus { .. } => Some(Trouble::NoStatus),
+            Settled::Hung => Some(Trouble::Hang),
+            Settled::TurnLimit => Some(Trouble::TurnLimit),
+            Settled::Status(_) | Settled::Failed(_) | Settled::Questions | Settled::Paused(_) => None,
+        };
         let next = match settled {
             Settled::Status(status) => {
                 self.hangs.remove(task);
@@ -1359,6 +1364,12 @@ impl Owner {
                 self.turn_limit(task)?
             }
         };
+        if next.0 == TaskStatus::Failed
+            && let Some(trouble) = trouble
+            && let Some(asked) = self.ask_after_last_step(task, located, trouble, now, events).await?
+        {
+            return Ok(asked);
+        }
         Ok(next)
     }
 

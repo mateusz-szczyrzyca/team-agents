@@ -285,10 +285,22 @@ learns of a new holder, and needs no change. With nobody fitting — or at once 
 with no agents listed — a member's task is stopped and its lead is told on the bus that the work is its own
 (`harness/team/bus-lead-takes-work.md`, notice `member_failed`), followed by the briefing of the member's work without
 its prompt (`harness/run/lead-briefing.md`), gathered with a snapshot at the next turn of the loop and before the daemon
-ends; the item of the stopped member is published when the lead ends `DONE`, as for a member the human stopped
+ends. The work is owed to the lead in the state (`State::owe_lead`, `lead_owed` in the member's `renewals`), saved with
+the stop, and the mark is cleared (`State::lead_told`) only once the bus took the notice, so a restart or a bus that
+fails before the lead is told tells it at the next turn after all; the item of the stopped member is published when the lead ends `DONE`, as for a member the human stopped
 (`pr::joins`). A solo task and a coordinator's have no lead: they fail as before, and so does every task with
 `mode = "off"`, or once it was taken over `replacements` times. Each choice is logged as `decision_taken` with
-`decision` `takeover`.
+`decision` `takeover`, and each hand-over as `task_handed_over` (history migration 16 admits it).
+
+**After the last step** (`daemon/owner/last_step.rs`): when a run would fail a task that was handed over before, or a
+coordinator holding the item of a stopped member, the daemon writes the task's next questions file from
+`harness/run/notice-last-step.md` instead, records its number with `State::ask_after_last_step` (in the member's
+`renewals`, with the boundary of a new session) and settles the run as one that asked questions; a file the state does
+not record is removed again and the task fails as before. Whether to ask is decided by `decide::last_step::after_last_step`
+(mode, role, asked before, held before, a stopped member's work), the answer by `decide::last_step::last_step_answer`:
+`a` queues the task, which starts briefed in that new session; any other answer — `b`, `ok`, free text — stops it, and
+a member's work is owed to its lead as above. A task is asked so only once, and never in mode `off`. The open question
+is in the state, so a restart while it waits keeps it, and its answer still does what it says.
 
 **The watchdog** is the engine's: a run whose output files show no change for `[watchdog] hang_minutes` is stopped (its
 whole process group, `SIGTERM` then `SIGKILL`) and classified as a hang unless the provider refused it. **A pause** is
@@ -1183,7 +1195,7 @@ socket. One owner, no file races (CON-3).
 The owner runs these checks sequentially after reading a plan at every run's end, independently of role and outcome,
 and awaits durable history acknowledgement before settling the run. Commands stay declared in this part.
 Task and round status use cached plan summaries; their read path does no filesystem or database work.
-History schema 16 adds append-only step judgements and migrates older databases.
+History schema 17 adds append-only step judgements and migrates older databases.
 
 ## Rules of the plan
 
@@ -1331,3 +1343,13 @@ The prompt catalog supplies each part's deliverable, checks and earlier merged p
 adds optional split plans, and answer responses carry an optional split acknowledgement alongside the ordinary
 `applied` reply; the CLI derives the four part states from plans and durable rounds. Recovery reads this
 same state, so neither the gap between parts nor an open part requires a separate restart mechanism.
+
+### Tier requirement preparation
+
+`agent-core::kinds::Tier` has a total capability order: investigator > normal > worker, independent of the
+stable keyword declaration order. Task-list `Tier:` directives default to normal and are exposed through
+`TaskList::required_tier`. The pure `decide::assign::tier::choose_agent` takes offered members in preference order
+and an optional coordinator; it returns a fitting member, a fitting coordinator only if no member fits, or an
+explicit missing-tier result. Availability and waiting remain the caller's responsibility. The existing daemon
+assignment path is unchanged in this preparatory part. Split plans optionally retain their approval authority;
+legacy plans leave it unknown until recorded explicitly.

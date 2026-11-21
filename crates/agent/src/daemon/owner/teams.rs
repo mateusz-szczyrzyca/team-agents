@@ -475,6 +475,16 @@ impl Owner {
             match self.carry_out(&next).await? {
                 Ok(()) => {
                     self.outbox.pop_front();
+                    // The lead was told of a member's work: nothing is owed to it any more.
+                    if let BusJob::Tell {
+                        notice: BusNotice::LeadTakesWork(work),
+                        ..
+                    } = &next.job
+                    {
+                        self.leads_being_told.remove(&work.task);
+                        self.parts.state.lead_told(&work.task)?;
+                        self.save().await?;
+                    }
                 }
                 // What the bus refuses for good would block everything behind it for ever: it is dropped, once told.
                 Err(error) if !is_transient(&error) => {
@@ -936,10 +946,9 @@ impl Owner {
         if let Some(found) = self.parts.state.find_task(task)
             && found.team.crew().coordinator().is_some()
         {
-            // A member's work that is its lead's now is told as such, with its briefing, not as a failure; the briefing is
-            // gathered at the next turn of the loop.
-            let told = if let Some(trouble) = self.to_lead.remove(task) {
-                self.lead_briefings.push((task.clone(), trouble));
+            // A member's work that is its lead's now is told as such, with its briefing, not as a failure: the work is owed
+            // to the lead in the state, and the briefing is gathered at the next turn of the loop.
+            let told = if found.member.owes_lead() {
                 None
             } else {
                 notice_for(found.team, located.role, found.member, end, message)?
