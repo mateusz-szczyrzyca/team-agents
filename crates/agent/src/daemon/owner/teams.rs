@@ -412,6 +412,7 @@ impl Owner {
     /// # Errors
     /// [`OwnerError`] when the state cannot be saved or is found inconsistent.
     pub(super) async fn team_life(&mut self) -> Result<(), OwnerError> {
+        self.brief_leads().await;
         self.flush_outbox().await?;
         self.drop_closed_waits();
         let looks = std::mem::take(&mut self.looks);
@@ -469,7 +470,7 @@ impl Owner {
     // ---- the bus --------------------------------------------------------------------------------------------
 
     /// Does what is waiting for the bus, oldest first; stops at the first thing the bus does not take.
-    async fn flush_outbox(&mut self) -> Result<(), OwnerError> {
+    pub(super) async fn flush_outbox(&mut self) -> Result<(), OwnerError> {
         while let Some(next) = self.outbox.front().cloned() {
             match self.carry_out(&next).await? {
                 Ok(()) => {
@@ -551,20 +552,20 @@ impl Owner {
             if state == MemberState::Active
                 && held
                     .iter()
-                    .any(|task| self.task_of(team_id, &member).as_ref() == Some(task))
+                    .any(|task| self.task_on_bus(team_id, &member).as_ref() == Some(task))
             {
                 continue;
             }
             match self.parts.bus.team_set(team_id, &member, state).await {
                 // A member that went to sleep while something waits for it is woken at once.
                 Ok(Woken::Message | Woken::Board) if state == MemberState::Sleeping => {
-                    if let Some(task) = self.task_of(team_id, &member) {
+                    if let Some(task) = self.task_on_bus(team_id, &member) {
                         self.wake_member(team_id, &task, look).await?;
                     }
                 }
                 // A member that went to sleep with nothing waiting read what woke it.
                 Ok(Woken::No) if state == MemberState::Sleeping => {
-                    if let Some(task) = self.task_of(team_id, &member) {
+                    if let Some(task) = self.task_on_bus(team_id, &member) {
                         self.wake_settled(&task, look);
                     }
                 }
@@ -582,6 +583,19 @@ impl Owner {
             }
         }
         Ok(())
+    }
+
+    /// The task of the member that the bus of `team` knows as `agent`: the agent its task was first given to, whoever
+    /// holds it now.
+    fn task_on_bus(&self, team: &TeamId, agent: &AgentName) -> Option<TaskId> {
+        self.parts.state.team(team).and_then(|found| {
+            found
+                .crew()
+                .roster()
+                .into_iter()
+                .find(|(_, member)| member.bus_agent().name() == agent.as_str())
+                .map(|(_, member)| member.task().clone())
+        })
     }
 
     /// The task of the member named `agent` in `team`.
@@ -868,7 +882,7 @@ impl Owner {
     }
 
     /// Keeps `job` for the bus: it is done at the next turn of the loop, and again until the bus takes it.
-    fn tell_bus(&mut self, team: &TeamId, job: BusJob) {
+    pub(super) fn tell_bus(&mut self, team: &TeamId, job: BusJob) {
         self.outbox.push_back(Outbound {
             team: team.clone(),
             job,
@@ -922,7 +936,15 @@ impl Owner {
         if let Some(found) = self.parts.state.find_task(task)
             && found.team.crew().coordinator().is_some()
         {
-            if let Some(told) = notice_for(found.team, located.role, found.member, end, message)? {
+            // A member's work that is its lead's now is told as such, with its briefing, not as a failure; the briefing is
+            // gathered at the next turn of the loop.
+            let told = if let Some(trouble) = self.to_lead.remove(task) {
+                self.lead_briefings.push((task.clone(), trouble));
+                None
+            } else {
+                notice_for(found.team, located.role, found.member, end, message)?
+            };
+            if let Some(told) = told {
                 self.outbox.push_back(Outbound {
                     team: located.team.clone(),
                     job: BusJob::Tell {

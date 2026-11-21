@@ -51,7 +51,8 @@ fn was_excluded(member: &Member) -> bool {
 pub(in crate::daemon) fn reconcile(team: &Team, bus: &BusTeam) -> Result<Reconciliation, InvalidName> {
     let mut plan = Reconciliation::default();
     for (_, member) in team.crew().roster() {
-        let name = agent_name(member.agent())?;
+        // A task taken over keeps the name of its first agent on the bus.
+        let name = agent_name(member.bus_agent())?;
         let Some(on_bus) = bus.members.get(&name) else {
             continue;
         };

@@ -258,7 +258,7 @@ end does (`settle.rs`):
 | quota exhausted, rate limited | `paused` | woken at the time the CLI gave (plus a minute), else after the `[limits]` minutes; the human is told |
 | turn limit | `queued`: resumed in the same session with a short continuation prompt | at most `[limits] turn_limit_resumes` consecutive automatic resumes (default `3`); the next exhaustion goes up the ladder (below), then fails and notifies with the count; any other end resets the count |
 | hung | `queued`: resumed from its session | after `[watchdog] hang_strikes` hangs in a row without progress, the ladder (below), then `failed` and the human is told; a run that did something before it went silent starts the count again |
-| the daemon shut down | `queued`, or `failed` when the no-status budget is exhausted and the ladder has no new session | the run is recorded as ended with no status and no exit code; on the third consecutive no-status end of a session, a resumable solo, coordinator or member task goes up the ladder (below), and fails when it has no step left |
+| the daemon shut down | `queued`, or `failed` when the no-status budget is exhausted and neither the ladder nor the takeover (below) has a step | the run is recorded as ended with no status and no exit code; on the third consecutive no-status end of a session, a resumable solo, coordinator or member task goes up the ladder (below), and fails when it has no step left |
 
 **The ladder** (`decide::ladder::next_step`, `[replacement] new_sessions`): after the retries of the same session a task of
 a solo agent, a coordinator or a member is started once in a new session of the same agent. The renewal (`renewals` of the
@@ -270,6 +270,25 @@ the bus's log and its cursors in at most 64 MiB of its state, `agentbus/unread.r
 briefing says so). Every word of it is in the catalog: the values are facts (the reason as the state records it, the
 plan's marks). `State::renew_task` records the renewal and refuses a worker and a reviewer. Each decision is logged as `decision_taken` with `decision` `ladder`. A worker and a
 reviewer are not started anew; when the new session goes bad too, the task fails as before.
+
+**The takeover** (`daemon/owner/takeover.rs`, `decide::replacement::choose`, `[replacement] agents`, `mode`,
+`replacements`): when the ladder has no step left, the daemon offers the task to the agents of `[replacement] agents`, in
+their order, leaving out the agent that holds it and every agent of its team (crew and reviewers: a place in the team is
+one task). `choose` takes the first that is not in a run and of the same or a higher tier; `State::hand_over_task` gives
+it the task and keeps the agent before it in the member's `past_holders`, the items the task works on are reassigned to
+it on their branches, and the new holder's session begins at the same moment (`State::begin_holder_session`, the
+boundary in the member's `renewals` without raising their count), so its first run is briefed like a new session and
+its retries are its own. A task keeps the name of its first agent (`Member::bus_agent`) on its team's bus and in its own
+branch: the agentbus server of its runs gets `--agent` with that name, the bus's states are reconciled under it, the
+team's context and the coordinator's notices name it, and the briefing reads the messages to it — the bus itself never
+learns of a new holder, and needs no change. With nobody fitting — or at once with `mode = "lead"`, and in mode `auto`
+with no agents listed — a member's task is stopped and its lead is told on the bus that the work is its own
+(`harness/team/bus-lead-takes-work.md`, notice `member_failed`), followed by the briefing of the member's work without
+its prompt (`harness/run/lead-briefing.md`), gathered with a snapshot at the next turn of the loop and before the daemon
+ends; the item of the stopped member is published when the lead ends `DONE`, as for a member the human stopped
+(`pr::joins`). A solo task and a coordinator's have no lead: they fail as before, and so does every task with
+`mode = "off"`, or once it was taken over `replacements` times. Each choice is logged as `decision_taken` with
+`decision` `takeover`.
 
 **The watchdog** is the engine's: a run whose output files show no change for `[watchdog] hang_minutes` is stopped (its
 whole process group, `SIGTERM` then `SIGKILL`) and classified as a hang unless the provider refused it. **A pause** is

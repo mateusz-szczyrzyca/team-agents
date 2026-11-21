@@ -164,7 +164,12 @@ async fn exhausted_team_member_notifies_the_coordinator_on_the_bus() {
     rig.pin_turn_limit_clock();
     let path = rig.home.config_file();
     let config = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(path, format!("{config}\n[limits]\nturn_limit_resumes = 0\n")).unwrap();
+    // The rung of a takeover is off: this test is about the member that fails after the ladder's last new session.
+    std::fs::write(
+        path,
+        format!("{config}\n[limits]\nturn_limit_resumes = 0\n[replacement]\nmode = \"off\"\n"),
+    )
+    .unwrap();
     rig.start().await;
     let (_, tasks) = rig
         .run(

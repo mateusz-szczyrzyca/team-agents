@@ -1318,3 +1318,16 @@ fn a_round_detail_with_plan_steps_renders_them_under_their_task() {
     let text = render_round(&round);
     assert!(text.contains("    [x] 1.1 First step (confirmed)\n"), "{text}");
 }
+
+#[test]
+fn a_task_another_agent_took_over_names_the_agent_it_replaced() {
+    let mut teams = sample();
+    teams[0].members[1].held_by = Some("deepinfra-deepseek".parse().unwrap());
+
+    let text = render(&teams);
+
+    assert!(
+        text.contains("  task-20261111-153002-k3x9  member       claude-1   queued, for deepinfra-deepseek\n"),
+        "{text}"
+    );
+}

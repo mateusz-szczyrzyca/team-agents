@@ -19,6 +19,7 @@ pub mod opinion;
 pub mod outcome;
 pub mod plan;
 pub mod publish;
+pub mod replacement;
 pub mod retry;
 pub mod reviewer;
 pub mod round;

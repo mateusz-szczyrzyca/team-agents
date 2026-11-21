@@ -5,6 +5,19 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.42.0 — 21.11.2026 — PR #160
+
+### New features
+- [agent] [agent-core] **Action:** a task whose new session goes bad too can now be taken over by another agent: list them in `[replacement] agents = ["claude-2", "inv-opus"]`. The first one that is free, not in the task's team and of the same or a higher place carries on in the same worktree and on the same branch, briefed on where the work stands, under the same name on the team's bus. `[replacement] replacements = 1` says how many times a task may be taken over.
+- [agent] [agent-core] **Action:** a team member whose new session goes bad too, with no listed agent that fits — also when you list none — now stops, and the team's lead gets its work in a message on the bus, with its branch, its worktree and a briefing of what its runs left; the item is published when the lead ends `DONE`. Before, the member failed and you were asked. `[replacement] mode = "lead"` gives the work to the lead at once; `mode = "off"` keeps the old behaviour.
+- [agent] [agent-core] `agent status` says from whom a task was taken over, for example `claude-2  queued, for claude-1`.
+
+## 0.41.0 — 21.11.2026 — PR #159
+
+### New features
+- [agent-core] A pure table decides who takes over a task whose own agent cannot go on: the first idle agent of the same or a higher place (`[replacement] agents`, in the order you name them), otherwise the team's lead, otherwise you. The place of an agent is its tier: a worker below a normal agent below an investigator.
+- [agent-core] The state keeps who held a task before the agent that holds it now, with the time, so that a task given to another agent still shows whose work it is. This part only decides and records; nothing acts on it yet. No migration: an older `state.json` loads as before.
+
 ## 0.40.0 — 20.11.2026 — PR #156
 
 ### New features

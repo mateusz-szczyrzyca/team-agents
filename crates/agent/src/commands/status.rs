@@ -369,6 +369,10 @@ fn render_at(
             let renewed = member
                 .new_sessions
                 .map_or_else(String::new, |_| ", in a new session".to_owned());
+            let taken_over = member
+                .held_by
+                .as_ref()
+                .map_or_else(String::new, |held| format!(", for {held}"));
             // Only a task that runs is active now: what a task that waits last did is in its log.
             let active = (member.status == TaskStatus::Running)
                 .then(|| activity(&member.task))
@@ -381,7 +385,7 @@ fn render_at(
                 Role::Solo | Role::Coordinator | Role::Member | Role::Worker => member.status.to_string(),
             };
             lines.push(format!(
-                "  {}  {:<role_width$}  {:<agent_width$}  {status}{renewed}{active}{waiting}",
+                "  {}  {:<role_width$}  {:<agent_width$}  {status}{renewed}{taken_over}{active}{waiting}",
                 member.task,
                 member.role.to_string(),
                 member.agent.name(),

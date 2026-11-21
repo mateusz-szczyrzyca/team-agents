@@ -59,6 +59,9 @@ pub enum TeamPrompt {
     MemberNoStatus,
     /// The message to the coordinator that a member ended its turn without a status line while holding an item.
     MemberNoStatusItem,
+    /// The message to the lead that the work of a member whose new session went bad too, and which no other agent can
+    /// take over, is its own now.
+    LeadTakesWork,
     /// The message to a member that the worker finished its request.
     HelperResult,
     /// The message to a member that the worker failed its request.
@@ -109,6 +112,7 @@ impl TeamPrompt {
         Self::MemberFailedItem,
         Self::MemberNoStatus,
         Self::MemberNoStatusItem,
+        Self::LeadTakesWork,
         Self::HelperResult,
         Self::HelperFailed,
         Self::WorkerFailed,
@@ -209,6 +213,7 @@ impl TeamPrompt {
                 Audience::Model,
                 &["member", "item", "branch"],
             ),
+            Self::LeadTakesWork => lead_takes_work_spec(),
             Self::HelperResult => PromptSpec::new(
                 "harness/team/bus-helper-result.md",
                 Audience::Model,
@@ -246,6 +251,15 @@ const fn delegation_spec() -> PromptSpec {
             "request",
             "context",
         ],
+    )
+}
+
+/// The message to the lead that the work of a member is its own now.
+const fn lead_takes_work_spec() -> PromptSpec {
+    PromptSpec::new(
+        "harness/team/bus-lead-takes-work.md",
+        Audience::Model,
+        &["member", "task", "branch", "worktree"],
     )
 }
 
