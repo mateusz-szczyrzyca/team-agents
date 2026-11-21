@@ -778,6 +778,9 @@ mod rig;
 #[path = "rounds/tests/round_records.rs"]
 mod round_records_tests;
 #[cfg(test)]
+#[path = "rounds/tests/split_status.rs"]
+mod split_status_tests;
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]
