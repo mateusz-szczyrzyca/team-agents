@@ -32,6 +32,7 @@ use crate::config::Checks;
 use crate::repo_path::RepoPath;
 use crate::state::CommitId;
 
+pub mod commits;
 pub mod markers;
 
 /// What a subject starts with when its commit is the first half of a test-first cycle.
