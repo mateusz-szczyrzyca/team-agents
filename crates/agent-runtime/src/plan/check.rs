@@ -232,6 +232,11 @@ async fn check_log_paths(checks_dir: &Path, run_id: Option<&RunId>, step_id: Ite
     Ok((log_path, rel_path))
 }
 
+/// Keeps the primary mismatch reason when process cleanup also fails.
+fn with_cleanup_result(reason: String, _cleanup: Result<(), crate::process::ProcessError>) -> String {
+    reason
+}
+
 /// Waits for `process` to exit or reach `check_seconds`, returning the state and reason.
 /// Cleanup failure prevents confirmation to ensure no unmanaged processes survive.
 async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> (JudgementState, Option<String>) {
@@ -257,18 +262,20 @@ async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> 
             }
         }
         Ok(Err(error)) => {
-            if let Err(err) = process.stop(Duration::ZERO).await {
-                tracing::warn!(%err, "cannot stop process group after check wait error");
-            }
-            (JudgementState::Mismatch, Some(format!("check wait failed: {error}")))
-        }
-        Err(_elapsed) => {
-            if let Err(error) = process.stop(Duration::from_secs(5)).await {
-                tracing::warn!(%error, "cannot stop process group on check timeout");
-            }
+            let cleanup = process.stop(Duration::ZERO).await.map(|_report| ());
             (
                 JudgementState::Mismatch,
-                Some(format!("ran past {check_seconds} seconds")),
+                Some(with_cleanup_result(format!("check wait failed: {error}"), cleanup)),
+            )
+        }
+        Err(_elapsed) => {
+            let cleanup = process.stop(Duration::from_secs(5)).await.map(|_report| ());
+            (
+                JudgementState::Mismatch,
+                Some(with_cleanup_result(
+                    format!("ran past {check_seconds} seconds"),
+                    cleanup,
+                )),
             )
         }
     }

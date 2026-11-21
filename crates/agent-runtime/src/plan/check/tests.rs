@@ -547,3 +547,52 @@ async fn spawn_failure_reports_only_an_existing_output_file() {
         assert!(env.task_dir.join(path).is_file());
     }
 }
+
+#[tokio::test]
+async fn missing_output_is_reported_in_the_mismatch_reason() {
+    let env = TestEnv::new();
+    let step = parse_first_step("[x] 1.1 Check\n    Check: true\n");
+    let command = format!(
+        "rm '{}/checks/{}/1.1.log'; exit 1",
+        env.task_dir.display(),
+        env.run.as_str()
+    );
+    let result = super::execute_command_check(&env.context(60, &[]), &step, &command)
+        .await
+        .unwrap();
+    assert_eq!(result.state, JudgementState::Mismatch);
+    assert!(result.reason.unwrap().contains("cannot read check output"));
+}
+
+#[tokio::test]
+async fn unreadable_output_is_reported_in_the_mismatch_reason() {
+    let env = TestEnv::new();
+    let step = parse_first_step("[x] 1.1 Check\n    Check: true\n");
+    let command = format!(
+        "rm '{0}/checks/{1}/1.1.log'; mkdir '{0}/checks/{1}/1.1.log'; exit 1",
+        env.task_dir.display(),
+        env.run.as_str()
+    );
+    let result = super::execute_command_check(&env.context(60, &[]), &step, &command)
+        .await
+        .unwrap();
+    assert_eq!(result.state, JudgementState::Mismatch);
+    assert!(result.reason.unwrap().contains("cannot read check output"));
+}
+
+#[test]
+fn failed_cleanup_retains_the_primary_and_cleanup_reasons() {
+    for reason in ["ran past 1 seconds", "check wait failed: unavailable"] {
+        let cleanup = Err(crate::process::ProcessError::StopTimeout {
+            limit: std::time::Duration::from_secs(5),
+        });
+        assert_eq!(
+            super::with_cleanup_result(reason.to_owned(), cleanup),
+            format!("{reason}; process cleanup failed: the process did not end within 5s of SIGKILL")
+        );
+    }
+    assert_eq!(
+        super::with_cleanup_result("ran past 1 seconds".to_owned(), Ok(())),
+        "ran past 1 seconds"
+    );
+}
