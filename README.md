@@ -761,10 +761,10 @@ finding the team cannot repair: the commit is in the branch for good and publish
 finding is never sent back to the team and spends none of its passes: you are asked about it at once, all the commits of
 the round in one question that shows each commit's subject, its author and the lines it added to and took out of the
 test. What you answer is kept for the item until it is closed, by the commit and the path: `allow` is not asked again
-through fix passes, merges of the base, a split into parts or a restart of the daemon, and `refuse` is told to the team
-once and is not asked again either. A new commit that changes a frozen test is a new question, which says what was allowed
-before. A file you allowed before this was so (`checks.json` of an earlier version) covers the commits that were in the
-round then. A `TEST-FIX:` commit that also changes a file that is not a test (by the `test_paths` of the repository) is
+through fix passes, merges of the base, a split into parts or a restart of the daemon, and `refuse` is recorded, sends
+nothing back to the team (it cannot undo a commit) and is not asked again either. A new commit that changes a frozen test is a new question, which says what was allowed
+before. A file you allowed or refused before this was so (`checks.json` of an earlier version) covers the commits that were in
+the round then, and no later one. A `TEST-FIX:` commit that also changes a file that is not a test (by the `test_paths` of the repository) is
 no test fix: it is such a finding too. Answer with `allow` or `refuse`; `allow except` names paths and does not apply to
 commits.
 It is "Round checks before the review" in [`docs/architecture.md`](docs/architecture.md).

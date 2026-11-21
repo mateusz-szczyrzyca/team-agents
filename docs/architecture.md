@@ -935,15 +935,17 @@ tests of `RoundState` list its phases and events):
 **Findings about commits** (`agent_core::decide::checks::commits`). The only finding that names a commit is the edit of a
 frozen test, and the team cannot repair it: the commit is in the branch for good and published history is never rewritten.
 `split` takes it out of the issues; `settle` leaves what nobody has answered: not the commit and path the human allowed or
-refused for the item, not a path the task list allows, not a path the human allowed before the findings had a subject
-(`Subject::Commit`), up to the head they allowed it at (no head recorded: all the commits there are now). Those commits are
-recorded as allowed subjects of their own, so that the old allowance may be taken back when the file changes again without
+refused for the item, not a path the task list allows, not a path the human allowed or refused before the findings had a
+subject (`Subject::Commit`), up to the head they did it at (no head recorded: the commits that are in the round now,
+`commits::inherit_refusals` for a refusal and `settle` for an allowance). Those commits are recorded as allowed or refused
+subjects of their own, and for a file with no head the head they are covered up to is snapshotted (`covered_at`), so that
+a commit added later is a finding of its own and the old allowance may be taken back when the file changes again without
 asking about them again. The checks ask about what is left in one question, after those of the other issues, with each
 commit's subject, its author (`git log --format=%an`) and the lines it added to and took out of the test
 (`decide::checks::commits::describe`), and say what was allowed before. The allowance is kept by the commit and the path in
 `checks.json` and is never taken back; a new commit is a new finding, and an item's parts, which use the original item ID,
-share it. `refuse` is kept in `refused` and told to the team once, with the pass it counts (`Checking::conclude_with_commits`);
-the same commit is neither asked nor sent back again. A refusal of a file or of the missing tests is kept as well, and sends
+share it. `refuse` is kept in `refused` and sends nothing back: the team cannot undo a commit, so a refusal holds no round
+and spends no pass (`Checking::conclude_with_commits`); the same commit is neither asked nor sent back again. A refusal of a file or of the missing tests is kept as well, and sends
 the round back each time the file is still changed.
 
 **The message to the team.** The lead is woken (`Why::Checks`) and told the reasons — one for each issue, from
@@ -984,7 +986,7 @@ same per-subject `Decisions` used by the owner.
   again: the review starts when nothing remains, otherwise the team receives its remaining findings.
 - *Refused* — back to the team, with what the human refused named, as the next pass; the lead's resumed run is told to undo
   what was refused. What was refused is kept for the item: a file is not asked about again, and the round goes back while it
-  is still changed; a commit is told once.
+  is still changed; a refused commit sends nothing back.
 - A lead that ends without putting the question is woken again, twice; then the human is told directly (`notice-not-asked`).
 
 **The record** is `tasks/<lead>/checks.json` ([`state.md`](state.md)): the passes and what was allowed for each item, the
