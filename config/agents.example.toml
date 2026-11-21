@@ -117,6 +117,8 @@ replace_after_minutes = 15
 [plan]
 roles = ["solo", "member", "coordinator"]
 bounces = 3
+check_seconds = 60
+check_refuse = ["agent gate", "make gate"]
 
 # Coordinator proposals are approved whole when valid and unchanged in scope.
 # Estimates are compared only when their unit matches the repository unit (case, spaces and a plural s are ignored).
