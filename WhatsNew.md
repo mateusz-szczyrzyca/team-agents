@@ -5,11 +5,6 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.48.0 — 21.11.2026 — PR pending
-
-### New features
-- [agent-core] [agent-runtime] `[plan] check_seconds` (default 120; `0` disables commands) and `[plan] check_refuse` (default `["agent gate", "make gate"]`) configure plan step command check limits and gate refusals. In the daemon, commands remain declared while existence checks continue.
-
 ## 0.47.0 — 21.11.2026 — PR #164
 
 ### New features
