@@ -794,6 +794,10 @@ mod new_session_tests;
 mod takeover_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/last_step.rs"]
+mod last_step_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/history_failures.rs"]
 mod history_failures_tests;
 
