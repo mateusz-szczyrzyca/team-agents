@@ -1,6 +1,8 @@
 //! The words that name a task in a notification: its description, its item and the first sentences of its brief.
 
 use agent_core::ids::ItemId;
+use agent_core::prompt::Variables;
+use agent_core::state::Team;
 use agent_core::state::split::{PartKey, SplitPlan};
 use agent_core::task_list::TaskList;
 use agent_core::task_title::brief_excerpt;
@@ -54,5 +56,15 @@ pub(crate) fn item_line(list: &TaskList, splits: &[SplitPlan], item: ItemId, par
     Some(of_part.unwrap_or_else(|| format!("{} {}", found.id, found.title)))
 }
 
+/// The item a notification is about, from what the notification says itself: its `item` or `items` (when exactly one
+/// item is named), its `round` or `rounds`, or its pull request `pr`. A notification about several items, or about none,
+/// names no item.
+pub(crate) fn item_of_notice(_team: &Team, _values: &Variables) -> Option<ItemId> {
+    None
+}
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod item_tests;

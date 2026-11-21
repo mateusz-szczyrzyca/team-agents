@@ -3,7 +3,7 @@
 use agent_core::state::{ItemPhase, MergeMode};
 use agent_core::status::TaskStatus;
 
-use super::rig::{ONE, Rig, investigator, normal};
+use super::rig::{ONE, PARALLEL, Rig, investigator, normal};
 
 /// The list `ONE` with a header line before its brief.
 fn one_with_a_description() -> String {
@@ -179,4 +179,64 @@ async fn the_status_of_a_team_whose_list_names_nothing_says_the_derived_descript
     rig.stop().await.unwrap();
 
     assert_eq!(summary.short_desc.as_deref(), Some("Build the thing."));
+}
+
+#[tokio::test]
+async fn a_notice_about_one_item_of_two_names_that_item_and_not_the_other() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,work"),
+            normal("claude-1", "fail"),
+            normal("claude-2", "fail"),
+            investigator("inv-r1", "done"),
+            investigator("inv-r2", "done"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.wake_sleeping_teams();
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(
+            &["inv-lead", "claude-1", "claude-2"],
+            PARALLEL,
+            MergeMode::Autopilot,
+            Some("inv-lead"),
+        )
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[2], TaskStatus::Failed).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let first = rig.notification_with("item 1.1 behind failed member").await;
+    let second = rig.notification_with("item 2.1 behind failed member").await;
+    rig.stop().await.unwrap();
+
+    assert!(first.contains("\n\n1.1 One\n\n"), "{first}");
+    assert!(!first.contains("2.1 Two"), "{first}");
+    assert!(second.contains("\n\n2.1 Two\n\n"), "{second}");
+    assert!(!second.contains("1.1 One"), "{second}");
+}
+
+#[tokio::test]
+async fn the_notification_that_a_team_is_done_names_no_item() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "merged", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    let notification = rig.notification_with("is finished").await;
+    rig.stop().await.unwrap();
+
+    assert!(!notification.contains("1.1 The first item"), "{notification}");
+    assert!(notification.contains("\nTask: Build the thing.\n"), "{notification}");
 }
