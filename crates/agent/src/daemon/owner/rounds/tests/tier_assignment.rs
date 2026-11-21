@@ -394,7 +394,7 @@ async fn a_member_fix_waits_for_its_response_and_integrates_before_the_existing_
             normal("lead", "integrate"),
             investigator("inv-member", "work,fix-held:2,answer:1"),
             investigator("inv-r1", "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\\n   CHECK: read src/lib.rs:7,verify:VERDICT: APPROVE\\nSUMMARY: fixed"),
-            investigator("inv-r2", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "verify:VERDICT: APPROVE"),
         ],
         5,
         true,
