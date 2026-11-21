@@ -151,3 +151,16 @@ fn a_task_is_not_handed_over_to_an_agent_of_a_lower_tier_and_the_state_still_loa
         State::from_json(&state.to_json().unwrap()).expect("the refused hand-over leaves a state that loads");
     }
 }
+
+#[test]
+fn a_members_task_may_be_handed_over_to_an_investigator_and_the_state_loads_again() {
+    let mut state = old_state();
+
+    state.hand_over_task(&task(), investigator("inv-kimi"), at()).unwrap();
+
+    let loaded = State::from_json(&state.to_json().unwrap()).expect("the state loads again");
+    assert_eq!(
+        loaded.find_task(&task()).unwrap().member.agent(),
+        &investigator("inv-kimi")
+    );
+}
