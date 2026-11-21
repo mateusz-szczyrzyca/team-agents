@@ -5,6 +5,23 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.50.0 — 21.11.2026 — PR #167
+
+### New features
+- [agent] [agent-core] [agent-runtime] `agent log --follow` with `--task`, `--agent`, `--run`, `--round` or `--team` now shows the work, not only the daemon's records: the agent's messages, commands and tool calls as they are recorded, across runs and restarts of the daemon, after the newest lines of the scope (`-n`, default 100; `-n 0` shows only what comes). When a run ends it says how, and what the round waits for next. `--no-steps` leaves the steps out. For example:
+
+  ```text
+  2026-11-21T12:50:00Z run run-…-2fqp started by inv-claude-sonnet on task task-…-8cgk of team team-…-4qem (solo) in round round-…-q1w2
+  2026-11-21T12:50:03Z command: cargo test -p agent-core
+  2026-11-21T12:50:41Z The tests pass; I run the gate.…
+  2026-11-21T12:52:10Z info run_ended task-…-8cgk (inv-claude-sonnet) team team-…-4qem rounds round-…-q1w2 run run-…-2fqp: ended reported DONE
+  round round-…-q1w2 waits for the delivering pull request to merge
+  ```
+- [agent] `agent log --agent <agent>`, `--task <task>` and `--run <run>` without `--follow` print the steps of the runs they cover between the daemon's records, the newest `-n` lines of both together; `--agent` covers every run of that agent, in every team.
+
+### Enhancements
+- [agent] [agent-core] **Action:** the text of `agent log` lines changed (`--json` did not): every line of a record now says what happened and to whom — the task and the agent, the team and rounds, the run, and in words for the common events (`queued ← waiting`, `run started by claude-1`, `ended reported DONE`, `item 1.1 in review ← in progress after a review verdict`) or as `key=value` for the others, with long values cut. A program that reads the text should read `--json`.
+
 ## 0.49.0 — 21.11.2026 — PR #166
 
 ### Bug fixes
