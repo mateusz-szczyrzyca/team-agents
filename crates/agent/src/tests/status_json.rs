@@ -60,8 +60,8 @@ fn the_json_of_the_teams_reads_back_as_the_teams() {
     assert_eq!(read, teams);
 }
 
-#[test]
-fn the_command_prints_what_the_daemon_lists_as_json() {
+#[tokio::test]
+async fn the_command_prints_what_the_daemon_lists_as_json() {
     use agent_core::protocol::{Frame, Reply, Response};
 
     use crate::testing::{Answer, FakeDaemon};
@@ -77,16 +77,20 @@ fn the_command_prints_what_the_daemon_lists_as_json() {
     });
     let environment = Environment::new(Some(std::ffi::OsString::from(dir.path())));
     let mut out = Vec::new();
-    let mut err = Vec::new();
 
-    let code = run_in(&environment, ["agent", "status", "--json"], &mut out, &mut err).unwrap();
+    execute(
+        &environment,
+        Command::Status(StatusArgs {
+            target: None,
+            running: false,
+            investigators: false,
+            json: true,
+        }),
+        &mut out,
+    )
+    .await
+    .unwrap();
 
-    assert_eq!(
-        code,
-        std::process::ExitCode::SUCCESS,
-        "{}",
-        String::from_utf8_lossy(&err)
-    );
     let read: Vec<TeamSummary> = serde_json::from_slice(&out).unwrap();
     assert_eq!(read, teams);
 }
