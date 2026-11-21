@@ -174,7 +174,7 @@ pub(super) struct Published {
     pub(super) items: Vec<ItemId>,
 }
 
-/// Makes `origin` carry `ready.tip` on the branch decided by [`publish_decision`]: pushes it, unless `origin` has it
+/// Makes `origin` carry `ready.tip` on the branch decided by [`agent_core::decide::publish::publish_decision`]: pushes it, unless `origin` has it
 /// there already (`carried`, what GitHub says the branch is at).
 async fn carry(
     ready: &Ready,
