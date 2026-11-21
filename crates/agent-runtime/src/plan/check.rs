@@ -153,9 +153,12 @@ async fn check_exists(
     })
 }
 
+/// Maximum number of bytes read from the end of a command's log file for tail extraction.
 const TAIL_BYTES: u64 = 64 * 1024;
+/// Maximum number of trailing lines returned in a mismatch tail.
 const TAIL_LINES: usize = 40;
 
+/// Reads the last [`TAIL_LINES`] lines (up to [`TAIL_BYTES`]) from `path`.
 async fn read_tail(path: &Path) -> Result<String, io::Error> {
     let mut file = match fs::File::open(path).await {
         Ok(file) => file,
@@ -177,6 +180,7 @@ async fn read_tail(path: &Path) -> Result<String, io::Error> {
     Ok(lines.into_iter().skip(keep).collect::<Vec<_>>().join("\n"))
 }
 
+/// Resolves the absolute log file path and task-relative output path for `step_id`.
 async fn check_log_paths(checks_dir: &Path, run_id: Option<&RunId>, step_id: ItemId) -> io::Result<(PathBuf, String)> {
     let (target_dir, rel_path) = match run_id {
         Some(run) => (
@@ -190,12 +194,17 @@ async fn check_log_paths(checks_dir: &Path, run_id: Option<&RunId>, step_id: Ite
     Ok((log_path, rel_path))
 }
 
+/// Waits for `process` to exit or reach `check_seconds`, returning the state and reason.
+/// Cleanup failure prevents confirmation to ensure no unmanaged processes survive.
 async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> (JudgementState, Option<String>) {
     let check_duration = Duration::from_secs(check_seconds);
     match timeout(check_duration, process.wait()).await {
         Ok(Ok(exit)) => {
             if let Err(error) = process.stop(Duration::ZERO).await {
-                tracing::warn!(%error, "cannot stop process group after check completion");
+                return (
+                    JudgementState::Mismatch,
+                    Some(format!("process cleanup failed: {error}")),
+                );
             }
             match exit {
                 ExitReport::Exited { code: 0 } => (JudgementState::Confirmed, None),
@@ -227,6 +236,7 @@ async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> 
     }
 }
 
+/// Extracts trailing output for a mismatch result if a log exists.
 async fn resolve_mismatch_tail(state: JudgementState, log_path: &Path) -> String {
     if state == JudgementState::Mismatch {
         match read_tail(log_path).await {
@@ -241,6 +251,7 @@ async fn resolve_mismatch_tail(state: JudgementState, log_path: &Path) -> String
     }
 }
 
+/// Prepares the [`ProcessSpec`] for running `command_str` in a shell with output redirected.
 fn prepare_process_spec(
     context: &CheckContext<'_>,
     command_str: &str,
@@ -270,7 +281,7 @@ fn prepare_process_spec(
 /// Prepared command execution engine for plan step command checks.
 ///
 /// # Errors
-/// Returns [`CheckError`] if check execution management fails.
+/// [`CheckError::DurationOverflow`] if the measured check duration exceeds `u64` milliseconds.
 pub async fn execute_command_check(
     context: &CheckContext<'_>,
     step: &Step,
@@ -376,7 +387,7 @@ pub async fn execute_command_check(
 /// Executes the check for `step` within `context`.
 ///
 /// # Errors
-/// Returns [`CheckError`] if check management fails.
+/// [`CheckError::DurationOverflow`] if check duration calculation overflows.
 pub async fn execute_step_check(context: &CheckContext<'_>, step: &Step) -> Result<JudgementResult, CheckError> {
     let check = step.check();
     let Some(check) = check else {
