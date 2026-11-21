@@ -432,8 +432,10 @@ impl Owner {
             self.resume_split_proposals(team).await?;
             let mut look = Look::default();
             self.reconcile_bus(team, &mut look).await?;
+            self.requeue_underqualified(team, &mut look)?;
             self.pull_requests(team, &mut look).await?;
             self.assign_items(team, &mut look).await?;
+            self.refresh_tier_waits(team, &mut look)?;
             self.serve_requests(team, &mut look).await?;
             self.close_if_finished(team, &mut look)?;
             self.observe_round_waits(team);
@@ -639,6 +641,54 @@ impl Owner {
     }
 
     // ---- items and requests ---------------------------------------------------------------------------------
+
+    /// Detaches a parent assignee when approval raised the first part's required tier.
+    fn requeue_underqualified(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
+        let team = self
+            .parts
+            .state
+            .team(team_id)
+            .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+        let items = agent_core::decide::assign::dispatch::underqualified(team);
+        for item in items {
+            let mut team = self
+                .parts
+                .state
+                .team_mut(team_id)
+                .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+            team.item_mut(item)
+                .ok_or_else(|| OwnerError::LostItem {
+                    team: team_id.clone(),
+                    item,
+                })?
+                .advance(ItemPhase::Pending)
+                .map_err(|source| OwnerError::Item {
+                    team: team_id.clone(),
+                    item,
+                    source,
+                })?;
+            look.changed = true;
+        }
+        Ok(())
+    }
+
+    /// Records absent capability once, retaining the wait through daemon recovery.
+    fn refresh_tier_waits(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
+        let mut team = self
+            .parts
+            .state
+            .team_mut(team_id)
+            .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+        let previous = team.tier_waits().clone();
+        let entered = team.refresh_tier_waits();
+        look.changed |= previous != *team.tier_waits();
+        for (item, tier) in entered {
+            tracing::info!(event = LogEvent::TeamChanged.as_str(), kind = "tier_wait", team = %team_id,
+                item = %item, required_tier = tier.as_str(),
+                "item waits because no crew member meets its required tier");
+        }
+        Ok(())
+    }
 
     /// Gives the pending items to the members that are free.
     async fn assign_items(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
