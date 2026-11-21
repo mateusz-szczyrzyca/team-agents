@@ -28,12 +28,6 @@ pub(crate) fn task(n: u32) -> TaskId {
     format!("task-20261111-1530{n:02}-k3x9").parse().unwrap()
 }
 
-/// The words of a task whose brief is `Fix the typo in the README. It has one.`, with no item.
-pub(crate) fn words() -> crate::daemon::notice::TaskWords {
-    let list = agent_core::task_list::TaskList::parse("Fix the typo in the README. It has one.\n").unwrap();
-    crate::daemon::notice::TaskWords::new(&list, None)
-}
-
 /// The ID of run number `n` (0 to 59).
 pub(crate) fn run(n: u32) -> RunId {
     format!("run-20261111-1530{n:02}-r7q2").parse().unwrap()

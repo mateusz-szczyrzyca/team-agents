@@ -193,7 +193,7 @@ async fn the_notification_that_a_team_is_finished_names_the_team_the_repository_
         task: &task_id,
         team: Some(team.id()),
         pr: None,
-        words: crate::fixtures::words(),
+        words: crate::daemon::notice::sample::words(),
     };
     let notification = team_done_notification(&texts, &team, &context).unwrap();
 
