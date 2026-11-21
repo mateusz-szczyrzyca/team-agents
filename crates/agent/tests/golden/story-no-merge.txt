@@ -149,7 +149,7 @@ SUMMARY: fine
 <time>  pull request #1 approved and handed to the human (--no-merge)
 <time>  round <round-1> closed: approved
 <time>  notification sent: ✅✅ example (task <task-4>)
-  ----- notification (610 bytes) -----
+  ----- notification (617 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.
@@ -170,7 +170,7 @@ Build the thing.
   ----- end of notification -----
 <time>  pull request #1 merged as <commit-2>
 <time>  notification sent: 🟣 example (task <task-4>)
-  ----- notification (428 bytes) -----
+  ----- notification (435 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.
@@ -190,7 +190,7 @@ Build the thing.
   ----- end of notification -----
 <time>  team ended
 <time>  notification sent: ✅ example (task <task-4>)
-  ----- notification (429 bytes) -----
+  ----- notification (436 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.

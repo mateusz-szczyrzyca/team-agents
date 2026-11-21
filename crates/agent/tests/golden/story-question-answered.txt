@@ -58,7 +58,7 @@ b) leave it to me — I merge or close it
 **Verdict:**
   ----- end of questions -----
 <time>  notification sent: ❓ example (task <task-4>)
-  ----- notification (541 bytes) -----
+  ----- notification (548 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.
@@ -211,7 +211,7 @@ SUMMARY: fine
 <time>  pull request #1 merged as <commit-2>
 <time>  round <round-1> closed: merged
 <time>  notification sent: 🟣 example (task <task-4>)
-  ----- notification (428 bytes) -----
+  ----- notification (435 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.
@@ -231,7 +231,7 @@ Build the thing.
   ----- end of notification -----
 <time>  team ended
 <time>  notification sent: ✅ example (task <task-4>)
-  ----- notification (429 bytes) -----
+  ----- notification (436 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.
