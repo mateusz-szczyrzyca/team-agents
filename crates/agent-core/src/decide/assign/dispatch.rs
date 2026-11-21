@@ -143,3 +143,18 @@ pub fn coordinator_can_take_over(team: &Team, member: &Member) -> bool {
         })
     })
 }
+
+/// The qualified holder of a review fix, preserving a fitting integration lead.
+#[must_use]
+pub fn fixer(team: &Team, item: ItemId) -> Option<&Member> {
+    let required = required_tier(team, item);
+    let roster = team.crew().roster();
+    let (_, lead) = roster.first()?;
+    if lead.agent().tier() >= required {
+        return Some(lead);
+    }
+    roster
+        .iter()
+        .find(|(role, member)| matches!(role, Role::Member) && member.agent().tier() >= required)
+        .map(|(_, member)| *member)
+}

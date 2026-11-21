@@ -600,7 +600,7 @@ impl Owner {
         team_id: &TeamId,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
-        let lead = self.lead_of(team_id)?;
+        let holders = self.response_holders(team_id)?;
         let items = self.parts.state.team(team_id).map_or_else(Vec::new, |team| {
             team.items()
                 .iter()
@@ -608,7 +608,10 @@ impl Owner {
                 .collect()
         });
         for (item, passes) in items {
-            let ItemPhase::Fixing { .. } = item.phase() else {
+            let ItemPhase::Fixing { assignee, .. } = item.phase() else {
+                continue;
+            };
+            let Some(holder) = holders.iter().find(|holder| &holder.agent == assignee) else {
                 continue;
             };
             let Some(ledger) = item.findings() else {
@@ -641,7 +644,7 @@ impl Owner {
                 {
                     disputes.answered_pass = 0;
                 }
-                self.release(&lead.task, Why::Gate(text), look)?;
+                self.release(&holder.task, Why::Gate(text), look)?;
             }
         }
         Ok(())

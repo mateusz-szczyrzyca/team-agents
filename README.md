@@ -318,7 +318,10 @@ before a fitting coordinator. The daemon applies the requirement to initial item
 including the first. A busy qualified member keeps its place; the coordinator takes an item only when no member
 in the crew meets its tier. If capability is absent, the item stays pending across restarts and `agent status`
 says, for example, `1.1  waiting for investigator agent`. Assignment prompts name the required tier and the
-selected agent. A failed member’s work also keeps its required tier when offered to the coordinator. Workers
+selected agent. A failed member’s work also keeps its required tier when offered to the coordinator.
+Review fixes follow the same minimum tier: when the coordinator does not qualify, a qualified member makes the
+fix and answers the findings, then the coordinator integrates its commits before the same pull request is verified.
+A review fix with no qualified agent remains waiting, including after a restart. Workers
 remain available through delegation. Approved split plans can retain who approved them.
 
 A coordinator can submit a [split proposal](docs/task-list.md#coordinator-proposal-form) by writing

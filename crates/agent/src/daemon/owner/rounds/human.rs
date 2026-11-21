@@ -19,7 +19,7 @@ use super::super::{Owner, OwnerError};
 use super::{Announcement, AutopilotNotice, Lead, Pulls};
 
 impl Owner {
-    /// Gives the lead the fix pass that waits for it: its task is queued, and its prompt has the findings.
+    /// Gives the assigned fixer its waiting pass, with the findings in its prompt.
     pub(super) fn deliver_fix_passes(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
@@ -113,7 +113,7 @@ impl Owner {
     pub(super) fn start_pass_after_answer(
         &mut self,
         team_id: &TeamId,
-        lead: &Lead,
+        _lead: &Lead,
         waits: &Exhausted,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
@@ -157,6 +157,9 @@ impl Owner {
             return Ok(());
         }
         for id in moving {
+            let Some((assignee, branch)) = self.fix_assignment(team_id, id, &waits.pr)? else {
+                continue;
+            };
             let mut team_mut = self
                 .parts
                 .state
@@ -170,8 +173,8 @@ impl Owner {
                 context.extra_fix_passes = context.extra_fix_passes.saturating_add(policy.fix_passes);
             }
             let after = ItemPhase::Fixing {
-                assignee: lead.agent.clone(),
-                branch: waits.pr.branch.clone(),
+                assignee,
+                branch,
                 pr: waits.pr.clone(),
             };
             let status = after.kind().status();
@@ -201,6 +204,9 @@ impl Owner {
             });
             look.changed = true;
         }
-        self.release(&lead.task, Why::FixPass, look)
+        self.deliver_fix_passes(team_id, look)
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -345,3 +345,91 @@ async fn a_later_investigator_part_moves_from_the_normal_member_to_the_coordinat
     assert!(matches!(team.items()[0].phase(), ItemPhase::InProgress {assignee, ..} if assignee.as_str() == "inv-lead"));
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn an_investigator_item_receives_its_fix_pass_on_the_investigator_member() {
+    let mut rig = Rig::new(
+        &[
+            normal("lead", "integrate"),
+            investigator("inv-member", "work,ask-here"),
+            investigator("inv-r1", "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — untested → add coverage\\n   CHECK: read src/lib.rs:7"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ], 5, true,
+    ).await;
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(
+            &["lead", "inv-member"],
+            &format!("{ONE}\nTier: investigator\n"),
+            MergeMode::Autopilot,
+            Some("lead"),
+        )
+        .await;
+    let state = rig
+        .state_where("investigator review fix", |state| {
+            matches!(state.team(&id).unwrap().items()[0].phase(), ItemPhase::Fixing { .. })
+        })
+        .await;
+    let team = state.team(&id).unwrap();
+    assert!(matches!(team.items()[0].phase(), ItemPhase::Fixing { assignee, pr, .. }
+        if assignee.as_str() == "inv-member" && pr.number.get().get() == 1));
+    assert_eq!(team.rounds().len(), 1);
+    let round = team.rounds()[0].id().clone();
+    let prompt = rig.prompt(&tasks[1], 2).await;
+    assert!(prompt.contains("THE REVIEWERS ASKED FOR CHANGES"), "{prompt}");
+    assert!(prompt.contains("untested → add coverage"), "{prompt}");
+    let state = rig.status_is(&tasks[1], TaskStatus::Questions).await;
+    assert_eq!(state.team(&id).unwrap().rounds()[0].id(), &round);
+    assert!(
+        matches!(state.team(&id).unwrap().items()[0].phase(), ItemPhase::Fixing { assignee, .. }
+        if assignee.as_str() == "inv-member")
+    );
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_member_fix_waits_for_its_response_and_integrates_before_the_existing_pr_merges() {
+    let mut rig = Rig::new(
+        &[
+            normal("lead", "integrate"),
+            investigator("inv-member", "work,fix-held:2,answer:1"),
+            investigator("inv-r1", "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\\n   CHECK: read src/lib.rs:7,verify:VERDICT: APPROVE\\nSUMMARY: fixed"),
+            investigator("inv-r2", "verify:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(
+            &["lead", "inv-member"],
+            &format!("{ONE}\nTier: investigator\n"),
+            MergeMode::Autopilot,
+            Some("lead"),
+        )
+        .await;
+    let prompt = rig.prompt(&tasks[1], 2).await;
+    assert!(prompt.contains("integrate"), "{prompt}");
+    let worktree = rig.worktree(&tasks[1]);
+    rig.wait_for("member holds its fix", || worktree.join(".fake-started-2").exists())
+        .await;
+    let state = rig.state();
+    assert!(
+        matches!(state.team(&id).unwrap().items()[0].phase(), ItemPhase::Fixing { assignee, .. }
+        if assignee.as_str() == "inv-member")
+    );
+    assert_eq!(rig.github.reviews(1).len(), 2);
+    std::fs::write(worktree.join(".fake-release-2"), "").unwrap();
+    let correction = rig.prompt(&tasks[1], 3).await;
+    assert!(correction.contains("FINDING 1"), "{correction}");
+    let state = rig
+        .item_where("1.1", "qualified fix merged", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+    assert_eq!(state.team(&id).unwrap().rounds().len(), 1);
+    assert_eq!(rig.github.calls("POST", "/repos/octo/example/pulls").len(), 1);
+    assert_eq!(state.team(&id).unwrap().items()[0].fix_passes().len(), 1);
+    rig.stop().await.unwrap();
+}

@@ -1357,5 +1357,10 @@ underqualified parent assignee; before assigning work, the owner returns that it
 Missing capability is retained in the team's optional `tier_waits` map, refreshed atomically with assignment.
 Entering a wait logs `team_changed` with `kind=tier_wait`; restored waits do not log again. The status reply
 exposes this optional map, and assignment prompts explain the minimum tier and selection. Coordinator takeover
-after a failed run checks the working items’ requirements too. Split plans optionally retain their approval authority;
+after a failed run checks the working items’ requirements too. Review fixes keep a qualified integration lead;
+when the lead is below the requirement, a qualified member fixes on its own branch. Its response and corrections
+stay on its task, while the coordinator integrates its commits and passes the gate before verification of the
+existing pull request. A human answer renewing the fix budget uses the same qualification rule. With no qualified
+fixer, the item retains its review and a durable capability wait. Status also shows waits for a ready later part
+before its next round opens. Split plans optionally retain their approval authority;
 legacy plans leave it unknown until recorded explicitly.

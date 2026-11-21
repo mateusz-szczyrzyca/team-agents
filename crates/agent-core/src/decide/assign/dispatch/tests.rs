@@ -135,3 +135,37 @@ fn coordinator_takeover_respects_the_work_requirement_rather_than_the_failed_age
         );
     }
 }
+
+#[test]
+fn review_fixes_keep_a_qualified_lead_or_select_a_qualified_member() {
+    for (required, member_tier, coordinator_tier, expected) in [
+        ("normal", Tier::Normal, Tier::Investigator, Some("lead")),
+        ("investigator", Tier::Investigator, Tier::Normal, Some("member")),
+        ("investigator", Tier::Normal, Tier::Investigator, Some("lead")),
+        ("investigator", Tier::Normal, Tier::Normal, None),
+    ] {
+        let participant = |tier, name| match tier {
+            Tier::Investigator => inv(name),
+            Tier::Normal => normal(name),
+            Tier::Worker => crate::state::fixtures::worker(name),
+        };
+        let team = Team::new(
+            team_id(1),
+            "example".parse().unwrap(),
+            at(0),
+            MergeMode::Autopilot,
+            TaskListText::new(format!("Brief.\n\n1. Feature\n[ ] 1.1 Item\nTier: {required}\n")).unwrap(),
+            Crew::team(TeamMembers {
+                coordinator: member(1, participant(coordinator_tier, "lead")),
+                members: vec![member(2, participant(member_tier, "member"))],
+                workers: vec![],
+            })
+            .unwrap(),
+        );
+        assert_eq!(
+            fixer(&team, "1.1".parse().unwrap()).map(|member| member.agent().name()),
+            expected,
+            "{required}, {member_tier}, {coordinator_tier}"
+        );
+    }
+}

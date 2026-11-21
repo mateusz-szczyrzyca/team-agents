@@ -1382,3 +1382,69 @@ fn an_open_split_round_waiting_for_a_tier_is_not_shown_in_progress() {
         ]
     );
 }
+
+#[test]
+fn a_ready_later_split_part_shows_its_tier_wait_before_a_round_opens() {
+    let mut team = team_state().teams()[0].clone();
+    let item = "1.1".parse().unwrap();
+    let round: agent_core::ids::RoundId = "round-20261111-153001-q1w2".parse().unwrap();
+    team.open_round(round.clone(), Some(item), at(1)).unwrap();
+    team.advance_item(
+        item,
+        ItemPhase::InProgress {
+            assignee: "claude-1".parse().unwrap(),
+            branch: "agents/claude-1/first".parse().unwrap(),
+        },
+    )
+    .unwrap();
+    team.activate_split(serde_json::from_value(serde_json::json!({
+        "parent":"1.1", "parts":[
+            {"title":"First", "delivers":"First document", "checks":"Read it", "depends_on":[]},
+            {"title":"Second", "delivers":"Second document", "checks":"Read it", "depends_on":["a"], "tier":"investigator"}
+        ]
+    })).unwrap()).unwrap();
+    let reviews = vec![agent_core::state::Review {
+        outcome: agent_core::state::ReviewOutcome::Submitted {
+            verdict: agent_core::status::ReviewVerdict::Approve,
+            at: at(2),
+        },
+        ..crate::fixtures::review("inv-codex", 4)
+    }];
+    team.advance_item(
+        item,
+        ItemPhase::InReview {
+            pr: crate::fixtures::pr(7),
+            reviews: reviews.clone(),
+        },
+    )
+    .unwrap();
+    team.advance_item(
+        item,
+        ItemPhase::Approved {
+            pr: crate::fixtures::pr(7),
+            reviews,
+        },
+    )
+    .unwrap();
+    team.advance_item(
+        item,
+        ItemPhase::Done {
+            completion: agent_core::state::Completion::Merged {
+                pr: crate::fixtures::pr(7),
+                at: at(2),
+            },
+        },
+    )
+    .unwrap();
+    team.close_round(&round, at(2), agent_core::state::RoundEnd::Merged)
+        .unwrap();
+    let mut summary = TeamSummary::from(&team);
+    summary.tier_waits.insert(item, agent_core::kinds::Tier::Investigator);
+    assert_eq!(
+        super::splits::lines(&summary),
+        vec![
+            "    1.1a  done  First",
+            "    1.1b  waiting for investigator agent  Second",
+        ]
+    );
+}
