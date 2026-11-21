@@ -204,3 +204,6 @@ impl Owner {
         self.release(&lead.task, Why::FixPass, look)
     }
 }
+
+#[cfg(test)]
+mod tests;
