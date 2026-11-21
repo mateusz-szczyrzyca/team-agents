@@ -1071,12 +1071,12 @@ impl ItemProgress {
         self.merge_conflict.as_ref()
     }
 
-    /// Sends the lead to merge the base into the branch of `approved_head`. The pass is recorded at `at`.
-    /// The passes spent are not incremented until the conflict pass is published.
+    /// Sends the lead to merge the base into the branch of `approved_head`: one more pass is spent and the pass is
+    /// recorded at `at`. Returns the passes spent so far, this one included.
     pub fn begin_merge_conflict(&mut self, approved_head: CommitId, at: Timestamp) -> u32 {
         self.conflict_approved_head = Some(approved_head.clone());
         self.merge_conflict = Some(MergeConflict::MergingBase { approved_head, at });
-        self.merge_passes
+        self.spend_merge_pass()
     }
 
     /// Ends the merge conflict pass in progress; the passes spent stay counted.
@@ -1864,15 +1864,12 @@ mod tests {
     }
 
     #[test]
-    fn beginning_merge_conflict_does_not_spend_pass_until_published() {
+    fn beginning_merge_conflict_spends_pass() {
         let mut item = progress_in(PhaseKind::Approved);
         assert_eq!(item.merge_passes(), 0);
 
         let head: CommitId = "26b65de7e4076596768ca96b48a7f94799c93874".parse().unwrap();
-        item.begin_merge_conflict(head, at(10));
-        assert_eq!(item.merge_passes(), 0);
-
-        item.record_published_conflict_pass();
+        assert_eq!(item.begin_merge_conflict(head, at(10)), 1);
         assert_eq!(item.merge_passes(), 1);
     }
 
