@@ -4,7 +4,8 @@
 //! A client sends one [`Request`] per line; the daemon answers each with a [`Response`] and, to a client that
 //! subscribed, sends [`Event`]s as the state changes — a [`Frame`] is either. The strict legacy APIs use
 //! [`PROTOCOL_VERSION`]; negotiated APIs also accept [`SPLIT_PROTOCOL_VERSION`] for split-aware clients and
-//! [`PLAN_PROTOCOL_VERSION`] for plan status snapshots.
+//! [`PLAN_PROTOCOL_VERSION`] for plan status snapshots, and [`EXECUTOR_PROTOCOL_VERSION`] for split executors
+//! and capability waits.
 //! Unsupported tags are refused before the message body is decoded.
 //! The types here only describe lines and read and write them; the socket is the daemon's.
 
@@ -38,7 +39,10 @@ pub const SPLIT_PROTOCOL_VERSION: u32 = 4;
 /// The negotiated protocol version carrying plan step judgements and settlement states in status and show replies.
 pub const PLAN_PROTOCOL_VERSION: u32 = 5;
 
-/// Wire format requested by a client; version four includes approved split details.
+/// The negotiated version carrying split executors and capability waits.
+pub const EXECUTOR_PROTOCOL_VERSION: u32 = 6;
+
+/// Wire format requested by a client, with metadata limited to the negotiated version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyFormat {
     /// Version three, readable by clients predating split execution.
@@ -47,6 +51,8 @@ pub enum ReplyFormat {
     Split,
     /// Version five, including plan step judgements and status snapshots.
     Plan,
+    /// Version six, including split executors and capability waits.
+    Executor,
 }
 
 /// Longest line a client may send, in bytes: a task list (1 MiB at most) with room for the rest of the request.
@@ -142,6 +148,7 @@ fn decode<T: DeserializeOwned>(line: &str, max: usize) -> Result<T, ProtocolErro
 fn encode_split<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
     strip_plan_fields(&mut value);
+    strip_executor_fields(&mut value);
     if let Some(protocol) = value.get_mut("protocol") {
         *protocol = serde_json::Value::from(SPLIT_PROTOCOL_VERSION);
     }
@@ -151,13 +158,23 @@ fn encode_split<T: Serialize>(message: &T) -> Result<String, EncodeError> {
 /// Serializes one of the protocol's object-shaped messages with the plan-aware version tag.
 fn encode_plan<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    strip_executor_fields(&mut value);
     if let Some(protocol) = value.get_mut("protocol") {
         *protocol = serde_json::Value::from(PLAN_PROTOCOL_VERSION);
     }
     encode(&value)
 }
 
-/// Checks the wire boundary before decoding either supported format into the shared domain types.
+/// Serializes executor-aware messages without downgrading their metadata.
+fn encode_executor<T: Serialize>(message: &T) -> Result<String, EncodeError> {
+    let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    if let Some(protocol) = value.get_mut("protocol") {
+        *protocol = serde_json::Value::from(EXECUTOR_PROTOCOL_VERSION);
+    }
+    encode(&value)
+}
+
+/// Checks the wire boundary before decoding a supported format into the shared domain types.
 fn decode_negotiated<T: DeserializeOwned>(line: &str, max: usize) -> Result<(T, ReplyFormat), ProtocolError> {
     if line.len() > max {
         return Err(ProtocolError::TooLong { len: line.len(), max });
@@ -187,6 +204,16 @@ fn decode_negotiated<T: DeserializeOwned>(line: &str, max: usize) -> Result<(T, 
                 .map(|message| (message, ReplyFormat::Plan))
                 .map_err(|source| ProtocolError::Malformed { source })
         }
+        version if version == u64::from(EXECUTOR_PROTOCOL_VERSION) => {
+            let mut value: serde_json::Value =
+                serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
+            if let Some(protocol) = value.get_mut("protocol") {
+                *protocol = serde_json::Value::from(PROTOCOL_VERSION);
+            }
+            serde_json::from_value(value)
+                .map(|message| (message, ReplyFormat::Executor))
+                .map_err(|source| ProtocolError::Malformed { source })
+        }
         found => Err(UnsupportedVersion { found }.into()),
     }
 }
@@ -196,7 +223,15 @@ fn strip_split_fields(value: &mut serde_json::Value) -> bool {
     match value {
         serde_json::Value::Object(object) => {
             let mut changed = false;
-            for key in ["split", "splits", "part", "task_plans"] {
+            for key in [
+                "split",
+                "splits",
+                "part",
+                "part_assignments",
+                "tier_waits",
+                "tier_questions",
+                "task_plans",
+            ] {
                 changed |= object.remove(key).is_some();
             }
             for nested in object.values_mut() {
@@ -242,6 +277,27 @@ fn strip_plan_fields(value: &mut serde_json::Value) -> bool {
     }
 }
 
+/// Removes metadata introduced by protocol six from older negotiated formats.
+fn strip_executor_fields(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            object.retain(|key, _| key != "part_assignments" && key != "tier_waits" && key != "tier_questions");
+            for nested in object.values_mut() {
+                strip_executor_fields(nested);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for nested in values {
+                strip_executor_fields(nested);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
+}
+
 impl Frame {
     /// The frame as one line ending with a newline.
     ///
@@ -282,6 +338,7 @@ impl Frame {
             ReplyFormat::Legacy => self.to_line(),
             ReplyFormat::Split => encode_split(self),
             ReplyFormat::Plan => encode_plan(self),
+            ReplyFormat::Executor => encode_executor(self),
         }
     }
 

@@ -132,7 +132,7 @@ fn protocol_four_preserves_split_details_and_selects_matching_replies() {
 #[test]
 fn negotiated_frames_check_size_version_and_malformed_data() {
     use crate::protocol::{Frame, MAX_FRAME_BYTES, MAX_REQUEST_BYTES, ProtocolError, Request};
-    for version in [1, 2, 6] {
+    for version in [1, 2, 7] {
         let line = format!(r#"{{"protocol":{version},"type":"unknown"}}"#);
         assert!(
             matches!(Frame::from_line_negotiated(&line), Err(ProtocolError::UnsupportedVersion(crate::protocol::UnsupportedVersion { found })) if found == version)
@@ -186,7 +186,8 @@ fn working_split_team() -> Team {
 fn split_summary_events_and_round_identities_use_the_negotiated_version() {
     use crate::protocol::{Event, EventKind, Frame, ReplyFormat};
     use crate::state::fixtures::at;
-    let summary = TeamSummary::from(&working_split_team());
+    let mut summary = TeamSummary::from(&working_split_team());
+    summary.part_assignments.clear();
     let response = Frame::Response(Response::ok(
         RequestId(9),
         Reply::Teams {

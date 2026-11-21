@@ -193,3 +193,53 @@ fn persisted_split_cannot_have_two_open_parts_of_one_item() {
     let read = serde_json::from_value::<Team>(wire);
     assert!(matches!(read, Err(error) if error.is_data()));
 }
+
+#[test]
+fn part_assignment_survives_review_and_reload_and_tracks_a_reassigned_executor() {
+    use crate::state::fixtures::{agent, run, task};
+    use crate::state::{NewRun, Round};
+    let mut found = working();
+    found.activate_split(plan(&[&[], &["a"]])).unwrap();
+    assert_eq!(found.part_assignments().get(&round_id(1)), Some(&agent("codex-1")));
+    found
+        .item_mut("1.2".parse().unwrap())
+        .unwrap()
+        .reassign(agent("inv-opus"), "agents/inv-opus/part-a".parse().unwrap())
+        .unwrap();
+    found
+        .begin_run(
+            &task(1),
+            NewRun {
+                id: run(1),
+                at: at(5),
+                session: None,
+                rounds: vec![round_id(1)],
+            },
+        )
+        .unwrap();
+    found
+        .item_mut("1.2".parse().unwrap())
+        .unwrap()
+        .advance(ItemPhase::InReview {
+            pr: pr(7),
+            reviews: vec![],
+        })
+        .unwrap();
+    let found = round_trip(&found);
+    assert_eq!(found.part_assignments().get(&round_id(1)), Some(&agent("inv-opus")));
+    let legacy: Round = serde_json::from_str(include_str!("before-assignment.json")).unwrap();
+    assert_eq!(serde_json::to_value(&legacy).unwrap().get("assigned_to"), None);
+    assert_eq!(
+        serde_json::to_value(legacy).unwrap(),
+        serde_json::from_str::<serde_json::Value>(include_str!("before-assignment.json")).unwrap()
+    );
+}
+
+#[test]
+fn executor_is_stored_at_team_level_and_round_format_is_unchanged() {
+    let mut found = working();
+    found.activate_split(plan(&[&[], &["a"]])).unwrap();
+    let wire = serde_json::to_value(&found).unwrap();
+    assert_eq!(wire["part_assignments"][round_id(1).as_str()], "codex-1");
+    assert_eq!(wire["rounds"][0].get("assigned_to"), None);
+}

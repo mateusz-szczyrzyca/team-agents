@@ -338,15 +338,23 @@ requests go to their coordinator. Pending input, corrections and existing questi
 Decisions appear in history as `split_decision` and, at debug log level, as `decision_taken` with decision
 `split_proposal`. Existing configurations and split plans remain readable;
 history migration 15 preserves previous rows while admitting decision records. Requested tiers are retained;
-assignment enforcement follows in the next part.
+items and parts are assigned only to agents meeting their minimum tier. When none fits, the harness writes one
+questions file for the lead and keeps the item waiting. An answer goes to the lead without permitting a lower-tier
+assignment; restarts do not repeat the question.
 
 A coordinator can ask the human to split an item into independently deliverable parts in one questions file.
 Approve using the [explicit split verdict](docs/task-list.md#approved-split-plans-core-format); `agent answer`
 lists the recorded parts, or explains a rejected form. The current round delivers part a. Later parts receive
 separate rounds, branches and pull requests after their dependencies merge; the original item and team remain
-open until all parts merge. `agent status` shows the parts and their dependency states. Definitions and progress
-survive restarts. The CLI negotiates socket protocol `5` for plan status and protocol `4` for split acknowledgements. Plan status falls back to protocol `4` and then `3`; both older formats omit plan summaries. Older `agent` CLIs using protocols `3` and `4` still talk to the new daemon. Protocol `3` replies also omit split fields; ordinary replies retain their existing shape. A new CLI probes with a
-read-only status request and reconnects once using protocol `3` when an older daemon rejects or closes the probe.
+open until all parts merge. Each part's pull request and a line in `agent status` name its original item, letter,
+sibling pull requests so far, approval authority, requested tier and assigned agent. Historical executors remain
+visible after review and restart; facts missing from older states say `not recorded`. Definitions and progress
+survive restarts. All status views and show requests use socket protocol negotiation: the CLI probes `6`, then
+falls back to `5`, `4` and `3`
+when an older daemon refuses or closes a probe. Version `6` carries executor assignments and capability waits;
+versions `3`–`5` omit both so older strict clients remain compatible. Version `5` also carries plan summaries,
+which versions `3` and `4` omit. Split acknowledgements use protocol `4`, with a fallback to `3`; version `3`
+also omits split fields. Negotiation uses read-only status requests and caches its choice on the connection.
 The actual answer is sent once. Showing the full state of a split team requires protocol `4`.
 Schema `13` states from version 0.29.0 remain readable, with original round names and histories.
 

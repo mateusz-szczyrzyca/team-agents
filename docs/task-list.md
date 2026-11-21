@@ -187,7 +187,14 @@ through its usual assignment process. The daemon picks the first dependency-read
 Its prompt identifies that part's deliverable and checks, excludes the other parts, and names earlier merged pull requests. The parent stays
 open until every part merges, including with `--no-merge`. Plans and part progress survive daemon restarts.
 `agent status` lists every part as done, in progress, waiting for named dependencies, or to do.
-Assignment and one-open-team-per-agent rules remain unchanged.
+Each part's pull request and `agent status` also identify the original item and part letter, sibling pull requests,
+approval authority (`harness` or `human`), requested tier and assigned executor. Older plans without provenance
+say `not recorded`; an omitted tier still means `normal`.
+
+If nobody in the team meets the tier, the harness writes one questions file for the lead and the part waits.
+The answer is sent to the lead using the usual answer flow; it does not permit using a lower-tier agent.
+The question is not repeated after an answer or daemon restart. Suitable staffing releases the wait.
+The one-open-team-per-agent rule remains unchanged.
 
 
 ### Coordinator proposal form

@@ -22,6 +22,7 @@ mod split;
 mod start;
 mod takeover;
 mod teams;
+mod tier_questions;
 mod wakes;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
@@ -203,6 +204,9 @@ pub(crate) enum OwnerError {
     /// A coordinator's split proposal could not be processed.
     #[error("cannot process the split proposal")]
     Proposal(#[from] split::ProposalError),
+    /// An absent capability cannot be asked of the human.
+    #[error("cannot ask about missing team capability")]
+    TierQuestion(#[from] tier_questions::TierQuestionError),
     /// Questions cannot be recorded.
     #[error("the questions of task {task} cannot be recorded")]
     Question {

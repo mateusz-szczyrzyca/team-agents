@@ -231,7 +231,7 @@ async fn teams(
     target: Option<Target>,
 ) -> Result<(Vec<TeamSummary>, Option<HistoryHealth>), StatusError> {
     let reply = connection
-        .request_split(Client::Cli, Command::Status(StatusRequest { target }))
+        .request(Client::Cli, Command::Status(StatusRequest { target }))
         .await?;
     match reply {
         Reply::Teams { teams } => Ok((teams, None)),
@@ -362,6 +362,13 @@ fn render_at(
                 .map(|round| format!("  {}{}", round_line(round), rounds(round))),
         );
         lines.extend(splits::lines(team));
+        for plan in &team.splits {
+            lines.extend(
+                crate::split_context::lines(plan, &team.rounds, &team.part_assignments)
+                    .into_iter()
+                    .map(|(_, text)| format!("      {text}")),
+            );
+        }
         for (item, tier) in &team.tier_waits {
             if team.splits.iter().any(|plan| plan.parent() == *item) {
                 continue;
@@ -559,3 +566,7 @@ mod tests;
 #[cfg(test)]
 #[path = "status/tests/splits.rs"]
 mod split_tests;
+
+#[cfg(test)]
+#[path = "status/tests/negotiation.rs"]
+mod negotiation_tests;
