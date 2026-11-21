@@ -6,6 +6,7 @@
 #   done            ends with STATUS: DONE
 #   done:TEXT       ends with TEXT, a line break and STATUS: DONE
 #   sleep           ends with STATUS: SLEEPING
+#   bus-sleep       reads its messages as the `--agent` its MCP configuration names, then ends with STATUS: SLEEPING
 #   fail            ends with STATUS: FAILED
 #   nostatus        ends without a STATUS line
 #   questions       ends with STATUS: QUESTIONS and writes no questions file
@@ -63,6 +64,7 @@ name=""
 bus_bin=""
 bus_dir=""
 home=""
+mcp_config=""
 args=("$@")
 while (($#)); do
   case $1 in
@@ -71,6 +73,7 @@ while (($#)); do
     --bus-bin) bus_bin=$2; shift ;;
     --bus-dir) bus_dir=$2; shift ;;
     --home) home=$2; shift ;;
+    --mcp-config) mcp_config=$2; shift ;;
     --session-id | --resume) session=$2; shift ;;
   esac
   shift
@@ -430,6 +433,13 @@ case $action in
     result "${action#target-done:}"'\nSTATUS: DONE'
     ;;
   sleep) result 'Nothing to do now.\nSTATUS: SLEEPING' ;;
+  bus-sleep)
+    # Reads its messages under the name the run's MCP configuration gives it on the bus (the `--agent` of the agentbus
+    # server), as an agent that uses the server the harness gave it, then ends with STATUS: SLEEPING.
+    name=$(tr -d ' \n' < "$mcp_config" | sed -n 's/.*"--agent","\([^"]*\)".*/\1/p')
+    read_messages
+    result 'Nothing to do now.\nSTATUS: SLEEPING'
+    ;;
   hold)
     # Works until the run is stopped, as a member that the human stops while it runs; `.fake-continue` ends it.
     while [[ ! -f .fake-continue ]]; do

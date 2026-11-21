@@ -618,3 +618,69 @@ async fn the_lead_that_gets_a_members_work_is_briefed_on_it() {
         "the snapshot of its worktree: {text}"
     );
 }
+
+// Rule: a member taken over is woken for each new message to the name its task has on the bus, as before the takeover;
+// the wake-ups of one message do not hold back the next.
+#[tokio::test]
+async fn a_member_taken_over_is_woken_for_each_new_message_to_its_name_on_the_bus() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep"),
+            normal("claude-1", BAD_IN_BOTH_SESSIONS),
+            // The task's seventh run is claude-3's first: it and every later run read the messages as the bus knows it.
+            normal("claude-3", "work,work,work,work,work,work,bus-sleep"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    configure(&rig, "[replacement]\nagents = [\"claude-3\"]\n");
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let member_task = tasks[1].clone();
+    let sleeps_after = |runs: usize| {
+        let task = member_task.clone();
+        move |state: &State| {
+            let member = state.find_task(&task).unwrap().member;
+            member.agent().name() == "claude-3" && member.runs().len() == runs && member.status() == TaskStatus::Waiting
+        }
+    };
+    rig.state_where("claude-3 asleep after its first run", sleeps_after(7))
+        .await;
+    let bus = agent_runtime::agentbus::AgentBus::new(
+        std::str::FromStr::from_str(super::super::fixture::agentbus_binary().to_str().unwrap()).unwrap(),
+        std::str::FromStr::from_str(rig.home.root().to_str().unwrap()).unwrap(),
+    );
+
+    for number in 1..=3 {
+        bus.send(
+            &"inv-lead".parse().unwrap(),
+            &agent_runtime::agentbus::Recipient::Member {
+                agent: "claude-1".parse().unwrap(),
+                team: team.clone(),
+            },
+            &agent_runtime::agentbus::Outgoing::Chat {
+                text: format!("Message number {number} for the task."),
+            },
+        )
+        .await
+        .unwrap();
+        rig.state_where(
+            &format!("claude-3 woken for message {number}"),
+            sleeps_after(7 + number),
+        )
+        .await;
+    }
+    let state = rig.state();
+    rig.stop().await.unwrap();
+
+    assert_eq!(
+        state.find_task(&tasks[1]).unwrap().member.runs().len(),
+        10,
+        "one wake-up for each message"
+    );
+}
