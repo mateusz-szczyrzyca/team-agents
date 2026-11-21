@@ -566,3 +566,7 @@ mod tests;
 #[cfg(test)]
 #[path = "status/tests/splits.rs"]
 mod split_tests;
+
+#[cfg(test)]
+#[path = "status/tests/negotiation.rs"]
+mod negotiation_tests;
