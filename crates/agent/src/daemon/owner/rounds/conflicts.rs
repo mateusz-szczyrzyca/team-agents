@@ -163,7 +163,7 @@ impl Owner {
                 .start_merge_conflict(team, &items, ConflictStep::AskHuman, &approved_head, now, look)
                 .await;
         }
-        let judged = match self.judge_tip(&lead, &pr, &approved_head).await {
+        let judged = match self.judge_tip(&lead, &approved_head).await {
             Ok(judged) => judged,
             Err(error) => {
                 tracing::warn!(
@@ -394,12 +394,7 @@ impl Owner {
 
     /// Whether the lead's tip of `pr` is the commit to push: it merged the base, and the gate of the harness or of the
     /// lead passed at it.
-    async fn judge_tip(
-        &mut self,
-        lead: &Lead,
-        _pr: &PullRequest,
-        approved_head: &CommitId,
-    ) -> Result<Judgement, PublishError> {
+    async fn judge_tip(&mut self, lead: &Lead, approved_head: &CommitId) -> Result<Judgement, PublishError> {
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let base = self.base_branch(&lead.repo)?;
         let record = self.parts.store.load_gate_record(&lead.task).await?;

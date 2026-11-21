@@ -400,27 +400,6 @@ impl Owner {
     ) -> Result<Attempt, PublishError> {
         let lead = site.lead;
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        let independent = items_of(publication).iter().any(|id| {
-            self.parts.state.team(site.team).is_some_and(|team| {
-                team.items()
-                    .iter()
-                    .find(|item| item.id().to_string() == *id)
-                    .is_some_and(|item| {
-                        returned_delivery(team, item.id())
-                            || team.round_of(item.id()).is_some_and(|round| round.part().is_some())
-                    })
-            })
-        });
-        let _source = if independent {
-            // The lead's own branch is named after the agent its task was first given to, whoever holds it now.
-            let first = self.parts.state.find_task(&lead.task).map_or_else(
-                || Ok(lead.agent.clone()),
-                |found| found.member.bus_agent().name().parse(),
-            )?;
-            crate::daemon::team::task_branch(&first, &lead.task)?
-        } else {
-            publication.head_branch.clone()
-        };
         let record = self.parts.store.load_gate_record(&lead.task).await?;
         let tip = git.rev_parse(&Revision::Head).await?;
         // A gate of the harness that still runs decides nothing yet; the record is read after it, so that it is not older.
