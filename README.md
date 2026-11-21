@@ -506,8 +506,9 @@ VS Code server discovery skips plain files beside builds (such as `cli/servers/l
 `remote-cli` directory in either server layout. Directory symlinks are followed; other listing errors are reported.
 
 With a `github_token` in `secrets.toml` the daemon runs the autopilot: when an item's branch has a green gate it opens the pull
-request, `[review] min_first_full_reviews` investigators from outside the team review it (default `2`). All their
-approvals merge it and start the next item. Set the key in `agents.toml`, for example:
+request, `[review] min_first_full_reviews` investigators from outside the team review it (default `2`). The harness publishes
+the passing gated commit directly to the pull request branch without switching worktree branches; agents do not switch
+branches in their worktree. All their approvals merge it and start the next item. Set the key in `agents.toml`, for example:
 
 ```toml
 [review]
