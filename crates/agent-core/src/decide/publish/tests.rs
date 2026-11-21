@@ -214,3 +214,76 @@ fn the_reasons_say_what_is_wrong_and_where_to_look() {
         "{not_at_tip}"
     );
 }
+
+#[test]
+fn publish_decision_table() {
+    let task_branch: BranchName = "agents/lead/task-1".parse().unwrap();
+    let part_branch: BranchName = "agents/lead/task-1-1.1a".parse().unwrap();
+    let pr_branch: BranchName = "agents/lead/task-1-1.1a".parse().unwrap();
+
+    let branches = PublicationBranches {
+        task: &task_branch,
+        part: Some(&part_branch),
+        pr: Some(&pr_branch),
+    };
+
+    let cases = [
+        (RoundPublication::Item, RemoteState::Behind, &task_branch, PublishAction::Push),
+        (RoundPublication::Item, RemoteState::Equal, &task_branch, PublishAction::UpToDate),
+        (RoundPublication::Item, RemoteState::Diverged, &task_branch, PublishAction::Refused),
+        (RoundPublication::Part, RemoteState::Behind, &part_branch, PublishAction::Push),
+        (RoundPublication::Part, RemoteState::Equal, &part_branch, PublishAction::UpToDate),
+        (RoundPublication::Part, RemoteState::Diverged, &part_branch, PublishAction::Refused),
+        (RoundPublication::ConflictPass, RemoteState::Behind, &pr_branch, PublishAction::Push),
+        (RoundPublication::ConflictPass, RemoteState::Equal, &pr_branch, PublishAction::UpToDate),
+        (RoundPublication::ConflictPass, RemoteState::Diverged, &pr_branch, PublishAction::Refused),
+        (RoundPublication::FixPass, RemoteState::Behind, &pr_branch, PublishAction::Push),
+        (RoundPublication::FixPass, RemoteState::Equal, &pr_branch, PublishAction::UpToDate),
+        (RoundPublication::FixPass, RemoteState::Diverged, &pr_branch, PublishAction::Refused),
+    ];
+
+    for (round, remote, expected_branch, expected_action) in cases {
+        let decision = publish_decision(round, &branches, remote);
+        assert_eq!(decision.branch, expected_branch, "round={round:?}, remote={remote:?}");
+        assert_eq!(decision.action, expected_action, "round={round:?}, remote={remote:?}");
+    }
+}
+
+#[test]
+fn publish_tries_step_table() {
+    let cases = [
+        (0, 3, PublishTriesStep::Retry),
+        (1, 3, PublishTriesStep::Retry),
+        (2, 3, PublishTriesStep::Retry),
+        (3, 3, PublishTriesStep::TellLead),
+        (4, 3, PublishTriesStep::AskHuman),
+        (5, 3, PublishTriesStep::AskHuman),
+        (0, 0, PublishTriesStep::AskHuman),
+        (1, 0, PublishTriesStep::AskHuman),
+    ];
+
+    for (tries, limit, expected) in cases {
+        assert_eq!(
+            publish_tries_step(tries, limit),
+            expected,
+            "tries={tries}, limit={limit}"
+        );
+    }
+}
+
+#[test]
+fn publish_answer_table() {
+    let cases = [
+        (Some(Verdict::Accept), PublishAnswer::Retry),
+        (Verdict::from_text("a").unwrap(), PublishAnswer::Retry),
+        (Verdict::from_text("a) try again").unwrap(), PublishAnswer::Retry),
+        (Verdict::from_text("b").unwrap(), PublishAnswer::Stop),
+        (Verdict::from_text("b) stop the task").unwrap(), PublishAnswer::Stop),
+        (Verdict::from_text("stop").unwrap(), PublishAnswer::Stop),
+        (None, PublishAnswer::Retry),
+    ];
+
+    for (verdict, expected) in cases {
+        assert_eq!(publish_answer(verdict.as_ref()), expected, "verdict={verdict:?}");
+    }
+}

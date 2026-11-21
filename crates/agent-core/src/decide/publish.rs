@@ -19,6 +19,8 @@
 use std::fmt;
 
 use crate::config::AbsolutePath;
+use crate::ids::BranchName;
+use crate::questions::Verdict;
 use crate::state::{CommitId, GateOutcome, GateRecord};
 
 /// What is known of the branch of a lead that waits.
@@ -146,6 +148,109 @@ pub fn gate_step(waiting: &Waiting<'_>) -> GateStep {
         }),
         None => GateStep::Run,
     }
+}
+
+/// The nature of the round or pass publishing its work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoundPublication {
+    /// A standalone or initial round of an item.
+    Item,
+    /// A round delivering a part of a split item.
+    Part,
+    /// A merge conflict pass on an approved pull request.
+    ConflictPass,
+    /// A review fix pass updating an existing pull request.
+    FixPass,
+}
+
+/// The relationship between the gated commit and the remote branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteState {
+    /// Remote branch is behind the gated commit (fast-forward push needed).
+    Behind,
+    /// Remote branch already points to the gated commit (up to date).
+    Equal,
+    /// Remote branch has diverged from the gated commit (non-fast-forward).
+    Diverged,
+}
+
+/// How the gated commit is published to the target branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishAction {
+    /// Push the gated commit to the remote branch.
+    Push,
+    /// The remote branch already carries the gated commit; adopt without pushing.
+    UpToDate,
+    /// The remote branch has diverged; publication cannot proceed automatically.
+    Refused,
+}
+
+/// The available branch names of the task, part, and open pull request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublicationBranches<'a> {
+    /// The branch of the task.
+    pub task: &'a BranchName,
+    /// The branch of the part, when the round is part of a split item.
+    pub part: Option<&'a BranchName>,
+    /// The branch of the open pull request, when one exists.
+    pub pr: Option<&'a BranchName>,
+}
+
+/// The result of the publication decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublishDecision<'a> {
+    /// The branch that receives the gated commit.
+    pub branch: &'a BranchName,
+    /// How the commit is brought to that branch.
+    pub action: PublishAction,
+}
+
+/// Which branch a round publishes to and how.
+#[must_use]
+pub fn publish_decision<'a>(
+    _round: RoundPublication,
+    branches: &PublicationBranches<'a>,
+    _remote: RemoteState,
+) -> PublishDecision<'a> {
+    // STUB: wrong implementation so tests fail first!
+    PublishDecision {
+        branch: branches.task,
+        action: PublishAction::Push,
+    }
+}
+
+/// What the harness does when publication cannot succeed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishTriesStep {
+    /// Retry publication after a backoff.
+    Retry,
+    /// Tell the lead once what is wrong.
+    TellLead,
+    /// Ask the human once in a questions file.
+    AskHuman,
+}
+
+/// Decides the next step after a publication failure based on attempt count and configured limit.
+#[must_use]
+pub const fn publish_tries_step(_tries: u32, _limit: u32) -> PublishTriesStep {
+    // STUB: wrong implementation so tests fail first!
+    PublishTriesStep::Retry
+}
+
+/// What the human's answer to the publication failure question says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishAnswer {
+    /// Try publishing again.
+    Retry,
+    /// Stop the task.
+    Stop,
+}
+
+/// Reads the human's verdict on a publication failure question.
+#[must_use]
+pub fn publish_answer(_verdict: Option<&Verdict>) -> PublishAnswer {
+    // STUB: wrong implementation so tests fail first!
+    PublishAnswer::Retry
 }
 
 #[cfg(test)]
