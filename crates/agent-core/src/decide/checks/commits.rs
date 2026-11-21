@@ -174,11 +174,37 @@ pub enum NoteError {
 /// [`NoteError`] when the commit is not in the round, did not change the test, or has no known author.
 pub fn describe(
     finding: &CommitFinding,
-    _facts: &RoundFacts,
-    _authors: &BTreeMap<CommitId, String>,
+    facts: &RoundFacts,
+    authors: &BTreeMap<CommitId, String>,
 ) -> Result<CommitNote, NoteError> {
-    Err(NoteError::NoCommit {
+    let commit = facts
+        .commits
+        .iter()
+        .find(|known| known.id == finding.commit)
+        .ok_or_else(|| NoteError::NoCommit {
+            commit: finding.commit.clone(),
+        })?;
+    // A merge has no files of its own: what it changed against its first parent is what its resolution did to the test.
+    let files = if commit.parents.len() > 1 {
+        commit.merge_files.first().map_or(&[][..], Vec::as_slice)
+    } else {
+        commit.files.as_slice()
+    };
+    let changed = files
+        .iter()
+        .find(|file| file.path == finding.path)
+        .ok_or_else(|| NoteError::NoFile {
+            commit: finding.commit.clone(),
+            path: finding.path.clone(),
+        })?;
+    let author = authors.get(&finding.commit).ok_or_else(|| NoteError::NoAuthor {
         commit: finding.commit.clone(),
+    })?;
+    Ok(CommitNote {
+        finding: finding.clone(),
+        subject: commit.subject.clone(),
+        author: author.clone(),
+        lines: changed.lines,
     })
 }
 
