@@ -1,22 +1,28 @@
 //! Execution of plan step checks.
 
-use crate::history::JudgementRecord;
+use std::io;
+use std::path::Path;
+use std::time::Instant;
+
 use agent_core::ids::{ItemId, RunId, TaskId, TeamId};
 use agent_core::plan::judge::{JudgementState, refuse_command};
 use agent_core::plan::{Check, Step};
+use agent_core::repo_path::RepoPath;
 use agent_core::state::Timestamp;
-use std::path::Path;
+use tokio::fs;
+
+use crate::history::JudgementRecord;
 
 #[cfg(test)]
 mod tests;
 
-/// What can go wrong while inspecting paths or running step checks.
+/// Errors that can happen while inspecting paths for checks.
 #[derive(Debug, thiserror::Error)]
 pub enum CheckError {
-    /// The duration cannot be represented in milliseconds.
-    #[error("check duration exceeds u64 milliseconds")]
+    /// A check duration overflowed the supported representation.
+    #[error("check duration overflowed u64 milliseconds: {source}")]
     DurationOverflow {
-        /// The failed integer conversion.
+        /// The integer conversion error.
         #[source]
         source: std::num::TryFromIntError,
     },
@@ -44,22 +50,22 @@ pub struct CheckContext<'a> {
 pub struct JudgementResult {
     /// The outcome state.
     pub state: JudgementState,
-    /// The check specification string, if present on the step.
+    /// The check as a line, if any.
     pub check_line: Option<String>,
-    /// Mismatch or failure reason.
+    /// Why the check failed or was refused, if any.
     pub reason: Option<String>,
-    /// Execution duration in milliseconds.
+    /// How long check execution took in milliseconds.
     pub duration_ms: u64,
-    /// Path to the captured check output relative to task directory.
+    /// The task-relative output path, if an output file was written.
     pub output_path: Option<String>,
-    /// Log tail of the check execution.
+    /// Trailing output lines for mismatch notification.
     pub tail: String,
-    /// Whether the check was a refused gate command.
+    /// Whether the check was refused because it matched `check_refuse`.
     pub gate_refused: bool,
 }
 
 impl JudgementResult {
-    /// Converts this judgement result into a durable record.
+    /// Converts this result into a [`JudgementRecord`] ready to be written to history.
     #[must_use]
     pub fn into_record(
         self,
@@ -84,36 +90,103 @@ impl JudgementResult {
     }
 }
 
+fn duration_millis(elapsed: std::time::Duration) -> Result<u64, CheckError> {
+    u64::try_from(elapsed.as_millis()).map_err(|source| CheckError::DurationOverflow { source })
+}
+
+async fn check_exists(worktree: &Path, repo_path: &RepoPath) -> Result<JudgementResult, CheckError> {
+    let start = Instant::now();
+    let check_line = format!("exists {}", repo_path.as_str());
+    let full_path = worktree.join(repo_path.as_str());
+
+    let (state, reason) = if let Err(error) = fs::symlink_metadata(&full_path).await {
+        let reason = if error.kind() == io::ErrorKind::NotFound {
+            format!("path does not exist: {}", repo_path.as_str())
+        } else {
+            format!("cannot inspect path {}: {error}", repo_path.as_str())
+        };
+        (JudgementState::Mismatch, Some(reason))
+    } else {
+        let canonical_worktree = fs::canonicalize(worktree).await;
+        let canonical_path = fs::canonicalize(&full_path).await;
+        match (canonical_worktree, canonical_path) {
+            (Ok(base), Ok(target)) => {
+                if target.starts_with(&base) {
+                    (JudgementState::Confirmed, None)
+                } else {
+                    (
+                        JudgementState::Mismatch,
+                        Some(format!("path escapes worktree: {}", repo_path.as_str())),
+                    )
+                }
+            }
+            (Err(error), _) => (
+                JudgementState::Mismatch,
+                Some(format!("cannot resolve worktree {}: {error}", worktree.display())),
+            ),
+            (_, Err(error)) => (
+                JudgementState::Mismatch,
+                Some(format!("cannot resolve path {}: {error}", repo_path.as_str())),
+            ),
+        }
+    };
+
+    let duration_ms = duration_millis(start.elapsed())?;
+    Ok(JudgementResult {
+        state,
+        check_line: Some(check_line),
+        reason,
+        duration_ms,
+        output_path: None,
+        tail: String::new(),
+        gate_refused: false,
+    })
+}
+
 /// Executes the check for `step` within `context`.
 ///
 /// # Errors
 /// Returns [`CheckError`] if check management fails.
 pub async fn execute_step_check(context: &CheckContext<'_>, step: &Step) -> Result<JudgementResult, CheckError> {
-    tokio::task::yield_now().await;
     let check = step.check();
-    let is_refused = check.as_ref().is_some_and(|c| match c {
-        Check::Command(cmd) => refuse_command(cmd, context.check_refuse),
-        _ => false,
-    });
-    Ok(JudgementResult {
-        state: JudgementState::Declared,
-        check_line: check.map(|c| match c {
-            Check::Command(cmd) => cmd.clone(),
-            Check::Exists(p) => format!("exists {}", p.as_str()),
-            Check::Reviewer => "reviewer".to_owned(),
-        }),
-        reason: if is_refused {
-            Some("refused gate command".to_owned())
-        } else {
-            None
-        },
-        duration_ms: 0,
-        output_path: None,
-        tail: String::new(),
-        gate_refused: is_refused,
-    })
-}
+    let Some(check) = check else {
+        return Ok(JudgementResult {
+            state: JudgementState::Declared,
+            check_line: None,
+            reason: None,
+            duration_ms: 0,
+            output_path: None,
+            tail: String::new(),
+            gate_refused: false,
+        });
+    };
 
-fn duration_millis(_elapsed: std::time::Duration) -> Result<u64, CheckError> {
-    Ok(0)
+    match check {
+        Check::Reviewer => Ok(JudgementResult {
+            state: JudgementState::Declared,
+            check_line: Some("reviewer".to_owned()),
+            reason: None,
+            duration_ms: 0,
+            output_path: None,
+            tail: String::new(),
+            gate_refused: false,
+        }),
+        Check::Command(cmd) => {
+            let is_refused = refuse_command(cmd, context.check_refuse);
+            Ok(JudgementResult {
+                state: JudgementState::Declared,
+                check_line: Some(cmd.clone()),
+                reason: if is_refused {
+                    Some("refused gate command".to_owned())
+                } else {
+                    None
+                },
+                duration_ms: 0,
+                output_path: None,
+                tail: String::new(),
+                gate_refused: is_refused,
+            })
+        }
+        Check::Exists(repo_path) => check_exists(context.worktree, repo_path).await,
+    }
 }
