@@ -1277,3 +1277,34 @@ team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 i
 "
     );
 }
+
+#[test]
+fn an_open_split_round_waiting_for_a_tier_is_not_shown_in_progress() {
+    let mut team = team_state().teams()[0].clone();
+    let item = "1.1".parse().unwrap();
+    team.open_round("round-20261111-153001-q1w2".parse().unwrap(), Some(item), at(1))
+        .unwrap();
+    team.advance_item(
+        item,
+        agent_core::state::ItemPhase::InProgress {
+            assignee: "claude-1".parse().unwrap(),
+            branch: "agents/claude-1/first".parse().unwrap(),
+        },
+    )
+    .unwrap();
+    team.activate_split(serde_json::from_value(serde_json::json!({
+        "parent":"1.1", "parts":[
+            {"title":"First", "delivers":"First document", "checks":"Read it", "depends_on":[], "tier":"investigator"},
+            {"title":"Second", "delivers":"Second document", "checks":"Read it", "depends_on":["a"]}
+        ]
+    })).unwrap()).unwrap();
+    let mut summary = TeamSummary::from(&team);
+    summary.tier_waits.insert(item, agent_core::kinds::Tier::Investigator);
+    assert_eq!(
+        super::splits::lines(&summary),
+        vec![
+            "    1.1a  waiting for investigator agent  First",
+            "    1.1b  waiting for 1.1a  Second",
+        ]
+    );
+}
