@@ -5,6 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.51.0 — 21.11.2026 — PR #168
+
+### New features
+- [agent] [agent-runtime] A round's gated work reaches the branch of its pull request without forcing, even when the branch or another branch is checked out in a worktree, and after a conflict pass of a part of a split.
+- [agent] Branch preservation instructions prevent tasks from switching their worktrees away from their active branches.
+
 ## 0.50.0 — 21.11.2026 — PR #167
 
 ### New features
@@ -23,10 +29,6 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent] [agent-core] **Action:** the text of `agent log` lines changed (`--json` did not): every line of a record now says what happened and to whom — the task and the agent, the team and rounds, the run, and in words for the common events (`queued ← waiting`, `run started by claude-1`, `ended reported DONE`, `item 1.1 in review ← in progress after a review verdict`) or as `key=value` for the others, with long values cut. A program that reads the text should read `--json`.
 
 ## 0.49.0 — 21.11.2026 — PR #166
-
-### New features
-- [agent] [agent-core] [agent-runtime] `[publish] tries` (default 3; `0` asks immediately) bounds publication retries when a pull request branch cannot be pushed. When publication cannot succeed, the lead is told once with what is wrong, and if it still fails the human is asked once in a questions file with options to retry or stop.
-- [agent] [agent-runtime] A round's gated work reaches the branch of its pull request without forcing, even when the branch or another branch is checked out in a worktree, and after a conflict pass of a part of a split.
 
 ### Bug fixes
 - [agent] `agent status --running` showed the parts of a split that were already merged as `to do` and the parts after them as `waiting for`, while `agent status` showed them `done`. Every view now prints the same state for a part, and the running view leaves out the parts of an item whose parts are all merged.
