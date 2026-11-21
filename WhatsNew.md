@@ -10,7 +10,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ### Bug fixes
 - [agent] [agent-core] [agent-runtime] A split pull request kept a stale gate commit after a conflict pass, and a checked-out part branch or detached worktree caused publication to fail or switch branches: publication now pushes the passing gated commit directly to the pull request branch without forcing or changing worktree checkouts, and refuses diverged remote branches.
 - [agent] Harness prompts and documentation instruct agents and leads not to switch branches in their worktrees during round execution.
-- [agent] The harness waits for its running gate before reading the result; previously a stale record could send the lead back before that gate finished.
+- [agent] The harness waits for its running gate to finish before reading the result; previously a stale record could send the lead back before that gate finished.
 
 ## 0.51.0 — 21.11.2026 — PR #168
 
