@@ -8,7 +8,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ## 0.52.0 — 21.11.2026 — PR #169
 
 ### Bug fixes
-- [agent] [agent-core] [agent-runtime] Publication now pushes the passing gated commit directly to the pull request branch without switching or forcing checked-out worktree branches, correctly selects the existing PR branch across publication kinds, and refuses diverged remote heads.
+- [agent] [agent-core] [agent-runtime] A split pull request kept a stale gate commit after a conflict pass, and a checked-out part branch or detached worktree caused publication to fail or switch branches: publication now pushes the passing gated commit directly to the pull request branch without forcing or changing worktree checkouts, and refuses diverged remote branches.
 - [agent] Prompts and documentation instruct agents and leads not to switch branches in their worktrees during round execution.
 
 ## 0.51.0 — 21.11.2026 — PR #168
@@ -28,7 +28,16 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
   Note: inv-claude-sonnet has questions (task-20261121-132909-y6mz)
 
   1.1 The daemon runs the command check of a step that became done, one at a time for a task, without blocking
+
+  Questions number 4 of task task-20261121-132909-y6mz wait for your answers in /home/…/questions-4.md.
+
+  TASK (task-20261121-132909-y6mz):
+  The first sentences of the task's description.
   ```
+- [agent] [agent-core] `agent status` ends the line of each team with its description in quotes, `agent status --json` prints the teams as a JSON array with each team's `short_desc`, and the summary of a team that the daemon sends carries it as the optional field `short_desc`.
+
+### Enhancements
+- [agent] [agent-core] **Action:** the text of the notifications changed (new order of the fields, new lines): a script that reads them must follow. The socket protocol only gained the optional field `short_desc` in version 6, which older negotiated protocols do not carry; replace the CLI together with the daemon.
 
 ## 0.50.0 — 21.11.2026 — PR #167
 

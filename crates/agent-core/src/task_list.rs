@@ -27,6 +27,7 @@ use std::str::FromStr;
 
 use crate::ids::{AgentName, InvalidItemId, InvalidName, ItemId};
 use crate::kinds::{Tier, UnknownKeyword};
+use crate::task_title::{MAX_SHORT_DESC_CHARS, derived_short_desc};
 
 /// Largest task list accepted, in bytes: a bound on untrusted input, far above any real list.
 pub const MAX_TASK_LIST_BYTES: usize = 1 << 20;
@@ -39,6 +40,9 @@ const COORDINATOR_PREFIX: &str = "Coordinator:";
 
 /// The text that starts a line naming a path or glob that the task's rounds may change.
 const ALLOW_PREFIX: &str = "Allow:";
+
+/// The text that starts the line giving the short description of the task, in the header.
+const SHORT_DESC_PREFIX: &str = "Short desc:";
 
 /// The text that starts the line listing the features a feature waits for.
 const DEPENDS_ON_PREFIX: &str = "Depends on:";
@@ -55,6 +59,17 @@ pub enum AllowLines {
     Permissions,
     /// The lines are text of the brief, as every version before the lines existed read them: a state of such a version
     /// may hold a brief that starts with one, and it neither has to be a valid pattern nor grants anything.
+    Brief,
+}
+
+/// How a line `Short desc:` before the brief of a task list is read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ShortDescLines {
+    /// The line gives the description of the task, as a task list of this version means it.
+    #[default]
+    Header,
+    /// The line is text of the brief, as every version before the line existed read it: a state of such a version may
+    /// hold a brief that starts with it, whatever it says.
     Brief,
 }
 
@@ -116,7 +131,9 @@ pub struct TaskList {
     coordinator: Option<AgentName>,
     /// Root-relative permissions given in the header.
     allowances: Vec<crate::task_allowance::TaskAllowance>,
-    /// The text before the first feature, without the `Coordinator:` line and the blank lines around it.
+    /// The text of the `Short desc:` line, if the header has one.
+    short_desc: Option<String>,
+    /// The text before the first feature, without the header lines and the blank lines around it.
     brief: String,
     /// The features, in the order written.
     features: Vec<Feature>,
@@ -199,6 +216,30 @@ pub enum TaskListError {
         /// Why the pattern was refused.
         #[source]
         source: crate::task_allowance::AllowanceError,
+    },
+    /// The `Short desc:` line has no text.
+    #[error("line {line}: the Short desc: line is empty; give the line some text or remove it")]
+    ShortDescEmpty {
+        /// The line.
+        line: NonZeroUsize,
+    },
+    /// The `Short desc:` line is longer than [`MAX_SHORT_DESC_CHARS`] characters.
+    #[error("line {line}: the Short desc: line has {len} characters; write at most {max} characters")]
+    ShortDescTooLong {
+        /// The line.
+        line: NonZeroUsize,
+        /// The length of its text, in characters.
+        len: usize,
+        /// The limit, in characters.
+        max: usize,
+    },
+    /// The header has a second `Short desc:` line.
+    #[error("line {line}: a second Short desc: line, the first is on line {first_line}; keep one")]
+    ShortDescTwice {
+        /// The line of the second one.
+        line: NonZeroUsize,
+        /// The line of the first one.
+        first_line: NonZeroUsize,
     },
     /// The text has nothing in it but blank lines, or only a `Coordinator:` line.
     #[error("the task list is empty")]
@@ -367,6 +408,19 @@ impl TaskList {
     /// # Errors
     /// The [`TaskListError`] of [`TaskList::parse`].
     pub fn parse_with(text: &str, allow_lines: AllowLines) -> Result<Self, TaskListError> {
+        Self::parse_with_short_desc(text, allow_lines, ShortDescLines::Header)
+    }
+
+    /// Parses a task list whose `Allow:` and `Short desc:` lines before the brief are read as `allow_lines` and
+    /// `short_desc_lines` say.
+    ///
+    /// # Errors
+    /// The [`TaskListError`] of [`TaskList::parse`].
+    pub fn parse_with_short_desc(
+        text: &str,
+        allow_lines: AllowLines,
+        short_desc_lines: ShortDescLines,
+    ) -> Result<Self, TaskListError> {
         if text.len() > MAX_TASK_LIST_BYTES {
             return Err(TaskListError::TooLarge {
                 len: text.len(),
@@ -376,6 +430,7 @@ impl TaskList {
         let text = text.strip_prefix(BYTE_ORDER_MARK).unwrap_or(text);
         let mut parser = Parser {
             allow_lines,
+            short_desc_lines,
             ..Parser::default()
         };
         for (index, line) in text.lines().enumerate() {
@@ -402,6 +457,20 @@ impl TaskList {
     #[must_use]
     pub fn coordinator(&self) -> Option<&AgentName> {
         self.coordinator.as_ref()
+    }
+
+    /// The description the `Short desc:` line of the header gives, if it has one.
+    #[must_use]
+    pub fn short_desc(&self) -> Option<&str> {
+        self.short_desc.as_deref()
+    }
+
+    /// The description to show for the task: the one the header gives, otherwise the one derived from the brief.
+    #[must_use]
+    pub fn display_short_desc(&self) -> String {
+        self.short_desc
+            .clone()
+            .unwrap_or_else(|| derived_short_desc(&self.brief))
     }
 
     /// The text before the first feature, which every member reads; the whole text when there are no features.
@@ -694,8 +763,12 @@ struct Parser<'a> {
     coordinator: Option<AgentName>,
     /// How a line `Allow:` before the brief is read.
     allow_lines: AllowLines,
+    /// How a line `Short desc:` before the brief is read.
+    short_desc_lines: ShortDescLines,
     /// Root-relative permissions given in the header.
     allowances: Vec<crate::task_allowance::TaskAllowance>,
+    /// The `Short desc:` line read so far: its line and its text.
+    short_desc: Option<(NonZeroUsize, String)>,
     /// The lines before the first feature.
     brief: Vec<&'a str>,
     /// The features read so far; the last one is the current one.
@@ -726,9 +799,13 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
         }
-        if self.allow_lines == AllowLines::Permissions
-            && self.features.is_empty()
-            && self.brief.iter().all(|line| line.trim().is_empty())
+        if self.in_header()
+            && self.short_desc_lines == ShortDescLines::Header
+            && let Some(desc) = text.strip_prefix(SHORT_DESC_PREFIX)
+        {
+            return self.short_desc_line(line, desc);
+        }
+        if self.in_header()
             && let Some(pattern) = text.strip_prefix(ALLOW_PREFIX)
         {
             let pattern = pattern.trim();
@@ -765,6 +842,37 @@ impl<'a> Parser<'a> {
             LineKind::Text if self.features.is_empty() => self.brief.push(text),
             LineKind::Text => return Err(TaskListError::UnexpectedLine { line }),
         }
+        Ok(())
+    }
+
+    /// Whether a header line is possible now: its lines are read as such, and neither the brief nor a feature began.
+    fn in_header(&self) -> bool {
+        self.allow_lines == AllowLines::Permissions
+            && self.features.is_empty()
+            && self.brief.iter().all(|line| line.trim().is_empty())
+    }
+
+    /// The `Short desc:` line `line` with the text `desc` after its label.
+    fn short_desc_line(&mut self, line: NonZeroUsize, desc: &str) -> Result<(), TaskListError> {
+        if let Some((first_line, _)) = &self.short_desc {
+            return Err(TaskListError::ShortDescTwice {
+                line,
+                first_line: *first_line,
+            });
+        }
+        let desc = desc.trim();
+        if desc.is_empty() {
+            return Err(TaskListError::ShortDescEmpty { line });
+        }
+        let len = desc.chars().count();
+        if len > MAX_SHORT_DESC_CHARS {
+            return Err(TaskListError::ShortDescTooLong {
+                line,
+                len,
+                max: MAX_SHORT_DESC_CHARS,
+            });
+        }
+        self.short_desc = Some((line, desc.to_owned()));
         Ok(())
     }
 
@@ -923,6 +1031,7 @@ impl<'a> Parser<'a> {
         Ok(TaskList {
             coordinator: self.coordinator,
             allowances: self.allowances,
+            short_desc: self.short_desc.map(|(_, text)| text),
             brief,
             features: self.features,
             tiers: self.tiers,
@@ -1597,6 +1706,9 @@ Depends on: 2,3,1,
 #[cfg(test)]
 #[path = "task_list/allowances_tests.rs"]
 mod allowances_tests;
+
+#[cfg(test)]
+mod short_desc_tests;
 
 #[cfg(test)]
 mod tier_tests;

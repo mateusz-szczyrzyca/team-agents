@@ -464,7 +464,7 @@ impl Owner {
             self.publish(
                 at,
                 EventKind::TeamUpdated {
-                    summary: Box::new(TeamSummary::from(found)),
+                    summary: Box::new(TeamSummary::described(found)),
                 },
             );
         }
@@ -1049,7 +1049,7 @@ impl Owner {
             .map(|(_, member)| member.task().clone())
             .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
         let now = Timestamp::now(&self.parts.clock)?;
-        let context = self.notice_context(&lead, now, None)?;
+        let context = self.notice_context_for(&lead, now, None, None)?;
         let notification = team_done_notification(&self.parts.team_texts, team, &context)?;
         for (task, status) in transitions {
             self.move_to(&task, team_id, status, &mut look.events)?;

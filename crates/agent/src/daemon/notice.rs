@@ -3,6 +3,11 @@
 //! Every wording is a template under `prompts/harness/run/`; this module chooses one, fills it and splits it into the
 //! title (its first line) and the body.
 
+mod words;
+
+#[cfg(test)]
+pub(crate) mod sample;
+
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use time::UtcOffset;
@@ -15,6 +20,8 @@ use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::state::Timestamp;
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
 use agent_runtime::notify::{InvalidNotification, Notification};
+
+pub(crate) use words::{TaskWords, TaskWordsError, item_line, item_of_notice};
 
 /// Every notice that can be sent to the human.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -97,7 +104,7 @@ impl NoticeKind {
 }
 
 /// The facts about the task and environment needed to lay out a notification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct NoticeContext<'a> {
     /// The repository name.
     pub(super) repo: &'a str,
@@ -117,6 +124,8 @@ pub(super) struct NoticeContext<'a> {
     pub(super) team: Option<&'a TeamId>,
     /// The address of the pull request, if applicable.
     pub(super) pr: Option<&'a str>,
+    /// What the notification says of its task in words.
+    pub(super) words: TaskWords,
 }
 
 /// Formats the optional CLI and model shared by notification and review headers.
@@ -162,29 +171,39 @@ pub(super) fn layout_notification(
         format!("{} {client}", context.agent)
     };
 
-    let mut body = format!(
-        "Repo: {}\nAgent: {agent_str}\nTime: {time_str}\nTask: {}",
-        context.repo, context.task
+    let mut head = format!(
+        "Repo: {}\nTime: {time_str}\nTask: {}\nAgent: {agent_str}\n{}",
+        context.repo,
+        context.words.short_desc(),
+        context.words.id_line()
     );
     if let Some(team) = context.team {
-        body.push_str("\nTeam: ");
-        body.push_str(team.as_str());
+        head.push_str("\nTeam: ");
+        head.push_str(team.as_str());
     }
-    body.push_str("\nStatus: ");
-    body.push_str(status.icon());
-    body.push(' ');
-    body.push_str(status.label());
-    body.push_str("\nNote: ");
-    body.push_str(note);
+    head.push_str("\nStatus: ");
+    head.push_str(status.icon());
+    head.push(' ');
+    head.push_str(status.label());
+    head.push_str("\nNote: ");
+    head.push_str(note);
     if let Some(pr) = context.pr {
-        body.push_str("\nPR: ");
-        body.push_str(pr);
+        head.push_str("\nPR: ");
+        head.push_str(pr);
     }
 
-    if !original_body.is_empty() {
-        body.push_str("\n\n");
-        body.push_str(original_body);
-    }
+    let sections = [
+        Some(head.as_str()),
+        context.words.item(),
+        Some(original_body),
+        context.words.tail(),
+    ];
+    let body = sections
+        .into_iter()
+        .flatten()
+        .filter(|section| !section.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
 
     Notification::new(&title, &body)
 }

@@ -23,6 +23,12 @@ use agent_runtime::text_file::{TextFileError, read_text_file};
 use super::status::{kind_of, round_line};
 use crate::client::{ClientError, Connection};
 
+/// What starts the first line of a task list that names its coordinator.
+const COORDINATOR_PREFIX: &str = "Coordinator:";
+
+/// The byte order mark some editors put at the start of a file; the task list parser does not count it.
+const BYTE_ORDER_MARK: char = '\u{feff}';
+
 /// What the command line of `agent run` says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunInput {
@@ -88,6 +94,15 @@ pub(crate) enum RunError {
     /// The words of the command line do not make a task.
     #[error(transparent)]
     Words(#[from] WordsError),
+    /// `--short-desc` has more than one line: it would be read as task text.
+    #[error("--short-desc is one line of at most 70 characters; it has more than one line")]
+    ShortDescNotOneLine,
+    /// `--short-desc` was given with a task list file, which has its own `Short desc:` line.
+    #[error("--short-desc is for a task given as text: put a `Short desc:` line in the file {path:?} instead")]
+    ShortDescWithFile {
+        /// The file.
+        path: PathBuf,
+    },
     /// The task list file cannot be read.
     #[error("cannot read the task list {path:?}")]
     ReadList {
@@ -298,6 +313,58 @@ fn render_shared(shared: &[SharedAgent]) -> String {
     lines.concat()
 }
 
+/// The words of `agent run` with the task, the last of them, given the header line `Short desc: <desc>` when `desc` is
+/// asked for with `--short-desc`. The line goes after a `Coordinator:` line, which has to be the first.
+///
+/// # Errors
+/// [`RunError::ShortDescWithFile`] when the task is in `file`: its own header says what it is.
+pub(crate) fn words_with_short_desc(
+    words: Vec<String>,
+    file: Option<&Path>,
+    desc: Option<&str>,
+) -> Result<Vec<String>, RunError> {
+    let Some(desc) = desc else {
+        return Ok(words);
+    };
+    if let Some(path) = file {
+        return Err(RunError::ShortDescWithFile {
+            path: path.to_path_buf(),
+        });
+    }
+    if desc.contains(['\n', '\r']) {
+        return Err(RunError::ShortDescNotOneLine);
+    }
+    let mut words = words;
+    // One word is only an agent: the missing task is refused later, with its own message.
+    if words.len() >= 2
+        && let Some(task) = words.last_mut()
+    {
+        *task = task_with_short_desc(task, desc);
+    }
+    Ok(words)
+}
+
+/// The text of a task list `text` with the header line `Short desc: <desc>`: after the first nonblank line when that is
+/// the `Coordinator:` line, which only counts as the first, as the parser reads it, and before everything else.
+fn task_with_short_desc(text: &str, desc: &str) -> String {
+    let line = format!("Short desc: {desc}\n");
+    let body = text.strip_prefix(BYTE_ORDER_MARK).unwrap_or(text);
+    let mut offset = 0;
+    for physical in body.split_inclusive('\n') {
+        offset += physical.len();
+        if physical.trim().is_empty() {
+            continue;
+        }
+        if physical.starts_with(COORDINATOR_PREFIX) {
+            let (head, rest) = body.split_at(offset);
+            let end = if head.ends_with('\n') { "" } else { "\n" };
+            return format!("{head}{end}{line}{rest}");
+        }
+        break;
+    }
+    format!("{line}{body}")
+}
+
 /// The request that starts what `input` says in the repository `directory` is in: nothing is asked of the daemon yet.
 ///
 /// # Errors
@@ -439,3 +506,6 @@ const IDENTITY_EMAIL: &str = "agent@localhost.invalid";
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod short_desc_tests;

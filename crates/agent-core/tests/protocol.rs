@@ -226,6 +226,7 @@ mod protocol_lines {
         let summary = TeamSummary {
             id: "team-20261121-010000-abcd".parse::<TeamId>().unwrap(),
             repo: "repo".parse::<RepoName>().unwrap(),
+            short_desc: None,
             created_at: Timestamp::from_utc(time::OffsetDateTime::UNIX_EPOCH.into()).unwrap(),
             merge: MergeMode::Autopilot,
             items: ItemCounts::default(),
@@ -272,6 +273,7 @@ mod protocol_lines {
         let summary = TeamSummary {
             id: "team-20261121-010000-abcd".parse::<TeamId>().unwrap(),
             repo: "repo".parse::<RepoName>().unwrap(),
+            short_desc: None,
             created_at: Timestamp::from_utc(time::OffsetDateTime::UNIX_EPOCH.into()).unwrap(),
             merge: MergeMode::Autopilot,
             items: ItemCounts::default(),
@@ -341,6 +343,7 @@ mod protocol_lines {
         let summary = TeamSummary {
             id: "team-20261121-010000-abcd".parse::<TeamId>().unwrap(),
             repo: "repo".parse::<RepoName>().unwrap(),
+            short_desc: None,
             created_at: Timestamp::from_utc(time::OffsetDateTime::UNIX_EPOCH.into()).unwrap(),
             merge: MergeMode::Autopilot,
             items: ItemCounts::default(),

@@ -470,7 +470,7 @@ impl Owner {
                     return Ok(());
                 }
                 let now = Timestamp::now(&self.parts.clock)?;
-                match self.notice_context(&lead.task, now, None) {
+                match self.notice_context_for(&lead.task, now, None, None) {
                     Ok(context) => match not_asked(pulls, team_id, &lead.task, &context) {
                         Ok(notification) => match self.locate(&lead.task) {
                             Ok(located) => self.notify(now, &located, &lead.task, notification),
