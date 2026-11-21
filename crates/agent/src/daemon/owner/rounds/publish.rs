@@ -600,19 +600,9 @@ impl Owner {
         }
     }
 
-    /// Updates the pull request `pr` whose items `fixing` were fixed: pushes the branch, tells the reviewers in a comment,
-    /// and takes the finished `joining` items whose branches `ready.tip` contains in with it.
-    async fn update_pull_request(
-        &mut self,
-        site: Site<'_>,
-        (pr, fixing): (&PullRequest, &[ItemId]),
-        joining: &[Joining],
-        ready: &Ready,
-        now: Timestamp,
-    ) -> Result<Attempt, PublishError> {
-        let Site { pulls, team, lead } = site;
-        let member_fixes: Vec<_> = self
-            .parts
+    /// Member branches that must be integrated before the existing pull request can be updated.
+    fn member_fix_branches(&self, team: &TeamId, fixing: &[ItemId], lead: &Lead) -> Vec<Joining> {
+        self.parts
             .state
             .team(team)
             .into_iter()
@@ -629,7 +619,21 @@ impl Owner {
                 | ItemPhase::Approved { .. }
                 | ItemPhase::Done { .. } => None,
             })
-            .collect();
+            .collect()
+    }
+
+    /// Updates the pull request `pr` whose items `fixing` were fixed: pushes the branch, tells the reviewers in a comment,
+    /// and takes the finished `joining` items whose branches `ready.tip` contains in with it.
+    async fn update_pull_request(
+        &mut self,
+        site: Site<'_>,
+        (pr, fixing): (&PullRequest, &[ItemId]),
+        joining: &[Joining],
+        ready: &Ready,
+        now: Timestamp,
+    ) -> Result<Attempt, PublishError> {
+        let Site { pulls, team, lead } = site;
+        let member_fixes = self.member_fix_branches(team, fixing, lead);
         if contained(&ready.git, &member_fixes, &ready.tip).await?.len() != member_fixes.len() {
             return Ok(Attempt::Nothing);
         }

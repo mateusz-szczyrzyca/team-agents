@@ -333,8 +333,7 @@ pub(super) fn ran_since(member: &Member, time: Timestamp) -> bool {
     member.runs().last().is_some_and(|run| run.started_at() >= time)
 }
 
-/// The task of the lead of `team` when a fix pass waits to be given to it: an item is being fixed, the lead waits and
-/// has not started a run since the request for changes.
+/// The task of an assigned fixer that waits and has not started a run since the request for changes.
 pub(super) fn fix_delivery(team: &Team) -> Option<TaskId> {
     team.crew().roster().iter().find_map(|(_, member)| {
         if member.status() != TaskStatus::Waiting {

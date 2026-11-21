@@ -19,7 +19,7 @@ use super::super::{Owner, OwnerError};
 use super::{Announcement, AutopilotNotice, Lead, Pulls};
 
 impl Owner {
-    /// Gives the lead the fix pass that waits for it: its task is queued, and its prompt has the findings.
+    /// Gives the assigned fixer its waiting pass, with the findings in its prompt.
     pub(super) fn deliver_fix_passes(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
