@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::num::{NonZeroU32, TryFromIntError};
 use std::path::Path;
 
+use agent_core::decide::checks::commits::CommitNote;
 use agent_core::decide::checks::markers::Marker;
 use agent_core::decide::checks::{Issue, Subject, TestChange};
 use agent_core::decide::round::AskReason;
@@ -188,6 +189,15 @@ pub(super) struct Questions {
     pub(super) subjects: Vec<Subject>,
 }
 
+/// The findings about commits a question is to ask about, and what the human already said about the item.
+#[derive(Debug, Clone, Default)]
+pub(super) struct CommitQuestion {
+    /// The findings, each with what the human is shown about its commit: all of them are one question.
+    pub(super) notes: Vec<CommitNote>,
+    /// What the human allowed or refused for the item before; it is said in the question, not asked again.
+    pub(super) before: Vec<Subject>,
+}
+
 /// The questions for the `issues` of the round of the team `team`, whose lead is `task`: one for each kind and judge. `reason` says
 /// why the human is asked, and `passes` is what the team used.
 ///
@@ -198,6 +208,22 @@ pub(super) fn questions(
     team: &TeamId,
     task: &TaskId,
     issues: &[Issue],
+    reason: AskReason,
+    passes: u32,
+) -> Result<Questions, ChecksTextError> {
+    questions_with_commits(texts, team, task, issues, &CommitQuestion::default(), reason, passes)
+}
+
+/// The questions for the `issues` of the round and, as one more question, for the findings about commits of `commits`.
+///
+/// # Errors
+/// [`ChecksTextError`].
+pub(super) fn questions_with_commits(
+    texts: &ChecksPrompts,
+    team: &TeamId,
+    task: &TaskId,
+    issues: &[Issue],
+    _commits: &CommitQuestion,
     reason: AskReason,
     passes: u32,
 ) -> Result<Questions, ChecksTextError> {
