@@ -35,6 +35,11 @@ pub struct ItemChecks {
     /// written before this key existed has none.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub refused: BTreeSet<Subject>,
+    /// The head the checks looked at when what the human said about a file became known to them as a decision about
+    /// the commits that were in the round then: an answer given before findings had a subject of their own covers those
+    /// commits and no later one. A file written before this key existed has none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub covered_at: BTreeMap<RepoPath, CommitId>,
 }
 
 /// What a question of the checks covers of the issues the checks found.
@@ -166,6 +171,19 @@ impl ChecksRecord {
             held.refused.extend(refused.iter().cloned());
         }
     }
+
+    /// The heads up to which what the human said about a file covers its commits, for those that have one.
+    #[must_use]
+    pub fn covered_at_of(&self, _items: &[ItemId]) -> BTreeMap<RepoPath, CommitId> {
+        BTreeMap::new()
+    }
+
+    /// Records that what the human said about each of `paths` covers the commits up to `head`; a head recorded before
+    /// stays.
+    pub fn snapshot_covered(&mut self, _items: &[ItemId], _paths: &[RepoPath], _head: &CommitId) {}
+
+    /// Records that the human refused `subjects` for `items`, without an answer to a question.
+    pub fn keep_refused(&mut self, _items: &[ItemId], _subjects: &[Subject]) {}
 
     /// The heads at which the files of `items` were allowed, for those that have one.
     #[must_use]

@@ -112,6 +112,30 @@ pub fn settle(findings: Vec<CommitFinding>, facts: &RoundFacts, said: &Said<'_>)
     settled
 }
 
+/// The findings of a round that a file the human refused before findings had a subject of their own does not cover, and
+/// the subjects of those it does.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Inherited {
+    /// The findings nobody has refused through a file.
+    pub remaining: Vec<CommitFinding>,
+    /// The subjects of the findings a refused file covers: they are kept as refused from now on.
+    pub refused: Vec<Subject>,
+}
+
+/// Takes the findings out that a refused file covers: its commits up to the head it was refused at, all the commits of
+/// the round when no head is known.
+#[must_use]
+pub fn inherit_refusals(
+    findings: Vec<CommitFinding>,
+    _facts: &RoundFacts,
+    _refused_paths: &BTreeMap<RepoPath, Option<CommitId>>,
+) -> Inherited {
+    Inherited {
+        remaining: findings,
+        refused: Vec::new(),
+    }
+}
+
 /// Whether `head` is `commit` or comes after it in the history of the round.
 fn reaches(facts: &RoundFacts, head: &CommitId, commit: &CommitId) -> bool {
     let mut seen: HashSet<&CommitId> = HashSet::new();

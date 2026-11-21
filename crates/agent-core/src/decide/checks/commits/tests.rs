@@ -318,3 +318,51 @@ fn a_finding_that_cannot_be_described_says_what_is_missing() {
         Err(NoteError::NoAuthor { commit: id('3') })
     );
 }
+
+fn refused_paths(rows: &[(&str, Option<char>)]) -> BTreeMap<RepoPath, Option<CommitId>> {
+    rows.iter().map(|(file, head)| (path(file), head.map(id))).collect()
+}
+
+#[test]
+fn a_file_refused_before_findings_had_a_subject_covers_the_commits_up_to_its_head() {
+    let findings = vec![
+        finding('2', "tests/a.rs"),
+        finding('3', "tests/a.rs"),
+        finding('3', "tests/b.rs"),
+    ];
+    struct Case {
+        name: &'static str,
+        refused: BTreeMap<RepoPath, Option<CommitId>>,
+        remaining: Vec<CommitFinding>,
+        refused_subjects: Vec<Subject>,
+    }
+    let cases = [
+        Case {
+            name: "no file was refused",
+            refused: refused_paths(&[]),
+            remaining: findings.clone(),
+            refused_subjects: vec![],
+        },
+        Case {
+            name: "a file refused with no head covers all its commits in the round",
+            refused: refused_paths(&[("tests/a.rs", None)]),
+            remaining: vec![finding('3', "tests/b.rs")],
+            refused_subjects: vec![
+                finding('2', "tests/a.rs").subject(),
+                finding('3', "tests/a.rs").subject(),
+            ],
+        },
+        Case {
+            name: "a file refused at a head covers the commits up to it and not later ones",
+            refused: refused_paths(&[("tests/a.rs", Some('2'))]),
+            remaining: vec![finding('3', "tests/a.rs"), finding('3', "tests/b.rs")],
+            refused_subjects: vec![finding('2', "tests/a.rs").subject()],
+        },
+    ];
+    for case in cases {
+        let inherited = inherit_refusals(findings.clone(), &facts(), &case.refused);
+
+        assert_eq!(inherited.remaining, case.remaining, "{}", case.name);
+        assert_eq!(inherited.refused, case.refused_subjects, "{}", case.name);
+    }
+}

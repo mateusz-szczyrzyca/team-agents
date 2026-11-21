@@ -109,4 +109,65 @@ mod checks_record_commits {
         assert_eq!(record.allowed_of(&[item()]), []);
         assert_eq!(record.refused_of(&[item()]), [commit('b', "tests/a.rs")]);
     }
+
+    fn some_path(text: &str) -> agent_core::repo_path::RepoPath {
+        text.parse().unwrap()
+    }
+
+    fn head(digit: char) -> CommitId {
+        digit.to_string().repeat(40).parse().unwrap()
+    }
+
+    #[test]
+    fn a_snapshot_bounds_what_an_answer_of_an_earlier_daemon_covers_and_is_taken_once() {
+        let mut record = ChecksRecord::default();
+
+        record.snapshot_covered(&[item(), other_item()], &[some_path("tests/a.rs")], &head('1'));
+        record.snapshot_covered(
+            &[item()],
+            &[some_path("tests/a.rs"), some_path("tests/b.rs")],
+            &head('2'),
+        );
+
+        assert_eq!(
+            record.covered_at_of(&[item()]),
+            std::collections::BTreeMap::from([
+                (some_path("tests/a.rs"), head('1')),
+                (some_path("tests/b.rs"), head('2'))
+            ])
+        );
+        assert_eq!(
+            record.covered_at_of(&[other_item()]),
+            std::collections::BTreeMap::from([(some_path("tests/a.rs"), head('1'))])
+        );
+    }
+
+    #[test]
+    fn a_refusal_is_kept_without_an_answer_and_leaves_the_question_and_the_passes_alone() {
+        let mut record: ChecksRecord = serde_json::from_str(BEFORE).unwrap();
+
+        record.keep_refused(&[item()], &[commit('a', "tests/a.rs")]);
+
+        assert_eq!(record.refused_of(&[item()]), [commit('a', "tests/a.rs")]);
+        assert_eq!(record.passes_of(&[item()]), 1);
+        assert!(record.asked.is_some());
+    }
+
+    #[test]
+    fn a_refused_file_answered_at_a_head_keeps_the_head_it_was_refused_at() {
+        let mut record = ChecksRecord::default();
+        record.basis = Some(agent_core::state::Basis {
+            head: head('4'),
+            covers: agent_core::state::Covers::Everything,
+        });
+        let refused = Subject::Path(some_path("tests/a.rs"));
+
+        record.answered(&[item()], &[], std::slice::from_ref(&refused));
+
+        assert_eq!(record.refused_of(&[item()]), [refused]);
+        assert_eq!(
+            record.covered_at_of(&[item()]),
+            std::collections::BTreeMap::from([(some_path("tests/a.rs"), head('4'))])
+        );
+    }
 }
