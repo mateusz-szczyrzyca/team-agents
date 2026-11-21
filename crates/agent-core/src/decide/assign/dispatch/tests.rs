@@ -1,0 +1,70 @@
+//! Decisions distinguish missing capability from unavailable qualified crew.
+
+use super::*;
+use crate::state::fixtures::{at, inv, member, normal, task, team_id};
+use crate::state::{Crew, MergeMode, TaskListText, TeamMembers};
+use crate::status::TaskStatus;
+
+#[test]
+fn ready_items_use_members_before_the_only_fitting_coordinator_or_wait() {
+    for (required, member_tier, coordinator_tier, busy, expected) in [
+        ("normal", Tier::Normal, Tier::Investigator, false, "member"),
+        ("worker", Tier::Normal, Tier::Investigator, false, "member"),
+        ("investigator", Tier::Investigator, Tier::Investigator, false, "member"),
+        ("investigator", Tier::Normal, Tier::Investigator, false, "coordinator"),
+        ("investigator", Tier::Normal, Tier::Normal, false, "absent"),
+        ("normal", Tier::Normal, Tier::Investigator, true, "busy"),
+    ] {
+        let participant = |tier, name| match tier {
+            Tier::Investigator => inv(name),
+            Tier::Normal => normal(name),
+            Tier::Worker => crate::state::fixtures::worker(name),
+        };
+        let mut team = Team::new(
+            team_id(1),
+            "example".parse().unwrap(),
+            at(0),
+            MergeMode::Autopilot,
+            TaskListText::new(format!("Brief.\n\n1. Feature\n[ ] 1.1 Item\nTier: {required}\n")).unwrap(),
+            Crew::team(TeamMembers {
+                coordinator: member(1, participant(coordinator_tier, "lead")),
+                members: vec![member(2, participant(member_tier, "member"))],
+                workers: vec![],
+            })
+            .unwrap(),
+        );
+        if busy {
+            team.find_mut(&task(2))
+                .unwrap()
+                .1
+                .transition(TaskStatus::Running)
+                .unwrap();
+        }
+        let item = "1.1".parse().unwrap();
+        let chosen = dispatch(&team);
+        let wanted = match expected {
+            "member" => Dispatch {
+                assigned: vec![(item, participant(member_tier, "member"))],
+                waiting: vec![],
+            },
+            "coordinator" => Dispatch {
+                assigned: vec![(item, participant(coordinator_tier, "lead"))],
+                waiting: vec![],
+            },
+            "absent" | "busy" => Dispatch {
+                assigned: vec![],
+                waiting: vec![Waiting {
+                    item,
+                    required: required.parse().unwrap(),
+                    reason: if expected == "absent" {
+                        WaitReason::Absent
+                    } else {
+                        WaitReason::Busy
+                    },
+                }],
+            },
+            _ => panic!("known case"),
+        };
+        assert_eq!(chosen, wanted, "{required}, {member_tier}, {coordinator_tier}, {busy}");
+    }
+}
