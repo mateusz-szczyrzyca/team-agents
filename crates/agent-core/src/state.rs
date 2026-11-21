@@ -358,7 +358,7 @@ impl State {
     ///
     /// # Errors
     /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
-    /// `holder` is in its team, or a run of it is going.
+    /// `holder` is of a lower tier than the agent that holds it or is in its team, or a run of it is going.
     pub fn hand_over_task(&mut self, task: &TaskId, holder: Participant, at: Timestamp) -> Result<(), HandOverError> {
         let no_task = || HandOverError::NoTask { task: task.clone() };
         let team = self
@@ -381,6 +381,15 @@ impl State {
         }
         if held_by == holder {
             return Err(HandOverError::SameHolder { task: task.clone() });
+        }
+        // A task is never given to a lower tier; for a solo agent's, a coordinator's or a member's task, the tiers
+        // left are the ones the crew allows it.
+        if crate::decide::replacement::rank(holder.tier()) < crate::decide::replacement::rank(held_by.tier()) {
+            return Err(HandOverError::LowerTier {
+                task: task.clone(),
+                holder: holder.tier(),
+                held: held_by.tier(),
+            });
         }
         let in_team = team
             .crew()
