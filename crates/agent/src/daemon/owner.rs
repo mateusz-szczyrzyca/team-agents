@@ -980,7 +980,6 @@ impl Owner {
         self.release_deferred_target(&task);
         self.cancels.remove(&task);
         self.holds.remove(&task);
-        self.task_plans.remove(&task);
         let result = match outcome {
             Outcome::Verdict(verdict) => match *verdict {
                 RunVerdict::Finished(run) => self.finished(&task, *run).await,
