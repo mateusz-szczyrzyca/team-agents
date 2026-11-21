@@ -5,7 +5,7 @@
 //! the team for it; what they say is kept by the commit and the path for the item until it is closed, and the same
 //! finding is neither asked nor sent back again. A new commit, or a new path, is a new finding.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use super::{Issue, RoundFacts, Subject};
 use crate::repo_path::RepoPath;
@@ -47,10 +47,21 @@ pub struct Findings {
 /// Tells the issues about a commit from the others.
 #[must_use]
 pub fn split(issues: Vec<Issue>) -> Findings {
-    Findings {
-        commits: Vec::new(),
-        rest: issues,
+    let mut found = Findings::default();
+    for issue in issues {
+        match issue {
+            Issue::RedTestEdited { path, red, edit } => found.commits.push(CommitFinding {
+                commit: edit,
+                path,
+                red,
+            }),
+            other @ (Issue::TestChanged { .. }
+            | Issue::ProtectedChanged { .. }
+            | Issue::NoTests
+            | Issue::Marker { .. }) => found.rest.push(other),
+        }
     }
+    found
 }
 
 /// What was said about the findings of the item before.
@@ -78,11 +89,45 @@ pub struct Settled {
 
 /// Which of the `findings` of the round `facts` still need the human.
 #[must_use]
-pub fn settle(findings: Vec<CommitFinding>, _facts: &RoundFacts, _said: &Said<'_>) -> Settled {
-    Settled {
-        ask: findings,
-        inherited: Vec::new(),
+pub fn settle(findings: Vec<CommitFinding>, facts: &RoundFacts, said: &Said<'_>) -> Settled {
+    let mut settled = Settled::default();
+    for finding in findings {
+        let subject = finding.subject();
+        if said.allowed.contains(&subject)
+            || said.refused.contains(&subject)
+            || said.task_list.iter().any(|allowance| allowance.matches(&finding.path))
+        {
+            continue;
+        }
+        let covered = said.paths.get(&finding.path).is_some_and(|head| match head {
+            Some(head) => reaches(facts, head, &finding.commit),
+            None => true,
+        });
+        if covered {
+            settled.inherited.push(subject);
+        } else {
+            settled.ask.push(finding);
+        }
     }
+    settled
+}
+
+/// Whether `head` is `commit` or comes after it in the history of the round.
+fn reaches(facts: &RoundFacts, head: &CommitId, commit: &CommitId) -> bool {
+    let mut seen: HashSet<&CommitId> = HashSet::new();
+    let mut pending = vec![head];
+    while let Some(next) = pending.pop() {
+        if next == commit {
+            return true;
+        }
+        if !seen.insert(next) {
+            continue;
+        }
+        if let Some(known) = facts.commits.iter().find(|known| known.id == *next) {
+            pending.extend(known.parents.iter());
+        }
+    }
+    false
 }
 
 #[cfg(test)]
