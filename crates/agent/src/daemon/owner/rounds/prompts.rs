@@ -202,7 +202,10 @@ async fn round_sections_for(
             };
             Ok(text.map(Addition::Append))
         }
-        (Role::Member | Role::Worker, _) => Ok(None),
+        (Role::Member | Role::Worker, Some(Why::Gate(text))) => Ok(Some(Addition::Append(text.clone()))),
+        (Role::Member | Role::Worker, _) => Ok(fix_pass(ctx, texts, found, matches!(why, Some(Why::Woken)))
+            .await?
+            .map(Addition::Append)),
     }
 }
 

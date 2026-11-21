@@ -336,28 +336,28 @@ pub(super) fn ran_since(member: &Member, time: Timestamp) -> bool {
 /// The task of the lead of `team` when a fix pass waits to be given to it: an item is being fixed, the lead waits and
 /// has not started a run since the request for changes.
 pub(super) fn fix_delivery(team: &Team) -> Option<TaskId> {
-    let roster = team.crew().roster();
-    let (_, lead) = roster.first()?;
-    if lead.status() != TaskStatus::Waiting {
-        return None;
-    }
-    let requested = team
-        .items()
-        .iter()
-        .filter_map(|progress| match progress.phase() {
-            ItemPhase::Fixing { assignee, .. } if assignee.as_str() == lead.agent().name() => progress
-                .fix_passes()
-                .last()
-                .and_then(|pass| pass.requested_by.iter().filter_map(changes_requested_at).max()),
-            ItemPhase::Fixing { .. }
-            | ItemPhase::Pending
-            | ItemPhase::InProgress { .. }
-            | ItemPhase::InReview { .. }
-            | ItemPhase::Approved { .. }
-            | ItemPhase::Done { .. } => None,
-        })
-        .max()?;
-    (!ran_since(lead, requested)).then(|| lead.task().clone())
+    team.crew().roster().iter().find_map(|(_, member)| {
+        if member.status() != TaskStatus::Waiting {
+            return None;
+        }
+        let requested = team
+            .items()
+            .iter()
+            .filter_map(|progress| match progress.phase() {
+                ItemPhase::Fixing { assignee, .. } if assignee.as_str() == member.agent().name() => progress
+                    .fix_passes()
+                    .last()
+                    .and_then(|pass| pass.requested_by.iter().filter_map(changes_requested_at).max()),
+                ItemPhase::Fixing { .. }
+                | ItemPhase::Pending
+                | ItemPhase::InProgress { .. }
+                | ItemPhase::InReview { .. }
+                | ItemPhase::Approved { .. }
+                | ItemPhase::Done { .. } => None,
+            })
+            .max()?;
+        (!ran_since(member, requested)).then(|| member.task().clone())
+    })
 }
 
 /// The review tasks of `team` that wait for a review to be asked of them: a review is pending, the task waits and has
