@@ -1302,7 +1302,10 @@ async fn a_graceful_stop_and_restart_snapshots_the_worktree_shows_it_in_round_st
     let mut connection = crate::client::Connection::connect(&rig.home.socket_file())
         .await
         .unwrap();
-    let activity = crate::commands::status::Activity::new(rig.home.clone(), time::UtcOffset::UTC);
+    let activity = crate::commands::status::Activity::new(
+        rig.home.clone(),
+        agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+    );
     let mut rendered = Vec::new();
     crate::commands::status::status_active(
         &mut connection,

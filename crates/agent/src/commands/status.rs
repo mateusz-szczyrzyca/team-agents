@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use agent_core::history::HistoryHealth;
 use agent_core::ids::{RoundId, TaskId};
 use agent_core::kinds::Role;
+use agent_core::local_time::Zone;
 use agent_core::plan::judge::JudgementState;
 use agent_core::protocol::{
     Client, Command, PlanStepSummary, Reply, RoundDetail, ShowRequest, StatusRequest, Target, TeamSummary,
@@ -52,12 +53,12 @@ pub(crate) struct Activity {
     /// The home whose runs are looked at.
     home: Home,
     /// The machine's offset from UTC.
-    offset: UtcOffset,
+    offset: Zone,
 }
 
 impl Activity {
     /// The activity of the tasks of `home`, told in the local time `offset` gives.
-    pub(crate) const fn new(home: Home, offset: UtcOffset) -> Self {
+    pub(crate) const fn new(home: Home, offset: Zone) -> Self {
         Self { home, offset }
     }
 
@@ -113,16 +114,18 @@ impl Activity {
     }
 }
 
-/// `at` as a time of day, `HH:MM:SS`, at `offset` from UTC.
-pub(crate) fn clock_time(at: SystemTime, offset: UtcOffset) -> String {
-    let local = time::OffsetDateTime::from(at).to_offset(offset);
-    format!("{:02}:{:02}:{:02}", local.hour(), local.minute(), local.second())
+/// `at` as a person reads it in `zone`: the date, the time with its seconds and the zone.
+pub(crate) fn clock_time(at: SystemTime, zone: Zone) -> String {
+    match Timestamp::from_utc(time::UtcDateTime::from(at)) {
+        Ok(at) => zone.stamp(at),
+        // A time the state cannot hold (outside the years 0 to 9999) is shown as the system's own text.
+        Err(_) => time::OffsetDateTime::from(at).to_string(),
+    }
 }
 
-/// `at` as a time of day, `HH:MM:SS`, at `offset` from UTC: the time of a recorded activity.
-pub(crate) fn clock_of(at: Timestamp, offset: UtcOffset) -> String {
-    let local = at.as_utc().to_offset(offset);
-    format!("{:02}:{:02}:{:02}", local.hour(), local.minute(), local.second())
+/// `at` as a person reads it in `zone`: the time of a recorded activity.
+pub(crate) fn clock_of(at: Timestamp, zone: Zone) -> String {
+    zone.stamp(at)
 }
 
 /// Asks the daemon for the status of `target` (every team without one) and writes it to `out`; the tasks that run say
@@ -178,7 +181,7 @@ pub(crate) async fn status(
 pub(crate) async fn status_investigators(
     connection: &mut Connection,
     home: &Home,
-    offset: UtcOffset,
+    offset: Zone,
     out: &mut impl Write,
 ) -> Result<(), StatusError> {
     let settings = Settings::load(home).await.map_err(StatusError::Settings)?;
@@ -350,7 +353,7 @@ pub(crate) fn render(teams: &[TeamSummary]) -> String {
 /// The teams as text: a line for each team, and under it a line for each of its tasks, with what `activity` says of each
 /// task that runs after its status; the rounds say nothing beyond their lines.
 pub(crate) fn render_active(teams: &[TeamSummary], activity: &dyn Fn(&TaskId) -> Option<String>) -> String {
-    render_at(teams, activity, &|_| String::new(), UtcOffset::UTC)
+    render_at(teams, activity, &|_| String::new(), Zone::Fixed(UtcOffset::UTC))
 }
 
 /// [`render_active`] with what `rounds` says of each round after its line, the times in UTC: what the tests of the
@@ -361,7 +364,7 @@ fn render_with(
     activity: &dyn Fn(&TaskId) -> Option<String>,
     rounds: &dyn Fn(&Round) -> String,
 ) -> String {
-    render_at(teams, activity, rounds, UtcOffset::UTC)
+    render_at(teams, activity, rounds, Zone::Fixed(UtcOffset::UTC))
 }
 
 /// [`render_active`] with what `rounds` says of each round after its line, the times of the recorded activities told at
@@ -370,7 +373,7 @@ fn render_at(
     teams: &[TeamSummary],
     activity: &dyn Fn(&TaskId) -> Option<String>,
     rounds: &dyn Fn(&Round) -> String,
-    offset: UtcOffset,
+    offset: Zone,
 ) -> String {
     render_in(teams, View::Full, activity, rounds, offset)
 }
@@ -378,7 +381,13 @@ fn render_at(
 /// What a view of the status prints, the running view being the same teams with their open rounds only.
 #[cfg(test)]
 pub(crate) fn render_running(teams: &[TeamSummary]) -> String {
-    render_in(teams, View::Running, &|_| None, &|_| String::new(), UtcOffset::UTC)
+    render_in(
+        teams,
+        View::Running,
+        &|_| None,
+        &|_| String::new(),
+        Zone::Fixed(UtcOffset::UTC),
+    )
 }
 
 /// Which view of the status is printed: the full one, or the running one that limits the round lines to the open ones.
@@ -395,7 +404,7 @@ fn render_in(
     view: View,
     activity: &dyn Fn(&TaskId) -> Option<String>,
     rounds: &dyn Fn(&Round) -> String,
-    offset: UtcOffset,
+    offset: Zone,
 ) -> String {
     if teams.is_empty() {
         return NO_TEAMS.to_owned();

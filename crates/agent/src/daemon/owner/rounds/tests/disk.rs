@@ -490,7 +490,10 @@ async fn agent_status_running_names_the_free_space_below_the_limit() {
     let mut connection = crate::client::Connection::connect(&rig.home.socket_file())
         .await
         .unwrap();
-    let activity = crate::commands::status::Activity::new(rig.home.clone(), time::UtcOffset::UTC);
+    let activity = crate::commands::status::Activity::new(
+        rig.home.clone(),
+        agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+    );
     let mut out = Vec::new();
     crate::commands::status::status_running(&mut connection, &activity, &mut out)
         .await

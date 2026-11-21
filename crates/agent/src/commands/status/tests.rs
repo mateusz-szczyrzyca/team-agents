@@ -1,4 +1,5 @@
 use std::num::NonZeroU32;
+use time::UtcOffset;
 
 use agent_core::plan::judge::JudgementState;
 use agent_core::protocol::PlanStepSummary;
@@ -239,7 +240,7 @@ async fn the_investigator_view_asks_the_daemon_and_lists_the_configured_investig
     let mut connection = Connection::connect(daemon.socket()).await.unwrap();
     let mut out = Vec::new();
 
-    status_investigators(&mut connection, &home, UtcOffset::UTC, &mut out)
+    status_investigators(&mut connection, &home, Zone::Fixed(UtcOffset::UTC), &mut out)
         .await
         .unwrap();
 
@@ -248,7 +249,7 @@ async fn the_investigator_view_asks_the_daemon_and_lists_the_configured_investig
         investigators::render(
             &listed,
             &["inv-codex".parse().unwrap(), "inv-gemini".parse().unwrap()],
-            UtcOffset::UTC
+            Zone::Fixed(UtcOffset::UTC)
         )
     );
     assert_eq!(
@@ -271,7 +272,7 @@ async fn the_investigator_view_says_why_a_configuration_it_cannot_read_lists_nob
     let home = Home::new(&AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap());
     let mut connection = Connection::connect(daemon.socket()).await.unwrap();
 
-    let error = status_investigators(&mut connection, &home, UtcOffset::UTC, &mut Vec::new())
+    let error = status_investigators(&mut connection, &home, Zone::Fixed(UtcOffset::UTC), &mut Vec::new())
         .await
         .unwrap_err();
 
@@ -387,7 +388,7 @@ team-20261111-153000-t5m8  team-agents  autopilot  0 pending, 1 in progress, 0 i
 /// The activity of a home in `dir`, which has no runs.
 fn no_activity(dir: &std::path::Path) -> Activity {
     let home = Home::new(&AbsolutePath::from_str(dir.to_str().unwrap()).unwrap());
-    Activity::new(home, UtcOffset::UTC)
+    Activity::new(home, Zone::Fixed(UtcOffset::UTC))
 }
 
 // Rule: a task that runs says when it was last active; a task that does not run says nothing of it.
@@ -418,8 +419,8 @@ fn the_last_activity_is_told_as_the_local_time_of_day() {
     let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_794_694_211);
     let warsaw = UtcOffset::from_hms(1, 0, 0).unwrap();
 
-    assert_eq!(clock_time(at, UtcOffset::UTC), "22:10:11");
-    assert_eq!(clock_time(at, warsaw), "23:10:11");
+    assert_eq!(clock_time(at, Zone::Fixed(UtcOffset::UTC)), "2026-11-14 22:10:11 +00:00");
+    assert_eq!(clock_time(at, Zone::Fixed(warsaw)), "2026-11-14 23:10:11 +01:00");
 }
 
 // Rule: the last activity of a running task is read from the output of its runs in the home.
@@ -451,7 +452,10 @@ async fn the_status_reads_the_last_activity_of_a_running_task_from_the_home() {
     status_active(&mut connection, None, &activity, &mut out).await.unwrap();
 
     let text = String::from_utf8(out).unwrap();
-    let expected = format!("running, last activity {}\n", clock_time(changed, UtcOffset::UTC));
+    let expected = format!(
+        "running, last activity {}\n",
+        clock_time(changed, Zone::Fixed(UtcOffset::UTC))
+    );
     assert!(text.contains(&expected), "{text}");
 }
 
@@ -697,7 +701,7 @@ fn disk_line_appears_below_limit_and_not_above() {
     let dir = tempfile::tempdir().unwrap();
     let abs = agent_core::config::AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap();
     let home = Home::new(&abs);
-    let activity = Activity::new(home.clone(), time::UtcOffset::UTC);
+    let activity = Activity::new(home.clone(), Zone::Fixed(UtcOffset::UTC));
 
     std::fs::write(home.free_space_file(), (50 * 1024 * 1024 * 1024u64).to_string()).unwrap();
     assert_eq!(
@@ -779,7 +783,7 @@ fn a_reviewers_line_says_what_it_did_or_does_rather_than_that_it_waits() {
                 ),
             ],
             None,
-            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 19:15:50",
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 2026-11-11 19:15:50 +00:00",
         ),
         (
             vec![review_activity(
@@ -790,7 +794,7 @@ fn a_reviewers_line_says_what_it_did_or_does_rather_than_that_it_waits() {
                 &finished(at(30)),
             )],
             None,
-            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 19:15:30",
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:30 +00:00",
         ),
         (
             vec![review_activity(
@@ -815,7 +819,7 @@ fn a_reviewers_line_says_what_it_did_or_does_rather_than_that_it_waits() {
                 },
             )],
             None,
-            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: the human stopped it",
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: the human stopped it",
         ),
         (
             vec![review_activity(
@@ -831,7 +835,7 @@ fn a_reviewers_line_says_what_it_did_or_does_rather_than_that_it_waits() {
                 },
             )],
             None,
-            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: the run showed no activity for too long",
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: the run showed no activity for too long",
         ),
     ];
     for (activities, running, line) in tables {
@@ -865,7 +869,7 @@ fn the_ordinal_of_a_review_counts_only_the_reviews_this_investigator_gave_for_th
 
     assert_eq!(
         reviewer_line(4, activities),
-        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 19:15:30"
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:30 +00:00"
     );
 }
 
@@ -940,7 +944,7 @@ fn a_review_that_ended_without_a_report_says_when_and_why_it_stopped() {
 
         assert_eq!(
             reviewer_line(4, activities),
-            format!("  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: {reason}")
+            format!("  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: {reason}")
         );
     }
 }
@@ -991,7 +995,7 @@ fn a_review_that_failed_says_the_end_of_its_run() {
 
         assert_eq!(
             reviewer_line(4, activities),
-            format!("  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: {reason}")
+            format!("  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: {reason}")
         );
     }
 }
@@ -1070,7 +1074,7 @@ fn a_reviewers_ordinal_leaves_out_a_review_that_ended_without_its_report() {
 
     assert_eq!(
         reviewer_line(4, activities),
-        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 19:15:50"
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:50 +00:00"
     );
 }
 
@@ -1103,7 +1107,7 @@ fn a_verification_asked_in_the_second_of_the_first_review_is_its_second_review()
 
     assert_eq!(
         reviewer_line(4, activities),
-        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 19:15:40"
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 2026-11-11 19:15:40 +00:00"
     );
 }
 
@@ -1138,7 +1142,7 @@ fn an_abandoned_second_opinion_says_the_reason_the_daemon_recorded() {
         assert_eq!(
             reviewer_line(4, activities),
             format!(
-                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: its second opinion was abandoned: {reason}"
+                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: its second opinion was abandoned: {reason}"
             )
         );
     }

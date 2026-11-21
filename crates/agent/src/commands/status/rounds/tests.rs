@@ -1,6 +1,7 @@
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::str::FromStr;
+use time::UtcOffset;
 
 use agent_core::config::AbsolutePath;
 use agent_core::history::{
@@ -69,21 +70,27 @@ fn a_round_that_goes_on_says_where_its_work_is_and_when_it_started() {
     let round = round_of(&rounds_state(), 2);
 
     assert_eq!(
-        suffix(&round, Some(RoundWork::PullDraft), warsaw()),
-        ", PR draft  started 11-11-2026 20:15"
+        suffix(&round, Some(RoundWork::PullDraft), Zone::Fixed(warsaw())),
+        ", PR draft  started 2026-11-11 20:15 +01:00"
     );
     assert_eq!(
-        suffix(&round, Some(RoundWork::OnlyLocal), UtcOffset::UTC),
-        ", only local  started 11-11-2026 19:15"
+        suffix(&round, Some(RoundWork::OnlyLocal), Zone::Fixed(UtcOffset::UTC)),
+        ", only local  started 2026-11-11 19:15 +00:00"
     );
-    assert_eq!(suffix(&round, None, UtcOffset::UTC), "  started 11-11-2026 19:15");
+    assert_eq!(
+        suffix(&round, None, Zone::Fixed(UtcOffset::UTC)),
+        "  started 2026-11-11 19:15 +00:00"
+    );
 }
 
 #[test]
 fn a_round_that_is_closed_says_when_it_started_and_how_long_it_took() {
     let round = round_of(&rounds_state(), 1);
 
-    assert_eq!(suffix(&round, None, warsaw()), "  started 11-11-2026 20:15, took 31s");
+    assert_eq!(
+        suffix(&round, None, Zone::Fixed(warsaw())),
+        "  started 2026-11-11 20:15 +01:00, took 31s"
+    );
 }
 
 // Rule: the day is the local one: a round opened late in the evening in UTC started the next day in Warsaw.
@@ -93,10 +100,13 @@ fn the_day_a_round_started_is_the_local_day() {
     let round = closed_after(4 * 3600 + 15 * 60, 60);
 
     assert_eq!(
-        suffix(&round, None, UtcOffset::UTC),
-        "  started 11-11-2026 23:30, took 1m"
+        suffix(&round, None, Zone::Fixed(UtcOffset::UTC)),
+        "  started 2026-11-11 23:30 +00:00, took 1m"
     );
-    assert_eq!(suffix(&round, None, warsaw()), "  started 12-11-2026 00:30, took 1m");
+    assert_eq!(
+        suffix(&round, None, Zone::Fixed(warsaw())),
+        "  started 2026-11-12 00:30 +01:00, took 1m"
+    );
 }
 
 #[test]
@@ -218,9 +228,13 @@ async fn running(dir: &Path) -> (String, Vec<Command>) {
     let mut connection = Connection::connect(daemon.socket()).await.unwrap();
     let mut out = Vec::new();
 
-    status_running(&mut connection, &Activity::new(home(dir), warsaw()), &mut out)
-        .await
-        .unwrap();
+    status_running(
+        &mut connection,
+        &Activity::new(home(dir), Zone::Fixed(warsaw())),
+        &mut out,
+    )
+    .await
+    .unwrap();
 
     let commands = daemon.requests().into_iter().map(|request| request.command).collect();
     (String::from_utf8(out).unwrap(), commands)
@@ -238,7 +252,7 @@ async fn a_round_whose_pull_request_was_opened_and_is_not_ready_is_a_draft() {
         text,
         "\
 team-20261111-153000-t5m8  team-agents  autopilot  1 pending, 1 in progress, 0 in review, 0 approved, 0 done
-  round-20261111-153002-q1w2  item 1.2  open, PR draft  started 11-11-2026 20:15
+  round-20261111-153002-q1w2  item 1.2  open, PR draft  started 2026-11-11 20:15 +01:00
   task-20261111-153001-k3x9  coordinator  inv-opus   queued
   task-20261111-153002-k3x9  member       claude-1   queued
   task-20261111-153003-k3x9  worker       glm-1      queued
@@ -266,7 +280,7 @@ async fn a_round_with_no_pull_request_in_the_history_is_only_local() {
 
     assert_eq!(
         text.lines().nth(1),
-        Some("  round-20261111-153002-q1w2  item 1.2  open, only local  started 11-11-2026 20:15")
+        Some("  round-20261111-153002-q1w2  item 1.2  open, only local  started 2026-11-11 20:15 +01:00")
     );
 }
 
@@ -280,7 +294,7 @@ async fn without_a_history_the_status_says_that_it_cannot_tell_a_draft_from_loca
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines[1],
-        "  round-20261111-153002-q1w2  item 1.2  open, only local or PR draft  started 11-11-2026 20:15"
+        "  round-20261111-153002-q1w2  item 1.2  open, only local or PR draft  started 2026-11-11 20:15 +01:00"
     );
     let last = lines.last().unwrap();
     assert!(
@@ -302,7 +316,7 @@ async fn the_status_of_every_team_says_how_long_its_closed_rounds_took() {
     status_active(
         &mut connection,
         None,
-        &Activity::new(home(dir.path()), warsaw()),
+        &Activity::new(home(dir.path()), Zone::Fixed(warsaw())),
         &mut out,
     )
     .await
@@ -312,8 +326,8 @@ async fn the_status_of_every_team_says_how_long_its_closed_rounds_took() {
     assert_eq!(
         text.lines().collect::<Vec<_>>()[1..3],
         [
-            "  round-20261111-153001-q1w2  item 1.1  closed, abandoned  started 11-11-2026 20:15, took 31s",
-            "  round-20261111-153002-q1w2  item 1.2  open, only local  started 11-11-2026 20:15",
+            "  round-20261111-153001-q1w2  item 1.1  closed, abandoned  started 2026-11-11 20:15 +01:00, took 31s",
+            "  round-20261111-153002-q1w2  item 1.2  open, only local  started 2026-11-11 20:15 +01:00",
         ]
     );
     assert_eq!(daemon.requests().len(), 2);
@@ -336,7 +350,7 @@ async fn a_status_with_no_round_that_goes_on_reads_no_history() {
     status_active(
         &mut connection,
         None,
-        &Activity::new(home(dir.path()), warsaw()),
+        &Activity::new(home(dir.path()), Zone::Fixed(warsaw())),
         &mut out,
     )
     .await
@@ -391,9 +405,12 @@ fn unanswered_opinions_show_the_finding_investigator_assignment_time_and_free_wa
             failure: None,
         }],
     );
-    assert_eq!(opinion_waits(&detail, warsaw()), include_str!("opinions.golden"));
+    assert_eq!(
+        opinion_waits(&detail, Zone::Fixed(warsaw())),
+        include_str!("opinions.golden")
+    );
     detail.opinions.clear();
-    assert_eq!(opinion_waits(&detail, warsaw()), "");
+    assert_eq!(opinion_waits(&detail, Zone::Fixed(warsaw())), "");
     let mut legacy = serde_json::to_value(&detail).unwrap();
     legacy.as_object_mut().unwrap().remove("opinion_attempts");
     assert_eq!(
@@ -430,9 +447,13 @@ async fn idle_round_lines_and_details_say_what_the_daemon_waits_for() {
     });
     let mut connection = Connection::connect(daemon.socket()).await.unwrap();
     let mut out = Vec::new();
-    status_running(&mut connection, &Activity::new(home(dir.path()), warsaw()), &mut out)
-        .await
-        .unwrap();
+    status_running(
+        &mut connection,
+        &Activity::new(home(dir.path()), Zone::Fixed(warsaw())),
+        &mut out,
+    )
+    .await
+    .unwrap();
     let text = String::from_utf8(out).unwrap();
     assert!(
         text.lines()

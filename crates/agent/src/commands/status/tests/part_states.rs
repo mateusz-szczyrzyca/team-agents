@@ -3,6 +3,7 @@
 use super::*;
 use crate::fixtures::{at, team_state};
 use agent_core::protocol::{Command, Frame, Reply, Response};
+use time::UtcOffset;
 
 /// The sample team with its item 1.1 split into `members` parts, each depending on the parts before it.
 fn split_team(members: usize) -> agent_core::state::Team {
@@ -262,7 +263,7 @@ fn no_activity(dir: &std::path::Path) -> Activity {
             .parse::<agent_core::config::AbsolutePath>()
             .unwrap(),
     );
-    Activity::new(home, UtcOffset::UTC)
+    Activity::new(home, Zone::Fixed(UtcOffset::UTC))
 }
 
 /// Serves one connection of a daemon that speaks every protocol: it answers a status request with `summary` and the

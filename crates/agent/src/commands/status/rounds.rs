@@ -8,13 +8,13 @@ use std::collections::HashMap;
 
 use agent_core::history::Record;
 use agent_core::ids::RoundId;
+use agent_core::local_time::Zone;
 use agent_core::protocol::TeamSummary;
 use agent_core::round_work::{DraftPull, RoundWork, draft_pull, round_work};
 use agent_core::state::{Round, RoundLife};
 use agent_runtime::history::Reader;
 use agent_runtime::process::error_chain;
 use agent_runtime::store::Home;
-use time::UtcOffset;
 
 use super::{Activity, StatusError, round_detail};
 use crate::client::Connection;
@@ -41,7 +41,7 @@ pub(super) struct Told {
     /// The findings waiting for independent investigators.
     opinions: HashMap<RoundId, String>,
     /// The machine's offset from UTC: the times are local.
-    offset: UtcOffset,
+    offset: Zone,
     /// Why the history could not say whether a draft is open, when it could not.
     unread: Option<String>,
 }
@@ -152,23 +152,15 @@ pub(super) async fn told(
 
 /// What follows the line of `round`: where its work is, when it started in the local time `offset` gives and, for a
 /// round that is closed, how long it took.
-fn suffix(round: &Round, work: Option<RoundWork>, offset: UtcOffset) -> String {
+fn suffix(round: &Round, work: Option<RoundWork>, offset: Zone) -> String {
     let work = work.map_or_else(String::new, |work| format!(", {work}"));
-    let opened = round.opened_at().as_utc();
-    let local = opened.to_offset(offset);
-    let started = format!(
-        "started {:02}-{:02}-{:04} {:02}:{:02}",
-        local.day(),
-        u8::from(local.month()),
-        local.year(),
-        local.hour(),
-        local.minute()
-    );
+    let opened = round.opened_at();
+    let started = format!("started {}", offset.stamp_minute(opened));
     let length = match round.life() {
         RoundLife::Open => String::new(),
         RoundLife::Closed { at, .. } => {
             // A round is never closed before it was opened: the state refuses it when it is read.
-            let seconds = u64::try_from((at.as_utc() - opened).whole_seconds()).unwrap_or_default();
+            let seconds = u64::try_from((at.as_utc() - opened.as_utc()).whole_seconds()).unwrap_or_default();
             format!(", took {}", took(seconds))
         }
     };
@@ -193,7 +185,7 @@ fn took(seconds: u64) -> String {
 }
 
 /// Describes each unanswered opinion independently of the round's general work label.
-fn opinion_waits(detail: &agent_core::protocol::RoundDetail, offset: UtcOffset) -> String {
+fn opinion_waits(detail: &agent_core::protocol::RoundDetail, offset: Zone) -> String {
     use agent_core::state::OpinionStage;
     let mut text = String::new();
     for (number, opinion) in &detail.opinions {
@@ -207,15 +199,7 @@ fn opinion_waits(detail: &agent_core::protocol::RoundDetail, offset: UtcOffset) 
                     .and_then(|attempt| attempt.asked_at);
                 let time = match since {
                     Some(at) => {
-                        let at = at.as_utc().to_offset(offset);
-                        format!(
-                            "since {:02}-{:02}-{:04} {:02}:{:02}",
-                            at.day(),
-                            u8::from(at.month()),
-                            at.year(),
-                            at.hour(),
-                            at.minute()
-                        )
+                        format!("since {}", offset.stamp_minute(at))
                     }
                     None => "(assignment time unavailable)".to_owned(),
                 };
