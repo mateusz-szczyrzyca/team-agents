@@ -135,7 +135,11 @@ pub(super) struct PullWatch {
     /// The next publication action owned by the harness, per round.
     waits: HashMap<agent_core::ids::RoundId, agent_core::decide::wait::Obligation>,
     /// The branches whose publication failed, and the time before which they are not tried again.
-    retry_at: HashMap<(TeamId, BranchName), Timestamp>,
+    pub(super) retry_at: HashMap<(TeamId, BranchName), Timestamp>,
+    /// How many times publication failed for a branch of a team.
+    pub(super) publish_tries: HashMap<(TeamId, BranchName), u32>,
+    /// The number of the question written for the human when publication failed repeatedly.
+    pub(super) publish_question: HashMap<TaskId, std::num::NonZeroU32>,
     /// What the human was told once and is not told again.
     announced: HashSet<Announcement>,
     /// How many times each reviewer's report was sent back for lacking a verdict.

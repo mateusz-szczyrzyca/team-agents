@@ -17,7 +17,7 @@ use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
-use super::publish::Own;
+use super::publish::{Own, Site};
 use super::{Lead, PublishError, Pulls};
 use crate::daemon::merge::{items_of, ran_since};
 use crate::daemon::pr::{Joining, Publication, Publish};
@@ -200,7 +200,12 @@ impl Owner {
                             .collect(),
                     },
                 };
-                return self.publish_failed(pulls, team, &lead, &publication, &error, now);
+                let site = Site {
+                    pulls,
+                    lead: &lead,
+                    team,
+                };
+                return self.publish_failed(site, &publication, &error, now, look).await;
             }
         };
         self.record_event_at(
@@ -285,6 +290,11 @@ impl Owner {
         let end = LeadEnd::Result { changed };
         let decided = after_lead(&end, &allowances);
         log_decision("after_lead", &format!("pr={pr}, end={end:?}"), &format!("{decided:?}"));
+        self.each_item(team, items, |item| {
+            item.reset_publish_tries();
+            item.clear_publish_question();
+            Ok(())
+        })?;
         match decided {
             AfterLead::RetryMerge => {
                 self.end_pass(team, items, pr)?;
@@ -507,7 +517,7 @@ impl Owner {
     }
 
     /// Changes each of `items` of `team` with `change`.
-    fn each_item(
+    pub(crate) fn each_item(
         &mut self,
         team: &TeamId,
         items: &[ItemId],

@@ -196,6 +196,41 @@ impl Owner {
             .state
             .find_task(task)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let is_publish_question = self
+            .parts
+            .state
+            .team(&located.team)
+            .is_some_and(|team| team.items().iter().any(|item| item.publish_question().is_some()))
+            || self
+                .watch
+                .publish_question
+                .remove(task)
+                .is_some_and(|asked| asked == number);
+        if is_publish_question {
+            let answer = agent_core::decide::publish::publish_answer(file.entries().first().and_then(Entry::verdict));
+            log_decision("publish_answer", &task.as_str(), &format!("{answer:?}"));
+            let items: Vec<agent_core::ids::ItemId> = self
+                .parts
+                .state
+                .team(&located.team)
+                .map(|t| t.items().iter().map(agent_core::state::ItemProgress::id).collect())
+                .unwrap_or_default();
+            self.each_item(&located.team, &items, |item| {
+                item.clear_publish_question();
+                if answer == agent_core::decide::publish::PublishAnswer::Retry {
+                    item.reset_publish_tries();
+                }
+                Ok(())
+            })?;
+            return match answer {
+                agent_core::decide::publish::PublishAnswer::Retry => {
+                    self.watch.retry_at.retain(|(t, _), _| t != &located.team);
+                    self.watch.publish_tries.retain(|(t, _), _| t != &located.team);
+                    Ok(TaskStatus::Queued)
+                }
+                agent_core::decide::publish::PublishAnswer::Stop => Ok(TaskStatus::Stopped),
+            };
+        }
         if found.member.asked_after_last_step() != Some(number) {
             return Ok(TaskStatus::Queued);
         }

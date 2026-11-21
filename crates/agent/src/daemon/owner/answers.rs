@@ -82,7 +82,7 @@ impl Owner {
     }
 
     /// Starts watching the directory of `task` for a save of its questions file.
-    fn watch_task(&mut self, task: &TaskId) {
+    pub(super) fn watch_task(&mut self, task: &TaskId) {
         let Some(watcher) = self.watcher.as_mut() else {
             return;
         };
