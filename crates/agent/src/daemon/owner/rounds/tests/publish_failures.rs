@@ -851,6 +851,31 @@ async fn owner_of(state: &agent_core::state::State) -> (Daemon, Owner, Sinks, Pu
     (daemon, owner.with_pulls(pulls.clone()), sinks, pulls)
 }
 
+/// Creates the base commit used to exercise gate completion without publication.
+fn initial_gate_commit(worktree: &std::path::Path) -> agent_core::state::CommitId {
+    std::fs::create_dir_all(worktree).unwrap();
+    git(worktree, &["init", "-q", "-b", "main"]);
+    std::fs::write(worktree.join("work.txt"), "hello\n").unwrap();
+    git(worktree, &["add", "work.txt"]);
+    git(
+        worktree,
+        &[
+            "-c",
+            "user.name=Fake",
+            "-c",
+            "user.email=fake@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            "Initial commit",
+        ],
+    );
+    let tip_str = git(worktree, &["rev-parse", "HEAD"]);
+    tip_str.trim().parse().unwrap()
+}
+
 #[tokio::test]
 async fn try_publish_while_own_gate_running_does_not_load_stale_or_invalid_gate_record() {
     use std::str::FromStr;
@@ -896,27 +921,7 @@ async fn try_publish_while_own_gate_running_does_not_load_stale_or_invalid_gate_
     let repo = crate::fixtures::repo();
     let task = crate::fixtures::task(1);
     let worktree = daemon.home.worktree_dir(&repo, &task);
-    std::fs::create_dir_all(&worktree).unwrap();
-    git(&worktree, &["init", "-q", "-b", "main"]);
-    std::fs::write(worktree.join("work.txt"), "hello\n").unwrap();
-    git(&worktree, &["add", "work.txt"]);
-    git(
-        &worktree,
-        &[
-            "-c",
-            "user.name=Fake",
-            "-c",
-            "user.email=fake@example.com",
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "-q",
-            "-m",
-            "Initial commit",
-        ],
-    );
-    let tip_str = git(&worktree, &["rev-parse", "HEAD"]);
-    let tip: agent_core::state::CommitId = tip_str.trim().parse().unwrap();
+    let tip = initial_gate_commit(&worktree);
 
     let lead = owner.lead_of(&team_id).unwrap();
     let site = Site {
