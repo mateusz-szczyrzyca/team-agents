@@ -5,7 +5,7 @@
 //! refused (`deny_unknown_fields`), every value is parsed into its type (the newtypes of this module), and the lists of agents are
 //! checked against each other. The type does no I/O; whoever reads the file passes its text in.
 
-#[cfg(test)]
+mod replacement;
 mod replacement_tests;
 mod split;
 pub use split::Split;
@@ -13,8 +13,10 @@ mod review_count;
 mod secrets;
 mod values;
 
+pub use replacement::Replacement;
 pub use review_count::{ReviewCount, ReviewCountError};
 
+use crate::state::RenewalLimit;
 use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU32;
 
@@ -26,7 +28,6 @@ use crate::kinds::{CliKind, Keyword, Role, Tier, UnknownKeyword};
 use crate::log::LogLevel;
 use crate::repo_path::PathPatterns;
 use crate::review_response::opinion::Permission;
-use crate::state::RenewalLimit;
 
 pub use secrets::{InvalidSecret, MAX_SECRETS_BYTES, Position, Secret, Secrets, SecretsError};
 pub use values::{
@@ -151,6 +152,18 @@ pub enum ConfigError {
     PlanRoleTwice {
         /// The role that is listed twice.
         role: Role,
+    },
+    /// `[replacement] agents` names an agent that has no table in the file.
+    #[error("[replacement] agents names {name}, which is not defined in [agents] or [investigators]")]
+    ReplacementAgentUnknown {
+        /// The name that is not configured.
+        name: AgentName,
+    },
+    /// `[replacement] agents` names the same agent more than once.
+    #[error("[replacement] agents names {name} more than once")]
+    ReplacementAgentTwice {
+        /// The name that is listed twice.
+        name: AgentName,
     },
 }
 
@@ -470,22 +483,6 @@ impl Default for Plan {
             roles: vec![Role::Solo, Role::Member, Role::Coordinator],
             bounces: DEFAULT_PLAN_BOUNCES,
         }
-    }
-}
-
-/// `[replacement]`: whether a task whose runs go bad is started in a new session, and how often.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-pub struct Replacement {
-    /// How many new sessions of its agent a task is started in after its runs went bad; `0` never starts one.
-    new_sessions: RenewalLimit,
-}
-
-impl Replacement {
-    /// How many new sessions of its agent a task is started in after its runs went bad; `0` never starts one.
-    #[must_use]
-    pub const fn new_sessions(&self) -> RenewalLimit {
-        self.new_sessions
     }
 }
 
@@ -817,6 +814,7 @@ impl RawConfig {
             repos,
         } = self;
         check_plan(&plan)?;
+        replacement::check(replacement.agents(), &agents, &investigators)?;
         check_list(Tier::Normal, &normal, &agents)?;
         check_list(Tier::Worker, &workers, &agents)?;
         check_tiers(&normal, &workers, &agents, &investigators)?;
