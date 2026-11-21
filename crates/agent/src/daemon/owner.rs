@@ -134,6 +134,9 @@ struct RunTaskFailed(#[source] JoinError);
 /// Why the owner stopped with an error: something it cannot go on without.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum OwnerError {
+    /// The words that name a task in a notification cannot be made.
+    #[error("cannot make the words of a notification")]
+    TaskWords(#[from] super::notice::TaskWordsError),
     /// A second opinion cannot be scheduled or retained.
     #[error(transparent)]
     Opinion(#[from] rounds::OpinionDaemonError),
@@ -2016,13 +2019,15 @@ impl Owner {
             task,
             team,
             pr,
-            words: TaskWords::new(
+            words: TaskWords::rendered(
                 found.team.task_list().list(),
                 match item {
                     NoticeItem::OfTheTask => item_line_of_task(found.team, found.role, found.member),
                     NoticeItem::Named(named) => named.and_then(|id| named_item_line(found.team, id)),
                 },
-            ),
+                task,
+                &self.parts.texts,
+            )?,
         })
     }
 

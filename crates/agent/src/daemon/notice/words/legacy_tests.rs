@@ -3,7 +3,6 @@ use agent_core::ids::{TaskId, TeamId};
 use agent_core::kinds::CliKind;
 use agent_core::state::State;
 
-use super::*;
 use crate::daemon::notice::{NoticeContext, NoticeKind, layout_notification};
 use crate::fixtures::at;
 

@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use agent_core::ids::{ItemId, TaskId};
-use agent_core::prompt::{Variables, VariablesError};
+use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::state::split::{PartKey, SplitPlan};
 use agent_core::state::{Completion, ItemPhase, ItemProgress, Team};
 use agent_core::task_list::TaskList;
@@ -21,39 +21,55 @@ pub(crate) enum TaskWordsError {
     Render(#[from] RenderTextError),
 }
 
-/// What a notification says of its task in words, besides the identifiers.
+/// What a notification says of its task in words, besides the lines that identify it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TaskWords {
     /// The short description of the task.
     short_desc: String,
     /// The item or part the notification concerns, as one line of its number and its full title.
     item: Option<String>,
-    /// The first sentences of the task's brief; empty when the brief is.
+    /// The first sentences of the task's brief; empty when the brief has no words.
     excerpt: String,
+    /// The line of the catalog that gives the task's ID.
+    id_line: String,
+    /// The end of the notification, from the catalog: the first sentences of the task's brief; none when the brief
+    /// has no words.
+    tail: Option<String>,
 }
 
 impl TaskWords {
-    /// The words of the task whose list is `list`, for a notification that concerns `item`.
-    pub(crate) fn new(list: &TaskList, item: Option<String>) -> Self {
-        Self {
-            short_desc: list.display_short_desc(),
-            item,
-            excerpt: brief_excerpt(list.brief()),
-        }
-    }
-
-    /// The words of the task whose list is `list`, for a notification about `task` that concerns `item`, with the
-    /// lines that the catalog gives to the task's ID and to the end of the notification.
+    /// The words of the task `task` whose list is `list`, for a notification that concerns `item`, with the lines that
+    /// the catalog gives to the task's ID and to the end of the notification.
     ///
     /// # Errors
     /// [`TaskWordsError`] when a text of the catalog cannot be rendered.
     pub(crate) fn rendered(
         list: &TaskList,
         item: Option<String>,
-        _task: &TaskId,
-        _texts: &HarnessPrompts,
+        task: &TaskId,
+        texts: &HarnessPrompts,
     ) -> Result<Self, TaskWordsError> {
-        Ok(Self::new(list, item))
+        let id = Variables::new().with("task", task.as_str())?;
+        let id_line = texts.render(HarnessPrompt::NoticeTaskId, &id)?.trim_end().to_owned();
+        let excerpt = brief_excerpt(list.brief());
+        let tail = if excerpt.is_empty() {
+            None
+        } else {
+            let values = id.with("excerpt", excerpt.as_str())?;
+            Some(
+                texts
+                    .render(HarnessPrompt::NoticeTaskTail, &values)?
+                    .trim_end()
+                    .to_owned(),
+            )
+        };
+        Ok(Self {
+            short_desc: list.display_short_desc(),
+            item,
+            excerpt,
+            id_line,
+            tail,
+        })
     }
 
     /// The short description of the task.
@@ -67,8 +83,25 @@ impl TaskWords {
     }
 
     /// The first sentences of the task's brief.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "only the tests of the words read the excerpt apart from its text"
+        )
+    )]
     pub(super) fn excerpt(&self) -> &str {
         &self.excerpt
+    }
+
+    /// The line that gives the task's ID.
+    pub(super) fn id_line(&self) -> &str {
+        &self.id_line
+    }
+
+    /// The end of the notification, if the task's brief has words.
+    pub(super) fn tail(&self) -> Option<&str> {
+        self.tail.as_deref()
     }
 }
 
