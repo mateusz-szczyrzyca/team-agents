@@ -117,7 +117,7 @@ fn a_history_of_version_11_is_migrated_and_keeps_its_records_and_takes_snapshots
     let version: u32 = raw
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("the version");
-    assert_eq!(version, 15);
+    assert_eq!(version, 16);
     let reader = Reader::open(&path).expect("the history opens");
     assert_eq!(reader.round_records(&round).expect("the records are read"), before);
     let snapshot_round = RoundId::from_str(ROUND).expect("a round ID");
@@ -270,7 +270,7 @@ fn a_history_of_version_13_gains_the_delivery_warning_and_keeps_logs_and_plan_ve
     );
     let raw = rusqlite::Connection::open(&path).unwrap();
     let version: u32 = raw.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
-    assert_eq!(version, 15);
+    assert_eq!(version, 16);
     let plans: i64 = raw
         .query_row("SELECT count(*) FROM plan_versions", [], |row| row.get(0))
         .unwrap();

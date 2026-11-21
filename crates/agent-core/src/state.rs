@@ -386,6 +386,86 @@ impl State {
             })
     }
 
+    /// Records that the human is asked, in questions `question`, what becomes of `task`, whose runs went bad with
+    /// `trouble` after the last step of the ladder, at `at`: a new session begins for whatever the answer is, no new
+    /// session of the agent is counted, and the task is asked so only once. Returns whether a session was begun: `false`
+    /// for a task with no run.
+    ///
+    /// # Errors
+    /// [`RenewTaskError`] when the task is not in the state, is of a worker or a reviewer, or the session does not fit
+    /// its runs.
+    pub fn ask_after_last_step(
+        &mut self,
+        task: &TaskId,
+        trouble: crate::decide::ladder::Trouble,
+        question: std::num::NonZeroU32,
+        at: Timestamp,
+    ) -> Result<bool, RenewTaskError> {
+        let (role, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        match role {
+            Role::Solo | Role::Coordinator | Role::Member => {}
+            Role::Worker | Role::Reviewer => {
+                return Err(RenewTaskError::Role {
+                    task: task.clone(),
+                    role,
+                });
+            }
+        }
+        member
+            .ask_after_last_step(trouble, question, at)
+            .map_err(|source| RenewTaskError::Renewal {
+                task: task.clone(),
+                source,
+            })
+    }
+
+    /// Records that the work of the member's task `task`, whose runs went bad with `trouble`, is owed to its team's lead
+    /// from `at`: the task stops, and the lead is to be told until [`State::lead_told`]. A session boundary is marked as
+    /// for a hand-over. Only a member's task owes its work to a lead.
+    ///
+    /// # Errors
+    /// [`RenewTaskError`] when the task is not in the state, is not a member's, or the boundary does not fit its runs.
+    pub fn owe_lead(
+        &mut self,
+        task: &TaskId,
+        trouble: crate::decide::ladder::Trouble,
+        at: Timestamp,
+    ) -> Result<(), RenewTaskError> {
+        let (role, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        match role {
+            Role::Member => {}
+            Role::Solo | Role::Coordinator | Role::Worker | Role::Reviewer => {
+                return Err(RenewTaskError::Role {
+                    task: task.clone(),
+                    role,
+                });
+            }
+        }
+        member
+            .owe_lead(trouble, at)
+            .map(|_| ())
+            .map_err(|source| RenewTaskError::Renewal {
+                task: task.clone(),
+                source,
+            })
+    }
+
+    /// Records that the lead of `task` was told that the member's work is its own: nothing is owed any more.
+    ///
+    /// # Errors
+    /// [`RenewTaskError::NoTask`] when the task is not in the state.
+    pub fn lead_told(&mut self, task: &TaskId) -> Result<(), RenewTaskError> {
+        let (_, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        member.lead_told();
+        Ok(())
+    }
+
     /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
     /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
     /// that the state it leaves loads again.

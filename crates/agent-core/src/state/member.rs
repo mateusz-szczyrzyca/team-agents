@@ -179,6 +179,32 @@ impl CheckedMut<'_, Member> {
         self.value.begin_holder_session(trouble, at)
     }
 
+    /// See [`Member::ask_after_last_step`].
+    ///
+    /// # Errors
+    /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
+    pub(crate) fn ask_after_last_step(
+        &mut self,
+        trouble: ladder::Trouble,
+        question: NonZeroU32,
+        at: Timestamp,
+    ) -> Result<bool, renewal::RenewalError> {
+        self.value.ask_after_last_step(trouble, question, at)
+    }
+
+    /// See [`Member::owe_lead`].
+    ///
+    /// # Errors
+    /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
+    pub(crate) fn owe_lead(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
+        self.value.owe_lead(trouble, at)
+    }
+
+    /// See [`Member::lead_told`].
+    pub(crate) fn lead_told(&mut self) {
+        self.value.lead_told();
+    }
+
     /// See [`Member::held_task`].
     pub(crate) fn held_task(&mut self, holder: Participant, at: Timestamp) {
         self.value.held_task(holder, at);
@@ -372,6 +398,18 @@ impl Member {
 
     getter!("Who works in the task.", pub const fn agent(&self) -> &Participant = &self.agent);
 
+    /// The questions the human was asked what becomes of the task after the last step of the ladder; `None` until then.
+    #[must_use]
+    pub fn asked_after_last_step(&self) -> Option<NonZeroU32> {
+        self.renewals.as_ref().and_then(renewal::Renewals::asked)
+    }
+
+    /// Whether the work of this member's task is owed to its team's lead, which is still to be told of it.
+    #[must_use]
+    pub fn owes_lead(&self) -> bool {
+        self.renewals.as_ref().is_some_and(renewal::Renewals::lead_owed)
+    }
+
     /// The agent the task is known by on its team's bus: the agent it was first given to. A task keeps that name when
     /// another agent takes it over, so that the messages, the wake-ups and the lead's rights of the team stay with it.
     #[must_use]
@@ -509,6 +547,47 @@ impl Member {
         at: Timestamp,
     ) -> Result<bool, renewal::RenewalError> {
         self.begin_session(trouble, at, SessionStart::HandOver)
+    }
+
+    /// Records that the human is asked, in questions `question`, what becomes of the task after `trouble` at its last
+    /// step, at `at`: a session begins as for a hand-over, so that no session of the runs before is resumed whatever the
+    /// answer. Only [`State::ask_after_last_step`](super::State::ask_after_last_step) calls it. Returns `false` for a
+    /// task with no run, which records nothing.
+    ///
+    /// # Errors
+    /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
+    pub(crate) fn ask_after_last_step(
+        &mut self,
+        trouble: ladder::Trouble,
+        question: NonZeroU32,
+        at: Timestamp,
+    ) -> Result<bool, renewal::RenewalError> {
+        let begun = self.begin_session(trouble, at, SessionStart::HandOver)?;
+        if let Some(renewals) = self.renewals.as_mut().filter(|_| begun) {
+            renewals.ask(question);
+        }
+        Ok(begun)
+    }
+
+    /// Records that the work of the task, whose runs went bad with `trouble`, is owed to its team's lead from `at`, with a
+    /// session boundary as for a hand-over; `false` for a task with no run, which records nothing. Only
+    /// [`State::owe_lead`](super::State::owe_lead) calls it.
+    ///
+    /// # Errors
+    /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
+    pub(crate) fn owe_lead(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
+        let begun = self.begin_session(trouble, at, SessionStart::HandOver)?;
+        if let Some(renewals) = self.renewals.as_mut().filter(|_| begun) {
+            renewals.owe_lead(Some(at));
+        }
+        Ok(begun)
+    }
+
+    /// Records that the task's lead was told of its work: nothing is owed any more.
+    pub(crate) fn lead_told(&mut self) {
+        if let Some(renewals) = self.renewals.as_mut() {
+            renewals.owe_lead(None);
+        }
     }
 
     /// Records the start of a new session, by `start`, after `trouble`, at `at`; `false` for a task with no run.

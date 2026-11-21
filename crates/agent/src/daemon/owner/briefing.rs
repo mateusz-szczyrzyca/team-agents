@@ -194,11 +194,26 @@ impl Owner {
         }))
     }
 
-    /// Tells the leads of the member tasks of [`Owner::lead_briefings`] that the member's work is their own, each with the
-    /// briefing of what the member's runs left. A briefing that cannot be gathered is left out and logged, and the message
-    /// goes all the same: the lead still has the branch and the worktree of the work.
+    /// Tells the leads of the member tasks whose work the state owes them, and which are not being told already, that the
+    /// work is their own, each with the briefing of what the member's runs left. A briefing that cannot be gathered is
+    /// left out and logged, and the message goes all the same: the lead still has the branch and the worktree of the
+    /// work. The state stops owing the work when the bus took the message ([`Owner::flush_outbox`]).
     pub(super) async fn brief_leads(&mut self) {
-        for (task, trouble) in std::mem::take(&mut self.lead_briefings) {
+        let owed: Vec<(TaskId, Trouble)> = self
+            .parts
+            .state
+            .teams()
+            .iter()
+            .flat_map(|team| team.crew().roster().into_iter().map(|(_, member)| member))
+            .filter(|member| member.owes_lead() && !self.leads_being_told.contains(member.task()))
+            .filter_map(|member| {
+                member
+                    .renewals()
+                    .map(|renewals| (member.task().clone(), renewals.reason()))
+            })
+            .collect();
+        for (task, trouble) in owed {
+            self.leads_being_told.insert(task.clone());
             let briefing = match self.gather_facts(&task, trouble).await {
                 Ok(Some(facts)) => match facts.render_for_lead(&self.parts.texts, &task) {
                     Ok(text) => Some(text),
@@ -334,7 +349,7 @@ impl BriefingFacts {
 }
 
 /// Why the session before went bad, as the state records it; the briefing's text says what each word means.
-const fn reason_word(reason: Trouble) -> &'static str {
+pub(super) const fn reason_word(reason: Trouble) -> &'static str {
     match reason {
         Trouble::NoStatus => "no_status",
         Trouble::Hang => "hang",
