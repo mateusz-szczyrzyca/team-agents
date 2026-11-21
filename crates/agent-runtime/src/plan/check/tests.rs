@@ -459,7 +459,13 @@ async fn execute_command_check_mismatches_on_invalid_env_name() {
     let result = super::execute_command_check(&ctx, &step, "echo test").await.unwrap();
 
     assert_eq!(result.state, JudgementState::Mismatch);
-    assert!(result.reason.as_deref().unwrap().contains("invalid environment variable name"));
+    assert!(
+        result
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("invalid environment variable name")
+    );
 }
 
 #[tokio::test]
@@ -480,5 +486,11 @@ async fn execute_command_check_mismatches_on_non_utf8_worktree() {
     let result = super::execute_command_check(&ctx, &step, "echo test").await.unwrap();
 
     assert_eq!(result.state, JudgementState::Mismatch);
-    assert!(result.reason.as_deref().unwrap().contains("worktree path is not valid UTF-8"));
+    assert!(
+        result
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("worktree path is not valid UTF-8")
+    );
 }
