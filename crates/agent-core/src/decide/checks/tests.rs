@@ -805,30 +805,70 @@ fn allowance(text: &str) -> crate::task_allowance::TaskAllowance {
     crate::task_allowance::TaskAllowance::parse(text).unwrap()
 }
 
+/// A round whose commits are `commits` and whose diff lists every file they change.
+fn round_touched(commits: Vec<CommitFacts>) -> RoundFacts {
+    let mut files: Vec<FileChange> = Vec::new();
+    for file in commits.iter().flat_map(|commit| commit.files.iter()) {
+        if !files.iter().any(|known| known.path == file.path) {
+            files.push(file.clone());
+        }
+    }
+    RoundFacts {
+        files,
+        commits,
+        ..RoundFacts::default()
+    }
+}
+
 // Rule: what the task list allows for a commit of the round is the file the commit changed that the allowance names: a
 // finding about that commit is covered as long as its explanation stands in the same commit.
 #[test]
 fn a_finding_about_a_commit_is_allowed_by_the_file_of_it_the_task_list_allows() {
-    let not_a_test = test_fix_touching(vec![modified("tests/a.rs", 1, 1), modified("src/lib.rs", 1, 0)]);
-    let touching_another_test = test_fix_touching(vec![modified("tests/a.rs", 1, 1), modified("tests/b.rs", 2, 0)]);
     let cases = [
-        ("src/lib.rs", &not_a_test, Some("src/lib.rs")),
-        ("tests/a.rs", &not_a_test, Some("tests/a.rs")),
-        ("tests/", &touching_another_test, Some("tests/a.rs")),
-        ("tests/*.rs", &touching_another_test, Some("tests/a.rs")),
-        ("docs/", &not_a_test, None),
-        ("*", &not_a_test, Some("src/lib.rs")),
+        (
+            "src/lib.rs",
+            vec![("tests/a.rs", 0, 1), ("src/lib.rs", 1, 0)],
+            Some("src/lib.rs"),
+        ),
+        (
+            "tests/a.rs",
+            vec![("tests/a.rs", 1, 1), ("src/lib.rs", 1, 0)],
+            Some("tests/a.rs"),
+        ),
+        // a commit that changes test files only: the test it changed, by the allowance that names it
+        (
+            "tests/*.rs",
+            vec![("src/lib.rs", 3, 0), ("tests/a.rs", 1, 1)],
+            Some("tests/a.rs"),
+        ),
+        ("docs/notes.md", vec![("tests/a.rs", 0, 1), ("src/lib.rs", 1, 0)], None),
+        (
+            "src/*.rs",
+            vec![("tests/a.rs", 0, 1), ("src/lib.rs", 1, 0)],
+            Some("src/lib.rs"),
+        ),
     ];
-    for (line, facts, subject) in cases {
+    for (line, files, subject) in cases {
+        let changed: Vec<FileChange> = files
+            .iter()
+            .map(|(text, added, removed)| modified(text, *added, *removed))
+            .collect();
+        let other = changed
+            .iter()
+            .find(|file| !file.path.as_str().starts_with("tests/"))
+            .map_or_else(|| path("tests/a.rs"), |file| file.path.clone());
+        let facts = round_touched(vec![commit('1', "", "TEST-FIX: and more", changed)]);
+        let tried = Issue::Tried {
+            commit: id('1'),
+            fault: CommitFault::FixTouchesOther { fix: id('1'), other },
+        };
         let allowances = [allowance(line)];
-        let tried = found(facts)
-            .into_iter()
-            .find(|issue| matches!(issue, Issue::Tried { .. }))
-            .unwrap();
 
-        let allowed = tried.allowed_subject(facts, &allowances);
-
-        assert_eq!(allowed, subject.map(|text| Subject::Path(path(text))), "{line}");
+        assert_eq!(
+            tried.allowed_subject(&facts, &allowances),
+            subject.map(|text| Subject::Path(path(text))),
+            "{line}"
+        );
     }
 }
 
