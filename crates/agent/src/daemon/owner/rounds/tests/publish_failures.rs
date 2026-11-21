@@ -1122,3 +1122,76 @@ async fn publish_failure_restart_recovers_question_and_answer_retries_and_succee
 
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn publish_failure_question_creation_interrupted_before_commit_recovers_without_replacing_existing_file_or_answer()
+ {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,work,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+
+    // Set [publish] tries = 0 so publication immediately escalates to asking the human:
+    let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config_text.push_str("\n[publish]\ntries = 0\n");
+    std::fs::write(rig.home.config_file(), config_text).unwrap();
+
+    // Hook in origin that rejects git push:
+    let hook_dir = rig.origin.join("hooks");
+    std::fs::create_dir_all(&hook_dir).unwrap();
+    let hook = hook_dir.join("pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\necho 'pre-receive: publish denied' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    rig.start().await;
+
+    let (team_id, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+
+    // Publication failure escalates to human question:
+    rig.status_is(&task, TaskStatus::Questions).await;
+
+    let qfile = rig.home.questions_file(&task, n(1));
+    assert!(qfile.exists(), "questions file should be written");
+
+    // Simulate crash before question commit: human writes answer to file, state still shows task queued/running without question:
+    rig.stop().await.unwrap();
+    let custom_answer_text = "# Questions\n\n## 1. Action?\n**Verdict:** a\n\n**ANSWERED**\n";
+    std::fs::write(&qfile, custom_answer_text).unwrap();
+
+    // Remove open question from state and reset task status to Queued to simulate crash before question commit:
+    let mut state = rig.state();
+    state
+        .team_mut(&team_id)
+        .unwrap()
+        .item_mut("1.1".parse().unwrap())
+        .unwrap()
+        .clear_publish_question();
+    // Also remove the question from the member's questions list in state:
+    let state_file = rig.home.state_file();
+    let mut state_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&state_file).unwrap()).unwrap();
+    state_json["teams"][0]["items"][0]["publish_question"] = serde_json::Value::Null;
+    state_json["teams"][0]["crew"]["member"]["questions"] = serde_json::json!([]);
+    state_json["teams"][0]["crew"]["member"]["status"] = serde_json::json!("queued");
+    std::fs::write(&state_file, serde_json::to_string_pretty(&state_json).unwrap()).unwrap();
+
+    rig.start().await;
+
+    // After re-evaluating publication failure, the daemon must NOT overwrite existing human answer:
+    rig.status_is(&task, TaskStatus::Questions).await;
+
+    let file_content_after_restart = std::fs::read_to_string(&qfile).unwrap();
+    assert!(
+        file_content_after_restart.contains("**Verdict:** a"),
+        "restart must NOT replace existing question file or erase human answer, got: {file_content_after_restart}"
+    );
+
+    rig.stop().await.unwrap();
+}

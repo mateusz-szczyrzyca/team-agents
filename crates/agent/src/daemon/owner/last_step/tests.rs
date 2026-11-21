@@ -107,3 +107,75 @@ async fn after_answer_ignores_unrelated_member_and_wrong_question_number() {
         "matching publication question answer must clear publish_question"
     );
 }
+
+#[tokio::test]
+async fn after_answer_clears_retry_timers_only_for_matching_branches() {
+    let item_id = "1.1".parse().unwrap();
+    let team_i = team_id(1);
+    let task_lead = task(1);
+    let branch_lead = "agents/lead/task-1-1.1".parse().unwrap();
+    let branch_other = "agents/other/task-2".parse().unwrap();
+
+    let mut team = Team::new(
+        team_i.clone(),
+        repo(),
+        at(0),
+        agent_core::state::MergeMode::Autopilot,
+        TaskListText::new("Brief.\n\n1. Feature\n[ ] 1.1 Item\n".into()).unwrap(),
+        Crew::solo(member(1, normal("lead"))).unwrap(),
+    );
+
+    team.open_round("round-20261111-153001-test".parse().unwrap(), Some(item_id), at(1))
+        .unwrap();
+
+    team.advance_item(
+        item_id,
+        ItemPhase::InProgress {
+            assignee: "lead".parse().unwrap(),
+            branch: branch_lead,
+        },
+    )
+    .unwrap();
+
+    let mut progress = team.item_mut(item_id).unwrap();
+    progress.record_publish_question(task_lead.clone(), nz(1), at(100));
+
+    let mut state = State::new();
+    state.insert_team(team).unwrap();
+
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    // Populate retry timers for both this branch and an unrelated branch in the same team:
+    owner
+        .watch
+        .retry_at
+        .insert((team_i.clone(), "agents/lead/task-1-1.1".parse().unwrap()), at(200));
+    owner.watch.retry_at.insert((team_i.clone(), branch_other), at(300));
+
+    let located_lead = owner.locate(&task_lead).unwrap();
+    let file = QuestionsFile::parse("# Questions\n\n## 1. Action?\n**Verdict:** a\n").unwrap();
+
+    let status = owner
+        .after_answer(&task_lead, &located_lead, nz(1), &file)
+        .expect("after_answer for retry must succeed");
+    assert_eq!(status, TaskStatus::Queued);
+
+    // Matching branch retry timer was cleared:
+    assert!(
+        !owner
+            .watch
+            .retry_at
+            .contains_key(&(team_i.clone(), "agents/lead/task-1-1.1".parse().unwrap())),
+        "matching branch retry timer must be cleared"
+    );
+
+    // Unrelated branch retry timer in same team MUST BE PRESERVED:
+    assert!(
+        owner
+            .watch
+            .retry_at
+            .contains_key(&(team_i.clone(), "agents/other/task-2".parse().unwrap())),
+        "unrelated branch retry timer in same team must NOT be cleared"
+    );
+}
