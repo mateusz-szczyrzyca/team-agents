@@ -509,6 +509,12 @@ fn check_program(text: &str) -> Result<(), InvalidValue> {
 }
 
 impl Program {
+    /// The POSIX shell command, resolved through the run environment PATH.
+    #[must_use]
+    pub fn posix_shell() -> Self {
+        Self::literal("false")
+    }
+
     /// The program, as a command name or an absolute path.
     #[must_use]
     pub fn as_path(&self) -> &Path {
