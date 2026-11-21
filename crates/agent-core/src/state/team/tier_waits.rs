@@ -9,7 +9,18 @@ impl Team {
     /// The idle lead to ask about unstaffed capability waits, if any.
     #[must_use]
     pub fn tier_question_task(&self) -> Option<crate::ids::TaskId> {
-        None
+        if self.unasked_tier_waits().is_empty() {
+            return None;
+        }
+        let lead = self
+            .crew()
+            .coordinator()
+            .or_else(|| self.crew().roster().first().map(|(_, member)| *member))?;
+        matches!(
+            lead.status(),
+            crate::status::TaskStatus::Queued | crate::status::TaskStatus::Waiting
+        )
+        .then(|| lead.task().clone())
     }
 
     /// Capability waits that still need a human question.
