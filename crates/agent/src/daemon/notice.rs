@@ -3,6 +3,8 @@
 //! Every wording is a template under `prompts/harness/run/`; this module chooses one, fills it and splits it into the
 //! title (its first line) and the body.
 
+mod words;
+
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use time::UtcOffset;
@@ -15,6 +17,9 @@ use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::state::Timestamp;
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
 use agent_runtime::notify::{InvalidNotification, Notification};
+
+pub(crate) use words::TaskWords;
+pub(crate) use words::item_line;
 
 /// Every notice that can be sent to the human.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -97,7 +102,7 @@ impl NoticeKind {
 }
 
 /// The facts about the task and environment needed to lay out a notification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct NoticeContext<'a> {
     /// The repository name.
     pub(super) repo: &'a str,
@@ -117,6 +122,8 @@ pub(super) struct NoticeContext<'a> {
     pub(super) team: Option<&'a TeamId>,
     /// The address of the pull request, if applicable.
     pub(super) pr: Option<&'a str>,
+    /// What the notification says of its task in words.
+    pub(super) words: TaskWords,
 }
 
 /// Formats the optional CLI and model shared by notification and review headers.

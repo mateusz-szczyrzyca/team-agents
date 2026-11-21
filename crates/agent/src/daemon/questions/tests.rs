@@ -268,6 +268,7 @@ async fn the_notification_of_incomplete_answers_names_the_agent_the_task_the_fil
         task: &task_id,
         team: None,
         pr: None,
+        words: crate::fixtures::words(),
     };
 
     let note = incomplete_notification(

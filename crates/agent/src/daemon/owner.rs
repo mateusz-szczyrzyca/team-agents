@@ -74,7 +74,7 @@ use self::teams::{Outbound, Served};
 use super::control::{Halt, Steer, after_halt, halted_status};
 use super::gate::GateQueue;
 use super::history::health_to_tell;
-use super::notice::{Notice, NoticeContext};
+use super::notice::{Notice, NoticeContext, TaskWords};
 use super::notifier::Delivery;
 use super::questions;
 use super::questions::watch::{Report, Saves, Watcher};
@@ -1993,6 +1993,7 @@ impl Owner {
             task,
             team,
             pr,
+            words: TaskWords::new(found.team.task_list().list(), None),
         })
     }
 
