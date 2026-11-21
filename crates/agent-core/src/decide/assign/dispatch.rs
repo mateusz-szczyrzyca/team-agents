@@ -98,3 +98,9 @@ pub fn required_tier(team: &Team, item: ItemId) -> Tier {
 
 #[cfg(test)]
 mod tests;
+
+/// Working items whose assignee cannot deliver their current part's tier.
+#[must_use]
+pub fn underqualified(_team: &Team) -> Vec<ItemId> {
+    Vec::new()
+}

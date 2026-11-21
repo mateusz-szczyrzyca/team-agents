@@ -68,3 +68,26 @@ fn ready_items_use_members_before_the_only_fitting_coordinator_or_wait() {
         assert_eq!(chosen, wanted, "{required}, {member_tier}, {coordinator_tier}, {busy}");
     }
 }
+
+#[test]
+fn first_split_part_requeues_an_underqualified_parent_assignee() {
+    use crate::state::fixtures::{drive, round_id, team};
+    use crate::state::{ItemPhase, PhaseKind};
+    let item = "1.2".parse().unwrap();
+    let mut found = team(1);
+    found.open_round(round_id(1), Some(item), at(1)).unwrap();
+    drive(&mut found, "1.2", PhaseKind::InProgress);
+    let plan = serde_json::from_value(serde_json::json!({
+        "parent": "1.2", "parts": [
+            {"title":"First", "delivers":"First document", "checks":"Read it", "depends_on":[], "tier":"investigator"},
+            {"title":"Second", "delivers":"Second document", "checks":"Read it", "depends_on":["a"]}
+        ]
+    }))
+    .unwrap();
+    found.activate_split(plan).unwrap();
+    assert_eq!(required_tier(&found, item), Tier::Investigator);
+    assert_eq!(underqualified(&found), vec![item]);
+    found.advance_item(item, ItemPhase::Pending).unwrap();
+    assert_eq!(underqualified(&found), vec![]);
+    assert_eq!(dispatch(&found).assigned, vec![(item, inv("inv-opus"))]);
+}
