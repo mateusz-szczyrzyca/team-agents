@@ -994,7 +994,8 @@ impl ItemProgress {
 
     /// Increments the publication attempt counter and returns the new count.
     pub fn record_publish_try(&mut self) -> u32 {
-        0
+        self.publish_tries = self.publish_tries.saturating_add(1);
+        self.publish_tries
     }
 
     /// Resets the publication attempt counter.
@@ -1010,7 +1011,7 @@ impl ItemProgress {
 
     /// Records that the human was asked about publication failure at `at`.
     pub fn ask_human_about_publication(&mut self, at: Timestamp) {
-        let _ = at;
+        self.publish_question = Some(at);
     }
 
     /// Clears the open publication question.
