@@ -5,6 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.54.0 — 21.11.2026 — PR #171
+
+### New features
+- [agent] [agent-core] When publication to GitHub fails repeatedly, attempts are bounded by `[publish] tries` (default 3): the harness retries with backoff below the limit, notifies the lead once when the limit is reached so it can correct the problem, and asks the human once in a questions file if publication continues to fail.
+- [agent] [agent-core] Open publication failure questions survive daemon restarts, and answering Retry or Stop cleanly resumes retries or stops the task.
+
 ## 0.53.0 — 21.11.2026 — PR #170
 
 ### New features
