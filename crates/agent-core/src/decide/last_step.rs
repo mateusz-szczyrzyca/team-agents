@@ -54,19 +54,43 @@ pub enum LastStepAnswer {
 /// only once, and only a task that was taken over, or a coordinator that holds the work of a stopped member.
 #[must_use]
 pub const fn after_last_step(
-    _mode: ReplacementMode,
-    _role: Role,
-    _asked: Asked,
-    _held: HeldBefore,
-    _work: MembersWork,
+    mode: ReplacementMode,
+    role: Role,
+    asked: Asked,
+    held: HeldBefore,
+    work: MembersWork,
 ) -> AfterLastStep {
-    AfterLastStep::AskHuman
+    if matches!(mode, ReplacementMode::Off) || matches!(asked, Asked::Once) {
+        return AfterLastStep::Fail;
+    }
+    let taken_over = matches!(held, HeldBefore::Others);
+    let asks = match role {
+        Role::Solo | Role::Member => taken_over,
+        Role::Coordinator => taken_over || matches!(work, MembersWork::OfAStoppedMember),
+        Role::Worker | Role::Reviewer => false,
+    };
+    if asks {
+        AfterLastStep::AskHuman
+    } else {
+        AfterLastStep::Fail
+    }
 }
 
-/// What the verdict of the question after the last step says; `None` when it has none.
+/// What the verdict of the question after the last step says; `None` when it has none. Only an answer that names the
+/// option `a` starts the task once more: `ok`, `b` and any other words stop it, so that nothing more runs on a task
+/// nobody asked to go on.
 #[must_use]
-pub const fn last_step_answer(_verdict: Option<&Verdict>) -> LastStepAnswer {
-    LastStepAnswer::OnceMore
+pub fn last_step_answer(verdict: Option<&Verdict>) -> LastStepAnswer {
+    match verdict {
+        Some(Verdict::Own(answer)) if names_option_a(answer.as_str()) => LastStepAnswer::OnceMore,
+        Some(Verdict::Accept | Verdict::Own(_)) | None => LastStepAnswer::Stop,
+    }
+}
+
+/// Whether `answer` names the option `a`: `a` alone, or `a` followed by what is not a letter or a digit (`a)`, `a —`).
+fn names_option_a(answer: &str) -> bool {
+    let mut chars = answer.trim_start().chars();
+    matches!(chars.next(), Some('a' | 'A')) && chars.next().is_none_or(|next| !next.is_alphanumeric())
 }
 
 #[cfg(test)]
