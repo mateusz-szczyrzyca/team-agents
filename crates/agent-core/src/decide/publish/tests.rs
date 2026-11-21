@@ -231,19 +231,19 @@ fn publish_decision_table() {
         (
             RoundPublication::Item,
             RemoteState::Behind,
-            &task_branch,
+            &pr_branch,
             PublishAction::Push,
         ),
         (
             RoundPublication::Item,
             RemoteState::Equal,
-            &task_branch,
+            &pr_branch,
             PublishAction::UpToDate,
         ),
         (
             RoundPublication::Item,
             RemoteState::Diverged,
-            &task_branch,
+            &pr_branch,
             PublishAction::Refused,
         ),
         (
