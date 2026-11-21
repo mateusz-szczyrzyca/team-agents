@@ -5,9 +5,14 @@ use agent_core::state::{ItemPhase, MergeMode};
 use agent_core::status::TaskStatus;
 
 use super::fake_github::MergeAnswer;
+use super::publish::{Attempt, OwnGate, Site};
 use super::rig::{ONE, Rig, git, investigator, normal};
 use crate::client::Connection;
-use crate::daemon::owner::fixture::{answers, n};
+use crate::daemon::owner::Owner;
+use crate::daemon::owner::fixture::{Daemon, Sinks, answers, n};
+use crate::daemon::owner::rounds::Pulls;
+use crate::daemon::pr::plan_publications;
+use std::sync::Arc;
 
 const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 
@@ -817,4 +822,157 @@ async fn existing_pr_equal_head_publication_takes_uptodate_and_skips_push() {
         item.phase(),
         ItemPhase::Approved { .. } | ItemPhase::Done { .. }
     ));
+}
+
+/// An owner of `state` with autopilot texts loaded for testing direct publish attempts.
+async fn owner_of(state: &agent_core::state::State) -> (Daemon, Owner, Sinks, Pulls) {
+    let daemon = Daemon::new(state, None);
+    let secrets = daemon.home.root().join("secrets.toml");
+    std::fs::write(&secrets, "github_token = \"ghp_test_token_0123\"\n").unwrap();
+    std::fs::set_permissions(&secrets, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+    let (owner, sinks) = daemon.bare_owner().await;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+    let language = owner.parts.settings.config.language();
+    let pulls = Pulls::new(
+        Arc::new(
+            agent_runtime::autopilot_prompts::AutopilotPrompts::load(&root, language)
+                .await
+                .unwrap(),
+        ),
+        Arc::new(
+            agent_runtime::checks_prompts::ChecksPrompts::load(&root, language)
+                .await
+                .unwrap(),
+        ),
+        &owner.parts.settings,
+    )
+    .unwrap()
+    .unwrap();
+    (daemon, owner.with_pulls(pulls.clone()), sinks, pulls)
+}
+
+#[tokio::test]
+async fn try_publish_while_own_gate_running_does_not_load_stale_or_invalid_gate_record() {
+    use std::str::FromStr;
+
+    let mut state = crate::fixtures::solo_state();
+    let team_id = crate::fixtures::team_id(0);
+    let item: agent_core::ids::ItemId = "1.1".parse().unwrap();
+    let round: agent_core::ids::RoundId = "round-20261119-090000-wait".parse().unwrap();
+    let branch: agent_core::ids::BranchName = "agents/claude-1/task-1-1.1".parse().unwrap();
+    {
+        let mut team = state.team_mut(&team_id).unwrap();
+        team.open_round(round, Some(item), crate::fixtures::at(10)).unwrap();
+        team.advance_item(
+            item,
+            ItemPhase::InProgress {
+                assignee: "claude-1".parse().unwrap(),
+                branch: branch.clone(),
+            },
+        )
+        .unwrap();
+        team.begin_run(
+            &crate::fixtures::task(1),
+            agent_core::state::NewRun {
+                id: crate::fixtures::run(1),
+                at: crate::fixtures::at(20),
+                session: None,
+                rounds: Vec::new(),
+            },
+        )
+        .unwrap();
+        let (_, mut lead) = team.find_mut(&crate::fixtures::task(1)).unwrap();
+        lead.transition(TaskStatus::Running).unwrap();
+        lead.end_run(
+            crate::fixtures::at(30),
+            agent_core::state::RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Done,
+            },
+        )
+        .unwrap();
+        lead.transition(TaskStatus::Waiting).unwrap();
+    }
+    let (daemon, mut owner, _sinks, pulls) = owner_of(&state).await;
+    let repo = crate::fixtures::repo();
+    let task = crate::fixtures::task(1);
+    let worktree = daemon.home.worktree_dir(&repo, &task);
+    std::fs::create_dir_all(&worktree).unwrap();
+    git(&worktree, &["init", "-q", "-b", "main"]);
+    std::fs::write(worktree.join("work.txt"), "hello\n").unwrap();
+    git(&worktree, &["add", "work.txt"]);
+    git(
+        &worktree,
+        &[
+            "-c",
+            "user.name=Fake",
+            "-c",
+            "user.email=fake@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            "Initial commit",
+        ],
+    );
+    let tip_str = git(&worktree, &["rev-parse", "HEAD"]);
+    let tip: agent_core::state::CommitId = tip_str.trim().parse().unwrap();
+
+    let lead = owner.lead_of(&team_id).unwrap();
+    let site = Site {
+        pulls: &pulls,
+        team: &team_id,
+        lead: &lead,
+    };
+    let plan = plan_publications(owner.parts.state.team(&team_id).unwrap()).unwrap();
+    assert!(!plan.is_empty(), "plan must have at least one publication");
+    let publication = &plan[0];
+    let now = agent_core::state::Timestamp::now(&owner.parts.clock).unwrap();
+
+    // 1. In-flight own gate: answer channel is open and has not answered yet.
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    owner.watch.own_gates.insert(
+        lead.task.clone(),
+        OwnGate::Running {
+            tip: tip.clone(),
+            retry: false,
+            answer: rx,
+        },
+    );
+
+    // Write an invalid / in-flight record to gate.json.
+    // If try_publish reads gate_record before checking own_gate_state (or while OwnGate::Running),
+    // it will attempt to parse this invalid record and fail with StoreError::ParseGateRecord.
+    // When read after own_gate_state reports completion, it returns Attempt::Nothing without loading the record.
+    let gate_file = daemon.home.gate_record_file(&lead.task);
+    std::fs::create_dir_all(gate_file.parent().unwrap()).unwrap();
+    std::fs::write(&gate_file, "in-flight-invalid-json\n").unwrap();
+
+    let attempt = owner.try_publish(site, publication, now).await;
+    assert!(
+        matches!(attempt, Ok(Attempt::Nothing)),
+        "try_publish must not load gate record while own gate is running"
+    );
+
+    // 2. Complete the gate: write the valid passing record and send Ok on the channel.
+    let record = agent_core::state::GateRecord {
+        tree: agent_core::state::GateTree::Clean,
+        result: agent_core::state::GateResult {
+            head: tip.clone(),
+            finished_at: now,
+            outcome: agent_core::state::GateOutcome::Passed,
+            log: agent_core::config::AbsolutePath::from_str("/tmp/gate.log").unwrap(),
+        },
+    };
+    std::fs::write(&gate_file, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    tx.send(Ok(agent_core::protocol::Reply::GateRecorded {
+        record: record.clone(),
+    }))
+    .unwrap();
+
+    let attempt_completed = owner.try_publish(site, publication, now).await;
+    assert!(
+        !matches!(attempt_completed, Ok(Attempt::Nothing)),
+        "try_publish after gate completion must read the updated gate record and proceed"
+    );
 }
