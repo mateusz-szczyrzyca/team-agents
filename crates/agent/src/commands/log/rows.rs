@@ -17,7 +17,7 @@ use super::{Format, LogError};
 const FOLLOW_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// The newest lines `agent log` prints when `-n` names none.
-const DEFAULT_LINES: u32 = 50;
+const DEFAULT_LINES: u32 = 100;
 
 /// Row arguments; their presence opts a scoped story into log queries.
 #[derive(Debug, Args)]
@@ -53,7 +53,7 @@ pub(crate) struct RowArgs {
     /// Include timestamps at or before this RFC 3339 time.
     #[arg(long)]
     until: Option<Timestamp>,
-    /// Maximum newest lines (default 50); zero prints none.
+    /// Maximum newest lines (default 100); zero prints none.
     #[arg(short = 'n')]
     limit: Option<u32>,
     /// Print one subject of the selected round or team.

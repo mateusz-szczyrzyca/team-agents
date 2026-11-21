@@ -58,6 +58,28 @@ with future rows only. The reader polls every `100` ms without contacting the da
 interrupt following. The durable cursor survives retention even when every log row is deleted. Updates to an existing
 coalesced warning are not new rows and are not printed again. Stop following with Ctrl-C.
 
+### Lines of the rows, and the steps of the runs
+
+In text, every line of a row says what happened and to whom: the time, the level and event, the task with the agent of
+its run in brackets, the team and rounds, the run, then the message. A few events have words instead of the constant
+text, for example `task_status_changed` (`queued ← waiting`), `run_started` (`run started by claude-1`, and why it started), `run_ended`
+(`ended reported DONE`) and `item_phase_changed` (`item 1.1 in review ← in progress after a review verdict`); the other
+events print their fields as `key=value` after the message. A value over `120` characters is cut and ends with `…`.
+`--json` is unchanged.
+
+A scope that names a run, a task or an agent (`--run`, `--task`, `--agent`) prints, with its rows, the steps of the runs it
+covers: the messages of the agent (the first line of each), its commands, tool calls and edits, and the results the CLI
+recorded, one line each and cut like the rows. They are the steps the story of a round numbers, read from the same history,
+so a value the history masks is masked here. The rows and the steps are one text of the newest `-n` lines (`100` unless
+given), in the order of their times; a run is told once before its first line, with its agent, task, team and round, and a
+line names its agent when the scope covers more than one agent. `--agent` covers every run of that agent, in every team.
+`--no-steps` leaves the steps out. `--round` and `--team` with `-f` cover the runs of the round or of the team.
+
+`-f` with such a scope prints the newest lines, then, as they are recorded, the new rows and the new steps of the runs of
+the scope, each once: a row by its ID, a step by its number in its run. A run that starts later is followed from its first
+step. After the row of a run that ended, a line tells what its round waits for, as `agent status <round>` does (it asks
+the daemon; when the daemon cannot be asked the line says so and the follow goes on).
+
 `--show` takes exactly one view and requires a round or team. Row filters apply to `--show log`; another
 view selects its full scoped projection. `--json` makes their structured output JSON lines.
 
