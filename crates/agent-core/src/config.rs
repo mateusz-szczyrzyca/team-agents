@@ -385,7 +385,6 @@ impl Default for Snapshot {
 /// Default number of lead passes per round on a merge conflict.
 const DEFAULT_CONFLICT_PASSES: u32 = 3;
 
-/// Default number of times publication is tried before the lead is told.
 /// `[merge]`: what the harness does when GitHub refuses to merge an approved pull request for a conflict.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
