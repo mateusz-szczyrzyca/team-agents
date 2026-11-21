@@ -39,25 +39,11 @@ impl JudgementState {
 /// Compared after trimming, as a prefix of whole words.
 #[must_use]
 pub fn refuse_command(command: &str, refused_prefixes: &[String]) -> bool {
-    let trimmed = command.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    for prefix in refused_prefixes {
-        let prefix_trimmed = prefix.trim();
-        if prefix_trimmed.is_empty() {
-            continue;
-        }
-        if trimmed == prefix_trimmed {
-            return true;
-        }
-        if let Some(rest) = trimmed.strip_prefix(prefix_trimmed)
-            && rest.chars().next().is_some_and(char::is_whitespace)
-        {
-            return true;
-        }
-    }
-    false
+    refused_prefixes.iter().any(|prefix| {
+        let mut words = command.split_whitespace();
+        let mut prefix_words = prefix.split_whitespace().peekable();
+        prefix_words.peek().is_some() && prefix_words.all(|word| words.next() == Some(word))
+    })
 }
 
 /// Finds the steps of `current` that are to be judged: steps marked done that were not done in `last_plan`
