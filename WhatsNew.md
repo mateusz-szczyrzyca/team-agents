@@ -5,13 +5,6 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.54.0 — 22.11.2026 — PR #171
-
-### New features
-- [agent] [agent-core] Publication failures are bounded by configurable `[publish] tries` (default 3): the lead is notified once at the retry limit, and failures escalate to asking the human once with choices to retry or stop.
-- [agent] [agent-core] Publication retry counts and human question escalation identity are persisted durably and survive daemon restarts.
-- [agent] Publication question files on disk are reconciled cleanly without replacing existing human answers or discarding unreadable files.
-
 ## 0.53.0 — 21.11.2026 — PR #170
 
 ### New features
