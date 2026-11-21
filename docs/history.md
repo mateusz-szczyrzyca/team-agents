@@ -399,6 +399,25 @@ the same as the last one is not written again.
 `(kind = 'version')` is exactly `text` not `NULL`, and `(kind = 'unreadable')` is exactly `detail` not `NULL`; only an
 `unreadable` row has a `line`.
 
+### `step_judgements`
+
+The judgements of plan steps ([`plan.md`](plan.md)) executed and checked at the end of runs, added by migration `16`.
+A row is written for every step judged at the end of a run.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | INTEGER key | the order the judgements were written in, counted from 1 |
+| `task` | TEXT | the task whose step was judged |
+| `team` | TEXT | the task's team |
+| `run` | TEXT, nullable | the run at whose end the judgement was made |
+| `at` | TEXT | when the judgement was made |
+| `step` | TEXT | the step identifier (e.g. item ID) |
+| `state` | `confirmed` \| `declared` \| `mismatch` | the judgement result |
+| `check_line` | TEXT, nullable | the check command or instruction line |
+| `reason` | TEXT, nullable | explanation of the judgement, required for mismatch |
+| `duration_ms` | INTEGER ≥ 0 | how long check execution took in milliseconds |
+| `output_path` | TEXT, nullable | task-relative path to check output log file |
+
 ## Indexes
 
 | Index | On | For |
@@ -418,6 +437,8 @@ the same as the last one is not written again.
 | `daemon_log_rounds_by_round` | `daemon_log_rounds (round, log)` | the daemon log entries of a round |
 | `plan_versions_by_task` | `plan_versions (task, id)` | the plan versions of a task, in the order they were read |
 | `plan_versions_by_team` | `plan_versions (team, id)` | the plan versions of a team, in the order they were read |
+| `step_judgements_by_task` | `step_judgements (task, id)` | the step judgements of a task, in the order they were made |
+| `step_judgements_by_team` | `step_judgements (team, id)` | the step judgements of a team, in the order they were made |
 
 The key of each table is an index too: `WITHOUT ROWID` tables are stored in the order of their key.
 
@@ -776,3 +797,7 @@ History version 15 admits `split_decision` event records. The migration preserve
 records, round links, search entries and log cursors. The event keeps the task, parent item, outcome
 (`approved`, `corrected`, `asked`), correction count, optional question number and reason. The previous schema
 is retained as `crates/agent-runtime/tests/fixtures/history-before-split-decisions.sql` and tested on upgrade.
+
+History version 16 adds `step_judgements` ([above](#step_judgements)). The migration preserves existing
+records, round links, search entries and log cursors. The previous schema is retained as
+`crates/agent-runtime/tests/fixtures/history-before-step-judgements.sql` and tested on upgrade.

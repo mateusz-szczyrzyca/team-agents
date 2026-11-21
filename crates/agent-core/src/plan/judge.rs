@@ -51,10 +51,10 @@ pub fn refuse_command(command: &str, refused_prefixes: &[String]) -> bool {
         if trimmed == prefix_trimmed {
             return true;
         }
-        if let Some(rest) = trimmed.strip_prefix(prefix_trimmed) {
-            if rest.chars().next().is_some_and(char::is_whitespace) {
-                return true;
-            }
+        if let Some(rest) = trimmed.strip_prefix(prefix_trimmed)
+            && rest.chars().next().is_some_and(char::is_whitespace)
+        {
+            return true;
         }
     }
     false
@@ -94,7 +94,6 @@ pub fn steps_to_judge<'a>(
         }
         if *old_step != step {
             to_judge.push(step);
-            continue;
         }
     }
 
