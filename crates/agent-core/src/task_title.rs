@@ -19,8 +19,8 @@ pub const NO_BRIEF_DESC: &str = "a task without a description";
 /// What ends a sentence.
 const SENTENCE_END: char = '.';
 
-/// The mark of a list item, which opens a line of a brief but says nothing about the task.
-const LIST_MARK: char = '*';
+/// The bullet of a list item, which opens a line of a brief but says nothing about the task.
+const LIST_BULLET: char = '*';
 
 /// The dash of a list item.
 const LIST_DASH: char = '-';
@@ -28,20 +28,19 @@ const LIST_DASH: char = '-';
 /// The plus of a list item.
 const LIST_PLUS: char = '+';
 
+/// The `)` after the number of a numbered list item, as in `1)`.
+const NUMBERED_PAREN: char = ')';
+
 /// The byte order mark some editors put at the start of a file; it is not part of its text.
 const BYTE_ORDER_MARK: char = '\u{feff}';
-
-/// The `)` of a numbered list item, as in `1)`.
-const NUMBERED_PAREN: char = ')';
 
 /// The description to show for a task whose task list names none: the first sentence of its brief, cut to
 /// [`MAX_SHORT_DESC_CHARS`] characters.
 #[must_use]
 pub fn derived_short_desc(brief: &str) -> String {
     let text = unmarked_text(brief);
-    let first = trim_marks(first_sentence(&text));
-    let unmarked = first.trim_start_matches(BYTE_ORDER_MARK);
-    let sentence = unmarked.trim();
+    let unmarked = trim_marks(first_sentence(&text));
+    let sentence = unmarked.trim_start_matches(BYTE_ORDER_MARK).trim();
     if sentence.is_empty() {
         return NO_BRIEF_DESC.to_owned();
     }
@@ -56,10 +55,12 @@ pub fn brief_excerpt(brief: &str) -> String {
     if text.chars().count() <= MAX_EXCERPT_CHARS {
         return text.to_owned();
     }
-    let head = slice_chars(text, MAX_EXCERPT_CHARS);
-    let fitting = head.trim_end();
+    let fitting = slice_chars(text, MAX_EXCERPT_CHARS).trim_end();
     match fitting.rfind(SENTENCE_END) {
-        Some(at) if !ends_number(fitting, at) => slice_chars(fitting, char_count(&fitting, at) + 1).to_owned(),
+        // The sentences up to the last one that fits; a cut inside the first would only repeat the description.
+        Some(at) if !inside_number(fitting, at) && at > 0 => {
+            slice_chars(fitting, char_count(fitting, at).saturating_add(1)).to_owned()
+        }
         Some(_) | None => cut(fitting, MAX_EXCERPT_CHARS),
     }
 }
@@ -70,7 +71,7 @@ fn unmarked_text(brief: &str) -> String {
     trim_marks(line)
 }
 
-/// `line` without the heading marks and a list marker that open it.
+/// `line` without the heading marks and the list marker that opens it.
 fn trim_marks(line: &str) -> String {
     let line = line.trim_start();
     if line.starts_with('#') {
@@ -80,7 +81,7 @@ fn trim_marks(line: &str) -> String {
     let Some((_, first)) = chars.next() else {
         return String::new();
     };
-    if matches!(first, LIST_MARK | LIST_DASH | LIST_PLUS) {
+    if matches!(first, LIST_BULLET | LIST_DASH | LIST_PLUS) {
         let rest = line.get(first.len_utf8()..).unwrap_or_default();
         if rest.starts_with(char::is_whitespace) {
             return rest.trim_start().to_owned();
@@ -99,30 +100,27 @@ fn trim_marks(line: &str) -> String {
     line.to_owned()
 }
 
-/// The first sentence of `text`: up to and including its first full stop that does not end a number.
+/// The first sentence of `text`: up to and including its first full stop outside a number.
 fn first_sentence(text: &str) -> &str {
     let mut from = 0;
     while let Some(found) = text.get(from..).and_then(|rest| rest.find(SENTENCE_END)) {
         let at = from.saturating_add(found);
-        if !ends_number(text, at) {
-            return slice_chars(text, char_count(text, at) + 1);
+        if !inside_number(text, at) {
+            return slice_chars(text, char_count(text, at).saturating_add(1));
         }
-        // The stop of an ordinal number: the sentence goes on after it.
+        // The stop of a number such as `v1.2`: the sentence goes on after it.
         from = at.saturating_add(SENTENCE_END.len_utf8());
     }
     text
 }
 
 /// Whether the full stop at byte `at` of `text` sits inside a number, as in `v1.2`, rather than ending a sentence.
-fn ends_number(text: &str, at: usize) -> bool {
+fn inside_number(text: &str, at: usize) -> bool {
     let before = text.get(..at).and_then(|head| head.chars().next_back());
     let after = text
         .get(at.saturating_add(SENTENCE_END.len_utf8())..)
         .and_then(|rest| rest.chars().next());
-    match (before, after) {
-        (Some(digit), Some(next)) if digit.is_ascii_digit() => next.is_ascii_digit(),
-        _ => false,
-    }
+    matches!((before, after), (Some(digit), Some(next)) if digit.is_ascii_digit() && next.is_ascii_digit())
 }
 
 /// `text` in at most `max` characters; a cut text is marked and says that the text goes on.
