@@ -1,17 +1,18 @@
 //! The owner's side of the plan of a task (`.agent/plan.md`, see `docs/plan.md`): what the daemon does with it at the
 //! end of a run.
 
-use std::str::FromStr;
-
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
 use agent_core::decide::plan::{DoneEnds, PlanFacts, PlanRead, PlanVerdict, decide_plan, done_ends_with};
 use agent_core::ids::RunId;
-use agent_core::ids::{AgentName, BranchName, InvalidName, TaskId, TeamId};
+use agent_core::ids::{AgentName, BranchName, InvalidName, ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
+use agent_core::plan::judge::{JudgementState, steps_to_judge};
 use agent_core::plan::{PLAN_FILE, Plan, PlanError, parse_plan};
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::questions::{Entry, QuestionsFile, Verdict, quote};
@@ -22,7 +23,8 @@ use agent_core::status::{RunOutcome, TaskStatus};
 use agent_core::task_list::MAX_TASK_LIST_BYTES;
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision, Untracked};
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
-use agent_runtime::history::{PlanRead as HistoryPlanRead, PlanRecord, Reader, log_decision};
+use agent_runtime::history::{JudgementRecord, PlanRead as HistoryPlanRead, PlanRecord, Reader, log_decision};
+use agent_runtime::plan::check::{CheckContext, JudgementResult, execute_step_check};
 use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::ComposeError;
 use agent_runtime::text_file::{ReplaceError, TextFileError, read_text_file, replace_text_file};
@@ -332,8 +334,8 @@ impl Owner {
 
 impl Owner {
     /// What the end `end` of a run of `task` does with its plan: what the worktree has is kept in the history, and a
-    /// run that reported `DONE` against its plan is sent back or the human asked, by [`decide_plan`]. `settled` is what
-    /// the run's end comes to otherwise; the result is what it comes to now.
+    /// run that reported `DONE` against its plan is sent back or the human asked, by [`decide_plan`].
+    /// `settled` is what the run's end comes to otherwise; the result is what it comes to now.
     ///
     /// # Errors
     /// [`OwnerError`] when the task is gone or has no questions number left.
@@ -361,24 +363,22 @@ impl Owner {
             .state
             .find_task(task)
             .and_then(|found| found.member.current_run().map(|run| run.id().clone()));
-        // Only a parsed plan of a run that may be sent back is compared with the earlier versions: in every other case the
-        // decision needs no history, and the run's end reads none.
-        let policy = self.parts.settings.config.plan();
-        let may_be_sent_back = matches!(found.read, PlanRead::Parsed(_))
-            && matches!(
-                end,
-                RunEnd::Reported {
-                    outcome: RunOutcome::Done
-                }
-            )
-            && policy.bounces() > 0
-            && policy.roles().contains(&located.role);
-        let earlier = if may_be_sent_back {
+        let earlier = if matches!(found.read, PlanRead::Parsed(_)) {
             self.earlier_plans(task, run.as_ref()).await
         } else {
             Vec::new()
         };
-        self.keep_plan(task, located, run, &found)?;
+        self.keep_plan(task, located, run.clone(), &found)?;
+        let _judged_steps = if let PlanRead::Parsed(plan) = &found.read {
+            let (res, latest) = self
+                .judge_steps_at_end(task, located, run.as_ref(), plan, earlier.last())
+                .await?;
+            self.refresh_task_plan(task, plan, &latest);
+            res
+        } else {
+            self.invalidate_task_plan(task);
+            Vec::new()
+        };
         let ends = self.parts.state.team(&located.team).map_or(DoneEnds::Work, |team| {
             done_ends_with(located.role, team.items().iter().map(ItemProgress::phase), |agent| {
                 member_works(team, agent)
@@ -461,6 +461,104 @@ impl Owner {
             }
         }
         plans
+    }
+
+    /// Executes and records the step checks of `plan` that are to be judged at the end of `run`.
+    async fn judge_steps_at_end<'a>(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        run: Option<&RunId>,
+        plan: &'a Plan,
+        earlier_plan: Option<&Plan>,
+    ) -> Result<
+        (
+            Vec<(&'a agent_core::plan::Step, JudgementResult)>,
+            HashMap<ItemId, JudgementRecord>,
+        ),
+        OwnerError,
+    > {
+        let Ok(worktree) = self.worktree_of(task, located) else {
+            return Ok((Vec::new(), HashMap::new()));
+        };
+        let mut previous = self.latest_judgements(task).await;
+        let to_judge = steps_to_judge(plan, earlier_plan, |id| previous.get(id).map(|j| j.state));
+        let task_dir = self.parts.store.home().task_dir(task);
+        let context = CheckContext {
+            worktree: worktree.as_path(),
+            task_dir: &task_dir,
+            run,
+            check_seconds: 0,
+            check_refuse: &[],
+            envs: &[],
+        };
+        let mut records = Vec::new();
+        let mut results = Vec::new();
+        for step in to_judge {
+            let result = match execute_step_check(&context, step).await {
+                Ok(res) => res,
+                Err(error) => JudgementResult {
+                    state: JudgementState::Mismatch,
+                    check_line: step.check().map(|c| match c {
+                        agent_core::plan::Check::Command(cmd) => cmd.clone(),
+                        agent_core::plan::Check::Exists(p) => format!("exists {}", p.as_str()),
+                        agent_core::plan::Check::Reviewer => "reviewer".to_owned(),
+                    }),
+                    reason: Some(format!("cannot run check: {}", error_chain(&error))),
+                    duration_ms: 0,
+                    output_path: None,
+                    tail: String::new(),
+                    gate_refused: false,
+                },
+            };
+            let at = Timestamp::now(&self.parts.clock)?;
+            records.push(JudgementRecord {
+                task: task.clone(),
+                team: located.team.clone(),
+                run: run.cloned(),
+                at,
+                step: step.id(),
+                state: result.state,
+                check: result.check_line.clone(),
+                reason: result.reason.clone(),
+                duration_ms: result.duration_ms,
+                output_path: result.output_path.clone(),
+            });
+            results.push((step, result));
+        }
+        for record in &records {
+            previous.insert(record.step, record.clone());
+        }
+        if !records.is_empty() {
+            self.history.persist_judgements(records).await?;
+        }
+        Ok((results, previous))
+    }
+
+    /// The latest judgements of steps of `task` kept in history, keyed by step ID.
+    async fn latest_judgements(&self, task: &TaskId) -> HashMap<ItemId, JudgementRecord> {
+        let path = self.parts.store.home().history_file();
+        let task_id = task.clone();
+        let looked = tokio::task::spawn_blocking(move || {
+            Reader::open(&path).and_then(|reader| reader.latest_judgements(&task_id))
+        })
+        .await;
+        match looked {
+            Ok(Ok(map)) => map,
+            Ok(Err(error)) => {
+                tracing::debug!(task = %task, error = %error_chain(&error), "no previous judgements could be read");
+                HashMap::new()
+            }
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    %error,
+                    "the previous judgements could not be read"
+                );
+                HashMap::new()
+            }
+        }
     }
 
     /// Hands what was found of the plan of `task` at the end of `run` to the history.
