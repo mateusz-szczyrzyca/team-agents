@@ -165,7 +165,12 @@ mod grants {
             covers: Covers::Tried,
         });
 
-        record.answered(&[item()], Some(&basis(Covers::Tried)), &[], &[Subject::Commit(head('b'))]);
+        record.answered(
+            &[item()],
+            Some(&basis(Covers::Tried)),
+            &[],
+            &[Subject::Commit(head('b'))],
+        );
 
         assert_eq!(record.refused_of(&[item()]), [Subject::Commit(head('b'))]);
         assert!(record.refused_tried_of(&[item()]));
@@ -175,7 +180,12 @@ mod grants {
     #[test]
     fn a_refusal_of_a_commit_is_set_aside_when_the_round_is_not_that_commit_s_any_more() {
         let mut record = used(2);
-        record.answered(&[item()], Some(&basis(Covers::Tried)), &[], &[Subject::Commit(head('b'))]);
+        record.answered(
+            &[item()],
+            Some(&basis(Covers::Tried)),
+            &[],
+            &[Subject::Commit(head('b'))],
+        );
 
         record.forget_tried_refusals(&[item()]);
 
@@ -199,12 +209,7 @@ mod grants {
         let mut record = used(1);
         record.asked = Some(asked());
 
-        record.answered(
-            &[item()],
-            Some(&basis(Covers::Everything)),
-            &[path("ci/gate.sh")],
-            &[],
-        );
+        record.answered(&[item()], Some(&basis(Covers::Everything)), &[path("ci/gate.sh")], &[]);
 
         assert_eq!(record.refused_of(&[item()]), []);
         assert_eq!(record.allowed_of(&[item()]), [path("ci/gate.sh")]);

@@ -2,7 +2,9 @@
 
 use super::markers::Marker;
 use super::*;
+use crate::decide::round::AskReason;
 use crate::repo_path::{PathPattern, PathPatterns};
+use crate::state::{Basis, Covers};
 
 fn patterns(texts: &[&str]) -> PathPatterns {
     PathPatterns::try_from(
@@ -905,6 +907,87 @@ fn the_findings_about_a_path_are_allowed_by_the_allowance_of_that_path() {
         None,
         "the lack of tests is no file"
     );
+}
+
+#[test]
+fn a_question_about_the_commits_the_team_cannot_repair_covers_them_only() {
+    let facts = red_then("GREEN: code a", vec![modified("tests/a.rs", 1, 2)]);
+    let issues = found(&facts);
+    let commits: Vec<&Issue> = issues
+        .iter()
+        .filter(|issue| matches!(issue, Issue::EditedTest { .. }))
+        .collect();
+    let everything: Vec<&Issue> = issues.iter().collect();
+
+    assert_eq!(
+        basis_of(&commits, AskReason::OnlyTheHumanMayAllow, &id('2')),
+        Basis {
+            head: id('2'),
+            covers: Covers::Tried
+        }
+    );
+    assert_eq!(
+        basis_of(&everything, AskReason::OnlyTheHumanMayAllow, &id('2')).covers,
+        Covers::Everything,
+        "a question that names a path as well is about every finding of the round"
+    );
+    assert_eq!(
+        basis_of(&commits, AskReason::PassesUsed, &id('2')).covers,
+        Covers::Everything
+    );
+}
+
+#[test]
+fn a_finding_names_the_fault_of_its_commit_with_the_path_beside_it() {
+    let facts = test_fix_touching(vec![modified("tests/a.rs", 0, 1), modified("src/lib.rs", 1, 0)]);
+    let issues = found(&facts);
+
+    for issue in &issues {
+        match issue {
+            Issue::Tried { fault, .. } => {
+                let named = commit_fault(issue).unwrap();
+                assert_eq!(named.fault(), *fault);
+                assert_eq!(named.path(), Some(&path("src/lib.rs")));
+            }
+            Issue::EditedTest { path: edited, red, .. } => {
+                let named = commit_fault(issue).unwrap();
+                assert_eq!(
+                    named.fault(),
+                    CommitFault::TestEdited {
+                        path: edited.clone(),
+                        red: red.clone()
+                    }
+                );
+                assert_eq!(named.path(), Some(edited));
+            }
+            Issue::RedTestEdited { .. } | Issue::TestChanged { .. } | Issue::ProtectedChanged { .. } => {
+                assert_eq!(commit_fault(issue), None, "{issue:?}");
+            }
+            Issue::NoTests | Issue::Marker { .. } => {
+                assert_eq!(commit_fault(issue), None, "{issue:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_commit_left_out_of_the_rounds_diff_belongs_to_no_round_any_more() {
+    let files = vec![modified("src/lib.rs", 1, 0)];
+    let in_the_round = round_touched(vec![commit('1', "", "TEST-FIX: and more", files)]);
+    let merged = RoundFacts {
+        files: vec![modified("docs/notes.md", 1, 0)],
+        ..in_the_round.clone()
+    };
+    let tried = Issue::Tried {
+        commit: id('1'),
+        fault: CommitFault::FixTouchesOther {
+            fix: id('1'),
+            other: path("src/lib.rs"),
+        },
+    };
+
+    assert!(!tried.gone_from_round(&in_the_round));
+    assert!(tried.gone_from_round(&merged));
 }
 
 // ---- production code without tests ------------------------------------------------------------------------------------
