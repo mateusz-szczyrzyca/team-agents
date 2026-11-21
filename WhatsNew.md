@@ -5,15 +5,6 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.47.0 — 21.11.2026 — PR #164
-
-### New features
-- [agent] [agent-core] The pull request of each part of a split now says which split it belongs to: the original item and the part's letter, the other parts with their pull requests so far, who approved the split (the harness or you), and the tier the part asked for with the agent it was given. `agent status` shows the same in one line per part; what an old split did not record is shown as `not recorded`.
-- [agent] [agent-core] When the team has no agent of the tier an item or a part asks for, you are asked once, in a questions file of the lead's task. A restart of the daemon, an answer or free text never asks again for the same wait; the question comes back only if the wait ends and a new one begins. An answer never lowers the tier.
-
-### Enhancements
-- [agent] [agent-core] The assigned agent of a part is kept across reviews and restarts. **Action:** an `agent` CLI older than this version cannot read status from this daemon (the status reply has a new optional field, as `tier_waits` of 0.46.0 had): upgrade and restart the CLI and the daemon together.
-
 ## 0.46.0 — 21.11.2026 — PR #162
 
 ### New features
