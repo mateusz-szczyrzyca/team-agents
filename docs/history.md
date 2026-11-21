@@ -418,7 +418,7 @@ The daemon waits for the history writer to acknowledge the transaction before se
 | `check_line` | TEXT, nullable | the check command or instruction line |
 | `reason` | TEXT, nullable | explanation of the judgement, required for mismatch |
 | `duration_ms` | INTEGER ≥ 0 | how long check execution took in milliseconds |
-| `output_path` | TEXT, nullable | task-relative path to command-output file (e.g. `checks/<step_id>.log`); `NULL` when no output file was written |
+| `output_path` | TEXT, nullable | task-relative path to command-output file (e.g. `checks/<run_id>/<step_id>.log`); `NULL` when no output file was written |
 
 ## Indexes
 

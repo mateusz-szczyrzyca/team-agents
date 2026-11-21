@@ -139,20 +139,19 @@ including tasks created before plan enforcement. It judges a newly done step, a 
 or notes), a previous mismatch, or a step with no previous judgement. An unchanged confirmed or declared step is
 not checked again. Steps to do, in hand or given up are never judged.
 
-| Check | Settlement |
+| Check | Settlement in this release |
 |---|---|
 | no `Check:` line | `declared` |
 | `reviewer` | `declared`; a later item will connect a reviewer's verdict to a step |
 | `exists PATH` | `confirmed` when a file or directory resolves inside the task's worktree; `mismatch` when absent, inaccessible, or resolving outside it |
-| a command | `confirmed` when exit status is 0; `declared` when refused (e.g. `agent gate`, `make gate`) or when `check_seconds = 0`; `mismatch` when exit status is non-zero, command fails to start, or exceeds `check_seconds` |
+| a command | `declared`; in the daemon, commands remain declared pending durable owner lifecycle |
 
 Existence checks use asynchronous filesystem operations and follow symlinks only to targets inside the worktree.
-Command checks run sequentially in the task's worktree with the agent's environment variables (`agent_env`), closed stdin,
-and a process group timeout set by `[plan] check_seconds` (default 120; `0` disables commands and keeps them declared).
-Commands matching a prefix in `[plan] check_refuse` (default `["agent gate", "make gate"]`) are refused, remaining declared
-with a once-only notice delivered on the next run (`prompts/harness/run/plan-gate-refused.md`).
-The full output of each command check is saved to `tasks/<task>/checks/<run_id>/<step_id>.log` (or `checks/<step_id>.log`),
-and a bounded tail of the output is captured in the prompt's mismatch notice.
+The runtime provides `execute_command_check` for executing command checks in the task's worktree with agent environment
+variables, closed stdin, bounded output logs at `tasks/<task>/checks/<run_id>/<step_id>.log`, and a timeout set by
+`[plan] check_seconds` (default 120; `0` disables commands and keeps them declared; commands matching prefixes in
+`[plan] check_refuse` are refused and declared). In the running daemon, commands remain declared, and durable background
+lifecycle with mismatch bounce handling follows in a dedicated task.
 Each judgement records the task, run, step ID, check, state, reason, output path, and duration in
 [`history.db`](history.md#step_judgements).
 Judgements are acknowledged by the history writer before run settlement continues.
@@ -160,13 +159,14 @@ Judgements are acknowledged by the history writer before run settlement continue
 `agent status <task>` and `agent status <round>` show the plan's step marks and the settlement of done steps,
 for example `[x] 1.1 Write the guide (confirmed)` or `[x] 1.2 Add images (mismatch: …)`.
 The daemon serves cached snapshots so status requests do not read plans or SQLite. A task without a readable
-plan keeps its previous status format.
+plan keeps its previous status format. Mismatches are recorded and displayed in this part; they do not send a run
+back and do not consume the plan's bounce budget. The existing rules below still apply to unfinished plans.
 
 ## Enforcing the plan
 
 **Sent back.** A run of a role named in [`[plan] roles`](configuration.md#plan) (default: solo, member, coordinator)
 that ends `STATUS: DONE` goes back to the same agent, in the same session, when its plan says it is not done. There are
-five reasons, in this order, each with its own text of the catalog (`prompts/harness/run/plan-*.md`):
+four reasons, in this order, each with its own text of the catalog (`prompts/harness/run/plan-*.md`):
 
 | Reason | When | The agent is told |
 |---|---|---|
@@ -174,12 +174,6 @@ five reasons, in this order, each with its own text of the catalog (`prompts/har
 | unreadable | it does not parse | the error with its line, as the table of [Errors](#errors) gives it |
 | lost step | a step that any version kept from an earlier run had is gone, or its ID names another step than in the newest of them — so the same plan handed in again after a send-back for a lost step goes back again | the step IDs, and that a step is given up, never deleted |
 | unfinished | a step is to do (`[ ]`) or in hand (`[>]`) | the step IDs, and to finish them or give them up with a reason |
-| mismatch | a step marked done failed its check | the step ID, check command, and tail output |
-
-A run that ends with another status is recorded and never sent back for its plan. Mismatches share the `[plan] bounces`
-budget (default 3; `0` sends nothing back and still records the plan); after the bounce limit is reached, one questions file
-is written asking the human about the failure. Other statuses (`Failed`, `Waiting`, `Questions`), excluded roles, and
-legacy tasks created before this version are judged without bounce.
 
 A run that ends with another status is recorded and never sent back for its plan. **A coordinator** also ends a turn
 with `STATUS: DONE` after it integrated one member while others work: its `DONE` is judged by its plan only when no

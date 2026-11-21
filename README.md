@@ -256,16 +256,13 @@ the pull request: a plan an agent commits by mistake is taken out of its branch 
 delivery". See [configuration](docs/configuration.md#plan).
 
 At every run's end, the daemon also judges done steps, for every role and outcome. `exists PATH` confirms a file or
-folder inside the worktree; an absent path or a symlink outside it is a mismatch. Steps without checks or with
-`reviewer` remain declared. Command checks run sequentially in the worktree with closed input and environment secrets,
-subject to `[plan] check_seconds` (default `60`; `0` disables commands and keeps them declared). Commands matching
-`[plan] check_refuse` (default `["agent gate", "make gate"]`) are refused, remaining declared with a once-only notice
-delivered on the next run. `agent status <task>` and `agent status <round>` show these states beside the steps.
-A run ending `DONE` with a mismatch is sent back to the agent sharing the `[plan] bounces` budget (or asks the human in
-the task's questions file upon exhaustion); other statuses, excluded roles, and legacy tasks are judged without bounce.
-Judgements are retained in history schema 17, which automatically upgrades older histories; keep a backup before
-upgrading if you need to return to an older daemon. Check outputs are stored in `checks/<step_id>.log` under the task
-directory.
+folder inside the worktree; an absent path or a symlink outside it is a mismatch. Steps without checks, with
+`reviewer`, or with commands remain declared. `agent status <task>` and `agent status <round>` show these states
+beside the steps. Judgements are retained in history schema 17, which automatically upgrades older histories;
+keep a backup before upgrading if you need to return to an older daemon. This release provides the runtime engine
+and configuration (`[plan] check_seconds`, default 120; `[plan] check_refuse`, default `["agent gate", "make gate"]`)
+for command checks; in the daemon, commands remain declared, and durable command execution with mismatch bounces follows
+in a dedicated task.
 
 
 A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt
