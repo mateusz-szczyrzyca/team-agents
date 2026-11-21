@@ -368,7 +368,7 @@ impl Owner {
                 .ok_or_else(|| OwnerError::LostTeam {
                     team: open.located.team.clone(),
                 })?
-                .activate_split(plan)?;
+                .activate_split(plan.with_approval(agent_core::state::split::SplitApproval::Human))?;
         }
         if let Some(acknowledgement) = &decision.acknowledgement {
             tracing::info!(event = LogEvent::QuestionsAnswered.as_str(), task = %task, %acknowledgement, "the split answer was interpreted");
