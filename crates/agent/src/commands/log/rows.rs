@@ -1,6 +1,5 @@
 //! CLI row predicates, separate from the preserved story command.
 
-use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 
@@ -11,8 +10,7 @@ use agent_runtime::history::{LogFilter, LogWindow, Reader};
 use clap::Args;
 
 use super::steps::{TimedStep, agent_steps, run_steps, task_steps};
-use super::team::{Team, teams};
-use super::timeline::Timeline;
+use super::timeline::{Team, Timeline};
 use super::{Format, LogError};
 
 /// The newest lines `agent log` prints when `-n` names none.
@@ -52,7 +50,7 @@ pub(crate) struct RowArgs {
     /// Include timestamps at or before this RFC 3339 time.
     #[arg(long)]
     until: Option<Timestamp>,
-    /// Maximum newest rows (default 100); zero prints none.
+    /// Maximum newest lines (default 50); zero prints none.
     #[arg(short = 'n')]
     limit: Option<u32>,
     /// Print one subject of the selected round or team.
@@ -78,13 +76,14 @@ impl RowArgs {
     }
 
     /// Prints a bounded query of the directly opened history.
+    ///
+    /// In text, the rows of the scope and the steps of its runs are one text, the newest `limit` things of it.
     pub(crate) fn print(
         &self,
         path: &Path,
         round: Option<RoundId>,
         team: Option<TeamId>,
         format: Format,
-        steps: bool,
         out: &mut impl Write,
     ) -> Result<(), LogError> {
         let reader = Reader::open(path)?;
@@ -95,6 +94,7 @@ impl RowArgs {
         if let Some(view) = self.show.filter(|view| *view != LogView::Log) {
             return super::views::print(&reader, round, team.as_ref(), view, format, out);
         }
+        let scoped = self.task.is_some() || self.run.is_some() || self.agent.is_some();
         let filter = LogFilter {
             grep: self.grep.clone(),
             team,
@@ -117,13 +117,22 @@ impl RowArgs {
         } else {
             None
         };
-        let agents = Vec::new();
-        let steps: Vec<TimedStep> = Vec::new();
-        let known: Vec<Team> = Vec::new();
+        let agents = followed_agents(&reader, &filter)?;
+        let steps = if scoped {
+            steps_of(&reader, &filter)?
+        } else {
+            Vec::new()
+        };
+        let mut teams: Vec<Team> = Vec::new();
+        for team in reader.teams()? {
+            let mut runs = std::collections::BTreeMap::new();
+            for run in reader.runs_of_team(&team.value.team)? {
+                runs.insert(run.start.value.run.clone(), run.start.value);
+            }
+            teams.push(Team::new(team.value.team.clone(), runs));
+        }
         let mut cursor = reader.log_cursor()?;
-        let mut window = LogWindow::Newest(self.limit.unwrap_or(100));
-        let mut first = true;
-        let mut printed: BTreeSet<i64> = BTreeSet::new();
+        let mut window = LogWindow::Newest(self.limit.unwrap_or(DEFAULT_LINES));
         loop {
             let rows = reader.log_rows(&filter, window)?;
             for row in &rows {
@@ -136,20 +145,18 @@ impl RowArgs {
                     }
                 }
                 Format::Text(_) => {
-                    print_text(
-                        &rows,
-                        &steps,
-                        &known,
-                        &agents,
-                        self.limit.unwrap_or(DEFAULT_LINES),
-                        &mut printed,
-                        first,
-                        self.follow,
-                        out,
-                    )?;
+                    let rows: Vec<&agent_core::log::LogEntry> = rows.iter().collect();
+                    let steps = steps
+                        .iter()
+                        .filter(|step| near(&rows, step.at, step.run.task.as_str()))
+                        .cloned()
+                        .collect();
+                    let mut timeline = Timeline::new(rows, steps, agents.clone());
+                    timeline.teams.extend(teams.iter().cloned());
+                    let text = timeline.newest(self.limit.unwrap_or(DEFAULT_LINES));
+                    out.write_all(text.as_bytes()).map_err(LogError::Output)?;
                 }
             }
-            first = false;
             out.flush().map_err(LogError::Output)?;
             let Some(runtime) = &runtime else {
                 return Ok(());
@@ -164,10 +171,10 @@ impl RowArgs {
     }
 }
 
-/// Writes one row as JSON.
+/// Writes one row in the same format for the initial window and follow pages.
 fn print_row(row: &agent_core::log::LogEntry, format: Format, out: &mut impl Write) -> Result<(), LogError> {
     let text = match format {
-        Format::Text(_) => String::new(),
+        Format::Text(_) => format!("{} {} {} {}", row.at(), row.level(), row.event(), row.message()),
         Format::Json => serde_json::json!({
             "id": row.id(), "first_at": row.first_at(), "at": row.at(), "level": row.level(),
             "event": row.event(), "module": row.module(), "team": row.team(), "rounds": row.rounds(),
@@ -179,50 +186,8 @@ fn print_row(row: &agent_core::log::LogEntry, format: Format, out: &mut impl Wri
     writeln!(out, "{text}").map_err(LogError::Output)
 }
 
-/// Writes the text of `page`'s rows and of their steps: the newest `limit` things of it, or, when following, the
-/// things that were not printed yet.
-fn print_text(
-    page: &[agent_core::log::LogEntry],
-    steps: &[TimedStep],
-    teams: &[Team],
-    followed: &[AgentName],
-    limit: u32,
-    printed: &mut BTreeSet<i64>,
-    first: bool,
-    following: bool,
-    out: &mut impl Write,
-) -> Result<(), LogError> {
-    let rows: Vec<&agent_core::log::LogEntry> = page
-        .iter()
-        .filter(|row| first || !following || !printed.contains(&row.id()))
-        .collect();
-    let scoped = rows
-        .iter()
-        .any(|row| row.task().is_some() || row.run().is_some() || row.team().is_some());
-    let nearby = steps
-        .iter()
-        .filter(|step| !scoped || near(&rows, step.at, step.run.task.as_str()))
-        .collect();
-    let mut timeline = Timeline::new(rows, nearby, followed.to_vec());
-    timeline.teams.extend(
-        teams
-            .iter()
-            .filter(|team| page.iter().any(|row| row.team() == Some(&team.team)))
-            .cloned(),
-    );
-    let text = if following && !first {
-        timeline.fresh()
-    } else {
-        timeline.newest(limit)
-    };
-    for row in page {
-        printed.insert(row.id());
-    }
-    out.write_all(text.as_bytes()).map_err(LogError::Output)
-}
-
 /// Whether `step` is one of the rows' task or comes between the first and the last of them in the day.
-fn near(rows: &[&agent_core::log::LogEntry], at: agent_core::state::Timestamp, task: &str) -> bool {
+fn near(rows: &[&agent_core::log::LogEntry], at: Timestamp, task: &str) -> bool {
     let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
         return false;
     };
@@ -231,52 +196,43 @@ fn near(rows: &[&agent_core::log::LogEntry], at: agent_core::state::Timestamp, t
         || (first.at() <= at && at <= last.at())
 }
 
-/// The agents whose runs are followed: the one of `--agent`, or those of the runs of `--task` and `--run`, and those of
-/// the rows themselves.
+/// The agents whose runs the scope covers: the one of `--agent`, those of the runs of `--task` and `--run`, and those
+/// of the steps. A line names its agent when more than one is followed, or when the scope is one task.
 fn followed_agents(reader: &Reader, filter: &LogFilter) -> Result<Vec<AgentName>, LogError> {
-    let mut agents: Vec<AgentName> = Vec::new();
+    let mut names: Vec<String> = Vec::new();
     if let Some(agent) = &filter.agent {
-        agents.push(agent.clone());
+        names.push(agent.to_string());
     }
     if let Some(task) = &filter.task {
-        agents.extend(step_agents(task_steps(reader, task)?));
-    }
-    if let Some(id) = &filter.run {
-        if let Some(run) = reader.run(id)? {
-            agents.extend(name(&run.start.value.agent.name));
+        for run in reader.runs_of_task(task)? {
+            names.push(run.start.value.agent.name);
         }
     }
-    agents.extend(step_agents(steps_of(reader, filter)?));
+    if let Some(id) = &filter.run
+        && let Some(run) = reader.run(id)?
+    {
+        names.push(run.start.value.agent.name);
+    }
+    for step in steps_of(reader, filter)? {
+        names.push(step.run.agent.name);
+    }
+    let mut agents: Vec<AgentName> = Vec::new();
+    for name in names {
+        match name.parse() {
+            Ok(agent) => agents.push(agent),
+            Err(source) => {
+                // The history validated the name of a run when it wrote it, so a name that does not parse cannot
+                // happen; it is left out of the followed agents, and the steps of its run print without it.
+                tracing::warn!(%source, %name, "a run of the scope has no agent name a log can show");
+            }
+        }
+    }
     agents.sort();
     agents.dedup();
-    // A log names an agent only when more than one run is followed; one name alone says nothing of the text. A scope
-    // of one task keeps it: its lines name the task and the agent that runs it.
     if agents.len() < 2 && filter.task.is_none() {
         agents.clear();
     }
     Ok(agents)
-}
-
-/// The agent of `name`, which a run records as text and the log prints as its name.
-fn name(name: &str) -> Option<AgentName> {
-    match name.parse() {
-        Ok(agent) => Some(agent),
-        Err(source) => {
-            // The history validated the name of a run when it wrote it, so this cannot happen; a name that does not
-            // parse is left out of the followed agents, and its steps print without it.
-            tracing::warn!(%source, name, "a run of the scope has no agent name a log can show");
-            None
-        }
-    }
-}
-
-/// The agents of `steps`, each as often as its steps are.
-fn step_agents(steps: Vec<TimedStep>) -> Vec<AgentName> {
-    let mut agents: Vec<AgentName> = Vec::new();
-    for step in steps {
-        agents.extend(name(&step.run.agent.name));
-    }
-    agents
 }
 
 /// The steps of the runs `filter` covers, oldest first.
