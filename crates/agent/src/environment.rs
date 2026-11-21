@@ -29,15 +29,19 @@ pub(crate) struct Environment {
     local_offset: UtcOffset,
     /// Why the offset is UTC, when it is for that reason.
     offset_error: Option<IndeterminateOffset>,
+    /// The zone the times a person reads in this process are written in.
+    zone: Zone,
 }
 
 /// The machine's offset from UTC at `at`, or nothing when the machine cannot tell it: the zone then shows UTC, marked.
 fn system_offset_at(at: OffsetDateTime) -> Option<UtcOffset> {
-    if !zone_is_known() {
-        return None;
-    }
     // A failure is the specified fallback of `Zone::Lookup`, which marks the time as UTC; the reason is not kept.
     UtcOffset::local_offset_at(at).ok()
+}
+
+/// A lookup for a process whose `TZ` or `/etc/localtime` does not name a known zone: every moment falls back to UTC, marked.
+const fn unknown_offset_at(_at: OffsetDateTime) -> Option<UtcOffset> {
+    None
 }
 
 /// Whether the zone of the process is one the system knows. glibc reads an unknown `TZ` as UTC without a failure, so the
@@ -104,11 +108,13 @@ impl Environment {
     /// Call it at the start of the process, while it has one thread: the system refuses to name the time zone of a
     /// process that has more.
     pub(crate) fn from_process() -> Self {
-        // `time` reads `TZ` and the zone database once, while the process has one thread. `None` means they could not be
-        // read now; the lookup of each moment then reports the zone it cannot find as UTC.
-        if time::util::refresh_tz().is_none() {
-            // Nothing else to do: the lookup of each moment is the one that decides the zone.
-        }
+        // `time` reads `TZ` and the zone database once, while the process has one thread. When they cannot be read or
+        // do not name a known zone, every moment falls back to UTC, marked.
+        let zone = if time::util::refresh_tz().is_some() && zone_is_known() {
+            Zone::Lookup(system_offset_at)
+        } else {
+            Zone::Lookup(unknown_offset_at)
+        };
         let (local_offset, offset_error) = match UtcOffset::current_local_offset() {
             Ok(offset) => (offset, None),
             // UTC is the specified fallback; the daemon logs why.
@@ -124,6 +130,7 @@ impl Environment {
                 .find(|value| !value.to_string_lossy().trim().is_empty()),
             local_offset,
             offset_error,
+            zone,
         }
     }
 
@@ -136,6 +143,7 @@ impl Environment {
             editor: None,
             local_offset: UtcOffset::UTC,
             offset_error: None,
+            zone: Zone::Utc,
         }
     }
 
@@ -165,8 +173,8 @@ impl Environment {
 
     /// The zone the times a person reads in this process are written in: the offset the machine has at each moment, so
     /// a time before a change of summer time has the offset of its day. UTC, marked, when the machine cannot tell it.
-    pub(crate) fn zone() -> Zone {
-        Zone::Lookup(system_offset_at)
+    pub(crate) const fn zone(&self) -> Zone {
+        self.zone
     }
 
     /// The machine's offset from UTC.

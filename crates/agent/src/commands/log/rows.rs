@@ -30,6 +30,16 @@ pub(crate) struct Scope {
     pub(crate) team: Option<TeamId>,
 }
 
+/// The zones `agent log` uses: the machine's zone for reading a typed time without a zone, and the output zone
+/// (`Zone::Utc` when `--utc` is given) for printing times.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LogZones {
+    /// The machine's zone, in which `--since` and `--until` without a zone are read.
+    pub(crate) input: Zone,
+    /// The zone in which the output's times are written.
+    pub(crate) output: Zone,
+}
+
 /// Row arguments; their presence opts a scoped story into log queries.
 #[derive(Debug, Args)]
 pub(crate) struct RowArgs {
@@ -58,8 +68,8 @@ pub(crate) struct RowArgs {
     /// Exact daemon event name.
     #[arg(long)]
     event: Option<LogEvent>,
-    /// Include timestamps at or after this time: RFC 3339 with its zone, or a date and a time read in the zone of the
-    /// output (`2026-11-21 17:29`, `2026-11-21T17:29:53`), as `--utc` says.
+    /// Include timestamps at or after this time: RFC 3339 with its zone, or a date and a time in this machine's time
+    /// zone (`2026-11-21 17:29`, `2026-11-21T17:29:53`).
     #[arg(long, value_name = "TIME")]
     since: Option<TypedTime>,
     /// Include timestamps at or before this time, read as `--since` reads its time.
@@ -99,7 +109,7 @@ impl RowArgs {
         socket: &Path,
         scope: Scope,
         format: Format,
-        zone: Zone,
+        zones: LogZones,
         out: &mut impl Write,
     ) -> Result<(), LogError> {
         let Scope { round, team } = scope;
@@ -111,8 +121,8 @@ impl RowArgs {
         if let Some(view) = self.show.filter(|view| *view != LogView::Log) {
             return super::views::print(&reader, round, team.as_ref(), view, format, out);
         }
-        let since = typed_time(self.since.as_ref(), "--since", zone)?;
-        let until = typed_time(self.until.as_ref(), "--until", zone)?;
+        let since = typed_time(self.since.as_ref(), "--since", zones.input)?;
+        let until = typed_time(self.until.as_ref(), "--until", zones.input)?;
         let filter = LogFilter {
             grep: self.grep.clone(),
             team,
@@ -137,7 +147,7 @@ impl RowArgs {
             None
         };
         match format {
-            Format::Json => follow_json(&reader, &filter, limit, runtime.as_ref(), zone, out),
+            Format::Json => follow_json(&reader, &filter, limit, runtime.as_ref(), zones.output, out),
             Format::Text(options) => {
                 // A round or a team without `--follow` is told by its rows (`--show log`) or its story; the steps of
                 // its runs are listed only for a run, a task or an agent, or when following.
@@ -146,7 +156,7 @@ impl RowArgs {
                 } else {
                     StepView::LeftOut
                 };
-                let (mut feed, text) = Feed::open_in(&reader, filter, steps, limit, zone)?;
+                let (mut feed, text) = Feed::open_in(&reader, filter, steps, limit, zones.output)?;
                 out.write_all(text.as_bytes()).map_err(LogError::Output)?;
                 out.flush().map_err(LogError::Output)?;
                 let Some(runtime) = &runtime else {

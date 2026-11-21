@@ -29,7 +29,7 @@ filters use explicit `--show log` so they compare the same kind of rows.
 
 Filters intersect. `--level` matches exactly one severity; `--agent` matches the agent of the associated run.
 `--since` and `--until` are inclusive timestamps: one with its zone (`Z` or an offset) is read as written, one without
-is read in the zone of the output, as the text is written (see the top of this page). `-n 0` prints no rows; the default is `100`.
+is read in the zone of the machine (see the top of this page), also with `--utc` or `--json`. `-n 0` prints no rows; the default is `100`.
 The newest matching rows are printed oldest first by database insertion ID. Row-mode `--json` prints each log's
 `id`, `first_at`, `at`, `level`, `event`, `module`, `team`, `rounds`, `task`, `run`, `message`, `fields`, `count`
 and `cut`. A filter that matches nothing succeeds with empty output. Older schemas without daemon logs also

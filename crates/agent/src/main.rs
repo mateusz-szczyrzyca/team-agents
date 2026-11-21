@@ -748,11 +748,12 @@ async fn execute_steer(environment: &Environment, steer: Steer, out: &mut impl W
 /// [`CommandError`].
 fn execute_log(environment: &Environment, args: LogArgs, out: &mut impl Write) -> Result<(), CommandError> {
     use crate::commands::log::Format;
-    use crate::commands::log::rows::Scope;
+    use crate::commands::log::rows::{LogZones, Scope};
     use agent_core::story::{PromptView, StepView, StoryOptions};
 
     let home = environment.home()?;
-    let zone = if args.utc { Zone::Utc } else { Environment::zone() };
+    let local_zone = environment.zone();
+    let zone = if args.utc { Zone::Utc } else { local_zone };
     let format = if args.json {
         Format::Json
     } else {
@@ -774,8 +775,12 @@ fn execute_log(environment: &Environment, args: LogArgs, out: &mut impl Write) -
             round: args.round.clone(),
             team: args.team.clone(),
         };
+        let zones = LogZones {
+            input: local_zone,
+            output: zone,
+        };
         args.rows
-            .print(&home.history_file(), &home.socket_file(), scope, format, zone, out)?;
+            .print(&home.history_file(), &home.socket_file(), scope, format, zones, out)?;
         return Ok(());
     }
     let request = LogRequest::new(args.round, args.team, format)?;
