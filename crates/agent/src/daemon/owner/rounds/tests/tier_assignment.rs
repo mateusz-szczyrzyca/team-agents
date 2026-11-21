@@ -514,3 +514,49 @@ async fn absent_tier_asks_once_across_restart_and_an_unhelpful_answer() {
     assert!(!rig.home.questions_file(&tasks[0], n(2)).exists());
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn missing_tier_after_first_part_merge_names_the_waiting_second_part() {
+    let mut rig = Rig::new(
+        &[
+            normal("lead", "proposal:later,integrate"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let directory = rig.home.root().join("fake-proposals");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("later.json"),
+        serde_json::json!({"parent":"1.1", "scope":{"kind":"unchanged"}, "parts":[
+            {"title":"First", "delivers":"First document", "checks":"Read first", "depends_on":[],
+             "estimate":{"amount":100,"unit":"lines"}},
+            {"title":"Second", "delivers":"Second document", "checks":"Read second", "depends_on":["a"],
+             "tier":"investigator", "estimate":{"amount":100,"unit":"lines"}}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(&["lead", "claude-1"], ONE, MergeMode::Autopilot, Some("lead"))
+        .await;
+    let state = rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    assert_eq!(state.team(&id).unwrap().rounds().len(), 1);
+    assert_eq!(
+        state.team(&id).unwrap().rounds()[0]
+            .part_pull_request()
+            .unwrap()
+            .number
+            .get()
+            .get(),
+        1
+    );
+    let question = std::fs::read_to_string(rig.home.questions_file(&tasks[0], std::num::NonZeroU32::MIN)).unwrap();
+    assert!(question.contains("Item 1.1b requires investigator"), "{question}");
+    rig.stop().await.unwrap();
+}
