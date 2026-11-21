@@ -545,6 +545,79 @@ async fn startup_cached_confirmations_do_not_show_stale_confirmed_for_edited_ste
 }
 
 #[tokio::test]
+async fn startup_cached_confirmations_preserved_for_deduplicated_plan_runs() {
+    let mut daemon = with_bounces(&solo_state(), 2);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    let plan = "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists ok.txt\n[ ] 1.2 Later\n";
+    std::fs::write(dir.join(".agent/plan.md"), plan).unwrap();
+
+    // Run 1: ok.txt does not exist, so 1.1 is judged Mismatch.
+    daemon.start().await;
+    daemon
+        .state_where("sent back once", |state| {
+            state
+                .find_task(&task(1))
+                .and_then(|f| f.member.plan())
+                .is_some_and(|k| k.sent_back() >= 1)
+        })
+        .await;
+    daemon.stop().await.unwrap();
+
+    // Verify Run 1 kept the plan version in history
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let versions = reader.plan_versions(&task(1)).unwrap();
+    assert_eq!(versions.len(), 1);
+
+    // Run 2: ok.txt is created, plan text is identical, 1.1 is confirmed.
+    // Plan versions in history is deduplicated (still len == 1).
+    std::fs::write(dir.join("ok.txt"), "content").unwrap();
+    daemon.start().await;
+    daemon
+        .state_where("run 2 ended or sent back twice", |state| {
+            state
+                .find_task(&task(1))
+                .and_then(|f| f.member.plan())
+                .is_some_and(|k| k.sent_back() >= 2)
+        })
+        .await;
+    daemon.stop().await.unwrap();
+
+    let versions = reader.plan_versions(&task(1)).unwrap();
+    assert_eq!(versions.len(), 1, "history must deduplicate identical plan versions");
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    let j = judgements.get(&"1.1".parse::<ItemId>().unwrap()).unwrap();
+    assert_eq!(j.state, agent_core::plan::judge::JudgementState::Confirmed);
+
+    // Daemon restart: snapshot recovery must find the confirmation carried forward
+    daemon.start().await;
+
+    let mut connection = crate::client::Connection::connect(&daemon.home.socket_file())
+        .await
+        .unwrap();
+    let reply = connection
+        .request(
+            agent_core::protocol::Client::Cli,
+            agent_core::protocol::Command::Status(agent_core::protocol::StatusRequest { target: None }),
+        )
+        .await
+        .unwrap();
+    let (agent_core::protocol::Reply::Teams { teams } | agent_core::protocol::Reply::Overview { teams, .. }) = reply
+    else {
+        panic!("expected Reply::Teams, got {reply:?}");
+    };
+    let step = &teams[0].task_plans.get(&task(1)).unwrap()[0];
+    assert_eq!(step.id, "1.1".parse::<ItemId>().unwrap());
+    assert_eq!(
+        step.state,
+        Some(agent_core::plan::judge::JudgementState::Confirmed),
+        "valid confirmation must be preserved across restart even when plan version was deduplicated"
+    );
+
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn plan_steps_are_judged_when_run_fails() {
     let mut daemon = with_bounces(&solo_state(), 1);
     let dir = daemon.scenario(1, "fail");
