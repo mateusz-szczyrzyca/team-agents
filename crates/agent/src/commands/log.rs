@@ -2,6 +2,7 @@
 
 pub(crate) mod rows;
 pub(crate) mod steps;
+mod team;
 #[cfg(test)]
 mod tests;
 mod timeline;

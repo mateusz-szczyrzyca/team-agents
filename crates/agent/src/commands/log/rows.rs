@@ -1,5 +1,6 @@
 //! CLI row predicates, separate from the preserved story command.
 
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 
@@ -9,7 +10,13 @@ use agent_core::state::Timestamp;
 use agent_runtime::history::{LogFilter, LogWindow, Reader};
 use clap::Args;
 
+use super::steps::{TimedStep, agent_steps, run_steps, task_steps};
+use super::team::{Team, teams};
+use super::timeline::Timeline;
 use super::{Format, LogError};
+
+/// The newest lines `agent log` prints when `-n` names none.
+const DEFAULT_LINES: u32 = 50;
 
 /// Row arguments; their presence opts a scoped story into log queries.
 #[derive(Debug, Args)]
@@ -77,6 +84,7 @@ impl RowArgs {
         round: Option<RoundId>,
         team: Option<TeamId>,
         format: Format,
+        steps: bool,
         out: &mut impl Write,
     ) -> Result<(), LogError> {
         let reader = Reader::open(path)?;
@@ -109,13 +117,39 @@ impl RowArgs {
         } else {
             None
         };
+        let agents = followed_agents(&reader, &filter)?;
+        let steps = if steps { steps_of(&reader, &filter)? } else { Vec::new() };
+        let known = teams(&reader)?;
         let mut cursor = reader.log_cursor()?;
         let mut window = LogWindow::Newest(self.limit.unwrap_or(100));
+        let mut first = true;
+        let mut printed: BTreeSet<i64> = BTreeSet::new();
         loop {
-            for row in reader.log_rows(&filter, window)? {
+            let rows = reader.log_rows(&filter, window)?;
+            for row in &rows {
                 cursor = cursor.max(row.id());
-                print_row(&row, format, out)?;
             }
+            match format {
+                Format::Json => {
+                    for row in &rows {
+                        print_row(row, format, out)?;
+                    }
+                }
+                Format::Text(_) => {
+                    print_text(
+                        &rows,
+                        &steps,
+                        &known,
+                        &agents,
+                        self.limit.unwrap_or(DEFAULT_LINES),
+                        &mut printed,
+                        first,
+                        self.follow,
+                        out,
+                    )?;
+                }
+            }
+            first = false;
             out.flush().map_err(LogError::Output)?;
             let Some(runtime) = &runtime else {
                 return Ok(());
@@ -130,10 +164,10 @@ impl RowArgs {
     }
 }
 
-/// Writes one row in the same format for the initial window and follow pages.
+/// Writes one row as JSON.
 fn print_row(row: &agent_core::log::LogEntry, format: Format, out: &mut impl Write) -> Result<(), LogError> {
     let text = match format {
-        Format::Text(_) => format!("{} {} {} {}", row.at(), row.level(), row.event(), row.message()),
+        Format::Text(_) => String::new(),
         Format::Json => serde_json::json!({
             "id": row.id(), "first_at": row.first_at(), "at": row.at(), "level": row.level(),
             "event": row.event(), "module": row.module(), "team": row.team(), "rounds": row.rounds(),
@@ -143,4 +177,121 @@ fn print_row(row: &agent_core::log::LogEntry, format: Format, out: &mut impl Wri
         .to_string(),
     };
     writeln!(out, "{text}").map_err(LogError::Output)
+}
+
+/// Writes the text of `page`'s rows and of their steps: the newest `limit` things of it, or, when following, the
+/// things that were not printed yet.
+fn print_text(
+    page: &[agent_core::log::LogEntry],
+    steps: &[TimedStep],
+    teams: &[Team],
+    followed: &[AgentName],
+    limit: u32,
+    printed: &mut BTreeSet<i64>,
+    first: bool,
+    following: bool,
+    out: &mut impl Write,
+) -> Result<(), LogError> {
+    let rows: Vec<&agent_core::log::LogEntry> = page
+        .iter()
+        .filter(|row| first || !following || !printed.contains(&row.id()))
+        .collect();
+    let scoped = rows
+        .iter()
+        .any(|row| row.task().is_some() || row.run().is_some() || row.team().is_some());
+    let nearby = steps
+        .iter()
+        .filter(|step| !scoped || near(&rows, step.at, step.run.task.as_str()))
+        .collect();
+    let mut timeline = Timeline::new(rows, nearby, followed.to_vec());
+    timeline.teams.extend(
+        teams
+            .iter()
+            .filter(|team| page.iter().any(|row| row.team() == Some(&team.team)))
+            .cloned(),
+    );
+    let text = if following && !first {
+        timeline.fresh()
+    } else {
+        timeline.newest(limit)
+    };
+    for row in page {
+        printed.insert(row.id());
+    }
+    out.write_all(text.as_bytes()).map_err(LogError::Output)
+}
+
+/// Whether `step` is one of the rows' task or comes between the first and the last of them in the day.
+fn near(rows: &[&agent_core::log::LogEntry], at: agent_core::state::Timestamp, task: &str) -> bool {
+    let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
+        return false;
+    };
+    rows.iter()
+        .any(|row| row.task().is_some_and(|row| row.as_str() == task))
+        || (first.at() <= at && at <= last.at())
+}
+
+/// The agents whose runs are followed: the one of `--agent`, or those of the runs of `--task` and `--run`, and those of
+/// the rows themselves.
+fn followed_agents(reader: &Reader, filter: &LogFilter) -> Result<Vec<AgentName>, LogError> {
+    let mut agents: Vec<AgentName> = Vec::new();
+    if let Some(agent) = &filter.agent {
+        agents.push(agent.clone());
+    }
+    if let Some(task) = &filter.task {
+        agents.extend(step_agents(task_steps(reader, task)?));
+    }
+    if let Some(id) = &filter.run {
+        if let Some(run) = reader.run(id)? {
+            agents.extend(name(&run.start.value.agent.name));
+        }
+    }
+    agents.extend(step_agents(steps_of(reader, filter)?));
+    agents.sort();
+    agents.dedup();
+    // A log names an agent only when more than one run is followed; one name alone says nothing of the text. A scope
+    // of one task keeps it: its lines name the task and the agent that runs it.
+    if agents.len() < 2 && filter.task.is_none() {
+        agents.clear();
+    }
+    Ok(agents)
+}
+
+/// The agent of `name`, which a run records as text and the log prints as its name.
+fn name(name: &str) -> Option<AgentName> {
+    match name.parse() {
+        Ok(agent) => Some(agent),
+        Err(source) => {
+            // The history validated the name of a run when it wrote it, so this cannot happen; a name that does not
+            // parse is left out of the followed agents, and its steps print without it.
+            tracing::warn!(%source, name, "a run of the scope has no agent name a log can show");
+            None
+        }
+    }
+}
+
+/// The agents of `steps`, each as often as its steps are.
+fn step_agents(steps: Vec<TimedStep>) -> Vec<AgentName> {
+    let mut agents: Vec<AgentName> = Vec::new();
+    for step in steps {
+        agents.extend(name(&step.run.agent.name));
+    }
+    agents
+}
+
+/// The steps of the runs `filter` covers, oldest first.
+fn steps_of(reader: &Reader, filter: &LogFilter) -> Result<Vec<TimedStep>, LogError> {
+    if let Some(id) = &filter.run {
+        return Ok(match reader.run(id)? {
+            Some(run) => run_steps(reader, &run.start.value)?,
+            None => Vec::new(),
+        });
+    }
+    if let Some(task) = &filter.task {
+        return Ok(task_steps(reader, task)?);
+    }
+    if let Some(agent) = &filter.agent {
+        return Ok(agent_steps(reader, agent)?);
+    }
+    Ok(Vec::new())
 }

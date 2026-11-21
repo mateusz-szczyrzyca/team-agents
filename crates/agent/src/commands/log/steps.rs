@@ -81,6 +81,19 @@ pub(crate) fn agent_steps(reader: &Reader, agent: &AgentName) -> Result<Vec<Time
     Ok(steps)
 }
 
+/// The place of each of `steps` when the scope has no row for them to follow: each step opens the text after the
+/// steps before it.
+pub(crate) fn unplaced(steps: &[&TimedStep]) -> Vec<Place> {
+    let mut places: Vec<Place> = Vec::with_capacity(steps.len());
+    for (index, _) in steps.iter().enumerate() {
+        places.push(match index.checked_sub(1) {
+            Some(previous) => Place::After(previous as i64),
+            None => Place::First,
+        });
+    }
+    places
+}
+
 /// Where each step of `steps`, oldest first, stands against `rows`, oldest first: after the last row recorded no later
 /// than its time, which keeps a step between the rows of its time.
 pub(crate) fn places(rows: &[&LogEntry], steps: &[&TimedStep]) -> Vec<Place> {

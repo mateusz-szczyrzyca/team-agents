@@ -15,7 +15,8 @@ use agent_core::log::LogEntry;
 use agent_core::log::render::{record_line, steps::step_line};
 use agent_core::state::Timestamp;
 
-use super::steps::{Place, TimedStep, places};
+use super::steps::{Place, TimedStep, places, unplaced};
+use super::team::Team;
 
 /// What one thing of the text is, for the newest line and for following.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,25 +36,33 @@ pub(crate) struct Timeline<'a> {
     rows: Vec<&'a LogEntry>,
     /// The steps of the runs of the scope, oldest first.
     steps: Vec<&'a TimedStep>,
-    /// Where each step stands against the rows.
-    places: Vec<Place>,
     /// The agents whose runs the text covers: a line names its agent when there is more than one.
     followed: Vec<AgentName>,
     /// Every thing of the text, in the order it happened.
     order: Vec<Kind>,
+    /// What was printed so far, by its place in [`Timeline::order`].
+    printed: Vec<bool>,
+    /// The teams of the rows the text shows were made from.
+    pub(crate) teams: Vec<Team>,
 }
 
 impl<'a> Timeline<'a> {
-    /// The text of `rows` and of `steps`, the steps of the agents `followed`.
+    /// The text of the steps of the agents `followed`, in `teams`, the teams the rows stand for.
     pub(crate) fn new(rows: Vec<&'a LogEntry>, steps: Vec<&'a TimedStep>, followed: Vec<AgentName>) -> Self {
-        let places = places(&rows, &steps);
-        let order = order_of(&rows, &steps, &places);
+        let order = if rows.is_empty() {
+            let places: Vec<Place> = rows.iter().map(|_| Place::First).collect();
+            let _ = places;
+            order_of(&rows, &steps, &unplaced(&steps))
+        } else {
+            order_of(&rows, &steps, &places(&rows, &steps))
+        };
         Self {
             rows,
             steps,
-            places,
             followed,
+            printed: vec![false; order.len()],
             order,
+            teams: Vec::new(),
         }
     }
 
@@ -86,13 +95,45 @@ impl<'a> Timeline<'a> {
     }
 
     /// The row's line: what happened, with the task, the agent, the run and the fields.
+    ///
+    /// The text has its rows with `teams`: a row's run is looked up in the team the row belongs to.
     fn row_line(&self, row: &LogEntry) -> String {
-        let run = self
-            .steps
+        let run = Some(row)
+            .and_then(|_| row.team())
+            .and_then(|team| self.teams.iter().find(|made| &made.team == team))
+            .and_then(|team| team.run_of(row.run()))
+            .cloned();
+        format!(
+            "{}
+",
+            record_line(row, run.as_ref())
+        )
+    }
+
+    /// The run of `row`, when the text knows its team.
+    fn run(&self, row: &LogEntry) -> Option<&agent_core::history::RunStart> {
+        let team = row.team()?;
+        self.teams
             .iter()
-            .find(|timed| Some(&timed.step.run) == row.run())
-            .map(|timed| &timed.run);
-        format!("{}\n", record_line(row, run))
+            .find(|made| &made.team == team)
+            .and_then(|made| made.run_of(row.run()))
+    }
+
+    /// The things of the text that were not printed yet, oldest first.
+    pub(crate) fn fresh(&mut self) -> String {
+        let mut text = String::new();
+        while let Some((index, kind)) = self
+            .order
+            .iter()
+            .enumerate()
+            .find(|(index, _)| !self.printed.get(*index).copied().unwrap_or(false))
+        {
+            if let Some(printed) = self.printed.get_mut(index) {
+                *printed = true;
+            }
+            text.push_str(&self.line(*kind));
+        }
+        text
     }
 
     /// A run's first line: the agent, the task, the team and the round it works for.
@@ -148,7 +189,7 @@ fn order_of(rows: &[&LogEntry], steps: &[&TimedStep], places: &[Place]) -> Vec<K
     }
     let mut order: Vec<Kind> = Vec::new();
     let mut told: BTreeSet<String> = BTreeSet::new();
-    let mut push_steps = |order: &mut Vec<Kind>, told: &mut BTreeSet<String>, step: usize| {
+    let push_steps = |order: &mut Vec<Kind>, told: &mut BTreeSet<String>, step: usize| {
         if let Some(timed) = steps.get(step)
             && told.insert(timed.run.run.to_string())
         {

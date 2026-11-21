@@ -255,6 +255,32 @@ impl Reader {
         read_team(&snapshot, team)
     }
 
+    /// Every team of the history, oldest first.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn teams(&self) -> Result<Vec<Stored<TeamStart>>, ReadError> {
+        let snapshot = self.snapshot("teams")?;
+        let mut statement = snapshot
+            .prepare("SELECT team FROM teams ORDER BY at, rowid")
+            .map_err(query("teams"))?;
+        let ids: Vec<String> = statement
+            .query_map([], |row| row.get(0))
+            .map_err(query("teams"))?
+            .collect::<Result<_, _>>()
+            .map_err(query("teams"))?;
+        drop(statement);
+        let mut teams = Vec::with_capacity(ids.len());
+        for id in ids {
+            let team = Row_::of("teams", &id).value("team", TeamId::from_str(&id))?;
+            match read_team(&snapshot, &team)? {
+                Some(team) => teams.push(team),
+                None => {}
+            }
+        }
+        Ok(teams)
+    }
+
     /// Every entry of `daemon_logs`, in write order (`id ASC`); databases before version 4 have none.
     ///
     /// # Errors
