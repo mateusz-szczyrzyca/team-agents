@@ -36,10 +36,10 @@ pub enum PersistJudgementsError {
     #[error(transparent)]
     Write(#[from] WriteError),
     /// The blocking persistence task failed.
-    #[error("persistence task failed: {0}")]
+    #[error("judgement persistence task failed")]
     Task(#[from] tokio::task::JoinError),
     /// The persistence acknowledgement was dropped before receipt.
-    #[error("persistence acknowledgement was dropped: {0}")]
+    #[error("judgement persistence acknowledgement was dropped")]
     Acknowledged(#[from] tokio::sync::oneshot::error::RecvError),
 }
 

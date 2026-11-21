@@ -20,7 +20,7 @@ mod tests;
 #[derive(Debug, thiserror::Error)]
 pub enum CheckError {
     /// A check duration overflowed the supported representation.
-    #[error("check duration overflowed u64 milliseconds: {source}")]
+    #[error("check duration exceeds u64 milliseconds")]
     DurationOverflow {
         /// The integer conversion error.
         #[source]
