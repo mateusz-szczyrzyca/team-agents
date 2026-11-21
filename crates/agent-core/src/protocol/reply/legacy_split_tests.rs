@@ -188,8 +188,6 @@ fn split_summary_events_and_round_identities_use_the_negotiated_version() {
     use crate::state::fixtures::at;
     let mut summary = TeamSummary::from(&working_split_team());
     summary.part_assignments.clear();
-    // The split protocol has no description of the team: a summary read back from it has none.
-    summary.short_desc = None;
     let response = Frame::Response(Response::ok(
         RequestId(9),
         Reply::Teams {

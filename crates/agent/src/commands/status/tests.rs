@@ -9,7 +9,7 @@ use crate::fixtures::{task, team_id, team_state};
 use crate::testing::{Answer, FakeDaemon};
 
 fn sample() -> Vec<TeamSummary> {
-    vec![crate::fixtures::legacy_summary(&team_state().teams()[0])]
+    vec![TeamSummary::from(&team_state().teams()[0])]
 }
 
 #[test]
@@ -373,7 +373,7 @@ fn a_team_lists_its_rounds_under_its_line_with_their_items_and_how_they_ended() 
     assert_eq!(
         text,
         "\
-team-20261111-153000-t5m8  team-agents  autopilot  0 pending, 1 in progress, 0 in review, 0 approved, 1 done  \"Build the thing.\"
+team-20261111-153000-t5m8  team-agents  autopilot  0 pending, 1 in progress, 0 in review, 0 approved, 1 done
   round-20261111-153001-q1w2  item 1.1  closed, merged
   round-20261111-153002-q1w2  item 1.2  open
   task-20261111-153001-k3x9  coordinator  inv-opus   queued

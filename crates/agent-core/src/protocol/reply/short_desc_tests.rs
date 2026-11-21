@@ -17,21 +17,21 @@ fn team_with_a_description() -> crate::state::Team {
 
 #[test]
 fn the_summary_of_a_team_whose_list_names_no_description_has_the_derived_one() {
-    let summary = TeamSummary::from(&team(1));
+    let summary = TeamSummary::described(&team(1));
 
     assert_eq!(summary.short_desc.as_deref(), Some("Build the thing."));
 }
 
 #[test]
 fn the_summary_of_a_team_whose_list_names_one_has_it() {
-    let summary = TeamSummary::from(&team_with_a_description());
+    let summary = TeamSummary::described(&team_with_a_description());
 
     assert_eq!(summary.short_desc.as_deref(), Some("Given words"));
 }
 
 #[test]
 fn a_summary_without_the_field_is_read_as_one_without_a_description() {
-    let mut value = serde_json::to_value(TeamSummary::from(&team(1))).unwrap();
+    let mut value = serde_json::to_value(TeamSummary::described(&team(1))).unwrap();
     value.as_object_mut().unwrap().remove("short_desc");
 
     let summary: TeamSummary = serde_json::from_value(value).unwrap();
@@ -41,7 +41,7 @@ fn a_summary_without_the_field_is_read_as_one_without_a_description() {
 
 #[test]
 fn a_summary_without_a_description_does_not_write_the_field() {
-    let mut summary = TeamSummary::from(&team(1));
+    let mut summary = TeamSummary::described(&team(1));
     summary.short_desc = None;
 
     let value = serde_json::to_value(&summary).unwrap();
@@ -51,7 +51,7 @@ fn a_summary_without_a_description_does_not_write_the_field() {
 
 /// A frame with the summary of the sample team, in a response and in an event.
 fn frames() -> Vec<(Frame, &'static str)> {
-    let summary = TeamSummary::from(&team_with_a_description());
+    let summary = TeamSummary::described(&team_with_a_description());
     vec![
         (
             Frame::Response(Response::ok(

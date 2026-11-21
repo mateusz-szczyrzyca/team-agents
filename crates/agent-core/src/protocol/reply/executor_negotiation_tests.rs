@@ -41,7 +41,6 @@ fn older_protocols_decode_populated_summaries_with_the_strict_old_shape() {
     let mut expected = serde_json::to_value(&summary).unwrap();
     expected.as_object_mut().unwrap().remove("part_assignments");
     expected.as_object_mut().unwrap().remove("tier_waits");
-    expected.as_object_mut().unwrap().remove("short_desc");
     let expected: OldTeamSummary = serde_json::from_value(expected).unwrap();
     let frames = [
         (
