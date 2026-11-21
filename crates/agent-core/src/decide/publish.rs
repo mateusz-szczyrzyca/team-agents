@@ -208,15 +208,23 @@ pub struct PublishDecision<'a> {
 /// Which branch a round publishes to and how.
 #[must_use]
 pub fn publish_decision<'a>(
-    _round: RoundPublication,
+    round: RoundPublication,
     branches: &PublicationBranches<'a>,
-    _remote: RemoteState,
+    remote: RemoteState,
 ) -> PublishDecision<'a> {
-    // STUB: wrong implementation so tests fail first!
-    PublishDecision {
-        branch: branches.task,
-        action: PublishAction::Push,
-    }
+    let branch = match round {
+        RoundPublication::Item => branches.task,
+        RoundPublication::Part => branches.part.unwrap_or(branches.task),
+        RoundPublication::ConflictPass | RoundPublication::FixPass => {
+            branches.pr.or(branches.part).unwrap_or(branches.task)
+        }
+    };
+    let action = match remote {
+        RemoteState::Behind => PublishAction::Push,
+        RemoteState::Equal => PublishAction::UpToDate,
+        RemoteState::Diverged => PublishAction::Refused,
+    };
+    PublishDecision { branch, action }
 }
 
 /// What the harness does when publication cannot succeed.
@@ -232,9 +240,17 @@ pub enum PublishTriesStep {
 
 /// Decides the next step after a publication failure based on attempt count and configured limit.
 #[must_use]
-pub const fn publish_tries_step(_tries: u32, _limit: u32) -> PublishTriesStep {
-    // STUB: wrong implementation so tests fail first!
-    PublishTriesStep::Retry
+pub const fn publish_tries_step(tries: u32, limit: u32) -> PublishTriesStep {
+    if limit == 0 {
+        return PublishTriesStep::AskHuman;
+    }
+    if tries < limit {
+        PublishTriesStep::Retry
+    } else if tries == limit {
+        PublishTriesStep::TellLead
+    } else {
+        PublishTriesStep::AskHuman
+    }
 }
 
 /// What the human's answer to the publication failure question says.
@@ -248,9 +264,21 @@ pub enum PublishAnswer {
 
 /// Reads the human's verdict on a publication failure question.
 #[must_use]
-pub fn publish_answer(_verdict: Option<&Verdict>) -> PublishAnswer {
-    // STUB: wrong implementation so tests fail first!
-    PublishAnswer::Retry
+pub fn publish_answer(verdict: Option<&Verdict>) -> PublishAnswer {
+    match verdict {
+        Some(Verdict::Own(answer)) if names_option_b(answer.as_str()) => PublishAnswer::Stop,
+        Some(Verdict::Accept | Verdict::Own(_)) | None => PublishAnswer::Retry,
+    }
+}
+
+/// Whether `answer` selects option b or asks to stop.
+fn names_option_b(answer: &str) -> bool {
+    let trimmed = answer.trim_start();
+    let mut chars = trimmed.chars();
+    if matches!(chars.next(), Some('b' | 'B')) && chars.next().is_none_or(|next| !next.is_alphanumeric()) {
+        return true;
+    }
+    trimmed.starts_with("stop") || trimmed.starts_with("Stop")
 }
 
 #[cfg(test)]
