@@ -474,6 +474,14 @@ checked!(Team, TeamWire, check_team);
 /// Why a team's parts do not fit together.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TeamError {
+    /// A capability wait refers to an item outside the team's task list.
+    #[error("team {team}: capability wait names unknown item {item}")]
+    TierWait {
+        /// The team retaining the wait.
+        team: TeamId,
+        /// The unknown original item.
+        item: ItemId,
+    },
     /// A stored split does not belong to this team or repeats an original item.
     #[error("team {team} has an invalid split")]
     Split {
@@ -805,6 +813,14 @@ fn check_team(team: &Team) -> Result<(), TeamError> {
     check_items(&team.id, &team.task_list, &team.items)?;
     rounds::check_rounds(team)?;
     splits::check_splits(team)?;
+    for item in team.tier_waits.keys() {
+        if team.item(*item).is_none() {
+            return Err(TeamError::TierWait {
+                team: team.id.clone(),
+                item: *item,
+            });
+        }
+    }
     for (index, reviewer) in team.reviewers.iter().enumerate() {
         let previous = team.reviewers.get(..index).unwrap_or_default();
         check_reviewer(&team.crew, previous, reviewer).map_err(|reason| TeamError::Reviewer {
