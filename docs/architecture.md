@@ -679,6 +679,14 @@ Exhaustion sends `harness/pr/notice-handover-held.md` once for the held tip, nam
 `agent say` command. Publication clears the counter. The counter and notification deduplication remain transient,
 like the existing publication corrections; a daemon restart may issue a fresh correction.
 
+When publication to GitHub fails (push rejection, pull request creation or update error), attempts are governed
+by pure decision `decide::publish::publish_tries_step` and bounded by `[publish] tries` (default 3). Below the
+limit, the harness retries with backoff. At the limit, the lead is notified once with `harness/pr/notice-publish-failed.md`
+and sent back to correct the issue. Above the limit or when the limit is 0, the human is asked once in a questions file
+with `harness/pr/notice-publish-question.md`. The attempt counter and open question timestamp are persisted durably on
+`ItemProgress` across daemon restarts. Human answers are resolved via `decide::publish::publish_answer`: answering `Retry`
+clears the question and retries, while `Stop` stops the task.
+
 The owner's `rounds/waiting.rs` projects task activity, pending opinions, durable response corrections and its
 queued gates/publication actions into `decide::wait::round_wait`. This pure decision returns no wait for active
 or closed rounds and an owned obligation or a defect for idle open rounds. `RoundDetail.waiting` carries its

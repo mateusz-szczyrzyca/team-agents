@@ -56,6 +56,7 @@ Top-level key and tables:
 | `[log]` | table | `level = "info"`, `keep_days = 0` | the daemon's own log (`stderr` and `history.db`) |
 | `[snapshot]` | table | `warn_mb = 200` | the snapshots of worktrees |
 | `[merge]` | table | `conflict_passes = 3` | what happens when GitHub refuses an approved pull request for a conflict |
+| `[publish]` | table | `tries = 3` | what happens when a branch cannot be published to GitHub |
 | `[web]` | table | loopback, nobody let in | the dashboard |
 | `[repos.NAME]` | table | none | per repository: base branch, gate and the checks before a review |
 
@@ -343,6 +344,14 @@ does not allow (`Allow:`) is reviewed again before the merge. Every other refusa
 | Key | Default | Meaning |
 |---|---|---|
 | `conflict_passes` | `3` | lead passes per round to merge the base after a conflict; when they are used up, or the lead gives no result, the lead asks you in its questions file. `0` tells you at once, as before |
+
+### `[publish]`
+
+What happens when a branch cannot be published to GitHub (push failure, pull request creation or update error). The harness retries with backoff below `tries`, tells the lead once when the limit is reached so the lead can fix it, and asks the human once if publication still fails.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `tries` | `3` | how many times publication is tried before the lead is told once, and after that you are asked in a questions file. `0` asks you at once |
 
 ## `secrets.toml`
 
