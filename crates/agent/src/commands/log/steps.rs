@@ -11,7 +11,6 @@ mod tests;
 
 use agent_core::history::{RunStart, Step};
 use agent_core::ids::{AgentName, TaskId};
-use agent_core::log::LogEntry;
 use agent_core::state::Timestamp;
 use agent_runtime::history::{ReadError, Reader};
 
@@ -24,16 +23,6 @@ pub(crate) struct TimedStep {
     pub(crate) run: RunStart,
     /// When the step was recorded.
     pub(crate) at: Timestamp,
-}
-
-/// What a step is lined up against in the log: the `id` of the row it follows, or `None` for a step that comes before
-/// every row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Place {
-    /// Before the first row of the log.
-    First,
-    /// After the row with this `id`.
-    After(i64),
 }
 
 /// The steps of `task` in its runs, oldest first.
@@ -71,7 +60,7 @@ pub(crate) fn run_steps(reader: &Reader, run: &RunStart) -> Result<Vec<TimedStep
 /// The steps of every run of `agent`, wherever its team, oldest first.
 ///
 /// # Errors
-/// [`agent_runtime::history::ReadError`] when the history cannot be read.
+/// [`ReadError`] when the history cannot be read.
 pub(crate) fn agent_steps(reader: &Reader, agent: &AgentName) -> Result<Vec<TimedStep>, ReadError> {
     let mut steps = Vec::new();
     for row in reader.runs_of_agent(agent)? {
@@ -79,36 +68,4 @@ pub(crate) fn agent_steps(reader: &Reader, agent: &AgentName) -> Result<Vec<Time
     }
     steps.sort_by_key(|timed| (timed.at, timed.step.run.clone(), timed.step.number));
     Ok(steps)
-}
-
-/// The place of each of `steps` when the scope has no row for them to follow: each step opens the text after the
-/// steps before it.
-pub(crate) fn unplaced(steps: &[&TimedStep]) -> Vec<Place> {
-    let mut places: Vec<Place> = Vec::with_capacity(steps.len());
-    for (index, _) in steps.iter().enumerate() {
-        places.push(match index.checked_sub(1) {
-            Some(previous) => Place::After(previous as i64),
-            None => Place::First,
-        });
-    }
-    places
-}
-
-/// Where each step of `steps`, oldest first, stands against `rows`, oldest first: after the last row recorded no later
-/// than its time, which keeps a step between the rows of its time.
-pub(crate) fn places(rows: &[&LogEntry], steps: &[&TimedStep]) -> Vec<Place> {
-    let mut places: Vec<Place> = Vec::with_capacity(steps.len());
-    let mut next = 0_usize;
-    for timed in steps {
-        while let Some(row) = rows.get(next)
-            && row.at() <= timed.at
-        {
-            next = next.saturating_add(1);
-        }
-        match next.checked_sub(1).and_then(|before| rows.get(before)) {
-            Some(row) => places.push(Place::After(row.id())),
-            None => places.push(Place::First),
-        }
-    }
-    places
 }
