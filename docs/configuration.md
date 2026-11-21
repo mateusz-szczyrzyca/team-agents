@@ -188,20 +188,25 @@ and a member are started anew; a worker and a reviewer are not.
 | Key | Default | Meaning |
 |---|---|---|
 | `new_sessions` | `1` | how many new sessions of its agent a task is started in after its runs went bad; `0` turns them off; at most `10`. The count is kept in the state, so it survives a restart of the daemon |
-| `agents` | `[]` | the agents that may take a task over when its new session went bad too, in the order to try them: names from `[agents.NAME]` or `[investigators.NAME]`. A name that is not configured, or given twice, is refused. With an empty list and `mode = "auto"` the task fails as before |
+| `agents` | `[]` | the agents that may take a task over when its new session went bad too, in the order to try them: names from `[agents.NAME]` or `[investigators.NAME]`. A name that is not configured, or given twice, is refused. With an empty list, `mode = "auto"` gives a member's work to the team's lead, as `lead` does |
 | `mode` | `"auto"` | how far the harness goes without you: `auto` — another agent of `agents`, then, for a member, the team's lead, then you; `lead` — a member's work goes to the team's lead at once, other tasks fail; `off` — the task fails at once, as before `agents` existed |
 | `replacements` | `1` | how many times a task is taken over by another agent; `0` takes none over; at most `10`. The count is in the state |
 
 When the new session goes bad too — after its own retries — the task is given to the first agent of `agents` that is not in
 the task's team, not in the middle of a run, and of the same or a higher place than the agent it replaces: an investigator
 above a normal agent, which is above a worker. It works in the same worktree, on the same branch and on the same task, and
-its first run is briefed like a new session (see above), with retries of its own. The state keeps who held the task
-before (`past_holders`), and the daemon's log the choice (`decision_taken` with `decision` `takeover`).
+its first run is briefed like a new session (see above), with retries of its own; a takeover is not counted among
+`new_sessions`. On the team's bus the task keeps the name of the agent it was first given to: the new agent's runs act
+under that name, so the messages to it, its wake-ups and a lead's rights stay with the task, and its branch keeps that
+name too. The state keeps who held the task before (`past_holders`), and the daemon's log the choice
+(`decision_taken` with `decision` `takeover`).
 
 With no agent to take it, a member's task is stopped and the team's lead is told on the bus that the work is its own now:
-whose it was, its branch and its worktree. The lead integrates the branch, finishes the work and ends `DONE`, and the
-item is published as the lead's. A solo task and a coordinator's have no lead: they fail and you are told, as before.
-The new agent is not added to the team on the bus: messages of the team still name the agent that started the task.
+whose it was, its branch and its worktree, with the briefing of what the member's runs left — the snapshot of its
+worktree, the commits, the uncommitted files, its plan and the messages it had not read. The lead integrates the branch,
+finishes the work and ends `DONE`, and the item is published as the lead's. The message goes out before the daemon ends,
+also when it is stopped during the member's last retry. A solo task and a coordinator's have no lead: they fail and you
+are told, as before.
 
 The new session works in the same worktree, on the same branch and on the same task. The state keeps the restart and its
 reason, the history the snapshot, the daemon's log the decision (`decision_taken` with `decision` `ladder`), and

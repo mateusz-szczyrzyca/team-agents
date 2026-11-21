@@ -276,15 +276,19 @@ reviewer are not started anew; when the new session goes bad too, the task fails
 their order, leaving out the agent that holds it and every agent of its team (crew and reviewers: a place in the team is
 one task). `choose` takes the first that is not in a run and of the same or a higher tier; `State::hand_over_task` gives
 it the task and keeps the agent before it in the member's `past_holders`, the items the task works on are reassigned to
-it on their branches, and the task is started anew at the same moment (`State::renew_task`), so its first run is
-briefed like a new session and its retries are its own. A task's own branch keeps the name of its first agent
-(`start::work_branch`). With nobody fitting — or at once with `mode = "lead"` — a member's task is stopped and its lead
-is told on the bus that the work is its own (`harness/team/bus-lead-takes-work.md`, notice `member_failed`); the item of
-the stopped member is published when the lead ends `DONE`, as for a member the human stopped (`pr::joins`). A solo
-task and a coordinator's have no lead: they fail as before, and so does every task with `mode = "off"`, with no
-`agents` in mode `auto`, or once it was taken over `replacements` times. Each choice is logged as `decision_taken`
-with `decision` `takeover`. The bus does not learn of the new holder: the messages of the team still name the agent
-that started the task.
+it on their branches, and the new holder's session begins at the same moment (`State::begin_holder_session`, the
+boundary in the member's `renewals` without raising their count), so its first run is briefed like a new session and
+its retries are its own. A task keeps the name of its first agent (`Member::bus_agent`) on its team's bus and in its own
+branch: the agentbus server of its runs gets `--agent` with that name, the bus's states are reconciled under it, the
+team's context and the coordinator's notices name it, and the briefing reads the messages to it — the bus itself never
+learns of a new holder, and needs no change. With nobody fitting — or at once with `mode = "lead"`, and in mode `auto`
+with no agents listed — a member's task is stopped and its lead is told on the bus that the work is its own
+(`harness/team/bus-lead-takes-work.md`, notice `member_failed`), followed by the briefing of the member's work without
+its prompt (`harness/run/lead-briefing.md`), gathered with a snapshot at the next turn of the loop and before the daemon
+ends; the item of the stopped member is published when the lead ends `DONE`, as for a member the human stopped
+(`pr::joins`). A solo task and a coordinator's have no lead: they fail as before, and so does every task with
+`mode = "off"`, or once it was taken over `replacements` times. Each choice is logged as `decision_taken` with
+`decision` `takeover`.
 
 **The watchdog** is the engine's: a run whose output files show no change for `[watchdog] hang_minutes` is stopped (its
 whole process group, `SIGTERM` then `SIGKILL`) and classified as a hang unless the provider refused it. **A pause** is

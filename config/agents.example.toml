@@ -136,7 +136,7 @@ corrections = 2   # 0 asks the human at the first invalid proposal
 # not in a run, and of the same or a higher place (investigator above normal agent above worker), in the same worktree
 # and on the same branch; `replacements` is how many such takeovers a task gets. `mode`: "auto" (that, then for a
 # member the team's lead, then you), "lead" (a member's work to the team's lead at once) or "off" (you at once, as
-# before). With no `agents` in mode "auto" the task fails as before.
+# before). With no `agents`, mode "auto" gives a member's work to the team's lead.
 
 [replacement]
 new_sessions = 1
