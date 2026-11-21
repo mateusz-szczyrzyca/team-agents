@@ -167,6 +167,22 @@ async fn check_refused_gate_command_remains_declared() {
 }
 
 #[tokio::test]
+async fn execute_command_check_refuses_matching_prefix_before_spawn() {
+    let env = TestEnv::new();
+    let marker_file = env.worktree.join("refused-marker.txt");
+    let cmd = format!("touch \"{}\"", marker_file.display());
+    let step = parse_first_step(&format!("[x] 1.1 Refused\n    Check: {cmd}\n"));
+    let refuse = vec!["touch".to_owned()];
+    let ctx = env.context(60, &refuse);
+    let result = super::execute_command_check(&ctx, &step, &cmd).await.unwrap();
+
+    assert_eq!(result.state, JudgementState::Declared);
+    assert!(result.gate_refused);
+    assert_eq!(result.reason.as_deref(), Some("refused gate command"));
+    assert!(!marker_file.exists(), "refused command must not be spawned");
+}
+
+#[tokio::test]
 async fn check_command_remains_declared_in_part_a() {
     let env = TestEnv::new();
     let step = parse_first_step("[x] 1.1 First item\n    Check: echo passed check\n");
