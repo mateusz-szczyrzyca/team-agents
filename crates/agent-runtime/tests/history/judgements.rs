@@ -201,3 +201,107 @@ async fn judgements_are_persisted_with_awaited_confirmation() {
         .unwrap_err();
     assert!(matches!(err, PersistJudgementsError::Unavailable));
 }
+
+#[tokio::test]
+async fn persist_judgements_returns_ok_on_empty_records() {
+    use agent_runtime::history::History;
+
+    let history = History::disabled();
+    history.persist_judgements(Vec::new()).await.unwrap();
+}
+
+#[tokio::test]
+async fn persist_judgements_disabled_history_fails_with_unavailable() {
+    use agent_core::ids::{TaskId, TeamId};
+    use agent_runtime::history::{History, JudgementRecord, PersistJudgementsError};
+
+    let history = History::disabled();
+    let record = JudgementRecord {
+        task: "task-20261121-010000-abcd".parse::<TaskId>().unwrap(),
+        team: "team-20261121-010000-abcd".parse::<TeamId>().unwrap(),
+        run: None,
+        at: at(1_000, 0),
+        step: "1.1".parse::<ItemId>().unwrap(),
+        state: JudgementState::Confirmed,
+        check: Some("exists one.txt".to_owned()),
+        reason: None,
+        duration_ms: 10,
+        output_path: None,
+    };
+    let err = history.persist_judgements(vec![record]).await.unwrap_err();
+    assert!(matches!(err, PersistJudgementsError::Unavailable));
+}
+
+#[tokio::test]
+async fn persist_judgements_unavailable_history_fails_with_unavailable() {
+    use agent_core::ids::{TaskId, TeamId};
+    use agent_runtime::history::{History, JudgementRecord, PersistJudgementsError, TracingReporter};
+    use std::sync::Arc;
+
+    let history = History::unavailable(&std::io::Error::other("offline"), Arc::new(TracingReporter));
+    let record = JudgementRecord {
+        task: "task-20261121-010000-abcd".parse::<TaskId>().unwrap(),
+        team: "team-20261121-010000-abcd".parse::<TeamId>().unwrap(),
+        run: None,
+        at: at(1_000, 0),
+        step: "1.1".parse::<ItemId>().unwrap(),
+        state: JudgementState::Confirmed,
+        check: Some("exists one.txt".to_owned()),
+        reason: None,
+        duration_ms: 10,
+        output_path: None,
+    };
+    let err = history.persist_judgements(vec![record]).await.unwrap_err();
+    assert!(matches!(err, PersistJudgementsError::Unavailable));
+}
+
+#[tokio::test]
+async fn persist_judgements_store_failure_fails_with_write_error() {
+    use agent_core::history::Record;
+    use agent_core::ids::{TaskId, TeamId};
+    use agent_runtime::history::{
+        DEFAULT_QUEUE, History, JudgementRecord, PersistJudgementsError, RecordKind, Setup, Store, TracingReporter,
+        WriteError,
+    };
+    use std::sync::Arc;
+
+    struct FailingStore;
+    impl Store for FailingStore {
+        fn write(&mut self, _records: &[Record]) -> Result<(), WriteError> {
+            Ok(())
+        }
+        fn write_judgements(&mut self, _records: &[JudgementRecord]) -> Result<(), WriteError> {
+            Err(WriteError::Rule {
+                record: RecordKind::Judgement,
+                rule: "database write failed",
+            })
+        }
+    }
+
+    let started = History::start(
+        FailingStore,
+        Setup {
+            reporter: Arc::new(TracingReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let history = started.history;
+
+    let record = JudgementRecord {
+        task: "task-20261121-010000-abcd".parse::<TaskId>().unwrap(),
+        team: "team-20261121-010000-abcd".parse::<TeamId>().unwrap(),
+        run: None,
+        at: at(1_000, 0),
+        step: "1.1".parse::<ItemId>().unwrap(),
+        state: JudgementState::Confirmed,
+        check: Some("exists one.txt".to_owned()),
+        reason: None,
+        duration_ms: 10,
+        output_path: None,
+    };
+
+    let err = history.persist_judgements(vec![record]).await.unwrap_err();
+    assert!(matches!(err, PersistJudgementsError::Write(WriteError::Rule { .. })));
+    started.writer.close().unwrap();
+}
