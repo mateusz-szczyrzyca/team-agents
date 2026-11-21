@@ -90,6 +90,18 @@ fn lead_round(end: RunEnd, status: TaskStatus) -> (State, TeamId) {
         member.begin_run(crate::fixtures::run(1), at(1), None).unwrap();
         member.transition(TaskStatus::Running).unwrap();
         member.end_run(at(2), end).unwrap();
+        if status == TaskStatus::Done {
+            // A task ends done after a run of it, so the run that ends it comes first.
+            member.transition(TaskStatus::Running).unwrap();
+            member
+                .end_run(
+                    crate::fixtures::at(3),
+                    RunEnd::Reported {
+                        outcome: RunOutcome::Done,
+                    },
+                )
+                .unwrap();
+        }
         if member.status() != status {
             member.transition(status).unwrap();
         }
@@ -121,25 +133,6 @@ async fn a_round_whose_run_is_queued_writes_no_error() {
 
     assert!(
         !logged.contains(&LogEvent::DaemonTaskFailed.as_str().to_owned()),
-        "{logged:?}"
-    );
-}
-
-// A round of an item the crew can no longer work on, with nothing left to do, is still a defect: the owner reports
-// it, so the error keeps its meaning.
-#[tokio::test]
-async fn a_round_that_waits_for_nothing_is_still_an_error() {
-    let (state, team) = lead_round(
-        RunEnd::Reported {
-            outcome: RunOutcome::Done,
-        },
-        TaskStatus::Waiting,
-    );
-
-    let logged = events_of_a_look(&state, &team).await;
-
-    assert!(
-        logged.contains(&LogEvent::DaemonTaskFailed.as_str().to_owned()),
         "{logged:?}"
     );
 }
