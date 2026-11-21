@@ -291,7 +291,6 @@ impl Owner {
         let decided = after_lead(&end, &allowances);
         log_decision("after_lead", &format!("pr={pr}, end={end:?}"), &format!("{decided:?}"));
         self.each_item(team, items, |item| {
-            item.record_published_conflict_pass();
             item.reset_publish_tries();
             item.clear_publish_question();
             Ok(())
