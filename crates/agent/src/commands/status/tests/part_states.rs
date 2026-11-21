@@ -79,7 +79,7 @@ fn states_of(team: &TeamSummary) -> Vec<PartRow> {
                         super::splits::PartState::InProgress => "in progress",
                         super::splits::PartState::Ready => "to do",
                         super::splits::PartState::WaitingFor(_) => "waiting",
-                        super::splits::PartState::WaitingForTier => "waiting for a tier",
+                        super::splits::PartState::WaitingForTier { .. } => "waiting for a tier",
                     };
                     (id.to_string(), text)
                 })
