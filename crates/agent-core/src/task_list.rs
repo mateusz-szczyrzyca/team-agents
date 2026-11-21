@@ -27,7 +27,7 @@ use std::str::FromStr;
 
 use crate::ids::{AgentName, InvalidItemId, InvalidName, ItemId};
 use crate::kinds::{Tier, UnknownKeyword};
-use crate::task_title::{MAX_SHORT_DESC_CHARS, derived_short_desc};
+use crate::task_title::MAX_SHORT_DESC_CHARS;
 
 /// Largest task list accepted, in bytes: a bound on untrusted input, far above any real list.
 pub const MAX_TASK_LIST_BYTES: usize = 1 << 20;
@@ -531,9 +531,7 @@ impl TaskList {
     /// [`ShortDesc`] when the list has none.
     #[must_use]
     pub fn shown_short_desc(&self) -> ShortDesc {
-        self.short_desc
-            .clone()
-            .unwrap_or_else(|| ShortDesc(derived_short_desc(&self.brief)))
+        ShortDesc(short_desc::shown_short_desc().to_owned())
     }
 
     /// The name from the `Coordinator:` line, if the list starts with one. It may name a normal agent or an

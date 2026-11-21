@@ -3,7 +3,8 @@
 
 use std::num::NonZeroUsize;
 
-use super::{TaskList, TaskListError};
+use super::TaskListError;
+use crate::task_list::TaskList;
 use crate::task_title::MAX_SHORT_DESC_CHARS;
 
 /// The text that starts the header line naming the task in words.
