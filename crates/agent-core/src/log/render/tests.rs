@@ -115,7 +115,7 @@ fn record_line_gives_the_common_events_words_and_every_other_its_fields() {
                 ],
             ),
             format!(
-                "{}: the bus woke the agent for a message from codex-1",
+                "{}: the bus woke the agent for a message from codex-1 message_id=1510 wake_ups=2",
                 subject("inv-claude-sonnet")
             ),
         ),
@@ -144,14 +144,27 @@ fn record_line_gives_the_common_events_words_and_every_other_its_fields() {
             format!("{}: ended quota exhausted", subject("inv-claude-sonnet")),
         ),
         (
-            entry(LogEvent::ItemPhaseChanged, "an item changed phase after a review verdict", &[("item", "1.1"), ("phase", "in review"), ("pr", "168"), ("from", "in progress")]),
+            entry(
+                LogEvent::ItemPhaseChanged,
+                "an item changed phase after a review verdict",
+                &[
+                    ("item", "1.1"),
+                    ("phase", "in review"),
+                    ("pr", "168"),
+                    ("from", "in progress"),
+                ],
+            ),
             format!(
                 "{}: item 1.1 in review ← in progress after a review verdict, pr=168",
                 subject("inv-claude-sonnet")
             ),
         ),
         (
-            entry(LogEvent::NotificationSent, "a notification is delivered", &[("file", "outbox/1.md")]),
+            entry(
+                LogEvent::NotificationSent,
+                "a notification is delivered",
+                &[("file", "outbox/1.md")],
+            ),
             format!("{}: file=outbox/1.md", subject("inv-claude-sonnet")),
         ),
         (
@@ -161,6 +174,11 @@ fn record_line_gives_the_common_events_words_and_every_other_its_fields() {
     ];
     for (row, rest) in rows {
         let expected = format!("{} {} {} {rest}", row.at(), row.level(), row.event());
-        assert_eq!(record_line(&row, Some(&start("inv-claude-sonnet"))), expected, "{:?}", row.event());
+        assert_eq!(
+            record_line(&row, Some(&start("inv-claude-sonnet"))),
+            expected,
+            "{:?}",
+            row.event()
+        );
     }
 }
