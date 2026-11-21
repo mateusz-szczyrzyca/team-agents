@@ -157,11 +157,11 @@ fn the_opening_is_the_newest_lines_of_rows_and_steps_together_in_the_order_they_
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 3, "{text}");
     assert!(
-        lines[0].contains(" run run-20261121-132909-0001 started by claude-1"),
+        lines[0].starts_with("2026-11-21T12:50:03Z info task_status_changed "),
         "{text}"
     );
     assert!(
-        lines[1].starts_with("2026-11-21T12:50:03Z info task_status_changed "),
+        lines[1].contains(" run run-20261121-132909-0001 started by claude-1"),
         "{text}"
     );
     assert_eq!(lines[2], "2026-11-21T12:50:04Z command: cargo test", "{text}");
