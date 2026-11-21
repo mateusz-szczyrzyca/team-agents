@@ -58,3 +58,36 @@ fn history_before_judgements_upgrades_and_retains_records() {
 
     assert_eq!(reader.step_judgements(&task).unwrap(), vec![record]);
 }
+
+#[test]
+fn history_of_version_16_upgrades_and_retains_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(include_str!("../fixtures/history-before-step-judgements-v16.sql"))
+        .unwrap();
+    let old: Vec<_> = agent_runtime::history::schema::MIGRATIONS
+        .iter()
+        .copied()
+        .filter(|migration| migration.version <= 16)
+        .collect();
+    let world = complete(7);
+    let mut db = HistoryDb::open_with(&path, &old, roomy()).unwrap();
+    db.write(&world.records()).unwrap();
+    drop(db);
+    let round = &world.rounds[0].round;
+    let before = Reader::open(&path).unwrap().round_records(round).unwrap();
+
+    let db = HistoryDb::open(&path, roomy()).unwrap();
+    drop(db);
+
+    let version: u32 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 17);
+    let reader = Reader::open(&path).unwrap();
+    assert_eq!(reader.round_records(round).unwrap(), before);
+    assert_eq!(reader.step_judgements(&world.runs[0].start.task).unwrap(), Vec::new());
+}
