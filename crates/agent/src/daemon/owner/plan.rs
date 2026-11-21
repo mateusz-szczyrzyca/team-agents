@@ -485,6 +485,10 @@ impl Owner {
         let to_judge = steps_to_judge_with(
             plan,
             |id| {
+                let latest_step = earlier_plan.and_then(|plan| plan.step(id));
+                if latest_step.is_none_or(|step| step.state() != StepState::Done) {
+                    return latest_step;
+                }
                 if let Some(judgement) = previous.get(id)
                     && let Some(run_id) = &judgement.run
                     && let Some(plan_at_run) = earlier_by_run.get(run_id)
