@@ -436,6 +436,7 @@ impl Owner {
             self.pull_requests(team, &mut look).await?;
             self.assign_items(team, &mut look).await?;
             self.refresh_tier_waits(team, &mut look)?;
+            self.ask_tier_waits(team).await?;
             self.serve_requests(team, &mut look).await?;
             self.close_if_finished(team, &mut look)?;
             self.observe_round_waits(team);

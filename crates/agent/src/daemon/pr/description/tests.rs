@@ -94,3 +94,11 @@ fn the_lead_cannot_replace_the_unpushed_base_evidence() {
         "## What and why\n\nWork.\n\n## Tests\n\nTests."
     );
 }
+
+#[test]
+fn lead_cannot_replace_the_recorded_split_provenance() {
+    assert_eq!(
+        lead_sections("## What and why\n\nUseful work.\n\n## Split\n\nInvented approval.\n\n## Tests\n\nPassed."),
+        "## What and why\n\nUseful work.\n\n## Tests\n\nPassed."
+    );
+}

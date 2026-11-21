@@ -1364,3 +1364,21 @@ existing pull request. A human answer renewing the fix budget uses the same qual
 fixer, the item retains its review and a durable capability wait. Status also shows waits for a ready later part
 before its next round opens. Split plans optionally retain their approval authority;
 legacy plans leave it unknown until recorded explicitly.
+
+### Split provenance and one-time capability questions
+
+Split activation and executor runs retain `Team::part_assignments` by round ID. Coordinator integration runs
+cannot replace another member's executor record. The CLI and PR publisher use the same projection of the
+approved plan, round history and assignments, including sibling PRs already published, authority and tier.
+Legacy absence stays explicitly unknown. The PR publisher owns its `Split` section and strips a conflicting
+section supplied by the lead. Socket protocol 6 carries executor assignments and capability waits. Protocols
+3, 4 and 5 omit both maps so older strict clients can still read status. Status and show negotiate versions
+6, 5, 4 and 3 in order, using read-only probes and reconnecting after an unsupported format.
+
+After assignment the owner refreshes capability waits and asks an idle lead about any unasked waits. The pure
+`Team::tier_question_task` decision defers while the lead works or already asks a question. Catalog texts render
+the waiting item or part and its tier; the existing question machinery records history, watches the file and
+notifies the human. The harness makes the task's legal queued/running/questions transitions without launching a
+CLI for this turn. The question and `tier_questions` markers are saved before another run can start. The normal
+answer flow queues the lead with the answer; the capability decision still refuses a lower-tier assignee.
+Markers survive answers and restarts and expire only when the corresponding wait ends or changes tier.

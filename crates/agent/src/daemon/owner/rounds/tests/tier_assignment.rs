@@ -263,11 +263,13 @@ async fn a_first_part_waiting_for_an_absent_tier_survives_restart() {
     assert_eq!(team.item(item).unwrap().phase(), &ItemPhase::Pending);
     assert_eq!(team.rounds().len(), 1);
     assert_eq!(team.rounds()[0].id(), &round);
-    assert!(
+    assert_eq!(
         team.crew()
             .roster()
             .iter()
-            .all(|(_, member)| member.questions().is_empty())
+            .map(|(_, member)| member.questions().len())
+            .sum::<usize>(),
+        1
     );
     rig.stop().await.unwrap();
 }
@@ -431,5 +433,130 @@ async fn a_member_fix_waits_for_its_response_and_integrates_before_the_existing_
     assert_eq!(state.team(&id).unwrap().rounds().len(), 1);
     assert_eq!(rig.github.calls("POST", "/repos/octo/example/pulls").len(), 1);
     assert_eq!(state.team(&id).unwrap().items()[0].fix_passes().len(), 1);
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn absent_tier_asks_once_across_restart_and_an_unhelpful_answer() {
+    use crate::client::Connection;
+    use crate::daemon::owner::fixture::{answers, n};
+    use agent_core::protocol::{AnswerRequest, Client, Command};
+    let mut rig = Rig::new(
+        &[
+            normal("lead", "sleep"),
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(
+            &["lead", "claude-1"],
+            &format!("{ONE}\nTier: investigator\n"),
+            MergeMode::Autopilot,
+            Some("lead"),
+        )
+        .await;
+    let state = rig
+        .state_where("idle lead with an absent tier", |state| {
+            let team = state.team(&id).unwrap();
+            !team.tier_waits().is_empty()
+                && matches!(
+                    team.crew().coordinator().unwrap().status(),
+                    TaskStatus::Waiting | TaskStatus::Questions
+                )
+        })
+        .await;
+    assert_eq!(
+        state.team(&id).unwrap().crew().coordinator().unwrap().questions().len(),
+        1
+    );
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    rig.start().await;
+    let state = rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    assert_eq!(
+        state.team(&id).unwrap().crew().coordinator().unwrap().questions().len(),
+        1
+    );
+    assert_eq!(state.team(&id).unwrap().items()[0].phase(), &ItemPhase::Pending);
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: n(1),
+                answers: answers(&[(1, "Keep waiting — résumé")]),
+            }),
+        )
+        .await
+        .unwrap();
+    let state = rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    assert_eq!(state.team(&id).unwrap().items()[0].phase(), &ItemPhase::Pending);
+    assert_eq!(
+        state.team(&id).unwrap().crew().coordinator().unwrap().questions().len(),
+        1
+    );
+    rig.stop().await.unwrap();
+    rig.start().await;
+    let state = rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    assert_eq!(state.team(&id).unwrap().items()[0].phase(), &ItemPhase::Pending);
+    assert_eq!(
+        state.team(&id).unwrap().crew().coordinator().unwrap().questions().len(),
+        1
+    );
+    assert!(!rig.home.questions_file(&tasks[0], n(2)).exists());
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn missing_tier_after_first_part_merge_names_the_waiting_second_part() {
+    let mut rig = Rig::new(
+        &[
+            normal("lead", "proposal:later,integrate"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let directory = rig.home.root().join("fake-proposals");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("later.json"),
+        serde_json::json!({"parent":"1.1", "scope":{"kind":"unchanged"}, "parts":[
+            {"title":"First", "delivers":"First document", "checks":"Read first", "depends_on":[],
+             "estimate":{"amount":100,"unit":"lines"}},
+            {"title":"Second", "delivers":"Second document", "checks":"Read second", "depends_on":["a"],
+             "tier":"investigator", "estimate":{"amount":100,"unit":"lines"}}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(&["lead", "claude-1"], ONE, MergeMode::Autopilot, Some("lead"))
+        .await;
+    let state = rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    assert_eq!(state.team(&id).unwrap().rounds().len(), 1);
+    assert_eq!(
+        state.team(&id).unwrap().rounds()[0]
+            .part_pull_request()
+            .unwrap()
+            .number
+            .get()
+            .get(),
+        1
+    );
+    let question = std::fs::read_to_string(rig.home.questions_file(&tasks[0], std::num::NonZeroU32::MIN)).unwrap();
+    assert!(question.contains("Item 1.1b requires investigator"), "{question}");
     rig.stop().await.unwrap();
 }

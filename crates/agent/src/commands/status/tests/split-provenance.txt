@@ -1,0 +1,9 @@
+      Split 1.1a (item 1.1, part a); approved by harness; requested worker; assigned glm-1; other parts: 1.1b (not published), 1.1c (not published).
+      Split 1.1b (item 1.1, part b); approved by harness; requested investigator; assigned not recorded; other parts: 1.1a (#7), 1.1c (not published).
+      Split 1.1c (item 1.1, part c); approved by harness; requested normal; assigned not assigned; other parts: 1.1a (#7), 1.1b (not published).
+      Split 1.1a (item 1.1, part a); approved by human; requested worker; assigned glm-1; other parts: 1.1b (not published), 1.1c (not published).
+      Split 1.1b (item 1.1, part b); approved by human; requested investigator; assigned not recorded; other parts: 1.1a (#7), 1.1c (not published).
+      Split 1.1c (item 1.1, part c); approved by human; requested normal; assigned not assigned; other parts: 1.1a (#7), 1.1b (not published).
+      Split 1.1a (item 1.1, part a); approved by not recorded; requested worker; assigned glm-1; other parts: 1.1b (not published), 1.1c (not published).
+      Split 1.1b (item 1.1, part b); approved by not recorded; requested investigator; assigned not recorded; other parts: 1.1a (#7), 1.1c (not published).
+      Split 1.1c (item 1.1, part c); approved by not recorded; requested normal; assigned not assigned; other parts: 1.1a (#7), 1.1b (not published).

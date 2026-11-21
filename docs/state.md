@@ -55,8 +55,8 @@ Default fields are omitted on saving, preserving the old split representation.
 
 An approved split plan may also carry `approved_by`: `"harness"` or `"human"`. The optional field records the
 approval authority without changing the parts or their requirements. Absence means the authority was not recorded;
-reading and saving such a plan leaves the field absent. Existing plans load without a migration. The core API can
-attach provenance when recording approval; daemon wiring follows in a later part. The pre-change plan fixture is
+reading and saving such a plan leaves the field absent. Existing plans load without a migration. The daemon
+records `harness` for automatic approval and `human` for an explicit approving verdict. The pre-change plan fixture is
 `crates/agent-core/tests/fixtures/split-plan-before-approval.json`.
 
 Teams may have an optional `split_proposals` object, keyed by original item ID. Each entry stores bounded raw
@@ -489,7 +489,11 @@ version-3 replies and events. A version-3 `show` of a full split team returns an
 protocol 4 is required: removing part identities would make historical rounds invalid. Ordinary version-3 frames
 retain their existing encoding. State schema 13 is unchanged.
 
-Version 5 adds `task_plans` to status snapshots. Versions 3 and 4 omit this field, so strict older clients remain compatible. Plan-aware status and show requests first probe version 5, falling back to version 4 and then version 3 when needed. Status uses cached summaries; it performs no filesystem or history reads.
+Version 5 adds `task_plans` to status snapshots. Versions 3 and 4 omit this field.
+Version 6 adds `part_assignments` and `tier_waits`; versions 3, 4 and 5 omit both fields from replies and events,
+so strict older clients remain compatible. Status and show first probe version 6, then fall back to versions 5,
+4 and 3 when a daemon refuses or closes a probe. The selected format is cached on the connection. Status uses
+cached summaries; it performs no filesystem or history reads.
 
 The CLI negotiates before sending other split-aware commands: it sends a read-only version-4 `status` probe, then sends
 the intended command in version 4. If an older daemon rejects the probe or closes the connection, it reconnects
@@ -773,3 +777,20 @@ Step judgements live in history schema 17, not `state.json`; state schema 14 is 
 The daemon caches plan-step summaries for task and round status and rebuilds them on startup.
 A summary includes the mark, step ID and title, plus a done step's settlement and optional reason.
 The optional `task_plans` map in team and round replies is absent when there is no readable plan.
+
+### Split executors and capability questions
+
+Teams optionally store `part_assignments`, an object mapping split round IDs to agent names. Activation and the
+executor's run record the assignment; later coordinator integration or review does not replace it. This leaves
+the round representation unchanged and keeps the historical executor available after an item changes phase.
+Missing legacy assignments are displayed as `not recorded`, without guessing an executor from current progress.
+The optional map also appears in protocol-6 team status replies and events, alongside `tier_waits`. Older
+protocols omit both maps and the private `tier_questions` marker in full team replies; newer clients can fall
+back to older daemons without executor metadata.
+
+The optional `tier_questions` object maps original item IDs to the tiers already asked about in the current
+`tier_waits`. The question and markers are saved together. Answering queues the lead through the usual answer
+flow and leaves the marker intact, so a restart or an unhelpful answer cannot generate another question for the
+same wait. Refreshing waits removes markers once staffing resolves them. A later wait can then ask again.
+Older teams omit both maps and load with empty maps; the pre-change fixture
+`crates/agent-core/tests/fixtures/team-before-tier-waits.json` remains readable. No schema migration is needed.
