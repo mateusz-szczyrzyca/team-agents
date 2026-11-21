@@ -1,4 +1,4 @@
-//! State written before publish_tries and publish_question existed loads with default 0 and None.
+//! State written before `publish_tries` and `publish_question` existed loads with default 0 and `None`.
 
 use agent_core::state::State;
 

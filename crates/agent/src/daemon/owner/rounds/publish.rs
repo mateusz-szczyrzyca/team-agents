@@ -1568,14 +1568,11 @@ impl Owner {
                 task: site.lead.task.clone(),
                 source,
             })?;
-        let file = match path.to_str().map(agent_core::config::AbsolutePath::from_str) {
-            Some(Ok(file)) => file,
-            _ => {
-                return Err(PublishQuestionError::InvalidPath {
-                    task: site.lead.task.clone(),
-                }
-                .into());
+        let Some(Ok(file)) = path.to_str().map(agent_core::config::AbsolutePath::from_str) else {
+            return Err(PublishQuestionError::InvalidPath {
+                task: site.lead.task.clone(),
             }
+            .into());
         };
         let (_, mut member) = self.member_mut(&site.lead.task)?;
         member
