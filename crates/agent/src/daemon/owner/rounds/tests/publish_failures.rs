@@ -6,7 +6,7 @@ use agent_core::status::TaskStatus;
 
 use super::fake_github::MergeAnswer;
 use super::publish::{Attempt, OwnGate, Site};
-use super::rig::{ONE, Rig, git, investigator, normal};
+use super::rig::{ONE, PATIENCE, Rig, git, investigator, normal};
 use crate::client::Connection;
 use crate::daemon::owner::Owner;
 use crate::daemon::owner::fixture::{Daemon, Sinks, answers, n};
@@ -1282,45 +1282,53 @@ async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_esc
     })
     .await;
 
-    // Interrupt lead retry before completion: stop daemon and verify state:
+    // Stop daemon to simulate interruption before the lead finishes its corrective run:
     rig.stop().await.unwrap();
+
+    // Establish exact interrupted state fixture in state.json:
+    // Lead was released for corrective run, publish_tries is 1, and no questions have been created yet:
+    let state_file = rig.home.state_file();
+    let mut state_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&state_file).unwrap()).unwrap();
+    state_json["teams"][0]["items"][0]["publish_tries"] = serde_json::json!(1);
+    state_json["teams"][0]["items"][0]["publish_question"] = serde_json::Value::Null;
+    state_json["teams"][0]["items"][0]["publish_question_task"] = serde_json::Value::Null;
+    state_json["teams"][0]["items"][0]["publish_question_number"] = serde_json::Value::Null;
+    state_json["teams"][0]["crew"]["member"]["status"] = serde_json::json!("queued");
+    state_json["teams"][0]["crew"]["member"]["questions"] = serde_json::json!([]);
+    if let Some(runs) = state_json["teams"][0]["crew"]["member"]["runs"].as_array_mut() {
+        runs.truncate(1);
+    }
+    std::fs::write(&state_file, serde_json::to_string_pretty(&state_json).unwrap()).unwrap();
+
+    // Verify concrete pre-restart state:
     {
         let pre_state = rig.state();
         let member = &pre_state.find_task(&task).unwrap().member;
-        assert!(
-            matches!(
-                member.status(),
-                TaskStatus::Waiting | TaskStatus::Queued | TaskStatus::Running
-            ),
-            "lead should be waiting, queued, or running retry, got: {:?}",
-            member.status()
-        );
-        assert!(
-            !member.runs().is_empty(),
-            "lead should have at least 1 run, got: {}",
-            member.runs().len()
-        );
+        assert_eq!(member.status(), TaskStatus::Queued);
+        assert_eq!(member.runs().len(), 1);
+        assert_eq!(member.questions(), []);
+        assert_eq!(pre_state.teams()[0].items()[0].publish_tries(), 1);
+        assert_eq!(pre_state.teams()[0].items()[0].publish_question(), None);
     }
 
-    // Restart daemon: publication evaluates, fails push, releases lead for run 2:
+    // Restart daemon: the queued corrective run executes:
     rig.start().await;
-    rig.wait_for("lead woken for run 2 retry", || {
+    rig.wait_for("lead executes run 2 retry", || {
         rig.state().find_task(&task).is_some_and(|f| f.member.runs().len() >= 2)
     })
     .await;
 
-    // After restart and run 2 completes, publication fails again and escalates to human questions:
+    // After run 2 completes and publication fails again (tries=2 > limit=1),
+    // it escalates to asking the human with question 1:
     rig.status_is(&task, TaskStatus::Questions).await;
 
-    let q = rig
-        .state()
-        .find_task(&task)
-        .unwrap()
-        .member
-        .open_question()
-        .unwrap()
-        .clone();
+    let post_state = rig.state();
+    let post_member = &post_state.find_task(&task).unwrap().member;
+    assert_eq!(post_member.runs().len(), 2, "exactly one retry run should execute");
+    let q = post_member.open_question().unwrap().clone();
     assert_eq!(q.number(), n(1));
+    assert_eq!(post_state.teams()[0].items()[0].publish_tries(), 2);
 
     // Remove rejecting hook and answer 'a' to retry publication:
     std::fs::remove_file(&hook).unwrap();
@@ -1392,22 +1400,42 @@ async fn publish_failure_question_write_failure_recovers_when_storage_restored()
     )
     .unwrap();
 
-    // Wait briefly to allow daemon to attempt and encounter write failure:
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Wait deterministically for daemon to attempt question creation, fail with write error, and stop:
+    let deadline = std::time::Instant::now() + PATIENCE;
+    loop {
+        if Connection::connect(&rig.home.socket_file()).await.is_err() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for daemon to stop on write failure"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
 
-    // State must remain in Waiting without orphaned question:
-    assert_eq!(
-        rig.state().find_task(&task).unwrap().member.status(),
-        TaskStatus::Waiting
-    );
-    assert!(rig.state().find_task(&task).unwrap().member.open_question().is_none());
+    // Assert exact error and context from owner:
+    let stop_err = rig
+        .stop()
+        .await
+        .expect_err("owner should record write failure when directory is unwritable");
+    let crate::daemon::DaemonError::Owner(crate::daemon::owner::OwnerError::PublishQuestion(
+        crate::daemon::owner::rounds::PublishQuestionError::Write {
+            task: err_task,
+            path: err_path,
+            ..
+        },
+    )) = stop_err
+    else {
+        panic!("unexpected daemon error: {stop_err:?}");
+    };
+    assert_eq!(err_task, task);
+    assert_eq!(err_path, rig.home.questions_file(&task, n(1)));
 
-    // Stop daemon (owner reports the write failure during question preparation):
-    let stop_res = rig.stop().await;
-    assert!(
-        stop_res.is_err(),
-        "owner should record write failure when directory is unwritable"
-    );
+    // State before recovery must remain in Waiting without orphaned question:
+    let pre_state = rig.state();
+    let member = &pre_state.find_task(&task).unwrap().member;
+    assert_eq!(member.status(), TaskStatus::Waiting);
+    assert_eq!(member.open_question(), None);
 
     // Restore permissions so writing can succeed:
     std::fs::set_permissions(

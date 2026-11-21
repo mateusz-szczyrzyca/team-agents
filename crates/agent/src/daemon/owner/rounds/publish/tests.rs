@@ -173,7 +173,10 @@ async fn prepare_publish_question_file_atomic_no_clobber_reconciles_existing_fil
     let result = owner
         .prepare_publish_question_file(site, publication, &questions_file, "refused")
         .await;
-    assert!(result.is_ok(), "must reconcile with existing valid file: {result:?}");
+    assert!(
+        matches!(result, Ok(())),
+        "must reconcile with existing valid file: {result:?}"
+    );
     assert_eq!(
         std::fs::read_to_string(&questions_file).unwrap(),
         pre_existing_content,
@@ -211,7 +214,7 @@ async fn prepare_publish_question_file_returns_write_error_on_failure_and_recove
         .prepare_publish_question_file(site, publication, &valid_file, "refused")
         .await;
     assert!(
-        recovered.is_ok(),
+        matches!(recovered, Ok(())),
         "pending escalation must succeed on valid path: {recovered:?}"
     );
     assert!(valid_file.exists());
