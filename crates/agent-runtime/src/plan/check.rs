@@ -277,6 +277,17 @@ pub async fn execute_command_check(
     command_str: &str,
 ) -> Result<JudgementResult, CheckError> {
     let start = Instant::now();
+    if refuse_command(command_str, context.check_refuse) {
+        return Ok(JudgementResult {
+            state: JudgementState::Declared,
+            check_line: Some(command_str.to_owned()),
+            reason: Some("refused gate command".to_owned()),
+            duration_ms: 0,
+            output_path: None,
+            tail: String::new(),
+            gate_refused: true,
+        });
+    }
     if context.check_seconds == 0 {
         return Ok(JudgementResult {
             state: JudgementState::Declared,
