@@ -221,13 +221,6 @@ min_free_gb = 20
 [snapshot]
 warn_mb = 200
 
-# --- Publishing ----------------------------------------------------------------------------------------------------
-# What the harness does when a branch cannot be published to GitHub (e.g. refused force update or diverged branch).
-#   tries   how many times publication is tried before the lead is told once, and after that you are asked (default: 3)
-
-[publish]
-tries = 3
-
 # --- Merges --------------------------------------------------------------------------------------------------------
 # GitHub may refuse to merge an approved pull request because it conflicts with its base. The lead of the round is then
 # asked to merge the base into its branch, at most `conflict_passes` times per round; after that you are asked.

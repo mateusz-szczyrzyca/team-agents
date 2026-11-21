@@ -7,14 +7,12 @@ use agent_core::decide::round::{RoundEvent, RoundPolicy, RoundState, Stage};
 use agent_core::decide::wait::Obligation;
 use agent_core::history::HistoryEvent;
 use std::num::NonZeroU32;
-use std::str::FromStr;
 
 use agent_core::ids::{BranchName, ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::{EventKind, Failure, Reply};
 use agent_core::state::{CommitId, GateRecord, ItemPhase, PullRequest, Timestamp};
-use agent_core::status::TaskStatus;
 use agent_runtime::git::{Git, Revision};
 use agent_runtime::github::{NewPullRequest, PullRequestUpdate, Readiness, RemotePullRequest, RepoSlug};
 use agent_runtime::process::error_chain;
@@ -184,7 +182,18 @@ async fn carry(
 ) -> Result<BranchName, PublishError> {
     let remote_state = match carried {
         Some(head) if head == &ready.tip => agent_core::decide::publish::RemoteState::Equal,
-        Some(_) | None => agent_core::decide::publish::RemoteState::Behind,
+        Some(head) => {
+            if ready
+                .git
+                .is_ancestor(&Revision::Commit(head.clone()), &Revision::Commit(ready.tip.clone()))
+                .await?
+            {
+                agent_core::decide::publish::RemoteState::Behind
+            } else {
+                agent_core::decide::publish::RemoteState::Diverged
+            }
+        }
+        None => agent_core::decide::publish::RemoteState::Behind,
     };
     let decided = agent_core::decide::publish::publish_decision(round, branches, remote_state);
     match decided.action {
@@ -202,16 +211,6 @@ async fn carry(
     }
     ready.git.branch_point_if_unheld(decided.branch, &ready.tip).await?;
     Ok(decided.branch.clone())
-}
-
-/// The item IDs `publication` is for.
-fn item_ids_of(publication: &Publication) -> Vec<ItemId> {
-    match &publication.publish {
-        Publish::Open { items } => items.iter().map(|j| j.item).collect(),
-        Publish::Update { fixing, joining, .. } => {
-            fixing.iter().copied().chain(joining.iter().map(|j| j.item)).collect()
-        }
-    }
 }
 
 /// The numbers of the items `publication` is for.
@@ -323,16 +322,8 @@ impl Owner {
                 Ok(Attempt::Nothing) => {}
                 Ok(Attempt::Published(published)) => {
                     self.watch.retry_at.remove(&key);
-                    self.watch.publish_tries.remove(&key);
-                    self.watch.publish_question.remove(&lead.task);
                     self.watch.gate_sent_back.remove(&lead.task);
                     self.watch.own_gates.remove(&lead.task);
-                    self.each_item(team_id, &published.items, |item| {
-                        item.reset_publish_tries();
-                        item.clear_publish_question();
-                        Ok(())
-                    })?;
-                    self.save().await?;
                     if self.record_publication(team_id, &publication, &published, look)? {
                         self.note_reviewed(&lead, &published.pr.branch, &published.gated).await;
                     }
@@ -342,8 +333,7 @@ impl Owner {
                     self.hold_round(pulls, team_id, &lead, held, look)?;
                 }
                 Ok(Attempt::SentBack { tip, hold }) => {
-                    self.send_back_for_gate(site, &publication, (&tip, &hold), now, look)
-                        .await?;
+                    self.send_back_for_gate(site, &publication, (&tip, &hold), now, look)?;
                 }
                 Ok(Attempt::Uncommitted { tip, reason }) => {
                     let back = Back {
@@ -353,13 +343,12 @@ impl Owner {
                         told: reason,
                         undone: include_str!("../../../../../../prompts/harness/review/fix-no-commit-undone.md"),
                     };
-                    self.send_lead_back(site, &publication, &tip, &back, now, look).await?;
+                    self.send_lead_back(site, &publication, &tip, &back, now, look)?;
                 }
                 Ok(Attempt::NotJoined { tip, missing }) => {
-                    self.send_back_to_join(site, &publication, (&tip, &missing), now, look)
-                        .await?;
+                    self.send_back_to_join(site, &publication, (&tip, &missing), now, look)?;
                 }
-                Err(error) => self.publish_failed(site, &publication, &error, now, look).await?,
+                Err(error) => self.publish_failed(pulls, team_id, &lead, &publication, &error, now)?,
             }
         }
         Ok(())
@@ -432,15 +421,21 @@ impl Owner {
         } else {
             publication.head_branch.clone()
         };
-        let Some(tip) = git.branch_tip(&source).await? else {
-            return Ok(Attempt::Nothing);
+        let record = self.parts.store.load_gate_record(&lead.task).await?;
+        let tip = if let Some(record) = &record
+            && record.counts_as_pass()
+        {
+            record.result.head.clone()
+        } else if let Some(source_tip) = git.branch_tip(&source).await? {
+            source_tip
+        } else {
+            git.rev_parse(&Revision::Head).await?
         };
         // A gate of the harness that still runs decides nothing yet; the record is read after it, so that it is not older.
         let own = self.own_gate_state(&lead.task, &tip);
         if own == Own::Running {
             return Ok(Attempt::Nothing);
         }
-        let record = self.parts.store.load_gate_record(&lead.task).await?;
         let base = Revision::Branch(self.base_branch(&lead.repo)?);
         let waiting = Waiting {
             tip: &tip,
@@ -1210,13 +1205,13 @@ impl Owner {
 
     /// The lead is done and the gate has not passed at the tip of its branch: it is sent back with the reason, and after
     /// [`GATE_SEND_BACKS`] times the human is told.
-    async fn send_back_for_gate<'a>(
-        &'a mut self,
-        site: Site<'a>,
-        publication: &'a Publication,
-        (tip, hold): (&'a CommitId, &'a GateHold),
+    fn send_back_for_gate(
+        &mut self,
+        site: Site<'_>,
+        publication: &Publication,
+        (tip, hold): (&CommitId, &GateHold),
         now: Timestamp,
-        look: &'a mut Look,
+        look: &mut Look,
     ) -> Result<(), OwnerError> {
         let back = Back {
             prompt: AutopilotPrompt::GateNotPassed,
@@ -1228,18 +1223,18 @@ impl Owner {
             ),
             undone: "a gate that passes",
         };
-        self.send_lead_back(site, publication, tip, &back, now, look).await
+        self.send_lead_back(site, publication, tip, &back, now, look)
     }
 
     /// The lead is done, the gate passed, and its branch contains the branch of none of the finished items in `missing`:
     /// it is sent back to merge them, and after [`GATE_SEND_BACKS`] times the human is told.
-    async fn send_back_to_join<'a>(
-        &'a mut self,
-        site: Site<'a>,
-        publication: &'a Publication,
-        (tip, missing): (&'a CommitId, &'a [Joining]),
+    fn send_back_to_join(
+        &mut self,
+        site: Site<'_>,
+        publication: &Publication,
+        (tip, missing): (&CommitId, &[Joining]),
         now: Timestamp,
-        look: &'a mut Look,
+        look: &mut Look,
     ) -> Result<(), OwnerError> {
         let lines: Vec<String> = missing
             .iter()
@@ -1260,19 +1255,19 @@ impl Owner {
             ),
             undone: "their branches merged",
         };
-        self.send_lead_back(site, publication, tip, &back, now, look).await
+        self.send_lead_back(site, publication, tip, &back, now, look)
     }
 
     /// Sends the lead, which is done, back to its branch with the text of `back`; after [`GATE_SEND_BACKS`] times in a row
     /// the human is told once instead, and the lead waits for them.
-    async fn send_lead_back<'a>(
-        &'a mut self,
-        site: Site<'a>,
-        publication: &'a Publication,
-        tip: &'a CommitId,
-        back: &'a Back,
+    fn send_lead_back(
+        &mut self,
+        site: Site<'_>,
+        publication: &Publication,
+        tip: &CommitId,
+        back: &Back,
         now: Timestamp,
-        look: &'a mut Look,
+        look: &mut Look,
     ) -> Result<(), OwnerError> {
         let Site { pulls, team, lead } = site;
         let sent = self.watch.gate_sent_back.get(&lead.task).copied().unwrap_or(0);
@@ -1319,7 +1314,7 @@ impl Owner {
             .and_then(|values| Ok(pulls.texts.render(back.prompt, &values)?));
         let text = match text {
             Ok(text) => text,
-            Err(error) => return self.publish_failed(site, publication, &error, now, look).await,
+            Err(error) => return self.publish_failed(pulls, team, lead, publication, &error, now),
         };
         tracing::info!(
             event = LogEvent::ChecksDecided.as_str(),
@@ -1337,223 +1332,49 @@ impl Owner {
 
     /// What follows a branch that could not be published: it is logged, tried again after a while, and the human is told
     /// once.
-    pub(super) async fn publish_failed(
+    pub(super) fn publish_failed(
         &mut self,
-        site: Site<'_>,
+        pulls: &Pulls,
+        team_id: &TeamId,
+        lead: &Lead,
         publication: &Publication,
         error: &PublishError,
         now: Timestamp,
-        look: &mut Look,
     ) -> Result<(), OwnerError> {
         if let PublishError::RepoGone { repo } = error {
             tracing::error!(
                 event = LogEvent::ConfigurationNameMissing.as_str(),
-                team = %site.team,
+                team = %team_id,
                 kind = "repo",
                 name = %repo,
                 "a repository in the state is gone from the configuration"
             );
         }
         let reason = error_chain(error);
-        let item_ids = item_ids_of(publication);
-        if let Some(team) = self.parts.state.team(site.team) {
-            let has_open_question = item_ids
-                .iter()
-                .any(|id| team.item(*id).is_some_and(|item| item.publish_question().is_some()));
-            if has_open_question {
-                return Ok(());
-            }
-        }
-        let mut max_tries = 0;
-        self.each_item(site.team, &item_ids, |item| {
-            let tries = item.record_publish_try();
-            if tries > max_tries {
-                max_tries = tries;
-            }
-            Ok(())
-        })?;
-        self.save().await?;
-        let limit = self.parts.settings.config.publish().tries;
-        let step = agent_core::decide::publish::publish_tries_step(max_tries, limit);
-        match step {
-            agent_core::decide::publish::PublishTriesStep::Retry => {
-                self.retry_publish(site, publication, &reason, (max_tries, limit), now)?;
-            }
-            agent_core::decide::publish::PublishTriesStep::TellLead => {
-                self.tell_lead_publish_failed(site, publication, &reason, (max_tries, limit), look)?;
-            }
-            agent_core::decide::publish::PublishTriesStep::AskHuman => {
-                self.each_item(site.team, &item_ids, |item| {
-                    item.ask_human_about_publication(now);
-                    Ok(())
-                })?;
-                self.save().await?;
-                self.ask_human_publish_failed(site, publication, &reason, (max_tries, limit), now)
-                    .await?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Retries publication later, telling the human once if not yet announced.
-    fn retry_publish(
-        &mut self,
-        site: Site<'_>,
-        publication: &Publication,
-        reason: &str,
-        (tries, limit): (u32, u32),
-        now: Timestamp,
-    ) -> Result<(), OwnerError> {
         tracing::warn!(
             event = LogEvent::GithubCallFailed.as_str(),
-            team = %site.team,
+            team = %team_id,
             branch = %publication.head_branch,
-            tries,
-            limit,
             %reason,
             "a branch cannot be published: it is tried again in a minute"
         );
         let retry = Timestamp::from_utc(now.as_utc().saturating_add(PUBLISH_BACKOFF))?;
-        let key = (site.team.clone(), publication.head_branch.clone());
-        self.watch.retry_at.insert(key, retry);
+        self.watch
+            .retry_at
+            .insert((team_id.clone(), publication.head_branch.clone()), retry);
         let announcement = Announcement::PublishFailed {
-            team: site.team.clone(),
+            team: team_id.clone(),
             branch: publication.head_branch.clone(),
         };
-        if self.watch.announced.insert(announcement) {
-            let values = Variables::new()
-                .with("team", site.team.as_str())
-                .and_then(|values| values.with("items", items_of(publication).join(", ")))
-                .and_then(|values| values.with("reason", reason));
-            self.tell_human(site.pulls, AutopilotNotice::PublishFailed, values, site.lead, now);
+        if !self.watch.announced.insert(announcement) {
+            return Ok(());
         }
+        let values = Variables::new()
+            .with("team", team_id.as_str())
+            .and_then(|values| values.with("items", items_of(publication).join(", ")))
+            .and_then(|values| values.with("reason", &reason));
+        self.tell_human(pulls, AutopilotNotice::PublishFailed, values, lead, now);
         Ok(())
-    }
-
-    /// Tells the lead once that publication cannot succeed, releasing it.
-    fn tell_lead_publish_failed(
-        &mut self,
-        site: Site<'_>,
-        publication: &Publication,
-        reason: &str,
-        (tries, limit): (u32, u32),
-        look: &mut Look,
-    ) -> Result<(), OwnerError> {
-        tracing::info!(
-            event = LogEvent::ChecksDecided.as_str(),
-            outcome = "publish_failed_lead",
-            team = %site.team,
-            branch = %publication.head_branch,
-            tries,
-            limit,
-            %reason,
-            "publication cannot succeed: telling the lead once"
-        );
-        let text = Variables::new()
-            .with("branch", publication.head_branch.as_str())
-            .and_then(|v| v.with("reason", reason))
-            .map_err(PublishError::from)
-            .and_then(|v| Ok(site.pulls.texts.render(AutopilotPrompt::PublishFailed, &v)?))
-            .map_err(|error| OwnerError::PublishQuestion {
-                task: site.lead.task.clone(),
-                reason: format!("cannot render publish failed notice: {}", error_chain(&error)),
-            })?;
-        self.release(&site.lead.task, Why::Gate(text.trim_end().to_owned()), look)
-    }
-
-    /// Asks the human once whether to retry publication or stop.
-    async fn ask_human_publish_failed(
-        &mut self,
-        site: Site<'_>,
-        publication: &Publication,
-        reason: &str,
-        (tries, limit): (u32, u32),
-        now: Timestamp,
-    ) -> Result<(), OwnerError> {
-        tracing::warn!(
-            event = LogEvent::ChecksDecided.as_str(),
-            outcome = "publish_failed_human",
-            team = %site.team,
-            branch = %publication.head_branch,
-            tries,
-            limit,
-            %reason,
-            "publication cannot succeed after telling the lead: asking the human once"
-        );
-        let member = self
-            .parts
-            .state
-            .find_task(&site.lead.task)
-            .map(|found| found.member)
-            .ok_or_else(|| OwnerError::LostTask {
-                task: site.lead.task.clone(),
-            })?;
-        let number = super::super::start::next_number(member).ok_or_else(|| OwnerError::QuestionNumbers {
-            task: site.lead.task.clone(),
-        })?;
-        let path = self.parts.store.home().questions_file(&site.lead.task, number);
-        let items_text = items_of(publication).join(", ");
-        let text = Variables::new()
-            .with("task", site.lead.task.as_str())
-            .and_then(|v| v.with("items", &items_text))
-            .and_then(|v| v.with("branch", publication.head_branch.as_str()))
-            .and_then(|v| v.with("reason", reason))
-            .map_err(PublishError::from)
-            .and_then(|v| Ok(site.pulls.texts.render(AutopilotPrompt::NoticePublishQuestion, &v)?))
-            .map_err(|error| OwnerError::PublishQuestion {
-                task: site.lead.task.clone(),
-                reason: format!("cannot render publish question: {}", error_chain(&error)),
-            })?;
-        agent_runtime::text_file::replace_text_file(&path, &text, 0o600)
-            .await
-            .map_err(|error| OwnerError::PublishQuestion {
-                task: site.lead.task.clone(),
-                reason: format!("cannot write question file: {}", error_chain(&error)),
-            })?;
-        let file = match path.to_str().map(agent_core::config::AbsolutePath::from_str) {
-            Some(Ok(file)) => file,
-            Some(Err(problem)) => {
-                return Err(OwnerError::PublishQuestion {
-                    task: site.lead.task.clone(),
-                    reason: format!("question path is invalid: {}", error_chain(&problem)),
-                });
-            }
-            None => {
-                return Err(OwnerError::PublishQuestion {
-                    task: site.lead.task.clone(),
-                    reason: format!("question path {} is not UTF-8", path.display()),
-                });
-            }
-        };
-        let (_, mut member) = self.member_mut(&site.lead.task)?;
-        member
-            .ask_question(agent_core::state::Question::new(number, file, now))
-            .map_err(|source| OwnerError::Question {
-                task: site.lead.task.clone(),
-                source,
-            })?;
-        let loaded = crate::daemon::questions::read(&path)
-            .await
-            .map_err(|error| OwnerError::PublishQuestion {
-                task: site.lead.task.clone(),
-                reason: format!("cannot read question file {}: {}", path.display(), error_chain(&error)),
-            })?;
-        self.prepare_questions(&site.lead.task, &path, &loaded).await;
-        self.watch.publish_question.insert(site.lead.task.clone(), number);
-        let located = self.locate(&site.lead.task)?;
-        let mut events = Vec::new();
-        events.push(EventKind::QuestionAsked {
-            team: site.team.clone(),
-            task: site.lead.task.clone(),
-            number,
-        });
-        if self.member_mut(&site.lead.task)?.1.status() == TaskStatus::Waiting {
-            self.move_to(&site.lead.task, site.team, TaskStatus::Queued, &mut events)?;
-        }
-        self.move_to(&site.lead.task, site.team, TaskStatus::Running, &mut events)?;
-        self.move_to(&site.lead.task, site.team, TaskStatus::Questions, &mut events)?;
-        self.watch_task(&site.lead.task);
-        self.commit(&site.lead.task, &located, now, events, None).await
     }
 }
 

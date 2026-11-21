@@ -55,7 +55,6 @@ Top-level key and tables:
 | `[history]` | table | `enabled = true`, `max_text_bytes = 1048576`, `keep_days = 0` | the history database (`history.db`) |
 | `[log]` | table | `level = "info"`, `keep_days = 0` | the daemon's own log (`stderr` and `history.db`) |
 | `[snapshot]` | table | `warn_mb = 200` | the snapshots of worktrees |
-| `[publish]` | table | `tries = 3` | what happens when a branch cannot be published |
 | `[merge]` | table | `conflict_passes = 3` | what happens when GitHub refuses an approved pull request for a conflict |
 | `[web]` | table | loopback, nobody let in | the dashboard |
 | `[repos.NAME]` | table | none | per repository: base branch, gate and the checks before a review |
@@ -333,14 +332,6 @@ prunes the snapshots yet: their commits stay under `refs/agents/snapshots/` in t
 | Key | Default | Meaning |
 |---|---|---|
 | `warn_mb` | `200` | a snapshot bigger than this megabytes is taken and logged with a warning that says its size |
-
-### `[publish]`
-
-What happens when a branch cannot be published to GitHub (such as a diverged branch or a refused push). The harness tries again after a backoff until `tries` attempts are reached; then the lead is told once what is wrong. If that does not help, you are asked once in a questions file.
-
-| Key | Default | Meaning |
-|---|---|---|
-| `tries` | `3` | publication attempts before the lead is told once, and after that you are asked; `0` asks you at once |
 
 ### `[merge]`
 

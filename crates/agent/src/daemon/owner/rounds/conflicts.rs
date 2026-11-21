@@ -17,7 +17,7 @@ use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
-use super::publish::{Own, Site};
+use super::publish::Own;
 use super::{Lead, PublishError, Pulls};
 use crate::daemon::merge::{items_of, ran_since};
 use crate::daemon::pr::{Joining, Publication, Publish};
@@ -200,12 +200,7 @@ impl Owner {
                             .collect(),
                     },
                 };
-                let site = Site {
-                    pulls,
-                    lead: &lead,
-                    team,
-                };
-                return self.publish_failed(site, &publication, &error, now, look).await;
+                return self.publish_failed(pulls, team, &lead, &publication, &error, now);
             }
         };
         self.record_event_at(
@@ -290,11 +285,6 @@ impl Owner {
         let end = LeadEnd::Result { changed };
         let decided = after_lead(&end, &allowances);
         log_decision("after_lead", &format!("pr={pr}, end={end:?}"), &format!("{decided:?}"));
-        self.each_item(team, items, |item| {
-            item.reset_publish_tries();
-            item.clear_publish_question();
-            Ok(())
-        })?;
         match decided {
             AfterLead::RetryMerge => {
                 self.end_pass(team, items, pr)?;
@@ -413,21 +403,21 @@ impl Owner {
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let base = self.base_branch(&lead.repo)?;
         let record = self.parts.store.load_gate_record(&lead.task).await?;
-        let tip = match git.branch_tip(&pr.branch).await? {
-            Some(tip) if &tip != approved_head => tip,
-            _ => {
-                if let Some(record) = &record
-                    && &record.result.head != approved_head
-                {
-                    record.result.head.clone()
-                } else {
-                    let head = git.rev_parse(&Revision::Head).await?;
-                    if &head == approved_head {
-                        return Ok(Judgement::Ask);
-                    }
-                    head
-                }
+        let tip = if let Some(record) = &record
+            && &record.result.head != approved_head
+            && record.counts_as_pass()
+        {
+            record.result.head.clone()
+        } else if let Some(tip) = git.branch_tip(&pr.branch).await?
+            && &tip != approved_head
+        {
+            tip
+        } else {
+            let head = git.rev_parse(&Revision::Head).await?;
+            if &head == approved_head {
+                return Ok(Judgement::Ask);
             }
+            head
         };
         if &tip == approved_head
             || !git
@@ -471,12 +461,34 @@ impl Owner {
             part: None,
             pr: Some(&pr.branch),
         };
+        let remote_state = if approved_head == tip {
+            agent_core::decide::publish::RemoteState::Equal
+        } else if git
+            .is_ancestor(&Revision::Commit(approved_head.clone()), &Revision::Commit(tip.clone()))
+            .await?
+        {
+            agent_core::decide::publish::RemoteState::Behind
+        } else {
+            agent_core::decide::publish::RemoteState::Diverged
+        };
         let decided = agent_core::decide::publish::publish_decision(
             agent_core::decide::publish::RoundPublication::ConflictPass,
             &branches,
-            agent_core::decide::publish::RemoteState::Behind,
+            remote_state,
         );
-        git.push_commit(decided.branch, tip).await?;
+        match decided.action {
+            agent_core::decide::publish::PublishAction::UpToDate => {
+                git.adopt_pushed(decided.branch, tip).await?;
+            }
+            agent_core::decide::publish::PublishAction::Push => {
+                git.push_commit(decided.branch, tip).await?;
+            }
+            agent_core::decide::publish::PublishAction::Refused => {
+                return Err(PublishError::Refused {
+                    branch: decided.branch.clone(),
+                });
+            }
+        }
         git.branch_point_if_unheld(decided.branch, tip).await?;
         let base = self.base_branch(&lead.repo)?;
         let merged_base = git

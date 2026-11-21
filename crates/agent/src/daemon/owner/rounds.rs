@@ -136,10 +136,6 @@ pub(super) struct PullWatch {
     waits: HashMap<agent_core::ids::RoundId, agent_core::decide::wait::Obligation>,
     /// The branches whose publication failed, and the time before which they are not tried again.
     pub(super) retry_at: HashMap<(TeamId, BranchName), Timestamp>,
-    /// How many times publication failed for a branch of a team.
-    pub(super) publish_tries: HashMap<(TeamId, BranchName), u32>,
-    /// The number of the question written for the human when publication failed repeatedly.
-    pub(super) publish_question: HashMap<TaskId, std::num::NonZeroU32>,
     /// What the human was told once and is not told again.
     announced: HashSet<Announcement>,
     /// How many times each reviewer's report was sent back for lacking a verdict.
@@ -775,7 +771,6 @@ mod history_stories_tests;
 #[cfg(test)]
 #[path = "rounds/tests/merge_conflict.rs"]
 mod merge_conflict_tests;
-#[cfg(test)]
 #[cfg(test)]
 #[path = "rounds/tests/publish_failures.rs"]
 mod publish_failures_tests;

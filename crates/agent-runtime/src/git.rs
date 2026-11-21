@@ -18,7 +18,7 @@ use std::string::FromUtf8Error;
 use std::time::Duration;
 
 use agent_core::config::{AbsolutePath, EnvName, GitIdentity, InvalidValue};
-use agent_core::ids::{AgentName, BranchName};
+use agent_core::ids::{AgentName, BranchName, InvalidBranchName};
 use agent_core::repo_path::{InvalidRepoPath, RepoPath};
 use agent_core::state::{CommitId, InvalidCommitId};
 use tokio::process::Command;
@@ -375,6 +375,14 @@ pub enum GitError {
         /// Why the text is not a commit ID.
         source: InvalidCommitId,
     },
+    /// What git printed for a branch is not a branch name.
+    #[error("git {operation} did not print a branch name")]
+    NotABranch {
+        /// What was asked.
+        operation: GitOperation,
+        /// Why the text is not a branch name.
+        source: InvalidBranchName,
+    },
     /// What git printed for a directory is not an absolute path.
     #[error("git {operation} did not print an absolute path")]
     NotAPath {
@@ -719,10 +727,9 @@ impl Git {
         let mut held = HashSet::new();
         for line in printed.lines() {
             if let Some(branch_ref) = line.strip_prefix("branch refs/heads/") {
-                let branch: BranchName = branch_ref.parse().map_err(|source| GitError::Unexpected {
-                    operation,
-                    output: format!("invalid branch name in worktree list {branch_ref:?}: {source}"),
-                })?;
+                let branch: BranchName = branch_ref
+                    .parse()
+                    .map_err(|source| GitError::NotABranch { operation, source })?;
                 held.insert(branch);
             }
         }
