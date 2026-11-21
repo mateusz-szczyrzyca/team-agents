@@ -6,6 +6,15 @@ use crate::kinds::Tier;
 use std::collections::BTreeMap;
 
 impl Team {
+    /// Capability waits that still need a human question.
+    #[must_use]
+    pub fn unasked_tier_waits(&self) -> Vec<(ItemId, Tier)> {
+        Vec::new()
+    }
+
+    /// Records that the current capability waits were asked of the human.
+    pub fn mark_tier_questions(&mut self) {}
+
     /// Items waiting for a capability absent from the crew; empty in older states.
     #[must_use]
     pub fn tier_waits(&self) -> &BTreeMap<ItemId, Tier> {

@@ -74,3 +74,41 @@ fn an_unstaffed_review_fix_keeps_a_durable_tier_wait_after_restart() {
     assert_eq!(restored.tier_waits(), &BTreeMap::from([(item, Tier::Investigator)]));
     assert_eq!(restored.rounds(), team.rounds());
 }
+
+#[test]
+fn tier_questions_are_once_per_wait_and_survive_reload() {
+    let item = "1.1".parse().unwrap();
+    let mut team = Team::new(
+        team_id(1),
+        "example".parse().unwrap(),
+        at(0),
+        MergeMode::Autopilot,
+        TaskListText::new("Brief.\n\n1. Feature\n[ ] 1.1 Item\nTier: investigator\n".into()).unwrap(),
+        Crew::team(TeamMembers {
+            coordinator: member(1, normal("lead")),
+            members: vec![member(2, normal("member"))],
+            workers: vec![],
+        })
+        .unwrap(),
+    );
+    assert_eq!(team.unasked_tier_waits(), vec![]);
+    team.refresh_tier_waits();
+    for asked in [false, true] {
+        if asked {
+            team.mark_tier_questions();
+        }
+        let expected = if asked {
+            vec![]
+        } else {
+            vec![(item, Tier::Investigator)]
+        };
+        assert_eq!(team.unasked_tier_waits(), expected);
+        let restored: Team = serde_json::from_str(&serde_json::to_string(&team).unwrap()).unwrap();
+        assert_eq!(restored.unasked_tier_waits(), expected);
+    }
+    let mut old: Team =
+        serde_json::from_str(include_str!("../../../../tests/fixtures/team-before-tier-waits.json")).unwrap();
+    assert_eq!(old.unasked_tier_waits(), vec![]);
+    old.mark_tier_questions();
+    assert_eq!(old.unasked_tier_waits(), vec![]);
+}
