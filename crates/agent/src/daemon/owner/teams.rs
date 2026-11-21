@@ -552,20 +552,20 @@ impl Owner {
             if state == MemberState::Active
                 && held
                     .iter()
-                    .any(|task| self.task_of(team_id, &member).as_ref() == Some(task))
+                    .any(|task| self.task_on_bus(team_id, &member).as_ref() == Some(task))
             {
                 continue;
             }
             match self.parts.bus.team_set(team_id, &member, state).await {
                 // A member that went to sleep while something waits for it is woken at once.
                 Ok(Woken::Message | Woken::Board) if state == MemberState::Sleeping => {
-                    if let Some(task) = self.task_of(team_id, &member) {
+                    if let Some(task) = self.task_on_bus(team_id, &member) {
                         self.wake_member(team_id, &task, look).await?;
                     }
                 }
                 // A member that went to sleep with nothing waiting read what woke it.
                 Ok(Woken::No) if state == MemberState::Sleeping => {
-                    if let Some(task) = self.task_of(team_id, &member) {
+                    if let Some(task) = self.task_on_bus(team_id, &member) {
                         self.wake_settled(&task, look);
                     }
                 }
@@ -583,6 +583,19 @@ impl Owner {
             }
         }
         Ok(())
+    }
+
+    /// The task of the member that the bus of `team` knows as `agent`: the agent its task was first given to, whoever
+    /// holds it now.
+    fn task_on_bus(&self, team: &TeamId, agent: &AgentName) -> Option<TaskId> {
+        self.parts.state.team(team).and_then(|found| {
+            found
+                .crew()
+                .roster()
+                .into_iter()
+                .find(|(_, member)| member.bus_agent().name() == agent.as_str())
+                .map(|(_, member)| member.task().clone())
+        })
     }
 
     /// The task of the member named `agent` in `team`.
