@@ -360,6 +360,9 @@ fn render_at(
         );
         lines.extend(splits::lines(team));
         for (item, tier) in &team.tier_waits {
+            if team.splits.iter().any(|plan| plan.parent() == *item) {
+                continue;
+            }
             let part = team
                 .rounds
                 .iter()

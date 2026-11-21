@@ -29,7 +29,9 @@ pub(super) fn lines(team: &TeamSummary) -> Vec<String> {
                 .iter()
                 .any(|round| round.part() == Some(id.key()) && round.is_open())
             {
-                "in progress".to_owned()
+                team.tier_waits
+                    .get(&plan.parent())
+                    .map_or_else(|| "in progress".to_owned(), |tier| format!("waiting for {tier} agent"))
             } else if waiting.is_empty() {
                 "to do".to_owned()
             } else {
