@@ -186,7 +186,8 @@ fn working_split_team() -> Team {
 fn split_summary_events_and_round_identities_use_the_negotiated_version() {
     use crate::protocol::{Event, EventKind, Frame, ReplyFormat};
     use crate::state::fixtures::at;
-    let summary = TeamSummary::from(&working_split_team());
+    let mut summary = TeamSummary::from(&working_split_team());
+    summary.part_assignments.clear();
     let response = Frame::Response(Response::ok(
         RequestId(9),
         Reply::Teams {

@@ -255,8 +255,8 @@ async fn plan_requests_fall_back_to_split_protocol_four_daemon() {
                     };
                     let protocol = val.get("protocol").and_then(serde_json::Value::as_u64).unwrap_or(3);
                     let id = val.get("id").and_then(serde_json::Value::as_u64).unwrap_or(0);
-                    if protocol == 5 {
-                        // Protocol 4 daemon rejects protocol 5 probe:
+                    if protocol >= 5 {
+                        // Protocol 4 daemon rejects newer probes:
                         let refusal = concat!(
                             "{\"protocol\":4,\"id\":0,\"type\":\"response\",",
                             "\"result\":{\"status\":\"error\",\"error\":{\"kind\":\"invalid\",",
