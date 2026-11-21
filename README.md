@@ -260,8 +260,15 @@ A run ending without a `STATUS:` line resumes automatically in the same session 
 bad, and the task is started once in a new session of the same agent with a briefing built from facts — its prompt, the
 commits of its branch, the files it left uncommitted (kept in a snapshot first), its plan of steps and the messages of its
 team it had not read (`[replacement] new_sessions = 1`; `0` turns it off). The same happens after the watchdog's last
-strike for a hung run and after the last turn-limit resume. When the new session goes bad too, the task is marked failed
-and the coordinator (or human) is notified. `agent status` shows such a task as `in a new session`. Automatic retries apply only to resumable tasks with a session (solo tasks,
+strike for a hung run and after the last turn-limit resume. When the new session goes bad too, the task is given — with
+its worktree, its branch, its items and a briefing — to the first agent of `[replacement] agents` that is not in its team,
+not in a run, and of the same or a higher place than the agent it replaces (`[replacement] replacements = 1`; `0` takes
+none over; a takeover is not counted among the new sessions). On the team's bus the task keeps the name of the agent it
+was first given to. With no such agent — also when no `agents` are listed — a member's task stops and the team's lead
+gets its work in a message on the bus, with a briefing of what the member's runs left (`[replacement] mode = "lead"`
+asks for that at once). With `mode = "off"`, and for a solo task or a coordinator's with nobody to take it, the task is
+marked failed and the coordinator or you are notified, as before.
+`agent status` shows such a task as `in a new session`, and as `, for AGENT` when another agent took it over from AGENT. Automatic retries apply only to resumable tasks with a session (solo tasks,
 coordinators, and team members), excluding workers serving requests, reviewers, tasks without a session, or failures
 during startup or execution. Runs ending without a status line upon daemon shutdown or interruption (exit code `None`)
 count toward the consecutive limit; an interruption that exhausts the budget fails the task before another run starts.

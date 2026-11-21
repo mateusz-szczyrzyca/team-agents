@@ -76,13 +76,14 @@ impl Owner {
         if leads && fix_response_taken(team) {
             return Ok(Wake::Held);
         }
+        // The messages that wake a member are those to the name its task has on the bus, whoever holds it now.
         let agent: AgentName = self
             .parts
             .state
             .find_task(task)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
             .member
-            .agent()
+            .bus_agent()
             .name()
             .parse()?;
         let known = self.wake_counts.remove(task).or_else(|| {

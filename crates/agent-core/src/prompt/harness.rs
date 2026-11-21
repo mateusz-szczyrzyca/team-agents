@@ -48,6 +48,9 @@ pub enum HarnessPrompt {
     ResumeNoStatus,
     /// The briefing of a task started in a new session after its runs went bad.
     Briefing,
+    /// What the runs of a member's task left, as its lead is told when the work is its own: the briefing without the
+    /// task's prompt.
+    LeadBriefing,
     /// The note of a briefing whose list of unread messages leaves older ones out.
     BriefingMessagesLeftOut,
     /// Tell the human that consecutive turn-limit resumes are exhausted.
@@ -115,6 +118,7 @@ impl HarnessPrompt {
         Self::ResumeTurnLimit,
         Self::ResumeNoStatus,
         Self::Briefing,
+        Self::LeadBriefing,
         Self::BriefingMessagesLeftOut,
         Self::NoticeTurnLimitExhausted,
         Self::NoticeTurnLimitNoSession,
@@ -192,6 +196,7 @@ impl HarnessPrompt {
                     "messages",
                 ],
             ),
+            Self::LeadBriefing => lead_briefing_spec(),
             Self::BriefingMessagesLeftOut => {
                 PromptSpec::new("harness/run/briefing-messages-left-out.md", Audience::Model, &[])
             }
@@ -272,4 +277,24 @@ impl HarnessPrompt {
             ),
         }
     }
+}
+
+/// The briefing of a member's work as its lead is told: the facts of [`HarnessPrompt::Briefing`] without the prompt.
+const fn lead_briefing_spec() -> PromptSpec {
+    PromptSpec::new(
+        "harness/run/lead-briefing.md",
+        Audience::Model,
+        &[
+            "reason",
+            "task",
+            "base",
+            "branch",
+            "commits",
+            "uncommitted",
+            "snapshot",
+            "plan",
+            "left_out",
+            "messages",
+        ],
+    )
 }

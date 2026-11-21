@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.42.0 — 21.11.2026 — PR #158
+## 0.43.0 — 21.11.2026 — PR #158
 
 ### New features
 - [agent-core] A task-list item can name the kind of agent it needs with a line `Tier:` (`investigator`, `normal` or `worker`; an item without one asks for `normal`). An unknown tier is refused at its line. A list without `Tier:` lines reads as before. Nothing gives items out by tier yet.
@@ -13,6 +13,14 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Enhancements
 - [agent-core] A recorded split plan can keep who approved it, the harness or you. **Action:** a plan written with this field cannot be read by an older `agent`, so keep a backup of `state.json` from before the upgrade; plans without the field load as before.
+
+## 0.42.0 — 21.11.2026 — PR #160
+
+### New features
+- [agent] [agent-core] **Action:** a task whose new session goes bad too can now be taken over by another agent: list them in `[replacement] agents = ["claude-2", "inv-opus"]`. The first one that is free, not in the task's team and of the same or a higher place carries on in the same worktree and on the same branch, briefed on where the work stands, under the same name on the team's bus. `[replacement] replacements = 1` says how many times a task may be taken over.
+- [agent] [agent-core] **Action:** a team member whose new session goes bad too, with no listed agent that fits — also when you list none — now stops, and the team's lead gets its work in a message on the bus, with its branch, its worktree and a briefing of what its runs left; the item is published when the lead ends `DONE`. Before, the member failed and you were asked. `[replacement] mode = "lead"` gives the work to the lead at once; `mode = "off"` keeps the old behaviour.
+- [agent] [agent-core] `agent status` says from whom a task was taken over, for example `claude-2  queued, for claude-1`.
+
 
 ## 0.41.0 — 21.11.2026 — PR #159
 

@@ -315,6 +315,10 @@ pub struct MemberSummary {
     /// How many times the ladder started the task in a new session, if it did; absent from older daemons' replies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_sessions: Option<NonZeroU32>,
+    /// The agent that held the task before the one that holds it now, when another took it over; absent otherwise and
+    /// from older daemons' replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_by: Option<AgentName>,
 }
 
 impl ItemCounts {
@@ -341,6 +345,7 @@ impl MemberSummary {
             status: member.status(),
             open_question: member.open_question().map(Question::number),
             new_sessions: member.renewals().and_then(|renewals| NonZeroU32::new(renewals.used())),
+            held_by: member.past_holders().last().map(|held| held.agent.agent_name()),
         }
     }
 }

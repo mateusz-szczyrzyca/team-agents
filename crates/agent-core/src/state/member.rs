@@ -97,6 +97,15 @@ pub struct Member {
     past_holders: Vec<holding::Holding>,
 }
 
+/// Why a task begins a new session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionStart {
+    /// The ladder starts it anew in a new session of its agent: counted in [`renewal::Renewals::used`].
+    Renewal,
+    /// Another agent took it over: its session begins, and no new session of the agent is counted.
+    HandOver,
+}
+
 /// How a [`Member`] is read; see [`checked!`].
 #[derive(Deserialize)]
 #[serde(remote = "Member", deny_unknown_fields)]
@@ -156,6 +165,18 @@ impl CheckedMut<'_, Member> {
     /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
     pub(crate) fn renew(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
         self.value.renew(trouble, at)
+    }
+
+    /// See [`Member::begin_holder_session`].
+    ///
+    /// # Errors
+    /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
+    pub(crate) fn begin_holder_session(
+        &mut self,
+        trouble: ladder::Trouble,
+        at: Timestamp,
+    ) -> Result<bool, renewal::RenewalError> {
+        self.value.begin_holder_session(trouble, at)
     }
 
     /// See [`Member::held_task`].
@@ -351,6 +372,13 @@ impl Member {
 
     getter!("Who works in the task.", pub const fn agent(&self) -> &Participant = &self.agent);
 
+    /// The agent the task is known by on its team's bus: the agent it was first given to. A task keeps that name when
+    /// another agent takes it over, so that the messages, the wake-ups and the lead's rights of the team stay with it.
+    #[must_use]
+    pub fn bus_agent(&self) -> &Participant {
+        self.past_holders.first().map_or(&self.agent, |first| &first.agent)
+    }
+
     getter!("Where the task is in its life.", pub const fn status(&self) -> TaskStatus = self.status);
 
     getter!("The runs, oldest first.", pub fn runs(&self) -> &[Run] = &self.runs);
@@ -466,6 +494,30 @@ impl Member {
     /// # Errors
     /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
     pub(crate) fn renew(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
+        self.begin_session(trouble, at, SessionStart::Renewal)
+    }
+
+    /// Records that the agent that holds the task now begins its own session, after `trouble` made the runs of the
+    /// agent before it go bad: like [`Member::renew`], but no new session of the task's agent is counted. Only
+    /// [`State::begin_holder_session`](super::State::begin_holder_session) calls it.
+    ///
+    /// # Errors
+    /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
+    pub(crate) fn begin_holder_session(
+        &mut self,
+        trouble: ladder::Trouble,
+        at: Timestamp,
+    ) -> Result<bool, renewal::RenewalError> {
+        self.begin_session(trouble, at, SessionStart::HandOver)
+    }
+
+    /// Records the start of a new session, by `start`, after `trouble`, at `at`; `false` for a task with no run.
+    fn begin_session(
+        &mut self,
+        trouble: ladder::Trouble,
+        at: Timestamp,
+        start: SessionStart,
+    ) -> Result<bool, renewal::RenewalError> {
         let Some(last) = self.runs.last() else {
             return Ok(false);
         };
@@ -476,9 +528,13 @@ impl Member {
             });
         }
         let after_runs = self.runs.len();
-        match &mut self.renewals {
-            Some(renewals) => renewals.record(at, trouble, after_runs),
-            None => self.renewals = Some(renewal::Renewals::first(at, trouble, after_runs)),
+        match (&mut self.renewals, start) {
+            (Some(renewals), SessionStart::Renewal) => renewals.record(at, trouble, after_runs),
+            (Some(renewals), SessionStart::HandOver) => renewals.hand_over(at, trouble, after_runs),
+            (None, SessionStart::Renewal) => self.renewals = Some(renewal::Renewals::first(at, trouble, after_runs)),
+            (None, SessionStart::HandOver) => {
+                self.renewals = Some(renewal::Renewals::handed_over(at, trouble, after_runs));
+            }
         }
         Ok(true)
     }
