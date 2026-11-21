@@ -1,5 +1,10 @@
 # `agent log`: the story of a round and the daemon's own log
 
+The history file and the `--json` of `agent log` hold UTC: every time is RFC 3339 with `Z`. The text that `agent log`
+prints for a person is local time: the times are written in the zone of the machine (the `TZ` variable, else the system's
+zone) with the offset valid at each moment, as `date` shows it, in the form `2026-11-21 17:29:53 +01:00`. A zone that
+cannot be found is shown as UTC, marked `UTC`. `agent log --utc` prints the times of the files (RFC 3339, `Z`) instead.
+
 `agent log` tells what happened from [the history](history.md). It opens `history.db` read-only and asks no daemon, so it
 works when the daemon is stopped, crashed or never started. Without arguments it prints the newest `100` daemon log
 rows, in write order. A single round or team argument retains the story described below. Search, following,
@@ -23,7 +28,8 @@ selects daemon log rows instead. Row filters are `--task`, `--run`, `--agent`, `
 filters use explicit `--show log` so they compare the same kind of rows.
 
 Filters intersect. `--level` matches exactly one severity; `--agent` matches the agent of the associated run.
-`--since` and `--until` are inclusive UTC timestamps. `-n 0` prints no rows; the default is `100`.
+`--since` and `--until` are inclusive timestamps: one with its zone (`Z` or an offset) is read as written, one without
+is read in the zone of the output, as the text is written (see the top of this page). `-n 0` prints no rows; the default is `100`.
 The newest matching rows are printed oldest first by database insertion ID. Row-mode `--json` prints each log's
 `id`, `first_at`, `at`, `level`, `event`, `module`, `team`, `rounds`, `task`, `run`, `message`, `fields`, `count`
 and `cut`. A filter that matches nothing succeeds with empty output. Older schemas without daemon logs also
