@@ -421,6 +421,29 @@ impl State {
             })
     }
 
+    /// Records that the work of the member's task `task`, whose runs went bad with `trouble`, is owed to its team's lead
+    /// from `at`: the task stops, and the lead is to be told until [`State::lead_told`]. A session boundary is marked as
+    /// for a hand-over. Only a member's task owes its work to a lead.
+    ///
+    /// # Errors
+    /// [`RenewTaskError`] when the task is not in the state, is not a member's, or the boundary does not fit its runs.
+    pub fn owe_lead(
+        &mut self,
+        _task: &TaskId,
+        _trouble: crate::decide::ladder::Trouble,
+        _at: Timestamp,
+    ) -> Result<(), RenewTaskError> {
+        Ok(())
+    }
+
+    /// Records that the lead of `task` was told that the member's work is its own: nothing is owed any more.
+    ///
+    /// # Errors
+    /// [`RenewTaskError::NoTask`] when the task is not in the state.
+    pub fn lead_told(&mut self, _task: &TaskId) -> Result<(), RenewTaskError> {
+        Ok(())
+    }
+
     /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
     /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
     /// that the state it leaves loads again.

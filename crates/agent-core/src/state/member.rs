@@ -391,6 +391,12 @@ impl Member {
         self.renewals.as_ref().and_then(renewal::Renewals::asked)
     }
 
+    /// Whether the work of this member's task is owed to its team's lead, which is still to be told of it.
+    #[must_use]
+    pub const fn owes_lead(&self) -> bool {
+        true
+    }
+
     /// The agent the task is known by on its team's bus: the agent it was first given to. A task keeps that name when
     /// another agent takes it over, so that the messages, the wake-ups and the lead's rights of the team stay with it.
     #[must_use]
