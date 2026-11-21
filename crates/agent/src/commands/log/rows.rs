@@ -6,13 +6,15 @@ use std::path::Path;
 use agent_core::ids::{AgentName, RoundId, RunId, TaskId, TeamId};
 use agent_core::log::{LogEvent, LogLevel, LogView};
 use agent_core::state::Timestamp;
-use agent_core::story::StepView;
 use agent_runtime::history::{LogFilter, LogWindow, Reader};
 use clap::Args;
 
-use super::steps::{TimedStep, agent_steps, run_steps, task_steps};
-use super::timeline::{Team, Timeline};
+use super::follow::Feed;
+use super::wait::wait_line;
 use super::{Format, LogError};
+
+/// How long a follow waits before it reads the history again.
+const FOLLOW_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// The newest lines `agent log` prints when `-n` names none.
 const DEFAULT_LINES: u32 = 50;
@@ -82,6 +84,7 @@ impl RowArgs {
     pub(crate) fn print(
         &self,
         path: &Path,
+        socket: &Path,
         round: Option<RoundId>,
         team: Option<TeamId>,
         format: Format,
@@ -95,7 +98,6 @@ impl RowArgs {
         if let Some(view) = self.show.filter(|view| *view != LogView::Log) {
             return super::views::print(&reader, round, team.as_ref(), view, format, out);
         }
-        let scoped = self.task.is_some() || self.run.is_some() || self.agent.is_some();
         let filter = LogFilter {
             grep: self.grep.clone(),
             team,
@@ -108,62 +110,64 @@ impl RowArgs {
             since: self.since,
             until: self.until,
         };
+        let limit = self.limit.unwrap_or(DEFAULT_LINES);
         let runtime = if self.follow {
             Some(
                 tokio::runtime::Builder::new_current_thread()
-                    .enable_time()
+                    .enable_all()
                     .build()
                     .map_err(LogError::FollowRuntime)?,
             )
         } else {
             None
         };
-        let agents = followed_agents(&reader, &filter)?;
-        let steps = if scoped && !matches!(format, Format::Text(options) if options.steps == StepView::LeftOut) {
-            steps_of(&reader, &filter)?
-        } else {
-            Vec::new()
-        };
-        let mut teams: Vec<Team> = Vec::new();
-        for team in reader.teams()? {
-            let mut runs = std::collections::BTreeMap::new();
-            for run in reader.runs_of_team(&team.value.team)? {
-                runs.insert(run.start.value.run.clone(), run.start.value);
-            }
-            teams.push(Team::new(team.value.team.clone(), runs));
-        }
-        let mut cursor = reader.log_cursor()?;
-        let mut window = LogWindow::Newest(self.limit.unwrap_or(DEFAULT_LINES));
-        loop {
-            let rows = reader.log_rows(&filter, window)?;
-            for row in &rows {
-                cursor = cursor.max(row.id());
-            }
-            match format {
-                Format::Json => {
-                    for row in &rows {
-                        print_row(row, format, out)?;
-                    }
-                }
-                Format::Text(_) => {
-                    let rows: Vec<&agent_core::log::LogEntry> = rows.iter().collect();
-                    let mut timeline = Timeline::new(rows, steps.clone(), agents.clone());
-                    timeline.teams.extend(teams.iter().cloned());
-                    let text = timeline.newest(self.limit.unwrap_or(DEFAULT_LINES));
+        match format {
+            Format::Json => follow_json(&reader, &filter, limit, runtime.as_ref(), out),
+            Format::Text(options) => {
+                let (mut feed, text) = Feed::open(&reader, filter, options.steps, limit)?;
+                out.write_all(text.as_bytes()).map_err(LogError::Output)?;
+                out.flush().map_err(LogError::Output)?;
+                let Some(runtime) = &runtime else {
+                    return Ok(());
+                };
+                let mut waits = |round: &RoundId| runtime.block_on(wait_line(socket, round));
+                loop {
+                    // SQLite and stdout stay outside the async runtime. Only the cancellable timer runs inside it.
+                    runtime.block_on(async { tokio::time::sleep(FOLLOW_PAUSE).await });
+                    let text = feed.poll(&reader, &mut waits)?;
                     out.write_all(text.as_bytes()).map_err(LogError::Output)?;
+                    out.flush().map_err(LogError::Output)?;
                 }
             }
-            out.flush().map_err(LogError::Output)?;
-            let Some(runtime) = &runtime else {
-                return Ok(());
-            };
-            // SQLite and stdout stay outside the async runtime. Only the cancellable timer runs inside it.
-            runtime.block_on(async { tokio::time::sleep(std::time::Duration::from_millis(100)).await });
-            window = LogWindow::After {
-                id: cursor,
-                limit: 1000,
-            };
         }
+    }
+}
+
+/// The rows as JSON lines: the newest `limit`, then, when `runtime` is given, every row recorded after them.
+fn follow_json(
+    reader: &Reader,
+    filter: &LogFilter,
+    limit: u32,
+    runtime: Option<&tokio::runtime::Runtime>,
+    out: &mut impl Write,
+) -> Result<(), LogError> {
+    let mut cursor = reader.log_cursor()?;
+    let mut window = LogWindow::Newest(limit);
+    loop {
+        let rows = reader.log_rows(filter, window)?;
+        for row in &rows {
+            cursor = cursor.max(row.id());
+            print_row(row, Format::Json, out)?;
+        }
+        out.flush().map_err(LogError::Output)?;
+        let Some(runtime) = runtime else {
+            return Ok(());
+        };
+        runtime.block_on(async { tokio::time::sleep(FOLLOW_PAUSE).await });
+        window = LogWindow::After {
+            id: cursor,
+            limit: 1000,
+        };
     }
 }
 
@@ -180,60 +184,4 @@ fn print_row(row: &agent_core::log::LogEntry, format: Format, out: &mut impl Wri
         .to_string(),
     };
     writeln!(out, "{text}").map_err(LogError::Output)
-}
-
-/// The agents whose runs the scope covers: the one of `--agent`, those of the runs of `--task` and `--run`, and those
-/// of the steps. A line names its agent when more than one is followed, or when the scope is one task.
-fn followed_agents(reader: &Reader, filter: &LogFilter) -> Result<Vec<AgentName>, LogError> {
-    let mut names: Vec<String> = Vec::new();
-    if let Some(agent) = &filter.agent {
-        names.push(agent.to_string());
-    }
-    if let Some(task) = &filter.task {
-        for run in reader.runs_of_task(task)? {
-            names.push(run.start.value.agent.name);
-        }
-    }
-    if let Some(id) = &filter.run
-        && let Some(run) = reader.run(id)?
-    {
-        names.push(run.start.value.agent.name);
-    }
-    for step in steps_of(reader, filter)? {
-        names.push(step.run.agent.name);
-    }
-    let mut agents: Vec<AgentName> = Vec::new();
-    for name in names {
-        match name.parse() {
-            Ok(agent) => agents.push(agent),
-            Err(source) => {
-                // The history validated the name of a run when it wrote it, so a name that does not parse cannot
-                // happen; it is left out of the followed agents, and the steps of its run print without it.
-                tracing::warn!(%source, %name, "a run of the scope has no agent name a log can show");
-            }
-        }
-    }
-    agents.sort();
-    agents.dedup();
-    if agents.len() < 2 && filter.task.is_none() {
-        agents.clear();
-    }
-    Ok(agents)
-}
-
-/// The steps of the runs `filter` covers, oldest first.
-fn steps_of(reader: &Reader, filter: &LogFilter) -> Result<Vec<TimedStep>, LogError> {
-    if let Some(id) = &filter.run {
-        return Ok(match reader.run(id)? {
-            Some(run) => run_steps(reader, &run.start.value)?,
-            None => Vec::new(),
-        });
-    }
-    if let Some(task) = &filter.task {
-        return Ok(task_steps(reader, task)?);
-    }
-    if let Some(agent) = &filter.agent {
-        return Ok(agent_steps(reader, agent)?);
-    }
-    Ok(Vec::new())
 }

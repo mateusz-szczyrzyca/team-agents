@@ -8,6 +8,7 @@ pub(crate) mod steps;
 mod tests;
 mod timeline;
 mod views;
+mod wait;
 
 use std::io::Write;
 use std::path::Path;

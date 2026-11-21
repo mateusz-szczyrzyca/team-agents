@@ -10,9 +10,8 @@
 mod tests;
 
 use agent_core::history::{RunStart, Step};
-use agent_core::ids::{AgentName, TaskId};
 use agent_core::state::Timestamp;
-use agent_runtime::history::{ReadError, Reader};
+use agent_runtime::history::{LogFilter, ReadError, Reader, RunRow};
 
 /// A step of a covered run, at its place in the day.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,19 +22,6 @@ pub(crate) struct TimedStep {
     pub(crate) run: RunStart,
     /// When the step was recorded.
     pub(crate) at: Timestamp,
-}
-
-/// The steps of `task` in its runs, oldest first.
-///
-/// # Errors
-/// [`ReadError`] when the history cannot be read.
-pub(crate) fn task_steps(reader: &Reader, task: &TaskId) -> Result<Vec<TimedStep>, ReadError> {
-    let mut steps = Vec::new();
-    for row in reader.runs_of_task(task)? {
-        steps.extend(run_steps(reader, &row.start.value)?);
-    }
-    steps.sort_by_key(|timed| (timed.at, timed.step.run.clone(), timed.step.number));
-    Ok(steps)
 }
 
 /// The steps of `run`, oldest first.
@@ -57,15 +43,37 @@ pub(crate) fn run_steps(reader: &Reader, run: &RunStart) -> Result<Vec<TimedStep
         .collect()
 }
 
-/// The steps of every run of `agent`, wherever its team, oldest first.
+/// The runs a scope covers: those of the most specific of its run, task, agent, round and team, that also match
+/// everything else the scope names. A scope that names none of them covers no run.
 ///
 /// # Errors
 /// [`ReadError`] when the history cannot be read.
-pub(crate) fn agent_steps(reader: &Reader, agent: &AgentName) -> Result<Vec<TimedStep>, ReadError> {
-    let mut steps = Vec::new();
-    for row in reader.runs_of_agent(agent)? {
-        steps.extend(run_steps(reader, &row.start.value)?);
-    }
-    steps.sort_by_key(|timed| (timed.at, timed.step.run.clone(), timed.step.number));
-    Ok(steps)
+pub(crate) fn covered_runs(reader: &Reader, filter: &LogFilter) -> Result<Vec<RunRow>, ReadError> {
+    let runs = if let Some(run) = &filter.run {
+        reader.run(run)?.into_iter().collect()
+    } else if let Some(task) = &filter.task {
+        reader.runs_of_task(task)?
+    } else if let Some(agent) = &filter.agent {
+        reader.runs_of_agent(agent)?
+    } else if let Some(round) = &filter.round {
+        reader.runs_of_round(round)?
+    } else if let Some(team) = &filter.team {
+        reader.runs_of_team(team)?
+    } else {
+        Vec::new()
+    };
+    Ok(runs
+        .into_iter()
+        .filter(|row| {
+            let start = &row.start.value;
+            filter.run.as_ref().is_none_or(|run| *run == start.run)
+                && filter.task.as_ref().is_none_or(|task| *task == start.task)
+                && filter
+                    .agent
+                    .as_ref()
+                    .is_none_or(|agent| agent.as_str() == start.agent.name)
+                && filter.round.as_ref().is_none_or(|round| start.rounds.contains(round))
+                && filter.team.as_ref().is_none_or(|team| *team == start.team)
+        })
+        .collect())
 }

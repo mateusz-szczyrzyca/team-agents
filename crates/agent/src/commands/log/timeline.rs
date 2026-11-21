@@ -7,9 +7,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use agent_core::history::RunStart;
-use agent_core::ids::{AgentName, RunId, TeamId};
-use agent_core::log::LogEntry;
+use agent_core::ids::{AgentName, RoundId, RunId, TeamId};
 use agent_core::log::render::{record_line, steps::step_line};
+use agent_core::log::{LogEntry, LogEvent};
 use agent_core::state::Timestamp;
 
 use super::steps::TimedStep;
@@ -57,6 +57,8 @@ pub(crate) struct Timeline<'a> {
     followed: Vec<AgentName>,
     /// The teams the rows belong to, with their runs.
     pub(crate) teams: Vec<Team>,
+    /// What each round waits for, told after the row of a run of it that ended.
+    pub(crate) waits: BTreeMap<RoundId, String>,
 }
 
 impl<'a> Timeline<'a> {
@@ -67,14 +69,42 @@ impl<'a> Timeline<'a> {
             steps,
             followed,
             teams: Vec::new(),
+            waits: BTreeMap::new(),
         }
     }
 
     /// The newest `limit` things of the text, oldest first: each once, and a run told before the first of its steps.
     pub(crate) fn newest(&self, limit: u32) -> String {
-        let order = self.order();
+        let shown = self.shown(limit);
+        let mut text = String::new();
+        for step in self.first_steps(&shown).values() {
+            text.push_str(&self.run_line(*step));
+        }
+        for kind in &shown {
+            if !matches!(kind, Kind::Run(_)) {
+                text.push_str(&self.line(*kind));
+            }
+        }
+        text
+    }
+
+    /// The runs [`Self::newest`] with the same `limit` tells: a later page does not tell them again.
+    pub(crate) fn newest_runs(&self, limit: u32) -> BTreeSet<String> {
+        self.first_steps(&self.shown(limit)).into_keys().collect()
+    }
+
+    /// The newest `limit` things of the text, oldest first.
+    fn shown(&self, limit: u32) -> Vec<Kind> {
+        let order = self.order(BTreeSet::new());
         let limit = usize::try_from(limit).unwrap_or(usize::MAX);
-        let shown = order.get(order.len().saturating_sub(limit)..).unwrap_or_default();
+        order
+            .get(order.len().saturating_sub(limit)..)
+            .unwrap_or_default()
+            .to_vec()
+    }
+
+    /// For each run that has a step among `shown`, the first of them.
+    fn first_steps(&self, shown: &[Kind]) -> BTreeMap<String, usize> {
         let mut runs: BTreeMap<String, usize> = BTreeMap::new();
         for kind in shown {
             if let Kind::Step(step) = kind
@@ -83,23 +113,27 @@ impl<'a> Timeline<'a> {
                 runs.entry(timed.run.run.to_string()).or_insert(*step);
             }
         }
-        let mut text = String::new();
-        for step in runs.values() {
-            text.push_str(&self.run_line(*step));
-        }
-        for kind in shown {
-            if !matches!(kind, Kind::Run(_)) {
-                text.push_str(&self.line(*kind));
-            }
+        runs
+    }
+
+    /// Every thing of the text, oldest first, as one page of a follow: a run in `told` is not told again, and the runs
+    /// this page tells are added to it.
+    pub(crate) fn page(&self, told: &mut BTreeSet<String>) -> String {
+        let text = self
+            .order(told.clone())
+            .into_iter()
+            .map(|kind| self.line(kind))
+            .collect();
+        for timed in &self.steps {
+            told.insert(timed.run.run.to_string());
         }
         text
     }
 
     /// Every thing of the text, in the order it happened: the steps before every row first, then each row with the
     /// steps recorded before the next row's time.
-    fn order(&self) -> Vec<Kind> {
+    fn order(&self, mut told: BTreeSet<String>) -> Vec<Kind> {
         let mut order: Vec<Kind> = Vec::new();
-        let mut told: BTreeSet<String> = BTreeSet::new();
         let push = |order: &mut Vec<Kind>, told: &mut BTreeSet<String>, step: usize| {
             if let Some(timed) = self.steps.get(step)
                 && told.insert(timed.run.run.to_string())
@@ -152,7 +186,16 @@ impl<'a> Timeline<'a> {
             .team()
             .and_then(|team| self.teams.iter().find(|made| &made.team == team))
             .and_then(|team| team.run_of(row.run()));
-        format!("{}\n", record_line(row, run))
+        let mut line = format!("{}\n", record_line(row, run));
+        if row.event() == LogEvent::RunEnded {
+            for round in row.rounds() {
+                if let Some(wait) = self.waits.get(round) {
+                    line.push_str(wait);
+                    line.push('\n');
+                }
+            }
+        }
+        line
     }
 
     /// A run's first line: when, the agent, the task, the team and the round it works for.

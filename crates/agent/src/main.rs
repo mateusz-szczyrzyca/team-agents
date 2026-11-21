@@ -745,8 +745,14 @@ fn execute_log(environment: &Environment, args: LogArgs, out: &mut impl Write) -
         })
     };
     if args.rows.requested() || args.round.is_some() == args.team.is_some() {
-        args.rows
-            .print(&home.history_file(), args.round, args.team, format, out)?;
+        args.rows.print(
+            &home.history_file(),
+            &home.socket_file(),
+            args.round,
+            args.team,
+            format,
+            out,
+        )?;
         return Ok(());
     }
     let request = LogRequest::new(args.round, args.team, format)?;
