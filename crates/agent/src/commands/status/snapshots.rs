@@ -5,11 +5,11 @@
 mod tests;
 
 use agent_core::history::SnapshotRecord;
-use time::UtcOffset;
+use agent_core::local_time::Zone;
 
 /// One line per task that has a snapshot, showing its last snapshot. `snapshots` is in the order of the history: by task,
 /// then by number, so the last of a task is the one that follows the others of it.
-pub(crate) fn snapshot_lines(snapshots: &[SnapshotRecord], offset: UtcOffset) -> String {
+pub(crate) fn snapshot_lines(snapshots: &[SnapshotRecord], offset: Zone) -> String {
     let mut lines = Vec::new();
     for (index, snapshot) in snapshots.iter().enumerate() {
         let is_last = snapshots
@@ -34,7 +34,7 @@ pub(crate) fn snapshot_lines(snapshots: &[SnapshotRecord], offset: UtcOffset) ->
 pub(crate) fn snapshots_of(
     home: &agent_runtime::store::Home,
     round: &agent_core::ids::RoundId,
-    offset: UtcOffset,
+    offset: Zone,
 ) -> String {
     let read =
         agent_runtime::history::Reader::open(&home.history_file()).and_then(|reader| reader.snapshots_of_round(round));

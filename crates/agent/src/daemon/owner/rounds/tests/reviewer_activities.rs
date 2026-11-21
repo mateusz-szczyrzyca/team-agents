@@ -90,7 +90,7 @@ fn reported(teams: &[TeamSummary], task: &str) -> Option<String> {
             ActivityOutcome::Working => None,
         })
         .max()
-        .map(|(_, at)| clock_of(at, UtcOffset::UTC))
+        .map(|(_, at)| clock_of(at, agent_core::local_time::Zone::Fixed(UtcOffset::UTC)))
 }
 
 /// The tasks of the reviewers of `team` in `state`.
@@ -152,7 +152,10 @@ async fn while_a_round_goes_through_its_reviews_the_reviewers_lines_say_what_the
         };
         assert_eq!(
             state_of(&text, task.as_str()),
-            format!("done, 1st review finished {}", clock_of(at, UtcOffset::UTC)),
+            format!(
+                "done, 1st review finished {}",
+                clock_of(at, agent_core::local_time::Zone::Fixed(UtcOffset::UTC))
+            ),
             "{text}"
         );
     }

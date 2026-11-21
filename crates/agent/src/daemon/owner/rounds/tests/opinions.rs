@@ -1036,7 +1036,10 @@ async fn cli_commands_read_round_during_and_after_second_opinions() {
     let round_id = state.team(&team).unwrap().rounds()[0].id().clone();
     let round_text = round_id.to_string();
     let round_target = agent_core::protocol::Target::Round(round_id.clone());
-    let activity = crate::commands::status::Activity::new(rig.home.clone(), time::UtcOffset::UTC);
+    let activity = crate::commands::status::Activity::new(
+        rig.home.clone(),
+        agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+    );
     let log_req = crate::commands::log::LogRequest {
         selection: agent_core::story::Selection::Round(round_id),
         format: crate::commands::log::Format::Text(agent_core::story::StoryOptions {

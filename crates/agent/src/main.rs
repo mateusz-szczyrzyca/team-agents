@@ -698,11 +698,11 @@ async fn execute(environment: &Environment, command: Command, out: &mut impl Wri
         Command::Status(args) => {
             let home = environment.home()?;
             let mut connection = Connection::connect(&home.socket_file()).await?;
-            let activity = Activity::new(home.clone(), environment.local_offset());
+            let activity = Activity::new(home.clone(), environment.zone());
             if args.json {
                 status_json(&mut connection, args.target, out).await?;
             } else if args.investigators {
-                status_investigators(&mut connection, &home, environment.local_offset(), out).await?;
+                status_investigators(&mut connection, &home, environment.zone(), out).await?;
             } else if args.running {
                 status_running(&mut connection, &activity, out).await?;
             } else {
