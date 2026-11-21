@@ -117,9 +117,9 @@ impl RowArgs {
         } else {
             None
         };
-        let agents = Vec::new();
-        let steps: Vec<TimedStep> = Vec::new();
-        let known: Vec<Team> = Vec::new();
+        let agents = followed_agents(&reader, &filter)?;
+        let steps = if steps { steps_of(&reader, &filter)? } else { Vec::new() };
+        let known = teams(&reader)?;
         let mut cursor = reader.log_cursor()?;
         let mut window = LogWindow::Newest(self.limit.unwrap_or(100));
         let mut first = true;
