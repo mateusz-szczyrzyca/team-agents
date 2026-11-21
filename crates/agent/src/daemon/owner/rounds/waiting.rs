@@ -261,12 +261,11 @@ impl Owner {
 
     /// The action that owns the next step of an idle round.
     pub(in crate::daemon::owner) fn waiting_for(&self, team: &Team, round: &Round) -> Option<Waiting> {
-        let members = team.members_in(round.id());
         let activity = if *round.life() != RoundLife::Open {
             Activity::Closed
-        } else if members
+        } else if round_tasks(team, round)
             .iter()
-            .any(|(_, member)| matches!(member.status(), TaskStatus::Queued | TaskStatus::Running))
+            .any(|member| member.status() == TaskStatus::Running)
         {
             Activity::Active
         } else {
@@ -320,48 +319,16 @@ impl Owner {
         })
     }
 
-    /// What a round waits for when a task of its item has a run to come, so that the round is not unowned:
+    /// What an idle round waits for when a task of it is queued: the run that the daemon starts next is the one that
+    /// goes on with the round, so the round is not unowned.
     ///
-    /// - the lead's queued task, whose run starts the round right after it is opened;
-    /// - in the round of a split part, the task of the member the item is still given to, queued or between two of its
-    ///   runs: the lead opens the run of the part for it, so the part's work is not over there.
-    ///
-    /// A task that runs needs nothing to start; one that ended, asked the human or was stopped is looked at by
+    /// Only a `Queued` task has a run to come. A task that waits for a message, an assignment or a merge has none, and a
+    /// round whose tasks all wait is the defect. A task that ended, asked the human or was stopped is looked at by
     /// [`Owner::stuck_obligation`] and [`Owner::round_obligation`] first.
     pub(in crate::daemon::owner) fn queued_run_obligation(team: &Team, round: &Round) -> Option<Obligation> {
-        let runs_next = |member: &&Member| {
-            matches!(
-                member.status(),
-                TaskStatus::Queued | TaskStatus::Waiting | TaskStatus::Running
-            )
-        };
-        let in_the_round = team.members_in(round.id()).into_iter().map(|(_, member)| member);
-        // The lead is given a run of its item, but not the run of another item's round.
-        let lead = team
-            .crew()
-            .roster()
-            .into_iter()
-            .next()
-            .map(|(_, member)| member)
-            .filter(|_| round.item().is_some());
-        let waiting_for_the_item = round
-            .part()
-            .is_some()
-            .then(|| round.item().and_then(|item| team.item(item)))
-            .flatten()
-            .and_then(|progress| match progress.phase() {
-                ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } => Some(assignee),
-                ItemPhase::Pending
-                | ItemPhase::InReview { .. }
-                | ItemPhase::Approved { .. }
-                | ItemPhase::Done { .. } => None,
-            });
-        let member = in_the_round
-            .filter(|member| waiting_for_the_item.is_some_and(|assignee| member.agent().agent_name() == *assignee));
-        let tasks: Vec<&Member> = lead.into_iter().chain(member).filter(runs_next).collect();
-        tasks
+        round_tasks(team, round)
             .iter()
-            .any(|member| matches!(member.status(), TaskStatus::Queued | TaskStatus::Waiting))
+            .any(|member| member.status() == TaskStatus::Queued)
             .then_some(Obligation::QueuedRun)
     }
 
@@ -440,4 +407,41 @@ impl Owner {
             | None => None,
         }
     }
+}
+
+/// The tasks whose runs the work of `round` is waiting for or is done by, each once: the members that ran in it, the
+/// member its item is given to, which has a run to come before it ever names the round, and the lead, who is given a
+/// run of every item's round.
+fn round_tasks<'team>(team: &'team Team, round: &Round) -> Vec<&'team Member> {
+    let assignee = round
+        .item()
+        .and_then(|item| team.item(item))
+        .and_then(|progress| match progress.phase() {
+            ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } => Some(assignee),
+            ItemPhase::Pending | ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. } => {
+                None
+            }
+        });
+    let roster = team.crew().roster();
+    let lead = roster
+        .first()
+        .map(|(_, member)| *member)
+        .filter(|_| round.item().is_some());
+    let holders = roster
+        .iter()
+        .map(|(_, member)| *member)
+        .filter(|member| assignee.is_some_and(|name| member.agent().agent_name() == *name));
+    let mut tasks: Vec<&Member> = Vec::new();
+    for member in team
+        .members_in(round.id())
+        .into_iter()
+        .map(|(_, member)| member)
+        .chain(holders)
+        .chain(lead)
+    {
+        if !tasks.iter().any(|known| known.task() == member.task()) {
+            tasks.push(member);
+        }
+    }
+    tasks
 }
