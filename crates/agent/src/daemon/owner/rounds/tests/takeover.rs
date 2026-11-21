@@ -291,3 +291,62 @@ async fn without_replacement_agents_the_task_fails_as_before() {
         "the lead is not given the work: {bus}"
     );
 }
+
+// Rule: `replacements = 0` takes no task over: it fails as before, even with a fitting agent listed.
+#[tokio::test]
+async fn no_replacements_fail_the_task_as_before() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", BAD_IN_BOTH_SESSIONS),
+            normal("claude-2", "work"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        false,
+    )
+    .await;
+    configure(&rig, "[replacement]\nagents = [\"claude-2\"]\nreplacements = 0\n");
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+
+    let state = rig.status_is(&tasks[0], TaskStatus::Failed).await;
+    rig.stop().await.unwrap();
+
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert_eq!(member.agent().name(), "claude-1");
+    assert_eq!(member.past_holders().len(), 0, "nothing was handed over");
+}
+
+// Rule: mode `lead` gives a member's work to its lead even when a fitting agent is listed.
+#[tokio::test]
+async fn mode_lead_gives_the_members_work_to_the_lead_past_a_fitting_agent() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,work"),
+            normal("claude-1", BAD_IN_BOTH_SESSIONS),
+            normal("claude-2", "work"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    configure(&rig, "[replacement]\nagents = [\"claude-2\"]\nmode = \"lead\"\n");
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+
+    let state = rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+    rig.wait_for("the lead's text on the bus", || {
+        bus_texts(&rig).contains("WORK OF A MEMBER THAT IS GONE")
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    let member = state.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(member.agent().name(), "claude-1", "claude-2 is not given the task");
+    assert_eq!(member.past_holders().len(), 0);
+}
