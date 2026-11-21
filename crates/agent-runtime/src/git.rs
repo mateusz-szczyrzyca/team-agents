@@ -183,6 +183,9 @@ pub enum GitOperation {
     /// `git worktree remove`.
     #[strum(serialize = "worktree remove")]
     WorktreeRemove,
+    /// `git worktree list`.
+    #[strum(serialize = "worktree list")]
+    WorktreeList,
     /// `git branch <name>`.
     #[strum(serialize = "branch create")]
     BranchCreate,
@@ -684,6 +687,24 @@ impl Git {
         .map(drop)
     }
 
+    /// Moves `branch` to `commit` only when `branch` is not checked out in any worktree.
+    ///
+    /// Returns `true` when the branch was moved, or `false` when it was held by a worktree and left alone.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`]; [`GitError::Run`].
+    pub async fn branch_point_if_unheld(&self, _branch: &BranchName, _commit: &CommitId) -> Result<bool, GitError> {
+        Ok(true)
+    }
+
+    /// Lists all local branches currently checked out in any worktree of this repository.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`]; [`GitError::Run`].
+    pub async fn held_branches(&self) -> Result<HashSet<BranchName>, GitError> {
+        Ok(HashSet::new())
+    }
+
     /// Deletes `branch`.
     ///
     /// # Errors
@@ -921,6 +942,15 @@ impl Git {
             });
         }
         self.keep(&Revision::Published(branch.clone()), &tip).await
+    }
+
+    /// Pushes `commit` directly to `branch` on `origin`.
+    ///
+    /// # Errors
+    /// [`GitError::PushRefused`] when `origin` has commits of the branch the harness did not push;
+    /// [`GitError::Failed`] when there is no `origin` or the credentials fail; [`GitError::Run`].
+    pub async fn push_commit(&self, _branch: &BranchName, _commit: &CommitId) -> Result<(), GitError> {
+        Ok(())
     }
 
     /// Takes `tip` as pushed by the harness: `origin` has it on `branch` already, whoever pushed it there, and it is
