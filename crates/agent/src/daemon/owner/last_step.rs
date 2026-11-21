@@ -218,6 +218,20 @@ impl Owner {
             self.watch.publish_question.remove(task);
             let answer = agent_core::decide::publish::publish_answer(file.entries().first().and_then(Entry::verdict));
             log_decision("publish_answer", &task.as_str(), &format!("{answer:?}"));
+            let matching_branches: std::collections::HashSet<agent_core::ids::BranchName> = self
+                .parts
+                .state
+                .team(&located.team)
+                .into_iter()
+                .flat_map(|team| {
+                    matching_items.iter().filter_map(|id| {
+                        team.item(*id).and_then(|item| match item.phase() {
+                            agent_core::state::ItemPhase::InProgress { branch, .. } => Some(branch.clone()),
+                            _ => None,
+                        })
+                    })
+                })
+                .collect();
             let mut team_mut = self
                 .parts
                 .state
@@ -235,8 +249,12 @@ impl Owner {
             }
             return match answer {
                 agent_core::decide::publish::PublishAnswer::Retry => {
-                    self.watch.retry_at.retain(|(t, _), _| t != &located.team);
-                    self.watch.publish_tries.retain(|(t, _), _| t != &located.team);
+                    self.watch
+                        .retry_at
+                        .retain(|(t, b), _| !(t == &located.team && matching_branches.contains(b)));
+                    self.watch
+                        .publish_tries
+                        .retain(|(t, b), _| !(t == &located.team && matching_branches.contains(b)));
                     Ok(TaskStatus::Queued)
                 }
                 agent_core::decide::publish::PublishAnswer::Stop => Ok(TaskStatus::Stopped),

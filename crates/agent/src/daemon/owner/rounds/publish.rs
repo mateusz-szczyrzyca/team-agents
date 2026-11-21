@@ -309,28 +309,37 @@ pub(crate) enum PublishQuestionError {
         source: agent_runtime::autopilot_prompts::RenderAutopilotTextError,
     },
     /// Writing the question file failed.
-    #[error("cannot write publication question file for task {task}: {source}")]
+    #[error("cannot write publication question file {path:?} for task {task}")]
     Write {
         /// The task.
         task: TaskId,
+        /// The file path.
+        path: std::path::PathBuf,
         /// What failed.
         #[source]
         source: agent_runtime::text_file::ReplaceError,
     },
     /// Reading the question file back failed.
-    #[error("cannot read publication question file for task {task}: {source}")]
+    #[error("cannot read publication question file {path:?} for task {task}")]
     Read {
         /// The task.
         task: TaskId,
+        /// The file path.
+        path: std::path::PathBuf,
         /// What failed.
         #[source]
         source: crate::daemon::questions::QuestionsProblem,
     },
     /// The questions file path is not valid.
-    #[error("publication question file path is not valid for task {task}")]
+    #[error("publication question file path {path:?} is not valid for task {task}")]
     InvalidPath {
         /// The task.
         task: TaskId,
+        /// The file path.
+        path: std::path::PathBuf,
+        /// What failed.
+        #[source]
+        source: agent_core::config::InvalidValue,
     },
     /// The question could not be recorded in state.
     #[error("cannot record publication question for task {task}: {source}")]
@@ -1513,6 +1522,48 @@ impl Owner {
         self.release(&site.lead.task, Why::Gate(text.trim_end().to_owned()), look)
     }
 
+    /// Prepares and writes the questions file for publication failure if not already present with answers.
+    async fn prepare_publish_question_file(
+        &self,
+        site: Site<'_>,
+        publication: &Publication,
+        path: &std::path::Path,
+        reason: &str,
+    ) -> Result<(), PublishQuestionError> {
+        let is_populated = match crate::daemon::questions::read(path).await {
+            Ok(loaded) => loaded.file.is_answered() || loaded.file.entries().iter().any(|e| e.verdict().is_some()),
+            Err(_) => false,
+        };
+        if is_populated {
+            return Ok(());
+        }
+        let items_text = items_of(publication).join(", ");
+        let vars = Variables::new()
+            .with("task", site.lead.task.as_str())
+            .and_then(|v| v.with("items", &items_text))
+            .and_then(|v| v.with("branch", publication.head_branch.as_str()))
+            .and_then(|v| v.with("reason", reason))
+            .map_err(|source| PublishQuestionError::Variables {
+                task: site.lead.task.clone(),
+                source,
+            })?;
+        let text = site
+            .pulls
+            .texts
+            .render(AutopilotPrompt::NoticePublishQuestion, &vars)
+            .map_err(|source| PublishQuestionError::Render {
+                task: site.lead.task.clone(),
+                source,
+            })?;
+        agent_runtime::text_file::replace_text_file(path, &text, 0o600)
+            .await
+            .map_err(|source| PublishQuestionError::Write {
+                task: site.lead.task.clone(),
+                path: path.to_path_buf(),
+                source,
+            })
+    }
+
     /// Asks the human once whether to retry publication or stop.
     async fn ask_human_publish_failed(
         &mut self,
@@ -1544,36 +1595,21 @@ impl Owner {
             task: site.lead.task.clone(),
         })?;
         let path = self.parts.store.home().questions_file(&site.lead.task, number);
-        let items_text = items_of(publication).join(", ");
-        let vars = Variables::new()
-            .with("task", site.lead.task.as_str())
-            .and_then(|v| v.with("items", &items_text))
-            .and_then(|v| v.with("branch", publication.head_branch.as_str()))
-            .and_then(|v| v.with("reason", reason))
-            .map_err(|source| PublishQuestionError::Variables {
-                task: site.lead.task.clone(),
-                source,
-            })?;
-        let text = site
-            .pulls
-            .texts
-            .render(AutopilotPrompt::NoticePublishQuestion, &vars)
-            .map_err(|source| PublishQuestionError::Render {
-                task: site.lead.task.clone(),
-                source,
-            })?;
-        agent_runtime::text_file::replace_text_file(&path, &text, 0o600)
-            .await
-            .map_err(|source| PublishQuestionError::Write {
-                task: site.lead.task.clone(),
-                source,
-            })?;
-        let Some(Ok(file)) = path.to_str().map(agent_core::config::AbsolutePath::from_str) else {
-            return Err(PublishQuestionError::InvalidPath {
-                task: site.lead.task.clone(),
+
+        let file = match agent_core::config::AbsolutePath::from_str(&path.to_string_lossy()) {
+            Ok(file) => file,
+            Err(source) => {
+                return Err(PublishQuestionError::InvalidPath {
+                    task: site.lead.task.clone(),
+                    path: path.clone(),
+                    source,
+                }
+                .into());
             }
-            .into());
         };
+
+        self.prepare_publish_question_file(site, publication, &path, reason).await?;
+
         let (_, mut member) = self.member_mut(&site.lead.task)?;
         member
             .ask_question(agent_core::state::Question::new(number, file, now))
@@ -1585,6 +1621,7 @@ impl Owner {
             .await
             .map_err(|source| PublishQuestionError::Read {
                 task: site.lead.task.clone(),
+                path: path.clone(),
                 source,
             })?;
         self.prepare_questions(&site.lead.task, &path, &loaded).await;
