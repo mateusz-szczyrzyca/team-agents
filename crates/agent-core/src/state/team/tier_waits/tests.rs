@@ -30,3 +30,11 @@ fn absent_tier_wait_is_durable_and_reported_once_but_busy_is_not_a_tier_wait() {
     assert_eq!(old.tier_waits(), &BTreeMap::new());
     assert_eq!(old.refresh_tier_waits(), vec![]);
 }
+
+#[test]
+fn stored_tier_waits_refuse_items_outside_the_team() {
+    let mut value: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../tests/fixtures/team-before-tier-waits.json")).unwrap();
+    value["tier_waits"] = serde_json::json!({"99.1":"investigator"});
+    assert!(matches!(serde_json::from_value::<Team>(value), Err(error) if error.is_data()));
+}
