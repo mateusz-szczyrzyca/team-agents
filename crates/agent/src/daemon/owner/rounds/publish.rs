@@ -1530,18 +1530,6 @@ impl Owner {
         path: &std::path::Path,
         reason: &str,
     ) -> Result<(), PublishQuestionError> {
-        match crate::daemon::questions::read(path).await {
-            Ok(_) => return Ok(()),
-            Err(crate::daemon::questions::QuestionsProblem::Read { source, .. })
-                if source.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(PublishQuestionError::Read {
-                    task: site.lead.task.clone(),
-                    path: path.to_path_buf(),
-                    source,
-                });
-            }
-        }
         let items_text = items_of(publication).join(", ");
         let vars = Variables::new()
             .with("task", site.lead.task.as_str())
