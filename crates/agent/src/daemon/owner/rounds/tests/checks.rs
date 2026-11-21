@@ -1728,3 +1728,76 @@ async fn a_test_fix_that_also_changes_code_is_a_finding_about_its_commit_and_is_
     assert_eq!(kept.asked.as_ref().unwrap().subjects, [edit_of(&fix)]);
     assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
 }
+
+/// What a record of an earlier daemon decides: the round of `two-edits` is asked, the daemon stops, `legacy` is the
+/// record it finds in its place, the human answers and the review starts; then the team adds a third edit of the frozen
+/// test in a fix pass. Returns the record and the question that the third edit raised.
+async fn a_legacy_record_and_then_a_new_edit(
+    legacy: &str,
+) -> (ChecksRecord, QuestionsFile, [agent_core::state::CommitId; 3]) {
+    let mut rig = checking_rig(
+        "script:two-edits,questions,done,fix-script:third-edit,questions,done",
+        2,
+        CHANGES_ONCE,
+        APPROVE,
+    )
+    .await;
+    frozen_test_scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    std::fs::write(rig.home.checks_file(&tasks[0]), legacy).unwrap();
+    rig.start().await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    rig.wait_for("the second question of the checks", || {
+        rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists()
+    })
+    .await;
+    let commits = [
+        commit_of(&rig, &tasks[0], "GREEN"),
+        commit_of(&rig, &tasks[0], "Tidy the test once more"),
+        commit_of(&rig, &tasks[0], "Tidy the test a third time"),
+    ];
+    let file = questions_of(&rig, &tasks[0], 2);
+    let kept = record(&rig, &tasks[0]).await;
+    rig.stop().await.unwrap();
+    (kept, file, commits)
+}
+
+// Rule (review finding 6): what a file's allowance written before commit subjects covers is the commits that were in the
+// round then; a commit added after it is a new finding and is asked alone.
+#[tokio::test]
+async fn a_file_allowed_without_a_head_covers_the_commits_of_that_day_and_not_a_later_one() {
+    let (kept, file, [first, second, third]) =
+        a_legacy_record_and_then_a_new_edit(r#"{"items":{"1.1":{"passes":0,"allowed":[{"path":"tests/new.txt"}]}}}"#)
+            .await;
+
+    assert_eq!(kept.asked.as_ref().unwrap().subjects, [edit_of(&third)]);
+    assert_eq!(file.entries().len(), 1);
+    let allowed = kept.allowed_of(&["1.1".parse().unwrap()]);
+    assert!(
+        allowed.contains(&edit_of(&first)) && allowed.contains(&edit_of(&second)),
+        "{allowed:?}"
+    );
+    assert!(!allowed.contains(&edit_of(&third)));
+}
+
+// Rule (review finding 7): a file refused before commit subjects is a refusal of the commits that were in the round
+// then, which are neither asked again nor sent back, and a commit added after it is asked alone.
+#[tokio::test]
+async fn a_file_refused_without_a_head_is_a_refusal_of_the_commits_of_that_day_and_not_a_later_one() {
+    let (kept, file, [first, second, third]) =
+        a_legacy_record_and_then_a_new_edit(r#"{"items":{"1.1":{"passes":0,"refused":[{"path":"tests/new.txt"}]}}}"#)
+            .await;
+
+    assert_eq!(kept.asked.as_ref().unwrap().subjects, [edit_of(&third)]);
+    assert_eq!(file.entries().len(), 1);
+    let refused = kept.refused_of(&["1.1".parse().unwrap()]);
+    assert!(
+        refused.contains(&edit_of(&first)) && refused.contains(&edit_of(&second)),
+        "{refused:?}"
+    );
+    assert_eq!(kept.sent, None);
+}
