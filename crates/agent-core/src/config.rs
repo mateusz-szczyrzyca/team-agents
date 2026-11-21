@@ -396,8 +396,9 @@ pub struct Publish {
 impl Default for Publish {
     /// The default: three tries before the lead is told.
     fn default() -> Self {
-        let _ = DEFAULT_PUBLISH_TRIES;
-        Self { tries: 0 }
+        Self {
+            tries: DEFAULT_PUBLISH_TRIES,
+        }
     }
 }
 
