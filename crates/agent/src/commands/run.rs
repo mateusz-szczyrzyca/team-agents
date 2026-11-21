@@ -26,6 +26,9 @@ use crate::client::{ClientError, Connection};
 /// What starts the first line of a task list that names its coordinator.
 const COORDINATOR_PREFIX: &str = "Coordinator:";
 
+/// The byte order mark some editors put at the start of a file; the task list parser does not count it.
+const BYTE_ORDER_MARK: char = '\u{feff}';
+
 /// What the command line of `agent run` says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunInput {
@@ -328,6 +331,9 @@ pub(crate) fn words_with_short_desc(
             path: path.to_path_buf(),
         });
     }
+    if desc.contains(['\n', '\r']) {
+        return Err(RunError::ShortDescNotOneLine);
+    }
     let mut words = words;
     // One word is only an agent: the missing task is refused later, with its own message.
     if words.len() >= 2
@@ -338,17 +344,25 @@ pub(crate) fn words_with_short_desc(
     Ok(words)
 }
 
-/// The text of a task list `text` with the header line `Short desc: <desc>`: after its first line when that is the
-/// `Coordinator:` line, which only counts as the first, and before everything else.
+/// The text of a task list `text` with the header line `Short desc: <desc>`: after the first nonblank line when that is
+/// the `Coordinator:` line, which only counts as the first, as the parser reads it, and before everything else.
 fn task_with_short_desc(text: &str, desc: &str) -> String {
     let line = format!("Short desc: {desc}\n");
-    let first_end = text.find('\n').map_or(text.len(), |at| at.saturating_add(1));
-    let (first, rest) = text.split_at_checked(first_end).unwrap_or((text, ""));
-    if first.trim_start().starts_with(COORDINATOR_PREFIX) {
-        format!("{first}{}{line}{rest}", if first.ends_with('\n') { "" } else { "\n" })
-    } else {
-        format!("{line}{text}")
+    let body = text.strip_prefix(BYTE_ORDER_MARK).unwrap_or(text);
+    let mut offset = 0;
+    for physical in body.split_inclusive('\n') {
+        offset += physical.len();
+        if physical.trim().is_empty() {
+            continue;
+        }
+        if physical.starts_with(COORDINATOR_PREFIX) {
+            let (head, rest) = body.split_at(offset);
+            let end = if head.ends_with('\n') { "" } else { "\n" };
+            return format!("{head}{end}{line}{rest}");
+        }
+        break;
     }
+    format!("{line}{text}")
 }
 
 /// The request that starts what `input` says in the repository `directory` is in: nothing is asked of the daemon yet.
