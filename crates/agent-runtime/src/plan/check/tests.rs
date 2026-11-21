@@ -240,14 +240,36 @@ async fn check_command_mismatches_on_failure_with_tail() {
 #[tokio::test]
 async fn check_command_mismatches_on_timeout() {
     let env = TestEnv::new();
+    let ready_file = env.worktree.join("ready.txt");
     let script_file = env.worktree.join("hang.sh");
-    fs::write(&script_file, "#!/bin/sh\nwhile true; do sleep 1; done\n").unwrap();
+    fs::write(
+        &script_file,
+        format!("#!/bin/sh\ntouch \"{}\"\nsleep 300\n", ready_file.display()),
+    )
+    .unwrap();
     let step = parse_first_step("[x] 1.1 First item\n    Check: sh hang.sh\n");
-    let ctx = env.context(1, &[]);
-    let result = super::execute_command_check(&ctx, &step, "sh hang.sh").await.unwrap();
+    let ctx = env.context(10, &[]);
 
+    let check_fut = super::execute_command_check(&ctx, &step, "sh hang.sh");
+    tokio::pin!(check_fut);
+
+    let ready_fut = async {
+        let start = std::time::Instant::now();
+        while !ready_file.exists() {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(5),
+                "timed out waiting for ready marker"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        tokio::time::pause();
+        tokio::time::advance(std::time::Duration::from_secs(11)).await;
+    };
+
+    let (result, ()) = tokio::join!(check_fut, ready_fut);
+    let result = result.unwrap();
     assert_eq!(result.state, JudgementState::Mismatch);
-    assert_eq!(result.reason.as_deref(), Some("ran past 1 seconds"));
+    assert_eq!(result.reason.as_deref(), Some("ran past 10 seconds"));
 }
 
 #[tokio::test]
@@ -359,28 +381,52 @@ async fn check_command_guard_cleans_up_process_group_on_cancellation() {
     let env = TestEnv::new();
     let pid_file = env.worktree.join("cancel-child.pid");
     let pid_str = pid_file.to_str().unwrap();
-    let cmd = format!("/bin/sh -c 'sleep 300 & echo $! > {pid_str}; sleep 10'");
+    let cmd = format!("/bin/sh -c 'sleep 300 & echo $! > {pid_str}; sleep 60'");
     let step = parse_first_step(&format!("[x] 1.1 Cancel proc\n    Check: {cmd}\n"));
     let ctx = env.context(60, &[]);
 
-    // Run check future and cancel it by dropping before completion
-    let check_future = super::execute_command_check(&ctx, &step, &cmd);
-    let _res = tokio::time::timeout(std::time::Duration::from_millis(50), check_future).await;
+    let mut check_fut = Box::pin(super::execute_command_check(&ctx, &step, &cmd));
 
-    if let Ok(pid_text) = fs::read_to_string(&pid_file)
-        && let Ok(pid) = pid_text.trim().parse::<i32>()
-    {
-        let proc_path = format!("/proc/{pid}");
-        let path = std::path::Path::new(&proc_path);
-        let start = std::time::Instant::now();
-        while path.exists() && start.elapsed() < std::time::Duration::from_secs(5) {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
+    let pid: i32 = tokio::select! {
+        _ = &mut check_fut => panic!("check must not finish before cancellation"),
+        pid = async {
+            let start = std::time::Instant::now();
+            loop {
+                if let Ok(text) = fs::read_to_string(&pid_file) {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty()
+                        && let Ok(parsed) = trimmed.parse::<i32>()
+                    {
+                        return parsed;
+                    }
+                }
+                assert!(
+                    start.elapsed() < std::time::Duration::from_secs(5),
+                    "timed out waiting for child PID file"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        } => pid,
+    };
+
+    let proc_path = format!("/proc/{pid}");
+    let path = std::path::Path::new(&proc_path);
+    assert!(path.exists(), "descendant process must exist while running");
+
+    drop(check_fut);
+
+    let clean_start = std::time::Instant::now();
+    while path.exists() {
         assert!(
-            !path.exists(),
-            "guard drop must kill spawned descendant processes on cancellation"
+            clean_start.elapsed() < std::time::Duration::from_secs(5),
+            "timed out waiting for cancelled process to be cleaned up"
         );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+    assert!(
+        !path.exists(),
+        "guard drop must kill descendant process on cancellation"
+    );
 }
 
 #[tokio::test]
