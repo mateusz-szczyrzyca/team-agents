@@ -378,3 +378,16 @@ mod protocol_lines {
         assert_eq!(teams[0].task_plans.get(&task).unwrap()[0].title, "First step");
     }
 }
+
+#[test]
+fn plan_step_summary_rejects_unknown_marks() {
+    for mark in ["q", "", "xx"] {
+        let result = serde_json::from_value::<agent_core::protocol::PlanStepSummary>(serde_json::json!({
+            "id": "1.1", "mark": mark, "title": "Write guide", "state": null, "reason": null
+        }));
+        match result {
+            Err(error) => assert_eq!(error.classify(), serde_json::error::Category::Data),
+            Ok(summary) => panic!("invalid mark accepted: {summary:?}"),
+        }
+    }
+}
