@@ -220,3 +220,11 @@ fn a_typed_time_is_checked_for_its_form_when_typed_and_read_in_a_zone_when_used(
         Ok("2026-03-29T02:30:00Z".to_owned())
     );
 }
+
+#[test]
+fn a_moment_at_the_edge_of_the_year_range_falls_back_to_utc_marked_when_the_offset_leaves_four_digits() {
+    let east = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid"));
+    let west = Zone::Fixed(UtcOffset::from_hms(-1, 0, 0).expect("valid"));
+    assert_eq!(east.stamp(stamp("9999-12-31T23:30:00Z")), "9999-12-31 23:30:00 UTC");
+    assert_eq!(west.stamp(stamp("0000-01-01T00:30:00Z")), "0000-01-01 00:30:00 UTC");
+}

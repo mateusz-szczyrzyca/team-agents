@@ -281,3 +281,36 @@ fn record_line_in_writes_the_time_in_the_zone_given_and_the_rest_of_the_line_as_
         )
     );
 }
+
+#[test]
+fn record_line_in_writes_the_reset_time_of_an_exhausted_quota_in_the_zone_given() {
+    let resets_at: crate::state::Timestamp = "2026-11-21T17:00:00Z".parse().expect("a literal time is valid");
+    let end = format!(
+        "{:?}",
+        crate::state::RunEnd::QuotaExhausted {
+            resets_at: Some(resets_at)
+        }
+    );
+    let row = entry(LogEvent::RunEnded, "run ended", &[("end", &end)]);
+    let zone = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("a literal offset is valid"));
+
+    let local = record_line_in(&row, Some(&start("inv-claude-sonnet")), &zone);
+    let utc = record_line(&row, Some(&start("inv-claude-sonnet")));
+
+    assert_eq!(
+        local,
+        format!(
+            "2026-11-21 13:50:32 +01:00 {} {}: ended quota exhausted (back at 2026-11-21 18:00:00 +01:00)",
+            row_prefix(&row),
+            subject("inv-claude-sonnet")
+        )
+    );
+    assert_eq!(
+        utc,
+        format!(
+            "2026-11-21T12:50:32Z {} {}: ended quota exhausted (back at 2026-11-21T17:00:00Z)",
+            row_prefix(&row),
+            subject("inv-claude-sonnet")
+        )
+    );
+}
