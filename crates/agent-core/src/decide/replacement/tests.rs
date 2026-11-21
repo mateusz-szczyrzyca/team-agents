@@ -11,7 +11,7 @@ fn agent(name: &str) -> AgentName {
 }
 
 /// A candidate that is idle.
-fn idle<'a>(name: &'a AgentName, tier: Tier) -> Candidate<'a> {
+fn idle(name: &AgentName, tier: Tier) -> Candidate<'_> {
     Candidate {
         agent: name,
         tier,
