@@ -55,8 +55,8 @@ Default fields are omitted on saving, preserving the old split representation.
 
 An approved split plan may also carry `approved_by`: `"harness"` or `"human"`. The optional field records the
 approval authority without changing the parts or their requirements. Absence means the authority was not recorded;
-reading and saving such a plan leaves the field absent. Existing plans load without a migration. The core API can
-attach provenance when recording approval; daemon wiring follows in a later part. The pre-change plan fixture is
+reading and saving such a plan leaves the field absent. Existing plans load without a migration. The daemon
+records `harness` for automatic approval and `human` for an explicit approving verdict. The pre-change plan fixture is
 `crates/agent-core/tests/fixtures/split-plan-before-approval.json`.
 
 Teams may have an optional `split_proposals` object, keyed by original item ID. Each entry stores bounded raw
@@ -773,3 +773,19 @@ Step judgements live in history schema 17, not `state.json`; state schema 14 is 
 The daemon caches plan-step summaries for task and round status and rebuilds them on startup.
 A summary includes the mark, step ID and title, plus a done step's settlement and optional reason.
 The optional `task_plans` map in team and round replies is absent when there is no readable plan.
+
+### Split executors and capability questions
+
+Teams optionally store `part_assignments`, an object mapping split round IDs to agent names. Activation and the
+executor's run record the assignment; later coordinator integration or review does not replace it. This leaves
+the round representation unchanged and keeps the historical executor available after an item changes phase.
+Missing legacy assignments are displayed as `not recorded`, without guessing an executor from current progress.
+The optional map also appears in team status replies. The socket protocol number is unchanged; older strict
+CLIs reject status replies containing this field. Upgrade and restart the CLI and daemon together.
+
+The optional `tier_questions` object maps original item IDs to the tiers already asked about in the current
+`tier_waits`. The question and markers are saved together. Answering queues the lead through the usual answer
+flow and leaves the marker intact, so a restart or an unhelpful answer cannot generate another question for the
+same wait. Refreshing waits removes markers once staffing resolves them. A later wait can then ask again.
+Older teams omit both maps and load with empty maps; the pre-change fixture
+`crates/agent-core/tests/fixtures/team-before-tier-waits.json` remains readable. No schema migration is needed.

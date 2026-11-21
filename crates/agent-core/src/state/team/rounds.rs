@@ -246,6 +246,12 @@ fn describe_item(item: &Option<PhaseKind>) -> String {
 }
 
 impl Team {
+    /// Latest executor of each split round, retained after review and completion.
+    #[must_use]
+    pub fn part_assignments(&self) -> &std::collections::BTreeMap<RoundId, crate::ids::AgentName> {
+        &self.part_assignments
+    }
+
     getter!("The rounds of the team, oldest first.", pub fn rounds(&self) -> &[Round] = &self.rounds);
 
     /// The round `id`.
@@ -411,9 +417,35 @@ impl Team {
             return Err(BeginRunError::UnknownRound { round: unknown.clone() });
         }
         let (_, member) = self
+            .find(task)
+            .ok_or_else(|| BeginRunError::UnknownTask { task: task.clone() })?;
+        let assignments: Vec<_> = rounds
+            .iter()
+            .filter_map(|id| {
+                let round = self.round(id)?;
+                let progress = self.item(round.item()?)?;
+                match progress.phase() {
+                    ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }
+                        if assignee.as_str() == member.agent().name() && round.part().is_some() =>
+                    {
+                        Some((id.clone(), assignee.clone()))
+                    }
+                    ItemPhase::Pending
+                    | ItemPhase::InProgress { .. }
+                    | ItemPhase::Fixing { .. }
+                    | ItemPhase::InReview { .. }
+                    | ItemPhase::Approved { .. }
+                    | ItemPhase::Done { .. } => None,
+                }
+            })
+            .collect();
+        let (_, member) = self
             .find_mut(task)
             .ok_or_else(|| BeginRunError::UnknownTask { task: task.clone() })?;
         member.value.begin_run_for(id, at, session, rounds)?;
+        for (id, agent) in assignments {
+            self.part_assignments.insert(id, agent);
+        }
         Ok(())
     }
 }

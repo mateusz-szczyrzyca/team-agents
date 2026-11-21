@@ -196,7 +196,7 @@ fn strip_split_fields(value: &mut serde_json::Value) -> bool {
     match value {
         serde_json::Value::Object(object) => {
             let mut changed = false;
-            for key in ["split", "splits", "part", "task_plans"] {
+            for key in ["split", "splits", "part", "part_assignments", "task_plans"] {
                 changed |= object.remove(key).is_some();
             }
             for nested in object.values_mut() {

@@ -17,6 +17,10 @@ pub enum TeamPrompt {
     SplitRequested,
     /// The split proposal notice-question text.
     NoticeSplitQuestion,
+    /// Human instructions for staffing waits that must not use lower-tier agents.
+    NoticeTierQuestion,
+    /// One item and the capability it is waiting for.
+    TierWaiting,
     /// The split proposal correction text.
     SplitCorrection,
     /// The split proposal limit text.
@@ -95,6 +99,8 @@ impl TeamPrompt {
         Self::Context,
         Self::SplitRequested,
         Self::NoticeSplitQuestion,
+        Self::NoticeTierQuestion,
+        Self::TierWaiting,
         Self::SplitCorrection,
         Self::SplitLimit,
         Self::SplitCount,
@@ -135,6 +141,8 @@ impl TeamPrompt {
         match self {
             Self::SplitRequested => split_requested_spec(),
             Self::NoticeSplitQuestion => split_question_spec(),
+            Self::NoticeTierQuestion => tier_question_spec(),
+            Self::TierWaiting => PromptSpec::new("harness/team/tier-waiting.md", Audience::Model, &["item", "tier"]),
             Self::SplitCorrection => {
                 PromptSpec::new("harness/team/split-correction.md", Audience::Model, &["item", "reason"])
             }
@@ -174,11 +182,7 @@ impl TeamPrompt {
             Self::DeliveryClosed => {
                 PromptSpec::new("harness/team/bus-delivery-closed.md", Audience::Model, &["item", "pr"])
             }
-            Self::Part => PromptSpec::new(
-                "harness/team/part.md",
-                Audience::Model,
-                &["part", "title", "delivers", "checks", "previous"],
-            ),
+            Self::Part => part_spec(),
             Self::Context => PromptSpec::new(
                 "harness/team/context.md",
                 Audience::Model,
@@ -292,4 +296,22 @@ const fn split_question_spec() -> PromptSpec {
 /// The capability explanation has the same inputs for a member and coordinator.
 const fn tier_spec(path: &'static str) -> PromptSpec {
     PromptSpec::new(path, Audience::Model, &["required", "agent", "tier"])
+}
+
+/// The question about staffing without weakening a capability requirement.
+const fn tier_question_spec() -> PromptSpec {
+    PromptSpec::new(
+        "harness/team/notice-tier-question.md",
+        Audience::Human,
+        &["task", "waiting"],
+    )
+}
+
+/// The independently deliverable part and its previously merged dependencies.
+const fn part_spec() -> PromptSpec {
+    PromptSpec::new(
+        "harness/team/part.md",
+        Audience::Model,
+        &["part", "title", "delivers", "checks", "previous"],
+    )
 }

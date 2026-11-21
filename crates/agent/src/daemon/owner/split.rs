@@ -139,7 +139,7 @@ impl Owner {
                     .ok_or_else(|| OwnerError::LostTeam {
                         team: located.team.clone(),
                     })?
-                    .activate_split(plan)?;
+                    .activate_split(plan.with_approval(agent_core::state::split::SplitApproval::Harness))?;
                 self.record_split_decision(task, located, item, &keeping, SplitDecision::Approved, String::new());
                 Ok(ProposalEnd::Queued)
             }
