@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use time::{OffsetDateTime, UtcOffset};
 
+use super::TypedTime;
 use super::{TypedTimeError, Zone};
 use crate::state::Timestamp;
 
@@ -198,5 +199,24 @@ fn a_time_the_calendar_does_not_have_is_refused() {
         Err(TypedTimeError::NoSuchMoment {
             value: "2026-11-21 25:00".to_owned()
         })
+    );
+}
+
+#[test]
+fn a_typed_time_is_checked_for_its_form_when_typed_and_read_in_a_zone_when_used() {
+    assert_eq!(
+        "tomorrow".parse::<TypedTime>(),
+        Err(TypedTimeError::NotATime {
+            value: "tomorrow".to_owned()
+        })
+    );
+    let typed: TypedTime = "2026-03-29 02:30".parse().expect("the form is valid");
+    assert_eq!(
+        typed.read_in(Zone::Lookup(central_european)).map(|at| at.to_string()),
+        Ok("2026-03-29T01:30:00Z".to_owned())
+    );
+    assert_eq!(
+        typed.read_in(Zone::Utc).map(|at| at.to_string()),
+        Ok("2026-03-29T02:30:00Z".to_owned())
     );
 }

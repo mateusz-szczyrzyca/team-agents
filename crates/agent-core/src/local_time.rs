@@ -10,6 +10,7 @@
 mod tests;
 
 use std::fmt;
+use std::str::FromStr;
 
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcDateTime, UtcOffset};
 
@@ -58,6 +59,32 @@ pub enum TypedTimeError {
         /// The text as it was given.
         value: String,
     },
+}
+
+/// A time typed on a command line; the stub refuses every text until the reading is written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypedTime {
+    /// The text as it was typed.
+    text: String,
+}
+
+impl FromStr for TypedTime {
+    type Err = TypedTimeError;
+
+    /// Stub: refuses every text.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Err(TypedTimeError::NotATime { value: text.to_owned() })
+    }
+}
+
+impl TypedTime {
+    /// Stub: reads nothing.
+    ///
+    /// # Errors
+    /// Always, for now.
+    pub fn read_in(&self, _zone: Zone) -> Result<Timestamp, TypedTimeError> {
+        Err(TypedTimeError::NotATime { value: self.text.clone() })
+    }
 }
 
 impl Zone {
