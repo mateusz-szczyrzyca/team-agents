@@ -1151,7 +1151,7 @@ async fn publish_failure_question_creation_interrupted_before_commit_recovers_wi
 
     rig.start().await;
 
-    let (_team_id, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let (team_id, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let task = tasks[0].clone();
 
     // Publication failure escalates to human question:
@@ -1171,10 +1171,25 @@ async fn publish_failure_question_creation_interrupted_before_commit_recovers_wi
     let state_file = rig.home.state_file();
     let mut state_json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&state_file).unwrap()).unwrap();
+    state_json["teams"][0]["items"][0]["publish_tries"] = serde_json::json!(0);
     state_json["teams"][0]["items"][0]["publish_question"] = serde_json::Value::Null;
+    state_json["teams"][0]["items"][0]["publish_question_task"] = serde_json::Value::Null;
+    state_json["teams"][0]["items"][0]["publish_question_number"] = serde_json::Value::Null;
     state_json["teams"][0]["crew"]["member"]["questions"] = serde_json::json!([]);
     state_json["teams"][0]["crew"]["member"]["status"] = serde_json::json!("waiting");
     std::fs::write(&state_file, serde_json::to_string_pretty(&state_json).unwrap()).unwrap();
+
+    // Assert pre-commit state before restart:
+    let pre_state = rig.state();
+    let pre_team = pre_state.team(&team_id).unwrap();
+    let pre_item = pre_team.item("1.1".parse().unwrap()).unwrap();
+    let pre_member = &pre_state.find_task(&task).unwrap().member;
+    assert_eq!(pre_member.status(), TaskStatus::Waiting);
+    assert_eq!(pre_member.questions(), []);
+    assert!(pre_item.publish_question().is_none());
+    assert!(pre_item.publish_question_task().is_none());
+    assert!(pre_item.publish_question_number().is_none());
+    assert_eq!(pre_item.publish_tries(), 0);
 
     rig.start().await;
 
@@ -1259,17 +1274,42 @@ async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_esc
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let task = tasks[0].clone();
 
-    // Wait for first publication failure to wake the lead for retry run 2:
-    rig.wait_for("first run ended and lead woken for retry", || {
+    // Wait for first run to end and lead to transition to waiting:
+    rig.wait_for("first run ended and waiting", || {
+        rig.state()
+            .find_task(&task)
+            .is_some_and(|f| f.member.status() == TaskStatus::Waiting && f.member.runs().len() == 1)
+    })
+    .await;
+
+    // Interrupt lead retry before completion: stop daemon and verify state:
+    rig.stop().await.unwrap();
+    {
+        let pre_state = rig.state();
+        let member = &pre_state.find_task(&task).unwrap().member;
+        assert!(
+            matches!(
+                member.status(),
+                TaskStatus::Waiting | TaskStatus::Queued | TaskStatus::Running
+            ),
+            "lead should be waiting, queued, or running retry, got: {:?}",
+            member.status()
+        );
+        assert!(
+            !member.runs().is_empty(),
+            "lead should have at least 1 run, got: {}",
+            member.runs().len()
+        );
+    }
+
+    // Restart daemon: publication evaluates, fails push, releases lead for run 2:
+    rig.start().await;
+    rig.wait_for("lead woken for run 2 retry", || {
         rig.state().find_task(&task).is_some_and(|f| f.member.runs().len() >= 2)
     })
     .await;
 
-    // Interrupt / restart daemon while lead is in run 2 (interrupted lead release):
-    rig.stop().await.unwrap();
-    rig.start().await;
-
-    // After restart, lead completes run 2 and publication fails again, escalating to human questions:
+    // After restart and run 2 completes, publication fails again and escalates to human questions:
     rig.status_is(&task, TaskStatus::Questions).await;
 
     let q = rig
@@ -1306,143 +1346,109 @@ async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_esc
     rig.stop().await.unwrap();
 }
 
-#[test]
-fn publish_question_error_display_omits_duplicate_source_formatting() {
-    use super::PublishQuestionError;
-
-    let task = crate::fixtures::task(1);
-    let err_var = PublishQuestionError::Variables {
-        task: task.clone(),
-        source: agent_core::prompt::Variables::new()
-            .with("dup", "1")
-            .unwrap()
-            .with("dup", "2")
-            .unwrap_err(),
-    };
-    assert_eq!(
-        err_var.to_string(),
-        format!("cannot prepare publication variables for task {task}")
-    );
-
-    let err_render = PublishQuestionError::Render {
-        task: task.clone(),
-        source: agent_runtime::autopilot_prompts::RenderAutopilotTextError::NotLoaded {
-            id: agent_core::prompt::AutopilotPrompt::NoticePublishQuestion,
-        },
-    };
-    assert_eq!(
-        err_render.to_string(),
-        format!("cannot render publication question for task {task}")
-    );
-
-    let err_state = PublishQuestionError::State {
-        task: task.clone(),
-        source: agent_core::state::QuestionError::StillOpen { number: n(1) },
-    };
-    assert_eq!(
-        err_state.to_string(),
-        format!("cannot record publication question for task {task}")
-    );
-}
-
-fn state_with_waiting_lead() -> (agent_core::state::State, agent_core::ids::TeamId) {
-    let mut state = crate::fixtures::solo_state();
-    let team_id = crate::fixtures::team_id(0);
-    let item: agent_core::ids::ItemId = "1.1".parse().unwrap();
-    let round: agent_core::ids::RoundId = "round-20261119-090000-wait".parse().unwrap();
-    let branch: agent_core::ids::BranchName = "agents/claude-1/task-1-1.1".parse().unwrap();
-    {
-        let mut team = state.team_mut(&team_id).unwrap();
-        team.open_round(round, Some(item), crate::fixtures::at(10)).unwrap();
-        team.advance_item(
-            item,
-            ItemPhase::InProgress {
-                assignee: "claude-1".parse().unwrap(),
-                branch: branch.clone(),
-            },
-        )
-        .unwrap();
-        team.begin_run(
-            &crate::fixtures::task(1),
-            agent_core::state::NewRun {
-                id: crate::fixtures::run(1),
-                at: crate::fixtures::at(20),
-                session: None,
-                rounds: Vec::new(),
-            },
-        )
-        .unwrap();
-        let (_, mut lead) = team.find_mut(&crate::fixtures::task(1)).unwrap();
-        lead.transition(TaskStatus::Running).unwrap();
-        lead.end_run(
-            crate::fixtures::at(30),
-            agent_core::state::RunEnd::Reported {
-                outcome: agent_core::status::RunOutcome::Done,
-            },
-        )
-        .unwrap();
-        lead.transition(TaskStatus::Waiting).unwrap();
-    }
-    (state, team_id)
-}
-
 #[tokio::test]
-async fn prepare_publish_question_file_propagates_unreadable_or_corrupt_file_error() {
-    use super::PublishQuestionError;
+async fn publish_failure_question_write_failure_recovers_when_storage_restored() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
 
-    let (state, team_id) = state_with_waiting_lead();
-    let (daemon, owner, _sinks, pulls) = owner_of(&state).await;
-    let lead = owner.lead_of(&team_id).unwrap();
-    let site = Site {
-        pulls: &pulls,
-        team: &team_id,
-        lead: &lead,
-    };
-    let plan = plan_publications(owner.parts.state.team(&team_id).unwrap()).unwrap();
-    let publication = &plan[0];
+    // Set [publish] tries = 0 so publication immediately escalates to asking the human:
+    let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config_text.push_str("\n[publish]\ntries = 0\n");
+    std::fs::write(rig.home.config_file(), config_text).unwrap();
 
-    let questions_file = daemon.home.questions_file(&lead.task, n(1));
-    std::fs::create_dir_all(questions_file.parent().unwrap()).unwrap();
-    // Write invalid UTF-8 bytes to simulate a corrupt questions file
-    std::fs::write(&questions_file, [0xff, 0xfe, 0xfd]).unwrap();
+    // Hook in origin that rejects git push:
+    let hook_dir = rig.origin.join("hooks");
+    std::fs::create_dir_all(&hook_dir).unwrap();
+    let hook = hook_dir.join("pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\necho 'pre-receive: publish denied' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 
-    let result = owner
-        .prepare_publish_question_file(site, publication, &questions_file, "refused")
-        .await;
-    assert!(
-        matches!(
-            result,
-            Err(PublishQuestionError::Read {
-                source: crate::daemon::questions::QuestionsProblem::NotUtf8 { .. },
-                ..
-            })
-        ),
-        "must propagate corrupt questions file error instead of overwriting, got: {result:?}"
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+
+    // Wait until run ends:
+    rig.wait_for("lead run ends", || {
+        rig.state()
+            .find_task(&task)
+            .is_some_and(|f| f.member.status() == TaskStatus::Waiting)
+    })
+    .await;
+
+    // Simulate storage failure: make task directory read-only so question file cannot be written:
+    let task_dir = rig.home.task_dir(&task);
+    std::fs::set_permissions(
+        &task_dir,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o555),
+    )
+    .unwrap();
+
+    // Wait briefly to allow daemon to attempt and encounter write failure:
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // State must remain in Waiting without orphaned question:
+    assert_eq!(
+        rig.state().find_task(&task).unwrap().member.status(),
+        TaskStatus::Waiting
     );
-}
+    assert!(rig.state().find_task(&task).unwrap().member.open_question().is_none());
 
-#[tokio::test]
-async fn prepare_publish_question_file_returns_write_error_on_failure() {
-    use super::PublishQuestionError;
-
-    let (state, team_id) = state_with_waiting_lead();
-    let (daemon, owner, _sinks, pulls) = owner_of(&state).await;
-    let lead = owner.lead_of(&team_id).unwrap();
-    let site = Site {
-        pulls: &pulls,
-        team: &team_id,
-        lead: &lead,
-    };
-    let plan = plan_publications(owner.parts.state.team(&team_id).unwrap()).unwrap();
-    let publication = &plan[0];
-
-    // Nonexistent directory without parent creation causes write failure
-    let questions_file = daemon.home.root().join("nonexistent_parent_dir_1234/questions-1.md");
-    let result = owner
-        .prepare_publish_question_file(site, publication, &questions_file, "refused")
-        .await;
+    // Stop daemon (owner reports the write failure during question preparation):
+    let stop_res = rig.stop().await;
     assert!(
-        matches!(result, Err(PublishQuestionError::Write { .. })),
-        "must return Write error on write failure, got: {result:?}"
+        stop_res.is_err(),
+        "owner should record write failure when directory is unwritable"
     );
+
+    // Restore permissions so writing can succeed:
+    std::fs::set_permissions(
+        &task_dir,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .unwrap();
+
+    // Restart daemon: pending escalation recovers cleanly, creates question file and transitions task to Questions:
+    rig.start().await;
+    rig.status_is(&task, TaskStatus::Questions).await;
+    let q = rig
+        .state()
+        .find_task(&task)
+        .unwrap()
+        .member
+        .open_question()
+        .unwrap()
+        .clone();
+    assert_eq!(q.number(), n(1));
+
+    // Remove rejecting hook and answer 'a' to complete publication:
+    std::fs::remove_file(&hook).unwrap();
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: n(1),
+                answers: answers(&[(1, "a")]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    rig.wait_for("publication succeeds and pull request is opened", || {
+        !rig.github.pulls().is_empty()
+    })
+    .await;
+
+    rig.stop().await.unwrap();
 }

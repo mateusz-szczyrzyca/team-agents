@@ -1523,7 +1523,7 @@ impl Owner {
     }
 
     /// Prepares and writes the questions file for publication failure if not already present with answers.
-    pub(super) async fn prepare_publish_question_file(
+    async fn prepare_publish_question_file(
         &self,
         site: Site<'_>,
         publication: &Publication,
@@ -1560,13 +1560,26 @@ impl Owner {
                 task: site.lead.task.clone(),
                 source,
             })?;
-        agent_runtime::text_file::replace_text_file(path, &text, 0o600)
-            .await
-            .map_err(|source| PublishQuestionError::Write {
+        match agent_runtime::text_file::create_new_text_file(path, &text, 0o600).await {
+            Ok(()) => Ok(()),
+            Err(agent_runtime::text_file::ReplaceError::Write { source, .. })
+                if source.kind() == std::io::ErrorKind::AlreadyExists =>
+            {
+                match crate::daemon::questions::read(path).await {
+                    Ok(_) => Ok(()),
+                    Err(source) => Err(PublishQuestionError::Read {
+                        task: site.lead.task.clone(),
+                        path: path.to_path_buf(),
+                        source,
+                    }),
+                }
+            }
+            Err(source) => Err(PublishQuestionError::Write {
                 task: site.lead.task.clone(),
                 path: path.to_path_buf(),
                 source,
-            })
+            }),
+        }
     }
 
     /// Asks the human once whether to retry publication or stop.
@@ -1662,3 +1675,7 @@ impl Owner {
 #[cfg(test)]
 #[path = "tests/joined_pass_readers.rs"]
 mod joined_pass_readers_tests;
+
+#[cfg(test)]
+#[path = "publish/tests.rs"]
+mod tests;
