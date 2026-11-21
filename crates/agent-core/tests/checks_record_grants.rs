@@ -156,4 +156,78 @@ mod grants {
 
         assert_eq!(again, record);
     }
+
+    #[test]
+    fn a_refusal_is_kept_with_what_its_question_was_about_until_the_team_undoes_it() {
+        let mut record = used(1);
+        record.basis = Some(Basis {
+            head: head('a'),
+            covers: Covers::Tried,
+        });
+
+        record.answered(&[item()], Some(&basis(Covers::Tried)), &[], &[Subject::Commit(head('b'))]);
+
+        assert_eq!(record.refused_of(&[item()]), [Subject::Commit(head('b'))]);
+        assert!(record.refused_tried_of(&[item()]));
+        assert_eq!(record.asked, None);
+    }
+
+    #[test]
+    fn a_refusal_of_a_commit_is_set_aside_when_the_round_is_not_that_commit_s_any_more() {
+        let mut record = used(2);
+        record.answered(&[item()], Some(&basis(Covers::Tried)), &[], &[Subject::Commit(head('b'))]);
+
+        record.forget_tried_refusals(&[item()]);
+
+        assert_eq!(record.refused_of(&[item()]), []);
+        assert!(!record.refused_tried_of(&[item()]));
+    }
+
+    #[test]
+    fn a_refusal_in_a_question_that_covered_every_finding_stays() {
+        let mut record = used(0);
+        let path = self::path("ci/gate.sh");
+
+        record.answered(&[item()], Some(&basis(Covers::Everything)), &[], &[path.clone()]);
+
+        assert_eq!(record.refused_of(&[item()]), [path]);
+        assert!(!record.refused_tried_of(&[item()]));
+    }
+
+    #[test]
+    fn an_answer_that_allows_leaves_no_refusal_and_starts_the_passes_as_before() {
+        let mut record = used(1);
+        record.asked = Some(asked());
+
+        record.answered(
+            &[item()],
+            Some(&basis(Covers::Everything)),
+            &[path("ci/gate.sh")],
+            &[],
+        );
+
+        assert_eq!(record.refused_of(&[item()]), []);
+        assert_eq!(record.allowed_of(&[item()]), [path("ci/gate.sh")]);
+        assert_eq!(record.passes_of(&[item()]), 0, "the human decided");
+        assert_eq!((record.asked, record.basis), (None, None));
+    }
+
+    /// A basis with the head `a` and what a question `covers`.
+    fn basis(covers: Covers) -> Basis {
+        Basis {
+            head: head('a'),
+            covers,
+        }
+    }
+
+    /// The question of the record that is waited on: number 1.
+    fn asked() -> agent_core::state::Asked {
+        agent_core::state::Asked {
+            number: std::num::NonZeroU32::MIN,
+            at: "2026-11-20T10:00:00Z".parse().unwrap(),
+            items: vec![item()],
+            subjects: vec![Subject::Path("ci/gate.sh".parse().unwrap())],
+            relays: 0,
+        }
+    }
 }

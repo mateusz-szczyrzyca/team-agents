@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::Checks;
 use crate::repo_path::RepoPath;
 use crate::state::CommitId;
+use crate::state::{Basis, Covers};
 use crate::task_allowance::TaskAllowance;
 
 pub mod markers;
@@ -396,6 +397,17 @@ impl Issue {
         }
     }
 
+    /// Whether the round's own diff no longer holds this finding, a finding about a commit of the round
+    /// ([`Subject::Commit`]): the commit is not one the round added, by a merge of the base branch or by the part of a
+    /// split that carries it. What the human said about it does not hold any more.
+    #[must_use]
+    pub fn gone_from_round(&self, facts: &RoundFacts) -> bool {
+        match self.subject() {
+            Subject::Commit(commit) => commit_paths(facts, &commit).is_empty(),
+            Subject::Path(_) | Subject::NoTests => false,
+        }
+    }
+
     /// The task header that permits this path change; markers and missing tests always need their own decision.
     #[must_use]
     pub fn allowed_beforehand<'a>(
@@ -594,6 +606,78 @@ fn commit_paths<'a>(facts: &'a RoundFacts, commit: &CommitId) -> Vec<&'a RepoPat
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The fault of a finding about a commit, whatever the team did to it afterwards: a finding about a commit is one
+/// framing of the question to the human.
+#[must_use]
+pub fn commit_fault(issue: &Issue) -> Option<CommitFaultRef<'_>> {
+    match issue {
+        Issue::Tried { fault, .. } => Some(CommitFaultRef::Named(fault)),
+        Issue::EditedTest { path, red, .. } => Some(CommitFaultRef::Edited { path, red }),
+        Issue::TestChanged { .. }
+        | Issue::ProtectedChanged { .. }
+        | Issue::RedTestEdited { .. }
+        | Issue::NoTests
+        | Issue::Marker { .. } => None,
+    }
+}
+
+/// The fault of a finding about a commit, borrowed or made from its fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitFaultRef<'a> {
+    /// A [`CommitFault::FixTouchesOther`].
+    Named(&'a CommitFault),
+    /// A [`CommitFault::TestEdited`], which names its test and the `RED:` commit that committed it.
+    Edited {
+        /// The test.
+        path: &'a RepoPath,
+        /// The `RED:` commit.
+        red: &'a CommitId,
+    },
+}
+
+impl CommitFaultRef<'_> {
+    /// The path the fault names beside its commit, when it names one.
+    #[must_use]
+    pub fn path(&self) -> Option<&RepoPath> {
+        match self {
+            Self::Named(CommitFault::FixTouchesOther { other, .. }) => Some(other),
+            Self::Named(CommitFault::TestEdited { path, .. }) => Some(path),
+            Self::Edited { path, .. } => Some(path),
+        }
+    }
+
+    /// The fault itself.
+    #[must_use]
+    pub fn fault(&self) -> CommitFault {
+        match self {
+            Self::Named(fault) => (*fault).clone(),
+            Self::Edited { path, red } => CommitFault::TestEdited {
+                path: (*path).clone(),
+                red: (*red).clone(),
+            },
+        }
+    }
+}
+
+/// What the question about `issues` covers, besides its subjects: the commits the team cannot repair, when they are all
+/// the question finds; everything, for a question about the passed used to settle the rest.
+#[must_use]
+pub fn basis_of(issues: &[&Issue], reason: crate::decide::round::AskReason, head: &CommitId) -> Basis {
+    let commits_only = issues.iter().all(|issue| commit_fault(issue).is_some());
+    let covers = match (reason, commits_only) {
+        (crate::decide::round::AskReason::OnlyTheHumanMayAllow, true) => Covers::Tried,
+        (
+            crate::decide::round::AskReason::OnlyTheHumanMayAllow | crate::decide::round::AskReason::PassesUsed,
+            false,
+        ) => Covers::Everything,
+        (crate::decide::round::AskReason::PassesUsed, true) => Covers::Everything,
+    };
+    Basis {
+        head: head.clone(),
+        covers,
+    }
 }
 
 /// The protected paths `file` touches: where it was when it moved out of one and where it is when it is in one, each
