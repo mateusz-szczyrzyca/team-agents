@@ -23,7 +23,7 @@ use agent_core::status::RunOutcome;
 
 impl Owner {
     /// The actual holders of outstanding fix responses, in crew order.
-    fn response_holders(&self, team_id: &TeamId) -> Result<Vec<super::Lead>, OwnerError> {
+    pub(super) fn response_holders(&self, team_id: &TeamId) -> Result<Vec<super::Lead>, OwnerError> {
         let team = self
             .parts
             .state
