@@ -287,3 +287,37 @@ async fn plan_requests_fall_back_to_split_protocol_four_daemon() {
 
     server.abort();
 }
+
+#[tokio::test]
+async fn a_plan_status_probe_is_returned_without_a_second_status_request() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixListener;
+
+    let dir = tempfile::tempdir().unwrap();
+    let sock = socket(&dir);
+    let listener = UnixListener::bind(&sock).unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read, mut write) = stream.into_split();
+        let mut reader = BufReader::new(read);
+        let mut line = String::new();
+        let mut requests = Vec::new();
+        while reader.read_line(&mut line).await.unwrap() != 0 {
+            let request = Request::from_line_negotiated(&line).unwrap().0;
+            let response = Frame::Response(Response::ok(request.id, Reply::Teams { teams: Vec::new() }))
+                .to_line_for(ReplyFormat::Plan)
+                .unwrap();
+            requests.push(request);
+            write.write_all(response.as_bytes()).await.unwrap();
+            line.clear();
+        }
+        requests
+    });
+    let mut connection = Connection::connect(&sock).await.unwrap();
+    let reply = connection.request(Client::Cli, status()).await.unwrap();
+    drop(connection);
+    let requests = server.await.unwrap();
+
+    assert_eq!(reply, Reply::Teams { teams: Vec::new() });
+    assert_eq!(requests, [Request::new(RequestId(1), Client::Cli, status())]);
+}
