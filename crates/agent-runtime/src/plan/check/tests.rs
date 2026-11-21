@@ -442,3 +442,43 @@ async fn disabled_commands_with_check_seconds_zero_still_checks_exists() {
 
     assert_eq!(result.state, JudgementState::Confirmed);
 }
+
+#[tokio::test]
+async fn execute_command_check_mismatches_on_invalid_env_name() {
+    let env = TestEnv::new();
+    let step = parse_first_step("[x] 1.1 First item\n    Check: echo test\n");
+    let envs = [("INVALID=NAME".to_owned(), "val".to_owned())];
+    let ctx = CheckContext {
+        worktree: &env.worktree,
+        task_dir: &env.task_dir,
+        run: Some(&env.run),
+        check_seconds: 60,
+        check_refuse: &[],
+        envs: &envs,
+    };
+    let result = super::execute_command_check(&ctx, &step, "echo test").await.unwrap();
+
+    assert_eq!(result.state, JudgementState::Mismatch);
+    assert!(result.reason.as_deref().unwrap().contains("invalid environment variable name"));
+}
+
+#[tokio::test]
+async fn execute_command_check_mismatches_on_non_utf8_worktree() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let env = TestEnv::new();
+    let step = parse_first_step("[x] 1.1 First item\n    Check: echo test\n");
+    let non_utf8_path = std::path::Path::new(std::ffi::OsStr::from_bytes(b"/tmp/test-\xff\xfe-path"));
+    let ctx = CheckContext {
+        worktree: non_utf8_path,
+        task_dir: &env.task_dir,
+        run: Some(&env.run),
+        check_seconds: 60,
+        check_refuse: &[],
+        envs: &[],
+    };
+    let result = super::execute_command_check(&ctx, &step, "echo test").await.unwrap();
+
+    assert_eq!(result.state, JudgementState::Mismatch);
+    assert!(result.reason.as_deref().unwrap().contains("worktree path is not valid UTF-8"));
+}
