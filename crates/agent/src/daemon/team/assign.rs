@@ -85,7 +85,7 @@ pub(in crate::daemon) fn assignable(team: &Team) -> Result<Vec<Assigned>, Assign
                 .map(|(_, task)| *task)
                 .ok_or_else(|| AssignmentError::UnknownMember { member: member.clone() })?;
             let branch = match team.next_part(item) {
-                Some((part, _)) => format!("agents/{}/{task}-{part}", member).parse(),
+                Some((part, _)) => format!("agents/{member}/{task}-{part}").parse(),
                 None => item_branch(&member, task, item),
             }
             .map_err(|source| AssignmentError::Branch {
