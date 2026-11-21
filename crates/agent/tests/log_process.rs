@@ -199,28 +199,76 @@ mod log_zone {
 
     #[test]
     fn since_with_a_local_time_is_read_in_the_zone_of_the_process() {
-        let (_dir, home, written) = with_history();
-        let round = written.rounds[0].as_str();
+        let (_dir, home, _) = with_history();
 
-        // 21:00 in the zone of the process is 20:00 UTC: the same time as the one written with its zone.
-        let local = log(
+        // In CENTRAL_EUROPE (+01:00 in November), 20:31 local is 19:31 UTC: after the first run (19:30:04Z..19:30:05Z)
+        // and before the second run (19:31:44Z..19:31:45Z). Reading "2026-11-11 20:31" as UTC instead would select no run.
+        let local = text_of(
             &home,
-            &["--round", round, "--since", "2026-11-11 21:00"],
+            &["--agent", "dev-1", "--since", "2026-11-11 20:31"],
             CENTRAL_EUROPE,
         );
         let with_zone = text_of(
             &home,
-            &["--round", round, "--since", "2026-11-11T20:00:00Z"],
+            &["--agent", "dev-1", "--since", "2026-11-11T19:31:00Z"],
+            CENTRAL_EUROPE,
+        );
+        let as_utc_zone = text_of(&home, &["--agent", "dev-1", "--since", "2026-11-11 20:31"], "UTC0");
+        let with_utc_flag = text_of(
+            &home,
+            &["--agent", "dev-1", "--utc", "--since", "2026-11-11 20:31"],
             CENTRAL_EUROPE,
         );
 
-        assert_eq!(
-            local.status.code(),
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&local.stderr)
+        assert_eq!(local, with_zone);
+        assert!(
+            local.contains("2026-11-11 20:31:44 +01:00 step 1 of the run"),
+            "{local}"
         );
-        assert_eq!(String::from_utf8(local.stdout).unwrap(), with_zone);
+        assert!(!local.contains("run-20261111-193001-r7q2"), "{local}");
+        assert_eq!(as_utc_zone, "");
+        assert!(
+            with_utc_flag.contains("2026-11-11T19:31:44Z step 1 of the run"),
+            "{with_utc_flag}"
+        );
+        assert!(!with_utc_flag.contains("run-20261111-193001-r7q2"), "{with_utc_flag}");
+    }
+
+    #[test]
+    fn a_story_with_summer_and_winter_times_shows_each_with_the_offset_of_its_day() {
+        use std::num::NonZeroU32;
+
+        use agent_core::cli::ActivityEvent;
+        use agent_core::history::{MaxTextBytes, Record, Step};
+        use agent_runtime::history::{HistoryDb, Store};
+
+        let (_dir, home, written) = with_history();
+        let mut db = HistoryDb::open(&home.join("history.db"), MaxTextBytes::default()).unwrap();
+        db.write(&[Record::Step(Box::new(Step {
+            run: "run-20261111-193001-r7q2".parse().unwrap(),
+            number: NonZeroU32::new(3).unwrap(),
+            at: "2026-07-01T12:00:00Z".parse().unwrap(),
+            event: ActivityEvent::Text("step in summer".to_owned()),
+        }))])
+        .unwrap();
+        let round = written.rounds[0].as_str();
+
+        let text = text_of(&home, &["--round", round], CENTRAL_EUROPE);
+
+        assert!(text.contains("2026-07-01 14:00:00 +02:00"), "{text}");
+        assert!(text.contains("2026-11-11 20:30:04 +01:00"), "{text}");
+    }
+
+    #[test]
+    fn a_local_time_in_since_that_leaves_the_year_range_of_the_zone_ends_with_status_1() {
+        let (_dir, home, _) = with_history();
+
+        let output = log(&home, &["--since", "9999-12-31 23:30"], NEW_YORK);
+
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("--since needs a time"), "{stderr}");
+        assert!(stderr.contains("is not a moment that exists"), "{stderr}");
     }
 
     /// The text with every time of a person (`YYYY-MM-DD HH:MM:SS +HH:MM`) replaced by `<time>`.
