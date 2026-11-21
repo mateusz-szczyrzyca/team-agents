@@ -490,7 +490,7 @@ impl Reader {
         super::plans::read(&snapshot, task)
     }
 
-    /// The step judgements of `task`, oldest first: `None` for a database written before judgements, whose table is not
+    /// The step judgements of `task`, oldest first: an empty vector for a database written before judgements, whose table is not
     /// there.
     ///
     /// # Errors

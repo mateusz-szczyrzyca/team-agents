@@ -38,7 +38,7 @@ use crate::daemon::settle::Settled;
 
 /// Why the plan of a task cannot be taken out of its branch.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum OutOfDeliveryError {
+enum OutOfDeliveryError {
     /// The task's team is not in the state.
     #[error("the team {team} is not in the state")]
     TeamGone {
@@ -349,8 +349,8 @@ impl Owner {
         end: &RunEnd,
         settled: Settled,
     ) -> Result<(Settled, PlanHeld), OwnerError> {
-        let found = match self.worktree_of(task, located) {
-            Ok(worktree) => read_plan(&worktree.as_path().join(PLAN_FILE)).await,
+        let worktree = match self.worktree_of(task, located) {
+            Ok(worktree) => worktree,
             Err(error) => {
                 tracing::warn!(
                     event = LogEvent::GitCallFailed.as_str(),
@@ -361,6 +361,7 @@ impl Owner {
                 return Ok((settled, PlanHeld::No));
             }
         };
+        let found = read_plan(&worktree.as_path().join(PLAN_FILE)).await;
         let run = self
             .parts
             .state
@@ -372,16 +373,21 @@ impl Owner {
             (Vec::new(), HashMap::new())
         };
         self.keep_plan(task, located, run.clone(), &found)?;
-        let _judged_steps = if let PlanRead::Parsed(plan) = &found.read {
-            let (res, latest) = self
-                .judge_steps_at_end(task, located, run.as_ref(), plan, earlier.last(), &earlier_by_run)
+        if let PlanRead::Parsed(plan) = &found.read {
+            let latest = self
+                .judge_steps_at_end(
+                    task,
+                    located,
+                    run.as_ref(),
+                    plan,
+                    &worktree,
+                    (earlier.last(), &earlier_by_run),
+                )
                 .await?;
             self.refresh_task_plan(task, plan, &latest);
-            res
         } else {
             self.invalidate_task_plan(task);
-            Vec::new()
-        };
+        }
         let ends = self.parts.state.team(&located.team).map_or(DoneEnds::Work, |team| {
             done_ends_with(located.role, team.items().iter().map(ItemProgress::phase), |agent| {
                 member_works(team, agent)
@@ -465,22 +471,16 @@ impl Owner {
     }
 
     /// Executes and records the step checks of `plan` that are to be judged at the end of `run`.
-    async fn judge_steps_at_end<'a>(
+    async fn judge_steps_at_end(
         &mut self,
         task: &TaskId,
         located: &Located,
         run: Option<&RunId>,
-        plan: &'a Plan,
-        earlier_plan: Option<&Plan>,
-        earlier_by_run: &HashMap<RunId, Plan>,
-    ) -> Result<
-        (
-            Vec<(&'a agent_core::plan::Step, JudgementResult)>,
-            HashMap<ItemId, JudgementRecord>,
-        ),
-        OwnerError,
-    > {
-        let worktree = self.worktree_of(task, located)?;
+        plan: &Plan,
+        worktree: &AbsolutePath,
+        earlier: (Option<&Plan>, &HashMap<RunId, Plan>),
+    ) -> Result<HashMap<ItemId, JudgementRecord>, OwnerError> {
+        let (earlier_plan, earlier_by_run) = earlier;
         let mut previous = self.latest_judgements(task).await;
         let to_judge = steps_to_judge_with(
             plan,
@@ -509,17 +509,12 @@ impl Owner {
             envs: &[],
         };
         let mut records = Vec::new();
-        let mut results = Vec::new();
         for step in to_judge {
             let result = match execute_step_check(&context, step).await {
                 Ok(res) => res,
                 Err(error) => JudgementResult {
                     state: JudgementState::Mismatch,
-                    check_line: step.check().map(|c| match c {
-                        agent_core::plan::Check::Command(cmd) => cmd.clone(),
-                        agent_core::plan::Check::Exists(p) => format!("exists {}", p.as_str()),
-                        agent_core::plan::Check::Reviewer => "reviewer".to_owned(),
-                    }),
+                    check_line: step.check().map(ToString::to_string),
                     reason: Some(format!("cannot run check: {}", error_chain(&error))),
                     duration_ms: 0,
                     output_path: None,
@@ -528,19 +523,7 @@ impl Owner {
                 },
             };
             let at = Timestamp::now(&self.parts.clock)?;
-            records.push(JudgementRecord {
-                task: task.clone(),
-                team: located.team.clone(),
-                run: run.cloned(),
-                at,
-                step: step.id(),
-                state: result.state,
-                check: result.check_line.clone(),
-                reason: result.reason.clone(),
-                duration_ms: result.duration_ms,
-                output_path: result.output_path.clone(),
-            });
-            results.push((step, result));
+            records.push(result.into_record(task.clone(), located.team.clone(), run.cloned(), at, step.id()));
         }
         for record in &records {
             previous.insert(record.step, record.clone());
@@ -559,7 +542,7 @@ impl Owner {
                 }
             }
         }
-        Ok((results, previous))
+        Ok(previous)
     }
 
     /// The latest judgements of steps of `task` kept in history, keyed by step ID.

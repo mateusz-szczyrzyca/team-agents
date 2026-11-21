@@ -94,9 +94,12 @@ fn duration_millis(elapsed: std::time::Duration) -> Result<u64, CheckError> {
     u64::try_from(elapsed.as_millis()).map_err(|source| CheckError::DurationOverflow { source })
 }
 
-async fn check_exists(worktree: &Path, repo_path: &RepoPath) -> Result<JudgementResult, CheckError> {
+async fn check_exists(
+    worktree: &Path,
+    repo_path: &RepoPath,
+    check_line: String,
+) -> Result<JudgementResult, CheckError> {
     let start = Instant::now();
-    let check_line = format!("exists {}", repo_path.as_str());
     let full_path = worktree.join(repo_path.as_str());
 
     let (state, reason) = if let Err(error) = fs::symlink_metadata(&full_path).await {
@@ -187,6 +190,6 @@ pub async fn execute_step_check(context: &CheckContext<'_>, step: &Step) -> Resu
                 gate_refused: is_refused,
             })
         }
-        Check::Exists(repo_path) => check_exists(context.worktree, repo_path).await,
+        Check::Exists(repo_path) => check_exists(context.worktree, repo_path, check.to_string()).await,
     }
 }

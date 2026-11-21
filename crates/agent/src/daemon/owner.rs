@@ -172,9 +172,6 @@ pub(crate) enum OwnerError {
     /// Recovery on start failed.
     #[error("cannot recover the state")]
     Recovery(#[from] RecoveryError),
-    /// Removing the plan file from delivery failed or worktree could not be located.
-    #[error(transparent)]
-    OutOfDelivery(#[from] plan::OutOfDeliveryError),
     /// The renewal of a task that the ladder starts in a new session cannot be recorded.
     #[error("the ladder's new session cannot be recorded")]
     Renewal(#[from] agent_core::state::RenewTaskError),

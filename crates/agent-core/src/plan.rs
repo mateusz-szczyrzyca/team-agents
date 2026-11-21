@@ -380,14 +380,20 @@ pub enum Check {
     Reviewer,
 }
 
+impl std::fmt::Display for Check {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Command(command) => f.write_str(command),
+            Self::Exists(path) => write!(f, "{EXISTS_CHECK} {}", path.as_str()),
+            Self::Reviewer => f.write_str(REVIEWER_CHECK),
+        }
+    }
+}
+
 impl Check {
     /// The check as a `Check:` line, indented, with the line's end.
     fn to_text(&self) -> String {
-        match self {
-            Self::Command(command) => format!("{TEXT_INDENT}{CHECK_PREFIX} {command}\n"),
-            Self::Exists(path) => format!("{TEXT_INDENT}{CHECK_PREFIX} {EXISTS_CHECK} {}\n", path.as_str()),
-            Self::Reviewer => format!("{TEXT_INDENT}{CHECK_PREFIX} {REVIEWER_CHECK}\n"),
-        }
+        format!("{TEXT_INDENT}{CHECK_PREFIX} {self}\n")
     }
 }
 

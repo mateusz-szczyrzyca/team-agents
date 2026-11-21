@@ -144,7 +144,7 @@ not checked again. Steps to do, in hand or given up are never judged.
 | no `Check:` line | `declared` |
 | `reviewer` | `declared`; a later item will connect a reviewer's verdict to a step |
 | `exists PATH` | `confirmed` when a file or directory resolves inside the task's worktree; `mismatch` when absent, inaccessible, or resolving outside it |
-| a command | `declared`; commands are not executed until part b |
+| a command | `declared`; commands are not yet executed |
 
 Existence checks use asynchronous filesystem operations and follow symlinks only to targets inside the worktree.
 Each judgement records the task, run, step ID, check, state, reason and duration in
@@ -278,4 +278,4 @@ Make the six screenshots of the dashboard the README shows, in the dark theme an
     Check: reviewer
 ```
 
-With history disabled or unavailable, checks still update the current in-memory status. Their settlements cannot survive a restart, so recovery shows the plan without a durable settlement and the next run judges it again. A history failure is reported through the existing history diagnostics.
+With history disabled or unavailable, checks still update the current in-memory status. Their settlements cannot survive a restart, so recovery shows the plan without a durable settlement and the next run judges it again. Any judgement write failure is logged through the existing history diagnostics; the task continues with its in-memory settlements.
