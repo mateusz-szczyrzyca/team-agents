@@ -15,12 +15,35 @@ impl Team {
     /// Refreshes capability waits and returns newly entered waits for notification.
     pub fn refresh_tier_waits(&mut self) -> Vec<(ItemId, Tier)> {
         use crate::decide::assign::dispatch::{WaitReason, dispatch};
-        let next: BTreeMap<_, _> = dispatch(self)
+        let mut next: BTreeMap<_, _> = dispatch(self)
             .waiting
             .into_iter()
             .filter(|wait| wait.reason == WaitReason::Absent)
             .map(|wait| (wait.item, wait.required))
             .collect();
+        for item in self.items() {
+            if let crate::state::ItemPhase::InReview { reviews, .. } = item.phase()
+                && !reviews.is_empty()
+                && reviews
+                    .iter()
+                    .all(|review| matches!(review.outcome, crate::state::ReviewOutcome::Submitted { .. }))
+                && reviews.iter().any(|review| {
+                    matches!(
+                        review.outcome,
+                        crate::state::ReviewOutcome::Submitted {
+                            verdict: crate::status::ReviewVerdict::RequestChanges,
+                            ..
+                        }
+                    )
+                })
+                && crate::decide::assign::dispatch::fixer(self, item.id()).is_none()
+            {
+                next.insert(
+                    item.id(),
+                    crate::decide::assign::dispatch::required_tier(self, item.id()),
+                );
+            }
+        }
         let entered = next
             .iter()
             .filter(|(item, tier)| self.tier_waits.get(item) != Some(tier))
