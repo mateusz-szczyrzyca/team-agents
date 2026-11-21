@@ -201,7 +201,7 @@ impl<'a> Timeline<'a> {
     /// A run's first line: when, the agent, the task, the team and the round it works for.
     fn run_line(&self, step: usize) -> String {
         match self.steps.get(step) {
-            Some(timed) => format!("{}\n", run_start_line(&timed.run, timed.at)),
+            Some(timed) => format!("{}\n", run_start_line(&timed.run, timed.run.at)),
             None => String::new(),
         }
     }
