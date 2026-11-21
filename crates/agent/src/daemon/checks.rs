@@ -11,7 +11,7 @@ use std::num::{NonZeroU32, TryFromIntError};
 use std::path::Path;
 
 use agent_core::decide::checks::markers::Marker;
-use agent_core::decide::checks::{Issue, Subject, TestChange};
+use agent_core::decide::checks::{CommitFault, Issue, Subject, TestChange};
 use agent_core::decide::round::AskReason;
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::prompt::{ChecksPrompt, Variables, VariablesError};
@@ -102,6 +102,29 @@ pub(super) fn reason(texts: &ChecksPrompts, issue: &Issue) -> Result<String, Che
                 .with("red", short(red))?
                 .with("edit", short(edit))?,
         ),
+        Issue::Tried { commit, fault } => {
+            let commit = short(commit);
+            match fault {
+                CommitFault::FixTouchesOther { other, .. } => (
+                    ChecksPrompt::IssueCommitTestFixOther,
+                    Variables::new().with("commit", commit)?.with("path", other.as_str())?,
+                ),
+                CommitFault::TestEdited { path, red } => (
+                    ChecksPrompt::IssueCommitTestEdited,
+                    Variables::new()
+                        .with("commit", commit)?
+                        .with("path", path.as_str())?
+                        .with("red", format!("the `RED:` commit {}", short(red)))?,
+                ),
+            }
+        }
+        Issue::EditedTest { path, red, edit } => (
+            ChecksPrompt::IssueCommitTestEdited,
+            Variables::new()
+                .with("commit", short(edit))?
+                .with("path", path.as_str())?
+                .with("red", short(red))?,
+        ),
         Issue::NoTests => (ChecksPrompt::IssueNoTests, Variables::new()),
         Issue::Marker {
             path,
@@ -140,6 +163,10 @@ pub(super) fn named(texts: &ChecksPrompts, subject: &Subject) -> Result<String, 
             .render(ChecksPrompt::QuestionTitleNoTests, &Variables::new())?
             .trim()
             .to_owned(),
+        Subject::Commit(commit) => {
+            let commit = short(commit);
+            format!("Allow what the round asks of commit {commit}?")
+        }
     })
 }
 
@@ -247,6 +274,7 @@ pub(super) fn questions(
                     &Variables::new().with("path", path.as_str())?,
                 )?,
                 Subject::NoTests => texts.render(ChecksPrompt::QuestionTitleNoTests, &Variables::new())?,
+                Subject::Commit(commit) => format!("Allow what the round asks of commit {}?", short(commit)),
             }
         };
         let body = texts.render(

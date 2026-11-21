@@ -5,7 +5,7 @@ use std::path::Path;
 
 use agent_core::config::Language;
 use agent_core::decide::checks::markers::Marker;
-use agent_core::decide::checks::{Issue, Subject, TestChange, Touch};
+use agent_core::decide::checks::{CommitFault, Issue, Subject, TestChange, Touch};
 use agent_core::decide::round::AskReason;
 use agent_core::questions::Verdict;
 use agent_core::repo_path::RepoPath;
@@ -124,6 +124,35 @@ async fn the_reason_of_each_kind_of_issue_names_what_it_is_about() {
             marker("src/a.rs", Marker::ChecksUnderTest),
             vec!["`src/a.rs`", "under test"],
         ),
+        (
+            Issue::Tried {
+                commit: id('2'),
+                fault: CommitFault::FixTouchesOther {
+                    fix: id('2'),
+                    other: path("src/lib.rs"),
+                },
+            },
+            vec!["2222222", "`src/lib.rs`", "TEST-FIX:"],
+        ),
+        (
+            Issue::Tried {
+                commit: id('2'),
+                fault: CommitFault::TestEdited {
+                    path: path("tests/a.rs"),
+                    red: id('1'),
+                },
+            },
+            // the `RED:` commit is named as what it is: a question that allows one commit names no other commit
+            vec!["`tests/a.rs`", "no test fix of its own", "the `RED:` commit 1111111"],
+        ),
+        (
+            Issue::EditedTest {
+                path: path("tests/a.rs"),
+                red: id('1'),
+                edit: id('2'),
+            },
+            vec!["2222222", "`tests/a.rs`", "the team"],
+        ),
     ];
     for (issue, needles) in cases {
         let text = reason(&texts, &issue).unwrap();
@@ -133,6 +162,41 @@ async fn the_reason_of_each_kind_of_issue_names_what_it_is_about() {
         }
         assert!(!text.contains("{{"), "{issue:?}: {text}");
     }
+}
+
+// Rule: a finding about a commit is one subject of the question, whatever the team did in it: each is its own question.
+#[tokio::test]
+async fn every_commit_a_team_cannot_repair_is_a_question_of_its_own() {
+    let texts = texts().await;
+    let issues = [
+        Issue::Tried {
+            commit: id('2'),
+            fault: CommitFault::FixTouchesOther {
+                fix: id('2'),
+                other: path("src/lib.rs"),
+            },
+        },
+        Issue::EditedTest {
+            path: path("tests/a.rs"),
+            red: id('1'),
+            edit: id('3'),
+        },
+    ];
+
+    let asked = questions(&texts, &team(), &task(), &issues, AskReason::OnlyTheHumanMayAllow, 0).unwrap();
+
+    assert_eq!(asked.subjects, [Subject::Commit(id('2')), Subject::Commit(id('3'))]);
+    assert_eq!(asked.file.entries().len(), 2);
+    assert!(
+        asked.file.entries()[0].title().contains("2222222"),
+        "{}",
+        asked.file.entries()[0].title()
+    );
+    assert!(
+        asked.file.entries()[1].title().contains("3333333"),
+        "{}",
+        asked.file.entries()[1].title()
+    );
 }
 
 // Rule: a test file whose mode alone changed is told as such: its lines are the same, and only the human may allow it.

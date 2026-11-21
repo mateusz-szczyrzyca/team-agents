@@ -1,0 +1,1 @@
+Commit {{commit}} starts with `TEST-FIX:` and changes `{{path}}`, which is not a test: a test fix changes test files only, and a later commit cannot make this one right — only a rewrite of the branch, which is never done, could. The human is asked about it; say nothing more of it to the team.

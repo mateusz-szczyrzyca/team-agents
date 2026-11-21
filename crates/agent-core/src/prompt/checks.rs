@@ -27,6 +27,12 @@ pub enum ChecksPrompt {
     IssueProtected,
     /// The reason: a test of a `RED:` commit was edited by a later commit.
     IssueRedEdited,
+    /// The reason: a commit of the round that a rewrite of the branch alone could correct — a test fix that changes a
+    /// file that is not a test.
+    IssueCommitTestFixOther,
+    /// The reason: a commit of the round that a rewrite of the branch alone could correct — a commit that edits a test a
+    /// `RED:` commit of the round froze.
+    IssueCommitTestEdited,
     /// The reason: production code changed and no test line was added.
     IssueNoTests,
     /// The reason: added lines skip a test.
@@ -77,6 +83,8 @@ impl ChecksPrompt {
         Self::IssueTestMode,
         Self::IssueProtected,
         Self::IssueRedEdited,
+        Self::IssueCommitTestFixOther,
+        Self::IssueCommitTestEdited,
         Self::IssueNoTests,
         Self::IssueSkipsTest,
         Self::IssueSuppressesLint,
@@ -124,6 +132,16 @@ impl ChecksPrompt {
                 "harness/checks/issue-red-edited.md",
                 Audience::Model,
                 &["path", "red", "edit"],
+            ),
+            Self::IssueCommitTestFixOther => PromptSpec::new(
+                "harness/checks/issue-commit-test-fix-other.md",
+                Audience::Model,
+                &["commit", "path"],
+            ),
+            Self::IssueCommitTestEdited => PromptSpec::new(
+                "harness/checks/issue-commit-test-edited.md",
+                Audience::Model,
+                &["commit", "path", "red"],
             ),
             Self::IssueNoTests => PromptSpec::new("harness/checks/issue-no-tests.md", Audience::Model, &[]),
             Self::IssueSkipsTest => PromptSpec::new(
