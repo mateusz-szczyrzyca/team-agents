@@ -31,6 +31,22 @@ pub struct ItemChecks {
     /// that file after it. A file with no head here was allowed before this key existed and holds for any.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub allowed_at: BTreeMap<RepoPath, CommitId>,
+    /// What the human refused for the item, with what its question was about: it holds as long as the item is open, so
+    /// the round is sent back for it until the team undoes it, and it is not asked again. A file written before this
+    /// key existed has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refused: Vec<Refusal>,
+}
+
+/// What the human refused for an item, and what the question was about.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Refusal {
+    /// What was refused.
+    pub subject: Subject,
+    /// What the question was about, as for [`Basis`]; a question an earlier daemon wrote covers everything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basis: Option<Basis>,
 }
 
 /// What a question of the checks covers of the issues the checks found.
@@ -42,6 +58,10 @@ pub enum Covers {
     Everything,
     /// Only the issues that the human alone may allow, while the team still has issues of its own to settle.
     HumanPart,
+    /// The commits of the round that a rewrite of the branch alone could correct: a rewrite removes them whatever the
+    /// team does in a later commit, so what the human said about them is set aside once the round is no longer their
+    /// own diff — a merge of the base branch, the parts of a split.
+    Tried,
 }
 
 /// What the question in [`ChecksRecord::asked`] was put about, besides its subjects.
@@ -139,6 +159,49 @@ impl ChecksRecord {
         allowed.into_iter().cloned().collect()
     }
 
+    /// What the human refused for any of `items`, without repeats.
+    #[must_use]
+    pub fn refused_of(&self, items: &[ItemId]) -> Vec<Subject> {
+        let refused: BTreeSet<&Subject> = items
+            .iter()
+            .filter_map(|item| self.items.get(item))
+            .flat_map(|held| held.refused.iter().map(|refusal| &refusal.subject))
+            .collect();
+        refused.into_iter().cloned().collect()
+    }
+
+    /// Whether the human refused something of the commits of `items` in a question about them, rather than about every
+    /// finding of the round.
+    #[must_use]
+    pub fn refused_tried_of(&self, items: &[ItemId]) -> bool {
+        items.iter().filter_map(|item| self.items.get(item)).any(|held| {
+            held.refused.iter().any(|refusal| {
+                matches!(refusal.subject, Subject::Commit(_))
+                    && refusal
+                        .basis
+                        .as_ref()
+                        .is_some_and(|basis| basis.covers == Covers::Tried)
+            })
+        })
+    }
+
+    /// Takes back what the human refused for `items` about a commit of the round that a rewrite of the branch alone
+    /// could correct: the round is no longer the one they refused.
+    pub fn forget_tried_refusals(&mut self, items: &[ItemId]) {
+        for item in items {
+            let Some(held) = self.items.get_mut(item) else {
+                continue;
+            };
+            held.refused.retain(|refusal| {
+                !(matches!(refusal.subject, Subject::Commit(_))
+                    && refusal
+                        .basis
+                        .as_ref()
+                        .is_some_and(|basis| basis.covers == Covers::Tried))
+            });
+        }
+    }
+
     /// The heads at which the files of `items` were allowed, for those that have one.
     #[must_use]
     pub fn allowed_at_of(&self, items: &[ItemId]) -> BTreeMap<RepoPath, CommitId> {
@@ -186,6 +249,13 @@ impl ChecksRecord {
                         .collect();
                     held.human_only.extend(fresh);
                 }
+                // A question about the commits the team cannot repair covers all that is found about them: no pass of
+                // the team starts over for it, and whatever it covers of them stays covered.
+                Covers::Tried => {
+                    for subject in subjects {
+                        held.human_only.remove(subject);
+                    }
+                }
             }
             held.allowed.extend(subjects.iter().cloned());
             held.allowed_at
@@ -218,6 +288,26 @@ impl ChecksRecord {
             self.restart_passes(items);
         }
         self.asked = None;
+    }
+
+    /// Takes the human's answer of the question that is waited on, the `allowed` and `refused` subjects of its `items`
+    /// and the `basis` it was put about: the allowed subjects as [`Self::answer`] takes them, the refused ones kept as
+    /// refusals that hold until the team undoes them.
+    pub fn answered(&mut self, items: &[ItemId], basis: Option<&Basis>, allowed: &[Subject], refused: &[Subject]) {
+        self.basis = basis.cloned();
+        self.answer(items, allowed);
+        for item in items {
+            let held = self.items.entry(*item).or_default();
+            for subject in refused {
+                if held.refused.iter().any(|refusal| refusal.subject == *subject) {
+                    continue;
+                }
+                held.refused.push(Refusal {
+                    subject: subject.clone(),
+                    basis: basis.cloned(),
+                });
+            }
+        }
     }
 
     /// Takes back what the human allowed for `subjects`: they are asked about again.
