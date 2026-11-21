@@ -4,6 +4,8 @@ pub mod approval;
 
 use std::collections::BTreeSet;
 
+use crate::ids::ItemId;
+use crate::state::Round;
 use crate::state::split::{PartDefinition, PartId, PartKey, SplitPlan};
 
 /// The next scheduling decision, in the declaration order of the plan.
@@ -39,6 +41,19 @@ pub fn next_parts(plan: &SplitPlan, merged: &BTreeSet<PartKey>) -> Result<NextPa
     }
     let ready = ready_entries(plan, merged).map(|(id, _)| id).collect();
     Ok(NextParts::Ready(ready))
+}
+
+/// The parts of `item` that merged: those whose round carries the pull request of its part.
+///
+/// A round closed without a merge carries none, so its part has not merged. The daemon opens the next part from
+/// this set and the status prints the state of a part from it, so the two cannot disagree.
+pub fn merged_parts<'round>(rounds: impl IntoIterator<Item = &'round Round>, item: ItemId) -> BTreeSet<PartKey> {
+    rounds
+        .into_iter()
+        .filter(|round| round.item() == Some(item))
+        .filter(|round| round.part_pull_request().is_some())
+        .filter_map(Round::part)
+        .collect()
 }
 
 /// Lists dependency-ready definitions after the caller has checked the merged keys against the plan.

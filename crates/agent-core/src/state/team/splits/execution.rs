@@ -37,11 +37,7 @@ impl Team {
             return None;
         }
         let plan = self.splits().iter().find(|plan| plan.parent() == item)?;
-        let merged: std::collections::BTreeSet<_> = rounds
-            .iter()
-            .filter(|round| round.part_pull_request().is_some())
-            .filter_map(|round| round.part())
-            .collect();
+        let merged = crate::decide::split::merged_parts(self.rounds(), item);
         crate::decide::split::ready_entries(plan, &merged).next()
     }
 

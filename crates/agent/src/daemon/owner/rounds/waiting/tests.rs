@@ -495,3 +495,250 @@ async fn an_approved_round_merging_the_base_waits_for_the_lead_and_asking_the_hu
     let asking = obligation_after(&state, |_, _, _| {}, &round, &team).await;
     assert_eq!(asking, Some(Obligation::Human));
 }
+
+/// The round `round` of item 1.1 of the sample team, opened, whose item is given to the task `number`, that is
+/// `status`.
+fn round_for(number: u32, status: TaskStatus) -> (State, TeamId, RoundId) {
+    let mut state = team_state();
+    let team_id = team_id(0);
+    let round: RoundId = "round-20261119-090001-wait".parse().unwrap();
+    {
+        let mut team = state.team_mut(&team_id).unwrap();
+        team.open_round(round.clone(), Some("1.1".parse().unwrap()), at(10))
+            .unwrap();
+        let (_, mut member) = team.find_mut(&task(number)).unwrap();
+        if member.status() == TaskStatus::Queued && status != TaskStatus::Queued {
+            // A queued task runs, then waits: that is how a task comes to wait for its next run.
+            member.transition(TaskStatus::Running).unwrap();
+        }
+        if member.status() != status {
+            member.transition(status).unwrap();
+        }
+    }
+    (state, team_id, round)
+}
+
+// Instant after a round opens, its task is queued and the run that will name the round has not started yet: the round
+// waits for that run, it is not a round that waits for nothing.
+#[tokio::test]
+async fn a_round_of_a_queued_task_waits_for_the_run_of_the_task() {
+    let (state, team, round) = round_for(1, TaskStatus::Queued);
+    let daemon = home_with_token(&state);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let found = waiting_after(&mut owner, &round, &team, |_, _, _| {}).await;
+
+    assert_eq!(found, Some(Waiting::For(Obligation::QueuedRun)));
+}
+
+// A round whose task has run, given its answers and has no run yet is queued again with a new run, and waits for
+// that run.
+#[tokio::test]
+async fn a_round_of_a_task_that_waits_for_its_next_run_is_not_a_defect() {
+    let (mut state, team, round) = round_for(1, TaskStatus::Running);
+    {
+        let mut team_state = state.team_mut(&team).unwrap();
+        let (_, mut lead) = team_state.find_mut(&task(1)).unwrap();
+        lead.begin_run(run(1), at(11), None).unwrap();
+        lead.end_run(at(12), LEAD_DONE).unwrap();
+        lead.send_back_once_more();
+        lead.transition(TaskStatus::Queued).unwrap();
+    }
+    let daemon = home_with_token(&state);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let found = waiting_after(&mut owner, &round, &team, |_, _, _| {}).await;
+
+    assert_eq!(found, Some(Waiting::For(Obligation::QueuedRun)));
+}
+
+// A round a step of which waits for GitHub keeps that wait, whatever its lead's task is doing.
+#[tokio::test]
+async fn a_round_whose_step_waits_for_github_is_not_a_queued_run() {
+    let (state, team, round) = round_for(1, TaskStatus::Queued);
+    let daemon = home_with_token(&state);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let found = waiting_after(&mut owner, &round, &team, |owner, _, round| {
+        owner.watch.waits.insert(round.clone(), Obligation::FreeInvestigator);
+    })
+    .await;
+
+    assert_eq!(found, Some(Waiting::For(Obligation::FreeInvestigator)));
+}
+
+/// What `owner`, with pull requests to keep, says the round `round` of `team` waits for once its scheduling is done.
+async fn waiting_after(
+    owner: &mut crate::daemon::owner::Owner,
+    round: &RoundId,
+    team: &TeamId,
+    prepare: impl FnOnce(&mut crate::daemon::owner::Owner, &TaskId, &RoundId),
+) -> Option<Waiting> {
+    owner.set_pulls(pulls_of(owner).await.expect("the fixture home has a GitHub token"));
+    prepare(owner, &task(1), round);
+    let found = owner.parts.state.team(team).and_then(|team| team.round(round));
+    owner.waiting_for(owner.parts.state.team(team).unwrap(), found.unwrap())
+}
+
+/// A daemon home with `state` and the token of a GitHub account, so that the owner has its autopilot.
+fn home_with_token(state: &State) -> Daemon {
+    let daemon = Daemon::new(state, None);
+    let secrets = daemon.home.root().join("secrets.toml");
+    std::fs::write(&secrets, "github_token = \"ghp_test_token_0123\"\n").unwrap();
+    std::fs::set_permissions(&secrets, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+    daemon
+}
+
+/// The autopilot of `owner`, with the real texts.
+async fn pulls_of(owner: &crate::daemon::owner::Owner) -> Option<crate::daemon::owner::Pulls> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+    let language = owner.parts.settings.config.language();
+    crate::daemon::owner::Pulls::new(
+        Arc::new(
+            agent_runtime::autopilot_prompts::AutopilotPrompts::load(&root, language)
+                .await
+                .unwrap(),
+        ),
+        Arc::new(
+            agent_runtime::checks_prompts::ChecksPrompts::load(&root, language)
+                .await
+                .unwrap(),
+        ),
+        &owner.parts.settings,
+    )
+    .unwrap()
+}
+
+// The member that keeps the item counts only in a part round: a round of the whole item, with the same lead and the
+// same member between two runs, waits for nothing and is still a defect.
+#[tokio::test]
+async fn a_round_without_a_part_waits_for_no_member_between_its_runs() {
+    let (mut state, team, round) = round_for(1, TaskStatus::Done);
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        // The member worked in the round, so it is one of its members, and the item stays given to it.
+        found
+            .begin_run(
+                &task(2),
+                agent_core::state::NewRun {
+                    id: crate::fixtures::run(3),
+                    at: at(11),
+                    session: None,
+                    rounds: vec![round.clone()],
+                },
+            )
+            .unwrap();
+        let (_, mut member) = found.find_mut(&task(2)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.end_run(at(12), LEAD_DONE).unwrap();
+        member.transition(TaskStatus::Waiting).unwrap();
+    }
+    let daemon = home_with_token(&state);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let found = waiting_after(&mut owner, &round, &team, |_, _, _| {}).await;
+
+    assert_eq!(found, Some(Waiting::Defect));
+}
+
+/// Puts the task `number` of `team` to waiting for a message, as a task that ended a run is: queued, then running, then
+/// waiting.
+fn make_wait(state: &mut State, team: &TeamId, number: u32) {
+    let mut found = state.team_mut(team).unwrap();
+    let (_, mut member) = found.find_mut(&task(number)).unwrap();
+    if member.status() == TaskStatus::Queued {
+        member.transition(TaskStatus::Running).unwrap();
+    }
+    member.transition(TaskStatus::Waiting).unwrap();
+}
+
+/// The round of item 1.1 given to `claude-1` (task 2), whose lead (task 1) ended its run and is done and in which
+/// every other task waits for a message, with a split of two parts bound to the round when `split` is set.
+fn round_of_waiting_tasks(split: bool) -> (State, TeamId, RoundId) {
+    let (mut state, team, round) = idle_round(in_progress(), LEAD_DONE);
+    for number in [2, 3, 4] {
+        make_wait(&mut state, &team, number);
+    }
+    if split {
+        let plan = serde_json::json!({"parent": "1.1", "parts": [
+            {"title": "A part", "delivers": "A guide", "checks": "Read it", "depends_on": []},
+            {"title": "Another part", "delivers": "Another guide", "checks": "Read it", "depends_on": ["a"]},
+        ]});
+        state
+            .team_mut(&team)
+            .unwrap()
+            .activate_split(serde_json::from_value(plan).unwrap())
+            .unwrap();
+    }
+    (state, team, round)
+}
+
+// A task that waits for a message, an assignment or a merge has no run to come: a round whose tasks all wait, the lead
+// among them, waits for nothing, and that is the defect.
+#[tokio::test]
+async fn a_round_whose_tasks_all_wait_for_a_message_waits_for_nothing() {
+    let (mut state, team, round) = round_for(1, TaskStatus::Waiting);
+    for number in [2, 3, 4] {
+        make_wait(&mut state, &team, number);
+    }
+    let daemon = home_with_token(&state);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let found = waiting_after(&mut owner, &round, &team, |_, _, _| {}).await;
+
+    assert_eq!(found, Some(Waiting::Defect));
+}
+
+// The member the item is given to, queued behind a busy agent or the limit of runs, has not run in the round yet: its
+// run is the one the round waits for, whether the item is split or not.
+#[tokio::test]
+async fn a_round_whose_assignee_is_queued_for_its_first_run_waits_for_it() {
+    for split in [false, true] {
+        let (mut state, team, round) = round_of_waiting_tasks(split);
+        {
+            let mut found = state.team_mut(&team).unwrap();
+            let (_, mut member) = found.find_mut(&task(2)).unwrap();
+            member.transition(TaskStatus::Queued).unwrap();
+        }
+        let daemon = home_with_token(&state);
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+
+        let found = waiting_after(&mut owner, &round, &team, |_, _, _| {}).await;
+
+        assert_eq!(found, Some(Waiting::For(Obligation::QueuedRun)), "split: {split}");
+    }
+}
+
+// A member that worked in the round and is queued again for its next run waits for that run: the round is idle, not
+// at work, and says so.
+#[tokio::test]
+async fn a_round_whose_member_is_queued_again_after_a_run_in_it_waits_for_the_run() {
+    let (mut state, team, round) = idle_round(in_progress(), LEAD_DONE);
+    for number in [2, 4] {
+        make_wait(&mut state, &team, number);
+    }
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        found
+            .begin_run(
+                &task(3),
+                NewRun {
+                    id: run(3),
+                    at: at(40),
+                    session: None,
+                    rounds: vec![round.clone()],
+                },
+            )
+            .unwrap();
+        let (_, mut member) = found.find_mut(&task(3)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.end_run(at(50), LEAD_DONE).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    let daemon = home_with_token(&state);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let found = waiting_after(&mut owner, &round, &team, |_, _, _| {}).await;
+
+    assert_eq!(found, Some(Waiting::For(Obligation::QueuedRun)));
+}
