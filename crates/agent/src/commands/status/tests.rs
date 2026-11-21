@@ -1245,3 +1245,16 @@ fn a_task_the_ladder_started_anew_says_it_is_in_a_new_session() {
         "{text}"
     );
 }
+
+#[test]
+fn a_task_another_agent_took_over_names_the_agent_it_replaced() {
+    let mut teams = sample();
+    teams[0].members[1].held_by = Some("deepinfra-deepseek".parse().unwrap());
+
+    let text = render(&teams);
+
+    assert!(
+        text.contains("  task-20261111-153002-k3x9  member       claude-1   queued, for deepinfra-deepseek\n"),
+        "{text}"
+    );
+}
