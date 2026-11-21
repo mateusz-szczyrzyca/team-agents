@@ -188,7 +188,7 @@ fn with_part(texts: &TeamPrompts, run: &TeamRun<'_>, mut prompt: String) -> Resu
             | agent_core::state::ItemPhase::Approved { .. }
             | agent_core::state::ItemPhase::Done { .. } => false,
         });
-        if run.role != Role::Coordinator && !assigned {
+        if !assigned {
             continue;
         }
         let Some(plan) = run.team.splits().iter().find(|plan| plan.parent() == parent) else {
