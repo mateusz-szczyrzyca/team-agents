@@ -189,16 +189,8 @@ impl TeamPrompt {
                 Audience::Model,
                 &["item_id", "branch", "base"],
             ),
-            Self::TierMember => PromptSpec::new(
-                "harness/team/tier-member.md",
-                Audience::Model,
-                &["required", "agent", "tier"],
-            ),
-            Self::TierCoordinator => PromptSpec::new(
-                "harness/team/tier-coordinator.md",
-                Audience::Model,
-                &["required", "agent", "tier"],
-            ),
+            Self::TierMember => tier_spec("harness/team/tier-member.md"),
+            Self::TierCoordinator => tier_spec("harness/team/tier-coordinator.md"),
             Self::Wake => PromptSpec::new("harness/team/wake.md", Audience::Model, &["team"]),
             Self::Delegation => delegation_spec(),
             Self::MemberFinished => PromptSpec::new(
@@ -295,4 +287,9 @@ const fn split_question_spec() -> PromptSpec {
         Audience::Human,
         &["task", "item", "reason", "proposal", "example"],
     )
+}
+
+/// The capability explanation has the same inputs for a member and coordinator.
+const fn tier_spec(path: &'static str) -> PromptSpec {
+    PromptSpec::new(path, Audience::Model, &["required", "agent", "tier"])
 }
