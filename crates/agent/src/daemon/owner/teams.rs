@@ -37,8 +37,8 @@ use super::wakes::Wake;
 use super::{Located, Owner, OwnerError};
 use crate::daemon::team::{
     Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace, assignable,
-    closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for, reconcile, render_notice,
-    request_outcome, shared_agents, start_item, team_done_notification,
+    closing_transitions, failure_reason, form, is_finished, item_in_flight, lead_takes_work, notice_for, reconcile,
+    render_notice, request_outcome, shared_agents, start_item, team_done_notification,
 };
 
 /// The name the harness puts on the messages it writes to the bus, as the bus itself does.
@@ -922,7 +922,14 @@ impl Owner {
         if let Some(found) = self.parts.state.find_task(task)
             && found.team.crew().coordinator().is_some()
         {
-            if let Some(told) = notice_for(found.team, located.role, found.member, end, message)? {
+            // A member's work that is its lead's now is told as such, not as a failure.
+            let told = if self.to_lead.remove(task) {
+                let worktree = self.parts.store.home().worktree_dir(found.team.repo(), task);
+                lead_takes_work(found.team, found.member, &worktree)?
+            } else {
+                notice_for(found.team, located.role, found.member, end, message)?
+            };
+            if let Some(told) = told {
                 self.outbox.push_back(Outbound {
                     team: located.team.clone(),
                     job: BusJob::Tell {

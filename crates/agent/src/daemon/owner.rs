@@ -19,6 +19,7 @@ mod rounds;
 mod snapshots;
 mod split;
 mod start;
+mod takeover;
 mod teams;
 mod wakes;
 
@@ -142,6 +143,24 @@ pub(crate) enum OwnerError {
     /// The permanent finding numbers have been used up.
     #[error("cannot number review findings")]
     FindingNumbers(#[from] agent_core::state::FindingNumbersExhausted),
+    /// The state refuses to give a task whose runs went bad to the agent `[replacement]` chose.
+    #[error("task {task} cannot be handed to another agent")]
+    HandOver {
+        /// The task.
+        task: TaskId,
+        /// What the state refused.
+        source: agent_core::state::HandOverError,
+    },
+    /// An item of a task that was handed over cannot be given to the agent that took the task over.
+    #[error("item {item} of task {task} cannot be given to the agent that took the task over")]
+    Reassign {
+        /// The task.
+        task: TaskId,
+        /// The item.
+        item: agent_core::ids::ItemId,
+        /// What the state refused.
+        source: agent_core::state::NotWorkedOn,
+    },
     /// The state cannot be saved.
     #[error("the state cannot be saved")]
     Store(#[from] StoreError),
@@ -365,6 +384,21 @@ struct Located {
     agent: String,
 }
 
+/// What follows a run of a task that went bad: a step of the ladder, or who takes the task over when it has none left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// The session the task had goes on.
+    SameSession,
+    /// The task starts in a new session of its agent.
+    NewSession,
+    /// Another agent holds the task now and starts it in a new session.
+    HandedOver,
+    /// The member's task stops and its lead is given the work.
+    ToLead,
+    /// Nobody takes it: the task fails and the human decides.
+    Failed,
+}
+
 /// A run that went to its end, as its task is told of it.
 struct Ended<'a> {
     /// The task.
@@ -407,6 +441,8 @@ pub(super) struct Owner {
     hangs: HashMap<TaskId, u32>,
     /// Why a queued task of a team starts now; read when its run is made ready.
     reasons: HashMap<TaskId, Why>,
+    /// The member tasks whose work goes to the team's lead: the lead is told when the end of their run is settled.
+    to_lead: HashSet<TaskId>,
     /// How often each task was woken for the newest message that waits for it.
     wake_counts: HashMap<TaskId, wakes::WakeCount>,
     /// What the log line of the run of a task that was woken says of the wake-up; read when the run starts.
@@ -492,6 +528,7 @@ impl Owner {
             wakes: HashMap::new(),
             hangs: HashMap::new(),
             reasons: HashMap::new(),
+            to_lead: HashSet::new(),
             wake_counts: HashMap::new(),
             wake_notes: HashMap::new(),
             outbox: VecDeque::new(),
@@ -595,11 +632,20 @@ impl Owner {
         self.snapshot_interrupted(&recovery.interrupted, now).await;
         for task in &recovery.exhausted {
             let located = self.locate(task)?;
-            // The retries of the session are used up: the ladder may still start the task in a new session.
-            if self.restart_anew(task, &located)? {
+            // The retries of the session are used up: the ladder may still start the task in a new session, or another
+            // agent or the lead take it over.
+            let next = match self.restart_anew(task, &located)? {
+                Step::NewSession | Step::HandedOver => Some(TaskStatus::Queued),
+                Step::ToLead => Some(TaskStatus::Stopped),
+                Step::SameSession | Step::Failed => None,
+            };
+            if let Some(status) = next {
                 let mut events = Vec::new();
-                self.move_to(task, &located.team, TaskStatus::Queued, &mut events)?;
+                self.move_to(task, &located.team, status, &mut events)?;
                 self.commit(task, &located, now, events, None).await?;
+                if status == TaskStatus::Stopped {
+                    self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)?;
+                }
                 continue;
             }
             self.commit(task, &located, now, Vec::new(), Some(Notice::NoStatus { exit: None }))
@@ -1004,14 +1050,21 @@ impl Owner {
                 .find_task(task)
                 .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
             let mut status = interrupted_status(located.role, found.member);
-            // The retries of the session are used up: the ladder may still start the task in a new session.
-            if status == TaskStatus::Failed && self.restart_anew(task, &located)? {
-                status = TaskStatus::Queued;
+            // The retries of the session are used up: the ladder may still start the task in a new session, or another
+            // agent or the lead take it over.
+            let failed = status == TaskStatus::Failed;
+            if failed {
+                match self.restart_anew(task, &located)? {
+                    Step::NewSession | Step::HandedOver => status = TaskStatus::Queued,
+                    Step::ToLead => status = TaskStatus::Stopped,
+                    Step::SameSession | Step::Failed => {}
+                }
             }
             self.move_to(task, &located.team, status, &mut events)?;
             let notice = (status == TaskStatus::Failed).then_some(Notice::NoStatus { exit: None });
             self.commit(task, &located, now, events, notice).await?;
-            if status == TaskStatus::Failed {
+            // The lead is told of a failed task, and of a member's work that is its own now.
+            if failed && status != TaskStatus::Queued {
                 self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)?;
             }
             return Ok(());
@@ -1300,8 +1353,9 @@ impl Owner {
             // After the resumes of its session the task goes up the ladder: a new session, or the human.
             AfterTurnLimit::Exhausted => {
                 match self.climb(task, role, Trouble::TurnLimit, u32::try_from(count).unwrap_or(u32::MAX))? {
-                    LadderStep::SameSession | LadderStep::NewSession => (TaskStatus::Queued, None),
-                    LadderStep::GiveUp => (TaskStatus::Failed, Some(Notice::TurnLimitExhausted { count, limit })),
+                    Step::SameSession | Step::NewSession | Step::HandedOver => (TaskStatus::Queued, None),
+                    Step::ToLead => (TaskStatus::Stopped, None),
+                    Step::Failed => (TaskStatus::Failed, Some(Notice::TurnLimitExhausted { count, limit })),
                 }
             }
             AfterTurnLimit::NoSession => (TaskStatus::Failed, Some(Notice::TurnLimitNoSession)),
@@ -1325,12 +1379,13 @@ impl Owner {
             .member
             .bad_runs_since_renewal();
         let next = match self.climb(task, role, Trouble::NoStatus, count)? {
-            LadderStep::SameSession => {
+            Step::SameSession => {
                 self.reasons.insert(task.clone(), Why::NoStatus);
                 (TaskStatus::Queued, None)
             }
-            LadderStep::NewSession => (TaskStatus::Queued, None),
-            LadderStep::GiveUp => (TaskStatus::Failed, Some(Notice::NoStatus { exit })),
+            Step::NewSession | Step::HandedOver => (TaskStatus::Queued, None),
+            Step::ToLead => (TaskStatus::Stopped, None),
+            Step::Failed => (TaskStatus::Failed, Some(Notice::NoStatus { exit })),
         };
         Ok(next)
     }
@@ -1355,12 +1410,16 @@ impl Owner {
             strikes: watchdog.hang_strikes.get(),
         };
         let next = match self.climb(task, role, Trouble::Hang, count)? {
-            LadderStep::SameSession => (TaskStatus::Queued, None),
-            LadderStep::NewSession => {
+            Step::SameSession => (TaskStatus::Queued, None),
+            Step::NewSession | Step::HandedOver => {
                 self.hangs.remove(task);
                 (TaskStatus::Queued, None)
             }
-            LadderStep::GiveUp => {
+            Step::ToLead => {
+                self.hangs.remove(task);
+                (TaskStatus::Stopped, None)
+            }
+            Step::Failed => {
                 self.hangs.remove(task);
                 (TaskStatus::Failed, Some(notice))
             }
@@ -1368,9 +1427,9 @@ impl Owner {
         Ok(next)
     }
 
-    /// Whether the ladder starts `task`, which a restart or a stop of the daemon left with the no-status retries of its
-    /// session used up, in a new session; the renewal is recorded when it does.
-    fn restart_anew(&mut self, task: &TaskId, located: &Located) -> Result<bool, OwnerError> {
+    /// The ladder's step for `task`, which a restart or a stop of the daemon left with the no-status retries of its
+    /// session used up: a new session, another agent or the lead; a renewal or a hand-over is recorded when it is one.
+    fn restart_anew(&mut self, task: &TaskId, located: &Located) -> Result<Step, OwnerError> {
         let count = self
             .parts
             .state
@@ -1378,12 +1437,13 @@ impl Owner {
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
             .member
             .bad_runs_since_renewal();
-        Ok(self.climb(task, located.role, Trouble::NoStatus, count)? == LadderStep::NewSession)
+        self.climb(task, located.role, Trouble::NoStatus, count)
     }
 
-    /// The ladder's step for `task` of `role`, whose last `count` runs in a row went bad with `trouble`. A new session
-    /// is recorded in the state at once, so that a restart before its run begins keeps it.
-    fn climb(&mut self, task: &TaskId, role: Role, trouble: Trouble, count: u32) -> Result<LadderStep, OwnerError> {
+    /// The ladder's step for `task` of `role`, whose last `count` runs in a row went bad with `trouble`; with no step
+    /// left, who takes it over under `[replacement]`. A new session and a hand-over are recorded in the state at once, so
+    /// that a restart before the next run begins keeps them.
+    fn climb(&mut self, task: &TaskId, role: Role, trouble: Trouble, count: u32) -> Result<Step, OwnerError> {
         let config = &self.parts.settings.config;
         let member = self
             .parts
@@ -1404,24 +1464,26 @@ impl Owner {
             config.watchdog(),
             config.limits(),
         );
-        let step = if step == LadderStep::NewSession {
-            let now = Timestamp::now(&self.parts.clock)?;
-            // A clock set back during the run is not before its start: the run's end is clamped the same way.
-            let at = member
-                .runs()
-                .last()
-                .map(agent_core::state::Run::started_at)
-                .filter(|started| started.as_utc() > now.as_utc())
-                .unwrap_or(now);
-            let renewed = self.parts.state.renew_task(task, trouble, at)?;
-            // A task with no run to have gone bad has no step left.
-            if renewed {
-                LadderStep::NewSession
-            } else {
-                LadderStep::GiveUp
+        let renewed = match step {
+            LadderStep::SameSession => Some(Step::SameSession),
+            LadderStep::NewSession => {
+                let at = self.after_last_run(task)?;
+                self.parts
+                    .state
+                    .renew_task(task, trouble, at)?
+                    .then_some(Step::NewSession)
             }
-        } else {
-            step
+            LadderStep::GiveUp => None,
+        };
+        // With no step left — a task with no run to have gone bad has none either — another agent or the lead may take
+        // it over.
+        let step = match renewed {
+            Some(step) => step,
+            None => match self.take_over(task, role, trouble)? {
+                takeover::Takeover::Agent => Step::HandedOver,
+                takeover::Takeover::Lead => Step::ToLead,
+                takeover::Takeover::Nobody => Step::Failed,
+            },
         };
         log_decision(
             "ladder",
@@ -1432,6 +1494,24 @@ impl Owner {
             &format!("{step:?}"),
         );
         Ok(step)
+    }
+
+    /// The time to record a new session or a hand-over of `task` at: now, and never before its last run started.
+    fn after_last_run(&self, task: &TaskId) -> Result<Timestamp, OwnerError> {
+        let now = Timestamp::now(&self.parts.clock)?;
+        let member = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
+            .member;
+        // A clock set back during the run is not before its start: the run's end is clamped the same way.
+        Ok(member
+            .runs()
+            .last()
+            .map(agent_core::state::Run::started_at)
+            .filter(|started| started.as_utc() > now.as_utc())
+            .unwrap_or(now))
     }
 
     /// Records the questions the agent asked, when their file is usable.

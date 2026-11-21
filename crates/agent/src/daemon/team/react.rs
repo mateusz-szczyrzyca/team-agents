@@ -62,6 +62,8 @@ pub(in crate::daemon) enum BusNotice {
         /// The branch it worked on.
         branch: BranchName,
     },
+    /// The work of a member whose new session went bad too, and which no other agent can take over, is its lead's now.
+    LeadTakesWork(LeadWork),
     /// A worker finished a request of a member: the result goes to the member.
     HelperResult {
         /// The request.
@@ -80,6 +82,19 @@ pub(in crate::daemon) enum BusNotice {
         /// Why, for the requester.
         reason: String,
     },
+}
+
+/// The work of a member that its lead is given: whose it was and where it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::daemon) struct LeadWork {
+    /// The member.
+    pub(in crate::daemon) member: AgentName,
+    /// The member's task, which stopped.
+    pub(in crate::daemon) task: TaskId,
+    /// The branch with the member's work: its item's, or its task's.
+    pub(in crate::daemon) branch: BranchName,
+    /// The member's worktree, as a path.
+    pub(in crate::daemon) worktree: String,
 }
 
 /// How a request for a worker ended, for the requester.
@@ -214,6 +229,40 @@ pub(in crate::daemon) fn notice_for(
         | RunEnd::NoStatus { .. } => return Ok(None),
     };
     Ok(Some(Told { to, notice }))
+}
+
+/// What the lead of `team` is told when the work of `member`, whose task stopped, is its own now; `worktree` is the
+/// member's worktree. `None` for a team without a lead.
+///
+/// # Errors
+/// [`NoticeError`].
+pub(in crate::daemon) fn lead_takes_work(
+    team: &Team,
+    member: &Member,
+    worktree: &std::path::Path,
+) -> Result<Option<Told>, NoticeError> {
+    let Some(coordinator) = team.crew().coordinator() else {
+        return Ok(None);
+    };
+    let who = agent_name(member.agent())?;
+    // A task's own branch is named after its first agent, whoever holds the task now.
+    let first = member
+        .past_holders()
+        .first()
+        .map_or_else(|| member.agent(), |held| &held.agent);
+    let branch = match worked_on(team, member) {
+        Some((_, branch)) => branch,
+        None => task_branch(&agent_name(first)?, member.task())?,
+    };
+    Ok(Some(Told {
+        to: agent_name(coordinator.agent())?,
+        notice: BusNotice::LeadTakesWork(LeadWork {
+            member: who,
+            task: member.task().clone(),
+            branch,
+            worktree: worktree.display().to_string(),
+        }),
+    }))
 }
 
 /// How the request a worker served ended, given the end `end` of the worker's run and the status `status` its task has

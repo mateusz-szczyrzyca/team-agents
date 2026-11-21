@@ -568,10 +568,15 @@ pub(super) fn work_branch(team: &Team, member: &Member) -> Result<BranchName, St
         | ItemPhase::Approved { .. }
         | ItemPhase::Done { .. } => None,
     });
-    match item_branch {
-        Some(branch) => Ok(branch),
-        None => Ok(task_branch(&agent_name(member.agent())?, member.task())?),
+    if let Some(branch) = item_branch {
+        return Ok(branch);
     }
+    // A task's own branch is named after its first agent: an agent that took the task over works on that branch.
+    let first = member
+        .past_holders()
+        .first()
+        .map_or_else(|| member.agent(), |held| &held.agent);
+    Ok(task_branch(&agent_name(first)?, member.task())?)
 }
 
 /// A session ID in the form of a version 4 UUID, which Claude Code accepts for `--session-id`.

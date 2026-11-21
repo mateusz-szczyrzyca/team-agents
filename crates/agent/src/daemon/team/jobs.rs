@@ -10,7 +10,7 @@ use agent_runtime::notify::{InvalidNotification, Notification};
 use agent_runtime::team_prompts::{RenderTeamTextError, TeamPrompts};
 
 use super::prompts::SECTION_SEPARATOR;
-use super::react::{BusNotice, WorkerEnd};
+use super::react::{BusNotice, LeadWork, WorkerEnd};
 
 /// One thing the daemon has to do on the bus for a team.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +122,7 @@ pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) 
                     .with("branch", branch.as_str())?,
             )?,
         ),
+        BusNotice::LeadTakesWork(work) => lead_takes_work(texts, work)?,
         BusNotice::HelperResult {
             request,
             worker,
@@ -153,6 +154,27 @@ pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) 
 }
 
 /// The notice that `member` is done: with its item when the list has items, else with its branch alone.
+/// The kind, the fields and the text of the message that a member's work is its lead's now.
+fn lead_takes_work(texts: &TeamPrompts, work: &LeadWork) -> Result<Rendered, NoticeRenderError> {
+    let text = texts.render(
+        TeamPrompt::LeadTakesWork,
+        &Variables::new()
+            .with("member", work.member.as_str())?
+            .with("task", work.task.as_str())?
+            .with("branch", work.branch.as_str())?
+            .with("worktree", &work.worktree)?,
+    )?;
+    Ok((
+        NoticeKind::MemberFailed,
+        vec![
+            ("branch", work.branch.to_string()),
+            ("member", work.member.to_string()),
+            ("task", work.task.to_string()),
+        ],
+        text,
+    ))
+}
+
 fn member_finished(
     texts: &TeamPrompts,
     member: &AgentName,
