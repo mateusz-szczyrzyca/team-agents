@@ -420,6 +420,30 @@ pub fn assess(rules: &Checks, facts: &RoundFacts, allowed: &[Subject]) -> Vec<Is
 /// were, in the same files and in the order of their numbers; the rest as in [`assess`].
 #[must_use]
 pub fn assess_near(rules: &Checks, facts: &RoundFacts, unchanged: &[UnchangedLine], allowed: &[Subject]) -> Vec<Issue> {
+    assess_unsent_back(rules, facts, unchanged, allowed, &[])
+}
+
+/// The issues the checks find, the rest as in [`assess_near`], minus those about a commit of `untried`, whose findings the
+/// human may allow without a question: the team cannot repair them, so they are not the round's to settle.
+#[must_use]
+pub fn assess_untried(
+    rules: &Checks,
+    facts: &RoundFacts,
+    unchanged: &[UnchangedLine],
+    allowed: &[Subject],
+    untried: &[CommitId],
+) -> Vec<Issue> {
+    assess_unsent_back(rules, facts, unchanged, allowed, untried)
+}
+
+/// What [`assess_near`] and [`assess_untried`] differ in: the commits whose findings the team is not sent back for.
+fn assess_unsent_back(
+    rules: &Checks,
+    facts: &RoundFacts,
+    unchanged: &[UnchangedLine],
+    allowed: &[Subject],
+    untried: &[CommitId],
+) -> Vec<Issue> {
     let mut issues = protected_changes(rules, facts);
     issues.extend(changed_tests(rules, facts));
     issues.extend(edited_red_tests(rules, facts));
@@ -428,6 +452,10 @@ pub fn assess_near(rules: &Checks, facts: &RoundFacts, unchanged: &[UnchangedLin
     issues.extend(commits_the_team_cannot_repair(rules, facts));
     issues.extend(edited_test_commits(rules, facts));
     issues.retain(|issue| !allowed.contains(&issue.subject()));
+    issues.retain(|issue| match issue.subject() {
+        Subject::Commit(commit) => !untried.contains(&commit),
+        Subject::Path(_) | Subject::NoTests => true,
+    });
     issues
 }
 
