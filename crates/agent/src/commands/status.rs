@@ -527,6 +527,11 @@ pub(crate) fn round_line(round: &Round) -> String {
     format!("{}  {item}  {state}", round.id())
 }
 
+/// Stub: written in the next commit.
+pub(crate) fn render_round_in(_detail: &RoundDetail, _zone: Zone) -> String {
+    String::new()
+}
+
 /// A round in full as text: its line, the item, the pull request, the review passes, and the tasks that worked for it
 /// with where they work and their runs.
 pub(crate) fn render_round(detail: &RoundDetail) -> String {

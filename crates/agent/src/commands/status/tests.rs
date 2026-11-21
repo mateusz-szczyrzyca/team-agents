@@ -1469,3 +1469,14 @@ fn a_status_time_and_a_log_time_of_one_moment_in_one_zone_are_the_same_text() {
     assert_eq!(clock_of(at, zone), "2026-11-21 13:50:02 +01:00");
     assert_eq!(zone.stamp_minute(at), "2026-11-21 13:50 +01:00");
 }
+
+#[test]
+fn a_round_in_full_writes_the_time_it_was_opened_in_the_zone_given() {
+    let state = team_with_rounds();
+    let zone = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("a literal offset is valid"));
+
+    let text = render_round_in(&detail(&state), zone);
+
+    assert!(text.contains("  opened 2026-11-11 19:15:"), "{text}");
+    assert!(text.contains(" +01:00\n"), "{text}");
+}
