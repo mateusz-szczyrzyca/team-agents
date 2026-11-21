@@ -345,7 +345,7 @@ impl MemberSummary {
             status: member.status(),
             open_question: member.open_question().map(Question::number),
             new_sessions: member.renewals().and_then(|renewals| NonZeroU32::new(renewals.used())),
-            held_by: None,
+            held_by: member.past_holders().last().map(|held| held.agent.agent_name()),
         }
     }
 }
