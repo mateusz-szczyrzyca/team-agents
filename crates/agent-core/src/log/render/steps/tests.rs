@@ -58,7 +58,7 @@ fn agent(name: &str) -> AgentName {
 }
 
 #[test]
-fn step_line_tells_each_kind_of_step_for_each_cli() {
+fn step_line_names_its_agent_beside_another_and_tells_each_kind_of_step_for_each_cli() {
     let cut = format!("{}…", "y".repeat(120));
     let multibyte = format!("{}…", "ż".repeat(120));
     let rows: Vec<(&str, ActivityEvent, String)> = vec![
@@ -129,7 +129,11 @@ fn step_line_tells_each_kind_of_step_for_each_cli() {
         for (who, event, rest) in &rows {
             number = number.checked_add(1).expect("the table is short");
             let run = start(who, cli, "task-20261121-132909-ummt");
-            let line = step_line(&step(event.clone(), number), Some(&run), &[agent(who)]);
+            let line = step_line(
+                &step(event.clone(), number),
+                Some(&run),
+                &[agent(who), agent("codex-1")],
+            );
             assert_eq!(line, format!("{AT} {rest}"), "{cli:?} {event:?}");
         }
     }
