@@ -1,0 +1,28 @@
+## What the member's runs left
+
+The harness recorded why its last runs went bad as `no_status`: `no_status` — they ended without a `STATUS:` line;
+`hang` — they showed no activity until the watchdog stopped them; `turn_limit` — they used up their turn budget.
+
+The work of task task-20261121-101500-k2m4 is on branch agents/claude-1/task-20261121-101500-k2m4-1.1, forked from main. Its commits since then, oldest first (none when
+the list is empty):
+
+- 1a2b3c4d Add the parser
+
+Everything the member's worktree held when its last run ended is kept as a snapshot, refs/agents/snapshots/round-20261121-101400-a1b2/task-20261121-101500-k2m4/1. The files that
+differ from the last commit there (none when the list is empty) — they are on no branch until they are committed:
+
+- draft.txt
+- notes/żółw.md
+
+The steps of the member's `.agent/plan.md` as its runs left them — `[ ]` to do, `[>]` in hand, `[x]` done, `[-]` given
+up. They are what the member declared, not evidence: check them. An empty list: the task keeps no plan, or it does not
+read.
+
+- [x] 1 Read the code
+- [>] 2 Write the parser
+
+The messages to the member that no run of it read, oldest first (none when the list is empty).
+
+
+- #12 inv-opus:
+  Look at the cache first.
