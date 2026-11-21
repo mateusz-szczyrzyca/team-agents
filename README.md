@@ -157,7 +157,9 @@ never on the orchestrator's host or a network with anything you care about.
 ### Monitoring and response
 
 - Ship the daemon's log ([`docs/log.md`](docs/log.md)) somewhere you look at, and alert on warnings and errors.
-  `agent log` shows what a round, a team or a task did, with every prompt and step.
+  `agent log` shows what a round, a team or a task did, with every prompt and step. Its text shows times in the zone of
+this machine with its offset, as `date` does; `agent log --utc` shows them in UTC, as the files hold them, and `--json` is
+always UTC. A `--since` or `--until` without a zone is read in the zone of this machine.
 - Logs and the files of a task can contain secrets printed by commands: restrict who can read them.
 - `agent stop <team>` stops a team; stopping the daemon (`systemctl --user stop agent-daemon`) ends every run at
   once, and nothing starts until it runs again.

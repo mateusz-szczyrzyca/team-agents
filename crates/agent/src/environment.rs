@@ -1,16 +1,17 @@
 //! What a command reads from the process's environment, once, at its start.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
 use agent_core::config::{AbsolutePath, CommandLine, InvalidValue};
+use agent_core::local_time::Zone;
 use agent_runtime::settings::{Settings, SettingsError};
 use agent_runtime::store::{HOME_VARIABLE, Home};
-use time::UtcOffset;
 use time::error::IndeterminateOffset;
+use time::{OffsetDateTime, UtcOffset};
 
 /// The names of the variables that name an editor, in the order they are tried.
 const EDITOR_VARIABLES: [&str; 2] = ["VISUAL", "EDITOR"];
@@ -28,6 +29,52 @@ pub(crate) struct Environment {
     local_offset: UtcOffset,
     /// Why the offset is UTC, when it is for that reason.
     offset_error: Option<IndeterminateOffset>,
+    /// The zone the times a person reads in this process are written in.
+    zone: Zone,
+}
+
+/// The machine's offset from UTC at `at`, or nothing when the machine cannot tell it: the zone then shows UTC, marked.
+fn system_offset_at(at: OffsetDateTime) -> Option<UtcOffset> {
+    // A failure is the specified fallback of `Zone::Lookup`, which marks the time as UTC; the reason is not kept.
+    UtcOffset::local_offset_at(at).ok()
+}
+
+/// A lookup for a process whose `TZ` or `/etc/localtime` does not name a known zone: every moment falls back to UTC, marked.
+const fn unknown_offset_at(_at: OffsetDateTime) -> Option<UtcOffset> {
+    None
+}
+
+/// Whether the zone of the process is one the system knows. glibc reads an unknown `TZ` as UTC without a failure, so the
+/// name is checked here: without `TZ` the system's zone is `/etc/localtime`.
+fn zone_is_known() -> bool {
+    match std::env::var_os("TZ") {
+        None => Path::new("/etc/localtime").exists(),
+        Some(value) => tz_is_known(&value),
+    }
+}
+
+/// Whether `value`, a `TZ` the process has, names a zone: a file of the zone database (absolute, or in `TZDIR` or
+/// `/usr/share/zoneinfo`), or a POSIX rule such as `UTC0` or `CET-1CEST,M3.5.0,M10.5.0/3`, which has a digit and no
+/// leading `:`.
+fn tz_is_known(value: &OsStr) -> bool {
+    let Some(text) = value.to_str() else {
+        return false;
+    };
+    let (name, colon) = match text.strip_prefix(':') {
+        Some(name) => (name, true),
+        None => (text, false),
+    };
+    if name.is_empty() {
+        return false;
+    }
+    if name.starts_with('/') {
+        return Path::new(name).is_file();
+    }
+    let tzdir = std::env::var_os("TZDIR").map_or_else(|| PathBuf::from("/usr/share/zoneinfo"), PathBuf::from);
+    if tzdir.join(name).is_file() {
+        return true;
+    }
+    !colon && name.bytes().any(|byte| byte.is_ascii_digit())
 }
 
 /// Why `AGENTS_HOME` cannot be used.
@@ -61,6 +108,13 @@ impl Environment {
     /// Call it at the start of the process, while it has one thread: the system refuses to name the time zone of a
     /// process that has more.
     pub(crate) fn from_process() -> Self {
+        // `time` reads `TZ` and the zone database once, while the process has one thread. When they cannot be read or
+        // do not name a known zone, every moment falls back to UTC, marked.
+        let zone = if time::util::refresh_tz().is_some() && zone_is_known() {
+            Zone::Lookup(system_offset_at)
+        } else {
+            Zone::Lookup(unknown_offset_at)
+        };
         let (local_offset, offset_error) = match UtcOffset::current_local_offset() {
             Ok(offset) => (offset, None),
             // UTC is the specified fallback; the daemon logs why.
@@ -76,6 +130,7 @@ impl Environment {
                 .find(|value| !value.to_string_lossy().trim().is_empty()),
             local_offset,
             offset_error,
+            zone,
         }
     }
 
@@ -88,6 +143,7 @@ impl Environment {
             editor: None,
             local_offset: UtcOffset::UTC,
             offset_error: None,
+            zone: Zone::Utc,
         }
     }
 
@@ -113,6 +169,12 @@ impl Environment {
         self.directory
             .as_deref()
             .map_err(|error| EnvironmentError::NoDirectory(Arc::clone(error)))
+    }
+
+    /// The zone the times a person reads in this process are written in: the offset the machine has at each moment, so
+    /// a time before a change of summer time has the offset of its day. UTC, marked, when the machine cannot tell it.
+    pub(crate) const fn zone(&self) -> Zone {
+        self.zone
     }
 
     /// The machine's offset from UTC.

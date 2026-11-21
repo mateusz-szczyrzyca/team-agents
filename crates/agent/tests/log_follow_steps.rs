@@ -138,6 +138,8 @@ mod tests {
             let mut child = Command::new(env!("CARGO_BIN_EXE_agent"))
                 .env_clear()
                 .env("AGENTS_HOME", home)
+                // Fixed zone: the follow writes the times of the zone of the process, so the expected lines name it.
+                .env("TZ", "CET-1CEST,M3.5.0,M10.5.0/3")
                 .args(["log", "--follow"])
                 .args(args)
                 .stdout(Stdio::piped())
@@ -201,17 +203,17 @@ mod tests {
                 .line()
                 .contains(" run run-20261121-132909-0001 started by claude-1")
         );
-        assert_eq!(follower.line(), "2026-11-21T12:50:01Z command: cargo build");
+        assert_eq!(follower.line(), "2026-11-21 13:50:01 +01:00 command: cargo build");
         db.write(&[step(2, 3, ActivityEvent::Command("cargo test".to_owned()))])
             .expect("the step is written");
-        assert_eq!(follower.line(), "2026-11-21T12:50:03Z command: cargo test");
+        assert_eq!(follower.line(), "2026-11-21 13:50:03 +01:00 command: cargo test");
         db.write(&[step(
             3,
             4,
             ActivityEvent::Text("The tests pass.\nNext line.".to_owned()),
         )])
         .expect("the step is written");
-        assert_eq!(follower.line(), "2026-11-21T12:50:04Z The tests pass.…");
+        assert_eq!(follower.line(), "2026-11-21 13:50:04 +01:00 The tests pass.…");
         follower.stop();
     }
 
@@ -227,11 +229,11 @@ mod tests {
                 .line()
                 .contains(" run run-20261121-132909-0001 started by claude-1")
         );
-        assert_eq!(follower.line(), "2026-11-21T12:50:01Z command: cargo build");
+        assert_eq!(follower.line(), "2026-11-21 13:50:01 +01:00 command: cargo build");
         db.write_logs(&[run_row(LogEvent::RunEnded, 5)])
             .expect("the end is written");
         let end = follower.line();
-        assert!(end.starts_with("2026-11-21T12:50:05Z info run_ended "), "{end}");
+        assert!(end.starts_with("2026-11-21 13:50:05 +01:00 info run_ended "), "{end}");
         assert!(end.ends_with(": ended reported DONE"), "{end}");
         // No daemon listens in the temporary home: the line says that it was not asked.
         let wait = follower.line();
@@ -259,7 +261,7 @@ mod tests {
                 .line()
                 .contains(" run run-20261121-132909-0002 started by claude-1")
         );
-        assert_eq!(follower.line(), "2026-11-21T12:50:10Z command: git status");
+        assert_eq!(follower.line(), "2026-11-21 13:50:10 +01:00 command: git status");
         follower.stop();
     }
 
@@ -277,7 +279,7 @@ mod tests {
         assert!(
             follower
                 .line()
-                .starts_with("2026-11-21T12:50:02Z info task_status_changed ")
+                .starts_with("2026-11-21 13:50:02 +01:00 info task_status_changed ")
         );
         db.write(&[step(2, 3, ActivityEvent::Command("cargo test".to_owned()))])
             .expect("the step is written");
@@ -285,7 +287,7 @@ mod tests {
         assert!(
             follower
                 .line()
-                .starts_with("2026-11-21T12:50:04Z info task_status_changed ")
+                .starts_with("2026-11-21 13:50:04 +01:00 info task_status_changed ")
         );
         follower.stop();
     }
@@ -302,12 +304,12 @@ mod tests {
                 .line()
                 .contains(" run run-20261121-132909-0001 started by claude-1")
         );
-        assert_eq!(follower.line(), "2026-11-21T12:50:01Z command: cargo build");
+        assert_eq!(follower.line(), "2026-11-21 13:50:01 +01:00 command: cargo build");
         drop(db);
         let mut db = HistoryDb::open(&path, MaxTextBytes::default()).expect("the history reopens");
         db.write(&[step(2, 3, ActivityEvent::Command("cargo test".to_owned()))])
             .expect("the step is written");
-        assert_eq!(follower.line(), "2026-11-21T12:50:03Z command: cargo test");
+        assert_eq!(follower.line(), "2026-11-21 13:50:03 +01:00 command: cargo test");
         follower.stop();
     }
 
@@ -342,11 +344,11 @@ mod tests {
         follower.stop();
 
         assert!(
-            found.contains(&"2026-11-21T12:50:01Z claude-1 command: cargo build".to_owned()),
+            found.contains(&"2026-11-21 13:50:01 +01:00 claude-1 command: cargo build".to_owned()),
             "{found:?}"
         );
         assert!(
-            found.contains(&"2026-11-21T12:50:02Z codex-1 command: cargo clippy".to_owned()),
+            found.contains(&"2026-11-21 13:50:02 +01:00 codex-1 command: cargo clippy".to_owned()),
             "{found:?}"
         );
     }

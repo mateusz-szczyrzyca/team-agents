@@ -78,6 +78,7 @@ mod tests {
     fn log(home: &Path, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_agent"))
             .env_clear()
+            .env("TZ", "CET-1CEST,M3.5.0,M10.5.0/3")
             .env("AGENTS_HOME", home)
             .arg("log")
             .args(args)
@@ -133,9 +134,9 @@ mod tests {
         found[0].contains(" run run-20261121-132909-0001 started by claude-1 on task task-20261121-132909-0001 of team team-20261121-132909-aaaa "),
         "{found:?}"
     );
-        assert_eq!(found[1], "2026-11-21T12:50:02Z command: cargo build");
+        assert_eq!(found[1], "2026-11-21 13:50:02 +01:00 command: cargo build");
         assert!(found[2].contains("of team team-20261121-132909-bbbb "), "{found:?}");
-        assert_eq!(found[3], "2026-11-21T12:50:04Z command: cargo test");
+        assert_eq!(found[3], "2026-11-21 13:50:04 +01:00 command: cargo test");
     }
 
     /// A history of the schema version 13, as an older daemon wrote it, with one run of `codex-1` and its step.
@@ -170,7 +171,7 @@ mod tests {
             found[0].contains(" run run-20261121-132909-0001 started by codex-1 on task task-20261121-132909-0001 "),
             "{found:?}"
         );
-        assert_eq!(found[1], "2026-11-21T12:50:02Z command: cargo build");
+        assert_eq!(found[1], "2026-11-21 13:50:02 +01:00 command: cargo build");
     }
 
     #[test]
@@ -179,6 +180,7 @@ mod tests {
         old_history(&dir.path().join("history.db"));
         let mut child = Command::new(env!("CARGO_BIN_EXE_agent"))
             .env_clear()
+            .env("TZ", "CET-1CEST,M3.5.0,M10.5.0/3")
             .env("AGENTS_HOME", dir.path())
             .args(["log", "--follow", "--task", "task-20261121-132909-0001", "-n", "5"])
             .stdout(Stdio::piped())
@@ -197,6 +199,6 @@ mod tests {
             first.contains(" run run-20261121-132909-0001 started by codex-1 "),
             "{first}"
         );
-        assert_eq!(second, "2026-11-21T12:50:02Z command: cargo build\n");
+        assert_eq!(second, "2026-11-21 13:50:02 +01:00 command: cargo build\n");
     }
 }
