@@ -91,6 +91,9 @@ pub(crate) enum RunError {
     /// The words of the command line do not make a task.
     #[error(transparent)]
     Words(#[from] WordsError),
+    /// `--short-desc` has more than one line: it would be read as task text.
+    #[error("--short-desc is one line of at most 70 characters; it has more than one line")]
+    ShortDescNotOneLine,
     /// `--short-desc` was given with a task list file, which has its own `Short desc:` line.
     #[error("--short-desc is for a task given as text: put a `Short desc:` line in the file {path:?} instead")]
     ShortDescWithFile {

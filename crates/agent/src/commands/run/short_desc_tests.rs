@@ -84,3 +84,53 @@ fn a_task_with_its_own_line_and_the_flag_is_refused_as_two_lines() {
 
     assert!(matches!(error, TaskListError::ShortDescTwice { .. }), "{error:?}");
 }
+
+#[test]
+fn a_value_of_more_than_one_line_is_refused_and_changes_no_word() {
+    for desc in [
+        "Title\nInjected brief",
+        "Title\r\nInjected",
+        "Title\rInjected",
+        "\nTitle",
+        "Title\n",
+    ] {
+        let error = words_with_short_desc(words(&["claude-1", "Fix it."]), None, Some(desc)).unwrap_err();
+
+        assert!(matches!(error, RunError::ShortDescNotOneLine), "{desc:?}: {error:?}");
+    }
+}
+
+#[test]
+fn the_line_goes_after_the_first_nonblank_coordinator_line_the_parser_reads() {
+    for task in [
+        "\nCoordinator: claude-1\nFix it.",
+        "\n\n  \nCoordinator: claude-1\n\nFix it.",
+        "\u{feff}Coordinator: claude-1\nFix it.",
+        "Coordinator: claude-1",
+        "Coordinator: claude-1\n",
+    ] {
+        let result = words_with_short_desc(words(&["claude-1", task]), None, Some("Fix")).unwrap();
+        let list = TaskList::parse(result.last().unwrap());
+
+        let list = list.unwrap_or_else(|error| panic!("{task:?}: {error:?}"));
+        assert_eq!(
+            list.coordinator().map(agent_core::ids::AgentName::as_str),
+            Some("claude-1"),
+            "{task:?}"
+        );
+        assert_eq!(list.short_desc(), Some("Fix"), "{task:?}");
+    }
+}
+
+#[test]
+fn a_task_whose_first_nonblank_line_is_not_a_coordinator_line_gets_the_line_first() {
+    for task in [
+        "\nFix it.\nCoordinator: claude-1",
+        "Fix it.",
+        " Coordinator: claude-1\nFix it.",
+    ] {
+        let result = words_with_short_desc(words(&["claude-1", task]), None, Some("Fix")).unwrap();
+
+        assert_eq!(result.last().unwrap(), &format!("Short desc: Fix\n{task}"), "{task:?}");
+    }
+}
