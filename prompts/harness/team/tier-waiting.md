@@ -1,1 +1,1 @@
-Item {{item}} {{tier}}
+- Item {{item}} requires {{tier}}.
