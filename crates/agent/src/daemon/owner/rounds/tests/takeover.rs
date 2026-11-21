@@ -180,7 +180,7 @@ async fn the_off_mode_fails_the_task_and_hands_it_to_nobody() {
 
     let member = state.find_task(&tasks[0]).unwrap().member;
     assert_eq!(member.agent().name(), "claude-1");
-    assert!(member.past_holders().is_empty());
+    assert_eq!(member.past_holders().len(), 0);
 }
 
 // Rule: without a [replacement] table the task fails after its new session, as today.
@@ -207,7 +207,7 @@ async fn without_a_replacement_table_the_task_fails_as_before() {
     let state = rig.state();
     rig.stop().await.unwrap();
 
-    assert!(state.find_task(&tasks[0]).unwrap().member.past_holders().is_empty());
+    assert_eq!(state.find_task(&tasks[0]).unwrap().member.past_holders().len(), 0);
 }
 
 // Rule: the agent that took a task over starts the ladder afresh: one run without a status of its own is resumed in its

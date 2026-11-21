@@ -1,0 +1,12 @@
+# WORK OF A MEMBER THAT IS GONE
+
+Task {{task}} was given to a member of your team, {{agent}}. Its runs went bad, and neither a new session of it nor
+another agent could take the work over: it is yours now, and the member's task has stopped.
+
+The work is in the member's worktree, {{worktree}}, on the branch {{branch}}: the commits of the runs before are there
+and are not to be undone. The task the member was given is in this message before this section.
+
+1. Read it, then look at the worktree and the end of its branch's history.
+2. Finish the member's work as if you had it from the start: follow the rules of your role and of the task's prompt.
+3. Do not open a pull request for that work on your own: deliver it with the rest of the team's work, as your role says.
+4. End your turn with a `STATUS:` line.

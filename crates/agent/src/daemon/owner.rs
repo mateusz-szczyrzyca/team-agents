@@ -33,13 +33,15 @@ use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
 use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
+use agent_core::decide::replacement::{Activity, Candidate, Handover, ReplacementMode};
 use agent_core::history::{HistoryEvent, RunWhy};
-use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
-use agent_core::kinds::Role;
+use agent_core::ids::{AgentName, GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
+use agent_core::kinds::{Role, Tier};
 use agent_core::log::LogEvent;
 use agent_core::protocol::{
     Client, Command, Event, EventKind, Failure, FailureKind, Reply, RoundDetail, RoundTask, Target, TeamSummary,
 };
+use agent_core::state::Participant;
 use agent_core::state::{
     BeginRunError, CloseRoundError, InvalidTimestamp, NewRun, Question, QuestionError, RunEnd, RunError, SessionId,
     State, StateOpenRoundError, Team, Timestamp,
@@ -142,6 +144,24 @@ pub(crate) enum OwnerError {
     /// The permanent finding numbers have been used up.
     #[error("cannot number review findings")]
     FindingNumbers(#[from] agent_core::state::FindingNumbersExhausted),
+    /// A task whose runs went bad cannot be handed to another agent.
+    #[error("task {task} cannot be handed to another agent")]
+    HandOver {
+        /// The task.
+        task: TaskId,
+        /// What the state refused.
+        source: agent_core::state::HandOverError,
+    },
+    /// An item of a task that was handed over cannot be given to the agent that took it.
+    #[error("item {item} of task {task} cannot be given to the agent that took the task over")]
+    Reassign {
+        /// The task.
+        task: TaskId,
+        /// The item.
+        item: agent_core::ids::ItemId,
+        /// What the state refused.
+        source: agent_core::state::NotWorkedOn,
+    },
     /// The state cannot be saved.
     #[error("the state cannot be saved")]
     Store(#[from] StoreError),
@@ -365,6 +385,28 @@ struct Located {
     agent: String,
 }
 
+/// A member's task that the team's lead took over, as the lead's next run is told of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LeadWork {
+    /// The agent the work was taken from.
+    agent: String,
+    /// Its place in the team.
+    role: Role,
+}
+
+/// What follows a run of a task that went bad: the ladder's steps and the takeover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Continuation {
+    /// The session the task had is started again.
+    SameSession,
+    /// The task is started in a new session of the same agent.
+    NewSession,
+    /// Another agent took the task over.
+    HandedOver,
+    /// Nobody can take it: the task fails and the human decides.
+    Failed,
+}
+
 /// A run that went to its end, as its task is told of it.
 struct Ended<'a> {
     /// The task.
@@ -407,6 +449,8 @@ pub(super) struct Owner {
     hangs: HashMap<TaskId, u32>,
     /// Why a queued task of a team starts now; read when its run is made ready.
     reasons: HashMap<TaskId, Why>,
+    /// The member tasks the team's lead took over, by member task: its next run is told whose work it has.
+    lead_takes: HashMap<TaskId, LeadWork>,
     /// How often each task was woken for the newest message that waits for it.
     wake_counts: HashMap<TaskId, wakes::WakeCount>,
     /// What the log line of the run of a task that was woken says of the wake-up; read when the run starts.
@@ -492,6 +536,7 @@ impl Owner {
             wakes: HashMap::new(),
             hangs: HashMap::new(),
             reasons: HashMap::new(),
+            lead_takes: HashMap::new(),
             wake_counts: HashMap::new(),
             wake_notes: HashMap::new(),
             outbox: VecDeque::new(),
@@ -717,7 +762,8 @@ impl Owner {
                 autopilot: self.pulls.as_ref().map(Pulls::texts),
                 checks: self.pulls.as_ref().map(Pulls::checks),
             };
-            plan(&context, &mut self.parts.rng, &task, briefing.as_ref()).await
+            let lead_takes = self.lead_takes.get(&task);
+            plan(&context, &mut self.parts.rng, &task, briefing.as_ref(), lead_takes).await
         };
         let plan = match planned {
             Ok(plan) => plan,
@@ -756,6 +802,8 @@ impl Owner {
                         | StartProblem::Branch(_)
                         | StartProblem::Session(_)
                         | StartProblem::Autopilot(_)
+                        | StartProblem::Variable(_)
+                        | StartProblem::Render(_)
                         | StartProblem::Split(_) => {}
                     }
                 }
@@ -1300,8 +1348,10 @@ impl Owner {
             // After the resumes of its session the task goes up the ladder: a new session, or the human.
             AfterTurnLimit::Exhausted => {
                 match self.climb(task, role, Trouble::TurnLimit, u32::try_from(count).unwrap_or(u32::MAX))? {
-                    LadderStep::SameSession | LadderStep::NewSession => (TaskStatus::Queued, None),
-                    LadderStep::GiveUp => (TaskStatus::Failed, Some(Notice::TurnLimitExhausted { count, limit })),
+                    Continuation::SameSession | Continuation::NewSession | Continuation::HandedOver => {
+                        (TaskStatus::Queued, None)
+                    }
+                    Continuation::Failed => (TaskStatus::Failed, Some(Notice::TurnLimitExhausted { count, limit })),
                 }
             }
             AfterTurnLimit::NoSession => (TaskStatus::Failed, Some(Notice::TurnLimitNoSession)),
@@ -1325,12 +1375,12 @@ impl Owner {
             .member
             .bad_runs_since_renewal();
         let next = match self.climb(task, role, Trouble::NoStatus, count)? {
-            LadderStep::SameSession => {
+            Continuation::SameSession => {
                 self.reasons.insert(task.clone(), Why::NoStatus);
                 (TaskStatus::Queued, None)
             }
-            LadderStep::NewSession => (TaskStatus::Queued, None),
-            LadderStep::GiveUp => (TaskStatus::Failed, Some(Notice::NoStatus { exit })),
+            Continuation::NewSession | Continuation::HandedOver => (TaskStatus::Queued, None),
+            Continuation::Failed => (TaskStatus::Failed, Some(Notice::NoStatus { exit })),
         };
         Ok(next)
     }
@@ -1355,12 +1405,12 @@ impl Owner {
             strikes: watchdog.hang_strikes.get(),
         };
         let next = match self.climb(task, role, Trouble::Hang, count)? {
-            LadderStep::SameSession => (TaskStatus::Queued, None),
-            LadderStep::NewSession => {
+            Continuation::SameSession => (TaskStatus::Queued, None),
+            Continuation::NewSession | Continuation::HandedOver => {
                 self.hangs.remove(task);
                 (TaskStatus::Queued, None)
             }
-            LadderStep::GiveUp => {
+            Continuation::Failed => {
                 self.hangs.remove(task);
                 (TaskStatus::Failed, Some(notice))
             }
@@ -1378,12 +1428,12 @@ impl Owner {
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
             .member
             .bad_runs_since_renewal();
-        Ok(self.climb(task, located.role, Trouble::NoStatus, count)? == LadderStep::NewSession)
+        Ok(self.climb(task, located.role, Trouble::NoStatus, count)? == Continuation::NewSession)
     }
 
     /// The ladder's step for `task` of `role`, whose last `count` runs in a row went bad with `trouble`. A new session
     /// is recorded in the state at once, so that a restart before its run begins keeps it.
-    fn climb(&mut self, task: &TaskId, role: Role, trouble: Trouble, count: u32) -> Result<LadderStep, OwnerError> {
+    fn climb(&mut self, task: &TaskId, role: Role, trouble: Trouble, count: u32) -> Result<Continuation, OwnerError> {
         let config = &self.parts.settings.config;
         let member = self
             .parts
@@ -1404,24 +1454,29 @@ impl Owner {
             config.watchdog(),
             config.limits(),
         );
-        let step = if step == LadderStep::NewSession {
-            let now = Timestamp::now(&self.parts.clock)?;
-            // A clock set back during the run is not before its start: the run's end is clamped the same way.
-            let at = member
-                .runs()
-                .last()
-                .map(agent_core::state::Run::started_at)
-                .filter(|started| started.as_utc() > now.as_utc())
-                .unwrap_or(now);
-            let renewed = self.parts.state.renew_task(task, trouble, at)?;
-            // A task with no run to have gone bad has no step left.
-            if renewed {
-                LadderStep::NewSession
-            } else {
-                LadderStep::GiveUp
+        let step = match step {
+            LadderStep::SameSession => Continuation::SameSession,
+            LadderStep::NewSession => {
+                let now = Timestamp::now(&self.parts.clock)?;
+                // A clock set back during the run is not before its start: the run's end is clamped the same way.
+                let at = member
+                    .runs()
+                    .last()
+                    .map(agent_core::state::Run::started_at)
+                    .filter(|started| started.as_utc() > now.as_utc())
+                    .unwrap_or(now);
+                let renewed = self.parts.state.renew_task(task, trouble, at)?;
+                // A task with no run to have gone bad has no step left.
+                if renewed {
+                    Continuation::NewSession
+                } else {
+                    self.take_over(task, role, at)?
+                }
             }
-        } else {
-            step
+            LadderStep::GiveUp => {
+                let now = Timestamp::now(&self.parts.clock)?;
+                self.take_over(task, role, now)?
+            }
         };
         log_decision(
             "ladder",
@@ -1432,6 +1487,198 @@ impl Owner {
             &format!("{step:?}"),
         );
         Ok(step)
+    }
+
+    /// What follows a run of a task the ladder cannot renew again: another agent takes it over under `[replacement]`, or
+    /// the task fails and the human decides.
+    fn take_over(&mut self, task: &TaskId, role: Role, at: Timestamp) -> Result<Continuation, OwnerError> {
+        let config = &self.parts.settings.config;
+        let replacement = config.replacement();
+        let found = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let member = found.member;
+        let team_id = found.team.id().clone();
+        // A task is taken over as often as the file allows, and once by default; after that the human decides.
+        let allowed = replacement.replacements().get();
+        let used = u32::try_from(member.past_holders().len()).unwrap_or(u32::MAX);
+        if used >= allowed {
+            return Ok(Continuation::Failed);
+        }
+        // With no agent to take it over and the automatic mode, the task fails as before `[replacement]` existed.
+        if replacement.agents().is_empty() && replacement.mode() == ReplacementMode::Auto {
+            return Ok(Continuation::Failed);
+        }
+        let held = member.agent().clone();
+        let in_team = self.agents_in_team(&team_id);
+        let busy = self.agents_in_runs();
+        let candidates: Vec<(AgentName, Tier)> = replacement
+            .agents()
+            .iter()
+            .filter(|name| name.as_str() != held.name())
+            .filter(|name| !in_team.iter().any(|member| member == *name))
+            .map(|name| (name.clone(), self.tier_of(name)))
+            .collect();
+        let listed: Vec<Candidate<'_>> = candidates
+            .iter()
+            .map(|(name, tier)| Candidate {
+                agent: name,
+                tier: *tier,
+                activity: if busy.iter().any(|running| running == name) {
+                    Activity::InRun
+                } else {
+                    Activity::Idle
+                },
+            })
+            .collect();
+        let handover = agent_core::decide::replacement::choose(role, held.tier(), &listed, replacement.mode());
+        match handover {
+            Handover::Agent(name) => {
+                self.hand_task_over(task, name, &held, &team_id, at)?;
+                Ok(Continuation::HandedOver)
+            }
+            Handover::Lead => {
+                // The lead takes the member's work with its own task: the member's task stops, and the lead is told
+                // whose work it has in its next run.
+                self.give_to_lead(task, &held, &team_id, role);
+                Ok(Continuation::HandedOver)
+            }
+            // The question to the human is the next part of the item.
+            Handover::Human => Ok(Continuation::Failed),
+        }
+    }
+
+    /// Gives `task` to the agent `name`, with the items it works on, and restarts the ladder from the hand-over.
+    fn hand_task_over(
+        &mut self,
+        task: &TaskId,
+        name: &AgentName,
+        held: &Participant,
+        team_id: &TeamId,
+        at: Timestamp,
+    ) -> Result<(), OwnerError> {
+        let holder = self
+            .participant_of(name)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        self.parts
+            .state
+            .hand_over_task(task, holder, at)
+            .map_err(|source| OwnerError::HandOver {
+                task: task.clone(),
+                source,
+            })?;
+        // The items the task works on follow it: the agent that took it over holds them on the same branches.
+        let held_name: Option<AgentName> = held.name().parse().ok();
+        let mut items = Vec::new();
+        if let Some(team) = self.parts.state.team(team_id)
+            && let Some(old) = held_name
+        {
+            for progress in team.items() {
+                if let agent_core::state::ItemPhase::InProgress { assignee, branch }
+                | agent_core::state::ItemPhase::Fixing { assignee, branch, .. } = progress.phase()
+                    && assignee.as_str() == old.as_str()
+                {
+                    items.push((progress.id(), branch.clone()));
+                }
+            }
+        }
+        let mut team = self
+            .parts
+            .state
+            .team_mut(team_id)
+            .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+        for (id, branch) in items {
+            let mut change = team.item_mut(id).ok_or_else(|| OwnerError::LostItem {
+                team: team_id.clone(),
+                item: id,
+            })?;
+            change
+                .reassign(name.clone(), branch)
+                .map_err(|source| OwnerError::Reassign {
+                    task: task.clone(),
+                    item: id,
+                    source,
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Gives the work of `task`, held by `held` of team `team`, to the team's lead: the member's task stops and no two
+    /// agents work in its worktree; the lead's next run is told whose work it has.
+    fn give_to_lead(&mut self, task: &TaskId, held: &Participant, team: &TeamId, role: Role) {
+        self.lead_takes.insert(
+            task.clone(),
+            LeadWork {
+                agent: held.name().to_owned(),
+                role,
+            },
+        );
+        log_decision(
+            "take_over",
+            &format!("task={task}, team={team}, from={}, to=lead", held.name()),
+            "Lead",
+        );
+    }
+
+    /// The agents in the crew of `team` and its reviewers: an agent of the team is never offered the task of another.
+    fn agents_in_team(&self, team: &TeamId) -> Vec<AgentName> {
+        let Some(found) = self.parts.state.team(team) else {
+            return Vec::new();
+        };
+        found
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member)
+            .chain(found.reviewers().iter())
+            .filter_map(|member| member.agent().name().parse().ok())
+            .collect()
+    }
+
+    /// The place of the agent `name` in the configuration: its investigator table, its agent table, or a worker's.
+    fn tier_of(&self, name: &AgentName) -> Tier {
+        let config = &self.parts.settings.config;
+        if config
+            .investigators()
+            .keys()
+            .any(|investigator| investigator.as_str() == name.as_str())
+        {
+            return Tier::Investigator;
+        }
+        if config.normal_agents().iter().any(|agent| agent == name) {
+            return Tier::Normal;
+        }
+        Tier::Worker
+    }
+
+    /// The agent `name` as a participant, as the configuration lists it.
+    fn participant_of(&self, name: &AgentName) -> Option<agent_core::state::Participant> {
+        match self.tier_of(name) {
+            Tier::Investigator => name
+                .as_str()
+                .parse()
+                .ok()
+                .map(agent_core::state::Participant::Investigator),
+            Tier::Normal => Some(agent_core::state::Participant::Normal(name.clone())),
+            Tier::Worker => Some(agent_core::state::Participant::Worker(name.clone())),
+        }
+    }
+
+    /// The agents of the state that are in a run now: a task of theirs is running, or its run is going.
+    fn agents_in_runs(&self) -> Vec<AgentName> {
+        self.parts
+            .state
+            .teams()
+            .iter()
+            .flat_map(|team| {
+                let crew = team.crew().roster().into_iter().map(|(_, member)| member);
+                crew.chain(team.reviewers().iter())
+            })
+            .filter(|member| member.status() == TaskStatus::Running || member.current_run().is_some())
+            .filter_map(|member| member.agent().name().parse().ok())
+            .collect()
     }
 
     /// Records the questions the agent asked, when their file is usable.

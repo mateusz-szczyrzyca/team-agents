@@ -10,7 +10,7 @@ use agent_core::cli::{McpServerKind, RunMode, SessionId};
 use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValue, ModelName};
 use agent_core::decide::outcome::{NO_STATUS_RETRIES, consecutive_no_status};
 use agent_core::history::RunWhy;
-use agent_core::ids::{BranchName, GenerateIdError, InvalidBranchName, InvalidName, RunId, TaskId};
+use agent_core::ids::{AgentName, BranchName, GenerateIdError, InvalidBranchName, InvalidName, RunId, TaskId};
 use agent_core::kinds::Role;
 use agent_core::kinds::{CliKind, Tier};
 use agent_core::log::LogEvent;
@@ -125,6 +125,12 @@ pub(super) enum StartProblem {
     /// What the autopilot adds to the prompt cannot be made.
     #[error("cannot make what the autopilot tells the run")]
     Autopilot(#[from] SectionError),
+    /// A variable of a text of the harness is not valid.
+    #[error("a variable of a text of the harness is not valid")]
+    Variable(#[from] agent_core::prompt::VariablesError),
+    /// A text of the harness cannot be rendered.
+    #[error("cannot render a text of the harness")]
+    Render(#[from] agent_runtime::harness_prompts::RenderTextError),
 }
 
 /// What a run is made ready from.
@@ -151,6 +157,27 @@ pub(super) struct Context<'a> {
     pub(super) autopilot: Option<&'a AutopilotPrompts>,
     /// The texts of the checks before a review; `None` when the home has no autopilot.
     pub(super) checks: Option<&'a ChecksPrompts>,
+}
+
+/// `prompt` with the text a lead is told when it took a member's task over: the task, the agent it is taken from, its
+/// branch and its worktree.
+fn lead_takes_work(
+    ctx: &Context<'_>,
+    found: &TaskRef<'_>,
+    task: &TaskId,
+    work: &super::LeadWork,
+    prompt: &str,
+) -> Result<String, StartProblem> {
+    let held: AgentName = work.agent.parse().map_err(StartProblem::Name)?;
+    let branch = task_branch(&held, task).map_err(StartProblem::Branch)?;
+    let worktree = ctx.home.worktree_dir(found.team.repo(), task);
+    let values = Variables::new()
+        .with("task", task.as_str())?
+        .with("agent", work.agent.as_str())?
+        .with("branch", branch.as_str())?
+        .with("worktree", worktree.display().to_string())?;
+    let section = ctx.texts.render(HarnessPrompt::LeadTakesWork, &values)?;
+    Ok(format!("{}\n\n{}", prompt.trim_end(), section.trim_end()))
 }
 
 /// A run that is ready to start.
@@ -231,6 +258,7 @@ pub(super) async fn plan(
     rng: &mut impl Rng,
     task: &TaskId,
     briefing: Option<&BriefingFacts>,
+    lead_takes: Option<&crate::daemon::owner::LeadWork>,
 ) -> Result<Plan, StartProblem> {
     let found = ctx
         .state
@@ -288,6 +316,11 @@ pub(super) async fn plan(
     let prompt = super::split::with_correction(ctx.team_texts, team, role, prompt)?;
     let prompt = match briefing {
         Some(facts) => facts.render(ctx.texts, task, &prompt)?,
+        None => prompt,
+    };
+    // A lead whose team's member task was given to it is told whose work it has, after the task it is given.
+    let prompt = match lead_takes {
+        Some(work) => lead_takes_work(ctx, &found, task, work, &prompt)?,
         None => prompt,
     };
     let run = RunId::generate(ctx.clock, rng)?;
@@ -495,6 +528,15 @@ fn prompt_kind(member: &Member, session: Option<&SessionId>, config: &Config) ->
     if session.is_none() {
         return PromptKind::First;
     }
+    // An agent that took the task over has no session of its own to resume: it is given the whole task.
+    if member
+        .past_holders()
+        .last()
+        .is_some_and(|held| held.agent.name() != member.agent().name())
+        && member.last_session().is_none()
+    {
+        return PromptKind::First;
+    }
     let last_end = member.runs().last().and_then(|run| match run.state() {
         RunState::Ended { end, .. } => Some(end),
         RunState::Running => None,
@@ -568,10 +610,16 @@ pub(super) fn work_branch(team: &Team, member: &Member) -> Result<BranchName, St
         | ItemPhase::Approved { .. }
         | ItemPhase::Done { .. } => None,
     });
-    match item_branch {
-        Some(branch) => Ok(branch),
-        None => Ok(task_branch(&agent_name(member.agent())?, member.task())?),
+    if let Some(branch) = item_branch {
+        return Ok(branch);
     }
+    // The task's branch is the one its first agent was given: an agent that took the task over works on that same
+    // branch, not on one of its own, so that the work of the agent it replaced stays where it was put.
+    let first = member
+        .past_holders()
+        .first()
+        .map_or_else(|| member.agent(), |held| &held.agent);
+    Ok(task_branch(&agent_name(first)?, member.task())?)
 }
 
 /// A session ID in the form of a version 4 UUID, which Claude Code accepts for `--session-id`.
