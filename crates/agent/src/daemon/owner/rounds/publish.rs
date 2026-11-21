@@ -14,7 +14,7 @@ use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::{EventKind, Failure, Reply};
 use agent_core::state::{CommitId, GateRecord, ItemPhase, PullRequest, Timestamp};
 use agent_runtime::git::{Git, Revision};
-use agent_runtime::github::{NewPullRequest, PullRequestUpdate, Readiness, RepoSlug};
+use agent_runtime::github::{NewPullRequest, PullRequestUpdate, Readiness, RemotePullRequest, RepoSlug};
 use agent_runtime::process::error_chain;
 use tokio::sync::oneshot;
 
@@ -172,15 +172,45 @@ pub(super) struct Published {
     pub(super) items: Vec<ItemId>,
 }
 
-/// Makes `origin` carry `ready.tip` on `branch`: pushes it, unless `origin` has it there already (`carried`, what
-/// GitHub says the branch is at), which a push over a rewritten history would be refused for.
-async fn carry(ready: &Ready, branch: &BranchName, carried: Option<&CommitId>) -> Result<(), PublishError> {
-    if carried == Some(&ready.tip) {
-        ready.git.adopt_pushed(branch, &ready.tip).await?;
-    } else {
-        ready.git.push(branch).await?;
+/// Makes `origin` carry `ready.tip` on the branch decided by [`agent_core::decide::publish::publish_decision`]: pushes it, unless `origin` has it
+/// there already (`carried`, what GitHub says the branch is at).
+async fn carry(
+    ready: &Ready,
+    round: agent_core::decide::publish::RoundPublication,
+    branches: &agent_core::decide::publish::PublicationBranches<'_>,
+    carried: Option<&CommitId>,
+) -> Result<BranchName, PublishError> {
+    let remote_state = match carried {
+        Some(head) if head == &ready.tip => agent_core::decide::publish::RemoteState::Equal,
+        Some(head) => {
+            if ready
+                .git
+                .is_ancestor(&Revision::Commit(head.clone()), &Revision::Commit(ready.tip.clone()))
+                .await?
+            {
+                agent_core::decide::publish::RemoteState::Behind
+            } else {
+                agent_core::decide::publish::RemoteState::Diverged
+            }
+        }
+        None => agent_core::decide::publish::RemoteState::Behind,
+    };
+    let decided = agent_core::decide::publish::publish_decision(round, branches, remote_state);
+    match decided.action {
+        agent_core::decide::publish::PublishAction::UpToDate => {
+            ready.git.adopt_pushed(decided.branch, &ready.tip).await?;
+        }
+        agent_core::decide::publish::PublishAction::Push => {
+            ready.git.push_commit(decided.branch, &ready.tip).await?;
+        }
+        agent_core::decide::publish::PublishAction::Refused => {
+            return Err(PublishError::Refused {
+                branch: decided.branch.clone(),
+            });
+        }
     }
-    Ok(())
+    ready.git.branch_point_if_unheld(decided.branch, &ready.tip).await?;
+    Ok(decided.branch.clone())
 }
 
 /// The numbers of the items `publication` is for.
@@ -211,6 +241,37 @@ pub(super) async fn contained(git: &Git, items: &[Joining], tip: &CommitId) -> R
         }
     }
     Ok(found)
+}
+
+/// Decides and carries the publication branch for an open pull request.
+async fn carry_open_pull(
+    ready: &Ready,
+    head_branch: &BranchName,
+    ids: &[ItemId],
+    team: Option<&agent_core::state::Team>,
+    existing: Option<&RemotePullRequest>,
+) -> Result<BranchName, PublishError> {
+    let pr_branch = existing.as_ref().map(|found| &found.head_branch);
+    let part_branch = if ids.iter().any(|id| {
+        team.is_some_and(|team| {
+            returned_delivery(team, *id) || team.round_of(*id).is_some_and(|round| round.part().is_some())
+        })
+    }) {
+        Some(head_branch)
+    } else {
+        None
+    };
+    let branches = agent_core::decide::publish::PublicationBranches {
+        task: head_branch,
+        part: part_branch,
+        pr: pr_branch,
+    };
+    let round_pub = if part_branch.is_some() {
+        agent_core::decide::publish::RoundPublication::Part
+    } else {
+        agent_core::decide::publish::RoundPublication::Item
+    };
+    carry(ready, round_pub, &branches, existing.map(|found| &found.head)).await
 }
 
 impl Owner {
@@ -339,30 +400,7 @@ impl Owner {
     ) -> Result<Attempt, PublishError> {
         let lead = site.lead;
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        let independent = items_of(publication).iter().any(|id| {
-            self.parts.state.team(site.team).is_some_and(|team| {
-                team.items()
-                    .iter()
-                    .find(|item| item.id().to_string() == *id)
-                    .is_some_and(|item| {
-                        returned_delivery(team, item.id())
-                            || team.round_of(item.id()).is_some_and(|round| round.part().is_some())
-                    })
-            })
-        });
-        let source = if independent {
-            // The lead's own branch is named after the agent its task was first given to, whoever holds it now.
-            let first = self.parts.state.find_task(&lead.task).map_or_else(
-                || Ok(lead.agent.clone()),
-                |found| found.member.bus_agent().name().parse(),
-            )?;
-            crate::daemon::team::task_branch(&first, &lead.task)?
-        } else {
-            publication.head_branch.clone()
-        };
-        let Some(tip) = git.branch_tip(&source).await? else {
-            return Ok(Attempt::Nothing);
-        };
+        let tip = git.rev_parse(&Revision::Head).await?;
         // A gate of the harness that still runs decides nothing yet; the record is read after it, so that it is not older.
         let own = self.own_gate_state(&lead.task, &tip);
         if own == Own::Running {
@@ -407,6 +445,92 @@ impl Owner {
         }
     }
 
+    /// Finds the open pull request or creates a draft pull request for the publication.
+    async fn find_or_create_pull_request(
+        &mut self,
+        site: Site<'_>,
+        head_branch: &BranchName,
+        ids: &[ItemId],
+        ready: &Ready,
+        existing: Option<RemotePullRequest>,
+    ) -> Result<RemotePullRequest, PublishError> {
+        let Site { pulls, team, lead } = site;
+        let text = self.pull_text_of(pulls, team, &lead.repo, ids, &ready.record).await?;
+        let base = self.base_branch(&lead.repo)?;
+        let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
+        if let Some(mut found) = existing {
+            if found.head != ready.tip {
+                found.head = ready.tip.clone();
+                self.record_event(
+                    team,
+                    self.rounds_of_items(team, ids),
+                    HistoryEvent::PullPushed {
+                        pr: found.number,
+                        head: ready.tip.clone(),
+                    },
+                );
+            }
+            Ok(found)
+        } else {
+            let body = self.link_commits(&ready.git, &ready.tip, &text.body).await;
+            let created = github
+                .create_pull_request(&NewPullRequest {
+                    title: text.title,
+                    body,
+                    head: head_branch.clone(),
+                    base,
+                    readiness: Readiness::Draft,
+                })
+                .await?;
+            self.record_event(
+                team,
+                self.rounds_of_items(team, ids),
+                HistoryEvent::PullOpened {
+                    number: created.number,
+                    branch: head_branch.clone(),
+                    head: created.head.clone(),
+                    title: created.title.clone(),
+                    body: created.body.clone(),
+                },
+            );
+            Ok(created)
+        }
+    }
+
+    /// Finalizes description and marks draft PR ready for review.
+    async fn finalize_opened_pull(
+        &mut self,
+        site: Site<'_>,
+        ids: &[ItemId],
+        ready: &Ready,
+        remote: &RemotePullRequest,
+    ) -> Result<(), PublishError> {
+        let Site { pulls, team, lead } = site;
+        let text = self.pull_text_of(pulls, team, &lead.repo, ids, &ready.record).await?;
+        let body = self.disclosed(lead, ready, &text.body).await?;
+        let body = if body == remote.body {
+            body
+        } else {
+            refresh_harness_files(&ready.git, &body, &text.body).await
+        };
+        let body = self.link_commits(&ready.git, &ready.tip, &body).await;
+        let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
+        if body != remote.body {
+            let update = PullRequestUpdate {
+                body: Some(body),
+                ..PullRequestUpdate::default()
+            };
+            github.update_pull_request(remote.number, &update).await?;
+        }
+        github.mark_ready(remote.number).await?;
+        self.record_event(
+            team,
+            self.rounds_of_items(team, ids),
+            HistoryEvent::PullReady { pr: remote.number },
+        );
+        Ok(())
+    }
+
     /// Opens the pull request of the finished `items` whose branches `ready.tip` contains: pushes the branch, finds the
     /// pull request an earlier attempt opened or opens a draft, and marks it ready.
     async fn open_pull_request(
@@ -431,51 +555,14 @@ impl Owner {
                 Attempt::Nothing
             });
         }
-        let published_branch = self.publication_branch(team, &ids, head_branch, ready).await?;
-        let head_branch = published_branch.as_ref();
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
         let existing = github.find_open_pull_request(head_branch).await?;
-        carry(ready, head_branch, existing.as_ref().map(|found| &found.head)).await?;
-        let text = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record).await?;
-        let base = self.base_branch(&lead.repo)?;
-        let remote = if let Some(mut found) = existing {
-            if found.head != ready.tip {
-                found.head = ready.tip.clone();
-                self.record_event(
-                    team,
-                    self.rounds_of_items(team, &ids),
-                    HistoryEvent::PullPushed {
-                        pr: found.number,
-                        head: ready.tip.clone(),
-                    },
-                );
-            }
-            found
-        } else {
-            let body = self.link_commits(&ready.git, &ready.tip, &text.body).await;
-            let created = github
-                .create_pull_request(&NewPullRequest {
-                    title: text.title,
-                    body,
-                    head: head_branch.clone(),
-                    base,
-                    readiness: Readiness::Draft,
-                })
-                .await?;
-            // The opening is what GitHub made of it: its number, its head, its title and its body whole.
-            self.record_event(
-                team,
-                self.rounds_of_items(team, &ids),
-                HistoryEvent::PullOpened {
-                    number: created.number,
-                    branch: head_branch.clone(),
-                    head: created.head.clone(),
-                    title: created.title.clone(),
-                    body: created.body.clone(),
-                },
-            );
-            created
-        };
+        let published_branch =
+            carry_open_pull(ready, head_branch, &ids, self.parts.state.team(team), existing.as_ref()).await?;
+        let head_branch = &published_branch;
+        let remote = self
+            .find_or_create_pull_request(site, head_branch, &ids, ready, existing)
+            .await?;
         // The round goes to the reviewers only when the checks let it: until then the pull request stays a draft.
         let reviewing = Reviewing {
             items: &ids,
@@ -486,27 +573,7 @@ impl Owner {
         if let Some(held) = self.check_before_review(site, &reviewing, now).await? {
             return Ok(Attempt::Held(held));
         }
-        // The reviewers find the `TEST-FIX:` commits of the round listed in the description: the harness writes that.
-        let body = self.disclosed(lead, ready, &text.body).await?;
-        let body = if body == remote.body {
-            body
-        } else {
-            refresh_harness_files(&ready.git, &body, &text.body).await
-        };
-        let body = self.link_commits(&ready.git, &ready.tip, &body).await;
-        if body != remote.body {
-            let update = PullRequestUpdate {
-                body: Some(body),
-                ..PullRequestUpdate::default()
-            };
-            github.update_pull_request(remote.number, &update).await?;
-        }
-        github.mark_ready(remote.number).await?;
-        self.record_event(
-            team,
-            self.rounds_of_items(team, &ids),
-            HistoryEvent::PullReady { pr: remote.number },
-        );
+        self.finalize_opened_pull(site, &ids, ready, &remote).await?;
         Ok(Attempt::Published(Published {
             pr: PullRequest {
                 number: remote.number,
@@ -517,26 +584,6 @@ impl Owner {
             carried: remote.head,
             items: ids,
         }))
-    }
-
-    /// Keeps split parts and returned deliveries on independent branches at the integrated, gated tip.
-    async fn publication_branch<'a>(
-        &self,
-        team: &TeamId,
-        ids: &[ItemId],
-        head: &'a BranchName,
-        ready: &Ready,
-    ) -> Result<std::borrow::Cow<'a, BranchName>, PublishError> {
-        let independent = ids.iter().any(|id| {
-            self.parts.state.team(team).is_some_and(|team| {
-                returned_delivery(team, *id) || team.round_of(*id).is_some_and(|round| round.part().is_some())
-            })
-        });
-        if !independent {
-            return Ok(std::borrow::Cow::Borrowed(head));
-        }
-        ready.git.branch_point(head, &ready.tip).await?;
-        Ok(std::borrow::Cow::Borrowed(head))
     }
 
     /// Whether the update of a pull request whose items `fixing` are fixed waits: the lead's fix response to the pull
@@ -622,6 +669,44 @@ impl Owner {
             .collect()
     }
 
+    /// Updates the pull request body and comments for reviewers when a fix pass is published.
+    async fn update_fix_details(
+        &mut self,
+        site: Site<'_>,
+        pr: &PullRequest,
+        fixing: &[ItemId],
+        ids: &[ItemId],
+        ready: &Ready,
+        before: &RemotePullRequest,
+    ) -> Result<RemotePullRequest, PublishError> {
+        let Site { pulls, team, lead } = site;
+        let text = self.pull_text_of(pulls, team, &lead.repo, ids, &ready.record).await?;
+        let mut update = PullRequestUpdate::default();
+        if text.title != before.title {
+            update.title = Some(text.title);
+        }
+        let body = self.disclosed(lead, ready, &text.body).await?;
+        let body = refresh_harness_files(&ready.git, &body, &text.body).await;
+        let body = self.link_commits(&ready.git, &ready.tip, &body).await;
+        if body != before.body {
+            update.body = Some(body);
+        }
+        let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
+        if update != PullRequestUpdate::default() {
+            github.update_pull_request(pr.number, &update).await?;
+        }
+        let comment = pulls.texts.render(
+            AutopilotPrompt::PrUpdate,
+            &Variables::new()
+                .with("head", ready.tip.as_str())?
+                .with("pass", self.fix_passes_of(team, fixing).to_string())?
+                .with("gate", ready.record.summary())?,
+        )?;
+        let comment = self.link_commits(&ready.git, &ready.tip, &comment).await;
+        github.post_comment(pr.number, comment.trim_end()).await?;
+        Ok(github.get_pull_request(pr.number).await?)
+    }
+
     /// Updates the pull request `pr` whose items `fixing` were fixed: pushes the branch, tells the reviewers in a comment,
     /// and takes the finished `joining` items whose branches `ready.tip` contains in with it.
     async fn update_pull_request(
@@ -685,8 +770,18 @@ impl Owner {
         if let Some(held) = self.check_before_review(site, &reviewing, now).await? {
             return Ok(Attempt::Held(held));
         }
-        self.publication_branch(team, &ids, &pr.branch, ready).await?;
-        carry(ready, &pr.branch, Some(&before.head)).await?;
+        let branches = agent_core::decide::publish::PublicationBranches {
+            task: &pr.branch,
+            part: None,
+            pr: Some(&pr.branch),
+        };
+        carry(
+            ready,
+            agent_core::decide::publish::RoundPublication::FixPass,
+            &branches,
+            Some(&before.head),
+        )
+        .await?;
         self.record_event(
             team,
             self.rounds_of_items(team, &ids),
@@ -695,31 +790,7 @@ impl Owner {
                 head: ready.tip.clone(),
             },
         );
-        // The description follows the round: the items that joined, and the `TEST-FIX:` commits the round has now.
-        let text = self.pull_text_of(pulls, team, &lead.repo, &ids, &ready.record).await?;
-        let mut update = PullRequestUpdate::default();
-        if text.title != before.title {
-            update.title = Some(text.title);
-        }
-        let body = self.disclosed(lead, ready, &text.body).await?;
-        let body = refresh_harness_files(&ready.git, &body, &text.body).await;
-        let body = self.link_commits(&ready.git, &ready.tip, &body).await;
-        if body != before.body {
-            update.body = Some(body);
-        }
-        if update != PullRequestUpdate::default() {
-            github.update_pull_request(pr.number, &update).await?;
-        }
-        let comment = pulls.texts.render(
-            AutopilotPrompt::PrUpdate,
-            &Variables::new()
-                .with("head", ready.tip.as_str())?
-                .with("pass", self.fix_passes_of(team, fixing).to_string())?
-                .with("gate", ready.record.summary())?,
-        )?;
-        let comment = self.link_commits(&ready.git, &ready.tip, &comment).await;
-        github.post_comment(pr.number, comment.trim_end()).await?;
-        let after = github.get_pull_request(pr.number).await?;
+        let after = self.update_fix_details(site, pr, fixing, &ids, ready, &before).await?;
         Ok(Attempt::Published(Published {
             pr: pr.clone(),
             gated: ready.tip.clone(),

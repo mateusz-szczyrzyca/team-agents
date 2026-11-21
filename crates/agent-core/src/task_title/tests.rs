@@ -151,3 +151,72 @@ fn a_full_stop_inside_a_number_or_a_name_does_not_end_the_excerpt() {
     );
     assert!(excerpt.ends_with(&format!("here. {CUT_MARK}")), "{excerpt:?}");
 }
+
+#[test]
+fn a_brief_that_opens_with_a_short_desc_line_is_described_by_that_line_without_its_label() {
+    let cases = [
+        (
+            "Short desc: Checks ask the human once\n\nThis is an implementation task.",
+            "Checks ask the human once",
+        ),
+        ("Short desc: Fix it\nFix the typo.", "Fix it"),
+        ("Short desc: Fix it", "Fix it"),
+        ("\n  Short desc:   Fix it  \nFix the typo.", "Fix it"),
+        ("\u{feff}Short desc: Fix it\nFix the typo.", "Fix it"),
+        ("Short desc: One\nShort desc: Two\nBrief.", "One"),
+        (
+            "Short desc: Uses `agent log`. Twice.\nBrief.",
+            "Uses `agent log`. Twice.",
+        ),
+    ];
+
+    for (brief, expected) in cases {
+        assert_eq!(derived_short_desc(brief), expected, "{brief:?}");
+    }
+}
+
+#[test]
+fn a_short_desc_line_without_text_is_skipped_and_the_brief_after_it_describes_the_task() {
+    assert_eq!(derived_short_desc("Short desc:\nFix the typo. More."), "Fix the typo.");
+    assert_eq!(derived_short_desc("Short desc:   \n\nFix the typo."), "Fix the typo.");
+    assert_eq!(derived_short_desc("Short desc:"), NO_BRIEF_DESC);
+}
+
+#[test]
+fn a_short_desc_line_longer_than_the_limit_is_cut_with_a_mark_and_keeps_no_label() {
+    let brief = format!("Short desc: {}\nBrief.", "x".repeat(MAX_SHORT_DESC_CHARS + 1));
+
+    let desc = derived_short_desc(&brief);
+
+    assert_eq!(desc.chars().count(), MAX_SHORT_DESC_CHARS);
+    assert!(desc.starts_with('x') && desc.ends_with(CUT_MARK), "{desc:?}");
+}
+
+#[test]
+fn only_a_line_that_opens_the_brief_with_the_exact_label_names_the_task() {
+    let cases = [
+        ("Fix it.\n\nShort desc: later in the brief", "Fix it."),
+        (
+            "Short description of the change. More.",
+            "Short description of the change.",
+        ),
+        ("short desc: fix it. More.", "short desc: fix it."),
+    ];
+
+    for (brief, expected) in cases {
+        assert_eq!(derived_short_desc(brief), expected, "{brief:?}");
+    }
+}
+
+#[test]
+fn the_excerpt_of_a_brief_leaves_out_the_short_desc_line_that_opens_it() {
+    assert_eq!(
+        brief_excerpt("Short desc: Fix it\n\nFix the typo in the README. It has one."),
+        "Fix the typo in the README. It has one."
+    );
+    assert_eq!(brief_excerpt("Short desc: Fix it"), "");
+    assert_eq!(
+        brief_excerpt("Fix it.\n\nShort desc: later in the brief"),
+        "Fix it.\n\nShort desc: later in the brief"
+    );
+}

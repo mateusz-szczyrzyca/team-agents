@@ -153,10 +153,12 @@ fn such_a_state_has_a_derived_description_for_every_team_and_is_saved_as_it_was(
         .collect();
     let saved = state.to_json().unwrap();
 
-    assert_eq!(described[0], "Short desc: Original brief");
-    assert_eq!(described[1], "Short desc: Fix the typo in the README.");
+    // The line that such a state keeps in its brief names the task, without its label: `Task: Short desc: …` in a
+    // notification told the human nothing more than the description alone.
+    assert_eq!(described[0], "Original brief");
+    assert_eq!(described[1], "Fix the typo in the README.");
     assert!(
-        described[2].starts_with("Short desc: xxxx") && described[2].ends_with('…'),
+        described[2].starts_with("xxxx") && described[2].ends_with('…'),
         "{described:?}"
     );
     assert_eq!(State::from_json(&saved).unwrap(), state);

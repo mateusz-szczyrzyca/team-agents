@@ -18,7 +18,7 @@ use std::string::FromUtf8Error;
 use std::time::Duration;
 
 use agent_core::config::{AbsolutePath, EnvName, GitIdentity, InvalidValue};
-use agent_core::ids::{AgentName, BranchName};
+use agent_core::ids::{AgentName, BranchName, InvalidBranchName};
 use agent_core::repo_path::{InvalidRepoPath, RepoPath};
 use agent_core::state::{CommitId, InvalidCommitId};
 use tokio::process::Command;
@@ -183,6 +183,9 @@ pub enum GitOperation {
     /// `git worktree remove`.
     #[strum(serialize = "worktree remove")]
     WorktreeRemove,
+    /// `git worktree list`.
+    #[strum(serialize = "worktree list")]
+    WorktreeList,
     /// `git branch <name>`.
     #[strum(serialize = "branch create")]
     BranchCreate,
@@ -371,6 +374,14 @@ pub enum GitError {
         operation: GitOperation,
         /// Why the text is not a commit ID.
         source: InvalidCommitId,
+    },
+    /// What git printed for a branch is not a branch name.
+    #[error("git {operation} did not print a branch name")]
+    NotABranch {
+        /// What was asked.
+        operation: GitOperation,
+        /// Why the text is not a branch name.
+        source: InvalidBranchName,
     },
     /// What git printed for a directory is not an absolute path.
     #[error("git {operation} did not print an absolute path")]
@@ -684,6 +695,51 @@ impl Git {
         .map(drop)
     }
 
+    /// Moves `branch` to `commit` only when `branch` is not checked out in any worktree.
+    ///
+    /// Returns `true` when the branch was moved, or `false` when it was held by a worktree and left alone.
+    ///
+    /// # Errors
+    /// [`GitError::NotABranch`] when git printed a branch reference that is not a valid branch name;
+    /// [`GitError::NotUtf8`] when git printed non-UTF-8 output;
+    /// [`GitError::Failed`]; [`GitError::Run`].
+    pub async fn branch_point_if_unheld(&self, branch: &BranchName, commit: &CommitId) -> Result<bool, GitError> {
+        let held = self.held_branches().await?;
+        if held.contains(branch) {
+            return Ok(false);
+        }
+        self.branch_point(branch, commit).await?;
+        Ok(true)
+    }
+
+    /// Lists all local branches currently checked out in any worktree of this repository.
+    ///
+    /// # Errors
+    /// [`GitError::NotABranch`] when git printed a branch reference that is not a valid branch name;
+    /// [`GitError::NotUtf8`] when git printed non-UTF-8 output;
+    /// [`GitError::Failed`]; [`GitError::Run`].
+    pub async fn held_branches(&self) -> Result<HashSet<BranchName>, GitError> {
+        let operation = GitOperation::WorktreeList;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[arg("worktree"), arg("list"), arg("--porcelain")],
+            )
+            .await?;
+        let printed = text(operation, &captured.stdout)?;
+        let mut held = HashSet::new();
+        for line in printed.lines() {
+            if let Some(branch_ref) = line.strip_prefix("branch refs/heads/") {
+                let branch: BranchName = branch_ref
+                    .parse()
+                    .map_err(|source| GitError::NotABranch { operation, source })?;
+                held.insert(branch);
+            }
+        }
+        Ok(held)
+    }
+
     /// Deletes `branch`.
     ///
     /// # Errors
@@ -921,6 +977,29 @@ impl Git {
             });
         }
         self.keep(&Revision::Published(branch.clone()), &tip).await
+    }
+
+    /// Pushes `commit` directly to `branch` on `origin`.
+    ///
+    /// # Errors
+    /// [`GitError::PushRefused`] when `origin` has commits of the branch the harness did not push;
+    /// [`GitError::Failed`] when there is no `origin` or the credentials fail; [`GitError::Run`].
+    pub async fn push_commit(&self, branch: &BranchName, commit: &CommitId) -> Result<(), GitError> {
+        let operation = GitOperation::Push;
+        let reference = format!("{commit}:refs/heads/{branch}");
+        let args = [arg("push"), arg(REMOTE), arg(&reference)];
+        let captured = self.run(operation, Reach::Network, &args).await?;
+        if captured.exit != (ExitReport::Exited { code: 0 }) {
+            let error = failed(operation, &captured);
+            return Err(match error {
+                GitError::Failed { stderr, .. } if stderr.contains(REJECTED) => GitError::PushRefused {
+                    branch: branch.clone(),
+                    stderr,
+                },
+                other => other,
+            });
+        }
+        self.keep(&Revision::Published(branch.clone()), commit).await
     }
 
     /// Takes `tip` as pushed by the harness: `origin` has it on `branch` already, whoever pushed it there, and it is

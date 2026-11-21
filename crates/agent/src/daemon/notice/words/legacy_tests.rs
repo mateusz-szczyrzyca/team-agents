@@ -31,15 +31,11 @@ fn a_notification_about_a_task_of_a_state_from_before_carries_a_derived_descript
     let notification = layout_notification(NoticeKind::Failed, &context, "It failed").unwrap();
 
     let lines: Vec<&str> = notification.body().lines().collect();
-    assert_eq!(
-        lines.get(2).copied(),
-        Some("Task: Short desc: Original brief"),
-        "{lines:?}"
-    );
+    assert_eq!(lines.get(2).copied(), Some("Task: Original brief"), "{lines:?}");
     assert!(
         notification
             .body()
-            .ends_with("TASK (task-20261111-193001-k3x9):\nShort desc: Original brief\n\nBuild the thing."),
+            .ends_with("TASK (task-20261111-193001-k3x9):\nBuild the thing."),
         "{}",
         notification.body()
     );

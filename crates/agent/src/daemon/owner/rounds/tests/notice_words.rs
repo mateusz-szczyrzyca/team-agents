@@ -309,7 +309,7 @@ async fn a_daemon_that_starts_on_a_state_from_before_the_line_derives_the_descri
     let summary = listed_team(&rig, None).await;
     rig.stop().await.unwrap();
 
-    assert_eq!(summary.short_desc.as_deref(), Some("Short desc: Original brief"));
+    assert_eq!(summary.short_desc.as_deref(), Some("Original brief"));
 }
 
 #[tokio::test]
@@ -366,16 +366,10 @@ async fn a_daemon_that_goes_on_with_a_state_from_before_the_line_tells_the_human
     let notification = rig.notification_with("is merged").await;
     rig.stop().await.unwrap();
 
-    assert!(
-        notification.contains("\nTask: Short desc: Original brief\n"),
-        "{notification}"
-    );
+    assert!(notification.contains("\nTask: Original brief\n"), "{notification}");
     assert!(notification.contains("\n\n1.1 The first item\n\n"), "{notification}");
     assert!(
-        notification.ends_with(&format!(
-            "\n\nTASK ({}):\nShort desc: Original brief\n\nBuild the thing.",
-            tasks[0]
-        )),
+        notification.ends_with(&format!("\n\nTASK ({}):\nBuild the thing.", tasks[0])),
         "{notification}"
     );
 }

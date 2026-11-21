@@ -28,25 +28,36 @@ const BULLETS: [char; 3] = ['-', '*', '+'];
 /// The byte order mark some editors put at the start of a file; it is not part of the text.
 const BYTE_ORDER_MARK: char = '\u{feff}';
 
+/// The label of the line that gives a task's description. In a task list of this version it is a line of the header;
+/// a task list stored by a version that did not know the line keeps it as the first line of its brief.
+pub(crate) const SHORT_DESC_LABEL: &str = "Short desc:";
+
 /// The characters of an excerpt that a cut takes for its mark and the space before it.
 const EXCERPT_MARK_ROOM: usize = 2;
 
-/// The description to show for a task whose task list names none: the first sentence of `brief`, without its heading
-/// or list mark, cut to [`MAX_SHORT_DESC_CHARS`] characters with [`CUT_MARK`].
+/// The description to show for a task whose task list names none: the text of the `Short desc:` line when `brief`
+/// opens with one, otherwise the first sentence of `brief` without its heading or list mark; cut to
+/// [`MAX_SHORT_DESC_CHARS`] characters with [`CUT_MARK`].
 #[must_use]
 pub fn derived_short_desc(brief: &str) -> String {
-    let sentence = first_sentence(brief);
+    let (named, rest) = split_short_desc_line(brief);
+    if let Some(desc) = named {
+        return cut(desc, MAX_SHORT_DESC_CHARS);
+    }
+    let sentence = first_sentence(rest);
     if sentence.is_empty() {
         return NO_BRIEF_DESC.to_owned();
     }
     cut(&sentence, MAX_SHORT_DESC_CHARS)
 }
 
-/// The first sentences of `brief`: the brief whole when it fits in [`MAX_EXCERPT_CHARS`] characters, otherwise its
-/// sentences up to the last one that fits, or a cut inside the first, then [`CUT_MARK`].
+/// The first sentences of `brief`, without the `Short desc:` line when it opens with one: the brief whole when it
+/// fits in [`MAX_EXCERPT_CHARS`] characters, otherwise its sentences up to the last one that fits, or a cut inside
+/// the first, then [`CUT_MARK`].
 #[must_use]
 pub fn brief_excerpt(brief: &str) -> String {
-    let text = brief.trim_start_matches(BYTE_ORDER_MARK).trim();
+    let (_, rest) = split_short_desc_line(brief);
+    let text = rest.trim_start_matches(BYTE_ORDER_MARK).trim();
     if text.chars().count() <= MAX_EXCERPT_CHARS {
         return text.to_owned();
     }
@@ -58,6 +69,18 @@ pub fn brief_excerpt(brief: &str) -> String {
         Some(end) => format!("{} {CUT_MARK}", text.get(..end).unwrap_or_default()),
         None => cut(text, MAX_EXCERPT_CHARS),
     }
+}
+
+/// The text of the `Short desc:` line that opens `brief`, and the brief after that line. A line without text names
+/// nothing and is left out all the same; a brief that opens with another line is returned whole.
+fn split_short_desc_line(brief: &str) -> (Option<&str>, &str) {
+    let text = brief.trim_start_matches(BYTE_ORDER_MARK).trim_start();
+    let Some(after_label) = text.strip_prefix(SHORT_DESC_LABEL) else {
+        return (None, brief);
+    };
+    let (line, rest) = after_label.split_once('\n').unwrap_or((after_label, ""));
+    let desc = line.trim();
+    ((!desc.is_empty()).then_some(desc), rest)
 }
 
 /// The first sentence of `brief` on one line, with the heading or list mark of its first line taken off. A sentence

@@ -5,13 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.52.0 — 21.11.2026 — PR #170
+## 0.52.0 — 21.11.2026 — PR #169
 
-### New features
-- [agent] [agent-core] `agent log` writes its times as a person reads them: in the zone of this machine, with its offset at that moment, in one form. For example `2026-11-21 17:28:53 +01:00 command: git status` instead of `2026-11-21T16:28:53Z command: git status`. The rows, steps, story and follow all show the same moment the same way; `--json` and the files of the harness stay in UTC (RFC 3339).
-- [agent] `agent log --utc` prints the times as the files hold them, RFC 3339 with `Z`, as before this version.
-- [agent] [agent-core] A `--since` or `--until` without a zone is read in the zone of this machine: `agent log --round <round> --since "2026-11-21 17:29"`. With `Z` or an offset it is read as written.
-- [agent] **Action:** a script that reads the text of `agent log` must read the new form, or use `agent log --utc` to keep the old text.
+### Bug fixes
+- [agent] [agent-core] [agent-runtime] A split pull request kept a stale gate commit after a conflict pass, and a checked-out part branch or detached worktree caused publication to fail or switch branches: publication now pushes the passing gated commit directly to the pull request branch without forcing or changing worktree checkouts, and refuses diverged remote branches.
+- [agent] Harness prompts and documentation instruct agents and leads not to switch branches in their worktrees during round execution.
+- [agent] The harness waits for its running gate to finish before reading the result; previously a stale record could send the lead back before that gate finished.
 
 ## 0.51.0 — 21.11.2026 — PR #168
 
@@ -40,6 +39,9 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Enhancements
 - [agent] [agent-core] **Action:** the text of the notifications changed (new order of the fields, new lines): a script that reads them must follow. The socket protocol only gained the optional field `short_desc` in version 6, which older negotiated protocols do not carry; replace the CLI together with the daemon.
+
+### Bug fixes
+- [agent-core] A team started before 0.51.0 from a task file that already had a `Short desc:` line was named with the label in notifications and in `agent status` (`Task: Short desc: Checks ask…`): now only the description is shown (`Task: Checks ask…`), and the excerpt under `TASK` no longer repeats the line.
 
 ## 0.50.0 — 21.11.2026 — PR #167
 
