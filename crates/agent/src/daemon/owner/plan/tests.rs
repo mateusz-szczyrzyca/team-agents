@@ -846,3 +846,39 @@ async fn reopened_step_is_checked_again_when_marked_done() {
         "changed step must be re-judged as Mismatch against missing.txt, not left as Confirmed"
     );
 }
+
+#[test]
+fn edited_recovered_steps_discard_every_previous_judgement_state() {
+    use agent_core::plan::{judge::JudgementState, parse_plan};
+    use agent_runtime::history::JudgementRecord;
+    use std::collections::HashMap;
+
+    let old = parse_plan(FINISHED).unwrap();
+    let changed = parse_plan(&FINISHED.replace("Do it", "Write the guide")).unwrap();
+    let id = "1.1".parse::<ItemId>().unwrap();
+    let run = "run-20261121-010000-abcd".parse::<agent_core::ids::RunId>().unwrap();
+    let earlier = HashMap::from([(run.clone(), old.clone())]);
+    for state in [
+        JudgementState::Confirmed,
+        JudgementState::Declared,
+        JudgementState::Mismatch,
+    ] {
+        let judgements = HashMap::from([(
+            id,
+            JudgementRecord {
+                task: task(1),
+                team: team_id(1),
+                run: Some(run.clone()),
+                at: at(0),
+                step: id,
+                state,
+                check: None,
+                reason: Some("previous reason".to_owned()),
+                duration_ms: 0,
+                output_path: None,
+            },
+        )]);
+        let summary = super::step_summary(changed.step(&id).unwrap(), &judgements, &earlier);
+        assert_eq!((summary.state, summary.reason), (None, None), "{state:?}");
+    }
+}
