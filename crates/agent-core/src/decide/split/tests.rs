@@ -46,3 +46,51 @@ fn next_parts_rejects_unknown_merged_keys_instead_of_losing_progress() {
         Err(UnknownMergedPart { part: key("z") })
     );
 }
+
+/// A round of `item` bound to `part` in the state `state`, which is the JSON of the part's state.
+fn round_of(item: &str, id: &str, part: &serde_json::Value, life: &serde_json::Value) -> crate::state::Round {
+    serde_json::from_value(serde_json::json!({
+        "id": id, "item": item, "opened_at": "2026-11-21T10:00:00Z", "state": life, "part": part,
+    }))
+    .expect("round")
+}
+
+#[test]
+fn merged_parts_counts_only_rounds_of_the_item_that_carry_a_part_pull_request() {
+    let pr = serde_json::json!({
+        "number": 7, "branch": "agents/claude-1/1.1a", "opened_at": "2026-11-21T10:30:00Z",
+    });
+    let open = serde_json::json!({"status": "open"});
+    let closed = serde_json::json!({"status": "closed", "at": "2026-11-21T11:00:00Z", "how": "merged"});
+    let given_up = serde_json::json!({"status": "closed", "at": "2026-11-21T11:00:00Z", "how": "abandoned"});
+    let rounds = [
+        round_of(
+            "1.1",
+            "round-20261121-100000-aaaa",
+            &serde_json::json!({"status": "merged", "key": "a", "pr": pr}),
+            &closed,
+        ),
+        round_of(
+            "1.1",
+            "round-20261121-100100-bbbb",
+            &serde_json::json!({"status": "working", "key": "b"}),
+            &given_up,
+        ),
+        round_of(
+            "1.1",
+            "round-20261121-100200-cccc",
+            &serde_json::json!({"status": "working", "key": "c"}),
+            &open,
+        ),
+        round_of(
+            "1.2",
+            "round-20261121-100300-dddd",
+            &serde_json::json!({"status": "merged", "key": "a", "pr": pr}),
+            &closed,
+        ),
+    ];
+
+    let merged = merged_parts(&rounds, "1.1".parse().expect("item"));
+
+    assert_eq!(merged, BTreeSet::from([key("a")]));
+}
