@@ -308,3 +308,40 @@ async fn a_failed_investigator_item_is_not_given_to_a_normal_coordinator() {
     );
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_later_investigator_part_moves_from_the_normal_member_to_the_coordinator() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "proposal:later,integrate"),
+            normal("claude-1", "work,ask-here"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let dir = rig.home.root().join("fake-proposals");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("later.json"), serde_json::json!({
+        "parent":"1.1", "scope":{"kind":"unchanged"}, "parts":[
+            {"title":"First", "delivers":"First document", "checks":"Read first", "depends_on":[], "estimate":{"amount":100,"unit":"lines"}},
+            {"title":"Second", "delivers":"Second document", "checks":"Read second", "depends_on":["a"], "tier":"investigator", "estimate":{"amount":100,"unit":"lines"}}
+        ]
+    }).to_string()).unwrap();
+    rig.start().await;
+    let (id, _tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    let state = rig.state_where("later investigator part assigned", |state| {
+        let team = state.team(&id).unwrap();
+        team.rounds().len() == 2 && matches!(team.items()[0].phase(), ItemPhase::InProgress {assignee, ..} if assignee.as_str() == "inv-lead")
+    }).await;
+    let team = state.team(&id).unwrap();
+    assert_eq!(team.rounds().len(), 2);
+    assert_eq!(team.rounds()[1].part().unwrap().to_string(), "b");
+    assert_eq!(team.rounds()[0].part_pull_request().unwrap().number.get().get(), 1);
+    assert!(matches!(team.items()[0].phase(), ItemPhase::InProgress {assignee, ..} if assignee.as_str() == "inv-lead"));
+    rig.stop().await.unwrap();
+}
