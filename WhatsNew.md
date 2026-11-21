@@ -7,9 +7,9 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ## 0.51.0 — 21.11.2026 — PR #168
 
-### New features
-- [agent] [agent-runtime] A round's gated work reaches the branch of its pull request without forcing, even when the branch or another branch is checked out in a worktree, and after a conflict pass of a part of a split.
-- [agent] Branch preservation instructions prevent tasks from switching their worktrees away from their active branches.
+### Bug fixes
+- [agent] [agent-core] [agent-runtime] Publication now pushes the passing gated commit directly to the pull request branch without switching or forcing checked-out worktree branches, correctly selects the existing PR branch across publication kinds, and refuses diverged remote heads.
+- [agent] Prompts and documentation instruct agents and leads not to switch branches in their worktrees during round execution.
 
 ## 0.50.0 — 21.11.2026 — PR #167
 
