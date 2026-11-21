@@ -180,3 +180,70 @@ fn duration_millis_overflow_fails_with_duration_overflow() {
     let err = super::duration_millis(std::time::Duration::MAX).unwrap_err();
     assert!(matches!(err, super::CheckError::DurationOverflow { .. }));
 }
+
+#[tokio::test]
+async fn check_command_confirms_on_success_and_logs_output() {
+    let env = TestEnv::new();
+    let step = parse_first_step("[x] 1.1 First item\n    Check: echo check-success-output\n");
+    let ctx = env.context(60, &[]);
+    let result = execute_step_check(&ctx, &step).await.unwrap();
+
+    assert_eq!(result.state, JudgementState::Confirmed);
+    assert_eq!(result.check_line.as_deref(), Some("echo check-success-output"));
+    assert_eq!(result.output_path.as_deref(), Some("checks/1.1.log"));
+    let log_content = fs::read_to_string(env.task_dir.join("checks/1.1.log")).unwrap();
+    assert!(log_content.contains("check-success-output"));
+}
+
+#[tokio::test]
+async fn check_command_mismatches_on_failure_with_tail() {
+    let env = TestEnv::new();
+    let step = parse_first_step("[x] 1.1 First item\n    Check: /bin/sh -c 'echo failure-detail; exit 2'\n");
+    let ctx = env.context(60, &[]);
+    let result = execute_step_check(&ctx, &step).await.unwrap();
+
+    assert_eq!(result.state, JudgementState::Mismatch);
+    assert!(result.reason.as_deref().unwrap().contains("exit code 2"));
+    assert_eq!(result.output_path.as_deref(), Some("checks/1.1.log"));
+    assert!(result.tail.contains("failure-detail"));
+}
+
+#[tokio::test]
+async fn check_command_mismatches_on_timeout() {
+    let env = TestEnv::new();
+    let step = parse_first_step("[x] 1.1 First item\n    Check: sleep 5\n");
+    let ctx = env.context(1, &[]);
+    let result = execute_step_check(&ctx, &step).await.unwrap();
+
+    assert_eq!(result.state, JudgementState::Mismatch);
+    assert!(result.reason.as_deref().unwrap().contains("timed out after 1 seconds"));
+}
+
+#[tokio::test]
+async fn check_command_disabled_when_seconds_zero() {
+    let env = TestEnv::new();
+    let step = parse_first_step("[x] 1.1 First item\n    Check: echo hello\n");
+    let ctx = env.context(0, &[]);
+    let result = execute_step_check(&ctx, &step).await.unwrap();
+
+    assert_eq!(result.state, JudgementState::Declared);
+    assert!(result.output_path.is_none());
+}
+
+#[tokio::test]
+async fn check_command_receives_environment_and_has_no_stdin() {
+    let env = TestEnv::new();
+    let step = parse_first_step("[x] 1.1 First item\n    Check: test \"$MY_VAR\" = \"magic\" && ! read dummy\n");
+    let envs = [("MY_VAR".to_owned(), "magic".to_owned())];
+    let ctx = CheckContext {
+        worktree: &env.worktree,
+        task_dir: &env.task_dir,
+        run: Some(&env.run),
+        check_seconds: 60,
+        check_refuse: &[],
+        envs: &envs,
+    };
+    let result = execute_step_check(&ctx, &step).await.unwrap();
+
+    assert_eq!(result.state, JudgementState::Confirmed);
+}
