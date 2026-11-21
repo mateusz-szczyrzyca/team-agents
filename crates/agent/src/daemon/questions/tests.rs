@@ -264,7 +264,7 @@ async fn the_notification_of_incomplete_answers_names_the_agent_the_task_the_fil
         cli: Some(agent_core::kinds::CliKind::Claude),
         model: None,
         time: crate::fixtures::at(0),
-        offset: time::UtcOffset::UTC,
+        zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         task: &task_id,
         team: None,
         pr: None,

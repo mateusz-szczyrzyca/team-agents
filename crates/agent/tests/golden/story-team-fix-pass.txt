@@ -371,7 +371,7 @@ SUMMARY: fixed
 <time>  pull request #1 merged as <commit-3>
 <time>  round <round-1> closed: merged
 <time>  notification sent: 🟣 example (task <task-4>)
-  ----- notification (460 bytes) -----
+  ----- notification (467 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.
@@ -392,7 +392,7 @@ Build the thing.
   ----- end of notification -----
 <time>  team ended
 <time>  notification sent: ✅ example (task <task-4>)
-  ----- notification (461 bytes) -----
+  ----- notification (468 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.

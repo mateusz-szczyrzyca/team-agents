@@ -680,7 +680,7 @@ async fn execute_debug_cmd(
         }
     };
     let location = agent_runtime::debug::DebugLocation {
-        local_offset: environment.local_offset(),
+        zone: environment.zone(),
         checkout,
     };
     debug(&home, args.into(), location, out)

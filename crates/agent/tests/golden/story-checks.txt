@@ -162,7 +162,7 @@ Write `allow` to let the round go to its review as it is; the harness records it
 **Verdict:**
   ----- end of questions -----
 <time>  notification sent: ❓ example (task <task-4>)
-  ----- notification (541 bytes) -----
+  ----- notification (548 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.

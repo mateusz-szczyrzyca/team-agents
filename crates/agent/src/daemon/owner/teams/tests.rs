@@ -269,10 +269,11 @@ impl Fixture {
 
     fn setup(&self) -> DaemonSetup {
         DaemonSetup {
+            local_offset: time::UtcOffset::UTC,
             home: self.home.clone(),
             prompts_dir: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
             clock: SharedClock::new(self.clock.clone()),
-            local_offset: time::UtcOffset::UTC,
+            zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
             timings: Some(timings()),
             agent_binary_dir: None,
         }

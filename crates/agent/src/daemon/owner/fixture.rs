@@ -241,7 +241,7 @@ impl Daemon {
             rng: StdRng::seed_from_u64(1),
             notices,
             events,
-            local_offset: time::UtcOffset::UTC,
+            zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
             tick: Duration::from_millis(20),
             store,
             settings: Arc::clone(&settings),
@@ -346,10 +346,11 @@ impl Daemon {
     async fn try_start(&mut self, deadline: Instant) -> Result<JoinHandle<Result<(), DaemonError>>, DaemonError> {
         self.shutdown = CancellationToken::new();
         let setup = DaemonSetup {
+            local_offset: time::UtcOffset::UTC,
             home: self.home.clone(),
             prompts_dir: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
             clock: SharedClock::new(self.clock.clone()),
-            local_offset: time::UtcOffset::UTC,
+            zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
             timings: Some(Timings {
                 tick: Duration::from_millis(20),
                 run: RunTimings {

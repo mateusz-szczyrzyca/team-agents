@@ -44,7 +44,7 @@ impl Owner {
     ) -> Result<(), OwnerError> {
         let now = Timestamp::now(&self.parts.clock)?;
         let outlook = outlook_of(error);
-        let offset = self.parts.local_offset;
+        let offset = self.parts.zone;
         let (failure, wait) =
             self.watch
                 .github_waits
@@ -282,7 +282,7 @@ impl Owner {
                 .or_else(|| {
                     self.watch
                         .github_waits
-                        .line_of(team.id(), round.id(), self.parts.local_offset)
+                        .line_of(team.id(), round.id(), self.parts.zone)
                         .map(|_| Obligation::Human)
                 })
         };
