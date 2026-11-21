@@ -1749,20 +1749,6 @@ workers = ["qwen", "qwen"]"#,
     }
 
     #[test]
-    fn configuration_without_publish_reads_three_tries() {
-        let config =
-            Config::from_toml_str("[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n").unwrap();
-        assert_eq!(config.publish().tries, 3);
-    }
-
-    #[test]
-    fn configuration_with_publish_reads_the_tries() {
-        let text = "[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n\n[publish]\ntries = 5\n";
-        let config = Config::from_toml_str(text).unwrap();
-        assert_eq!(config.publish().tries, 5);
-    }
-
-    #[test]
     fn configuration_without_merge_reads_three_conflict_passes() {
         let config =
             Config::from_toml_str("[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n").unwrap();

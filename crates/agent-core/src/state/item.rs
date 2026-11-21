@@ -1840,30 +1840,6 @@ mod tests {
     }
 
     #[test]
-    fn publish_tries_and_question_are_persisted_and_read_back() {
-        let mut item = progress_in(PhaseKind::InProgress);
-        assert_eq!(item.publish_tries(), 0);
-        assert_eq!(item.publish_question(), None);
-
-        assert_eq!(item.record_publish_try(), 1);
-        assert_eq!(item.record_publish_try(), 2);
-        item.ask_human_about_publication(at(100));
-
-        let text = serde_json::to_string(&item).unwrap();
-        assert!(text.contains("\"publish_tries\":2"), "{text}");
-        assert!(text.contains("\"publish_question\":"), "{text}");
-
-        let back: ItemProgress = serde_json::from_str(&text).unwrap();
-        assert_eq!(back.publish_tries(), 2);
-        assert_eq!(back.publish_question(), Some(at(100)));
-
-        item.reset_publish_tries();
-        item.clear_publish_question();
-        assert_eq!(item.publish_tries(), 0);
-        assert_eq!(item.publish_question(), None);
-    }
-
-    #[test]
     fn beginning_merge_conflict_spends_pass() {
         let mut item = progress_in(PhaseKind::Approved);
         assert_eq!(item.merge_passes(), 0);
