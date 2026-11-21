@@ -1636,10 +1636,10 @@ async fn the_answer_about_commits_is_kept_across_a_restart_of_the_daemon() {
     assert!(!rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists());
 }
 
-// Rule: a refusal is told to the team once and is kept: the same commits are neither asked nor sent back again.
+// Rule: a refusal about commits is kept and sends nothing back: the team cannot undo a commit that is in the branch.
 #[tokio::test]
-async fn a_refusal_about_commits_is_told_once_and_kept() {
-    let mut rig = checking_rig("script:two-edits,questions,done,script:more-code", 2, SILENT, SILENT).await;
+async fn a_refusal_about_commits_sends_nothing_back_and_is_kept() {
+    let mut rig = checking_rig("script:two-edits,questions,done", 2, SILENT, SILENT).await;
     frozen_test_scripts(&rig);
     rig.start().await;
 
@@ -1651,15 +1651,20 @@ async fn a_refusal_about_commits_is_told_once_and_kept() {
     );
     answer(&rig, &tasks[0], 1, "refuse").await;
     reviews_asked(&rig).await;
-    let told = rig.prompt(&tasks[0], 4).await;
+    let answered = rig.prompt(&tasks[0], 3).await;
     rig.stop().await.unwrap();
 
-    assert!(told.contains("THE ROUND IS NOT READY FOR ITS REVIEW"), "{told}");
-    assert!(told.contains("refused to allow"), "{told}");
+    assert!(
+        answered.contains("THE HUMAN ANSWERED THE QUESTIONS OF THE ROUND CHECKS"),
+        "{answered}"
+    );
+    assert!(!answered.contains("THE ROUND IS NOT READY"), "{answered}");
     let kept = record(&rig, &tasks[0]).await;
     assert_eq!(kept.refused_of(&["1.1".parse().unwrap()]), edits_of(&[&first, &second]));
     assert_eq!(kept.allowed_of(&["1.1".parse().unwrap()]), []);
-    assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 1);
+    assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
+    assert_eq!(kept.sent, None);
+    assert_eq!(rig.runs(&tasks[0]), 3);
     assert!(!rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists());
     assert!(!rig.github.pulls()[0].draft);
 }

@@ -100,13 +100,13 @@ mod checks_record_commits {
     }
 
     #[test]
-    fn taking_back_an_allowance_does_not_take_back_a_refusal() {
+    fn taking_back_an_allowance_takes_back_no_commit_and_no_refusal() {
         let mut record = ChecksRecord::default();
         record.answered(&[item()], &[commit('a', "tests/a.rs")], &[commit('b', "tests/a.rs")]);
 
         record.revoke(&[item()], &[commit('a', "tests/a.rs"), commit('b', "tests/a.rs")]);
 
-        assert_eq!(record.allowed_of(&[item()]), []);
+        assert_eq!(record.allowed_of(&[item()]), [commit('a', "tests/a.rs")]);
         assert_eq!(record.refused_of(&[item()]), [commit('b', "tests/a.rs")]);
     }
 

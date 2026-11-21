@@ -111,23 +111,23 @@ mod round_checks_commits {
                 step: ask(AskReason::OnlyTheHumanMayAllow),
             },
             Row {
-                name: "a commit refused in this answer: the team is told once, and a pass is counted",
+                name: "a commit refused in this answer holds nothing back: the team cannot undo a commit",
                 passes: 0,
                 issues: vec![],
                 refused: vec![],
                 commits: refused_now(1),
-                step: back(1),
+                step: ChecksStep::StartReviews,
             },
             Row {
-                name: "a commit refused in this answer after one pass",
+                name: "a commit refused in this answer after one pass spends no pass either",
                 passes: 1,
                 issues: vec![],
                 refused: vec![],
                 commits: refused_now(2),
-                step: back(2),
+                step: ChecksStep::StartReviews,
             },
             Row {
-                name: "a refused commit and one to ask: the team is told first",
+                name: "a refused commit and one to ask: the human is asked, nobody is sent back",
                 passes: 0,
                 issues: vec![],
                 refused: vec![],
@@ -135,7 +135,7 @@ mod round_checks_commits {
                     to_ask: 1,
                     refused_now: 1,
                 },
-                step: back(1),
+                step: ask(AskReason::OnlyTheHumanMayAllow),
             },
         ]
     }
