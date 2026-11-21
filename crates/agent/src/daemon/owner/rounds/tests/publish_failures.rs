@@ -19,20 +19,6 @@ fn move_base(rig: &Rig) {
     git(&rig.repo, &["push", "-q", origin, "HEAD:refs/heads/main"]);
 }
 
-struct DeferChmod(std::path::PathBuf);
-impl Drop for DeferChmod {
-    fn drop(&mut self) {
-        drop(
-            std::process::Command::new("chmod")
-                .args(["755", self.0.to_str().unwrap()])
-                .status(),
-        );
-    }
-}
-fn defer_chmod(p: std::path::PathBuf) -> DeferChmod {
-    DeferChmod(p)
-}
-
 fn split_approval(count: usize) -> String {
     let parts = (0..count)
         .map(|index| {
@@ -52,28 +38,33 @@ fn split_approval(count: usize) -> String {
 async fn split_part_conflict_pass_publishes_gated_commit_to_part_pr_branch() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "ask-here,work,merge-base,work"),
+            investigator("inv-lead", "ask,integrate,integrate,merge-base"),
+            normal("claude-1", "work"),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
         ],
         5,
-        false,
+        true,
     )
     .await;
     rig.start().await;
 
-    let (team_id, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    let task = tasks[0].clone();
+    let (team_id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    let coordinator = tasks[0].clone();
+    let lead = tasks[1].clone();
 
-    // Lead asks to split into 2 parts:
-    rig.status_is(&task, TaskStatus::Questions).await;
+    // Coordinator asks to split into 2 parts:
+    rig.status_is(&coordinator, TaskStatus::Questions).await;
+    rig.status_is(&lead, TaskStatus::Waiting).await;
     Connection::connect(&rig.home.socket_file())
         .await
         .unwrap()
         .request(
             Client::Cli,
             Command::Answer(AnswerRequest {
-                task: task.clone(),
+                task: coordinator.clone(),
                 number: n(1),
                 answers: answers(&[(1, &split_approval(2))]),
             }),
@@ -86,28 +77,34 @@ async fn split_part_conflict_pass_publishes_gated_commit_to_part_pr_branch() {
 
     // Wait until conflict pass starts:
     rig.state_where("part 1.1a is in conflict pass", |state| {
-        state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap().merge_conflict().is_some()
+        state
+            .team(&team_id)
+            .unwrap()
+            .item("1.1".parse().unwrap())
+            .unwrap()
+            .merge_conflict()
+            .is_some()
     })
     .await;
 
-    // Allow merge, move base, signal fake base ready:
+    // Allow merge, move base, signal fake base ready in coordinator's worktree:
     rig.github.answer_merges(MergeAnswer::Allow);
     move_base(&rig);
-    std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+    std::fs::write(rig.worktree(&coordinator).join(".fake-base-ready"), "").unwrap();
 
     // Wait until part 1.1a PR merges and advances:
     let state = rig
         .state_where("part 1.1a PR merged", |state| {
-            state.team(&team_id).unwrap().rounds().len() >= 2
-                && !state.team(&team_id).unwrap().rounds()[0].is_open()
+            let team = state.team(&team_id).unwrap();
+            team.rounds().len() >= 2 && !team.rounds()[0].is_open()
         })
         .await;
     rig.stop().await.unwrap();
 
-    assert!(
-        state.team(&team_id).unwrap().splits().len() == 1,
-        "split part PR should complete and merge"
-    );
+    let team = state.team(&team_id).unwrap();
+    assert_eq!(team.splits().len(), 1, "split part PR should complete and merge");
+    let pr = team.rounds()[0].part_pull_request().unwrap();
+    assert_eq!(pr.number.get().get(), 1);
 }
 
 #[tokio::test]
@@ -150,25 +147,37 @@ async fn publish_with_checked_out_worktree_publishes_without_forcing() {
 async fn publish_failure_retries_tells_lead_and_asks_human() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,work,work"),
+            normal("claude-1", "work,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
         ],
         5,
         false,
     )
     .await;
 
-    // Make origin refs directory read-only so git push fails with permission denied / rejected:
-    let origin_refs = rig.origin.join("refs");
-    let _restore = defer_chmod(origin_refs.clone());
-    std::process::Command::new("chmod")
-        .args(["555", origin_refs.to_str().unwrap()])
-        .status()
-        .unwrap();
+    // Set [publish] tries = 1 so the first failure tells the lead and the second asks the human:
+    let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config_text.push_str("\n[publish]\ntries = 1\n");
+    std::fs::write(rig.home.config_file(), config_text).unwrap();
+
+    // Hook in origin that rejects git push:
+    let hook_dir = rig.origin.join("hooks");
+    std::fs::create_dir_all(&hook_dir).unwrap();
+    let hook = hook_dir.join("pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\necho 'pre-receive: publish denied' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let task = tasks[0].clone();
+
+    // First publication failure tells lead, waking it for run 2:
+    rig.wait_for("first run ended and lead woken for retry", || {
+        rig.state().find_task(&task).is_some_and(|f| f.member.runs().len() >= 2)
+    })
+    .await;
 
     // After bounded retries and telling lead, human is asked via questions file:
     rig.status_is(&task, TaskStatus::Questions).await;
@@ -176,7 +185,7 @@ async fn publish_failure_retries_tells_lead_and_asks_human() {
     let qfile = rig.home.questions_file(&task, n(1));
     assert!(qfile.exists(), "questions file should be written");
     let text = std::fs::read_to_string(&qfile).unwrap();
-    assert!(text.contains("could not be published"));
+    assert!(text.contains("could not be published"), "{text}");
 
     // Answering 'b' stops the task:
     Connection::connect(&rig.home.socket_file())

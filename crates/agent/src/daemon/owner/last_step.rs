@@ -196,6 +196,20 @@ impl Owner {
             .state
             .find_task(task)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        if let Some(number_asked) = self.watch.publish_question.remove(task)
+            && number_asked == number
+        {
+            let answer = agent_core::decide::publish::publish_answer(file.entries().first().and_then(Entry::verdict));
+            log_decision("publish_answer", &task.as_str(), &format!("{answer:?}"));
+            return match answer {
+                agent_core::decide::publish::PublishAnswer::Retry => {
+                    self.watch.retry_at.retain(|(t, _), _| t != &located.team);
+                    self.watch.publish_tries.retain(|(t, _), _| t != &located.team);
+                    Ok(TaskStatus::Queued)
+                }
+                agent_core::decide::publish::PublishAnswer::Stop => Ok(TaskStatus::Stopped),
+            };
+        }
         if found.member.asked_after_last_step() != Some(number) {
             return Ok(TaskStatus::Queued);
         }

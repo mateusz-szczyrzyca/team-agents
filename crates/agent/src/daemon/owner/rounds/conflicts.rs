@@ -395,8 +395,22 @@ impl Owner {
     ) -> Result<Judgement, PublishError> {
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let base = self.base_branch(&lead.repo)?;
-        let Some(tip) = git.branch_tip(&pr.branch).await? else {
-            return Ok(Judgement::Ask);
+        let record = self.parts.store.load_gate_record(&lead.task).await?;
+        let tip = match git.branch_tip(&pr.branch).await? {
+            Some(tip) if &tip != approved_head => tip,
+            _ => {
+                if let Some(record) = &record
+                    && &record.result.head != approved_head
+                {
+                    record.result.head.clone()
+                } else if let Ok(head) = git.rev_parse(&Revision::Head).await
+                    && &head != approved_head
+                {
+                    head
+                } else {
+                    return Ok(Judgement::Ask);
+                }
+            }
         };
         if &tip == approved_head
             || !git
@@ -409,7 +423,6 @@ impl Owner {
         if own == Own::Running {
             return Ok(Judgement::Wait);
         }
-        let record = self.parts.store.load_gate_record(&lead.task).await?;
         if record
             .as_ref()
             .is_some_and(|record| record.result.head == tip && record.counts_as_pass())
@@ -436,7 +449,8 @@ impl Owner {
         tip: &CommitId,
     ) -> Result<Vec<RepoPath>, PublishError> {
         let git: Git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        git.push(&pr.branch).await?;
+        git.push_commit(&pr.branch, tip).await?;
+        git.branch_point_if_unheld(&pr.branch, tip).await?;
         let base = self.base_branch(&lead.repo)?;
         let merged_base = git
             .merge_base(&Revision::Commit(tip.clone()), &Revision::RemoteBranch(base))
