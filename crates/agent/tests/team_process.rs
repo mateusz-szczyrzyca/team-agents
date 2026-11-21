@@ -632,4 +632,128 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         let debug_removed = world.agent(&["debug", "--team", &team, "--out", diag_removed.to_str().unwrap()]);
         assert!(debug_removed.status.success(), "{}", stderr(&debug_removed));
     }
+    /// A POSIX zone one hour east of UTC, with summer time of two hours: the zone the processes of the zone test run in.
+    const CENTRAL_EUROPE: &str = "CET-1CEST,M3.5.0,M10.5.0/3";
+
+    impl World {
+        /// Starts the daemon with `TZ` set to `zone`, as the process of the daemon's machine.
+        fn start_in(&mut self, zone: &str) {
+            let daemon = agent()
+                .arg("daemon")
+                .arg("--prompts-dir")
+                .arg(prompts())
+                .env("AGENTS_HOME", &self.home)
+                .env("TZ", zone)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let socket = self.home.join("agent.sock");
+            eventually("the socket", || socket.exists());
+            self.daemon = Some(daemon);
+        }
+
+        /// Runs `agent` with `args` in the scratch repository, with `TZ` set to `zone`.
+        fn agent_in(&self, args: &[&str], zone: &str) -> Output {
+            agent()
+                .args(args)
+                .current_dir(&self.repo)
+                .env("AGENTS_HOME", &self.home)
+                .env("TZ", zone)
+                .output()
+                .unwrap()
+        }
+
+        /// `agent status` in `zone`, which must succeed.
+        fn status_in(&self, zone: &str) -> String {
+            let output = self.agent_in(&["status"], zone);
+            assert!(output.status.success(), "{}", stderr(&output));
+            stdout(&output)
+        }
+    }
+
+    /// Whether `text` holds the moment `date` at `hour:minute` (seconds after it) written in `offset`, as the zone
+    /// writes a time of a person: `2026-11-21 13:50:02 +01:00`.
+    fn holds_moment(text: &str, date: &str, hour_minute: &str, offset: &str) -> bool {
+        text.lines().any(|line| {
+            let moment = format!("{date} {hour_minute}:");
+            line.match_indices(&moment).any(|(at, _)| {
+                line.get(at + moment.len()..).is_some_and(|after| {
+                    after
+                        .get(..2)
+                        .is_some_and(|seconds| seconds.bytes().all(|b| b.is_ascii_digit()))
+                        && after
+                            .get(2..)
+                            .is_some_and(|rest| rest.starts_with(&format!(" {offset}")))
+                })
+            })
+        })
+    }
+
+    #[test]
+    fn status_a_notification_and_the_log_tell_the_same_moment_in_the_zone_of_the_process() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "script:post"),
+            ("claude-2", "agent", "ask"),
+        ]));
+        let secrets = world.home.join("secrets.toml");
+        std::fs::write(&secrets, "[agent_env]\nAPI_KEY = \"FAKE_KEY\"\n").unwrap();
+        std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let scripts = world.home.join("fake-scripts");
+        std::fs::create_dir(&scripts).unwrap();
+        let post = POST_SCRIPT
+            .replace("AGENTBUS", &agentbus_binary().display().to_string())
+            .replace("HOME_DIR", &world.home.display().to_string());
+        std::fs::write(scripts.join("post.sh"), post).unwrap();
+        world.start_in(CENTRAL_EUROPE);
+
+        let output = world.agent_in(
+            &["run", "inv-opus", "claude-1", "claude-2", "Do it all."],
+            CENTRAL_EUROPE,
+        );
+        assert!(output.status.success(), "{}", stderr(&output));
+        let team = stdout(&output)
+            .lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .to_owned();
+
+        eventually("the notification to be written", || {
+            world
+                .home
+                .join("notifications")
+                .read_dir()
+                .is_ok_and(|mut entries| entries.next().is_some())
+        });
+        let notification = std::fs::read_dir(world.home.join("notifications"))
+            .unwrap()
+            .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+            .find(|text| text.contains("Time: "))
+            .expect("a notification with its time");
+        let time_line = notification
+            .lines()
+            .find(|line| line.starts_with("Time: "))
+            .unwrap()
+            .to_owned();
+        // `Time: 2026-11-21 13:50 +01:00`: the date, the minute and the zone of the daemon.
+        let shown = time_line.trim_start_matches("Time: ");
+        let (date, rest) = shown.split_once(' ').unwrap();
+        let (hour_minute, offset) = rest.split_once(' ').unwrap();
+
+        assert!(offset == "+01:00", "{time_line}");
+        let status = world.status_in(CENTRAL_EUROPE);
+        assert!(status.contains(" +01:00"), "{status}");
+
+        let log = world.agent_in(&["log", "--team", &team], CENTRAL_EUROPE);
+        assert!(log.status.success(), "{}", stderr(&log));
+        let log = stdout(&log);
+        assert!(
+            holds_moment(&log, date, hour_minute, "+01:00"),
+            "the log holds {date} {hour_minute} {offset}:\n{log}"
+        );
+    }
 }
