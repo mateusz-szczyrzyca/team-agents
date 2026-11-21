@@ -166,6 +166,12 @@ pub struct ClosedBeforeOpened {
 }
 
 impl Round {
+    /// The agent assigned to execute this split part; absent from older rounds.
+    #[must_use]
+    pub const fn assigned_to(&self) -> Option<&crate::ids::AgentName> {
+        None
+    }
+
     /// The verified team pull request delivering this round, retained after completion.
     #[must_use]
     pub const fn delivered_by(&self) -> Option<&super::PullRequest> {
