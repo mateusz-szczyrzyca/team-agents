@@ -18,7 +18,7 @@ use agent_core::state::Timestamp;
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
 use agent_runtime::notify::{InvalidNotification, Notification};
 
-pub(crate) use words::TaskWords;
+pub(crate) use words::{TaskWords, item_line};
 
 /// Every notice that can be sent to the human.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

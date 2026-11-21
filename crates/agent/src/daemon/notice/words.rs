@@ -44,10 +44,6 @@ impl TaskWords {
 
 /// The line that names `item` of `list` in a notification — its number and its full title — or the part `part` of it
 /// that `splits` define; `None` when the list has no such item.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired in the commit that names the item of a notice")
-)]
 pub(crate) fn item_line(list: &TaskList, splits: &[SplitPlan], item: ItemId, part: Option<PartKey>) -> Option<String> {
     let found = list.item(item)?;
     let of_part = part.and_then(|key| {

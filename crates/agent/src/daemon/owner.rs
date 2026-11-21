@@ -74,7 +74,7 @@ use self::teams::{Outbound, Served};
 use super::control::{Halt, Steer, after_halt, halted_status};
 use super::gate::GateQueue;
 use super::history::health_to_tell;
-use super::notice::{Notice, NoticeContext, TaskWords};
+use super::notice::{Notice, NoticeContext, TaskWords, item_line};
 use super::notifier::Delivery;
 use super::questions;
 use super::questions::watch::{Report, Saves, Watcher};
@@ -1993,7 +1993,7 @@ impl Owner {
             task,
             team,
             pr,
-            words: TaskWords::new(found.team.task_list().list(), None),
+            words: TaskWords::new(found.team.task_list().list(), item_line_of(found.team, found.member)),
         })
     }
 
@@ -2303,4 +2303,16 @@ fn owner_request_span() -> tracing::Span {
     let fields = OWNER_REQUEST_METADATA.fields();
     let pairs: [(&tracing::field::Field, Option<&dyn tracing::field::Value>); 0] = [];
     tracing::Span::new(&OWNER_REQUEST_METADATA, &fields.value_set(&pairs))
+}
+
+/// The line that names the item `member` works on in a notification: its number and its full title, or the part's; none
+/// when its latest run is for no item (a list without items) or the list does not have it.
+fn item_line_of(team: &agent_core::state::Team, member: &agent_core::state::Member) -> Option<String> {
+    let rounds = member.runs().last()?.rounds();
+    let round = rounds
+        .iter()
+        .rev()
+        .filter_map(|id| team.round(id))
+        .find(|round| round.item().is_some())?;
+    item_line(team.task_list().list(), team.splits(), round.item()?, round.part())
 }
