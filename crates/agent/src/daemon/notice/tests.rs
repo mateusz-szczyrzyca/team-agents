@@ -144,7 +144,7 @@ fn layout_as_a_table_every_field_present() {
         task: &task_id,
         team: Some(&team_id),
         pr: Some("https://github.com/org/team-agents/pull/42"),
-        words: crate::daemon::notice::sample::words(),
+        words: crate::daemon::notice::sample::words_about(&task_id),
     };
 
     let rendered = "Pull request 42 of team-agents is approved\nBoth reviewers approved pull request #42.";
@@ -186,7 +186,7 @@ fn layout_optional_fields_absent() {
         task: &task_id,
         team: None,
         pr: None,
-        words: crate::daemon::notice::sample::words(),
+        words: crate::daemon::notice::sample::words_about(&task_id),
     };
 
     let rendered = "codex-1 ended without a status (task-20261111-191500-1111)\nThe run ended without a status line.";
@@ -226,7 +226,7 @@ fn layout_empty_body() {
         task: &task_id,
         team: None,
         pr: None,
-        words: crate::daemon::notice::sample::words(),
+        words: crate::daemon::notice::sample::words_about(&task_id),
     };
 
     let rendered = "Single line notice title with no body";

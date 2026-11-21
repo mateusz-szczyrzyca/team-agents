@@ -33,6 +33,16 @@ pub(crate) fn words_for(list: &TaskList, item: Option<String>, task_id: &TaskId)
     TaskWords::rendered(list, item, task_id, &texts()).unwrap()
 }
 
+/// The words of a task whose brief is `Fix the typo in the README. It has one.`, with no item, for notifications about
+/// the task `task_id`.
+pub(crate) fn words_about(task_id: &TaskId) -> TaskWords {
+    words_for(
+        &TaskList::parse("Fix the typo in the README. It has one.\n").unwrap(),
+        None,
+        task_id,
+    )
+}
+
 /// The words of task 1 whose list is `list`, for a notification that concerns `item`.
 pub(crate) fn words_of(list: &TaskList, item: Option<String>) -> TaskWords {
     words_for(list, item, &task(1))
