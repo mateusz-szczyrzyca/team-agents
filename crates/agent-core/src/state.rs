@@ -386,6 +386,24 @@ impl State {
             })
     }
 
+    /// Records that the human is asked, in questions `question`, what becomes of `task`, whose runs went bad with
+    /// `trouble` after the last step of the ladder, at `at`: a new session begins for whatever the answer is, no new
+    /// session of the agent is counted, and the task is asked so only once. Returns whether a session was begun: `false`
+    /// for a task with no run.
+    ///
+    /// # Errors
+    /// [`RenewTaskError`] when the task is not in the state, is of a worker or a reviewer, or the session does not fit
+    /// its runs.
+    pub fn ask_after_last_step(
+        &mut self,
+        _task: &TaskId,
+        _trouble: crate::decide::ladder::Trouble,
+        _question: std::num::NonZeroU32,
+        _at: Timestamp,
+    ) -> Result<bool, RenewTaskError> {
+        Ok(false)
+    }
+
     /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
     /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
     /// that the state it leaves loads again.

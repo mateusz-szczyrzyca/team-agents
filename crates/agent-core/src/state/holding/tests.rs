@@ -250,3 +250,56 @@ fn a_task_is_known_on_its_teams_bus_by_the_agent_it_was_first_given_to() {
         "the bus keeps the name of the first holder"
     );
 }
+
+#[test]
+fn a_task_whose_last_step_went_bad_keeps_the_question_put_to_the_human_and_resumes_no_session() {
+    let mut state = handed_over_and_begun();
+    let question = std::num::NonZeroU32::new(3).unwrap();
+
+    let begun = state
+        .ask_after_last_step(&task(), crate::decide::ladder::Trouble::Hang, question, at())
+        .unwrap();
+
+    assert!(
+        begun,
+        "a task with runs begins a session for whatever the human answers"
+    );
+    let loaded = State::from_json(&state.to_json().unwrap()).expect("the state loads again");
+    let member = loaded.find_task(&task()).unwrap().member;
+    assert_eq!(member.asked_after_last_step(), Some(question));
+    assert_eq!(member.last_session(), None, "no session of the runs before is resumed");
+    assert_eq!(
+        member.renewals().map(crate::state::Renewals::used),
+        Some(0),
+        "no new session is counted"
+    );
+    assert_eq!(
+        member.renewals().map(crate::state::Renewals::reason),
+        Some(crate::decide::ladder::Trouble::Hang)
+    );
+}
+
+#[test]
+fn a_task_never_asked_after_its_last_step_has_no_such_question() {
+    let state = handed_over_and_begun();
+
+    assert_eq!(state.find_task(&task()).unwrap().member.asked_after_last_step(), None);
+    assert_eq!(
+        old_state().find_task(&task()).unwrap().member.asked_after_last_step(),
+        None
+    );
+}
+
+#[test]
+fn a_workers_task_is_never_asked_about_after_its_last_step() {
+    let mut state = old_state();
+    let worker: TaskId = "task-20261111-193003-k3x9".parse().unwrap();
+    let question = std::num::NonZeroU32::new(1).unwrap();
+
+    let refused = state.ask_after_last_step(&worker, crate::decide::ladder::Trouble::NoStatus, question, at());
+
+    assert!(matches!(
+        refused,
+        Err(crate::state::RenewTaskError::Role { task, role: Role::Worker }) if task == worker
+    ));
+}

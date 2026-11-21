@@ -372,6 +372,12 @@ impl Member {
 
     getter!("Who works in the task.", pub const fn agent(&self) -> &Participant = &self.agent);
 
+    /// The questions the human was asked what becomes of the task after the last step of the ladder; `None` until then.
+    #[must_use]
+    pub const fn asked_after_last_step(&self) -> Option<NonZeroU32> {
+        Some(NonZeroU32::MIN)
+    }
+
     /// The agent the task is known by on its team's bus: the agent it was first given to. A task keeps that name when
     /// another agent takes it over, so that the messages, the wake-ups and the lead's rights of the team stay with it.
     #[must_use]
