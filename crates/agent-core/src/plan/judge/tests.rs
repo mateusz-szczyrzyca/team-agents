@@ -113,3 +113,29 @@ fn unchanged_done_step_without_judgement_is_judged_again() {
     let ids: Vec<ItemId> = judged.iter().map(|step| step.id()).collect();
     assert_eq!(ids, vec!["1.1".parse::<ItemId>().unwrap()]);
 }
+
+#[test]
+fn refuses_gate_words_separated_by_whitespace() {
+    for (command, prefix, expected) in [
+        ("agent  gate", "agent gate", true),
+        ("agent\tgate --locked", "agent gate", true),
+        ("make gate", "make\tgate", true),
+        ("agent gateway", "agent  gate", false),
+        ("agent gate", " \t", false),
+    ] {
+        assert_eq!(refuse_command(command, &[prefix.to_owned()]), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn previously_confirmed_reopened_steps_are_selected_again() {
+    for mark in [' ', '>', '-'] {
+        let previous = parse_plan(&format!("Work.\n\n1. Work\n[{mark}] 1.1 Write it\n    Reopened.\n")).unwrap();
+        let current = parse_plan("Work.\n\n1. Work\n[x] 1.1 Write it\n    Reopened.\n").unwrap();
+        let selected = steps_to_judge(&current, Some(&previous), |_| Some(JudgementState::Confirmed));
+        assert_eq!(
+            selected.iter().map(|step| step.id()).collect::<Vec<_>>(),
+            vec!["1.1".parse::<ItemId>().unwrap()]
+        );
+    }
+}
