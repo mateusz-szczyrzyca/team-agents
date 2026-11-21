@@ -80,3 +80,70 @@ fn judgements_are_written_and_read_back_and_latest_is_indexed() {
     let latest_updated = reader.latest_judgements(&task).unwrap();
     assert_eq!(latest_updated.get(&step1), Some(&record1_again));
 }
+
+#[test]
+fn duration_overflowing_u64_max_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+
+    let world = complete(1);
+    db.write(&world.records()).unwrap();
+
+    let task = world.runs[0].start.task.clone();
+    let team = world.runs[0].start.team.clone();
+    let run = world.runs[0].start.run.clone();
+
+    let record = JudgementRecord {
+        task,
+        team,
+        run: Some(run),
+        at: at(1_000, 0),
+        step: "1.1".parse::<ItemId>().unwrap(),
+        state: JudgementState::Confirmed,
+        check: None,
+        reason: None,
+        duration_ms: u64::MAX,
+        output_path: None,
+    };
+
+    assert!(db.write_judgements(&[record]).is_err());
+}
+
+#[test]
+fn negative_duration_is_refused_on_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let mut db = HistoryDb::open(&path, roomy()).unwrap();
+
+    let world = complete(1);
+    db.write(&world.records()).unwrap();
+
+    let task = world.runs[0].start.task.clone();
+    let team = world.runs[0].start.team.clone();
+    let run = world.runs[0].start.run.clone();
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA ignore_check_constraints = ON;").unwrap();
+    conn.execute(
+        "INSERT INTO step_judgements (task, team, run, at, step, state, check_line, reason, duration_ms, output_path) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        rusqlite::params![
+            task.as_str(),
+            team.as_str(),
+            run.as_str(),
+            "2026-11-21T01:00:00Z",
+            "1.1",
+            "confirmed",
+            None::<String>,
+            None::<String>,
+            -1i64,
+            None::<String>,
+        ],
+    )
+    .unwrap();
+
+    let reader = Reader::open(&path).unwrap();
+    let err = reader.step_judgements(&task).unwrap_err();
+    assert!(matches!(err, agent_runtime::history::ReadError::Value { column, .. } if column == "duration_ms"));
+}
