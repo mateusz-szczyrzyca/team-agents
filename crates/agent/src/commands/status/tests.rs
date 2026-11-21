@@ -573,10 +573,10 @@ fn a_round_is_shown_with_its_item_its_tasks_with_where_they_work_and_their_runs(
         text,
         "\
 round-20261111-153002-q1w2  item 1.2  open  team team-20261111-153000-t5m8
-  opened 2026-11-11T19:15:20Z
+  opened 2026-11-11 19:15:20 +00:00
   item 1.2: The second item (in_progress)
   task-20261111-153002-k3x9  member  claude-1  /srv/agents/worktrees/team-agents/task-20261111-153002-k3x9  agents/claude-1/task-20261111-153002-k3x9-1.2
-    run-20261111-153001-r7q2  started 2026-11-11T19:15:21Z  running
+    run-20261111-153001-r7q2  started 2026-11-11 19:15:21 +00:00  running
 "
     );
 }
@@ -598,7 +598,10 @@ fn a_closed_round_says_when_and_how_it_ended_and_an_item_in_review_shows_its_pul
 
     let text = render_round(&detail(&state));
 
-    assert!(text.contains("  closed 2026-11-11T19:15:50Z, abandoned\n"), "{text}");
+    assert!(
+        text.contains("  closed 2026-11-11 19:15:50 +00:00, abandoned\n"),
+        "{text}"
+    );
     assert!(
         text.contains("  pull request #7 on agents/codex-1/item-1-2\n"),
         "{text}"
@@ -1468,4 +1471,40 @@ fn a_status_time_and_a_log_time_of_one_moment_in_one_zone_are_the_same_text() {
     assert_eq!(clock_of(at, zone), zone.stamp(at));
     assert_eq!(clock_of(at, zone), "2026-11-21 13:50:02 +01:00");
     assert_eq!(zone.stamp_minute(at), "2026-11-21 13:50 +01:00");
+}
+
+#[test]
+fn a_round_is_shown_with_its_times_in_the_zone_given() {
+    use agent_core::local_time::Zone;
+    let mut state = team_with_rounds();
+    {
+        let (_, mut member) = state.find_task_mut(&task(2)).unwrap();
+        member
+            .end_run(
+                at(30),
+                agent_core::state::RunEnd::Reported {
+                    outcome: agent_core::status::RunOutcome::Done,
+                },
+            )
+            .unwrap();
+    }
+    {
+        let mut team = state.team_mut(&team_id(0)).unwrap();
+        team.close_round(&round_id(2), at(50), RoundEnd::Abandoned).unwrap();
+    }
+    let zone = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("a literal offset is valid"));
+
+    let text = super::render_round_in(&detail(&state), zone);
+
+    assert!(text.contains("  opened 2026-11-11 20:15:20 +01:00\n"), "{text}");
+    assert!(
+        text.contains("  closed 2026-11-11 20:15:50 +01:00, abandoned\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "    run-20261111-153001-r7q2  started 2026-11-11 20:15:21 +01:00  ended 2026-11-11 20:15:30 +01:00\n"
+        ),
+        "{text}"
+    );
 }

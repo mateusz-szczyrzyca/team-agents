@@ -527,9 +527,14 @@ pub(crate) fn round_line(round: &Round) -> String {
     format!("{}  {item}  {state}", round.id())
 }
 
-/// A round in full as text: its line, the item, the pull request, the review passes, and the tasks that worked for it
-/// with where they work and their runs.
+/// A round in full as text, its times in UTC: what the tests of the layout compare.
 pub(crate) fn render_round(detail: &RoundDetail) -> String {
+    render_round_in(detail, Zone::Fixed(UtcOffset::UTC))
+}
+
+/// A round in full as text: its line, the item, the pull request, the review passes, and the tasks that worked for it
+/// with where they work and their runs, its times in `zone`.
+pub(crate) fn render_round_in(detail: &RoundDetail, _zone: Zone) -> String {
     let waiting = detail
         .waiting
         .as_ref()

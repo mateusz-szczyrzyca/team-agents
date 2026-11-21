@@ -197,4 +197,126 @@ mod daemon_process {
         let stderr = String::from_utf8(ended.stderr).unwrap();
         assert!(stderr.contains("run started"), "the daemon logs on stderr: {stderr}");
     }
+
+    /// Runs `agent` with `args` in `home` under `tz` and returns its standard output.
+    fn run_in_zone(home: &Home, args: &[&str], tz: &str) -> String {
+        let output = agent()
+            .args(args)
+            .env("AGENTS_HOME", home.root())
+            .env("TZ", tz)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    /// Seeds a team with an open round `round` on item 1.1 in progress for `TASK`, whose run asks a question.
+    fn seed_open_round_questions(home: &Home, round: &str) {
+        use std::num::NonZeroU32;
+
+        use agent_core::ids::RoundId;
+
+        let task = TaskId::from_str(TASK).unwrap();
+        let repo = RepoName::from_str("team-agents").unwrap();
+        let member = Member::new(task.clone(), Participant::Normal("claude-1".parse().unwrap()));
+        let mut team = Team::new(
+            TeamId::from_str("team-20261111-153000-t5m8").unwrap(),
+            repo.clone(),
+            Timestamp::from_str("2026-11-11T19:15:00Z").unwrap(),
+            MergeMode::Autopilot,
+            TaskListText::new(LIST.to_owned()).unwrap(),
+            Crew::solo(member).unwrap(),
+        );
+        team.open_round(
+            RoundId::from_str(round).unwrap(),
+            Some("1.1".parse().unwrap()),
+            Timestamp::from_str("2026-11-11T19:15:00Z").unwrap(),
+        )
+        .unwrap();
+        team.advance_item(
+            "1.1".parse().unwrap(),
+            agent_core::state::ItemPhase::InProgress {
+                assignee: "claude-1".parse().unwrap(),
+                branch: "agents/claude-1/task-20261111-153001-k3x9-1.1".parse().unwrap(),
+            },
+        )
+        .unwrap();
+        let mut state = State::new();
+        state.insert_team(team).unwrap();
+        std::fs::write(home.state_file(), state.to_json().unwrap()).unwrap();
+        let worktree = home.worktree_dir(&repo, &task);
+        std::fs::create_dir_all(&worktree).unwrap();
+        let questions = home.questions_file(&task, NonZeroU32::MIN);
+        std::fs::write(
+            worktree.join(".fake-scenario"),
+            format!("questions {}", questions.display()),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn status_round_log_and_notification_show_the_same_zone_while_status_json_stays_utc() {
+        const CENTRAL_EUROPE: &str = "CET-1CEST,M3.5.0,M10.5.0/3";
+        const NEW_YORK: &str = "EST5EDT,M3.2.0,M11.1.0";
+        const ROUND: &str = "round-20261111-153000-q1w2";
+
+        let (_dir, home) = home();
+        seed_open_round_questions(&home, ROUND);
+        let daemon = agent()
+            .arg("daemon")
+            .arg("--prompts-dir")
+            .arg(prompts())
+            .env("AGENTS_HOME", home.root())
+            .env("TZ", CENTRAL_EUROPE)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let notices_dir = home.notifications_dir();
+        eventually("the questions notification", || {
+            std::fs::read_dir(&notices_dir).is_ok_and(|mut entries| entries.any(|entry| entry.is_ok()))
+        });
+
+        let status_east = run_in_zone(&home, &["status"], CENTRAL_EUROPE);
+        let status_west = run_in_zone(&home, &["status"], NEW_YORK);
+        let round_east = run_in_zone(&home, &["status", ROUND], CENTRAL_EUROPE);
+        let json_east = run_in_zone(&home, &["status", "--json"], CENTRAL_EUROPE);
+        let json_utc = run_in_zone(&home, &["status", "--json"], "UTC0");
+        let log_east = run_in_zone(&home, &["log", "--task", TASK], CENTRAL_EUROPE);
+        let notice_path = std::fs::read_dir(&notices_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "md"))
+            .unwrap();
+        let notice = std::fs::read_to_string(notice_path).unwrap();
+
+        terminate(&daemon);
+        let ended = finish(daemon);
+        assert!(ended.status.success(), "{ended:?}");
+
+        assert!(status_east.contains("started 2026-11-11 20:15 +01:00"), "{status_east}");
+        assert!(status_west.contains("started 2026-11-11 14:15 -05:00"), "{status_west}");
+        assert!(
+            round_east.contains("  opened 2026-11-11 20:15:00 +01:00\n"),
+            "{round_east}"
+        );
+        assert_eq!(json_east, json_utc);
+        assert!(json_east.contains("\"2026-11-11T19:15:00Z\""), "{json_east}");
+
+        let ended_stamp = round_east
+            .lines()
+            .find_map(|line| line.split_once("  ended ").map(|(_, stamp)| stamp.trim()))
+            .expect("the round detail shows the ended run");
+        assert!(
+            log_east.contains(&format!("{ended_stamp} info run_ended")),
+            "log={log_east}\nround={round_east}"
+        );
+        let (date_time, zone) = ended_stamp.rsplit_once(' ').expect("stamp has zone");
+        let minute = date_time.get(..16).expect("minute prefix");
+        assert!(
+            notice.contains(&format!("\nTime: {minute} {zone}\n")),
+            "notice={notice}\nended_stamp={ended_stamp}"
+        );
+    }
 }
