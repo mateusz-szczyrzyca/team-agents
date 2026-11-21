@@ -943,6 +943,21 @@ pub(super) fn correction(texts: &HarnessPrompts, reason: &PlanReason) -> Result<
             HarnessPrompt::PlanLostStep,
             &Variables::new().with("steps", steps(ids))?,
         )?,
+        PlanReason::Mismatch {
+            step,
+            title,
+            check,
+            reason,
+            tail,
+        } => texts.render(
+            HarnessPrompt::PlanMismatch,
+            &Variables::new()
+                .with("step", step.to_string())?
+                .with("title", title.as_str())?
+                .with("check", check.as_deref().unwrap_or(""))?
+                .with("reason", reason.as_deref().unwrap_or(""))?
+                .with("output", tail.as_str())?,
+        )?,
     };
     Ok(text)
 }
