@@ -94,6 +94,8 @@ pub enum HarnessPrompt {
     /// The questions file the harness writes for the human when a task was sent back for its plan as often as
     /// `[plan] bounces` allows.
     NoticePlanQuestion,
+    /// The question to the human what becomes of a task after the last step of the ladder went bad too.
+    NoticeLastStep,
 }
 
 impl HarnessPrompt {
@@ -140,6 +142,7 @@ impl HarnessPrompt {
         Self::PlanUnfinished,
         Self::PlanLostStep,
         Self::NoticePlanQuestion,
+        Self::NoticeLastStep,
     ];
 
     /// Where the text is, who reads it and which variables it uses.
@@ -275,6 +278,7 @@ impl HarnessPrompt {
                 Audience::Human,
                 &["task", "agent", "count", "reason"],
             ),
+            Self::NoticeLastStep => last_step_spec(),
         }
     }
 }
@@ -296,5 +300,15 @@ const fn lead_briefing_spec() -> PromptSpec {
             "left_out",
             "messages",
         ],
+    )
+}
+
+/// The question to the human after the last step of the ladder: the task, the agent that holds it, those that held it
+/// before, and why its runs went bad.
+const fn last_step_spec() -> PromptSpec {
+    PromptSpec::new(
+        "harness/run/notice-last-step.md",
+        Audience::Human,
+        &["task", "agent", "held", "reason"],
     )
 }

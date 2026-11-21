@@ -1,0 +1,14 @@
+# Questions — task-20261121-101500-k2m4
+
+## 1. claude-2 could not finish its task either: start it once more, or stop it?
+The task went up every step the harness has: the retries of its session, a new session, and the agents that held it
+before claude-2 (claude-1, żółw-agent). The last runs of claude-2 went bad too: `no_status`.
+
+a) start it once more — claude-2 begins a new session, briefed on where the work stands; if that goes bad too, the
+   task fails, and you are not asked again
+b) stop the task — nothing more runs on it; the work of a team's member goes to its lead, which is told on the bus
+
+**Recommended:** b) — every step went bad, so one more run is unlikely to go better; look at the worktree and the
+branch yourself (the harness)
+
+**Verdict:**
