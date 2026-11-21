@@ -22,6 +22,7 @@ mod legacy;
 pub use activities::{Activity, ActivityEnd, ActivityOutcome, ActivityRequest};
 mod rounds;
 mod splits;
+mod tier_waits;
 pub use splits::{ActivateSplitError, RecordSplitError};
 
 pub(super) use self::legacy::{LegacyError, TeamV1};
@@ -422,6 +423,9 @@ pub struct Team {
     /// Raw split proposals and correction progress, absent in older state files.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     split_proposals: std::collections::BTreeMap<ItemId, super::split::keeping::ProposalKeeping>,
+    /// Ready items blocked by absent crew capability; missing in older teams.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    tier_waits: std::collections::BTreeMap<ItemId, Tier>,
 }
 
 /// How a [`Team`] is read; see [`checked!`].
@@ -460,6 +464,9 @@ struct TeamWire {
     /// Missing in older teams; every key must name an unsplit original item.
     #[serde(default)]
     split_proposals: std::collections::BTreeMap<ItemId, super::split::keeping::ProposalKeeping>,
+    /// Older teams have no recorded capability waits.
+    #[serde(default)]
+    tier_waits: std::collections::BTreeMap<ItemId, Tier>,
 }
 
 checked!(Team, TeamWire, check_team);
@@ -586,6 +593,7 @@ impl Team {
             unpushed_base: None,
             splits: Vec::new(),
             split_proposals: std::collections::BTreeMap::new(),
+            tier_waits: std::collections::BTreeMap::new(),
         };
         team.record_activities(created_at);
         team
