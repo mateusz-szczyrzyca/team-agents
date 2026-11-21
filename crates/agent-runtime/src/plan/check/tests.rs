@@ -264,9 +264,21 @@ async fn check_command_mismatches_on_timeout() {
         }
         tokio::time::pause();
         tokio::time::advance(std::time::Duration::from_secs(11)).await;
+        // Keep virtual time fixed while the OS delivers termination and reaps the process.
+        let cleanup_started = std::time::Instant::now();
+        loop {
+            assert!(
+                cleanup_started.elapsed() < std::time::Duration::from_secs(5),
+                "cleanup did not finish"
+            );
+            tokio::task::yield_now().await;
+        }
     };
 
-    let (result, ()) = tokio::join!(check_fut, ready_fut);
+    let result = tokio::select! {
+        result = check_fut => result,
+        () = ready_fut => panic!("readiness driver unexpectedly completed"),
+    };
     let result = result.unwrap();
     assert_eq!(result.state, JudgementState::Mismatch);
     assert_eq!(result.reason.as_deref(), Some("ran past 10 seconds"));
