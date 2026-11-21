@@ -1,4 +1,4 @@
-//! A history written before judgements (schema 15) preserves its records and upgrades to schema 16.
+//! A history written before judgements (schema 15) preserves its records and upgrades to schema 17.
 
 use agent_core::ids::ItemId;
 use agent_core::plan::judge::JudgementState;
@@ -35,7 +35,7 @@ fn history_before_judgements_upgrades_and_retains_records() {
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
 
     let reader = Reader::open(&path).unwrap();
     assert_eq!(reader.round_records(round).unwrap(), before);
