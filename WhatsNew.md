@@ -5,6 +5,16 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.45.0 — 21.11.2026 — PR #162
+
+### New features
+- [agent] [agent-core] An item and every part of a split are now given only to an agent of at least the tier they ask for (investigators above normal agents above workers; no `Tier:` and no tier in the split means normal). The first part of a split is handed to a fitting agent as well, not only to whoever was already running the item. A part for an investigator in a team with one investigator and one normal agent goes to the investigator, and a part for a normal agent never starts a worker.
+- [agent] [agent-core] When the team has no agent of the tier an item or a part asks for, it waits and nothing is given lower. The wait is kept across a restart of the daemon, is logged once as a `team_changed` event with `kind = tier_wait`, and `agent status` shows it. The one-time question to you about it follows in the next version.
+- [agent-core] The assignment text now says which tier was asked for and why this agent was chosen.
+
+### Enhancements
+- [agent] A coordinator that is not of the tier of a part is no longer told to take that part over, and an unassigned coordinator is not given the delivery scope of a part.
+
 ## 0.44.0 — 21.11.2026 — PR #161
 
 ### New features
