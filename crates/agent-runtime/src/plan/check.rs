@@ -37,7 +37,7 @@ pub enum CheckError {
 
 /// Errors that can happen while preparing a command check process spec.
 #[derive(Debug, thiserror::Error)]
-pub enum CommandPreparationError {
+enum CommandPreparationError {
     /// The program name cannot be parsed as a valid program.
     #[error("cannot parse program {program:?}")]
     InvalidProgram {
@@ -398,12 +398,25 @@ pub async fn execute_command_check(
                 check_line: Some(command_str.to_owned()),
                 reason: Some(format!("cannot prepare check command: {error}")),
                 duration_ms: duration_millis(start.elapsed())?,
-                output_path: Some(rel_output_path),
+                output_path: None,
                 tail: String::new(),
                 gate_refused: false,
             });
         }
     };
+
+    // The supervisor appends output, so initialize this attempt's artifact before spawning.
+    if let Err(error) = fs::write(&log_path, []).await {
+        return Ok(JudgementResult {
+            state: JudgementState::Mismatch,
+            check_line: Some(command_str.to_owned()),
+            reason: Some(format!("cannot create check output: {error}")),
+            duration_ms: duration_millis(start.elapsed())?,
+            output_path: None,
+            tail: String::new(),
+            gate_refused: false,
+        });
+    }
 
     let supervisor = Supervisor::new(NonZeroUsize::MIN);
     let process = match supervisor.spawn(&spec).await {
