@@ -42,7 +42,7 @@ const COORDINATOR_PREFIX: &str = "Coordinator:";
 const ALLOW_PREFIX: &str = "Allow:";
 
 /// The text that starts the line giving the short description of the task, in the header.
-const SHORT_DESC_PREFIX: &str = "Short desc:";
+const SHORT_DESC_PREFIX: &str = crate::task_title::SHORT_DESC_LABEL;
 
 /// The text that starts the line listing the features a feature waits for.
 const DEPENDS_ON_PREFIX: &str = "Depends on:";
