@@ -27,6 +27,7 @@ use std::str::FromStr;
 
 use crate::ids::{AgentName, InvalidItemId, InvalidName, ItemId};
 use crate::kinds::{Tier, UnknownKeyword};
+use crate::task_title::derived_short_desc;
 
 /// Largest task list accepted, in bytes: a bound on untrusted input, far above any real list.
 pub const MAX_TASK_LIST_BYTES: usize = 1 << 20;
@@ -116,7 +117,9 @@ pub struct TaskList {
     coordinator: Option<AgentName>,
     /// Root-relative permissions given in the header.
     allowances: Vec<crate::task_allowance::TaskAllowance>,
-    /// The text before the first feature, without the `Coordinator:` line and the blank lines around it.
+    /// The text of the `Short desc:` line, if the header has one.
+    short_desc: Option<String>,
+    /// The text before the first feature, without the header lines and the blank lines around it.
     brief: String,
     /// The features, in the order written.
     features: Vec<Feature>,
@@ -199,6 +202,30 @@ pub enum TaskListError {
         /// Why the pattern was refused.
         #[source]
         source: crate::task_allowance::AllowanceError,
+    },
+    /// The `Short desc:` line has no text.
+    #[error("line {line}: the Short desc: line is empty; give the line some text or remove it")]
+    ShortDescEmpty {
+        /// The line.
+        line: NonZeroUsize,
+    },
+    /// The `Short desc:` line is longer than [`MAX_SHORT_DESC_CHARS`] characters.
+    #[error("line {line}: the Short desc: line has {len} characters; write at most {max} characters")]
+    ShortDescTooLong {
+        /// The line.
+        line: NonZeroUsize,
+        /// The length of its text, in characters.
+        len: usize,
+        /// The limit, in characters.
+        max: usize,
+    },
+    /// The header has a second `Short desc:` line.
+    #[error("line {line}: a second Short desc: line, the first is on line {first_line}; keep one")]
+    ShortDescTwice {
+        /// The line of the second one.
+        line: NonZeroUsize,
+        /// The line of the first one.
+        first_line: NonZeroUsize,
     },
     /// The text has nothing in it but blank lines, or only a `Coordinator:` line.
     #[error("the task list is empty")]
@@ -402,6 +429,20 @@ impl TaskList {
     #[must_use]
     pub fn coordinator(&self) -> Option<&AgentName> {
         self.coordinator.as_ref()
+    }
+
+    /// The description the `Short desc:` line of the header gives, if it has one.
+    #[must_use]
+    pub fn short_desc(&self) -> Option<&str> {
+        self.short_desc.as_deref()
+    }
+
+    /// The description to show for the task: the one the header gives, otherwise the one derived from the brief.
+    #[must_use]
+    pub fn display_short_desc(&self) -> String {
+        self.short_desc
+            .clone()
+            .unwrap_or_else(|| derived_short_desc(&self.brief))
     }
 
     /// The text before the first feature, which every member reads; the whole text when there are no features.
@@ -923,6 +964,7 @@ impl<'a> Parser<'a> {
         Ok(TaskList {
             coordinator: self.coordinator,
             allowances: self.allowances,
+            short_desc: None,
             brief,
             features: self.features,
             tiers: self.tiers,
@@ -1597,6 +1639,9 @@ Depends on: 2,3,1,
 #[cfg(test)]
 #[path = "task_list/allowances_tests.rs"]
 mod allowances_tests;
+
+#[cfg(test)]
+mod short_desc_tests;
 
 #[cfg(test)]
 mod tier_tests;
