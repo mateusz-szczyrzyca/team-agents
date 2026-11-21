@@ -44,6 +44,15 @@ struct Resolved {
     marked: bool,
 }
 
+/// The precision of the clock in a shown moment.
+#[derive(Clone, Copy)]
+enum Precision {
+    /// Hour, minute and second (`HH:MM:SS`).
+    Second,
+    /// Hour and minute (`HH:MM`).
+    Minute,
+}
+
 /// Why a typed time cannot be read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TypedTimeError {
@@ -93,16 +102,23 @@ impl TypedTime {
 }
 
 impl Zone {
-    /// Stub: written in the next commit.
+    /// The moment `at` in this zone as [`Zone::stamp`] writes it, without the seconds: `2026-11-21 17:29 +01:00`.
+    /// [`Zone::Utc`] writes the RFC 3339 text of the files, which has its seconds.
     #[must_use]
-    pub fn stamp_minute(&self, _at: Timestamp) -> String {
-        String::new()
+    pub fn stamp_minute(&self, at: Timestamp) -> String {
+        self.written(at, Precision::Minute)
     }
+
     /// The moment `at` in this zone, written as the person reads it: `2026-11-21 17:29:53 +01:00`. The zone is always
     /// written: its offset, or `UTC` when the zone cannot be found or the offset would leave the four-digit years.
     /// [`Zone::Utc`] writes the RFC 3339 text of the files.
     #[must_use]
     pub fn stamp(&self, at: Timestamp) -> String {
+        self.written(at, Precision::Second)
+    }
+
+    /// The moment `at` in this zone, with its clock written at `precision`.
+    fn written(&self, at: Timestamp, precision: Precision) -> String {
         if matches!(self, Self::Utc) {
             return at.to_string();
         }
@@ -123,14 +139,15 @@ impl Zone {
         };
         let date = local.date();
         let time = local.time();
+        let clock = match precision {
+            Precision::Second => format!("{:02}:{:02}:{:02}", time.hour(), time.minute(), time.second()),
+            Precision::Minute => format!("{:02}:{:02}", time.hour(), time.minute()),
+        };
         format!(
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02} {}",
+            "{:04}-{:02}-{:02} {clock} {}",
             date.year(),
             u8::from(date.month()),
             date.day(),
-            time.hour(),
-            time.minute(),
-            time.second(),
             zone_label(resolved),
         )
     }
