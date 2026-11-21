@@ -259,6 +259,9 @@ delivery". See [configuration](docs/configuration.md#plan).
 
 At every run's end, the daemon also judges done steps, for every role and outcome. `exists PATH` confirms a file or
 folder inside the worktree; an absent path or a symlink outside it is a mismatch. Steps without checks, with
+`agent status` writes its times as `agent log` does: the date, the time, and the zone of this machine with the offset of
+that moment (`2026-11-21 13:50:02 +01:00`); `--utc` on `agent log` is the way back to the files' form. Notifications write their
+`Time:` line the same way, in the zone of the daemon's machine, with the minute.
 `reviewer`, or with commands remain declared. `agent status <task>` and `agent status <round>` show these states
 beside the steps. Judgements are retained in history schema 17, which automatically upgrades older histories;
 keep a backup before upgrading if you need to return to an older daemon. This release provides the runtime engine
