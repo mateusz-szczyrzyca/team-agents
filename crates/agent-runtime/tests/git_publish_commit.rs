@@ -139,7 +139,15 @@ mod git_publish_commit {
 
         // Advance remote branch with an independent commit:
         let remote_third = commit_file(&repo, "c.txt", "remote three\n");
-        raw(&repo, &["push", "-q", "origin", &format!("{remote_third}:refs/heads/{target_branch}")]);
+        raw(
+            &repo,
+            &[
+                "push",
+                "-q",
+                "origin",
+                &format!("{remote_third}:refs/heads/{target_branch}"),
+            ],
+        );
         assert_eq!(
             raw(&origin, &["rev-parse", &format!("refs/heads/{target_branch}")]),
             remote_third.to_string()

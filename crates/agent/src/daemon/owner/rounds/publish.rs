@@ -208,11 +208,9 @@ async fn carry(
 fn item_ids_of(publication: &Publication) -> Vec<ItemId> {
     match &publication.publish {
         Publish::Open { items } => items.iter().map(|j| j.item).collect(),
-        Publish::Update { fixing, joining, .. } => fixing
-            .iter()
-            .copied()
-            .chain(joining.iter().map(|j| j.item))
-            .collect(),
+        Publish::Update { fixing, joining, .. } => {
+            fixing.iter().copied().chain(joining.iter().map(|j| j.item)).collect()
+        }
     }
 }
 
@@ -593,14 +591,8 @@ impl Owner {
         }
         let github = self.github_for(pulls, &lead.repo, &ready.git).await?;
         let existing = github.find_open_pull_request(head_branch).await?;
-        let published_branch = carry_open_pull(
-            ready,
-            head_branch,
-            &ids,
-            self.parts.state.team(team),
-            existing.as_ref(),
-        )
-        .await?;
+        let published_branch =
+            carry_open_pull(ready, head_branch, &ids, self.parts.state.team(team), existing.as_ref()).await?;
         let head_branch = &published_branch;
         let remote = self
             .find_or_create_pull_request(site, head_branch, &ids, ready, existing)
@@ -1365,9 +1357,9 @@ impl Owner {
         let reason = error_chain(error);
         let item_ids = item_ids_of(publication);
         if let Some(team) = self.parts.state.team(site.team) {
-            let has_open_question = item_ids.iter().any(|id| {
-                team.item(*id).is_some_and(|item| item.publish_question().is_some())
-            });
+            let has_open_question = item_ids
+                .iter()
+                .any(|id| team.item(*id).is_some_and(|item| item.publish_question().is_some()));
             if has_open_question {
                 return Ok(());
             }
