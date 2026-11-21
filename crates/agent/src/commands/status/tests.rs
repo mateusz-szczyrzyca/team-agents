@@ -1258,3 +1258,22 @@ fn a_task_another_agent_took_over_names_the_agent_it_replaced() {
         "{text}"
     );
 }
+
+#[test]
+fn status_names_the_capability_an_item_is_waiting_for() {
+    let mut teams = sample();
+    teams[0]
+        .tier_waits
+        .insert("1.1".parse().unwrap(), agent_core::kinds::Tier::Investigator);
+    assert_eq!(
+        render(&teams),
+        "\
+team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 in review, 0 approved, 0 done
+    1.1  waiting for investigator agent
+  task-20261111-153001-k3x9  coordinator  inv-opus   queued
+  task-20261111-153002-k3x9  member       claude-1   queued
+  task-20261111-153003-k3x9  worker       glm-1      queued
+  task-20261111-153004-k3x9  reviewer     inv-codex  queued
+"
+    );
+}
