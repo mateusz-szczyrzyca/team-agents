@@ -321,3 +321,5 @@ async fn a_plan_status_probe_is_returned_without_a_second_status_request() {
     assert_eq!(reply, Reply::Teams { teams: Vec::new() });
     assert_eq!(requests, [Request::new(RequestId(1), Client::Cli, status())]);
 }
+
+mod executor;
