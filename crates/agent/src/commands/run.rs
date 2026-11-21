@@ -362,7 +362,7 @@ fn task_with_short_desc(text: &str, desc: &str) -> String {
         }
         break;
     }
-    format!("{line}{text}")
+    format!("{line}{body}")
 }
 
 /// The request that starts what `input` says in the repository `directory` is in: nothing is asked of the daemon yet.
