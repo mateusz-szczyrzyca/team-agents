@@ -191,7 +191,7 @@ impl ChecksRecord {
             held.allowed_at
                 .extend(subjects.iter().filter_map(|subject| match subject {
                     Subject::Path(path) => Some((path.clone(), basis.head.clone())),
-                    Subject::NoTests => None,
+                    Subject::NoTests | Subject::Commit(_) => None,
                 }));
         }
     }

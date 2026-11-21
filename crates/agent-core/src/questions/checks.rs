@@ -152,12 +152,18 @@ fn subject_key(subject: &Subject) -> String {
     match subject {
         Subject::Path(path) => path_key(path.as_str()),
         Subject::NoTests => "n:".to_owned(),
+        Subject::Commit(commit) => commit_key(commit.as_str()),
     }
 }
 
 /// Encodes a path without losing spaces when the Markdown parser trims a labelled part.
 fn path_key(path: &str) -> String {
     format!("p:{path}:")
+}
+
+/// Encodes a commit as a labelled part, which the parser trims as a path.
+fn commit_key(commit: &str) -> String {
+    format!("c:{commit}:")
 }
 
 #[cfg(test)]

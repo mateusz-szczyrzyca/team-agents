@@ -188,6 +188,14 @@ pub enum Issue {
         /// How many lines of the file have one.
         count: u32,
     },
+    /// A commit of the round that a rewrite of the branch alone could correct ([`CommitFault`]): the team cannot fix it
+    /// in a later commit, so only the human may allow it.
+    Tried {
+        /// The commit.
+        commit: CommitId,
+        /// What it did.
+        fault: CommitFault,
+    },
 }
 
 /// What was done to an existing test file.
@@ -209,6 +217,19 @@ pub enum TestChange {
     EditedBinary,
     /// Its mode (an executable bit) changed, and its lines are the same or only gained some.
     ModeChanged,
+}
+
+/// What a commit is not allowed to do, as a finding about that commit: only a rewrite of the branch removes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommitFault {
+    /// A commit whose subject starts with `TEST-FIX:` that touches a file that is not a test: a test fix touches test
+    /// files only.
+    FixTouchesOther {
+        /// The commits whose subject starts with `TEST-FIX:`.
+        fix: CommitId,
+        /// The first file it touched that is not a test.
+        other: RepoPath,
+    },
 }
 
 /// What was done to a protected file.
@@ -235,13 +256,42 @@ pub enum Judge {
 }
 
 /// What an issue is about: what the human allows or refuses, and what is recorded for the item when they allow it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Subject {
     /// A file.
     Path(RepoPath),
     /// That the round has no tests for the code it changes.
     NoTests,
+    /// A commit of the round, which a rewrite of the branch alone would correct.
+    Commit(CommitId),
+}
+
+impl PartialOrd for Subject {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Subject {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.rank().cmp(&other.rank()).then_with(|| match (self, other) {
+            (Self::Path(one), Self::Path(two)) => one.as_str().cmp(two.as_str()),
+            (Self::Commit(one), Self::Commit(two)) => one.as_str().cmp(two.as_str()),
+            (Self::Path(_) | Self::NoTests | Self::Commit(_), _) => std::cmp::Ordering::Equal,
+        })
+    }
+}
+
+impl Subject {
+    /// Which kind of subject this is, for the order of the set of subjects.
+    const fn rank(&self) -> u8 {
+        match self {
+            Self::Path(_) => 0,
+            Self::NoTests => 1,
+            Self::Commit(_) => 2,
+        }
+    }
 }
 
 impl FileChange {
@@ -275,6 +325,8 @@ pub enum IssueKind {
     NoTests,
     /// Each marker kind has its own question.
     Marker(markers::Marker),
+    /// A commit the team cannot repair; each kind of fault has its own question.
+    Tried(std::mem::Discriminant<CommitFault>),
 }
 
 impl Issue {
@@ -288,7 +340,7 @@ impl Issue {
             Self::TestChanged { path, .. } | Self::ProtectedChanged { path, .. } | Self::RedTestEdited { path, .. } => {
                 path
             }
-            Self::NoTests | Self::Marker { .. } => return None,
+            Self::NoTests | Self::Marker { .. } | Self::Tried { .. } => return None,
         };
         allowances.iter().find(|allowance| allowance.matches(path))
     }
@@ -302,6 +354,7 @@ impl Issue {
             Self::RedTestEdited { .. } => IssueKind::RedTestEdited,
             Self::NoTests => IssueKind::NoTests,
             Self::Marker { marker, .. } => IssueKind::Marker(*marker),
+            Self::Tried { fault, .. } => IssueKind::Tried(std::mem::discriminant(fault)),
         }
     }
 
@@ -311,6 +364,7 @@ impl Issue {
         match self {
             Self::TestChanged { .. } | Self::ProtectedChanged { .. } => Judge::Human,
             Self::RedTestEdited { .. } | Self::NoTests | Self::Marker { .. } => Judge::Team,
+            Self::Tried { .. } => Judge::Human,
         }
     }
 
@@ -323,6 +377,7 @@ impl Issue {
             | Self::RedTestEdited { path, .. }
             | Self::Marker { path, .. } => Subject::Path(path.clone()),
             Self::NoTests => Subject::NoTests,
+            Self::Tried { commit, .. } => Subject::Commit(commit.clone()),
         }
     }
 }
@@ -346,8 +401,14 @@ pub fn assess_near(rules: &Checks, facts: &RoundFacts, unchanged: &[UnchangedLin
     issues.extend(edited_red_tests(rules, facts));
     issues.extend(missing_tests(rules, facts));
     issues.extend(markers_added(rules, facts, unchanged));
+    issues.extend(commits_the_team_cannot_repair(rules, facts));
     issues.retain(|issue| !allowed.contains(&issue.subject()));
     issues
+}
+
+/// The commits of the round that a later commit cannot correct.
+fn commits_the_team_cannot_repair(_rules: &Checks, _facts: &RoundFacts) -> Vec<Issue> {
+    Vec::new()
 }
 
 /// The protected paths `file` touches: where it was when it moved out of one and where it is when it is in one, each

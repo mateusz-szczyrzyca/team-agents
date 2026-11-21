@@ -580,6 +580,66 @@ fn a_commit_that_is_not_a_test_fix_is_not_excused_by_being_named() {
     }
 }
 
+// ---- commits the team cannot repair ----------------------------------------------------------------------------------
+
+/// The `TEST-FIX:` commit `2` after the `RED:` commit, touching `files`, in a round whose description names it.
+fn test_fix_touching(files: Vec<FileChange>) -> RoundFacts {
+    test_fix(
+        "TEST-FIX: the assertion was wrong",
+        files,
+        &describing(&id('2').to_string()),
+    )
+}
+
+// Rule: a `TEST-FIX:` commit that touches a file that is not a test is a finding about that commit — the description
+// cannot excuse it, and only a rewrite of the branch removes it, so only the human may allow it.
+#[test]
+fn a_test_fix_that_touches_a_file_that_is_not_a_test_is_a_finding_about_the_commit() {
+    let cases = [
+        ("src/lib.rs", vec![modified("tests/a.rs", 1, 1), modified("src/lib.rs", 1, 0)]),
+        ("docs/notes.md", vec![added("docs/notes.md", 2), modified("tests/a.rs", 0, 1)]),
+        // a file next to the tests is not one
+        ("tests/notes.rs", vec![modified("tests/notes.rs", 1, 1)]),
+    ];
+    for (other, files) in cases {
+        let issues = found(&test_fix_touching(files));
+
+        // the commit takes a line out of the test of the `RED:` commit as well: that finding stays, for the team
+        let tried = Issue::Tried {
+            commit: id('2'),
+            fault: CommitFault::FixTouchesOther {
+                fix: id('2'),
+                other: path(other),
+            },
+        };
+        assert_eq!(issues.last(), Some(&tried), "{other}");
+        assert_eq!(tried.judge(), Judge::Human, "{other}");
+        assert_eq!(tried.subject(), Subject::Commit(id('2')), "{other}");
+    }
+}
+
+#[test]
+fn a_test_fix_of_test_files_only_is_no_finding_even_when_it_takes_lines_out() {
+    for files in [
+        vec![modified("tests/a.rs", 1, 1)],
+        vec![added("tests/b.rs", 4), modified("tests/a.rs", 0, 1)],
+        vec![modified("agentbus/a_test.go", 2, 2)],
+    ] {
+        assert_eq!(found(&test_fix_touching(files.clone())), [], "{files:?}");
+    }
+}
+
+#[test]
+fn a_commit_that_is_not_a_test_fix_and_touches_other_files_is_no_finding_about_a_commit() {
+    let facts = test_fix(
+        "GREEN: code and its test",
+        vec![modified("tests/a.rs", 1, 0), modified("src/lib.rs", 1, 0)],
+        &describing(&id('2').to_string()),
+    );
+
+    assert_eq!(found(&facts), []);
+}
+
 // ---- production code without tests ------------------------------------------------------------------------------------
 
 // Rule: a round that changes production code adds a line to a test file, or one of its commits says why not.
@@ -1033,6 +1093,7 @@ fn the_issues_come_in_the_order_of_the_rules() {
             Issue::RedTestEdited { .. } => "red edited",
             Issue::NoTests => "no tests",
             Issue::Marker { .. } => "marker",
+            Issue::Tried { .. } => "tried",
         })
         .collect();
 
