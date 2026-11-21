@@ -1,0 +1,10 @@
+## Step 1.2 check failed
+
+You ended your turn with `STATUS: DONE`, but the check of step 1.2 (`cargo test`) failed:
+
+```text
+failures:
+    test_something
+```
+
+Fix the step, ensure its check passes, or correct its check in `.agent/plan.md`, then end your turn as before.

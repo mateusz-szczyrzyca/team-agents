@@ -91,6 +91,10 @@ pub enum HarnessPrompt {
     PlanUnfinished,
     /// What a run sent back because its plan lost a step of the version before is told.
     PlanLostStep,
+    /// What a run sent back because a step check failed is told.
+    PlanMismatch,
+    /// What a run whose step check was refused because it ran the gate is told on its next run.
+    PlanGateRefused,
     /// The questions file the harness writes for the human when a task was sent back for its plan as often as
     /// `[plan] bounces` allows.
     NoticePlanQuestion,
@@ -141,6 +145,8 @@ impl HarnessPrompt {
         Self::PlanUnreadable,
         Self::PlanUnfinished,
         Self::PlanLostStep,
+        Self::PlanMismatch,
+        Self::PlanGateRefused,
         Self::NoticePlanQuestion,
         Self::NoticeLastStep,
     ];
@@ -273,6 +279,16 @@ impl HarnessPrompt {
             Self::PlanUnreadable => PromptSpec::new("harness/run/plan-unreadable.md", Audience::Model, &["error"]),
             Self::PlanUnfinished => PromptSpec::new("harness/run/plan-unfinished.md", Audience::Model, &["steps"]),
             Self::PlanLostStep => PromptSpec::new("harness/run/plan-lost-step.md", Audience::Model, &["steps"]),
+            Self::PlanMismatch => PromptSpec::new(
+                "harness/run/plan-mismatch.md",
+                Audience::Model,
+                &["check", "output", "step"],
+            ),
+            Self::PlanGateRefused => PromptSpec::new(
+                "harness/run/plan-gate-refused.md",
+                Audience::Model,
+                &["command", "step"],
+            ),
             Self::NoticePlanQuestion => PromptSpec::new(
                 "harness/run/notice-plan-question.md",
                 Audience::Human,

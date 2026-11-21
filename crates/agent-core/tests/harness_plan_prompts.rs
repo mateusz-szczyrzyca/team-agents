@@ -63,6 +63,20 @@ mod harness_plan_prompts {
             ),
             (HarnessPrompt::PlanLostStep, &[("steps", "1.3")], "plan-lost-step.txt"),
             (
+                HarnessPrompt::PlanMismatch,
+                &[
+                    ("step", "1.2"),
+                    ("check", "cargo test"),
+                    ("output", "failures:\n    test_something"),
+                ],
+                "plan-mismatch.txt",
+            ),
+            (
+                HarnessPrompt::PlanGateRefused,
+                &[("step", "1.1"), ("command", "agent gate")],
+                "plan-gate-refused.txt",
+            ),
+            (
                 HarnessPrompt::NoticePlanQuestion,
                 &[
                     ("task", "task-20261120-090000-abcd"),

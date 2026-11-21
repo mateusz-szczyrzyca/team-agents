@@ -524,3 +524,150 @@ fn an_item_whose_member_finished_it_is_the_coordinators_and_its_done_ends_the_wo
         );
     }
 }
+
+#[test]
+fn a_step_mismatch_sends_a_done_run_back_below_the_limit() {
+    let end = ended(RunOutcome::Done);
+    let read = read(DONE);
+    let keeping = keeping(0, PlanStage::Open);
+    let mismatch = PlanReason::Mismatch {
+        step: item("1.1"),
+        check: Some("cargo test".to_owned()),
+        tail: "error in test".to_owned(),
+    };
+
+    let verdict = decide_plan_with_mismatch(
+        PlanFacts {
+            role: Role::Solo,
+            end: &end,
+            read: &read,
+            earlier: &[],
+            keeping: Some(&keeping),
+            policy: &policy(),
+        },
+        Some(mismatch.clone()),
+    );
+
+    assert_eq!(verdict, PlanVerdict::SendBack(mismatch));
+}
+
+#[test]
+fn a_step_mismatch_asks_the_human_when_the_limit_is_reached() {
+    let end = ended(RunOutcome::Done);
+    let read = read(DONE);
+    let keeping = keeping(3, PlanStage::Open);
+    let mismatch = PlanReason::Mismatch {
+        step: item("1.1"),
+        check: Some("cargo test".to_owned()),
+        tail: "error in test".to_owned(),
+    };
+
+    let verdict = decide_plan_with_mismatch(
+        PlanFacts {
+            role: Role::Solo,
+            end: &end,
+            read: &read,
+            earlier: &[],
+            keeping: Some(&keeping),
+            policy: &policy(),
+        },
+        Some(mismatch.clone()),
+    );
+
+    assert_eq!(verdict, PlanVerdict::AskHuman(mismatch));
+}
+
+#[test]
+fn a_step_mismatch_does_not_bounce_for_failed_run_or_unplanned_role_or_legacy() {
+    let read = read(DONE);
+    let open_keeping = keeping(0, PlanStage::Open);
+    let mismatch = PlanReason::Mismatch {
+        step: item("1.1"),
+        check: Some("cargo test".to_owned()),
+        tail: "error in test".to_owned(),
+    };
+
+    // Failed run does not bounce for mismatch
+    let end_failed = ended(RunOutcome::Failed);
+    assert_eq!(
+        decide_plan_with_mismatch(
+            PlanFacts {
+                role: Role::Solo,
+                end: &end_failed,
+                read: &read,
+                earlier: &[],
+                keeping: Some(&open_keeping),
+                policy: &policy(),
+            },
+            Some(mismatch.clone()),
+        ),
+        PlanVerdict::Accept
+    );
+
+    // Reviewer role does not bounce
+    let end_done = ended(RunOutcome::Done);
+    assert_eq!(
+        decide_plan_with_mismatch(
+            PlanFacts {
+                role: Role::Reviewer,
+                end: &end_done,
+                read: &read,
+                earlier: &[],
+                keeping: Some(&open_keeping),
+                policy: &policy(),
+            },
+            Some(mismatch.clone()),
+        ),
+        PlanVerdict::Accept
+    );
+
+    // Legacy task (no keeping) does not bounce
+    assert_eq!(
+        decide_plan_with_mismatch(
+            PlanFacts {
+                role: Role::Solo,
+                end: &end_done,
+                read: &read,
+                earlier: &[],
+                keeping: None,
+                policy: &policy(),
+            },
+            Some(mismatch.clone()),
+        ),
+        PlanVerdict::Accept
+    );
+
+    // Released plan does not bounce
+    let released = keeping(0, PlanStage::Released);
+    assert_eq!(
+        decide_plan_with_mismatch(
+            PlanFacts {
+                role: Role::Solo,
+                end: &end_done,
+                read: &read,
+                earlier: &[],
+                keeping: Some(&released),
+                policy: &policy(),
+            },
+            Some(mismatch.clone()),
+        ),
+        PlanVerdict::Accept
+    );
+
+    // bounces = 0 does not bounce
+    let zero_policy = policy_of("[plan]\nbounces = 0\n");
+    assert_eq!(
+        decide_plan_with_mismatch(
+            PlanFacts {
+                role: Role::Solo,
+                end: &end_done,
+                read: &read,
+                earlier: &[],
+                keeping: Some(&open_keeping),
+                policy: &zero_policy,
+            },
+            Some(mismatch),
+        ),
+        PlanVerdict::Accept
+    );
+}

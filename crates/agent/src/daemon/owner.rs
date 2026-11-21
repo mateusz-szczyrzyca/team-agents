@@ -858,12 +858,13 @@ impl Owner {
                 source,
             })?;
         // The run's prompt has the reason it was sent back for its plan, if any: no later run is told it again.
-        // So are the answers about its plan that no run asked for.
+        // So are the answers about its plan that no run asked for and any refused gate notice.
         if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
             let reason = member.take_plan_reason();
             let answers = member.take_unread_plan_answers();
-            if reason.is_some() || answers.is_some() {
-                tracing::debug!(task = %task, ?reason, ?answers, "the run is told what waited for it of its plan");
+            let refused = member.take_plan_refused_gate();
+            if reason.is_some() || answers.is_some() || refused.is_some() {
+                tracing::debug!(task = %task, ?reason, ?answers, ?refused, "the run is told what waited for it of its plan");
             }
         }
         events.push(EventKind::RunStarted {

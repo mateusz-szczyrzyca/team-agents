@@ -49,6 +49,15 @@ pub enum PlanReason {
         /// The steps, in the order of the version before.
         steps: Vec<ItemId>,
     },
+    /// A step check failed or timed out.
+    Mismatch {
+        /// The step ID.
+        step: ItemId,
+        /// The check that was executed, if any.
+        check: Option<String>,
+        /// The trailing lines of the check's output.
+        tail: String,
+    },
 }
 
 /// What a task keeps of its plan: the count of its send-backs, what the human granted, the stage, and a reason that
@@ -71,6 +80,9 @@ pub struct PlanKeeping {
     /// The questions about the plan the human answered and no run has been given yet; `None` when there are none.
     #[serde(skip_serializing_if = "Option::is_none")]
     unread_answers: Option<NonZeroU32>,
+    /// A step check that was refused because it ran the gate, to be told on the next run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refused_gate: Option<(ItemId, String)>,
 }
 
 impl PlanKeeping {
@@ -146,5 +158,21 @@ impl PlanKeeping {
     /// The answered questions no run has been given yet, taken out.
     pub(super) fn take_unread_answers(&mut self) -> Option<NonZeroU32> {
         self.unread_answers.take()
+    }
+
+    /// Records that `command` of `step` was refused because it ran the gate.
+    pub(super) fn set_refused_gate(&mut self, step: ItemId, command: String) {
+        self.refused_gate = Some((step, command));
+    }
+
+    /// The refused gate notice for the next run, if any.
+    #[must_use]
+    pub fn refused_gate(&self) -> Option<&(ItemId, String)> {
+        self.refused_gate.as_ref()
+    }
+
+    /// The refused gate notice for the next run, taken out.
+    pub(super) fn take_refused_gate(&mut self) -> Option<(ItemId, String)> {
+        self.refused_gate.take()
     }
 }
