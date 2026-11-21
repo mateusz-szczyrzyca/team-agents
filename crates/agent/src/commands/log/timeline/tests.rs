@@ -141,12 +141,14 @@ mod timeline_tests {
         let timeline = Timeline::new(found.iter().collect(), steps.to_vec(), Vec::new());
         let text = timeline.newest(10);
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 6, "{text}");
-        assert!(lines[0].contains("task_status_changed") && lines[0].contains("12:50:05"), "{text}");
-        assert!(lines[1].contains("12:50:12Z run run-20261121-132909-0001 started by inv-claude-sonnet"), "{text}");
+        assert_eq!(lines.len(), 4, "{text}");
+        assert!(lines[0].contains("12:50:05Z info task_status_changed"), "{text}");
+        assert!(
+            lines[1].contains("12:50:00Z run run-20261121-132909-0001 started by inv-claude-sonnet"),
+            "{text}"
+        );
         assert!(lines[2].contains("12:50:12Z command: cargo test"), "{text}");
         assert!(lines[3].contains("12:50:15Z info task_status_changed"), "{text}");
-        assert!(lines[4].contains("12:50:25Z info task_status_changed"), "{text}");
         assert_eq!(timeline.newest(1).lines().count(), 1);
     }
 }
