@@ -5,6 +5,18 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.52.0 — 21.11.2026 — PR #169
+
+### New features
+- [agent] [agent-core] `agent log` writes its times as a person reads them: in the zone of this machine, with its offset at that moment, in one form. For example `2026-11-21 17:29:53 +01:00` instead of `2026-11-21T16:29:53Z`. The rows, steps, story and follow all show the same moment the same way.
+- [agent] `agent log --utc` prints the times as the files hold them, RFC 3339 with `Z`, as before this version.
+- [agent] [agent-core] A `--since` or `--until` without a zone is read in the zone of the output: `agent log --round <round> --since "2026-11-21 17:29"`. With `Z` or an offset it is read as written.
+
+### Enhancements
+- [agent] `--json` of `agent log` and the files of the harness are unchanged: UTC, RFC 3339.
+
+**Action:** a script that reads the text of `agent log` must read the new form, or use `agent log --utc` to keep the old text.
+
 ## 0.51.0 — 21.11.2026 — PR #168
 
 ### New features
