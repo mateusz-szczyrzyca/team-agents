@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use agent_core::history::{MaxTextBytes, Record};
 
+use super::judgements::JudgementRecord;
 use super::plans::PlanRecord;
 use agent_core::log::LogRecord;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
@@ -49,6 +50,14 @@ pub trait Store: Send + 'static {
     /// # Errors
     /// [`WriteError`] when they cannot be written; none of them is.
     fn write_plans(&mut self, _records: &[PlanRecord]) -> Result<(), WriteError> {
+        Ok(())
+    }
+
+    /// Writes judgement `records` as one unit: all of them or none.
+    ///
+    /// # Errors
+    /// [`WriteError`] when they cannot be written; none of them is.
+    fn write_judgements(&mut self, _records: &[JudgementRecord]) -> Result<(), WriteError> {
         Ok(())
     }
 }
@@ -196,6 +205,17 @@ impl Store for HistoryDb {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|source| WriteError::Transaction { source })?;
         super::plans::insert(&transaction, records)?;
+        transaction
+            .commit()
+            .map_err(|source| WriteError::Transaction { source })
+    }
+
+    fn write_judgements(&mut self, records: &[JudgementRecord]) -> Result<(), WriteError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|source| WriteError::Transaction { source })?;
+        super::judgements::insert(&transaction, records)?;
         transaction
             .commit()
             .map_err(|source| WriteError::Transaction { source })

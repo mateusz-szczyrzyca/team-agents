@@ -5,7 +5,7 @@
 //! the row named, not half believed. Each answer is read in one transaction: it is a whole snapshot, never a record the
 //! writer was in the middle of.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::Path;
 use std::str::FromStr;
@@ -34,6 +34,7 @@ mod stats;
 
 use super::codec::parse_time;
 use super::error::{ReadError, ValueProblem};
+use super::judgements::JudgementRecord;
 use super::migrate::{latest, version_of};
 use super::plans::PlanRecord;
 use super::schema::{DAEMON_LOGS_VERSION, MIGRATIONS, SNAPSHOTS_VERSION};
@@ -487,6 +488,25 @@ impl Reader {
     pub fn plan_versions(&self, task: &TaskId) -> Result<Vec<PlanRecord>, ReadError> {
         let snapshot = self.snapshot("plan_versions")?;
         super::plans::read(&snapshot, task)
+    }
+
+    /// The step judgements of `task`, oldest first: `None` for a database written before judgements, whose table is not
+    /// there.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn step_judgements(&self, task: &TaskId) -> Result<Vec<JudgementRecord>, ReadError> {
+        let snapshot = self.snapshot("step_judgements")?;
+        super::judgements::read(&snapshot, task)
+    }
+
+    /// The latest judgement for each step of `task`.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn latest_judgements(&self, task: &TaskId) -> Result<HashMap<ItemId, JudgementRecord>, ReadError> {
+        let snapshot = self.snapshot("step_judgements")?;
+        super::judgements::latest(&snapshot, task)
     }
 
     /// The last plan version of `task` kept at the end of a run other than `exclude`; `None` when there is none, which

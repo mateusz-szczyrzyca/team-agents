@@ -56,6 +56,10 @@ mod turn_limit;
 mod disputes;
 
 #[cfg(test)]
+mod judgements;
+#[cfg(test)]
+mod judgements_before;
+#[cfg(test)]
 mod opinions;
 #[cfg(test)]
 mod plans;

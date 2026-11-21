@@ -278,4 +278,8 @@ impl<S: Store> Store for Noting<S> {
     fn write_plans(&mut self, records: &[super::plans::PlanRecord]) -> Result<(), WriteError> {
         self.inner.write_plans(records)
     }
+
+    fn write_judgements(&mut self, records: &[super::judgements::JudgementRecord]) -> Result<(), WriteError> {
+        self.inner.write_judgements(records)
+    }
 }

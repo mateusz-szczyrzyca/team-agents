@@ -129,6 +129,8 @@ enum Job {
     Log(LogRecord),
     /// Reads of a task's plan to write.
     Plans(Vec<super::plans::PlanRecord>),
+    /// Judgements of a task's plan steps to write.
+    Judgements(Vec<super::judgements::JudgementRecord>),
     /// The writer is to answer on this channel when everything before it is written.
     Flush(SyncSender<()>),
     /// The writer is to stop.
@@ -619,6 +621,40 @@ impl History {
             Err(TrySendError::Full(job) | TrySendError::Disconnected(job)) => {
                 let lost = match job {
                     Job::Plans(plans) => count(plans.len()),
+                    Job::Judgements(judgements) => count(judgements.len()),
+                    Job::Record(_) | Job::Flush(_) | Job::Retain(_) | Job::Log(_) | Job::Close => 1,
+                };
+                self.shared.lose(lost);
+            }
+        }
+    }
+
+    /// Hands `records` of judgements of a task's plan steps to the history.
+    pub fn write_judgements(&self, records: Vec<super::judgements::JudgementRecord>) {
+        if records.is_empty() {
+            return;
+        }
+        let Some(queue) = &self.queue else {
+            self.shared.lose(count(records.len()));
+            return;
+        };
+        match queue.try_send(Job::Judgements(records)) {
+            Ok(()) => {}
+            Err(TrySendError::Full(Job::Judgements(records))) => {
+                self.shared.lose(count(records.len()));
+                self.shared.report(Cause::QueueFull, || {
+                    "the writer of the history is slower than the work: judgements are dropped while its queue is full"
+                        .to_owned()
+                });
+            }
+            Err(TrySendError::Disconnected(Job::Judgements(records))) => {
+                self.shared.lose(count(records.len()));
+                self.stopped();
+            }
+            Err(TrySendError::Full(job) | TrySendError::Disconnected(job)) => {
+                let lost = match job {
+                    Job::Judgements(judgements) => count(judgements.len()),
+                    Job::Plans(plans) => count(plans.len()),
                     Job::Record(_) | Job::Flush(_) | Job::Retain(_) | Job::Log(_) | Job::Close => 1,
                 };
                 self.shared.lose(lost);
@@ -697,6 +733,11 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
                     write_plans(&mut store, shared, &plans);
                     continue;
                 }
+                Job::Judgements(judgements) => {
+                    write_batch(&mut store, shared, std::mem::take(&mut batch));
+                    write_judgements(&mut store, shared, &judgements);
+                    continue;
+                }
                 Job::Retain(request) => {
                     write_batch(&mut store, shared, std::mem::take(&mut batch));
                     write_log_batch(&mut store, shared, std::mem::take(&mut log_batch));
@@ -740,6 +781,7 @@ fn count_what_is_left(jobs: &Receiver<Job>, shared: &Shared) {
             }
             Job::Retain(_) => shared.report(Cause::Retention, || "writer stopped before retention".to_owned()),
             Job::Plans(plans) => shared.lose(count(plans.len())),
+            Job::Judgements(judgements) => shared.lose(count(judgements.len())),
             Job::Log(_) | Job::Close => {}
         }
     }
@@ -765,6 +807,17 @@ fn write_plans(store: &mut impl Store, shared: &Shared, plans: &[super::plans::P
     }
     if let Err(error) = store.write_plans(plans) {
         shared.lose(count(plans.len()));
+        shared.report(Cause::Write(error.kind()), || error_chain(&error));
+    }
+}
+
+/// Writes `judgements`; when they cannot be written, each that failed is counted as lost.
+fn write_judgements(store: &mut impl Store, shared: &Shared, judgements: &[super::judgements::JudgementRecord]) {
+    if judgements.is_empty() {
+        return;
+    }
+    if let Err(error) = store.write_judgements(judgements) {
+        shared.lose(count(judgements.len()));
         shared.report(Cause::Write(error.kind()), || error_chain(&error));
     }
 }
