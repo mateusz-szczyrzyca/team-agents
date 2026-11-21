@@ -12,9 +12,10 @@ use agent_core::ids::RunId;
 use agent_core::ids::{AgentName, BranchName, InvalidName, ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
-use agent_core::plan::judge::{JudgementState, steps_to_judge};
-use agent_core::plan::{PLAN_FILE, Plan, PlanError, parse_plan};
+use agent_core::plan::judge::{JudgementState, steps_to_judge_with};
+use agent_core::plan::{PLAN_FILE, Plan, PlanError, StepState, parse_plan};
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
+use agent_core::protocol::PlanStepSummary;
 use agent_core::questions::{Entry, QuestionsFile, Verdict, quote};
 use agent_core::repo_path::{InvalidRepoPath, RepoPath};
 use agent_core::state::{ItemProgress, PlanKeeping, PlanReason, PlanStage};
@@ -23,7 +24,9 @@ use agent_core::status::{RunOutcome, TaskStatus};
 use agent_core::task_list::MAX_TASK_LIST_BYTES;
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision, Untracked};
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
-use agent_runtime::history::{JudgementRecord, PlanRead as HistoryPlanRead, PlanRecord, Reader, log_decision};
+use agent_runtime::history::{
+    JudgementRecord, PlanRead as HistoryPlanRead, PlanRecord, ReadError, Reader, log_decision,
+};
 use agent_runtime::plan::check::{CheckContext, JudgementResult, execute_step_check};
 use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::ComposeError;
@@ -35,7 +38,7 @@ use crate::daemon::settle::Settled;
 
 /// Why the plan of a task cannot be taken out of its branch.
 #[derive(Debug, thiserror::Error)]
-enum OutOfDeliveryError {
+pub(crate) enum OutOfDeliveryError {
     /// The task's team is not in the state.
     #[error("the team {team} is not in the state")]
     TeamGone {
@@ -363,15 +366,15 @@ impl Owner {
             .state
             .find_task(task)
             .and_then(|found| found.member.current_run().map(|run| run.id().clone()));
-        let earlier = if matches!(found.read, PlanRead::Parsed(_)) {
+        let (earlier, earlier_by_run) = if matches!(found.read, PlanRead::Parsed(_)) {
             self.earlier_plans(task, run.as_ref()).await
         } else {
-            Vec::new()
+            (Vec::new(), HashMap::new())
         };
         self.keep_plan(task, located, run.clone(), &found)?;
         let _judged_steps = if let PlanRead::Parsed(plan) = &found.read {
             let (res, latest) = self
-                .judge_steps_at_end(task, located, run.as_ref(), plan, earlier.last())
+                .judge_steps_at_end(task, located, run.as_ref(), plan, earlier.last(), &earlier_by_run)
                 .await?;
             self.refresh_task_plan(task, plan, &latest);
             res
@@ -419,10 +422,10 @@ impl Owner {
         })
     }
 
-    /// The versions of the plan of `task` the history kept from runs other than `run`, oldest first; none when the
-    /// history cannot be read (logged): a step lost since then is then not found. A kept version that does not parse is
-    /// left out and logged.
-    async fn earlier_plans(&self, task: &TaskId, run: Option<&RunId>) -> Vec<Plan> {
+    /// The versions of the plan of `task` the history kept from runs other than `run`, oldest first, along with a map by
+    /// run ID; none when the history cannot be read (logged): a step lost since then is then not found. A kept version
+    /// that does not parse is left out and logged.
+    async fn earlier_plans(&self, task: &TaskId, run: Option<&RunId>) -> (Vec<Plan>, HashMap<RunId, Plan>) {
         let path = self.parts.store.home().history_file();
         let task_id = task.clone();
         let looked =
@@ -433,7 +436,7 @@ impl Owner {
             Ok(Err(error)) => {
                 // A home without a history (or one disabled) has kept no plan: nothing can be found lost.
                 tracing::debug!(task = %task, error = %error_chain(&error), "no plan kept before can be read");
-                return Vec::new();
+                return (Vec::new(), HashMap::new());
             }
             Err(error) => {
                 tracing::warn!(
@@ -442,16 +445,22 @@ impl Owner {
                     %error,
                     "the plans kept before cannot be read: no step is found lost"
                 );
-                return Vec::new();
+                return (Vec::new(), HashMap::new());
             }
         };
         let mut plans = Vec::new();
+        let mut by_run = HashMap::new();
         for record in records.into_iter().filter(|record| record.run.as_ref() != run) {
             let HistoryPlanRead::Version { text } = record.read else {
                 continue;
             };
             match parse_plan(&text) {
-                Ok(plan) => plans.push(plan),
+                Ok(plan) => {
+                    if let Some(run_id) = record.run {
+                        by_run.insert(run_id, plan.clone());
+                    }
+                    plans.push(plan);
+                }
                 Err(error) => tracing::warn!(
                     event = LogEvent::HistoryRecordIncomplete.as_str(),
                     task = %task,
@@ -460,7 +469,7 @@ impl Owner {
                 ),
             }
         }
-        plans
+        (plans, by_run)
     }
 
     /// Executes and records the step checks of `plan` that are to be judged at the end of `run`.
@@ -471,6 +480,7 @@ impl Owner {
         run: Option<&RunId>,
         plan: &'a Plan,
         earlier_plan: Option<&Plan>,
+        earlier_by_run: &HashMap<RunId, Plan>,
     ) -> Result<
         (
             Vec<(&'a agent_core::plan::Step, JudgementResult)>,
@@ -478,11 +488,21 @@ impl Owner {
         ),
         OwnerError,
     > {
-        let Ok(worktree) = self.worktree_of(task, located) else {
-            return Ok((Vec::new(), HashMap::new()));
-        };
+        let worktree = self.worktree_of(task, located)?;
         let mut previous = self.latest_judgements(task).await;
-        let to_judge = steps_to_judge(plan, earlier_plan, |id| previous.get(id).map(|j| j.state));
+        let to_judge = steps_to_judge_with(
+            plan,
+            |id| {
+                if let Some(judgement) = previous.get(id)
+                    && let Some(run_id) = &judgement.run
+                    && let Some(plan_at_run) = earlier_by_run.get(run_id)
+                {
+                    return plan_at_run.step(id);
+                }
+                earlier_plan.and_then(|p| p.step(id))
+            },
+            |id| previous.get(id).map(|j| j.state),
+        );
         let task_dir = self.parts.store.home().task_dir(task);
         let context = CheckContext {
             worktree: worktree.as_path(),
@@ -529,8 +549,12 @@ impl Owner {
         for record in &records {
             previous.insert(record.step, record.clone());
         }
-        if !records.is_empty() {
-            self.history.persist_judgements(records).await?;
+        if !records.is_empty() && self.history.is_writing() {
+            match self.history.persist_judgements(records).await {
+                Ok(()) => {}
+                Err(agent_runtime::history::PersistJudgementsError::Unavailable) if !self.history.is_writing() => {}
+                Err(error) => return Err(OwnerError::PersistJudgements(error)),
+            }
         }
         Ok((results, previous))
     }
@@ -581,6 +605,180 @@ impl Owner {
             read,
         }]);
         Ok(())
+    }
+
+    /// Reads and parses the plan file in the worktree of `task` for snapshot recovery.
+    async fn read_worktree_plan(&self, task: &TaskId) -> Option<Plan> {
+        let located = self.locate(task).ok()?;
+        let worktree = self.worktree_of(task, &located).ok()?;
+        let plan_file = worktree.as_path().join(PLAN_FILE);
+        let text = match read_text_file(&plan_file, MAX_TASK_LIST_BYTES).await {
+            Ok(Some(file)) => file.text,
+            Ok(None) => return None,
+            Err(error) => {
+                tracing::warn!(
+                    task = %task,
+                    path = %plan_file.display(),
+                    error = %error_chain(&error),
+                    "cannot read plan file for snapshot"
+                );
+                return None;
+            }
+        };
+        match parse_plan(&text) {
+            Ok(plan) => Some(plan),
+            Err(error) => {
+                tracing::warn!(
+                    task = %task,
+                    error = %error_chain(&error),
+                    "cannot parse plan file for snapshot"
+                );
+                None
+            }
+        }
+    }
+
+    /// Asynchronously populates the in-memory plan summaries of all existing tasks at daemon recovery.
+    pub(super) async fn load_plan_snapshots(&mut self) {
+        let history_path = self.parts.store.home().history_file();
+        let is_writing = self.history.is_writing();
+        let mut parsed_tasks = Vec::new();
+        for team in self.parts.state.teams() {
+            let mut tasks = Vec::new();
+            for (_role, member) in team.crew().roster() {
+                tasks.push(member.task().clone());
+            }
+            for reviewer in team.reviewers() {
+                tasks.push(reviewer.task().clone());
+            }
+            for task in tasks {
+                if let Some(plan) = self.read_worktree_plan(&task).await {
+                    parsed_tasks.push((task, plan));
+                }
+            }
+        }
+
+        let mut loaded = HashMap::new();
+        for (task, plan) in parsed_tasks {
+            let has_done = plan.steps().any(|s| s.state() == StepState::Done);
+
+            let (judgements, earlier_by_run) = if has_done && is_writing && history_path.exists() {
+                let path = history_path.clone();
+                let task_id = task.clone();
+                let looked = tokio::task::spawn_blocking(move || {
+                    let reader = Reader::open(&path)?;
+                    let latest = reader.latest_judgements(&task_id)?;
+                    let records = reader.plan_versions(&task_id)?;
+                    let mut by_run = HashMap::new();
+                    for record in records {
+                        if let (Some(run_id), HistoryPlanRead::Version { text }) = (record.run, record.read)
+                            && let Ok(plan) = parse_plan(&text)
+                        {
+                            by_run.insert(run_id, plan);
+                        }
+                    }
+                    Ok::<_, ReadError>((latest, by_run))
+                })
+                .await;
+
+                match looked {
+                    Ok(Ok(pair)) => pair,
+                    Ok(Err(error)) => {
+                        tracing::warn!(
+                            event = LogEvent::HistoryRecordIncomplete.as_str(),
+                            task = %task,
+                            error = %error_chain(&error),
+                            "latest plan judgements could not be read for snapshot"
+                        );
+                        (HashMap::new(), HashMap::new())
+                    }
+                    Err(join_err) => {
+                        tracing::warn!(
+                            event = LogEvent::HistoryRecordIncomplete.as_str(),
+                            task = %task,
+                            error = %join_err,
+                            "failed to join task reading judgements for snapshot"
+                        );
+                        (HashMap::new(), HashMap::new())
+                    }
+                }
+            } else {
+                (HashMap::new(), HashMap::new())
+            };
+
+            let summaries: Vec<PlanStepSummary> = plan
+                .steps()
+                .map(|step| step_summary(step, &judgements, &earlier_by_run))
+                .collect();
+            loaded.insert(task, summaries);
+        }
+
+        self.task_plans = loaded;
+    }
+
+    /// Stores the parsed `plan` and latest `judgements` of `task` in cache for status snapshots.
+    pub(super) fn refresh_task_plan(
+        &mut self,
+        task: &TaskId,
+        plan: &Plan,
+        judgements: &HashMap<ItemId, JudgementRecord>,
+    ) {
+        let summaries: Vec<PlanStepSummary> = plan
+            .steps()
+            .map(|step| {
+                let is_done = step.state() == StepState::Done;
+                let judgement = if is_done { judgements.get(&step.id()) } else { None };
+                PlanStepSummary {
+                    id: step.id(),
+                    mark: step.state().mark(),
+                    title: step.title().to_owned(),
+                    state: judgement.map(|j| j.state),
+                    reason: judgement.and_then(|j| j.reason.clone()),
+                }
+            })
+            .collect();
+        self.task_plans.insert(task.clone(), summaries);
+    }
+
+    /// Removes `task`'s plan summaries from the status snapshot cache.
+    pub(super) fn invalidate_task_plan(&mut self, task: &TaskId) {
+        self.task_plans.remove(task);
+    }
+}
+
+/// Builds a [`PlanStepSummary`] for a step from the recovered plan and latest judgements.
+fn step_summary(
+    step: &agent_core::plan::Step,
+    judgements: &HashMap<ItemId, JudgementRecord>,
+    earlier_by_run: &HashMap<RunId, Plan>,
+) -> PlanStepSummary {
+    let is_done = step.state() == StepState::Done;
+    let (state, reason) = if is_done {
+        match judgements.get(&step.id()) {
+            Some(j) if j.state == JudgementState::Confirmed => {
+                let step_at_run = j
+                    .run
+                    .as_ref()
+                    .and_then(|r| earlier_by_run.get(r))
+                    .and_then(|p| p.step(&step.id()));
+                if step_at_run == Some(step) {
+                    (Some(JudgementState::Confirmed), None)
+                } else {
+                    (None, None)
+                }
+            }
+            Some(j) => (Some(j.state), j.reason.clone()),
+            None => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+    PlanStepSummary {
+        id: step.id(),
+        mark: step.state().mark(),
+        title: step.title().to_owned(),
+        state,
+        reason,
     }
 }
 

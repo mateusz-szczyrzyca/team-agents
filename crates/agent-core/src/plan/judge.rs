@@ -65,22 +65,34 @@ pub fn refuse_command(command: &str, refused_prefixes: &[String]) -> bool {
 ///
 /// Steps not marked done are never judged.
 #[must_use]
-pub fn steps_to_judge<'a>(
+pub fn steps_to_judge<'a, 'b>(
     current: &'a Plan,
-    last_plan: Option<&Plan>,
+    last_plan: Option<&'b Plan>,
     last_state: impl Fn(&ItemId) -> Option<JudgementState>,
 ) -> Vec<&'a Step> {
-    let mut to_judge = Vec::new();
-    let old_steps: HashMap<ItemId, &Step> = match last_plan {
+    let old_steps: HashMap<ItemId, &'b Step> = match last_plan {
         Some(plan) => plan.steps().map(|step| (step.id(), step)).collect(),
         None => HashMap::new(),
     };
+    steps_to_judge_with(current, |id| old_steps.get(id).copied(), last_state)
+}
+
+/// Finds the steps of `current` that are to be judged, determining previous step state via `step_before`.
+///
+/// Steps not marked done are never judged.
+#[must_use]
+pub fn steps_to_judge_with<'a, 'b>(
+    current: &'a Plan,
+    step_before: impl Fn(&ItemId) -> Option<&'b Step>,
+    last_state: impl Fn(&ItemId) -> Option<JudgementState>,
+) -> Vec<&'a Step> {
+    let mut to_judge = Vec::new();
 
     for step in current.steps() {
         if step.state() != StepState::Done {
             continue;
         }
-        let Some(old_step) = old_steps.get(&step.id()) else {
+        let Some(old_step) = step_before(&step.id()) else {
             to_judge.push(step);
             continue;
         };
@@ -96,7 +108,7 @@ pub fn steps_to_judge<'a>(
             to_judge.push(step);
             continue;
         }
-        if *old_step != step {
+        if *old_step != *step {
             to_judge.push(step);
         }
     }

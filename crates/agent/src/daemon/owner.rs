@@ -35,7 +35,7 @@ use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
 use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
 use agent_core::history::{HistoryEvent, RunWhy};
-use agent_core::ids::{GenerateIdError, InvalidName, ItemId, RoundId, TaskId, TeamId};
+use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::protocol::{
@@ -51,8 +51,7 @@ use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::harness_prompts::HarnessPrompts;
-use agent_runtime::history::JudgementRecord;
-use agent_runtime::history::{History, Reader, Scoped, log_decision};
+use agent_runtime::history::{History, Scoped, log_decision};
 use agent_runtime::notify::Notification;
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
@@ -175,6 +174,9 @@ pub(crate) enum OwnerError {
     /// Step judgements could not be persisted to history.
     #[error("cannot persist step judgements to history")]
     PersistJudgements(#[from] agent_runtime::history::PersistJudgementsError),
+    /// Removing the plan file from delivery failed or worktree could not be located.
+    #[error(transparent)]
+    OutOfDelivery(#[from] plan::OutOfDeliveryError),
     /// The renewal of a task that the ladder starts in a new session cannot be recorded.
     #[error("the ladder's new session cannot be recorded")]
     Renewal(#[from] agent_core::state::RenewTaskError),
@@ -503,7 +505,7 @@ pub(super) struct Owner {
     /// Whether free space was below min threshold on last check.
     was_min_space: bool,
     /// Cached plan summaries of tasks, refreshed when a run ends.
-    task_plans: std::sync::Mutex<HashMap<TaskId, Vec<PlanStepSummary>>>,
+    task_plans: HashMap<TaskId, Vec<PlanStepSummary>>,
 }
 
 /// The next report of the watch on the questions files; never, when the files are not watched.
@@ -564,7 +566,7 @@ impl Owner {
             deferred_targets: BTreeMap::new(),
             pending_removals: disk::PendingRemovals::default(),
             was_min_space: false,
-            task_plans: std::sync::Mutex::new(HashMap::new()),
+            task_plans: HashMap::new(),
         }
     }
 
@@ -983,10 +985,7 @@ impl Owner {
         self.release_deferred_target(&task);
         self.cancels.remove(&task);
         self.holds.remove(&task);
-        self.task_plans
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&task);
+        self.task_plans.remove(&task);
         let result = match outcome {
             Outcome::Verdict(verdict) => match *verdict {
                 RunVerdict::Finished(run) => self.finished(&task, *run).await,
@@ -1888,165 +1887,7 @@ impl Owner {
 
     /// Short summaries of the steps of `task`'s plan and their settlement states from the in-memory snapshot.
     fn task_plan_summary(&self, task: &TaskId) -> Vec<PlanStepSummary> {
-        let cache = self.task_plans.lock().unwrap_or_else(|poisoned| {
-            // The lock is held only briefly for in-memory snapshot updates.
-            // If poisoned, the remaining entries in the map remain coherent.
-            poisoned.into_inner()
-        });
-        cache.get(task).cloned().unwrap_or_default()
-    }
-
-    /// Opens the history reader for plan snapshots if the database is present and writing is enabled.
-    fn open_snapshot_reader(history_path: &std::path::Path, is_writing: bool) -> Option<Reader> {
-        if !is_writing || !history_path.exists() {
-            return None;
-        }
-        match Reader::open(history_path) {
-            Ok(reader) => Some(reader),
-            Err(error) => {
-                tracing::warn!(
-                    event = LogEvent::HistoryRecordIncomplete.as_str(),
-                    error = %error_chain(&error),
-                    "the history database could not be opened for plan snapshots"
-                );
-                None
-            }
-        }
-    }
-
-    /// Asynchronously populates the in-memory plan summaries of all existing tasks at daemon recovery.
-    async fn load_plan_snapshots(&self) {
-        let history_path = self.parts.store.home().history_file();
-        let reader = Self::open_snapshot_reader(&history_path, self.history.is_writing());
-        let mut loaded = HashMap::new();
-        for team in self.parts.state.teams() {
-            let mut tasks = Vec::new();
-            for (_role, member) in team.crew().roster() {
-                tasks.push(member.task().clone());
-            }
-            for reviewer in team.reviewers() {
-                tasks.push(reviewer.task().clone());
-            }
-            for task in tasks {
-                let worktree = self.parts.store.home().worktree_dir(team.repo(), &task);
-                let plan_file = worktree.join(agent_core::plan::PLAN_FILE);
-                let text = match tokio::fs::read_to_string(&plan_file).await {
-                    Ok(text) => text,
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                    Err(error) => {
-                        tracing::warn!(
-                            task = %task,
-                            path = %plan_file.display(),
-                            error = %error_chain(&error),
-                            "cannot read plan file for snapshot"
-                        );
-                        continue;
-                    }
-                };
-                let plan = match agent_core::plan::parse_plan(&text) {
-                    Ok(plan) => plan,
-                    Err(error) => {
-                        tracing::warn!(
-                            task = %task,
-                            error = %error_chain(&error),
-                            "cannot parse plan file for snapshot"
-                        );
-                        continue;
-                    }
-                };
-                let has_done = plan.stages().iter().any(|stage| {
-                    stage
-                        .steps()
-                        .iter()
-                        .any(|s| s.state() == agent_core::plan::StepState::Done)
-                });
-                let judgements = if has_done {
-                    if let Some(reader) = &reader {
-                        match reader.latest_judgements(&task) {
-                            Ok(map) => map,
-                            Err(error) => {
-                                tracing::warn!(
-                                    event = LogEvent::HistoryRecordIncomplete.as_str(),
-                                    task = %task,
-                                    error = %error_chain(&error),
-                                    "latest plan judgements could not be read for snapshot"
-                                );
-                                HashMap::new()
-                            }
-                        }
-                    } else {
-                        HashMap::new()
-                    }
-                } else {
-                    HashMap::new()
-                };
-                let summaries: Vec<PlanStepSummary> = plan
-                    .stages()
-                    .iter()
-                    .flat_map(agent_core::plan::Stage::steps)
-                    .map(|step| {
-                        let is_done = step.state() == agent_core::plan::StepState::Done;
-                        let judgement = if is_done { judgements.get(&step.id()) } else { None };
-                        PlanStepSummary {
-                            id: step.id(),
-                            mark: step.state().mark(),
-                            title: step.title().to_owned(),
-                            state: judgement.map(|j| j.state),
-                            reason: judgement.and_then(|j| j.reason.clone()),
-                        }
-                    })
-                    .collect();
-                loaded.insert(task, summaries);
-            }
-        }
-        *self.task_plans.lock().unwrap_or_else(|poisoned| {
-            // The lock is held only briefly for in-memory snapshot updates.
-            // If poisoned, replacing the map restores a valid state.
-            poisoned.into_inner()
-        }) = loaded;
-    }
-
-    /// Stores the parsed `plan` and latest `judgements` of `task` in cache for status snapshots.
-    pub(super) fn refresh_task_plan(
-        &self,
-        task: &TaskId,
-        plan: &agent_core::plan::Plan,
-        judgements: &HashMap<ItemId, JudgementRecord>,
-    ) {
-        let summaries: Vec<PlanStepSummary> = plan
-            .stages()
-            .iter()
-            .flat_map(agent_core::plan::Stage::steps)
-            .map(|step| {
-                let is_done = step.state() == agent_core::plan::StepState::Done;
-                let judgement = if is_done { judgements.get(&step.id()) } else { None };
-                PlanStepSummary {
-                    id: step.id(),
-                    mark: step.state().mark(),
-                    title: step.title().to_owned(),
-                    state: judgement.map(|j| j.state),
-                    reason: judgement.and_then(|j| j.reason.clone()),
-                }
-            })
-            .collect();
-        self.task_plans
-            .lock()
-            .unwrap_or_else(|poisoned| {
-                // If poisoned, inserting into the map is safe as map internal invariants are preserved.
-                poisoned.into_inner()
-            })
-            .insert(task.clone(), summaries);
-    }
-
-    /// Removes `task`'s plan summaries from the status snapshot cache.
-    pub(super) fn invalidate_task_plan(&self, task: &TaskId) {
-        self.task_plans
-            .lock()
-            .unwrap_or_else(|poisoned| {
-                // If poisoned, removal from the map is safe as map internal invariants are preserved.
-                poisoned.into_inner()
-            })
-            .remove(task);
+        self.task_plans.get(task).cloned().unwrap_or_default()
     }
 
     /// The tasks of `team` that worked for `round`, each with its worktree, its branch and the runs that named the round.

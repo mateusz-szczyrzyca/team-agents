@@ -87,6 +87,12 @@ impl Plan {
         &self.stages
     }
 
+    /// Looks up a step by its ID.
+    #[must_use]
+    pub fn step(&self, id: &ItemId) -> Option<&Step> {
+        self.steps().find(|step| step.id == *id)
+    }
+
     /// What changed from this plan to `newer`.
     ///
     /// Steps are compared by ID only: a step whose ID both versions have is the same step, and a title it took on is

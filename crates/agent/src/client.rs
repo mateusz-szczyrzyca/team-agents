@@ -158,7 +158,9 @@ impl Connection {
     /// # Errors
     /// [`ClientError`]: the conversation failed, or the daemon answered with an error.
     pub(crate) async fn request(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
-        if matches!(command, Command::Answer(_)) {
+        if matches!(command, Command::Status(_) | Command::Show(_)) {
+            self.request_plan(client, command).await
+        } else if matches!(command, Command::Answer(_)) {
             self.request_split(client, command).await
         } else {
             self.converse(client, command, Some(REQUEST_TIMEOUT)).await
@@ -182,11 +184,53 @@ impl Connection {
         self.converse(client, command, None).await
     }
 
+    /// Requests plan-aware version-five replies.
+    pub(crate) async fn request_plan(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
+        let format = self.negotiate_plan(&client).await?;
+        self.converse_format(client, command, Some(REQUEST_TIMEOUT), format)
+            .await
+    }
+
     /// Requests split-aware version-four replies.
     pub(crate) async fn request_split(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
         let format = self.negotiate(&client).await?;
         self.converse_format(client, command, Some(REQUEST_TIMEOUT), format)
             .await
+    }
+
+    /// Probes with a plan-aware request, falling back to split or legacy format when unsupported.
+    async fn negotiate_plan(&mut self, client: &Client) -> Result<ReplyFormat, ClientError> {
+        if let Some(format) = self.format {
+            return Ok(format);
+        }
+        let probe = Command::Status(agent_core::protocol::StatusRequest { target: None });
+        let format = match self
+            .converse_format(client.clone(), probe, Some(REQUEST_TIMEOUT), ReplyFormat::Plan)
+            .await
+        {
+            Ok(_) => ReplyFormat::Plan,
+            Err(error)
+                if matches!(
+                    &error,
+                    ClientError::Closed
+                        | ClientError::WrongAnswer {
+                            found: RequestId(0),
+                            ..
+                        }
+                        | ClientError::Refused(Failure {
+                            kind: agent_core::protocol::FailureKind::Invalid,
+                            ..
+                        })
+                ) =>
+            {
+                tracing::debug!(error = %agent_runtime::process::error_chain(&error), "daemon refused plan protocol; falling back to split protocol");
+                *self = Self::connect(&self.socket).await?;
+                self.negotiate(client).await?
+            }
+            Err(error) => return Err(error),
+        };
+        self.format = Some(format);
+        Ok(format)
     }
 
     /// Probes with a read-only status request, so a closed connection never retries a mutating command.
