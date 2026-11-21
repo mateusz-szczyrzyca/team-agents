@@ -58,7 +58,8 @@ impl Owner {
     /// The human is asked, in the task's next questions file, what becomes of `task`, whose runs went bad with `trouble`
     /// after the last step of the ladder; `None` when the task is not to be asked — mode `off`, asked once already, or
     /// neither taken over nor a lead given a member's work — or the question cannot be written (logged): the task then
-    /// fails as before.
+    /// fails as before. A question written but not recorded in the state is removed, so no questions file is left that
+    /// nothing answers.
     ///
     /// # Errors
     /// [`OwnerError`] when the task is gone or the state refuses the question.
@@ -106,7 +107,15 @@ impl Owner {
             return Ok(None);
         }
         let at = self.after_last_run(task)?;
-        self.parts.state.ask_after_last_step(task, trouble, number, at)?;
+        let recorded = self.parts.state.ask_after_last_step(task, trouble, number, at);
+        if !matches!(recorded, Ok(true)) {
+            // A question the state does not hold is never answered: its file goes, so that no orphan is left for the human.
+            remove_question(task, &path).await;
+            return match recorded {
+                Ok(_) => Ok(None),
+                Err(error) => Err(error.into()),
+            };
+        }
         log_decision("last_step", &format!("task={task}, trouble={trouble:?}"), "ask_human");
         let next = match self.ask(task, located, now, events).await? {
             Asked::Recorded(notice) => (TaskStatus::Questions, Some(notice)),
@@ -207,6 +216,20 @@ impl Owner {
                 Ok(TaskStatus::Stopped)
             }
         }
+    }
+}
+
+/// Removes the question after the last step of `task` at `path`, which the state does not hold; a failure is logged, as
+/// the task fails either way.
+async fn remove_question(task: &TaskId, path: &Path) {
+    if let Err(error) = tokio::fs::remove_file(path).await {
+        tracing::warn!(
+            event = LogEvent::QuestionsFileInvalid.as_str(),
+            task = %task,
+            path = %path.display(),
+            error = %error,
+            "the question after the last step that the state does not hold cannot be removed"
+        );
     }
 }
 
