@@ -185,3 +185,76 @@ fn record_line_gives_the_common_events_words_and_every_other_its_fields() {
         );
     }
 }
+
+#[test]
+fn record_line_tells_every_end_of_a_run_and_the_events_of_questions_and_of_a_refused_publication() {
+    let ended = |end: &str| entry(LogEvent::RunEnded, "run ended", &[("end", end)]);
+    let rows: Vec<(LogEntry, String)> = vec![
+        (
+            ended("RateLimited { retry_after: None }"),
+            format!("{}: ended rate limited", subject("inv-claude-sonnet")),
+        ),
+        (
+            ended("Hung"),
+            format!("{}: ended hung: stopped by the watchdog", subject("inv-claude-sonnet")),
+        ),
+        (
+            ended("TurnLimit"),
+            format!("{}: ended turn limit reached", subject("inv-claude-sonnet")),
+        ),
+        (
+            ended("Stopped"),
+            format!("{}: ended stopped by the human", subject("inv-claude-sonnet")),
+        ),
+        (
+            ended("NoStatus { exit_code: None }"),
+            format!(
+                "{}: ended no STATUS line (ended by a signal)",
+                subject("inv-claude-sonnet")
+            ),
+        ),
+        (
+            ended("QuotaExhausted { resets_at: Some(2026-11-21T17:00:00Z) }"),
+            format!(
+                "{}: ended quota exhausted (back at 2026-11-21T17:00:00Z)",
+                subject("inv-claude-sonnet")
+            ),
+        ),
+        (
+            entry(
+                LogEvent::QuestionsFileOpened,
+                "a questions file is opened",
+                &[("number", "2")],
+            ),
+            format!("{}: a questions file is opened number=2", subject("inv-claude-sonnet")),
+        ),
+        (
+            entry(
+                LogEvent::QuestionsAnswered,
+                "the questions are answered",
+                &[("via", "cli")],
+            ),
+            format!("{}: the questions are answered via=cli", subject("inv-claude-sonnet")),
+        ),
+        (
+            entry(
+                LogEvent::GithubStepWaiting,
+                "a step that calls GitHub waits",
+                &[("operation", "merge"), ("outlook", "will_not_pass"), ("pr", "167")],
+            ),
+            format!(
+                "{}: a step that calls GitHub waits operation=merge outlook=will_not_pass pr=167",
+                subject("inv-claude-sonnet")
+            ),
+        ),
+    ];
+    for (row, expected) in rows {
+        let line = record_line(&row, Some(&start("inv-claude-sonnet")));
+        assert_eq!(line, format!("2026-11-21T12:50:32Z {} {expected}", row_prefix(&row)));
+    }
+}
+
+/// The level and the event of `row`, as its line starts after the time.
+fn row_prefix(row: &LogEntry) -> String {
+    format!("{} {}", row.level(), row.event())
+}
