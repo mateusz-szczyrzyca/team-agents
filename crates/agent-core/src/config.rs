@@ -473,6 +473,18 @@ impl Plan {
     pub const fn bounces(&self) -> u32 {
         self.bounces
     }
+
+    /// Timeout in seconds for command checks; `0` disables command check execution.
+    #[must_use]
+    pub const fn check_seconds(&self) -> u64 {
+        0
+    }
+
+    /// Prefixes of commands refused as step checks (e.g. `agent gate`, `make gate`).
+    #[must_use]
+    pub fn check_refuse(&self) -> &[String] {
+        &[]
+    }
 }
 
 /// How many times a task's runs go back for its plan before the human is asked, by default.
@@ -1376,6 +1388,17 @@ cli = "claude"
 
         assert_eq!(plan.roles, [Role::Member]);
         assert_eq!(plan.bounces, 0);
+    }
+
+    #[test]
+    fn plan_check_defaults_and_configured_values() {
+        let default_plan = config("").plan().clone();
+        assert_eq!(default_plan.check_seconds(), 60);
+        assert_eq!(default_plan.check_refuse(), ["agent gate", "make gate"]);
+
+        let configured = config("[plan]\ncheck_seconds = 120\ncheck_refuse = [\"cargo test\"]\n").plan().clone();
+        assert_eq!(configured.check_seconds(), 120);
+        assert_eq!(configured.check_refuse(), ["cargo test"]);
     }
 
     #[test]
