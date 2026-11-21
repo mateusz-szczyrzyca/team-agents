@@ -392,7 +392,7 @@ Build the thing.
   ----- end of notification -----
 <time>  team ended
 <time>  notification sent: ✅ example (task <task-4>)
-  ----- notification (481 bytes) -----
+  ----- notification (461 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.
@@ -401,8 +401,6 @@ Task ID: <task-4>
 Team: <team-2>
 Status: ✅ done
 Note: Team <team-2> is finished
-
-1.1 The first item
 
 The team <team-2> on example has finished its work: 1 items done. Its tasks are closed. The worktrees stay where
 they are, in the home of the harness, until you remove them.
