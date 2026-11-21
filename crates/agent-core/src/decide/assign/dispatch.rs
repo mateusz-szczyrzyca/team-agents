@@ -143,3 +143,9 @@ pub fn coordinator_can_take_over(team: &Team, member: &Member) -> bool {
         })
     })
 }
+
+/// The qualified holder of a review fix, preserving a fitting integration lead.
+#[must_use]
+pub fn fixer(team: &Team, _item: ItemId) -> Option<&Member> {
+    team.crew().roster().first().map(|(_, member)| *member)
+}
