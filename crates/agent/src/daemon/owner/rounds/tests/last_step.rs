@@ -544,3 +544,63 @@ async fn a_restart_while_the_question_is_open_keeps_it_and_its_answer_still_appl
     assert_eq!(member.runs().len(), 10);
     assert_eq!(member.asked_after_last_step(), NonZeroU32::new(1));
 }
+
+/// Points the `[binaries] agentbus` of `rig` at `program`, before the daemon starts; the agents keep their own.
+fn use_agentbus(rig: &Rig, program: &std::path::Path) {
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    // The `[binaries]` table is the only one with a line `agentbus = "…"`.
+    let changed: Vec<String> = config
+        .lines()
+        .map(|line| {
+            if line.starts_with("agentbus = ") {
+                format!("agentbus = \"{}\"", program.display())
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect();
+    assert_ne!(changed.join("\n"), config.trim_end(), "the config names an agentbus");
+    std::fs::write(rig.home.config_file(), changed.join("\n") + "\n").unwrap();
+}
+
+// Rule: a member's work owed to its lead survives a restart until the lead is told: the bus fails when the member is
+// answered `b`, the daemon restarts with the bus back, and the lead is told then, with the briefing.
+#[tokio::test]
+async fn a_members_work_owed_to_its_lead_is_told_after_a_restart_when_the_bus_failed_before() {
+    let (mut rig, tasks) = member_replacement_gone_bad("sleep").await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    rig.stop().await.unwrap();
+    let failing = rig.home.root().join("failing-agentbus");
+    std::fs::write(&failing, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(&failing, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    use_agentbus(&rig, &failing);
+    rig.start().await;
+
+    answer(&rig, &tasks[1], 1, "b").await;
+    rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+    rig.stop().await.unwrap();
+    assert!(
+        !bus_texts(&rig).contains(LEAD_TEXT),
+        "the bus could not take the message"
+    );
+    assert!(
+        rig.state().find_task(&tasks[1]).unwrap().member.owes_lead(),
+        "the work stays owed to the lead in the state"
+    );
+    std::fs::write(rig.home.config_file(), config).unwrap();
+    rig.start().await;
+    rig.wait_for("the lead's text on the bus after the restart", || {
+        let bus = bus_texts(&rig);
+        bus.contains(LEAD_TEXT) && bus.contains(LEAD_BRIEFING)
+    })
+    .await;
+    let member_task = tasks[1].clone();
+    let state = rig
+        .state_where("nothing owed any more", |state| {
+            !state.find_task(&member_task).unwrap().member.owes_lead()
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(state.find_task(&tasks[1]).unwrap().member.status(), TaskStatus::Stopped);
+}
