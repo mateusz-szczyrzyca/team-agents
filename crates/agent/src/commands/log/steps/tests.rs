@@ -31,7 +31,7 @@ fn at(second: u32) -> Timestamp {
         .expect("a literal time is valid")
 }
 
-/// The task `name`.
+/// The task numbered `name`.
 fn task(name: &str) -> TaskId {
     format!("task-20261121-132909-{name:0>4}")
         .parse()
@@ -147,9 +147,8 @@ fn run_steps_are_the_steps_of_that_run() {
     let path = dir.path().join("history.db");
     history(&path);
     let reader = Reader::open(&path).expect("the history opens");
-    let task: TaskId = "task-20261121-132909-b".parse().expect("a literal id is valid");
     let run = reader
-        .runs_of_task(&task)
+        .runs_of_task(&task("8"))
         .expect("the runs are read")
         .remove(0)
         .start
@@ -183,6 +182,10 @@ fn places_stand_each_step_after_the_last_row_recorded_no_later_than_it() {
         .expect("the rows are read");
     let name: AgentName = "codex-1".parse().expect("a literal name is valid");
     let steps = agent_steps(&reader, &name).expect("the steps are read");
-    assert_eq!(places(&rows, &steps), vec![Place::After(rows[1].id())]);
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(
+        places(&rows, &steps),
+        vec![Place::After(rows.get(0).expect("one row").id())]
+    );
     assert_eq!(places(&[], &steps), vec![Place::First]);
 }

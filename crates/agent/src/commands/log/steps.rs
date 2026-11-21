@@ -92,12 +92,9 @@ pub(crate) fn places(rows: &[LogEntry], steps: &[TimedStep]) -> Vec<Place> {
         {
             next = next.saturating_add(1);
         }
-        match next {
-            0 | 1 => places.push(Place::First),
-            _ => match rows.get(next.saturating_sub(1)) {
-                Some(row) => places.push(Place::After(row.id())),
-                None => places.push(Place::First),
-            },
+        match next.checked_sub(1).and_then(|before| rows.get(before)) {
+            Some(row) => places.push(Place::After(row.id())),
+            None => places.push(Place::First),
         }
     }
     places
