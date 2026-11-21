@@ -11,9 +11,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agent_core::history::RunStart;
 use agent_core::ids::{AgentName, RoundId, RunId, TeamId};
-use agent_core::log::render::{record_line, steps::step_line};
+use agent_core::local_time::Zone;
+use agent_core::log::render::{record_line_in, steps::step_line_in};
 use agent_core::log::{LogEntry, LogEvent};
-use agent_core::state::Timestamp;
 
 use super::steps::TimedStep;
 
@@ -60,17 +60,26 @@ pub(crate) struct Timeline<'a> {
     pub(crate) teams: Vec<Team>,
     /// What each round waits for, told after the row of a run of it that ended.
     pub(crate) waits: BTreeMap<RoundId, String>,
+    /// The zone the times of the text are written in.
+    zone: Zone,
 }
 
 impl<'a> Timeline<'a> {
-    /// The text of `rows` and of `steps`, the steps of the agents `followed`.
+    /// The text of `rows` and of `steps`, the steps of the agents `followed`, with the times in the RFC 3339 form.
+    #[cfg(test)]
     pub(crate) fn new(rows: Vec<&'a LogEntry>, steps: Vec<TimedStep>, followed: Vec<AgentName>) -> Self {
+        Self::new_in(rows, steps, followed, Zone::Utc)
+    }
+
+    /// The text of `rows` and of `steps` as `Timeline::new` makes it, with every time in `zone`.
+    pub(crate) fn new_in(rows: Vec<&'a LogEntry>, steps: Vec<TimedStep>, followed: Vec<AgentName>, zone: Zone) -> Self {
         Self {
             rows,
             steps,
             followed,
             teams: Vec::new(),
             waits: BTreeMap::new(),
+            zone,
         }
     }
 
@@ -111,7 +120,7 @@ impl<'a> Timeline<'a> {
                 && let Some(timed) = self.steps.get(*step)
                 && told.insert(timed.run.run.to_string())
             {
-                text.push_str(&run_start_line(&timed.run, timed.run.at));
+                text.push_str(&run_start_line(&timed.run, self.zone));
                 text.push('\n');
             }
             text.push_str(&self.line(*kind));
@@ -149,7 +158,7 @@ impl<'a> Timeline<'a> {
             .team()
             .and_then(|team| self.teams.iter().find(|made| &made.team == team))
             .and_then(|team| team.run_of(row.run()));
-        let mut line = format!("{}\n", record_line(row, run));
+        let mut line = format!("{}\n", record_line_in(row, run, &self.zone));
         if row.event() == LogEvent::RunEnded {
             for round in row.rounds() {
                 if let Some(wait) = self.waits.get(round) {
@@ -169,7 +178,10 @@ impl<'a> Timeline<'a> {
                 None => String::new(),
             },
             Kind::Step(step) => match self.steps.get(step) {
-                Some(timed) => format!("{}\n", step_line(&timed.step, Some(&timed.run), &self.followed)),
+                Some(timed) => format!(
+                    "{}\n",
+                    step_line_in(&timed.step, Some(&timed.run), &self.followed, &self.zone)
+                ),
                 None => String::new(),
             },
         }
@@ -177,11 +189,16 @@ impl<'a> Timeline<'a> {
 }
 
 /// The first line of a run: when it started, the agent, the task, the team and the round it works for.
-pub(crate) fn run_start_line(run: &RunStart, at: Timestamp) -> String {
+pub(crate) fn run_start_line(run: &RunStart, zone: Zone) -> String {
     let rounds: Vec<&str> = run.rounds.iter().map(agent_core::ids::RoundId::as_str).collect();
     let mut line = format!(
-        "{at} run {} started by {} on task {} of team {} ({})",
-        run.run, run.agent.name, run.task, run.team, run.role
+        "{} run {} started by {} on task {} of team {} ({})",
+        zone.stamp(run.at),
+        run.run,
+        run.agent.name,
+        run.task,
+        run.team,
+        run.role
     );
     if !rounds.is_empty() {
         line.push_str(" in round ");

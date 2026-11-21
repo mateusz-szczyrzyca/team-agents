@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use agent_core::ids::{AgentName, InvalidId, RoundId, TaskId, TeamId};
+use agent_core::local_time::Zone;
 use agent_core::protocol::{SayError, Target};
 use agent_core::state::MergeMode;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
@@ -56,7 +57,7 @@ use crate::commands::control::ControlError;
 use crate::commands::daemon::{DaemonCommandError, daemon};
 use crate::commands::debug::{DebugCliArgs, DebugError, debug};
 use crate::commands::gate::{GateError, gate, task_in};
-use crate::commands::log::{LogError, LogRequest, log};
+use crate::commands::log::{LogError, LogRequest, log_in};
 use crate::commands::pause::pause;
 use crate::commands::resume::resume;
 use crate::commands::run::{RunError, RunInput, prepare, start};
@@ -234,6 +235,11 @@ struct RunArgs {
 /// The arguments of `agent log`.
 #[derive(Debug, Args)]
 #[command(group = clap::ArgGroup::new("what").multiple(true).args(["round", "team"]))]
+// Each bool is one switch of the command line; the switches are not one state that an enum could carry.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is one switch of `agent log`: --prompts, --no-steps, --json, --utc"
+)]
 struct LogArgs {
     /// Predicates that select daemon log rows instead of a story.
     #[command(flatten)]
@@ -253,6 +259,9 @@ struct LogArgs {
     /// Print the records as JSON lines, each exactly once, whole: `--prompts` and `--no-steps` do not change them.
     #[arg(long)]
     json: bool,
+    /// Print the times in UTC as the files hold them (RFC 3339, `Z`), not in the zone of this machine.
+    #[arg(long)]
+    utc: bool,
 }
 
 /// Why a text is not a round.
@@ -739,9 +748,12 @@ async fn execute_steer(environment: &Environment, steer: Steer, out: &mut impl W
 /// [`CommandError`].
 fn execute_log(environment: &Environment, args: LogArgs, out: &mut impl Write) -> Result<(), CommandError> {
     use crate::commands::log::Format;
+    use crate::commands::log::rows::{LogZones, Scope};
     use agent_core::story::{PromptView, StepView, StoryOptions};
 
     let home = environment.home()?;
+    let local_zone = environment.zone();
+    let zone = if args.utc { Zone::Utc } else { local_zone };
     let format = if args.json {
         Format::Json
     } else {
@@ -759,18 +771,20 @@ fn execute_log(environment: &Environment, args: LogArgs, out: &mut impl Write) -
         })
     };
     if args.rows.requested() || args.round.is_some() == args.team.is_some() {
-        args.rows.print(
-            &home.history_file(),
-            &home.socket_file(),
-            args.round,
-            args.team,
-            format,
-            out,
-        )?;
+        let scope = Scope {
+            round: args.round.clone(),
+            team: args.team.clone(),
+        };
+        let zones = LogZones {
+            input: local_zone,
+            output: zone,
+        };
+        args.rows
+            .print(&home.history_file(), &home.socket_file(), scope, format, zones, out)?;
         return Ok(());
     }
     let request = LogRequest::new(args.round, args.team, format)?;
-    log(&home.history_file(), &request, out)?;
+    log_in(&home.history_file(), &request, zone, out)?;
     Ok(())
 }
 

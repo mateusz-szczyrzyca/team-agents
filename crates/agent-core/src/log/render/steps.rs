@@ -6,6 +6,7 @@ mod tests;
 use crate::cli::ActivityEvent;
 use crate::history::{RunStart, Step};
 use crate::ids::AgentName;
+use crate::local_time::Zone;
 use crate::protocol::Client;
 
 /// Longest text a step's line shows, in characters; a longer one is cut and ends with [`CUT_MARK`].
@@ -19,7 +20,13 @@ const CUT_MARK: &str = "…";
 /// knows its start.
 #[must_use]
 pub fn step_line(step: &Step, run: Option<&RunStart>, followed: &[AgentName]) -> String {
-    let mut line = step.at.to_string();
+    step_line_in(step, run, followed, &Zone::Utc)
+}
+
+/// The line of `step` as [`step_line`] writes it, with its time in `zone`.
+#[must_use]
+pub fn step_line_in(step: &Step, run: Option<&RunStart>, followed: &[AgentName], zone: &Zone) -> String {
+    let mut line = zone.stamp(step.at);
     line.push(' ');
     if followed.len() > 1
         && let Some(name) = run.map(|run| run.agent.name.as_str())

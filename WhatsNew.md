@@ -8,8 +8,10 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ## 0.53.0 — 21.11.2026 — PR #170
 
 ### New features
-- [agent] [agent-core] When publication to GitHub fails repeatedly, attempts are bounded by `[publish] tries` (default 3): the harness retries with backoff below the limit, notifies the lead once when the limit is reached so it can correct the problem, and asks the human once in a questions file if publication continues to fail.
-- [agent] [agent-core] Open publication failure questions survive daemon restarts, and answering Retry or Stop cleanly resumes retries or stops the task.
+- [agent] [agent-core] `agent log` writes its times as a person reads them: in the zone of this machine, with its offset at that moment, in one form. For example `2026-11-21 17:28:53 +01:00 command: git status` instead of `2026-11-21T16:28:53Z command: git status`. The rows, steps, story and follow all show the same moment the same way; `--json` and the files of the harness stay in UTC (RFC 3339).
+- [agent] `agent log --utc` prints the times as the files hold them, RFC 3339 with `Z`, as before this version.
+- [agent] [agent-core] A `--since` or `--until` without a zone is read in the zone of this machine: `agent log --round <round> --since "2026-11-21 17:29"`. With `Z` or an offset it is read as written.
+- [agent] **Action:** a script that reads the text of `agent log` must read the new form, or use `agent log --utc` to keep the old text.
 
 ## 0.52.0 — 21.11.2026 — PR #169
 

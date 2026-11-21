@@ -10,6 +10,7 @@ mod text;
 
 use crate::history::{Record, SequencedRecord};
 use crate::ids::{RoundId, TeamId};
+use crate::local_time::Zone;
 
 /// How many lines of a prompt a story prints unless it is asked for the whole prompt.
 pub const PREVIEW_LINES: usize = 5;
@@ -73,14 +74,21 @@ pub fn selected<'a>(records: &'a [SequencedRecord], selection: &Selection) -> Ve
     chosen
 }
 
-/// The story of `selection` as text, ending with a newline; empty when no record belongs to it.
+/// The story of `selection` as text, ending with a newline; empty when no record belongs to it. Its times are in the
+/// RFC 3339 form of the files.
 #[must_use]
 pub fn render(records: &[SequencedRecord], selection: &Selection, options: StoryOptions) -> String {
+    render_in(records, selection, options, Zone::Utc)
+}
+
+/// The story of `selection` as [`render`] writes it, with every time in `zone`: what a person reads.
+#[must_use]
+pub fn render_in(records: &[SequencedRecord], selection: &Selection, options: StoryOptions, zone: Zone) -> String {
     let chosen = selected(records, selection);
     if chosen.is_empty() {
         return String::new();
     }
-    text::render(&chosen, selection, options)
+    text::render(&chosen, selection, options, zone)
 }
 
 /// The records of `selection`, each as one line of JSON, in the order of the story.

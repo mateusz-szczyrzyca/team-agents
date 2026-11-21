@@ -7,6 +7,7 @@ pub mod steps;
 mod tests;
 
 use crate::history::RunStart;
+use crate::local_time::Zone;
 use crate::log::{LogEntry, LogEvent};
 
 /// Longest value a line shows, in characters; a longer one is cut and ends with [`CUT_MARK`].
@@ -15,18 +16,25 @@ const MAX_VALUE_CHARS: usize = 120;
 /// The mark that ends a value the line cut.
 const CUT_MARK: &str = "…";
 
-/// The line of `entry` that `agent log` prints as text, with `subject`, the start of the entry's run, when known.
+/// The line of `entry` that `agent log` prints as text, with `subject`, the start of the entry's run, when known: its
+/// time in the RFC 3339 form of the files, as `agent log --utc` prints it.
 #[must_use]
 pub fn record_line(entry: &LogEntry, subject: Option<&RunStart>) -> String {
+    record_line_in(entry, subject, &Zone::Utc)
+}
+
+/// The line of `entry` as [`record_line`] writes it, with its time and the times in its words in `zone`.
+#[must_use]
+pub fn record_line_in(entry: &LogEntry, subject: Option<&RunStart>, zone: &Zone) -> String {
     let mut line = format!(
         "{} {} {} {}",
-        entry.at(),
+        zone.stamp(entry.at()),
         entry.level(),
         entry.event(),
         scope(entry, subject)
     );
     line.push_str(": ");
-    line.push_str(&words(entry, subject));
+    line.push_str(&words(entry, subject, zone));
     let fields = fields(entry);
     if !fields.is_empty() {
         line.push(' ');
@@ -105,7 +113,7 @@ fn text(field: Option<&serde_json::Value>) -> Option<String> {
 }
 
 /// What happened, in words for the common events and in the event's own message otherwise.
-fn words(entry: &LogEntry, subject: Option<&RunStart>) -> String {
+fn words(entry: &LogEntry, subject: Option<&RunStart>, zone: &Zone) -> String {
     match entry.event() {
         LogEvent::TaskStatusChanged => match (field(entry, "from"), field(entry, "to")) {
             (Some(from), Some(to)) => format!("{to} ← {from}"),
@@ -114,7 +122,7 @@ fn words(entry: &LogEntry, subject: Option<&RunStart>) -> String {
         LogEvent::ItemPhaseChanged => words_item(entry),
         LogEvent::RunStarted => words_run_started(entry, subject),
         LogEvent::RunEnded => match entry.fields().get("end") {
-            Some(end) => format!("ended {}", words_end(end)),
+            Some(end) => format!("ended {}", words_end(end, zone)),
             None => value(entry.message()),
         },
         _ => value(entry.message()),
@@ -157,7 +165,7 @@ fn words_run_started(entry: &LogEntry, subject: Option<&RunStart>) -> String {
 }
 
 /// How a run ended, from the `Debug` form of its end that the daemon records.
-fn words_end(end: &serde_json::Value) -> String {
+fn words_end(end: &serde_json::Value, zone: &Zone) -> String {
     let Some(text) = end.as_str() else {
         return value(&end.to_string());
     };
@@ -168,7 +176,7 @@ fn words_end(end: &serde_json::Value) -> String {
             None => "no STATUS line (ended by a signal)".to_owned(),
         },
         "QuotaExhausted" => match text.split_once("resets_at: Some(") {
-            Some((_, at)) => format!("quota exhausted (back at {})", text_before(at)),
+            Some((_, at)) => format!("quota exhausted (back at {})", back_at(at, zone)),
             None => "quota exhausted".to_owned(),
         },
         "RateLimited" => "rate limited".to_owned(),
@@ -176,6 +184,23 @@ fn words_end(end: &serde_json::Value) -> String {
         "TurnLimit" => "turn limit reached".to_owned(),
         "Stopped" => "stopped by the human".to_owned(),
         _ => value(text),
+    }
+}
+
+/// The time a quota is back at, from the text after `resets_at: Some(`, in `zone` when it is a time of the files or its
+/// `Debug` form, else as it was written.
+fn back_at(rest: &str, zone: &Zone) -> String {
+    let inner = rest.trim_start().strip_prefix("Timestamp(").unwrap_or(rest);
+    let raw = text_before(inner);
+    let cleaned = raw
+        .strip_suffix(" +00:00:00")
+        .or_else(|| raw.strip_suffix(" +00:00"))
+        .or_else(|| raw.strip_suffix(" +00"))
+        .or_else(|| raw.strip_suffix(" UTC"))
+        .unwrap_or(&raw);
+    match Zone::Utc.parse_typed(cleaned) {
+        Ok(at) => zone.stamp(at),
+        Err(_) => raw,
     }
 }
 

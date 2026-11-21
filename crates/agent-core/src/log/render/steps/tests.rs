@@ -7,8 +7,11 @@ use crate::config::AbsolutePath;
 use crate::history::{AgentIdentity, RunStart, RunWhy, Step};
 use crate::ids::{AgentName, RunId, TaskId, TeamId};
 use crate::kinds::{CliKind, Role, Tier};
+use crate::local_time::Zone;
 use crate::log::render::steps::step_line;
+use crate::log::render::steps::step_line_in;
 use crate::protocol::{Client, ControlAction};
+use time::UtcOffset;
 
 /// The time of every step of the table.
 const AT: &str = "2026-11-21T12:50:32Z";
@@ -177,4 +180,20 @@ fn the_end_of_a_call_is_told_as_each_cli_records_it_with_one_agent_and_with_two(
         assert_eq!(alone, format!("{AT} {expected}"));
         assert_eq!(beside, format!("{AT} {name} {expected}"));
     }
+}
+
+#[test]
+fn step_line_in_writes_the_time_of_the_step_in_the_zone_given() {
+    let zone = Zone::Fixed(UtcOffset::from_hms(-5, 0, 0).expect("a literal offset is valid"));
+    let line = step_line_in(
+        &step(ActivityEvent::Command("cargo test".to_owned()), 1),
+        Some(&start(
+            "inv-claude-sonnet",
+            CliKind::Claude,
+            "task-20261121-132909-ummt",
+        )),
+        &[],
+        &zone,
+    );
+    assert_eq!(line, "2026-11-21 07:50:32 -05:00 command: cargo test");
 }
