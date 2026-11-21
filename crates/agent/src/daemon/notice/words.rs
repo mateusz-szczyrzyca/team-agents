@@ -49,20 +49,15 @@ impl TaskWords {
         task: &TaskId,
         texts: &HarnessPrompts,
     ) -> Result<Self, TaskWordsError> {
-        let id = Variables::new().with("task", task.as_str())?;
-        let id_line = texts.render(HarnessPrompt::NoticeTaskId, &id)?.trim_end().to_owned();
         let excerpt = brief_excerpt(list.brief());
-        let tail = if excerpt.is_empty() {
-            None
-        } else {
-            let values = id.with("excerpt", excerpt.as_str())?;
-            Some(
-                texts
-                    .render(HarnessPrompt::NoticeTaskTail, &values)?
-                    .trim_end()
-                    .to_owned(),
-            )
-        };
+        let values = Variables::new()
+            .with("task", task.as_str())?
+            .with("excerpt", excerpt.as_str())?;
+        let rendered = texts.render(HarnessPrompt::NoticeTask, &values)?;
+        // The title line of the text is the line that gives the task's ID, its body the end of the notification.
+        let (id_line, body) = rendered.split_once('\n').unwrap_or((rendered.as_str(), ""));
+        let id_line = id_line.trim_end().to_owned();
+        let tail = (!excerpt.is_empty()).then(|| body.trim().to_owned());
         Ok(Self {
             short_desc: list.display_short_desc(),
             item,

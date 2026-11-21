@@ -63,10 +63,9 @@ pub enum HarnessPrompt {
     NoticeQuestions,
     /// The notification that a run ended with questions that cannot be read.
     NoticeQuestionsMissing,
-    /// The line of every notification about a task that gives the task's ID.
-    NoticeTaskId,
-    /// The block that ends every notification about a task: the first sentences of its brief.
-    NoticeTaskTail,
+    /// The two parts every notification about a task has: its title line is the line that gives the task's ID, its body
+    /// the block that ends the notification with the first sentences of the task's brief.
+    NoticeTask,
     /// The notification that a task was marked failed after the watchdog's last strike.
     NoticeHung,
     /// The notification that a task is paused for a provider's limit.
@@ -135,8 +134,7 @@ impl HarnessPrompt {
         Self::PromptFile,
         Self::NoticeQuestions,
         Self::NoticeQuestionsMissing,
-        Self::NoticeTaskId,
-        Self::NoticeTaskTail,
+        Self::NoticeTask,
         Self::NoticeHung,
         Self::NoticePaused,
         Self::NoticeFailed,
@@ -237,10 +235,7 @@ impl HarnessPrompt {
                 Audience::Human,
                 &["agent", "task", "file", "reason"],
             ),
-            Self::NoticeTaskId => PromptSpec::new("harness/run/notice-task-id.md", Audience::Human, &["task"]),
-            Self::NoticeTaskTail => {
-                PromptSpec::new("harness/run/notice-task-tail.md", Audience::Human, &["task", "excerpt"])
-            }
+            Self::NoticeTask => PromptSpec::new("harness/run/notice-task.md", Audience::Human, &["task", "excerpt"]),
             Self::NoticeHung => PromptSpec::new(
                 "harness/run/notice-hung.md",
                 Audience::Human,
