@@ -196,25 +196,29 @@ impl Owner {
             .state
             .find_task(task)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
-        let is_publish_question = self
+        let matching_items: Vec<agent_core::ids::ItemId> = self
             .parts
             .state
             .team(&located.team)
-            .is_some_and(|team| team.items().iter().any(|item| item.publish_question().is_some()))
-            || self
-                .watch
-                .publish_question
-                .remove(task)
-                .is_some_and(|asked| asked == number);
-        if is_publish_question {
+            .map(|team| {
+                team.items()
+                    .iter()
+                    .filter(|item| {
+                        item.publish_question().is_some()
+                            && (item.publish_question_task() == Some(task)
+                                || item.publish_question_task().is_none())
+                            && (item.publish_question_number() == Some(number)
+                                || (item.publish_question_number().is_none()
+                                    && self.watch.publish_question.get(task) == Some(&number)))
+                    })
+                    .map(agent_core::state::ItemProgress::id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !matching_items.is_empty() {
+            self.watch.publish_question.remove(task);
             let answer = agent_core::decide::publish::publish_answer(file.entries().first().and_then(Entry::verdict));
             log_decision("publish_answer", &task.as_str(), &format!("{answer:?}"));
-            let items: Vec<agent_core::ids::ItemId> = self
-                .parts
-                .state
-                .team(&located.team)
-                .map(|t| t.items().iter().map(agent_core::state::ItemProgress::id).collect())
-                .unwrap_or_default();
             let mut team_mut = self
                 .parts
                 .state
@@ -222,7 +226,7 @@ impl Owner {
                 .ok_or_else(|| OwnerError::LostTeam {
                     team: located.team.clone(),
                 })?;
-            for id in &items {
+            for id in &matching_items {
                 if let Some(mut item) = team_mut.item_mut(*id) {
                     item.clear_publish_question();
                     if answer == agent_core::decide::publish::PublishAnswer::Retry {
