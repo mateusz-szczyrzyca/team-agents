@@ -485,7 +485,7 @@ impl From<&Team> for TeamSummary {
         Self {
             id: team.id().clone(),
             repo: team.repo().clone(),
-            short_desc: None,
+            short_desc: Some(team.task_list().list().display_short_desc()),
             created_at: team.created_at(),
             merge: team.merge(),
             items,

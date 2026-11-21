@@ -377,8 +377,12 @@ fn render_in(
     let mut lines: Vec<String> = Vec::new();
     for team in teams {
         let items = &team.items;
+        let task = team
+            .short_desc
+            .as_ref()
+            .map_or_else(String::new, |desc| format!("  \"{desc}\""));
         lines.push(format!(
-            "{}  {}  {}  {} pending, {} in progress, {} in review, {} approved, {} done",
+            "{}  {}  {}  {} pending, {} in progress, {} in review, {} approved, {} done{task}",
             team.id,
             team.repo,
             team.merge.as_str(),
