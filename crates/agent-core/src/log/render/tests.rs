@@ -8,7 +8,7 @@ use crate::history::{AgentIdentity, RunStart, RunWhy};
 use crate::ids::{RoundId, RunId, TaskId, TeamId};
 use crate::kinds::{CliKind, Role, Tier};
 use crate::log::render::record_line;
-use crate::log::{LogEntry, LogEntryParts, LogEvent, LogTeamScope};
+use crate::log::{LogEntry, LogEntryParts, LogEvent};
 
 /// The task every row of the table is about.
 fn task() -> TaskId {

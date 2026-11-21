@@ -47,7 +47,7 @@ fn scope(entry: &LogEntry, subject: Option<&RunStart>) -> String {
         (None, None) => {}
     }
     if let Some(team) = entry.team() {
-        let rounds: Vec<&str> = entry.rounds().iter().map(|round| round.as_str()).collect();
+        let rounds: Vec<&str> = entry.rounds().iter().map(crate::ids::RoundId::as_str).collect();
         if rounds.is_empty() {
             parts.push(format!("team {team}"));
         } else {
@@ -146,16 +146,14 @@ fn words_item(entry: &LogEntry) -> String {
 
 /// A run's start and who started it: the queue, or the bus's message from an agent.
 fn words_run_started(entry: &LogEntry, subject: Option<&RunStart>) -> String {
-    match field(entry, "why") {
-        Some("wake_up") => match field(entry, "from") {
+    if let Some("wake_up") = field(entry, "why") {
+        return match field(entry, "from") {
             Some(from) => format!("the bus woke the agent for a message from {}", value(from)),
             None => "the bus woke the agent for a message".to_owned(),
-        },
-        Some(_) | None => {
-            let agent = agent(entry, subject).unwrap_or_default();
-            format!("run started by {agent}")
-        }
+        };
     }
+    let agent = agent(entry, subject).unwrap_or_default();
+    format!("run started by {agent}")
 }
 
 /// How a run ended, from the `Debug` form of its end that the daemon records.
