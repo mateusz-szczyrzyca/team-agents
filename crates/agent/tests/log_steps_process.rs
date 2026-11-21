@@ -137,6 +137,7 @@ mod tests {
     fn log(home: &Path, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_agent"))
             .env_clear()
+            .env("TZ", "CET-1CEST,M3.5.0,M10.5.0/3")
             .env("AGENTS_HOME", home)
             .args(["log"])
             .args(args)
@@ -172,10 +173,10 @@ mod tests {
         let found = lines(dir.path(), &["--task", "task-20261121-132909-0001"]);
 
         let expected = [
-            "2026-11-21T12:50:00Z run run-20261121-132909-0001 started by inv-claude-sonnet on task task-20261121-132909-0001 of team team-20261121-132909-4qem (solo) in round round-20261121-132909-q1w2",
-            "2026-11-21T12:50:03Z command: cargo test",
-            "2026-11-21T12:50:04Z command: git push",
-            "2026-11-21T12:50:06Z info task_status_changed task-20261121-132909-0001 team team-20261121-132909-4qem rounds round-20261121-132909-q1w2: queued ← waiting",
+            "2026-11-21 13:50:00 +01:00 run run-20261121-132909-0001 started by inv-claude-sonnet on task task-20261121-132909-0001 of team team-20261121-132909-4qem (solo) in round round-20261121-132909-q1w2",
+            "2026-11-21 13:50:03 +01:00 command: cargo test",
+            "2026-11-21 13:50:04 +01:00 command: git push",
+            "2026-11-21 13:50:06 +01:00 info task_status_changed task-20261121-132909-0001 team team-20261121-132909-4qem rounds round-20261121-132909-q1w2: queued ← waiting",
         ];
         assert_eq!(found.len(), expected.len(), "{}", text(&found));
         for (line, expected) in found.iter().zip(expected) {
@@ -192,7 +193,7 @@ mod tests {
 
         assert_eq!(
             text(&found),
-            "2026-11-21T12:50:00Z run run-20261121-132909-0002 started by codex-1 on task task-20261121-132909-0002 of team team-20261121-132909-4qem (solo) in round round-20261121-132909-q1w2\n2026-11-21T12:50:03Z command: cargo build"
+            "2026-11-21 13:50:00 +01:00 run run-20261121-132909-0002 started by codex-1 on task task-20261121-132909-0002 of team team-20261121-132909-4qem (solo) in round round-20261121-132909-q1w2\n2026-11-21 13:50:03 +01:00 command: cargo build"
         );
     }
 
@@ -205,7 +206,7 @@ mod tests {
 
         assert_eq!(found.len(), 1, "{}", text(&found));
         assert!(
-            found[0].starts_with("2026-11-21T12:50:06Z info task_status_changed"),
+            found[0].starts_with("2026-11-21 13:50:06 +01:00 info task_status_changed"),
             "{}",
             text(&found)
         );
@@ -220,7 +221,7 @@ mod tests {
 
         assert_eq!(
             text(&found),
-            "2026-11-21T12:50:00Z run run-20261121-132909-0002 started by codex-1 on task task-20261121-132909-0002 of team team-20261121-132909-4qem (solo) in round round-20261121-132909-q1w2\n2026-11-21T12:50:03Z command: cargo build"
+            "2026-11-21 13:50:00 +01:00 run run-20261121-132909-0002 started by codex-1 on task task-20261121-132909-0002 of team team-20261121-132909-4qem (solo) in round round-20261121-132909-q1w2\n2026-11-21 13:50:03 +01:00 command: cargo build"
         );
     }
 
@@ -247,7 +248,7 @@ mod tests {
 
         assert_eq!(found.len(), 1, "{}", text(&found));
         assert!(
-            found[0].starts_with("2026-11-21T12:50:06Z info task_status_changed"),
+            found[0].starts_with("2026-11-21 13:50:06 +01:00 info task_status_changed"),
             "{}",
             text(&found)
         );
