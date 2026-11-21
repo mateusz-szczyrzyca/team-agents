@@ -358,3 +358,527 @@ async fn a_restart_of_the_daemon_keeps_the_count_of_the_send_backs() {
     assert_eq!(member.plan().map(PlanKeeping::sent_back), Some(2));
     assert_eq!(member.questions().len(), 1);
 }
+
+#[tokio::test]
+async fn a_done_step_whose_check_fails_is_judged_mismatch_and_recorded_in_history() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists absent.txt\n",
+    )
+    .unwrap();
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    assert_eq!(
+        judgements.get(&"1.1".parse::<ItemId>().unwrap()).map(|j| j.state),
+        Some(agent_core::plan::judge::JudgementState::Mismatch)
+    );
+}
+
+#[tokio::test]
+async fn a_done_step_with_a_passing_check_is_judged_confirmed() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists ok.txt\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("ok.txt"), "content").unwrap();
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    assert_eq!(
+        judgements.get(&"1.1".parse::<ItemId>().unwrap()).map(|j| j.state),
+        Some(agent_core::plan::judge::JudgementState::Confirmed)
+    );
+}
+
+#[tokio::test]
+async fn a_refused_gate_check_is_judged_declared_and_recorded_in_history() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: make gate\n",
+    )
+    .unwrap();
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    assert_eq!(
+        judgements.get(&"1.1".parse::<ItemId>().unwrap()).map(|j| j.state),
+        Some(agent_core::plan::judge::JudgementState::Declared)
+    );
+}
+
+#[tokio::test]
+async fn unjudged_intervening_plan_causes_changed_step_to_be_rejudged() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists ok.txt\n[ ] 1.2 Later\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("ok.txt"), "content").unwrap();
+    daemon.start().await;
+
+    daemon
+        .state_where("sent back once", |state| {
+            state
+                .find_task(&task(1))
+                .and_then(|found| found.member.plan())
+                .is_some_and(|keeping| keeping.sent_back() >= 1)
+        })
+        .await;
+    daemon.stop().await.unwrap();
+
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    let step_id = "1.1".parse::<ItemId>().unwrap();
+    assert_eq!(
+        judgements.get(&step_id).map(|j| j.state),
+        Some(agent_core::plan::judge::JudgementState::Confirmed)
+    );
+
+    let plan2_text =
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists missing.txt\n[-] 1.2 Later\n    Dropped.\n";
+    {
+        use agent_runtime::history::Store;
+        let mut db = agent_runtime::history::HistoryDb::open(
+            &daemon.home.history_file(),
+            agent_core::history::MaxTextBytes::default(),
+        )
+        .unwrap();
+        db.write_plans(&[agent_runtime::history::PlanRecord {
+            task: task(1),
+            team: team_id(1),
+            run: Some("run-20261121-010000-abcd".parse().unwrap()),
+            at: agent_core::state::Timestamp::now(&daemon.clock).unwrap(),
+            read: agent_runtime::history::PlanRead::Version {
+                text: plan2_text.to_owned(),
+            },
+        }])
+        .unwrap();
+    }
+
+    std::fs::write(dir.join(".agent/plan.md"), plan2_text).unwrap();
+
+    daemon.start().await;
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let latest = reader.latest_judgements(&task(1)).unwrap();
+    assert_eq!(
+        latest.get(&step_id).map(|j| j.state),
+        Some(agent_core::plan::judge::JudgementState::Mismatch),
+        "changed step must be re-judged as Mismatch against missing.txt, not left as Confirmed"
+    );
+}
+
+#[tokio::test]
+async fn startup_cached_confirmations_do_not_show_stale_confirmed_for_edited_steps() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists ok.txt\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("ok.txt"), "content").unwrap();
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists edited.txt\n",
+    )
+    .unwrap();
+
+    daemon.start().await;
+
+    let mut connection = crate::client::Connection::connect(&daemon.home.socket_file())
+        .await
+        .unwrap();
+    let reply = connection
+        .request(
+            agent_core::protocol::Client::Cli,
+            agent_core::protocol::Command::Status(agent_core::protocol::StatusRequest { target: None }),
+        )
+        .await
+        .unwrap();
+    let (agent_core::protocol::Reply::Teams { teams } | agent_core::protocol::Reply::Overview { teams, .. }) = reply
+    else {
+        panic!("expected Reply::Teams, got {reply:?}");
+    };
+    let step = &teams[0].task_plans.get(&task(1)).unwrap()[0];
+    assert_eq!(step.id, "1.1".parse::<ItemId>().unwrap());
+    assert_eq!(
+        step.state, None,
+        "edited step must not show stale confirmed in startup status"
+    );
+
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn startup_cached_confirmations_preserved_for_deduplicated_plan_runs() {
+    let mut daemon = with_bounces(&solo_state(), 2);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    let plan = "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists ok.txt\n[ ] 1.2 Later\n";
+    std::fs::write(dir.join(".agent/plan.md"), plan).unwrap();
+
+    // Run 1: ok.txt does not exist, so 1.1 is judged Mismatch.
+    daemon.start().await;
+    daemon
+        .state_where("sent back once", |state| {
+            state
+                .find_task(&task(1))
+                .and_then(|f| f.member.plan())
+                .is_some_and(|k| k.sent_back() >= 1)
+        })
+        .await;
+    daemon.stop().await.unwrap();
+
+    // Verify Run 1 kept the plan version in history
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let versions = reader.plan_versions(&task(1)).unwrap();
+    assert_eq!(versions.len(), 1);
+
+    // Run 2: ok.txt is created, plan text is identical, 1.1 is confirmed.
+    // Plan versions in history is deduplicated (still len == 1).
+    std::fs::write(dir.join("ok.txt"), "content").unwrap();
+    daemon.start().await;
+    daemon
+        .state_where("run 2 ended or sent back twice", |state| {
+            state
+                .find_task(&task(1))
+                .and_then(|f| f.member.plan())
+                .is_some_and(|k| k.sent_back() >= 2)
+        })
+        .await;
+    daemon.stop().await.unwrap();
+
+    let versions = reader.plan_versions(&task(1)).unwrap();
+    assert_eq!(versions.len(), 1, "history must deduplicate identical plan versions");
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    let j = judgements.get(&"1.1".parse::<ItemId>().unwrap()).unwrap();
+    assert_eq!(j.state, agent_core::plan::judge::JudgementState::Confirmed);
+
+    // Daemon restart: snapshot recovery must find the confirmation carried forward
+    daemon.start().await;
+
+    let mut connection = crate::client::Connection::connect(&daemon.home.socket_file())
+        .await
+        .unwrap();
+    let reply = connection
+        .request(
+            agent_core::protocol::Client::Cli,
+            agent_core::protocol::Command::Status(agent_core::protocol::StatusRequest { target: None }),
+        )
+        .await
+        .unwrap();
+    let (agent_core::protocol::Reply::Teams { teams } | agent_core::protocol::Reply::Overview { teams, .. }) = reply
+    else {
+        panic!("expected Reply::Teams, got {reply:?}");
+    };
+    let step = &teams[0].task_plans.get(&task(1)).unwrap()[0];
+    assert_eq!(step.id, "1.1".parse::<ItemId>().unwrap());
+    assert_eq!(
+        step.state,
+        Some(agent_core::plan::judge::JudgementState::Confirmed),
+        "valid confirmation must be preserved across restart even when plan version was deduplicated"
+    );
+
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn plan_steps_are_judged_when_run_fails() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "fail");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists ok.txt\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("ok.txt"), "content").unwrap();
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Failed).await;
+    daemon.stop().await.unwrap();
+
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    assert_eq!(
+        judgements.get(&"1.1".parse::<ItemId>().unwrap()).map(|j| j.state),
+        Some(agent_core::plan::judge::JudgementState::Confirmed)
+    );
+}
+
+#[tokio::test]
+async fn plan_steps_are_judged_when_run_sleeps() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "sleep");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists ok.txt\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("ok.txt"), "content").unwrap();
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    assert_eq!(
+        judgements.get(&"1.1".parse::<ItemId>().unwrap()).map(|j| j.state),
+        Some(agent_core::plan::judge::JudgementState::Confirmed)
+    );
+}
+
+#[tokio::test]
+async fn plan_steps_are_judged_when_run_asks_questions() {
+    use std::num::NonZeroU32;
+
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let questions_file = daemon.home.questions_file(&task(1), NonZeroU32::new(1).unwrap());
+    let dir = daemon.scenario(1, &format!("questions {}", questions_file.display()));
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists ok.txt\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("ok.txt"), "content").unwrap();
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Questions).await;
+    daemon.stop().await.unwrap();
+
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    assert_eq!(
+        judgements.get(&"1.1".parse::<ItemId>().unwrap()).map(|j| j.state),
+        Some(agent_core::plan::judge::JudgementState::Confirmed)
+    );
+}
+
+#[tokio::test]
+async fn judgement_write_failure_keeps_the_settlement_and_cached_steps() {
+    use agent_runtime::history::{History, RecordKind, Setup, Store, TracingReporter, WriteError};
+    struct Failing;
+    impl Store for Failing {
+        fn write(&mut self, _: &[agent_core::history::Record]) -> Result<(), WriteError> {
+            Ok(())
+        }
+        fn write_judgements(&mut self, _: &[agent_runtime::history::JudgementRecord]) -> Result<(), WriteError> {
+            Err(WriteError::Rule {
+                record: RecordKind::Judgement,
+                rule: "injected judgement failure",
+            })
+        }
+    }
+    let daemon = with_bounces(&solo_state(), 1);
+    finished_plan(&daemon);
+    let started = History::start(
+        Failing,
+        Setup {
+            reporter: std::sync::Arc::new(TracingReporter),
+            capacity: agent_runtime::history::DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let mut owner = owner.with_history(started.history.clone());
+    let located = owner.locate(&task(1)).unwrap();
+    let end = agent_core::state::RunEnd::Reported {
+        outcome: agent_core::status::RunOutcome::Done,
+    };
+    let result = owner
+        .plan_at_end(
+            &task(1),
+            &located,
+            &end,
+            crate::daemon::settle::Settled::Status(TaskStatus::Done),
+        )
+        .await;
+    assert!(
+        matches!(
+            result,
+            Ok((crate::daemon::settle::Settled::Status(TaskStatus::Done), _))
+        ),
+        "{result:?}"
+    );
+    assert_eq!(
+        owner.task_plans.get(&task(1)).unwrap()[0].state,
+        Some(agent_core::plan::judge::JudgementState::Declared)
+    );
+    assert_eq!(started.history.health().lost, 1);
+    started.writer.close().unwrap();
+}
+
+#[tokio::test]
+async fn stopped_run_keeps_its_cached_plan_steps() {
+    use agent_core::protocol::{Client, Command, ControlRequest, StatusRequest, Target};
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "hang");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(dir.join(".agent/plan.md"), FINISHED).unwrap();
+    daemon.start().await;
+    daemon.status_is(1, TaskStatus::Running).await;
+    let mut connection = crate::client::Connection::connect(&daemon.home.socket_file())
+        .await
+        .unwrap();
+    connection
+        .request(
+            Client::Cli,
+            Command::Stop(ControlRequest {
+                target: Target::Task(task(1)),
+            }),
+        )
+        .await
+        .unwrap();
+    daemon.status_is(1, TaskStatus::Stopped).await;
+    let reply = connection
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+    let (agent_core::protocol::Reply::Teams { teams } | agent_core::protocol::Reply::Overview { teams, .. }) = reply
+    else {
+        panic!("{reply:?}")
+    };
+    assert_eq!(teams[0].task_plans.get(&task(1)).map(Vec::len), Some(2));
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn reopened_step_is_checked_again_when_marked_done() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists ok.txt\n[ ] 1.2 Later\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("ok.txt"), "content").unwrap();
+    daemon.start().await;
+
+    daemon
+        .state_where("sent back once", |state| {
+            state
+                .find_task(&task(1))
+                .and_then(|found| found.member.plan())
+                .is_some_and(|keeping| keeping.sent_back() >= 1)
+        })
+        .await;
+    daemon.stop().await.unwrap();
+
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    let step_id = "1.1".parse::<ItemId>().unwrap();
+    assert_eq!(
+        judgements.get(&step_id).map(|j| j.state),
+        Some(agent_core::plan::judge::JudgementState::Confirmed)
+    );
+
+    let plan2_text = "Finish it.\n\n1. Work\n[>] 1.1 Do it\n    Check: exists ok.txt\n[-] 1.2 Later\n    Dropped.\n";
+    {
+        use agent_runtime::history::Store;
+        let mut db = agent_runtime::history::HistoryDb::open(
+            &daemon.home.history_file(),
+            agent_core::history::MaxTextBytes::default(),
+        )
+        .unwrap();
+        db.write_plans(&[agent_runtime::history::PlanRecord {
+            task: task(1),
+            team: team_id(1),
+            run: Some("run-20261121-010000-abcd".parse().unwrap()),
+            at: agent_core::state::Timestamp::now(&daemon.clock).unwrap(),
+            read: agent_runtime::history::PlanRead::Version {
+                text: plan2_text.to_owned(),
+            },
+        }])
+        .unwrap();
+    }
+
+    std::fs::remove_file(dir.join("ok.txt")).unwrap();
+    std::fs::write(dir.join(".agent/plan.md"), plan2_text.replace("[>]", "[x]")).unwrap();
+
+    daemon.start().await;
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let latest = reader.latest_judgements(&task(1)).unwrap();
+    assert_eq!(
+        latest.get(&step_id).map(|j| j.state),
+        Some(agent_core::plan::judge::JudgementState::Mismatch),
+        "changed step must be re-judged as Mismatch against missing.txt, not left as Confirmed"
+    );
+}
+
+#[test]
+fn edited_recovered_steps_discard_every_previous_judgement_state() {
+    use agent_core::plan::{judge::JudgementState, parse_plan};
+    use agent_runtime::history::JudgementRecord;
+    use std::collections::HashMap;
+
+    let old = parse_plan(FINISHED).unwrap();
+    let changed = parse_plan(&FINISHED.replace("Do it", "Write the guide")).unwrap();
+    let id = "1.1".parse::<ItemId>().unwrap();
+    let run = "run-20261121-010000-abcd".parse::<agent_core::ids::RunId>().unwrap();
+    let earlier = HashMap::from([(run.clone(), old.clone())]);
+    for state in [
+        JudgementState::Confirmed,
+        JudgementState::Declared,
+        JudgementState::Mismatch,
+    ] {
+        let judgements = HashMap::from([(
+            id,
+            JudgementRecord {
+                task: task(1),
+                team: team_id(1),
+                run: Some(run.clone()),
+                at: at(0),
+                step: id,
+                state,
+                check: None,
+                reason: Some("previous reason".to_owned()),
+                duration_ms: 0,
+                output_path: None,
+            },
+        )]);
+        let summary = super::step_summary(changed.step(&id).unwrap(), &judgements, &earlier);
+        assert_eq!((summary.state, summary.reason), (None, None), "{state:?}");
+    }
+}

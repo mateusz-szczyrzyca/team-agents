@@ -45,6 +45,8 @@ pub enum RecordKind {
     Event,
     /// A read of a task's plan, kept in `plan_versions`.
     Plan,
+    /// A judgement of a task's plan step, kept in `step_judgements`.
+    Judgement,
 }
 
 impl Keyword for RecordKind {
@@ -89,7 +91,9 @@ impl FromStr for LostKind {
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         match RecordKind::from_str(text) {
-            Ok(RecordKind::Event | RecordKind::Plan) => return Err(UnknownKeyword::of::<RecordKind>(text)),
+            Ok(RecordKind::Event | RecordKind::Plan | RecordKind::Judgement) => {
+                return Err(UnknownKeyword::of::<RecordKind>(text));
+            }
             Ok(kind) => return Ok(Self::Record(kind)),
             Err(_) => {}
         }

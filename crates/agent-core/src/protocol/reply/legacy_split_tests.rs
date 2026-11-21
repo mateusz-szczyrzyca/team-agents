@@ -132,7 +132,7 @@ fn protocol_four_preserves_split_details_and_selects_matching_replies() {
 #[test]
 fn negotiated_frames_check_size_version_and_malformed_data() {
     use crate::protocol::{Frame, MAX_FRAME_BYTES, MAX_REQUEST_BYTES, ProtocolError, Request};
-    for version in [1, 2, 5] {
+    for version in [1, 2, 6] {
         let line = format!(r#"{{"protocol":{version},"type":"unknown"}}"#);
         assert!(
             matches!(Frame::from_line_negotiated(&line), Err(ProtocolError::UnsupportedVersion(crate::protocol::UnsupportedVersion { found })) if found == version)

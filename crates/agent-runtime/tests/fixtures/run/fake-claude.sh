@@ -76,6 +76,7 @@ case $scenario in
     finish_done
     ;;
   fail) init; result false 'I could not do it.\nSTATUS: FAILED' ;;
+  sleep) init; result false 'Going to sleep.\nSTATUS: SLEEPING' ;;
   nostatus) init; result false 'I think that is all.' ;;
   crash) exit 3 ;;
   garbage) echo 'this line is not JSON'; finish_done ;;

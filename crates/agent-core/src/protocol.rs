@@ -3,7 +3,8 @@
 //!
 //! A client sends one [`Request`] per line; the daemon answers each with a [`Response`] and, to a client that
 //! subscribed, sends [`Event`]s as the state changes — a [`Frame`] is either. The strict legacy APIs use
-//! [`PROTOCOL_VERSION`]; negotiated APIs also accept [`SPLIT_PROTOCOL_VERSION`] for split-aware clients.
+//! [`PROTOCOL_VERSION`]; negotiated APIs also accept [`SPLIT_PROTOCOL_VERSION`] for split-aware clients and
+//! [`PLAN_PROTOCOL_VERSION`] for plan status snapshots.
 //! Unsupported tags are refused before the message body is decoded.
 //! The types here only describe lines and read and write them; the socket is the daemon's.
 
@@ -19,8 +20,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub use event::{ControlAction, Event, EventKind};
 pub use reply::{
-    Failure, FailureKind, ItemCounts, MemberSummary, Outcome, Reply, Response, ReviewPass, RoundDetail, RoundItem,
-    RoundTask, SharedAgent, TeamSummary,
+    Failure, FailureKind, ItemCounts, MemberSummary, Outcome, PlanStepSummary, Reply, Response, ReviewPass,
+    RoundDetail, RoundItem, RoundTask, SharedAgent, TeamSummary,
 };
 pub use request::{
     AgentList, AgentListError, AnswerInput, AnswerList, AnswerListError, AnswerRequest, Client, Command,
@@ -34,6 +35,9 @@ pub const PROTOCOL_VERSION: u32 = 3;
 /// The negotiated protocol version carrying split plans, acknowledgements and part round identities.
 pub const SPLIT_PROTOCOL_VERSION: u32 = 4;
 
+/// The negotiated protocol version carrying plan step judgements and settlement states in status and show replies.
+pub const PLAN_PROTOCOL_VERSION: u32 = 5;
+
 /// Wire format requested by a client; version four includes approved split details.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyFormat {
@@ -41,6 +45,8 @@ pub enum ReplyFormat {
     Legacy,
     /// Version four, including split acknowledgements, plans and round identities.
     Split,
+    /// Version five, including plan step judgements and status snapshots.
+    Plan,
 }
 
 /// Longest line a client may send, in bytes: a task list (1 MiB at most) with room for the rest of the request.
@@ -135,8 +141,18 @@ fn decode<T: DeserializeOwned>(line: &str, max: usize) -> Result<T, ProtocolErro
 /// Serializes one of the protocol's object-shaped messages with the split-aware version tag.
 fn encode_split<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    strip_plan_fields(&mut value);
     if let Some(protocol) = value.get_mut("protocol") {
         *protocol = serde_json::Value::from(SPLIT_PROTOCOL_VERSION);
+    }
+    encode(&value)
+}
+
+/// Serializes one of the protocol's object-shaped messages with the plan-aware version tag.
+fn encode_plan<T: Serialize>(message: &T) -> Result<String, EncodeError> {
+    let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    if let Some(protocol) = value.get_mut("protocol") {
+        *protocol = serde_json::Value::from(PLAN_PROTOCOL_VERSION);
     }
     encode(&value)
 }
@@ -161,6 +177,16 @@ fn decode_negotiated<T: DeserializeOwned>(line: &str, max: usize) -> Result<(T, 
                 .map(|message| (message, ReplyFormat::Split))
                 .map_err(|source| ProtocolError::Malformed { source })
         }
+        version if version == u64::from(PLAN_PROTOCOL_VERSION) => {
+            let mut value: serde_json::Value =
+                serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
+            if let Some(protocol) = value.get_mut("protocol") {
+                *protocol = serde_json::Value::from(PROTOCOL_VERSION);
+            }
+            serde_json::from_value(value)
+                .map(|message| (message, ReplyFormat::Plan))
+                .map_err(|source| ProtocolError::Malformed { source })
+        }
         found => Err(UnsupportedVersion { found }.into()),
     }
 }
@@ -170,7 +196,7 @@ fn strip_split_fields(value: &mut serde_json::Value) -> bool {
     match value {
         serde_json::Value::Object(object) => {
             let mut changed = false;
-            for key in ["split", "splits", "part"] {
+            for key in ["split", "splits", "part", "task_plans"] {
                 changed |= object.remove(key).is_some();
             }
             for nested in object.values_mut() {
@@ -182,6 +208,30 @@ fn strip_split_fields(value: &mut serde_json::Value) -> bool {
             let mut changed = false;
             for nested in values {
                 changed |= strip_split_fields(nested);
+            }
+            changed
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => false,
+    }
+}
+
+/// Removes plan fields unknown to protocol three and four clients.
+fn strip_plan_fields(value: &mut serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(object) => {
+            let mut changed = object.remove("task_plans").is_some();
+            for nested in object.values_mut() {
+                changed |= strip_plan_fields(nested);
+            }
+            changed
+        }
+        serde_json::Value::Array(values) => {
+            let mut changed = false;
+            for nested in values {
+                changed |= strip_plan_fields(nested);
             }
             changed
         }
@@ -231,6 +281,7 @@ impl Frame {
         match format {
             ReplyFormat::Legacy => self.to_line(),
             ReplyFormat::Split => encode_split(self),
+            ReplyFormat::Plan => encode_plan(self),
         }
     }
 

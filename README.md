@@ -54,7 +54,7 @@ human, failed, sleeping.
 The documents: [`docs/architecture.md`](docs/architecture.md) (the layout and the process model),
 [`docs/configuration.md`](docs/configuration.md), [`docs/state.md`](docs/state.md) (what is kept and how old states
 are read), [`docs/history.md`](docs/history.md), [`docs/log.md`](docs/log.md), [`docs/task-list.md`](docs/task-list.md),
-[`docs/plan.md`](docs/plan.md) (the form of a task's plan of steps, not read by the daemon yet), [`docs/tdd.md`](docs/tdd.md).
+[`docs/plan.md`](docs/plan.md) (the form and verification of a task's plan of steps), [`docs/tdd.md`](docs/tdd.md).
 [`WhatsNew.md`](WhatsNew.md) says what each version brought.
 
 ## Security
@@ -255,6 +255,14 @@ or send it back once more. Tasks created before this version are never sent back
 the pull request: a plan an agent commits by mistake is taken out of its branch by a commit "Keep the plan out of the
 delivery". See [configuration](docs/configuration.md#plan).
 
+At every run's end, the daemon also judges done steps, for every role and outcome. `exists PATH` confirms a file or
+folder inside the worktree; an absent path or a symlink outside it is a mismatch. Steps without checks, with
+`reviewer`, or with commands remain declared. `agent status <task>` and `agent status <round>` show these states
+beside the steps. Judgements are retained in history schema 17, which automatically upgrades older histories;
+keep a backup before upgrading if you need to return to an older daemon. This release records mismatches without
+sending runs back for them; command execution and mismatch bounces follow in the next part.
+
+
 A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt
 (`prompts/harness/run/resume-no-status.md`), up to twice in a row. After that the session itself is taken to have gone
 bad, and the task is started once in a new session of the same agent with a briefing built from facts — its prompt, the
@@ -325,8 +333,7 @@ Approve using the [explicit split verdict](docs/task-list.md#approved-split-plan
 lists the recorded parts, or explains a rejected form. The current round delivers part a. Later parts receive
 separate rounds, branches and pull requests after their dependencies merge; the original item and team remain
 open until all parts merge. `agent status` shows the parts and their dependency states. Definitions and progress
-survive restarts. The CLI negotiates socket protocol `4` for split acknowledgements and status details. Older clients keep protocol
-`3`, whose replies omit split fields; ordinary replies retain their existing shape. A new CLI probes with a
+survive restarts. The CLI negotiates socket protocol `5` for plan status and protocol `4` for split acknowledgements. Plan status falls back to protocol `4` and then `3`; both older formats omit plan summaries. Older `agent` CLIs using protocols `3` and `4` still talk to the new daemon. Protocol `3` replies also omit split fields; ordinary replies retain their existing shape. A new CLI probes with a
 read-only status request and reconnects once using protocol `3` when an older daemon rejects or closes the probe.
 The actual answer is sent once. Showing the full state of a split team requires protocol `4`.
 Schema `13` states from version 0.29.0 remain readable, with original round names and histories.

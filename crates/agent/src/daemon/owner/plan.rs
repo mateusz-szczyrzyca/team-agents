@@ -1,19 +1,21 @@
 //! The owner's side of the plan of a task (`.agent/plan.md`, see `docs/plan.md`): what the daemon does with it at the
 //! end of a run.
 
-use std::str::FromStr;
-
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
 use agent_core::decide::plan::{DoneEnds, PlanFacts, PlanRead, PlanVerdict, decide_plan, done_ends_with};
 use agent_core::ids::RunId;
-use agent_core::ids::{AgentName, BranchName, InvalidName, TaskId, TeamId};
+use agent_core::ids::{AgentName, BranchName, InvalidName, ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
-use agent_core::plan::{PLAN_FILE, Plan, PlanError, parse_plan};
+use agent_core::plan::judge::{JudgementState, steps_to_judge_with};
+use agent_core::plan::{PLAN_FILE, Plan, PlanError, StepState, parse_plan};
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
+use agent_core::protocol::PlanStepSummary;
 use agent_core::questions::{Entry, QuestionsFile, Verdict, quote};
 use agent_core::repo_path::{InvalidRepoPath, RepoPath};
 use agent_core::state::{ItemProgress, PlanKeeping, PlanReason, PlanStage};
@@ -22,7 +24,10 @@ use agent_core::status::{RunOutcome, TaskStatus};
 use agent_core::task_list::MAX_TASK_LIST_BYTES;
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision, Untracked};
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
-use agent_runtime::history::{PlanRead as HistoryPlanRead, PlanRecord, Reader, log_decision};
+use agent_runtime::history::{
+    JudgementRecord, PlanRead as HistoryPlanRead, PlanRecord, ReadError, Reader, log_decision,
+};
+use agent_runtime::plan::check::{CheckContext, JudgementResult, execute_step_check};
 use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::ComposeError;
 use agent_runtime::text_file::{ReplaceError, TextFileError, read_text_file, replace_text_file};
@@ -332,8 +337,8 @@ impl Owner {
 
 impl Owner {
     /// What the end `end` of a run of `task` does with its plan: what the worktree has is kept in the history, and a
-    /// run that reported `DONE` against its plan is sent back or the human asked, by [`decide_plan`]. `settled` is what
-    /// the run's end comes to otherwise; the result is what it comes to now.
+    /// run that reported `DONE` against its plan is sent back or the human asked, by [`decide_plan`].
+    /// `settled` is what the run's end comes to otherwise; the result is what it comes to now.
     ///
     /// # Errors
     /// [`OwnerError`] when the task is gone or has no questions number left.
@@ -344,8 +349,8 @@ impl Owner {
         end: &RunEnd,
         settled: Settled,
     ) -> Result<(Settled, PlanHeld), OwnerError> {
-        let found = match self.worktree_of(task, located) {
-            Ok(worktree) => read_plan(&worktree.as_path().join(PLAN_FILE)).await,
+        let worktree = match self.worktree_of(task, located) {
+            Ok(worktree) => worktree,
             Err(error) => {
                 tracing::warn!(
                     event = LogEvent::GitCallFailed.as_str(),
@@ -356,29 +361,33 @@ impl Owner {
                 return Ok((settled, PlanHeld::No));
             }
         };
+        let found = read_plan(&worktree.as_path().join(PLAN_FILE)).await;
         let run = self
             .parts
             .state
             .find_task(task)
             .and_then(|found| found.member.current_run().map(|run| run.id().clone()));
-        // Only a parsed plan of a run that may be sent back is compared with the earlier versions: in every other case the
-        // decision needs no history, and the run's end reads none.
-        let policy = self.parts.settings.config.plan();
-        let may_be_sent_back = matches!(found.read, PlanRead::Parsed(_))
-            && matches!(
-                end,
-                RunEnd::Reported {
-                    outcome: RunOutcome::Done
-                }
-            )
-            && policy.bounces() > 0
-            && policy.roles().contains(&located.role);
-        let earlier = if may_be_sent_back {
+        let (earlier, earlier_by_run) = if matches!(found.read, PlanRead::Parsed(_)) {
             self.earlier_plans(task, run.as_ref()).await
         } else {
-            Vec::new()
+            (Vec::new(), HashMap::new())
         };
-        self.keep_plan(task, located, run, &found)?;
+        self.keep_plan(task, located, run.clone(), &found)?;
+        if let PlanRead::Parsed(plan) = &found.read {
+            let latest = self
+                .judge_steps_at_end(
+                    task,
+                    located,
+                    run.as_ref(),
+                    plan,
+                    &worktree,
+                    (earlier.last(), &earlier_by_run),
+                )
+                .await?;
+            self.refresh_task_plan(task, plan, &latest);
+        } else {
+            self.invalidate_task_plan(task);
+        }
         let ends = self.parts.state.team(&located.team).map_or(DoneEnds::Work, |team| {
             done_ends_with(located.role, team.items().iter().map(ItemProgress::phase), |agent| {
                 member_works(team, agent)
@@ -419,12 +428,18 @@ impl Owner {
         })
     }
 
-    /// The versions of the plan of `task` the history kept from runs other than `run`, oldest first; none when the
-    /// history cannot be read (logged): a step lost since then is then not found. A kept version that does not parse is
-    /// left out and logged.
-    async fn earlier_plans(&self, task: &TaskId, run: Option<&RunId>) -> Vec<Plan> {
+    /// The versions of the plan of `task` the history kept from runs other than `run`, oldest first, along with a map by
+    /// run ID; none when the history cannot be read (logged): a step lost since then is then not found. A kept version
+    /// that does not parse is left out and logged.
+    async fn earlier_plans(&self, task: &TaskId, run: Option<&RunId>) -> (Vec<Plan>, HashMap<RunId, Plan>) {
         let path = self.parts.store.home().history_file();
         let task_id = task.clone();
+        let task_runs: Vec<RunId> = self
+            .parts
+            .state
+            .find_task(task)
+            .map(|found| found.member.runs().iter().map(|r| r.id().clone()).collect())
+            .unwrap_or_default();
         let looked =
             tokio::task::spawn_blocking(move || Reader::open(&path).and_then(|reader| reader.plan_versions(&task_id)))
                 .await;
@@ -433,7 +448,7 @@ impl Owner {
             Ok(Err(error)) => {
                 // A home without a history (or one disabled) has kept no plan: nothing can be found lost.
                 tracing::debug!(task = %task, error = %error_chain(&error), "no plan kept before can be read");
-                return Vec::new();
+                return (Vec::new(), HashMap::new());
             }
             Err(error) => {
                 tracing::warn!(
@@ -442,25 +457,118 @@ impl Owner {
                     %error,
                     "the plans kept before cannot be read: no step is found lost"
                 );
-                return Vec::new();
+                return (Vec::new(), HashMap::new());
             }
         };
-        let mut plans = Vec::new();
-        for record in records.into_iter().filter(|record| record.run.as_ref() != run) {
-            let HistoryPlanRead::Version { text } = record.read else {
-                continue;
+        let parsed: Vec<_> = records.iter().map(|record| (record, retained_plan(record))).collect();
+        let plans = parsed
+            .iter()
+            .filter(|(record, _)| record.run.as_ref() != run)
+            .filter_map(|(_, plan)| plan.clone())
+            .collect();
+        let by_run = expand_plans_by_run(&task_runs, &parsed);
+        (plans, by_run)
+    }
+
+    /// Executes and records the step checks of `plan` that are to be judged at the end of `run`.
+    async fn judge_steps_at_end(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        run: Option<&RunId>,
+        plan: &Plan,
+        worktree: &AbsolutePath,
+        earlier: (Option<&Plan>, &HashMap<RunId, Plan>),
+    ) -> Result<HashMap<ItemId, JudgementRecord>, OwnerError> {
+        let (earlier_plan, earlier_by_run) = earlier;
+        let mut previous = self.latest_judgements(task).await;
+        let to_judge = steps_to_judge_with(
+            plan,
+            |id| {
+                let latest_step = earlier_plan.and_then(|plan| plan.step(id));
+                if latest_step.is_none_or(|step| step.state() != StepState::Done) {
+                    return latest_step;
+                }
+                if let Some(judgement) = previous.get(id)
+                    && let Some(run_id) = &judgement.run
+                    && let Some(plan_at_run) = earlier_by_run.get(run_id)
+                {
+                    return plan_at_run.step(id);
+                }
+                earlier_plan.and_then(|p| p.step(id))
+            },
+            |id| previous.get(id).map(|j| j.state),
+        );
+        let task_dir = self.parts.store.home().task_dir(task);
+        let context = CheckContext {
+            worktree: worktree.as_path(),
+            task_dir: &task_dir,
+            run,
+            check_seconds: 0,
+            check_refuse: &[],
+            envs: &[],
+        };
+        let mut records = Vec::new();
+        for step in to_judge {
+            let result = match execute_step_check(&context, step).await {
+                Ok(res) => res,
+                Err(error) => JudgementResult {
+                    state: JudgementState::Mismatch,
+                    check_line: step.check().map(ToString::to_string),
+                    reason: Some(format!("cannot run check: {}", error_chain(&error))),
+                    duration_ms: 0,
+                    output_path: None,
+                    tail: String::new(),
+                    gate_refused: false,
+                },
             };
-            match parse_plan(&text) {
-                Ok(plan) => plans.push(plan),
-                Err(error) => tracing::warn!(
+            let at = Timestamp::now(&self.parts.clock)?;
+            records.push(result.into_record(task.clone(), located.team.clone(), run.cloned(), at, step.id()));
+        }
+        for record in &records {
+            previous.insert(record.step, record.clone());
+        }
+        if !records.is_empty() && self.history.is_writing() {
+            match self.history.persist_judgements(records).await {
+                Ok(()) => {}
+                Err(error) => {
+                    // History degradation keeps the task running; the cached judgement is not durable.
+                    tracing::warn!(
+                        event = LogEvent::HistoryRecordIncomplete.as_str(),
+                        task = %task,
+                        error = %error_chain(&error),
+                        "plan judgements remain only in memory because history could not keep them"
+                    );
+                }
+            }
+        }
+        Ok(previous)
+    }
+
+    /// The latest judgements of steps of `task` kept in history, keyed by step ID.
+    async fn latest_judgements(&self, task: &TaskId) -> HashMap<ItemId, JudgementRecord> {
+        let path = self.parts.store.home().history_file();
+        let task_id = task.clone();
+        let looked = tokio::task::spawn_blocking(move || {
+            Reader::open(&path).and_then(|reader| reader.latest_judgements(&task_id))
+        })
+        .await;
+        match looked {
+            Ok(Ok(map)) => map,
+            Ok(Err(error)) => {
+                tracing::debug!(task = %task, error = %error_chain(&error), "no previous judgements could be read");
+                HashMap::new()
+            }
+            Err(error) => {
+                tracing::warn!(
                     event = LogEvent::HistoryRecordIncomplete.as_str(),
                     task = %task,
                     %error,
-                    "a plan kept before does not parse: its steps are not looked for"
-                ),
+                    "the previous judgements could not be read"
+                );
+                HashMap::new()
             }
         }
-        plans
     }
 
     /// Hands what was found of the plan of `task` at the end of `run` to the history.
@@ -484,6 +592,237 @@ impl Owner {
         }]);
         Ok(())
     }
+
+    /// Reads and parses the plan file in the worktree of `task` for snapshot recovery.
+    async fn read_worktree_plan(&self, task: &TaskId) -> Option<Plan> {
+        let located = match self.locate(task) {
+            Ok(located) => located,
+            Err(error) => {
+                tracing::warn!(task = %task, error = %error_chain(&error), "cannot locate task for plan snapshot");
+                return None;
+            }
+        };
+        let worktree = match self.worktree_of(task, &located) {
+            Ok(worktree) => worktree,
+            Err(error) => {
+                tracing::warn!(task = %task, error = %error_chain(&error), "cannot locate worktree for plan snapshot");
+                return None;
+            }
+        };
+        let plan_file = worktree.as_path().join(PLAN_FILE);
+        let text = match read_text_file(&plan_file, MAX_TASK_LIST_BYTES).await {
+            Ok(Some(file)) => file.text,
+            Ok(None) => return None,
+            Err(error) => {
+                tracing::warn!(
+                    task = %task,
+                    path = %plan_file.display(),
+                    error = %error_chain(&error),
+                    "cannot read plan file for snapshot"
+                );
+                return None;
+            }
+        };
+        match parse_plan(&text) {
+            Ok(plan) => Some(plan),
+            Err(error) => {
+                tracing::warn!(
+                    task = %task,
+                    error = %error_chain(&error),
+                    "cannot parse plan file for snapshot"
+                );
+                None
+            }
+        }
+    }
+
+    /// Asynchronously populates the in-memory plan summaries of all existing tasks at daemon recovery.
+    pub(super) async fn load_plan_snapshots(&mut self) {
+        let history_path = self.parts.store.home().history_file();
+        let is_writing = self.history.is_writing();
+        let mut parsed_tasks = Vec::new();
+        for team in self.parts.state.teams() {
+            let mut tasks = Vec::new();
+            for (_role, member) in team.crew().roster() {
+                tasks.push(member.task().clone());
+            }
+            for reviewer in team.reviewers() {
+                tasks.push(reviewer.task().clone());
+            }
+            for task in tasks {
+                if let Some(plan) = self.read_worktree_plan(&task).await {
+                    parsed_tasks.push((task, plan));
+                }
+            }
+        }
+
+        let mut loaded = HashMap::new();
+        for (task, plan) in parsed_tasks {
+            let has_done = plan.steps().any(|s| s.state() == StepState::Done);
+
+            let (judgements, earlier_by_run) = if has_done && is_writing {
+                let path = history_path.clone();
+                let task_id = task.clone();
+                let task_runs: Vec<RunId> = self
+                    .parts
+                    .state
+                    .find_task(&task)
+                    .map(|found| found.member.runs().iter().map(|r| r.id().clone()).collect())
+                    .unwrap_or_default();
+                let looked = tokio::task::spawn_blocking(move || {
+                    let reader = Reader::open(&path)?;
+                    let latest = reader.latest_judgements(&task_id)?;
+                    let records = reader.plan_versions(&task_id)?;
+                    let parsed: Vec<_> = records.iter().map(|record| (record, retained_plan(record))).collect();
+                    let by_run = expand_plans_by_run(&task_runs, &parsed);
+                    Ok::<_, ReadError>((latest, by_run))
+                })
+                .await;
+
+                match looked {
+                    Ok(Ok(pair)) => pair,
+                    Ok(Err(error)) => {
+                        tracing::warn!(
+                            event = LogEvent::HistoryRecordIncomplete.as_str(),
+                            task = %task,
+                            error = %error_chain(&error),
+                            "latest plan judgements could not be read for snapshot"
+                        );
+                        (HashMap::new(), HashMap::new())
+                    }
+                    Err(join_err) => {
+                        tracing::warn!(
+                            event = LogEvent::HistoryRecordIncomplete.as_str(),
+                            task = %task,
+                            error = %join_err,
+                            "failed to join task reading judgements for snapshot"
+                        );
+                        (HashMap::new(), HashMap::new())
+                    }
+                }
+            } else {
+                (HashMap::new(), HashMap::new())
+            };
+
+            let summaries: Vec<PlanStepSummary> = plan
+                .steps()
+                .map(|step| step_summary(step, &judgements, &earlier_by_run))
+                .collect();
+            loaded.insert(task, summaries);
+        }
+
+        self.task_plans = loaded;
+    }
+
+    /// Stores the parsed `plan` and latest `judgements` of `task` in cache for status snapshots.
+    pub(super) fn refresh_task_plan(
+        &mut self,
+        task: &TaskId,
+        plan: &Plan,
+        judgements: &HashMap<ItemId, JudgementRecord>,
+    ) {
+        let summaries: Vec<PlanStepSummary> = plan
+            .steps()
+            .map(|step| {
+                let is_done = step.state() == StepState::Done;
+                let judgement = if is_done { judgements.get(&step.id()) } else { None };
+                PlanStepSummary {
+                    id: step.id(),
+                    mark: step.state(),
+                    title: step.title().to_owned(),
+                    state: judgement.map(|j| j.state),
+                    reason: judgement.and_then(|j| j.reason.clone()),
+                }
+            })
+            .collect();
+        self.task_plans.insert(task.clone(), summaries);
+    }
+
+    /// Removes `task`'s plan summaries from the status snapshot cache.
+    pub(super) fn invalidate_task_plan(&mut self, task: &TaskId) {
+        self.task_plans.remove(task);
+    }
+}
+
+/// Builds a [`PlanStepSummary`] for a step from the recovered plan and latest judgements.
+fn step_summary(
+    step: &agent_core::plan::Step,
+    judgements: &HashMap<ItemId, JudgementRecord>,
+    earlier_by_run: &HashMap<RunId, Plan>,
+) -> PlanStepSummary {
+    let is_done = step.state() == StepState::Done;
+    let (state, reason) = if is_done {
+        match judgements.get(&step.id()) {
+            Some(j) => {
+                let step_at_run = j
+                    .run
+                    .as_ref()
+                    .and_then(|r| earlier_by_run.get(r))
+                    .and_then(|p| p.step(&step.id()));
+                if step_at_run == Some(step) {
+                    (Some(j.state), j.reason.clone())
+                } else {
+                    (None, None)
+                }
+            }
+            None => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+    PlanStepSummary {
+        id: step.id(),
+        mark: step.state(),
+        title: step.title().to_owned(),
+        state,
+        reason,
+    }
+}
+
+/// Parses a retained plan, logging why an invalid version cannot supply a snapshot.
+fn retained_plan(record: &PlanRecord) -> Option<Plan> {
+    match &record.read {
+        HistoryPlanRead::Missing | HistoryPlanRead::Unreadable { .. } => None,
+        HistoryPlanRead::Version { text } => match parse_plan(text) {
+            Ok(plan) => Some(plan),
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %record.task,
+                    error = %error_chain(&error),
+                    "cannot parse retained plan for snapshot"
+                );
+                None
+            }
+        },
+    }
+}
+
+/// Expands deduplicated plan versions across chronological runs, carrying forward the active plan.
+fn expand_plans_by_run(task_runs: &[RunId], records: &[(&PlanRecord, Option<Plan>)]) -> HashMap<RunId, Plan> {
+    let mut by_run = HashMap::new();
+    let mut active_plan: Option<Plan> = None;
+    let mut record_iter = records.iter().peekable();
+
+    for run_id in task_runs {
+        while let Some((record, plan)) = record_iter.peek() {
+            match &record.run {
+                None => active_plan.clone_from(plan),
+                Some(r) if r == run_id => active_plan.clone_from(plan),
+                Some(_) => break,
+            }
+            record_iter.next();
+        }
+        if let Some(plan) = &active_plan {
+            by_run.insert(run_id.clone(), plan.clone());
+        }
+    }
+    for (record, plan) in records {
+        if let (Some(run_id), Some(plan)) = (&record.run, plan) {
+            by_run.entry(run_id.clone()).or_insert_with(|| plan.clone());
+        }
+    }
+    by_run
 }
 
 /// Whether the member `agent` of `team` still works on its item: it does unless it waits after a run that ended

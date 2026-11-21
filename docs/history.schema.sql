@@ -1,4 +1,4 @@
-PRAGMA user_version = 16;
+PRAGMA user_version = 17;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -392,3 +392,21 @@ CREATE INDEX daemon_logs_by_time ON daemon_logs((substr(at,1,19)||'.'||substr(CA
 CREATE TRIGGER daemon_logs_cursor AFTER INSERT ON daemon_logs BEGIN
  UPDATE history_cursors SET value = max(value, new.id) WHERE name = 'daemon_logs';
 END;
+
+CREATE TABLE step_judgements (
+    id INTEGER PRIMARY KEY,
+    task TEXT NOT NULL,
+    team TEXT NOT NULL,
+    run TEXT,
+    at TEXT NOT NULL,
+    step TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('confirmed', 'declared', 'mismatch')),
+    check_line TEXT,
+    reason TEXT,
+    duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
+    output_path TEXT
+) STRICT;
+
+CREATE INDEX step_judgements_by_task ON step_judgements (task, id);
+
+CREATE INDEX step_judgements_by_team ON step_judgements (team, id);

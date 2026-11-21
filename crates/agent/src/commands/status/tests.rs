@@ -1,6 +1,7 @@
 use std::num::NonZeroU32;
 
-use agent_core::protocol::{Failure, FailureKind, Frame, MemberSummary, Response, TeamSummary};
+use agent_core::plan::judge::JudgementState;
+use agent_core::protocol::{Failure, FailureKind, Frame, MemberSummary, PlanStepSummary, Response, TeamSummary};
 
 use super::*;
 use crate::fixtures::{task, team_id, team_state};
@@ -1244,6 +1245,78 @@ fn a_task_the_ladder_started_anew_says_it_is_in_a_new_session() {
         text.contains("  task-20261111-153002-k3x9  member       claude-1   queued, in a new session\n"),
         "{text}"
     );
+}
+
+#[test]
+fn a_team_with_plan_steps_renders_them_under_their_member_with_settled_states() {
+    let mut teams = sample();
+    let task_id = task(2);
+    teams[0].task_plans.insert(
+        task_id.clone(),
+        vec![
+            PlanStepSummary {
+                id: "1.1".parse().unwrap(),
+                mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
+                title: "First step".to_owned(),
+                state: Some(JudgementState::Confirmed),
+                reason: None,
+            },
+            PlanStepSummary {
+                id: "1.2".parse().unwrap(),
+                mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
+                title: "Second step".to_owned(),
+                state: Some(JudgementState::Declared),
+                reason: None,
+            },
+            PlanStepSummary {
+                id: "1.3".parse().unwrap(),
+                mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
+                title: "Third step".to_owned(),
+                state: Some(JudgementState::Mismatch),
+                reason: Some("files missing".to_owned()),
+            },
+            PlanStepSummary {
+                id: "1.4".parse().unwrap(),
+                mark: serde_json::from_value(serde_json::json!(">")).unwrap(),
+                title: "Fourth step".to_owned(),
+                state: None,
+                reason: None,
+            },
+        ],
+    );
+
+    let text = render(&teams);
+    assert!(
+        text.contains("  task-20261111-153002-k3x9  member       claude-1   queued\n"),
+        "{text}"
+    );
+    assert!(text.contains("    [x] 1.1 First step (confirmed)\n"), "{text}");
+    assert!(text.contains("    [x] 1.2 Second step (declared)\n"), "{text}");
+    assert!(
+        text.contains("    [x] 1.3 Third step (mismatch: files missing)\n"),
+        "{text}"
+    );
+    assert!(text.contains("    [>] 1.4 Fourth step\n"), "{text}");
+}
+
+#[test]
+fn a_round_detail_with_plan_steps_renders_them_under_their_task() {
+    let state = team_with_rounds();
+    let mut round = detail(&state);
+    let task_id = round.tasks[0].task.clone();
+    round.task_plans.insert(
+        task_id,
+        vec![PlanStepSummary {
+            id: "1.1".parse().unwrap(),
+            mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
+            title: "First step".to_owned(),
+            state: Some(JudgementState::Confirmed),
+            reason: None,
+        }],
+    );
+
+    let text = render_round(&round);
+    assert!(text.contains("    [x] 1.1 First step (confirmed)\n"), "{text}");
 }
 
 #[test]

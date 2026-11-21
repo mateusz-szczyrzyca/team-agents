@@ -160,4 +160,234 @@ mod protocol_lines {
             "{err:?}"
         );
     }
+
+    #[test]
+    fn old_protocol_four_client_decodes_cleanly_without_task_plans() {
+        use agent_core::config::RepoName;
+        use agent_core::ids::{ItemId, TaskId, TeamId};
+        use agent_core::protocol::{ItemCounts, PlanStepSummary, ReplyFormat, RequestId, Response, TeamSummary};
+        use agent_core::state::{MergeMode, Timestamp};
+
+        #[expect(dead_code, reason = "simulates old client fields")]
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct OldTeamSummary {
+            id: TeamId,
+            repo: RepoName,
+            created_at: Timestamp,
+            merge: MergeMode,
+            items: ItemCounts,
+            #[serde(default)]
+            rounds: Vec<agent_core::state::Round>,
+            #[serde(default)]
+            splits: Vec<agent_core::state::split::SplitPlan>,
+            members: Vec<agent_core::protocol::MemberSummary>,
+            #[serde(default)]
+            activities: Vec<agent_core::state::Activity>,
+        }
+
+        #[expect(dead_code, reason = "simulates old client fields")]
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct OldResponse {
+            r#type: String,
+            protocol: u32,
+            id: RequestId,
+            result: OldOutcome,
+        }
+
+        #[expect(dead_code, reason = "simulates old client fields")]
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        #[serde(tag = "status", content = "reply", rename_all = "snake_case")]
+        enum OldOutcome {
+            Ok(OldReply),
+        }
+
+        #[expect(dead_code, reason = "simulates old client fields")]
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        #[serde(tag = "kind", rename_all = "snake_case")]
+        enum OldReply {
+            Teams { teams: Vec<OldTeamSummary> },
+        }
+
+        let task = "task-20261121-010000-abcd".parse::<TaskId>().unwrap();
+        let step = PlanStepSummary {
+            id: "1.1".parse::<ItemId>().unwrap(),
+            mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
+            title: "First step".to_owned(),
+            state: Some(agent_core::plan::judge::JudgementState::Confirmed),
+            reason: None,
+        };
+        let mut task_plans = std::collections::BTreeMap::new();
+        task_plans.insert(task.clone(), vec![step]);
+
+        let summary = TeamSummary {
+            id: "team-20261121-010000-abcd".parse::<TeamId>().unwrap(),
+            repo: "repo".parse::<RepoName>().unwrap(),
+            created_at: Timestamp::from_utc(time::OffsetDateTime::UNIX_EPOCH.into()).unwrap(),
+            merge: MergeMode::Autopilot,
+            items: ItemCounts::default(),
+            rounds: Vec::new(),
+            splits: Vec::new(),
+            members: Vec::new(),
+            activities: Vec::new(),
+            task_plans,
+        };
+
+        let frame = Frame::Response(Response::ok(RequestId(1), Reply::Teams { teams: vec![summary] }));
+
+        let split_line = frame.to_line_for(ReplyFormat::Split).unwrap();
+        assert!(
+            !split_line.contains("task_plans"),
+            "split protocol 4 line must omit task_plans: {split_line}"
+        );
+
+        let parsed: OldResponse =
+            serde_json::from_str(&split_line).expect("old protocol 4 client must decode line cleanly");
+        assert_eq!(parsed.protocol, 4);
+    }
+
+    #[test]
+    fn new_protocol_five_client_receives_task_plans() {
+        use agent_core::config::RepoName;
+        use agent_core::ids::{ItemId, TaskId, TeamId};
+        use agent_core::protocol::{ItemCounts, PlanStepSummary, ReplyFormat, RequestId, Response, TeamSummary};
+        use agent_core::state::{MergeMode, Timestamp};
+
+        let task = "task-20261121-010000-abcd".parse::<TaskId>().unwrap();
+        let step = PlanStepSummary {
+            id: "1.1".parse::<ItemId>().unwrap(),
+            mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
+            title: "First step".to_owned(),
+            state: Some(agent_core::plan::judge::JudgementState::Confirmed),
+            reason: None,
+        };
+        let mut task_plans = std::collections::BTreeMap::new();
+        task_plans.insert(task.clone(), vec![step]);
+
+        let summary = TeamSummary {
+            id: "team-20261121-010000-abcd".parse::<TeamId>().unwrap(),
+            repo: "repo".parse::<RepoName>().unwrap(),
+            created_at: Timestamp::from_utc(time::OffsetDateTime::UNIX_EPOCH.into()).unwrap(),
+            merge: MergeMode::Autopilot,
+            items: ItemCounts::default(),
+            rounds: Vec::new(),
+            splits: Vec::new(),
+            members: Vec::new(),
+            activities: Vec::new(),
+            task_plans,
+        };
+
+        let frame = Frame::Response(Response::ok(RequestId(1), Reply::Teams { teams: vec![summary] }));
+
+        let plan_line = frame.to_line_for(ReplyFormat::Plan).unwrap();
+        assert!(
+            plan_line.contains("\"protocol\":5"),
+            "plan protocol line must have protocol 5: {plan_line}"
+        );
+        assert!(
+            plan_line.contains("task_plans"),
+            "plan protocol line must retain task_plans: {plan_line}"
+        );
+
+        let decoded = Frame::from_line_negotiated(&plan_line).expect("must decode protocol 5 frame");
+        let Frame::Response(Response {
+            result: Outcome::Ok {
+                reply: Reply::Teams { teams },
+            },
+            ..
+        }) = decoded
+        else {
+            panic!("expected Reply::Teams");
+        };
+        assert_eq!(teams[0].task_plans.len(), 1);
+        assert_eq!(teams[0].task_plans.get(&task).unwrap()[0].title, "First step");
+    }
+
+    #[test]
+    fn new_protocol_five_client_preserves_both_split_fields_and_task_plans() {
+        use agent_core::config::RepoName;
+        use agent_core::ids::{ItemId, TaskId, TeamId};
+        use agent_core::protocol::{ItemCounts, PlanStepSummary, ReplyFormat, RequestId, Response, TeamSummary};
+        use agent_core::state::split::SplitPlan;
+        use agent_core::state::{MergeMode, Timestamp};
+
+        let task = "task-20261121-010000-abcd".parse::<TaskId>().unwrap();
+        let step = PlanStepSummary {
+            id: "1.1".parse::<ItemId>().unwrap(),
+            mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
+            title: "First step".to_owned(),
+            state: Some(agent_core::plan::judge::JudgementState::Confirmed),
+            reason: None,
+        };
+        let mut task_plans = std::collections::BTreeMap::new();
+        task_plans.insert(task.clone(), vec![step]);
+
+        let split_plan: SplitPlan = serde_json::from_value(serde_json::json!({
+            "parent": "1.1",
+            "parts": [
+                { "title": "Part 1", "delivers": "Delivers 1", "checks": "Checks 1", "depends_on": [] },
+                { "title": "Part 2", "delivers": "Delivers 2", "checks": "Checks 2", "depends_on": [] }
+            ]
+        }))
+        .unwrap();
+
+        let summary = TeamSummary {
+            id: "team-20261121-010000-abcd".parse::<TeamId>().unwrap(),
+            repo: "repo".parse::<RepoName>().unwrap(),
+            created_at: Timestamp::from_utc(time::OffsetDateTime::UNIX_EPOCH.into()).unwrap(),
+            merge: MergeMode::Autopilot,
+            items: ItemCounts::default(),
+            rounds: Vec::new(),
+            splits: vec![split_plan],
+            members: Vec::new(),
+            activities: Vec::new(),
+            task_plans,
+        };
+
+        let frame = Frame::Response(Response::ok(RequestId(1), Reply::Teams { teams: vec![summary] }));
+
+        let plan_line = frame.to_line_for(ReplyFormat::Plan).unwrap();
+        assert!(
+            plan_line.contains("\"protocol\":5"),
+            "plan protocol line must have protocol 5: {plan_line}"
+        );
+        assert!(
+            plan_line.contains("splits"),
+            "plan protocol line must retain splits: {plan_line}"
+        );
+        assert!(
+            plan_line.contains("task_plans"),
+            "plan protocol line must retain task_plans: {plan_line}"
+        );
+
+        let decoded = Frame::from_line_negotiated(&plan_line).expect("must decode protocol 5 frame");
+        let Frame::Response(Response {
+            result: Outcome::Ok {
+                reply: Reply::Teams { teams },
+            },
+            ..
+        }) = decoded
+        else {
+            panic!("expected Reply::Teams");
+        };
+        assert_eq!(teams[0].splits.len(), 1);
+        assert_eq!(teams[0].task_plans.len(), 1);
+        assert_eq!(teams[0].task_plans.get(&task).unwrap()[0].title, "First step");
+    }
+}
+
+#[test]
+fn plan_step_summary_rejects_unknown_marks() {
+    for mark in ["q", "", "xx"] {
+        let result = serde_json::from_value::<agent_core::protocol::PlanStepSummary>(serde_json::json!({
+            "id": "1.1", "mark": mark, "title": "Write guide", "state": null, "reason": null
+        }));
+        match result {
+            Err(error) => assert_eq!(error.classify(), serde_json::error::Category::Data),
+            Ok(summary) => panic!("invalid mark accepted: {summary:?}"),
+        }
+    }
 }
