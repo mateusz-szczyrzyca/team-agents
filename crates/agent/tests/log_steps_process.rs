@@ -237,4 +237,19 @@ mod tests {
         assert_eq!(value["message"], "task status changed");
         assert_eq!(value["task"], "task-20261121-132909-0001");
     }
+
+    #[test]
+    fn a_round_without_follow_prints_its_rows_alone() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        history(&dir.path().join("history.db"));
+
+        let found = lines(dir.path(), &["--round", "round-20261121-132909-q1w2", "-n", "10"]);
+
+        assert_eq!(found.len(), 1, "{}", text(&found));
+        assert!(
+            found[0].starts_with("2026-11-21T12:50:06Z info task_status_changed"),
+            "{}",
+            text(&found)
+        );
+    }
 }
