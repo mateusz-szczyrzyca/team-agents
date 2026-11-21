@@ -273,7 +273,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `snapshot_large` | `warn` | A snapshot of a task's worktree is bigger than `[snapshot] warn_mb`; it is kept, and its size is logged. |
 | `request_refused` | `warn` | A client connection, subscription or request cannot be accepted or is refused. |
 | `daemon_panicked` | `error` | A task or thread in the daemon panicked, with its message and location. |
-| `daemon_task_failed` | `error` | A task of the daemon (a side task or the task of a client connection) ends with an error it does not handle, such as a panic, with `error`. |
+| `daemon_task_failed` | `error` | A task of the daemon (a side task or the task of a client connection) ends with an error it does not handle, such as a panic, with `error`. With `operation=round_wait` it is an idle open round whose next action the harness has lost; a round whose task waits to be started waits for its run and is not such a round. |
 | `team_not_started` | `error` | A team that was formed is not started because of a fault of the daemon (the state refuses it, its events cannot be made, or forming it failed inside); the client is told to see this log. |
 | `notification_failed` | `error` | A notification for the human cannot be made, timed, queued or delivered. |
 | `history_record_incomplete` | `warn` | A record of the history cannot be made as it should: it is left out, counted as lost, or made with a fallback (such as a run's reason recorded as a continuation). Plan snapshot recovery also uses this event when retained judgements or plan versions cannot be read, with the task and error cause chain; check output is never logged whole. |

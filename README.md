@@ -437,8 +437,13 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
 | `agent resume <task\|team>` | starts a stopped, failed or waiting task again; when steps of the team wait for GitHub or git, it tries those at once and starts no task |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus; a word to a task reaches the agent's session in that task's team only |
-| `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now |
+| `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now. The parts of a split are the same as in `agent status`, except that the parts of an item whose every part merged are left out, its work being over |
 | `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed |
+
+Every view of `agent status` prints the same state for a part of a split, whether its round is open or closed:
+`done` when a round of the item merged the part's pull request, `in progress` while its round is open, `to do` when it
+is next, and `waiting for 1.1a` (and the other parts it depends on) until they are over. A part whose round was closed
+without a merge is not `done`. In `agent status --running`, an item whose every part merged shows no part line.
 
 `agent status` ends the line of a task that runs with `last activity HH:MM:SS`: the local time the output of its run last
 changed (the file `tasks/<task>/runs/<run>/out.jsonl`), which is how to tell a task that works from one that hangs.
@@ -606,8 +611,11 @@ Legacy unanswered blockers require a committed fix too.
 
 An idle open round's line in `agent status` and `agent status <round>` names what it waits for: a harness gate,
 a review, a free independent investigator (for a review, a second opinion or the replacement of a reviewer that cannot
-work, when none is free), a second opinion that an investigator is giving, the human's answer, or the lead's correction. `nothing: this is a defect` means the
-harness has lost its next action; it logs one `daemon_task_failed` error for that round with `operation=round_wait`.
+work, when none is free), a second opinion that an investigator is giving, the human's answer, the lead's correction,
+or the queued run of its task to start. A round waits for that run while the task that will work for it is queued, or
+waits for a free agent or for a limit of runs: the run starts the round, so it is no defect, and the round opened right
+after a merge of a part writes no error. `nothing: this is a defect` means the harness has lost its next action; it logs
+one `daemon_task_failed` error for that round with `operation=round_wait`.
 
 When another pull request of the same team already contains an item's deliverable (code, documents, images or
 anything else), the coordinator can report it instead of creating an empty pull request. It writes the standalone
