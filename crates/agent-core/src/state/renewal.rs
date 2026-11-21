@@ -1,5 +1,7 @@
 //! A task started again in a new session: what the state keeps of it, and how it reads a state written before it.
 
+use std::num::NonZeroU32;
+
 use serde::{Deserialize, Serialize};
 
 use super::run::{Run, RunEnd, RunState};
@@ -23,6 +25,14 @@ pub struct Renewals {
     after_runs: usize,
     /// Why the task was last started anew.
     reason: Trouble,
+    /// The questions the human was asked what becomes of the task after the last step of the ladder; `None` until then,
+    /// and in a state written before such questions existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    asked: Option<NonZeroU32>,
+    /// Since when the work of the member's task is owed to its team's lead, which is still to be told of it; `None`
+    /// when nothing is owed, and in a state written before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lead_owed: Option<Timestamp>,
 }
 
 impl Renewals {
@@ -44,6 +54,28 @@ impl Renewals {
         self.reason
     }
 
+    /// The questions the human was asked what becomes of the task after the last step of the ladder, if it was.
+    #[must_use]
+    pub const fn asked(&self) -> Option<NonZeroU32> {
+        self.asked
+    }
+
+    /// Records that the human was asked, in questions `question`, what becomes of the task after the last step.
+    pub(super) const fn ask(&mut self, question: NonZeroU32) {
+        self.asked = Some(question);
+    }
+
+    /// Whether the work of the member's task is owed to its team's lead, still to be told.
+    #[must_use]
+    pub const fn lead_owed(&self) -> bool {
+        self.lead_owed.is_some()
+    }
+
+    /// Records that the work of the member's task is owed to its team's lead from `at`, or nothing any more (`None`).
+    pub(super) const fn owe_lead(&mut self, at: Option<Timestamp>) {
+        self.lead_owed = at;
+    }
+
     /// Whether a task with `runs` runs has begun no run since it was last started anew.
     pub(super) const fn awaits_run(&self, runs: usize) -> bool {
         runs <= self.after_runs
@@ -56,6 +88,8 @@ impl Renewals {
             at,
             reason,
             after_runs,
+            asked: None,
+            lead_owed: None,
         }
     }
 
@@ -67,6 +101,8 @@ impl Renewals {
             at,
             reason,
             after_runs,
+            asked: None,
+            lead_owed: None,
         }
     }
 

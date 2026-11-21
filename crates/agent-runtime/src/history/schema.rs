@@ -414,4 +414,8 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
         version: 15,
         sql: include_str!("015-split-decisions.sql"),
     },
+    Migration {
+        version: 16,
+        sql: include_str!("016-handover-events.sql"),
+    },
 ];

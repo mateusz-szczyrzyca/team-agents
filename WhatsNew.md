@@ -5,6 +5,16 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.44.0 — 21.11.2026 — PR #161
+
+### New features
+- [agent] [agent-core] When the agent that took a task over goes bad too, or a lead given a member's work does, you are asked once in the task's questions file instead of the task just failing: answer `a` to start it once more in a new session, briefed; `b`, `ok` or anything else stops it — a member's work then goes to its lead. `[replacement] mode = "off"` asks nothing.
+- [agent] [agent-core] [agent-runtime] Every hand-over of a task is logged as `task_handed_over`, with the agent it was taken from and the one that holds it now, for example `agent log --event task_handed_over`.
+
+### Enhancements
+- [agent] A restart of the daemon after a task was taken over goes on with the agent that took it, in its own session.
+- [agent] [agent-core] A lead given a stopped member's work is told of it even when the daemon restarts, or the bus fails, before the lead was told.
+
 ## 0.43.0 — 21.11.2026 — PR #158
 
 ### New features

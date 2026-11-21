@@ -208,6 +208,12 @@ finishes the work and ends `DONE`, and the item is published as the lead's. The 
 also when it is stopped during the member's last retry. A solo task and a coordinator's have no lead: they fail and you
 are told, as before.
 
+After the last step — when the agent that took a task over goes bad too, after its own retries, or a lead given a
+member's work goes bad too — you are asked once, in the task's next questions file (`harness/run/notice-last-step.md`):
+`a` starts the task once more in a new session of its agent, briefed; `b`, `ok` for the recommendation, and any other
+answer, free text included, stop it, and a member's work then goes to its lead. A task that goes bad again after its question fails as before. Mode `off`
+asks nothing. Each hand-over is logged as `task_handed_over` (see [log.md](log.md)).
+
 The new session works in the same worktree, on the same branch and on the same task. The state keeps the restart and its
 reason, the history the snapshot, the daemon's log the decision (`decision_taken` with `decision` `ladder`), and
 `agent status` says `in a new session` on the task's line, and `, for AGENT` when another agent took the task over. A task that works for no open round (a state of an older
