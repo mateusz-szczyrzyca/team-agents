@@ -1048,3 +1048,77 @@ async fn publish_failure_retries_tells_lead_and_asks_human() {
     rig.status_is(&task, TaskStatus::Stopped).await;
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn publish_failure_restart_recovers_question_and_answer_retries_and_succeeds() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,work,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+
+    // Set [publish] tries = 1 so the first failure tells the lead and the second asks the human:
+    let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config_text.push_str("\n[publish]\ntries = 1\n");
+    std::fs::write(rig.home.config_file(), config_text).unwrap();
+
+    // Hook in origin that rejects git push:
+    let hook_dir = rig.origin.join("hooks");
+    std::fs::create_dir_all(&hook_dir).unwrap();
+    let hook = hook_dir.join("pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\necho 'pre-receive: publish denied' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+
+    // First publication failure tells lead, waking it for run 2:
+    rig.wait_for("first run ended and lead woken for retry", || {
+        rig.state().find_task(&task).is_some_and(|f| f.member.runs().len() >= 2)
+    })
+    .await;
+
+    // After bounded retries and telling lead, human is asked via questions file:
+    rig.status_is(&task, TaskStatus::Questions).await;
+
+    let qfile = rig.home.questions_file(&task, n(1));
+    assert!(qfile.exists(), "questions file should be written");
+
+    // Restart daemon while the publication question is open:
+    rig.stop().await.unwrap();
+    rig.start().await;
+
+    rig.status_is(&task, TaskStatus::Questions).await;
+
+    // Remove the rejecting hook so that git push can succeed:
+    std::fs::remove_file(&hook).unwrap();
+
+    // Answering 'a' (retry) resumes the task and publication succeeds:
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: n(1),
+                answers: answers(&[(1, "a")]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    rig.wait_for("publication succeeds and pull request is opened", || {
+        !rig.github.pulls().is_empty()
+    })
+    .await;
+
+    rig.stop().await.unwrap();
+}
