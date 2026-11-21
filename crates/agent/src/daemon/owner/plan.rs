@@ -428,6 +428,12 @@ impl Owner {
     async fn earlier_plans(&self, task: &TaskId, run: Option<&RunId>) -> (Vec<Plan>, HashMap<RunId, Plan>) {
         let path = self.parts.store.home().history_file();
         let task_id = task.clone();
+        let task_runs: Vec<RunId> = self
+            .parts
+            .state
+            .find_task(task)
+            .map(|found| found.member.runs().iter().map(|r| r.id().clone()).collect())
+            .unwrap_or_default();
         let looked =
             tokio::task::spawn_blocking(move || Reader::open(&path).and_then(|reader| reader.plan_versions(&task_id)))
                 .await;
@@ -449,16 +455,12 @@ impl Owner {
             }
         };
         let mut plans = Vec::new();
-        let mut by_run = HashMap::new();
-        for record in records.into_iter().filter(|record| record.run.as_ref() != run) {
-            let HistoryPlanRead::Version { text } = record.read else {
+        for record in records.iter().filter(|record| record.run.as_ref() != run) {
+            let HistoryPlanRead::Version { text } = &record.read else {
                 continue;
             };
-            match parse_plan(&text) {
+            match parse_plan(text) {
                 Ok(plan) => {
-                    if let Some(run_id) = record.run {
-                        by_run.insert(run_id, plan.clone());
-                    }
                     plans.push(plan);
                 }
                 Err(error) => tracing::warn!(
@@ -469,6 +471,7 @@ impl Owner {
                 ),
             }
         }
+        let by_run = expand_plans_by_run(&task_runs, &records);
         (plans, by_run)
     }
 
@@ -687,25 +690,28 @@ impl Owner {
             let (judgements, earlier_by_run) = if has_done && is_writing {
                 let path = history_path.clone();
                 let task_id = task.clone();
+                let task_runs: Vec<RunId> = self
+                    .parts
+                    .state
+                    .find_task(&task)
+                    .map(|found| found.member.runs().iter().map(|r| r.id().clone()).collect())
+                    .unwrap_or_default();
                 let looked = tokio::task::spawn_blocking(move || {
                     let reader = Reader::open(&path)?;
                     let latest = reader.latest_judgements(&task_id)?;
                     let records = reader.plan_versions(&task_id)?;
-                    let mut by_run = HashMap::new();
-                    for record in records {
-                        if let (Some(run_id), HistoryPlanRead::Version { text }) = (record.run, record.read) {
-                            match parse_plan(&text) {
-                                Ok(plan) => {
-                                    by_run.insert(run_id, plan);
-                                }
-                                Err(error) => tracing::warn!(
-                                    task = %task_id,
-                                    error = %error_chain(&error),
-                                    "cannot parse retained plan for snapshot"
-                                ),
-                            }
+                    for record in &records {
+                        if let (Some(_), HistoryPlanRead::Version { text }) = (&record.run, &record.read)
+                            && let Err(error) = parse_plan(text)
+                        {
+                            tracing::warn!(
+                                task = %task_id,
+                                error = %error_chain(&error),
+                                "cannot parse retained plan for snapshot"
+                            );
                         }
                     }
+                    let by_run = expand_plans_by_run(&task_runs, &records);
                     Ok::<_, ReadError>((latest, by_run))
                 })
                 .await;
@@ -809,6 +815,48 @@ fn step_summary(
         state,
         reason,
     }
+}
+
+/// Expands deduplicated plan version records across chronological task runs, carrying forward the active plan.
+fn expand_plans_by_run(task_runs: &[RunId], records: &[PlanRecord]) -> HashMap<RunId, Plan> {
+    let mut by_run = HashMap::new();
+    let mut active_plan: Option<Plan> = None;
+    let mut record_iter = records.iter().peekable();
+
+    for run_id in task_runs {
+        while let Some(record) = record_iter.peek() {
+            match &record.run {
+                None => {
+                    active_plan = match &record.read {
+                        HistoryPlanRead::Version { text } => parse_plan(text).ok(),
+                        _ => None,
+                    };
+                    record_iter.next();
+                }
+                Some(r) if r == run_id => {
+                    active_plan = match &record.read {
+                        HistoryPlanRead::Version { text } => parse_plan(text).ok(),
+                        _ => None,
+                    };
+                    record_iter.next();
+                }
+                Some(_) => break,
+            }
+        }
+        if let Some(plan) = &active_plan {
+            by_run.insert(run_id.clone(), plan.clone());
+        }
+    }
+
+    for record in records {
+        if let (Some(run_id), HistoryPlanRead::Version { text }) = (&record.run, &record.read)
+            && let Ok(plan) = parse_plan(text)
+        {
+            by_run.entry(run_id.clone()).or_insert(plan);
+        }
+    }
+
+    by_run
 }
 
 /// Whether the member `agent` of `team` still works on its item: it does unless it waits after a run that ended
