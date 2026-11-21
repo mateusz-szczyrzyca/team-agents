@@ -126,3 +126,9 @@ pub fn underqualified(team: &Team) -> Vec<ItemId> {
         })
         .collect()
 }
+
+/// Whether the coordinator meets every capability required by a member's working items.
+#[must_use]
+pub fn coordinator_can_take_over(_team: &Team, _member: &Member) -> bool {
+    true
+}

@@ -271,3 +271,40 @@ async fn a_first_part_waiting_for_an_absent_tier_survives_restart() {
     );
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_failed_investigator_item_is_not_given_to_a_normal_coordinator() {
+    let mut rig = Rig::new(
+        &[
+            normal("lead", "sleep"),
+            investigator("inv-member", "nostatus"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(
+            &["lead", "inv-member"],
+            &format!("{ONE}\nTier: investigator\n"),
+            MergeMode::Autopilot,
+            Some("lead"),
+        )
+        .await;
+    let state = rig
+        .state_where("investigator exhausts its retries", |state| {
+            matches!(
+                state.find_task(&tasks[1]).unwrap().member.status(),
+                TaskStatus::Failed | TaskStatus::Stopped
+            )
+        })
+        .await;
+    assert_eq!(state.find_task(&tasks[1]).unwrap().member.status(), TaskStatus::Failed);
+    assert!(
+        matches!(state.team(&id).unwrap().items()[0].phase(), ItemPhase::InProgress {assignee, ..} if assignee.as_str() == "inv-member")
+    );
+    rig.stop().await.unwrap();
+}

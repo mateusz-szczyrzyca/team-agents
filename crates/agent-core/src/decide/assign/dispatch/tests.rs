@@ -91,3 +91,47 @@ fn first_split_part_requeues_an_underqualified_parent_assignee() {
     assert_eq!(underqualified(&found), vec![]);
     assert_eq!(dispatch(&found).assigned, vec![(item, inv("inv-opus"))]);
 }
+
+#[test]
+fn coordinator_takeover_respects_the_work_requirement_rather_than_the_failed_agents_tier() {
+    for (required, coordinator_tier, expected) in [
+        ("normal", Tier::Normal, true),
+        ("normal", Tier::Investigator, true),
+        ("investigator", Tier::Normal, false),
+        ("investigator", Tier::Investigator, true),
+    ] {
+        let coordinator = match coordinator_tier {
+            Tier::Normal => normal("lead"),
+            Tier::Investigator => inv("lead"),
+            Tier::Worker => panic!("a worker cannot coordinate"),
+        };
+        let mut team = Team::new(
+            team_id(1),
+            "example".parse().unwrap(),
+            at(0),
+            MergeMode::Autopilot,
+            TaskListText::new(format!("Brief.\n\n1. Feature\n[ ] 1.1 Item\nTier: {required}\n")).unwrap(),
+            Crew::team(TeamMembers {
+                coordinator: member(1, coordinator),
+                members: vec![member(2, inv("member"))],
+                workers: vec![],
+            })
+            .unwrap(),
+        );
+        team.open_round(crate::state::fixtures::round_id(1), Some("1.1".parse().unwrap()), at(1))
+            .unwrap();
+        team.advance_item(
+            "1.1".parse().unwrap(),
+            crate::state::ItemPhase::InProgress {
+                assignee: "member".parse().unwrap(),
+                branch: "agents/member/work".parse().unwrap(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            coordinator_can_take_over(&team, team.find(&task(2)).unwrap().1),
+            expected,
+            "{required}, {coordinator_tier}"
+        );
+    }
+}
