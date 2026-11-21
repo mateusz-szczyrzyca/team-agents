@@ -241,6 +241,30 @@ async fn resolve_mismatch_tail(state: JudgementState, log_path: &Path) -> String
     }
 }
 
+fn prepare_process_spec(
+    context: &CheckContext<'_>,
+    command_str: &str,
+    log_path: PathBuf,
+) -> Result<ProcessSpec, String> {
+    let program = Program::from_str("sh").map_err(|err| format!("cannot parse shell program: {err}"))?;
+    let working_dir = AbsolutePath::from_str(context.worktree.to_str().unwrap_or_default())
+        .map_err(|err| format!("invalid worktree path: {err}"))?;
+    let mut env_map = BTreeMap::new();
+    for (key, val) in context.envs {
+        if let Ok(name) = EnvName::from_str(key) {
+            env_map.insert(name, val.clone());
+        }
+    }
+    Ok(ProcessSpec {
+        program,
+        args: vec!["-c".to_owned(), command_str.to_owned()],
+        env: env_map,
+        working_dir,
+        stdout_file: log_path.clone(),
+        stderr_file: log_path,
+    })
+}
+
 /// Executes a command check for `step` within `context`.
 ///
 /// Prepared command execution engine for plan step command checks.
@@ -292,13 +316,13 @@ pub async fn execute_command_check(
         }
     };
 
-    let program = match Program::from_str("sh") {
-        Ok(prog) => prog,
-        Err(err) => {
+    let spec = match prepare_process_spec(context, command_str, log_path.clone()) {
+        Ok(spec) => spec,
+        Err(reason) => {
             return Ok(JudgementResult {
                 state: JudgementState::Mismatch,
                 check_line: Some(command_str.to_owned()),
-                reason: Some(format!("cannot parse shell program: {err}")),
+                reason: Some(reason),
                 duration_ms: duration_millis(start.elapsed())?,
                 output_path: Some(rel_output_path),
                 tail: String::new(),
@@ -307,38 +331,7 @@ pub async fn execute_command_check(
         }
     };
 
-    let working_dir = match AbsolutePath::from_str(context.worktree.to_str().unwrap_or_default()) {
-        Ok(dir) => dir,
-        Err(err) => {
-            return Ok(JudgementResult {
-                state: JudgementState::Mismatch,
-                check_line: Some(command_str.to_owned()),
-                reason: Some(format!("invalid worktree path: {err}")),
-                duration_ms: duration_millis(start.elapsed())?,
-                output_path: Some(rel_output_path),
-                tail: String::new(),
-                gate_refused: false,
-            });
-        }
-    };
-
-    let mut env_map = BTreeMap::new();
-    for (key, val) in context.envs {
-        if let Ok(name) = EnvName::from_str(key) {
-            env_map.insert(name, val.clone());
-        }
-    }
-
-    let spec = ProcessSpec {
-        program,
-        args: vec!["-c".to_owned(), command_str.to_owned()],
-        env: env_map,
-        working_dir,
-        stdout_file: log_path.clone(),
-        stderr_file: log_path.clone(),
-    };
-
-    let supervisor = Supervisor::new(NonZeroUsize::new(1).unwrap());
+    let supervisor = Supervisor::new(NonZeroUsize::MIN);
     let process = match supervisor.spawn(&spec).await {
         Ok(proc) => proc,
         Err(error) => {
