@@ -455,7 +455,7 @@ async fn plan_steps_are_reported_in_status_summaries() {
     let steps = team_summary.task_plans.get(&tasks[0]).unwrap();
     assert_eq!(steps.len(), 1);
     assert_eq!(steps[0].id, "1.1".parse().unwrap());
-    assert_eq!(steps[0].mark, 'x');
+    assert_eq!(serde_json::to_value(steps[0].mark).unwrap(), serde_json::json!("x"));
     assert_eq!(steps[0].state, Some(agent_core::plan::judge::JudgementState::Confirmed));
 
     rig.stop().await.unwrap();
@@ -506,7 +506,7 @@ async fn plan_steps_are_preserved_in_status_after_daemon_restart() {
     let steps2 = team_summary2.task_plans.get(&tasks[0]).unwrap();
     assert_eq!(steps2.len(), 1);
     assert_eq!(steps2[0].id, "1.1".parse().unwrap());
-    assert_eq!(steps2[0].mark, 'x');
+    assert_eq!(serde_json::to_value(steps2[0].mark).unwrap(), serde_json::json!("x"));
     assert_eq!(
         steps2[0].state,
         Some(agent_core::plan::judge::JudgementState::Confirmed)
@@ -526,7 +526,7 @@ Do several.
     Check: reviewer
 [x] 1.2 No check
 [x] 1.3 Command check
-    Check: cargo test -p agent-core
+    Check: printf plan-check
 [x] 1.4 Exists file
     Check: exists one.txt
 [x] 1.5 Missing file

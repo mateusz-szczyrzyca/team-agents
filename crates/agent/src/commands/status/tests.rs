@@ -1256,28 +1256,28 @@ fn a_team_with_plan_steps_renders_them_under_their_member_with_settled_states() 
         vec![
             PlanStepSummary {
                 id: "1.1".parse().unwrap(),
-                mark: 'x',
+                mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
                 title: "First step".to_owned(),
                 state: Some(JudgementState::Confirmed),
                 reason: None,
             },
             PlanStepSummary {
                 id: "1.2".parse().unwrap(),
-                mark: 'x',
+                mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
                 title: "Second step".to_owned(),
                 state: Some(JudgementState::Declared),
                 reason: None,
             },
             PlanStepSummary {
                 id: "1.3".parse().unwrap(),
-                mark: 'x',
+                mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
                 title: "Third step".to_owned(),
                 state: Some(JudgementState::Mismatch),
                 reason: Some("files missing".to_owned()),
             },
             PlanStepSummary {
                 id: "1.4".parse().unwrap(),
-                mark: '>',
+                mark: serde_json::from_value(serde_json::json!(">")).unwrap(),
                 title: "Fourth step".to_owned(),
                 state: None,
                 reason: None,
@@ -1308,7 +1308,7 @@ fn a_round_detail_with_plan_steps_renders_them_under_their_task() {
         task_id,
         vec![PlanStepSummary {
             id: "1.1".parse().unwrap(),
-            mark: 'x',
+            mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
             title: "First step".to_owned(),
             state: Some(JudgementState::Confirmed),
             reason: None,

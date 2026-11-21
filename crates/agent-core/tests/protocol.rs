@@ -215,7 +215,7 @@ mod protocol_lines {
         let task = "task-20261121-010000-abcd".parse::<TaskId>().unwrap();
         let step = PlanStepSummary {
             id: "1.1".parse::<ItemId>().unwrap(),
-            mark: 'x',
+            mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
             title: "First step".to_owned(),
             state: Some(agent_core::plan::judge::JudgementState::Confirmed),
             reason: None,
@@ -259,7 +259,7 @@ mod protocol_lines {
         let task = "task-20261121-010000-abcd".parse::<TaskId>().unwrap();
         let step = PlanStepSummary {
             id: "1.1".parse::<ItemId>().unwrap(),
-            mark: 'x',
+            mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
             title: "First step".to_owned(),
             state: Some(agent_core::plan::judge::JudgementState::Confirmed),
             reason: None,
@@ -317,7 +317,7 @@ mod protocol_lines {
         let task = "task-20261121-010000-abcd".parse::<TaskId>().unwrap();
         let step = PlanStepSummary {
             id: "1.1".parse::<ItemId>().unwrap(),
-            mark: 'x',
+            mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
             title: "First step".to_owned(),
             state: Some(agent_core::plan::judge::JudgementState::Confirmed),
             reason: None,
