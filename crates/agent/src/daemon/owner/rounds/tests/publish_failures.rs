@@ -1188,7 +1188,14 @@ async fn publish_failure_question_creation_interrupted_before_commit_recovers_wi
     );
 
     // Active question identity in state must match question 1:
-    let active_q = rig.state().find_task(&task).unwrap().member.open_question().unwrap().clone();
+    let active_q = rig
+        .state()
+        .find_task(&task)
+        .unwrap()
+        .member
+        .open_question()
+        .unwrap()
+        .clone();
     assert_eq!(active_q.number(), n(1));
     assert_eq!(active_q.file().as_path(), qfile.as_path());
 
@@ -1265,7 +1272,14 @@ async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_esc
     // After restart, lead completes run 2 and publication fails again, escalating to human questions:
     rig.status_is(&task, TaskStatus::Questions).await;
 
-    let q = rig.state().find_task(&task).unwrap().member.open_question().unwrap().clone();
+    let q = rig
+        .state()
+        .find_task(&task)
+        .unwrap()
+        .member
+        .open_question()
+        .unwrap()
+        .clone();
     assert_eq!(q.number(), n(1));
 
     // Remove rejecting hook and answer 'a' to retry publication:

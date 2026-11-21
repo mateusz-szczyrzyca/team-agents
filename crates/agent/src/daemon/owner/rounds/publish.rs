@@ -291,7 +291,7 @@ async fn carry_open_pull(
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PublishQuestionError {
     /// Preparing prompt variables failed.
-    #[error("cannot prepare publication variables for task {task}: {source}")]
+    #[error("cannot prepare publication variables for task {task}")]
     Variables {
         /// The task.
         task: TaskId,
@@ -300,7 +300,7 @@ pub(crate) enum PublishQuestionError {
         source: agent_core::prompt::VariablesError,
     },
     /// Rendering the question prompt failed.
-    #[error("cannot render publication question for task {task}: {source}")]
+    #[error("cannot render publication question for task {task}")]
     Render {
         /// The task.
         task: TaskId,
@@ -339,10 +339,10 @@ pub(crate) enum PublishQuestionError {
         path: std::path::PathBuf,
         /// What failed.
         #[source]
-        source: agent_core::config::InvalidValue,
+        source: Option<agent_core::config::InvalidValue>,
     },
     /// The question could not be recorded in state.
-    #[error("cannot record publication question for task {task}: {source}")]
+    #[error("cannot record publication question for task {task}")]
     State {
         /// The task.
         task: TaskId,
@@ -1530,12 +1530,17 @@ impl Owner {
         path: &std::path::Path,
         reason: &str,
     ) -> Result<(), PublishQuestionError> {
-        let is_populated = match crate::daemon::questions::read(path).await {
-            Ok(loaded) => loaded.file.is_answered() || loaded.file.entries().iter().any(|e| e.verdict().is_some()),
-            Err(_) => false,
-        };
-        if is_populated {
-            return Ok(());
+        match crate::daemon::questions::read(path).await {
+            Ok(_) => return Ok(()),
+            Err(crate::daemon::questions::QuestionsProblem::Read { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(PublishQuestionError::Read {
+                    task: site.lead.task.clone(),
+                    path: path.to_path_buf(),
+                    source,
+                });
+            }
         }
         let items_text = items_of(publication).join(", ");
         let vars = Variables::new()
@@ -1596,13 +1601,18 @@ impl Owner {
         })?;
         let path = self.parts.store.home().questions_file(&site.lead.task, number);
 
-        let file = match agent_core::config::AbsolutePath::from_str(&path.to_string_lossy()) {
+        let text = path.to_str().ok_or_else(|| PublishQuestionError::InvalidPath {
+            task: site.lead.task.clone(),
+            path: path.clone(),
+            source: None,
+        })?;
+        let file = match agent_core::config::AbsolutePath::from_str(text) {
             Ok(file) => file,
             Err(source) => {
                 return Err(PublishQuestionError::InvalidPath {
                     task: site.lead.task.clone(),
                     path: path.clone(),
-                    source,
+                    source: Some(source),
                 }
                 .into());
             }
