@@ -105,6 +105,11 @@ async fn split_part_conflict_pass_publishes_gated_commit_to_part_pr_branch() {
     assert_eq!(team.splits().len(), 1, "split part PR should complete and merge");
     let pr = team.rounds()[0].part_pull_request().unwrap();
     assert_eq!(pr.number.get().get(), 1);
+    let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    assert_eq!(
+        remote_head, "0123456789abcdef0123456789abcdef01234567",
+        "remote PR branch must carry the exact gated commit hash"
+    );
 }
 
 #[tokio::test]
@@ -121,7 +126,8 @@ async fn publish_with_checked_out_worktree_publishes_without_forcing() {
     .await;
     rig.start().await;
 
-    let (_, _tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
 
     let state = rig
         .item_where("1.1", "in review or approved or done", |phase| {
@@ -140,6 +146,64 @@ async fn publish_with_checked_out_worktree_publishes_without_forcing() {
             ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. }
         ),
         "pull request must be published even when branch is checked out in worktree"
+    );
+    let pr = match item.phase() {
+        ItemPhase::InReview { pr, .. } | ItemPhase::Approved { pr, .. } => pr,
+        ItemPhase::Done {
+            completion: agent_core::state::Completion::Merged { pr, .. },
+        } => pr,
+        _ => panic!("unexpected phase"),
+    };
+    let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    assert_eq!(
+        remote_head, "0123456789abcdef0123456789abcdef01234567",
+        "remote PR branch must carry the exact gated commit hash"
+    );
+}
+
+#[tokio::test]
+async fn publish_with_detached_worktree_publishes_gated_commit_without_forcing() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+
+    // Detach HEAD in the task's worktree:
+    let worktree = rig.worktree(&task);
+    git(&worktree, &["checkout", "--detach", "HEAD"]);
+
+    let state = rig
+        .item_where("1.1", "in review or approved or done", |phase| {
+            matches!(
+                phase,
+                ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. }
+            )
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+    let pr = match item.phase() {
+        ItemPhase::InReview { pr, .. } | ItemPhase::Approved { pr, .. } => pr,
+        ItemPhase::Done {
+            completion: agent_core::state::Completion::Merged { pr, .. },
+        } => pr,
+        _ => panic!("unexpected phase"),
+    };
+    let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    assert_eq!(
+        remote_head, "0123456789abcdef0123456789abcdef01234567",
+        "remote PR branch must carry the exact gated commit hash"
     );
 }
 
