@@ -151,7 +151,7 @@ const GROUP_LABEL: &str = "Checks version one";
 fn subject_key(subject: &Subject) -> String {
     match subject {
         Subject::Path(path) => path_key(path.as_str()),
-        Subject::NoTests => "n:".to_owned(),
+        Subject::NoTests | Subject::Commit { .. } => "n:".to_owned(),
     }
 }
 

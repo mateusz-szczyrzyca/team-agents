@@ -242,6 +242,14 @@ pub enum Subject {
     Path(RepoPath),
     /// That the round has no tests for the code it changes.
     NoTests,
+    /// A test that one commit of the round took lines out of: the commit is in the branch for good, so what the human
+    /// says about it holds for the item whatever else happens to the round.
+    Commit {
+        /// The commit that took the lines out.
+        commit: CommitId,
+        /// The test it edited.
+        path: RepoPath,
+    },
 }
 
 impl FileChange {

@@ -140,6 +140,7 @@ pub(super) fn named(texts: &ChecksPrompts, subject: &Subject) -> Result<String, 
             .render(ChecksPrompt::QuestionTitleNoTests, &Variables::new())?
             .trim()
             .to_owned(),
+        Subject::Commit { .. } => String::new(),
     })
 }
 
@@ -246,7 +247,9 @@ pub(super) fn questions(
                     ChecksPrompt::QuestionTitlePath,
                     &Variables::new().with("path", path.as_str())?,
                 )?,
-                Subject::NoTests => texts.render(ChecksPrompt::QuestionTitleNoTests, &Variables::new())?,
+                Subject::NoTests | Subject::Commit { .. } => {
+                    texts.render(ChecksPrompt::QuestionTitleNoTests, &Variables::new())?
+                }
             }
         };
         let body = texts.render(
