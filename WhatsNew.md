@@ -5,6 +5,18 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.54.0 — 21.11.2026 — PR #171
+
+### New features
+- [agent] [agent-core] `agent status` writes its times in the zone of this machine, with the date and the offset of each moment, as `agent log` does: `last activity 2026-11-21 13:50:02 +01:00`, `started 2026-11-21 13:50 +01:00`.
+- [agent] [agent-core] A notification's `Time:` line is the minute in the daemon's zone with its offset: `Time: 2026-11-21 13:50 +01:00`.
+- [agent] [agent-core] `agent debug` writes each time in one form with its zone, as `agent log` does.
+
+### Enhancements
+- [agent] The files, the protocol and `--json` of `agent status` are unchanged: UTC.
+
+**Action:** a script that reads the text of `agent status` or the `Time:` line of a notification must read the new form. `agent log --utc` is the way back for the log only.
+
 ## 0.53.0 — 21.11.2026 — PR #170
 
 ### New features
