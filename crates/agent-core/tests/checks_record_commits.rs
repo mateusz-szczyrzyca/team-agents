@@ -155,11 +155,13 @@ mod checks_record_commits {
 
     #[test]
     fn a_refused_file_answered_at_a_head_keeps_the_head_it_was_refused_at() {
-        let mut record = ChecksRecord::default();
-        record.basis = Some(agent_core::state::Basis {
-            head: head('4'),
-            covers: agent_core::state::Covers::Everything,
-        });
+        let mut record = ChecksRecord {
+            basis: Some(agent_core::state::Basis {
+                head: head('4'),
+                covers: agent_core::state::Covers::Everything,
+            }),
+            ..ChecksRecord::default()
+        };
         let refused = Subject::Path(some_path("tests/a.rs"));
 
         record.answered(&[item()], &[], std::slice::from_ref(&refused));

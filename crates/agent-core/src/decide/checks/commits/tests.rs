@@ -325,17 +325,17 @@ fn refused_paths(rows: &[(&str, Option<char>)]) -> BTreeMap<RepoPath, Option<Com
 
 #[test]
 fn a_file_refused_before_findings_had_a_subject_covers_the_commits_up_to_its_head() {
-    let findings = vec![
-        finding('2', "tests/a.rs"),
-        finding('3', "tests/a.rs"),
-        finding('3', "tests/b.rs"),
-    ];
     struct Case {
         name: &'static str,
         refused: BTreeMap<RepoPath, Option<CommitId>>,
         remaining: Vec<CommitFinding>,
         refused_subjects: Vec<Subject>,
     }
+    let findings = vec![
+        finding('2', "tests/a.rs"),
+        finding('3', "tests/a.rs"),
+        finding('3', "tests/b.rs"),
+    ];
     let cases = [
         Case {
             name: "no file was refused",
