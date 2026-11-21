@@ -100,7 +100,7 @@ mod protocol_findings_maps {
         let team = state.team(team_id).unwrap();
         let round_state = team.rounds().iter().find(|r| r.id() == round_id).unwrap();
         let detail = RoundDetail::new(team, round_state, Vec::new());
-        let summary = TeamSummary::from(team);
+        let summary = legacy_summary(team);
 
         let gate_res = GateResult {
             head: "1111111111111111111111111111111111111111".parse().unwrap(),
@@ -148,6 +148,13 @@ mod protocol_findings_maps {
             },
             Reply::Subscribed { teams: vec![summary] },
         ]
+    }
+
+    /// The summary of `team` as the legacy protocol carries it: without the description, which it does not have.
+    fn legacy_summary(team: &agent_core::state::Team) -> TeamSummary {
+        let mut summary = TeamSummary::from(team);
+        summary.short_desc = None;
+        summary
     }
 
     /// Every variant of [`EventKind`] that carries part of the state of `round_id` in `state`.
@@ -401,7 +408,7 @@ mod protocol_findings_maps {
     #[test]
     fn every_event_kind_variant_round_trips_below_event() {
         let (state, team_id, round_id) = fix_pass_state();
-        let summary = TeamSummary::from(state.team(&team_id).unwrap());
+        let summary = legacy_summary(state.team(&team_id).unwrap());
         assert_event_round_trips(event_kinds(&team_id, &round_id, summary));
     }
 
@@ -428,7 +435,7 @@ mod protocol_findings_maps {
     #[test]
     fn every_event_kind_variant_round_trips_with_an_empty_ledger() {
         let (state, team_id, round_id) = fixing_state(false);
-        let summary = TeamSummary::from(state.team(&team_id).unwrap());
+        let summary = legacy_summary(state.team(&team_id).unwrap());
         assert_event_round_trips(event_kinds(&team_id, &round_id, summary));
     }
 }

@@ -109,11 +109,11 @@ fn a_blank_brief_has_no_excerpt() {
 #[test]
 fn the_excerpt_of_a_long_brief_ends_at_the_last_sentence_that_fits_and_says_it_was_cut() {
     let sentence = "Sentence text that goes on for a while.";
-    let brief = format!("{} And then more.", vec![sentence; 12].join(" "));
+    let brief = format!("{} And then more.", [sentence; 12].join(" "));
 
     let excerpt = brief_excerpt(&brief);
 
-    assert_eq!(excerpt, format!("{} {CUT_MARK}", vec![sentence; 9].join(" ")));
+    assert_eq!(excerpt, format!("{} {CUT_MARK}", [sentence; 9].join(" ")));
     assert!(excerpt.chars().count() <= MAX_EXCERPT_CHARS);
 }
 

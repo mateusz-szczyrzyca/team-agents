@@ -56,5 +56,5 @@ fn another_fault_of_a_stored_text_is_still_a_fault() {
     let result: Result<TaskListText, _> =
         serde_json::from_value(json!("Short desc: Fine\n1. Feature\n[ ] 1.x Broken\n"));
 
-    assert!(result.is_err());
+    assert!(matches!(result, Err(ref error) if error.is_data()), "{result:?}");
 }
