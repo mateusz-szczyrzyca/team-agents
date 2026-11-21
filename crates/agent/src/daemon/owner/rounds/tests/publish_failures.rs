@@ -150,12 +150,13 @@ async fn publish_with_checked_out_worktree_publishes_without_forcing() {
         ),
         "pull request must be published even when branch is checked out in worktree"
     );
-    let pr = match item.phase() {
-        ItemPhase::InReview { pr, .. } | ItemPhase::Approved { pr, .. } => pr,
-        ItemPhase::Done {
-            completion: agent_core::state::Completion::Merged { pr, .. },
-        } => pr,
-        _ => panic!("unexpected phase"),
+    let (ItemPhase::InReview { pr, .. }
+    | ItemPhase::Approved { pr, .. }
+    | ItemPhase::Done {
+        completion: agent_core::state::Completion::Merged { pr, .. },
+    }) = item.phase()
+    else {
+        panic!("unexpected phase");
     };
     let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
     let gate: serde_json::Value =
@@ -202,12 +203,13 @@ async fn publish_with_detached_worktree_publishes_gated_commit_without_forcing()
     rig.stop().await.unwrap();
 
     let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
-    let pr = match item.phase() {
-        ItemPhase::InReview { pr, .. } | ItemPhase::Approved { pr, .. } => pr,
-        ItemPhase::Done {
-            completion: agent_core::state::Completion::Merged { pr, .. },
-        } => pr,
-        _ => panic!("unexpected phase"),
+    let (ItemPhase::InReview { pr, .. }
+    | ItemPhase::Approved { pr, .. }
+    | ItemPhase::Done {
+        completion: agent_core::state::Completion::Merged { pr, .. },
+    }) = item.phase()
+    else {
+        panic!("unexpected phase");
     };
     let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
     let gate: serde_json::Value =
