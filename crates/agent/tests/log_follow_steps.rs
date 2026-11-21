@@ -169,16 +169,7 @@ mod tests {
 
         /// The next line the following prints.
         fn line(&self) -> String {
-            let line = self.lines.recv_timeout(WAIT).expect("the following prints a line");
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/trace.log")
-            {
-                use std::io::Write as _;
-                let _ = writeln!(file, "LINE {line}");
-            }
-            line
+            self.lines.recv_timeout(WAIT).expect("the following prints a line")
         }
 
         /// Stops the following.

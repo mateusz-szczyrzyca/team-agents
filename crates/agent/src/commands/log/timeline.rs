@@ -74,7 +74,7 @@ impl<'a> Timeline<'a> {
     pub(crate) fn newest(&self, limit: u32) -> String {
         let order = self.order();
         let limit = usize::try_from(limit).unwrap_or(usize::MAX);
-        let shown = &order[order.len().saturating_sub(limit)..];
+        let shown = order.get(order.len().saturating_sub(limit)..).unwrap_or_default();
         let mut runs: BTreeMap<String, usize> = BTreeMap::new();
         for kind in shown {
             if let Kind::Step(step) = kind
@@ -130,10 +130,7 @@ impl<'a> Timeline<'a> {
                 .rows
                 .get(row.saturating_add(1))
                 .map_or_else(|| known.at(), |next| next.at());
-            loop {
-                let Some(step) = steps.peek().copied() else {
-                    break;
-                };
+            while let Some(step) = steps.peek().copied() {
                 let before = self.steps.get(step).is_some_and(|timed| timed.at < limit);
                 if !before {
                     break;
