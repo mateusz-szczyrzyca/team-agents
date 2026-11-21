@@ -14,6 +14,7 @@ them in every pull request. `Allow:` path allowances do not grant this permissio
 
 ```text
 Coordinator: inv-opus                       optional, the first line of the text
+Short desc: Fix the typo in the README      optional one line, at most 70 characters, says what the task is
 Allow: Cargo.toml                           optional paths allowed before every round
 Allow: tests/**/*.golden
 
@@ -57,6 +58,14 @@ Depends on: 1
   `agent run` prints every allowance. Each pull request lists changed covered paths and their `Allow:` line under
   the harness-owned `## Allowed beforehand`; no covered changes means no heading. Reviewers judge those changes
   on their behavior. A text containing only header directives is empty.
+- **`Short desc: TEXT`** — at column 0, among the `Allow:` lines: before the first nonblank line of the brief, and
+  in either order with them (`Coordinator:` stays first). It says in one line what the task is; every notification
+  and `agent status` show it. At most 70 characters (not bytes), not empty, at most once; the text is trimmed. It is
+  not part of the brief the agents are given. A list without it is read as before and has a description derived
+  from its brief: its first sentence, without a heading or list mark, cut to 70 characters with a `…`. After the
+  brief began, `Short desc:` is ordinary brief text. For a task given as text, `agent run --short-desc "TEXT"` gives
+  the line; with `-f` the flag is refused (write the line in the file). A state written before the line existed that
+  holds a text whose first lines are a refused `Short desc:` reads them as brief, as it always did.
 - **The brief** — every line before the first feature, without the header directives, with the blank lines at its
   start and end removed and everything else kept, indentation included. A text with no feature at all is a brief
   alone, which is how `agent run claude-1 "Fix the flaky test"` works. Text that is only blank lines (or only a
@@ -105,6 +114,9 @@ mark, blank lines and the coordinator line count). The first fault in the text i
 | `InvalidTier` | an item's `Tier:` value is empty or unknown |
 | `DuplicateTier` | an item contains a second column-zero `Tier:` directive |
 | `InvalidAllowance` | an `Allow:` header has invalid or unsafe syntax; the error names its line and pattern |
+| `ShortDescEmpty` | the `Short desc:` line has no text; the error says to give it some or remove it |
+| `ShortDescTooLong` | the `Short desc:` text has more than 70 characters; the error gives its length |
+| `ShortDescTwice` | the header has a second `Short desc:` line; the error gives the line of the first |
 | `InvalidCoordinator` | the `Coordinator:` line has no valid name |
 | `FeatureNumber` | the number of a feature is `0`, has a leading zero, or is over 65535; `NumberProblem` says which: `Shape` (not digits, or a leading zero) or `Range` (`0`, over 65535) |
 | `FeatureWithoutTitle` | `N.` with no title |

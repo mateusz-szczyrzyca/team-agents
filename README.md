@@ -720,6 +720,18 @@ the path. `agent answer` and the daemon reject `ok`, blank verdicts, unsupported
 accepting any answers. Other questions still accept `ok`. A pending checks file written by an older daemon keeps its old
 per-file questions and verdict rules, including `ok` accepting the recommendation to refuse.
 
+A task file can say what it is in one line: `Short desc: Fix the typo in the README`, among the header lines before the
+brief, at most 70 characters ([the format](docs/task-list.md)). For a task given as text use
+`agent run --short-desc "Fix the typo" claude-1 "..."`. Every notification the daemon sends about a task starts with
+`Repo`, `Time` and `Task:` (that description), then the agent, `Task ID:`, the team, the status and the note; when it
+concerns an item it names it, number and title, on a line of its own after the fields (the title of the part for a
+split part), and it ends with a block `TASK (<task>):` with the first sentences of the task's brief. A task without the
+line has a description derived from its brief: its first sentence cut to 70 characters. `agent status` ends the line of
+each team with its description in quotes. The summary of a team that the daemon sends gains the optional field
+`short_desc` in the current protocol (version 6); older negotiated protocols do not carry it, and a client from before
+this version must be replaced together with the daemon. The text of the notifications changed: a program that reads
+them must follow.
+
 A task list can allow required path changes beforehand. Put `Allow: Cargo.toml` or, for example,
 `Allow: tests/**/*.golden` before its brief (after `Coordinator:` if present). The paths are relative to the repository
 root, with only `*`, `**` and `?` as glob operators. Invalid or overly broad patterns and patterns reaching `AGENTS.md`,

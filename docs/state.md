@@ -247,7 +247,7 @@ State
 | `repo` | repository name | the `[repos.NAME]` of the configuration the team works on |
 | `created_at` | time | when the team was started |
 | `merge` | `autopilot` \| `no_merge` | what happens to an approved pull request (`--no-merge`) |
-| `task_list` | text | the task list **as given**; reading parses it again, so a list that no longer parses is an error |
+| `task_list` | text | the task list **as given**; reading parses it again, so a list that no longer parses is an error. Its optional header line `Short desc:` (0.51.0) is part of the text, so the description is kept with the team and survives a restart without a new field and without a new schema number; a team without the line has one derived from its brief wherever one is shown. A stored text whose first lines are a `Short desc:` line this version refuses (too long, empty, twice) is read as brief, so no old state becomes unreadable |
 | `items` | list | the progress of each item: exactly one entry per item of the list, in its order |
 | `rounds` | list | the team's rounds, oldest first; absent = none (see "Rounds" below) |
 | `crew` | object | see below |
