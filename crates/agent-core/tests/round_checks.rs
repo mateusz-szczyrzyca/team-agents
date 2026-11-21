@@ -14,6 +14,11 @@ mod round_checks {
         text.parse().unwrap()
     }
 
+    /// A commit ID of forty copies of `digit`.
+    fn head(digit: char) -> agent_core::state::CommitId {
+        digit.to_string().repeat(40).parse().unwrap()
+    }
+
     fn pass(n: u32) -> ChecksStep {
         ChecksStep::BackToTeam {
             pass: NonZeroU32::new(n).unwrap(),
@@ -179,5 +184,95 @@ mod round_checks {
 
         assert_eq!(ChecksPolicy::new(config.review()), ChecksPolicy { check_passes: 4 });
         assert_eq!(ChecksPolicy::new(default.review()), TWICE);
+    }
+
+    /// An issue the human may allow beforehand for the item.
+    fn allowed_beforehand() -> Issue {
+        Issue::Tried {
+            commit: head('a'),
+            fault: agent_core::decide::checks::CommitFault::TestEdited {
+                path: path("tests/a.rs"),
+                red: head('b'),
+            },
+        }
+    }
+
+    // Rule: a finding only a rewrite of the branch removes is never sent back to the team: the human is asked about it
+    // at once, while the passes of the team are left.
+    #[test]
+    fn a_finding_the_team_cannot_repair_is_asked_of_the_human_at_once() {
+        let allowed = [Subject::Commit(head('a'))];
+
+        for passes in [0, 1, 2, 9] {
+            assert_eq!(
+                Checking::after(passes).conclude_allowed(&[allowed_beforehand()], &[], &allowed, TWICE),
+                ChecksStep::AskHuman {
+                    reason: AskReason::OnlyTheHumanMayAllow
+                },
+                "{passes}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_finding_about_a_commit_the_allowance_names_is_asked_about_while_the_others_stay_the_teams() {
+        let allowed = [Subject::Commit(head('a'))];
+
+        assert_eq!(
+            Checking::after(0).conclude_allowed(&[allowed_beforehand(), for_the_team()], &[], &allowed, TWICE),
+            ChecksStep::AskHuman {
+                reason: AskReason::OnlyTheHumanMayAllow
+            }
+        );
+    }
+
+    #[test]
+    fn an_allowance_for_another_commit_or_a_refusal_leaves_the_round_sent_back() {
+        let issues = [allowed_beforehand()];
+
+        assert_eq!(
+            Checking::after(0).conclude_allowed(&issues, &[], &[Subject::Commit(head('c'))], TWICE),
+            ChecksStep::AskHuman {
+                reason: AskReason::OnlyTheHumanMayAllow
+            },
+            "the finding is the human's all the same"
+        );
+        assert_eq!(
+            Checking::after(0).conclude_allowed(
+                &issues,
+                &[Subject::Commit(head('a'))],
+                &[Subject::Commit(head('a'))],
+                TWICE
+            ),
+            pass(1),
+            "a refusal sends the round back"
+        );
+    }
+
+    #[test]
+    fn the_allowance_of_a_file_leaves_only_that_file_to_the_human() {
+        let issues = [allowed_beforehand(), for_the_team()];
+        let allowed = [Subject::Path(path("tests/a.rs"))];
+
+        // a question about the human's part does not send the round back: the team used no pass of its own
+        for passes in [0, 1] {
+            assert_eq!(
+                Checking::after(passes).conclude_allowed(&issues, &[], &allowed, TWICE),
+                ChecksStep::AskHuman {
+                    reason: AskReason::OnlyTheHumanMayAllow
+                },
+                "{passes}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_plain_conclusion_sends_everything_it_gets_back_to_the_team() {
+        assert_eq!(
+            Checking::after(0).conclude(&[allowed_beforehand()], &[], TWICE),
+            ChecksStep::AskHuman {
+                reason: AskReason::OnlyTheHumanMayAllow
+            }
+        );
     }
 }

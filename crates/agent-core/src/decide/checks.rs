@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::Checks;
 use crate::repo_path::RepoPath;
 use crate::state::CommitId;
+use crate::task_allowance::TaskAllowance;
 
 pub mod markers;
 
@@ -351,6 +352,23 @@ pub enum IssueKind {
 }
 
 impl Issue {
+    /// The allowances of the task list for the item that permit this finding beforehand: the ones for its path, and for
+    /// a finding about a commit the allowance for a file that commit changed — what the human allowed covers the commit
+    /// as long as the file they allowed is in it.
+    #[must_use]
+    pub fn allowed_by<'a>(&self, facts: &RoundFacts, allowances: &'a [TaskAllowance]) -> Vec<&'a TaskAllowance> {
+        let _ = facts;
+        allowances.iter().take(0).collect()
+    }
+
+    /// The subject the human may allow beforehand for the round, through the `allowances` of the task list: the finding's
+    /// own, and for a finding about a commit each path of that commit that an allowance permits.
+    #[must_use]
+    pub fn allowed_subject(&self, facts: &RoundFacts, allowances: &[TaskAllowance]) -> Option<Subject> {
+        let _ = (facts, allowances);
+        None
+    }
+
     /// The task header that permits this path change; markers and missing tests always need their own decision.
     #[must_use]
     pub fn allowed_beforehand<'a>(
@@ -528,6 +546,27 @@ fn edited_test_commits(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
         }
     }
     issues
+}
+
+/// The paths a commit of the round changed, as the round lists them: where a file was when the round moves it, and where
+/// it is; none for a commit of the range that the round's own diff does not list.
+fn commit_paths<'a>(facts: &'a RoundFacts, commit: &CommitId) -> Vec<&'a RepoPath> {
+    facts
+        .commits
+        .iter()
+        .find(|known| known.id == *commit)
+        .map(|known| {
+            known
+                .files
+                .iter()
+                .flat_map(|file| match &file.change {
+                    Change::Renamed { from } => vec![from, &file.path],
+                    Change::Added | Change::Modified | Change::Deleted => vec![&file.path],
+                })
+                .filter(|path| facts.files.iter().any(|changed| changed.path == **path))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The protected paths `file` touches: where it was when it moved out of one and where it is when it is in one, each

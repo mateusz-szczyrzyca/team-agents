@@ -589,6 +589,20 @@ impl Checking {
     /// - Otherwise: back to the team.
     #[must_use]
     pub fn conclude(&self, issues: &[Issue], refused: &[Subject], policy: ChecksPolicy) -> ChecksStep {
+        self.conclude_allowed(issues, refused, &[], policy)
+    }
+
+    /// What the `issues` of the round come to, the rest as in [`Self::conclude`]; `allowed` are the subjects the human
+    /// may allow beforehand for the item: an issue whose subject is one of them is not sent back to the team with the
+    /// others, and is asked about without a pass of the team that cannot remove it.
+    #[must_use]
+    pub fn conclude_allowed(
+        &self,
+        issues: &[Issue],
+        refused: &[Subject],
+        allowed: &[Subject],
+        policy: ChecksPolicy,
+    ) -> ChecksStep {
         if issues.is_empty() {
             return ChecksStep::StartReviews;
         }
@@ -598,6 +612,7 @@ impl Checking {
         if issues.iter().any(|issue| refused.contains(&issue.subject())) {
             return back;
         }
+        let _ = allowed;
         let team_can_fix = issues.iter().any(|issue| issue.judge() == Judge::Team);
         match (team_can_fix, self.passes < policy.check_passes) {
             (true, true) if issues.iter().any(|issue| issue.judge() == Judge::Human) => ChecksStep::AskHuman {

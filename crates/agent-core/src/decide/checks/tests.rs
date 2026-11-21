@@ -800,6 +800,73 @@ fn a_commit_whose_finding_the_human_allows_on_the_task_list_is_no_issue_for_the_
     );
 }
 
+/// The task allowance of a task list's `Allow:` line.
+fn allowance(text: &str) -> crate::task_allowance::TaskAllowance {
+    crate::task_allowance::TaskAllowance::parse(text).unwrap()
+}
+
+// Rule: what the task list allows for a commit of the round is the file the commit changed that the allowance names: a
+// finding about that commit is covered as long as its explanation stands in the same commit.
+#[test]
+fn a_finding_about_a_commit_is_allowed_by_the_file_of_it_the_task_list_allows() {
+    let not_a_test = test_fix_touching(vec![modified("tests/a.rs", 1, 1), modified("src/lib.rs", 1, 0)]);
+    let touching_another_test = test_fix_touching(vec![modified("tests/a.rs", 1, 1), modified("tests/b.rs", 2, 0)]);
+    let cases = [
+        ("src/lib.rs", &not_a_test, Some("src/lib.rs")),
+        ("tests/a.rs", &not_a_test, Some("tests/a.rs")),
+        ("tests/", &touching_another_test, Some("tests/a.rs")),
+        ("tests/*.rs", &touching_another_test, Some("tests/a.rs")),
+        ("docs/", &not_a_test, None),
+        ("*", &not_a_test, Some("src/lib.rs")),
+    ];
+    for (line, facts, subject) in cases {
+        let allowances = [allowance(line)];
+        let tried = found(facts)
+            .into_iter()
+            .find(|issue| matches!(issue, Issue::Tried { .. }))
+            .unwrap();
+
+        let allowed = tried.allowed_subject(facts, &allowances);
+
+        assert_eq!(allowed, subject.map(|text| Subject::Path(path(text))), "{line}");
+    }
+}
+
+#[test]
+fn a_commit_the_round_does_not_list_is_covered_by_no_allowance_of_a_file() {
+    let facts = test_fix_touching(vec![modified("tests/a.rs", 1, 1), modified("src/lib.rs", 1, 0)]);
+    let allowances = [allowance("src/lib.rs")];
+    let missing = Issue::Tried {
+        commit: id('9'),
+        fault: CommitFault::FixTouchesOther {
+            fix: id('9'),
+            other: path("src/lib.rs"),
+        },
+    };
+
+    assert_eq!(missing.allowed_subject(&facts, &allowances), None);
+}
+
+#[test]
+fn the_findings_about_a_path_are_allowed_by_the_allowance_of_that_path() {
+    let facts = round(vec![modified("tests/a.rs", 1, 1)]);
+    let allowances = [allowance("tests/*.rs")];
+    let edited = Issue::TestChanged {
+        path: path("tests/a.rs"),
+        how: TestChange::Edited { removed: 1 },
+    };
+
+    assert_eq!(
+        edited.allowed_subject(&facts, &allowances),
+        Some(Subject::Path(path("tests/a.rs")))
+    );
+    assert_eq!(
+        Issue::NoTests.allowed_subject(&facts, &allowances),
+        None,
+        "the lack of tests is no file"
+    );
+}
+
 // ---- production code without tests ------------------------------------------------------------------------------------
 
 // Rule: a round that changes production code adds a line to a test file, or one of its commits says why not.
