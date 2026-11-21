@@ -608,3 +608,21 @@ fn failed_cleanup_retains_the_primary_and_cleanup_reasons() {
         "ran past 1 seconds"
     );
 }
+
+#[tokio::test]
+async fn output_creation_failure_mismatches_without_running_command() {
+    let env = TestEnv::new();
+    let command = "touch executed";
+    let step = parse_first_step("[x] 1.1 Check\n    Check: touch executed\n");
+    let log_path = env.task_dir.join("checks").join(env.run.as_str()).join("1.1.log");
+    fs::create_dir_all(&log_path).unwrap();
+
+    let result = super::execute_command_check(&env.context(60, &[]), &step, command)
+        .await
+        .unwrap();
+
+    assert_eq!(result.state, JudgementState::Mismatch);
+    assert!(result.reason.unwrap().starts_with("cannot create check output: "));
+    assert_eq!(result.output_path, None);
+    assert!(!env.worktree.join("executed").exists());
+}
