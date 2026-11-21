@@ -168,6 +168,28 @@ impl ChecksPrompt {
                 &["questions_file", "number", "task"],
             ),
             Self::Answered => PromptSpec::new("harness/checks/answered.md", Audience::Model, &[]),
+            Self::QuestionsTitle
+            | Self::QuestionTitlePath
+            | Self::QuestionTitleNoTests
+            | Self::QuestionInvalidVerdict
+            | Self::QuestionTitleGroup
+            | Self::QuestionTitleCommits
+            | Self::QuestionCommit
+            | Self::QuestionCommitBinary
+            | Self::QuestionBodyCommits
+            | Self::QuestionBefore
+            | Self::QuestionsInstructions
+            | Self::QuestionBody
+            | Self::QuestionRecommend
+            | Self::WhyOnlyHuman
+            | Self::WhyPassesUsed
+            | Self::NoticeNotAsked => self.question_spec(),
+        }
+    }
+
+    /// [`Self::spec`] of the texts the human reads: the questions, their parts and the notification.
+    const fn question_spec(self) -> PromptSpec {
+        match self {
             Self::QuestionsTitle => {
                 PromptSpec::new("harness/checks/questions-title.md", Audience::Human, &["team", "task"])
             }
@@ -220,6 +242,21 @@ impl ChecksPrompt {
             Self::NoticeNotAsked => {
                 PromptSpec::new("harness/checks/notice-not-asked.md", Audience::Human, &["team", "task"])
             }
+            Self::IssueTestDeleted
+            | Self::IssueTestRenamed
+            | Self::IssueTestEdited
+            | Self::IssueTestBinary
+            | Self::IssueTestMode
+            | Self::IssueProtected
+            | Self::IssueRedEdited
+            | Self::IssueNoTests
+            | Self::IssueSkipsTest
+            | Self::IssueSuppressesLint
+            | Self::IssueChecksUnderTest
+            | Self::TeamPass
+            | Self::Refused
+            | Self::AskRelay
+            | Self::Answered => self.spec(),
         }
     }
 }
