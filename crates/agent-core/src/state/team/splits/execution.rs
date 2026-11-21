@@ -71,12 +71,26 @@ impl Team {
         if !definition.depends_on.is_empty() {
             return Err(ActivateSplitError::FirstBlocked);
         }
+        let assignee = match self.item(item).map(crate::state::ItemProgress::phase) {
+            Some(ItemPhase::InProgress { assignee, .. }) => assignee.clone(),
+            Some(
+                ItemPhase::Pending
+                | ItemPhase::Fixing { .. }
+                | ItemPhase::InReview { .. }
+                | ItemPhase::Approved { .. }
+                | ItemPhase::Done { .. },
+            )
+            | None => {
+                return Err(ActivateSplitError::NotWorking { item });
+            }
+        };
         let target = self
             .rounds
             .iter_mut()
             .find(|candidate| candidate.id() == &round)
             .ok_or(ActivateSplitError::NotWorking { item })?;
         target.bind_part(first.key());
+        target.assign_part(assignee);
         self.split_proposals.retain(|parent, _| *parent != item);
         self.splits.push(plan);
         Ok(())

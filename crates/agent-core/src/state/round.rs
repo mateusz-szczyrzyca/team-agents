@@ -31,6 +31,9 @@ pub struct Round {
     /// Split execution identity; absent in schema 13 rounds written before activation.
     #[serde(skip_serializing_if = "Option::is_none")]
     part: Option<PartRound>,
+    /// Latest executor assigned to this part, retained when the parent moves on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assigned_to: Option<crate::ids::AgentName>,
     /// Another round's verified PR; retained after completion or an observed unmerged closure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     delivery: Option<super::PullRequest>,
@@ -54,6 +57,9 @@ struct RoundWire {
     /// Optional execution identity of a split part.
     #[serde(default)]
     part: Option<PartRound>,
+    /// Optional executor; absent from rounds written before split provenance.
+    #[serde(default)]
+    assigned_to: Option<crate::ids::AgentName>,
     /// Optional delivery claim; absent before schema 14.
     #[serde(default)]
     delivery: Option<super::PullRequest>,
@@ -169,7 +175,14 @@ impl Round {
     /// The agent assigned to execute this split part; absent from older rounds.
     #[must_use]
     pub const fn assigned_to(&self) -> Option<&crate::ids::AgentName> {
-        None
+        self.assigned_to.as_ref()
+    }
+
+    /// Keeps executor metadata only for split rounds.
+    pub(super) fn assign_part(&mut self, agent: crate::ids::AgentName) {
+        if self.part.is_some() {
+            self.assigned_to = Some(agent);
+        }
     }
 
     /// The verified team pull request delivering this round, retained after completion.
@@ -237,6 +250,7 @@ impl Round {
             opened_at,
             state: RoundLife::Open,
             part: None,
+            assigned_to: None,
             delivery: None,
             delivery_closed_at: None,
         }

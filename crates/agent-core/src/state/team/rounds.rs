@@ -411,9 +411,37 @@ impl Team {
             return Err(BeginRunError::UnknownRound { round: unknown.clone() });
         }
         let (_, member) = self
+            .find(task)
+            .ok_or_else(|| BeginRunError::UnknownTask { task: task.clone() })?;
+        let assignments: Vec<_> = rounds
+            .iter()
+            .filter_map(|id| {
+                let round = self.round(id)?;
+                let progress = self.item(round.item()?)?;
+                match progress.phase() {
+                    ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }
+                        if assignee.as_str() == member.agent().name() && round.part().is_some() =>
+                    {
+                        Some((id.clone(), assignee.clone()))
+                    }
+                    ItemPhase::Pending
+                    | ItemPhase::InProgress { .. }
+                    | ItemPhase::Fixing { .. }
+                    | ItemPhase::InReview { .. }
+                    | ItemPhase::Approved { .. }
+                    | ItemPhase::Done { .. } => None,
+                }
+            })
+            .collect();
+        let (_, member) = self
             .find_mut(task)
             .ok_or_else(|| BeginRunError::UnknownTask { task: task.clone() })?;
         member.value.begin_run_for(id, at, session, rounds)?;
+        for (id, agent) in assignments {
+            if let Some(round) = self.rounds.iter_mut().find(|round| round.id() == &id) {
+                round.assign_part(agent);
+            }
+        }
         Ok(())
     }
 }
