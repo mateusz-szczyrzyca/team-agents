@@ -382,6 +382,25 @@ impl Default for Snapshot {
     }
 }
 
+/// Default number of times publication is tried before the lead is told.
+const DEFAULT_PUBLISH_TRIES: u32 = 3;
+
+/// `[publish]`: what the harness does when a branch cannot be published.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Publish {
+    /// How many times publication is tried before the lead is told once, and after that the human is asked.
+    pub tries: u32,
+}
+
+impl Default for Publish {
+    /// The default: three tries before the lead is told.
+    fn default() -> Self {
+        let _ = DEFAULT_PUBLISH_TRIES;
+        Self { tries: 0 }
+    }
+}
+
 /// Default number of lead passes per round on a merge conflict.
 const DEFAULT_CONFLICT_PASSES: u32 = 3;
 
@@ -695,6 +714,8 @@ pub struct Config {
     disk: Disk,
     /// The snapshots of worktrees.
     snapshot: Snapshot,
+    /// The publication tries and notifications.
+    publish: Publish,
     /// The merges refused for a conflict.
     merge: Merge,
     /// The review fix passes.
@@ -768,6 +789,9 @@ struct RawConfig {
     /// See [`Config::snapshot`].
     #[serde(default)]
     snapshot: Snapshot,
+    /// See [`Config::publish`].
+    #[serde(default)]
+    publish: Publish,
     /// See [`Config::merge`].
     #[serde(default)]
     merge: Merge,
@@ -825,6 +849,7 @@ impl RawConfig {
             limits,
             disk,
             snapshot,
+            publish,
             merge,
             review,
             git,
@@ -865,6 +890,7 @@ impl RawConfig {
             limits,
             disk,
             snapshot,
+            publish,
             merge,
             review,
             git,
@@ -1053,6 +1079,12 @@ impl Config {
     #[must_use]
     pub const fn snapshot(&self) -> &Snapshot {
         &self.snapshot
+    }
+
+    /// The publication tries and notifications.
+    #[must_use]
+    pub const fn publish(&self) -> &Publish {
+        &self.publish
     }
 
     /// The merges refused for a conflict: how many lead passes a round may spend on them.
@@ -1744,6 +1776,20 @@ workers = ["qwen", "qwen"]"#,
         let config = Config::from_toml_str(text).unwrap();
         assert_eq!(config.disk().low_free_gb, 50);
         assert_eq!(config.disk().min_free_gb, 10);
+    }
+
+    #[test]
+    fn configuration_without_publish_reads_three_tries() {
+        let config =
+            Config::from_toml_str("[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n").unwrap();
+        assert_eq!(config.publish().tries, 3);
+    }
+
+    #[test]
+    fn configuration_with_publish_reads_the_tries() {
+        let text = "[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n\n[publish]\ntries = 5\n";
+        let config = Config::from_toml_str(text).unwrap();
+        assert_eq!(config.publish().tries, 5);
     }
 
     #[test]

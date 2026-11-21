@@ -440,6 +440,12 @@ pub struct ItemProgress {
     /// trouble.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     merge_conflict: Option<MergeConflict>,
+    /// How many times publication of this item was tried; absent while zero.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    publish_tries: u32,
+    /// When the publication failure question was asked to the human, if one is open; absent while none is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    publish_question: Option<Timestamp>,
 }
 
 /// A merge of an approved pull request that GitHub refused for a conflict, while the harness works on it.
@@ -499,6 +505,12 @@ struct ItemProgressWire {
     /// See [`ItemProgress`]; a state written before merge conflicts has none.
     #[serde(default)]
     merge_conflict: Option<MergeConflict>,
+    /// See [`ItemProgress`]; a state written before publish tries has none.
+    #[serde(default)]
+    publish_tries: u32,
+    /// See [`ItemProgress`]; a state written before publication questions has none.
+    #[serde(default)]
+    publish_question: Option<Timestamp>,
 }
 
 checked!(ItemProgress, ItemProgressWire, check_item_progress);
@@ -524,6 +536,31 @@ impl CheckedMut<'_, ItemProgress> {
     /// See [`ItemProgress::ask_human_about_merge_conflict`].
     pub fn ask_human_about_merge_conflict(&mut self, at: Timestamp) {
         self.value.ask_human_about_merge_conflict(at);
+    }
+
+    /// See [`ItemProgress::record_publish_try`].
+    pub fn record_publish_try(&mut self) -> u32 {
+        self.value.record_publish_try()
+    }
+
+    /// See [`ItemProgress::reset_publish_tries`].
+    pub fn reset_publish_tries(&mut self) {
+        self.value.reset_publish_tries();
+    }
+
+    /// See [`ItemProgress::ask_human_about_publication`].
+    pub fn ask_human_about_publication(&mut self, at: Timestamp) {
+        self.value.ask_human_about_publication(at);
+    }
+
+    /// See [`ItemProgress::clear_publish_question`].
+    pub fn clear_publish_question(&mut self) {
+        self.value.clear_publish_question();
+    }
+
+    /// See [`ItemProgress::record_published_conflict_pass`].
+    pub fn record_published_conflict_pass(&mut self) -> u32 {
+        self.value.record_published_conflict_pass()
     }
 
     /// See [`ItemProgress::set_conflict_approved_head`].
@@ -944,7 +981,46 @@ impl ItemProgress {
             conflict_verifications: 0,
             conflict_approved_head: None,
             merge_conflict: None,
+            publish_tries: 0,
+            publish_question: None,
         }
+    }
+
+    /// How many times publication of this item was tried.
+    #[must_use]
+    pub const fn publish_tries(&self) -> u32 {
+        self.publish_tries
+    }
+
+    /// Increments the publication attempt counter and returns the new count.
+    pub fn record_publish_try(&mut self) -> u32 {
+        0
+    }
+
+    /// Resets the publication attempt counter.
+    pub fn reset_publish_tries(&mut self) {
+        self.publish_tries = 0;
+    }
+
+    /// When the publication failure question was asked to the human, if one is open.
+    #[must_use]
+    pub const fn publish_question(&self) -> Option<Timestamp> {
+        self.publish_question
+    }
+
+    /// Records that the human was asked about publication failure at `at`.
+    pub fn ask_human_about_publication(&mut self, at: Timestamp) {
+        let _ = at;
+    }
+
+    /// Clears the open publication question.
+    pub fn clear_publish_question(&mut self) {
+        self.publish_question = None;
+    }
+
+    /// Records that a merge conflict pass was published and increments spent merge passes.
+    pub fn record_published_conflict_pass(&mut self) -> u32 {
+        self.spend_merge_pass()
     }
 
     getter!("The item's number in the task list.", pub const fn id(&self) -> ItemId = self.id);
@@ -1760,6 +1836,30 @@ mod tests {
         let back: ItemProgress = serde_json::from_str(&text).unwrap();
 
         assert_eq!(back.merge_passes(), 1);
+    }
+
+    #[test]
+    fn publish_tries_and_question_are_persisted_and_read_back() {
+        let mut item = progress_in(PhaseKind::InProgress);
+        assert_eq!(item.publish_tries(), 0);
+        assert_eq!(item.publish_question(), None);
+
+        assert_eq!(item.record_publish_try(), 1);
+        assert_eq!(item.record_publish_try(), 2);
+        item.ask_human_about_publication(at(100));
+
+        let text = serde_json::to_string(&item).unwrap();
+        assert!(text.contains("\"publish_tries\":2"), "{text}");
+        assert!(text.contains("\"publish_question\":"), "{text}");
+
+        let back: ItemProgress = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.publish_tries(), 2);
+        assert_eq!(back.publish_question(), Some(at(100)));
+
+        item.reset_publish_tries();
+        item.clear_publish_question();
+        assert_eq!(item.publish_tries(), 0);
+        assert_eq!(item.publish_question(), None);
     }
 
     #[test]

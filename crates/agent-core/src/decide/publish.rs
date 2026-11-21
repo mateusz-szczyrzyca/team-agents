@@ -20,6 +20,7 @@ use std::fmt;
 
 use crate::config::AbsolutePath;
 use crate::ids::BranchName;
+use crate::questions::Verdict;
 use crate::state::{CommitId, GateOutcome, GateRecord};
 
 /// What is known of the branch of a lead that waits.
@@ -223,6 +224,40 @@ pub fn publish_decision<'a>(
         RemoteState::Diverged => PublishAction::Refused,
     };
     PublishDecision { branch, action }
+}
+
+/// What the harness does when publication cannot succeed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishTriesStep {
+    /// Retry publication after a backoff.
+    Retry,
+    /// Tell the lead once what is wrong.
+    TellLead,
+    /// Ask the human once in a questions file.
+    AskHuman,
+}
+
+/// Decides the next step after a publication failure based on attempt count and configured limit.
+#[must_use]
+pub const fn publish_tries_step(tries: u32, limit: u32) -> PublishTriesStep {
+    let _ = (tries, limit);
+    PublishTriesStep::Retry
+}
+
+/// What the human's answer to the publication failure question says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishAnswer {
+    /// Try publishing again.
+    Retry,
+    /// Stop the task.
+    Stop,
+}
+
+/// Reads the human's verdict on a publication failure question.
+#[must_use]
+pub fn publish_answer(verdict: Option<&Verdict>) -> PublishAnswer {
+    let _ = verdict;
+    PublishAnswer::Retry
 }
 
 #[cfg(test)]
