@@ -26,7 +26,7 @@ fn a_state_written_before_handovers_loads_with_no_record() {
 
     let found = state.find_task(&task()).expect("the task is there");
     assert_eq!(found.member.status(), TaskStatus::Failed);
-    assert!(found.member.past_holders().is_empty());
+    assert_eq!(found.member.past_holders(), Vec::<Holding>::new());
 }
 
 #[test]
