@@ -82,7 +82,7 @@ impl Owner {
         for (item, tier) in team.unasked_tier_waits() {
             let label = team
                 .round_of(item)
-                .and_then(|round| round.part())
+                .and_then(agent_core::state::Round::part)
                 .map_or_else(|| item.to_string(), |part| format!("{item}{part}"));
             let values = Variables::new()
                 .with("item", label)
