@@ -125,7 +125,7 @@ fn a_state_written_before_the_line_loads_with_its_briefs_and_permissions_unchang
             .list()
             .allowances()
             .iter()
-            .map(|allowance| allowance.as_str())
+            .map(crate::task_allowance::TaskAllowance::as_str)
             .collect::<Vec<_>>(),
         ["Cargo.toml"]
     );
