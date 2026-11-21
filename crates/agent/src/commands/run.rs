@@ -23,6 +23,9 @@ use agent_runtime::text_file::{TextFileError, read_text_file};
 use super::status::{kind_of, round_line};
 use crate::client::{ClientError, Connection};
 
+/// What starts the first line of a task list that names its coordinator.
+const COORDINATOR_PREFIX: &str = "Coordinator:";
+
 /// What the command line of `agent run` says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunInput {
@@ -314,8 +317,35 @@ pub(crate) fn words_with_short_desc(
     file: Option<&Path>,
     desc: Option<&str>,
 ) -> Result<Vec<String>, RunError> {
-    let _ = (file, desc);
+    let Some(desc) = desc else {
+        return Ok(words);
+    };
+    if let Some(path) = file {
+        return Err(RunError::ShortDescWithFile {
+            path: path.to_path_buf(),
+        });
+    }
+    let mut words = words;
+    // One word is only an agent: the missing task is refused later, with its own message.
+    if words.len() >= 2
+        && let Some(task) = words.last_mut()
+    {
+        *task = task_with_short_desc(task, desc);
+    }
     Ok(words)
+}
+
+/// The text of a task list `text` with the header line `Short desc: <desc>`: after its first line when that is the
+/// `Coordinator:` line, which only counts as the first, and before everything else.
+fn task_with_short_desc(text: &str, desc: &str) -> String {
+    let line = format!("Short desc: {desc}\n");
+    let first_end = text.find('\n').map_or(text.len(), |at| at.saturating_add(1));
+    let (first, rest) = text.split_at_checked(first_end).unwrap_or((text, ""));
+    if first.trim_start().starts_with(COORDINATOR_PREFIX) {
+        format!("{first}{}{line}{rest}", if first.ends_with('\n') { "" } else { "\n" })
+    } else {
+        format!("{line}{text}")
+    }
 }
 
 /// The request that starts what `input` says in the repository `directory` is in: nothing is asked of the daemon yet.

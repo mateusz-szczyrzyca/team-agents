@@ -214,6 +214,10 @@ struct RunArgs {
     /// The agent that coordinates the team; it wins over the `Coordinator:` line of the task list.
     #[arg(long, value_name = "NAME")]
     coordinator: Option<AgentName>,
+    /// A line of at most 70 characters that says what the task is, for a task given as text (a file has its own
+    /// `Short desc:` line).
+    #[arg(long, value_name = "TEXT")]
+    short_desc: Option<String>,
     /// Stop before the merge of an approved pull request and hand it to you.
     #[arg(long)]
     no_merge: bool,
@@ -806,7 +810,7 @@ async fn execute_run(environment: &Environment, args: RunArgs, out: &mut impl Wr
         directory,
         RunInput {
             allow_unpushed_base: args.allow_unpushed_base,
-            words: args.words,
+            words: commands::run::words_with_short_desc(args.words, args.file.as_deref(), args.short_desc.as_deref())?,
             file: args.file,
             coordinator: args.coordinator,
             merge,
