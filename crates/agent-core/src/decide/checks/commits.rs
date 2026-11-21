@@ -127,13 +127,22 @@ pub struct Inherited {
 #[must_use]
 pub fn inherit_refusals(
     findings: Vec<CommitFinding>,
-    _facts: &RoundFacts,
-    _refused_paths: &BTreeMap<RepoPath, Option<CommitId>>,
+    facts: &RoundFacts,
+    refused_paths: &BTreeMap<RepoPath, Option<CommitId>>,
 ) -> Inherited {
-    Inherited {
-        remaining: findings,
-        refused: Vec::new(),
+    let mut inherited = Inherited::default();
+    for finding in findings {
+        let covered = refused_paths.get(&finding.path).is_some_and(|head| match head {
+            Some(head) => reaches(facts, head, &finding.commit),
+            None => true,
+        });
+        if covered {
+            inherited.refused.push(finding.subject());
+        } else {
+            inherited.remaining.push(finding);
+        }
     }
+    inherited
 }
 
 /// Whether `head` is `commit` or comes after it in the history of the round.

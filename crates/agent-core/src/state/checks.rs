@@ -162,28 +162,57 @@ impl ChecksRecord {
     /// Takes the human's answer to the question that is waited on, as [`Self::answer`] does for what they `allowed`,
     /// and keeps what they `refused` for `items`.
     pub fn answered(&mut self, items: &[ItemId], allowed: &[Subject], refused: &[Subject]) {
+        // The question's head is taken with the question: a refused file covers the commits up to it and no later one.
+        let head = self.basis.as_ref().map(|basis| basis.head.clone());
         self.answer(items, allowed);
         for item in items {
-            let held = self.items.entry(*item).or_default();
+            let kept = self.items.entry(*item).or_default();
             for subject in allowed {
-                held.refused.remove(subject);
+                kept.refused.remove(subject);
             }
-            held.refused.extend(refused.iter().cloned());
+            kept.refused.extend(refused.iter().cloned());
+            if let Some(head) = &head {
+                for subject in refused {
+                    if let Subject::Path(path) = subject {
+                        kept.covered_at.entry(path.clone()).or_insert_with(|| head.clone());
+                    }
+                }
+            }
         }
     }
 
     /// The heads up to which what the human said about a file covers its commits, for those that have one.
     #[must_use]
-    pub fn covered_at_of(&self, _items: &[ItemId]) -> BTreeMap<RepoPath, CommitId> {
-        BTreeMap::new()
+    pub fn covered_at_of(&self, items: &[ItemId]) -> BTreeMap<RepoPath, CommitId> {
+        items
+            .iter()
+            .filter_map(|item| self.items.get(item))
+            .flat_map(|held| held.covered_at.iter())
+            .map(|(path, head)| (path.clone(), head.clone()))
+            .collect()
     }
 
     /// Records that what the human said about each of `paths` covers the commits up to `head`; a head recorded before
     /// stays.
-    pub fn snapshot_covered(&mut self, _items: &[ItemId], _paths: &[RepoPath], _head: &CommitId) {}
+    pub fn snapshot_covered(&mut self, items: &[ItemId], paths: &[RepoPath], head: &CommitId) {
+        for item in items {
+            let kept = self.items.entry(*item).or_default();
+            for path in paths {
+                kept.covered_at.entry(path.clone()).or_insert_with(|| head.clone());
+            }
+        }
+    }
 
     /// Records that the human refused `subjects` for `items`, without an answer to a question.
-    pub fn keep_refused(&mut self, _items: &[ItemId], _subjects: &[Subject]) {}
+    pub fn keep_refused(&mut self, items: &[ItemId], subjects: &[Subject]) {
+        for item in items {
+            self.items
+                .entry(*item)
+                .or_default()
+                .refused
+                .extend(subjects.iter().cloned());
+        }
+    }
 
     /// The heads at which the files of `items` were allowed, for those that have one.
     #[must_use]
