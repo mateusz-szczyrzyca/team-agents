@@ -351,6 +351,13 @@ impl Member {
 
     getter!("Who works in the task.", pub const fn agent(&self) -> &Participant = &self.agent);
 
+    /// The agent the task is known by on its team's bus: the agent it was first given to. A task keeps that name when
+    /// another agent takes it over, so that the messages, the wake-ups and the lead's rights of the team stay with it.
+    #[must_use]
+    pub const fn bus_agent(&self) -> &Participant {
+        &self.agent
+    }
+
     getter!("Where the task is in its life.", pub const fn status(&self) -> TaskStatus = self.status);
 
     getter!("The runs, oldest first.", pub fn runs(&self) -> &[Run] = &self.runs);

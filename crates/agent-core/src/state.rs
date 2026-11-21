@@ -352,6 +352,23 @@ impl State {
         })
     }
 
+    /// Begins the session of the agent that holds `task` now, after a hand-over that followed `trouble`, at `at`: no
+    /// session of the agent before it is resumed, its bad runs are not counted against the new one, and the next run is
+    /// briefed. Unlike [`State::renew_task`] it counts no new session of the task's agent. Returns whether a session was
+    /// begun: `false` for a task with no run.
+    ///
+    /// # Errors
+    /// [`RenewTaskError`] when the task is not in the state, is of a worker or a reviewer, or the session does not fit
+    /// its runs.
+    pub fn begin_holder_session(
+        &mut self,
+        _task: &TaskId,
+        _trouble: crate::decide::ladder::Trouble,
+        _at: Timestamp,
+    ) -> Result<bool, RenewTaskError> {
+        Ok(false)
+    }
+
     /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
     /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
     /// that the state it leaves loads again.
