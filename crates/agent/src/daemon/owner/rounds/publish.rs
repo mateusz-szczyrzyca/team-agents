@@ -411,7 +411,7 @@ impl Owner {
                     })
             })
         });
-        let source = if independent {
+        let _source = if independent {
             // The lead's own branch is named after the agent its task was first given to, whoever holds it now.
             let first = self.parts.state.find_task(&lead.task).map_or_else(
                 || Ok(lead.agent.clone()),
@@ -422,15 +422,7 @@ impl Owner {
             publication.head_branch.clone()
         };
         let record = self.parts.store.load_gate_record(&lead.task).await?;
-        let tip = if let Some(record) = &record
-            && record.counts_as_pass()
-        {
-            record.result.head.clone()
-        } else if let Some(source_tip) = git.branch_tip(&source).await? {
-            source_tip
-        } else {
-            git.rev_parse(&Revision::Head).await?
-        };
+        let tip = git.rev_parse(&Revision::Head).await?;
         // A gate of the harness that still runs decides nothing yet; the record is read after it, so that it is not older.
         let own = self.own_gate_state(&lead.task, &tip);
         if own == Own::Running {

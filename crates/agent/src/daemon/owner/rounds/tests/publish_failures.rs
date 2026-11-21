@@ -383,6 +383,11 @@ async fn publish_with_stale_gate_record_and_new_worktree_commit_gates_and_publis
     .unwrap();
 
     // Create Second commit in worktree (worktree HEAD moves ahead of gate record):
+    let exclude = git(&worktree, &["rev-parse", "--git-path", "info/exclude"])
+        .trim()
+        .to_string();
+    std::fs::create_dir_all(std::path::Path::new(&exclude).parent().unwrap()).unwrap();
+    std::fs::write(&exclude, ".fake-*\n").unwrap();
     std::fs::write(worktree.join("second.txt"), "second\n").unwrap();
     git(&worktree, &["add", "second.txt"]);
     git(&worktree, &["commit", "-q", "-m", "Second commit"]);
@@ -427,5 +432,302 @@ async fn publish_with_stale_gate_record_and_new_worktree_commit_gates_and_publis
     assert_eq!(
         remote_head, second_commit,
         "remote PR branch must carry the new worktree commit, not the earlier pass"
+    );
+}
+
+#[tokio::test]
+async fn split_part_conflict_pass_with_lead_on_pr_part_branch_publishes_and_preserves_checkout() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,integrate,integrate,script:conflict-part-branch"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("conflict-part-branch.sh"),
+        "set -eu\nfor _ in $(seq 300); do [[ -e .fake-base-ready ]] && break; sleep 0.1; done\nrm -f .fake-base-ready\npart_branch=$(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/*-1.1a' | head -n 1)\ngit checkout \"$part_branch\"\ngit fetch -q origin main\ngit -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false merge -q --no-ff --no-edit origin/main\n",
+    )
+    .unwrap();
+    rig.start().await;
+
+    let (team_id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    let coordinator = tasks[0].clone();
+    let lead = tasks[1].clone();
+
+    // Coordinator asks to split into 2 parts:
+    rig.status_is(&coordinator, TaskStatus::Questions).await;
+    rig.status_is(&lead, TaskStatus::Waiting).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: coordinator.clone(),
+                number: n(1),
+                answers: answers(&[(1, &split_approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    // Part 1.1a PR #1 is approved; refuse merge for conflict:
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+
+    // Wait until conflict pass starts:
+    rig.state_where("part 1.1a is in conflict pass", |state| {
+        state
+            .team(&team_id)
+            .unwrap()
+            .item("1.1".parse().unwrap())
+            .unwrap()
+            .merge_conflict()
+            .is_some()
+    })
+    .await;
+
+    // Allow merge, move base, signal fake base ready in coordinator's worktree:
+    rig.github.answer_merges(MergeAnswer::Allow);
+    move_base(&rig);
+    std::fs::write(rig.worktree(&coordinator).join(".fake-base-ready"), "").unwrap();
+
+    // Wait until part 1.1a PR merges and advances:
+    let state = rig
+        .state_where("part 1.1a PR merged", |state| {
+            let team = state.team(&team_id).unwrap();
+            team.rounds().len() >= 2 && !team.rounds()[0].is_open()
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let team = state.team(&team_id).unwrap();
+    assert_eq!(team.splits().len(), 1, "split part PR should complete and merge");
+    let pr = team.rounds()[0].part_pull_request().unwrap();
+    assert_eq!(pr.number.get().get(), 1);
+    let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&coordinator)).unwrap()).unwrap();
+    let gated_commit = gate["result"]["head"].as_str().unwrap();
+    assert_eq!(
+        remote_head, gated_commit,
+        "remote PR branch must carry the exact gated commit hash"
+    );
+    let worktree = rig.worktree(&coordinator);
+    assert_eq!(
+        git(&worktree, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        pr.branch.as_str(),
+        "worktree checkout must remain on the actual PR part branch"
+    );
+}
+
+#[tokio::test]
+async fn split_part_conflict_pass_with_lead_detached_publishes_and_preserves_checkout() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,integrate,integrate,script:conflict-detached"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("conflict-detached.sh"),
+        "set -eu\nfor _ in $(seq 300); do [[ -e .fake-base-ready ]] && break; sleep 0.1; done\nrm -f .fake-base-ready\ngit checkout --detach HEAD\ngit fetch -q origin main\ngit -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false merge -q --no-ff --no-edit origin/main\n",
+    )
+    .unwrap();
+    rig.start().await;
+
+    let (team_id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    let coordinator = tasks[0].clone();
+    let lead = tasks[1].clone();
+
+    // Coordinator asks to split into 2 parts:
+    rig.status_is(&coordinator, TaskStatus::Questions).await;
+    rig.status_is(&lead, TaskStatus::Waiting).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: coordinator.clone(),
+                number: n(1),
+                answers: answers(&[(1, &split_approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    // Part 1.1a PR #1 is approved; refuse merge for conflict:
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+
+    // Wait until conflict pass starts:
+    rig.state_where("part 1.1a is in conflict pass", |state| {
+        state
+            .team(&team_id)
+            .unwrap()
+            .item("1.1".parse().unwrap())
+            .unwrap()
+            .merge_conflict()
+            .is_some()
+    })
+    .await;
+
+    // Allow merge, move base, signal fake base ready in coordinator's worktree:
+    rig.github.answer_merges(MergeAnswer::Allow);
+    move_base(&rig);
+    std::fs::write(rig.worktree(&coordinator).join(".fake-base-ready"), "").unwrap();
+
+    // Wait until part 1.1a PR merges and advances:
+    let state = rig
+        .state_where("part 1.1a PR merged", |state| {
+            let team = state.team(&team_id).unwrap();
+            team.rounds().len() >= 2 && !team.rounds()[0].is_open()
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let team = state.team(&team_id).unwrap();
+    assert_eq!(team.splits().len(), 1, "split part PR should complete and merge");
+    let pr = team.rounds()[0].part_pull_request().unwrap();
+    assert_eq!(pr.number.get().get(), 1);
+    let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&coordinator)).unwrap()).unwrap();
+    let gated_commit = gate["result"]["head"].as_str().unwrap();
+    assert_eq!(
+        remote_head, gated_commit,
+        "remote PR branch must carry the exact gated commit hash"
+    );
+    let worktree = rig.worktree(&coordinator);
+    assert_eq!(
+        git(&worktree, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "HEAD",
+        "worktree checkout must remain detached on HEAD"
+    );
+}
+
+#[tokio::test]
+async fn publish_with_equal_remote_state_is_up_to_date_without_forcing() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work-pushed"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+
+    let state = rig
+        .item_where("1.1", "in review or approved or done", |phase| {
+            matches!(
+                phase,
+                ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. }
+            )
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+    let (ItemPhase::InReview { pr, .. }
+    | ItemPhase::Approved { pr, .. }
+    | ItemPhase::Done {
+        completion: agent_core::state::Completion::Merged { pr, .. },
+    }) = item.phase()
+    else {
+        panic!("unexpected phase");
+    };
+    let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&task)).unwrap()).unwrap();
+    let gated_commit = gate["result"]["head"].as_str().unwrap();
+    assert_eq!(
+        remote_head, gated_commit,
+        "remote PR branch must match the gated commit on equal remote outcome"
+    );
+}
+
+#[tokio::test]
+async fn publish_with_diverged_remote_branch_refuses_push_and_leaves_remote_unchanged() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "ask,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+
+    // Wait until claude-1 asks questions so task branch exists:
+    rig.status_is(&task, TaskStatus::Questions).await;
+
+    // Push an independent diverged commit directly to origin on the task PR branch:
+    std::fs::write(rig.repo.join("diverged.txt"), "diverged remote work\n").unwrap();
+    git(&rig.repo, &["add", "diverged.txt"]);
+    git(&rig.repo, &["commit", "-q", "-m", "Remote diverged commit"]);
+    let diverged_head = git(&rig.repo, &["rev-parse", "HEAD"]).trim().to_string();
+    let task_branch = crate::daemon::team::task_branch(&"claude-1".parse().unwrap(), &task).unwrap();
+    let origin_str = rig.origin.to_str().unwrap();
+    git(
+        &rig.repo,
+        &["push", "-q", origin_str, &format!("HEAD:refs/heads/{task_branch}")],
+    );
+
+    // Answer questions so claude-1 commits independent work and requests publication:
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: n(1),
+                answers: answers(&[(1, "proceed")]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    // The daemon attempts publication, classifies remote as Diverged, and refuses to push.
+    // Wait until claude-1 finishes work:
+    rig.status_is(&task, TaskStatus::Done).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    rig.stop().await.unwrap();
+
+    // The remote branch on origin must remain unchanged at diverged_head (not overwritten):
+    let current_origin_head = git(&rig.origin, &["rev-parse", task_branch.as_str()])
+        .trim()
+        .to_string();
+    assert_eq!(
+        current_origin_head, diverged_head,
+        "remote PR branch must remain unchanged at diverged head on publication refusal"
     );
 }

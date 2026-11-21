@@ -397,28 +397,13 @@ impl Owner {
     async fn judge_tip(
         &mut self,
         lead: &Lead,
-        pr: &PullRequest,
+        _pr: &PullRequest,
         approved_head: &CommitId,
     ) -> Result<Judgement, PublishError> {
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let base = self.base_branch(&lead.repo)?;
         let record = self.parts.store.load_gate_record(&lead.task).await?;
-        let tip = if let Some(record) = &record
-            && &record.result.head != approved_head
-            && record.counts_as_pass()
-        {
-            record.result.head.clone()
-        } else if let Some(tip) = git.branch_tip(&pr.branch).await?
-            && &tip != approved_head
-        {
-            tip
-        } else {
-            let head = git.rev_parse(&Revision::Head).await?;
-            if &head == approved_head {
-                return Ok(Judgement::Ask);
-            }
-            head
-        };
+        let tip = git.rev_parse(&Revision::Head).await?;
         if &tip == approved_head
             || !git
                 .is_ancestor(&Revision::RemoteBranch(base), &Revision::Commit(tip.clone()))
