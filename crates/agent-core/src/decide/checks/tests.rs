@@ -648,7 +648,7 @@ fn a_test_fix_that_touches_a_file_that_is_not_a_test_is_a_finding_about_the_comm
                 other: path(other),
             },
         };
-        assert!(issues.iter().any(|issue| *issue == tried), "{other}: {issues:?}");
+        assert!(issues.contains(&tried), "{other}: {issues:?}");
         assert_eq!(tried.judge(), Judge::Human, "{other}");
         assert_eq!(tried.subject(), Subject::Commit(id('2')), "{other}");
     }

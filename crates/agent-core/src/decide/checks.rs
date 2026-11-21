@@ -384,9 +384,10 @@ impl Issue {
     #[must_use]
     pub const fn judge(&self) -> Judge {
         match self {
-            Self::TestChanged { .. } | Self::ProtectedChanged { .. } => Judge::Human,
+            Self::TestChanged { .. } | Self::ProtectedChanged { .. } | Self::Tried { .. } | Self::EditedTest { .. } => {
+                Judge::Human
+            }
             Self::RedTestEdited { .. } | Self::NoTests | Self::Marker { .. } => Judge::Team,
-            Self::Tried { .. } | Self::EditedTest { .. } => Judge::Human,
         }
     }
 
