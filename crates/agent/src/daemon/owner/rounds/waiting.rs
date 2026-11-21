@@ -5,7 +5,7 @@ use agent_core::ids::TeamId;
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::prompt::Variables;
-use agent_core::state::{ItemPhase, OpinionStage, PrNumber, Round, RoundLife, Team, Timestamp};
+use agent_core::state::{ItemPhase, Member, OpinionStage, PrNumber, Round, RoundLife, Team, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::github::Outlook;
 use agent_runtime::process::error_chain;
@@ -323,8 +323,21 @@ impl Owner {
     /// What a round waits for when a task that will work for it is queued, or waits for a free agent or a limit of
     /// runs: that task's run advances the round, so the round waits for it and is not unowned. A round opened a moment
     /// ago has no member in it yet, and the only task that can start it is the lead's, queued for it.
-    pub(in crate::daemon::owner) fn queued_run_obligation(_team: &Team, _round: &Round) -> Option<Obligation> {
-        None
+    pub(in crate::daemon::owner) fn queued_run_obligation(team: &Team, round: &Round) -> Option<Obligation> {
+        let runs_next = |member: &&Member| {
+            matches!(
+                member.status(),
+                TaskStatus::Queued | TaskStatus::Waiting | TaskStatus::Running
+            )
+        };
+        let in_the_round = team.members_in(round.id()).into_iter().map(|(_, member)| member);
+        let lead = team.crew().roster().into_iter().next();
+        lead.into_iter()
+            .map(|(_, member)| member)
+            .chain(in_the_round)
+            .filter(runs_next)
+            .any(|member| member.status() == TaskStatus::Queued)
+            .then_some(Obligation::QueuedRun)
     }
 
     /// The pending operation, including gates which do not run a model task.
