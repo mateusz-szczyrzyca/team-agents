@@ -54,7 +54,7 @@ pub enum CommandPreparationError {
         path: PathBuf,
     },
     /// The worktree path cannot be parsed as an absolute path.
-    #[error("invalid worktree path {}: {source}", path.display())]
+    #[error("invalid worktree path {}", path.display())]
     InvalidWorktreePath {
         /// The invalid path.
         path: PathBuf,
@@ -63,7 +63,7 @@ pub enum CommandPreparationError {
         source: agent_core::config::InvalidValue,
     },
     /// An environment variable name is invalid.
-    #[error("invalid environment variable name {name:?}: {source}")]
+    #[error("invalid environment variable name {name:?}")]
     InvalidEnvName {
         /// The invalid variable name.
         name: String,

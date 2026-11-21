@@ -148,10 +148,10 @@ not checked again. Steps to do, in hand or given up are never judged.
 
 Existence checks use asynchronous filesystem operations and follow symlinks only to targets inside the worktree.
 The runtime provides `execute_command_check` for executing command checks in the task's worktree with agent environment
-variables, closed stdin, bounded output logs at `tasks/<task>/checks/<run_id>/<step_id>.log`, and a timeout set by
-`[plan] check_seconds` (default 120; `0` disables commands and keeps them declared; commands matching prefixes in
-`[plan] check_refuse` are refused and declared). In the running daemon, commands remain declared, and durable background
-lifecycle with mismatch bounce handling follows in a dedicated task.
+variables, closed stdin, complete output logs saved to `tasks/<task>/checks/<run_id>/<step_id>.log` (with trailing
+lines lossy-decoded as UTF-8 for diagnostic notices), and a timeout set by `[plan] check_seconds` (default 120; `0` disables
+commands and keeps them declared; commands matching prefixes in `[plan] check_refuse` are refused and declared). In the
+running daemon, commands remain declared, and durable background lifecycle with mismatch bounce handling follows in a dedicated task.
 Each judgement records the task, run, step ID, check, state, reason, output path, and duration in
 [`history.db`](history.md#step_judgements).
 Judgements are acknowledged by the history writer before run settlement continues.
