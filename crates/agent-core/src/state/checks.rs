@@ -302,6 +302,10 @@ impl ChecksRecord {
                 continue;
             };
             for subject in subjects {
+                // A commit never changes: what was allowed about it holds until the item is closed.
+                if matches!(subject, Subject::Commit { .. }) {
+                    continue;
+                }
                 held.allowed.remove(subject);
                 held.human_only.remove(subject);
                 if let Subject::Path(path) = subject {

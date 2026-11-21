@@ -620,14 +620,15 @@ pub struct CommitsLeft {
     /// How many findings about a commit nobody has answered: only the human may allow them, so they are asked at once
     /// and spend no pass of the team.
     pub to_ask: usize,
-    /// How many findings about a commit the human refused in the answer that is being taken: the team is told once.
+    /// How many findings about a commit the human refused in the answer that is being taken: the team cannot undo a
+    /// commit, so a refusal holds nothing back and is only kept and told.
     pub refused_now: usize,
 }
 
 impl Checking {
     /// What the `issues` of the round and its findings about commits come to, as [`Self::conclude`] says for the issues:
     /// a finding about a commit is one that only the human may allow, and no finding the human has answered holds the
-    /// round again, except that the team is told once what they refused.
+    /// round: the team cannot undo a commit, so not even a refusal sends the round back.
     #[must_use]
     pub fn conclude_with_commits(
         &self,
@@ -636,13 +637,13 @@ impl Checking {
         commits: CommitsLeft,
         policy: ChecksPolicy,
     ) -> ChecksStep {
-        if issues.is_empty() && commits.to_ask == 0 && commits.refused_now == 0 {
+        if issues.is_empty() && commits.to_ask == 0 {
             return ChecksStep::StartReviews;
         }
         let back = ChecksStep::BackToTeam {
             pass: NonZeroU32::MIN.saturating_add(self.passes),
         };
-        if commits.refused_now > 0 || issues.iter().any(|issue| refused.contains(&issue.subject())) {
+        if issues.iter().any(|issue| refused.contains(&issue.subject())) {
             return back;
         }
         let team_can_fix = issues.iter().any(|issue| issue.judge() == Judge::Team);

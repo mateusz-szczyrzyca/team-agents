@@ -4,4 +4,4 @@ These commits are in the branch for good and the team cannot undo them: only a r
 
 {{commits}}
 {{before}}
-Write `{{allow}}` to let the round go to its review with these commits as they are: the harness records each commit and path for the item and does not ask about them again, through fix passes, merges of the base, a split into parts and restarts of the daemon. A new commit that changes a frozen test is a new question. Write `{{refuse}}` to tell the team once that you refused them; the refusal is kept as well and is not asked again. Use an explicit verdict.
+Write `{{allow}}` to let the round go to its review with these commits as they are: the harness records each commit and path for the item and does not ask about them again, through fix passes, merges of the base, a split into parts and restarts of the daemon. A new commit that changes a frozen test is a new question. Write `{{refuse}}` to record that you refused them: nothing is sent back to the team, which cannot undo a commit that is in the branch; the refusal is kept as well and is not asked again. Use an explicit verdict.

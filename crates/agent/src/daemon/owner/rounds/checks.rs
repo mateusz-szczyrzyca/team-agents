@@ -168,7 +168,7 @@ impl Owner {
         log_decision(
             "conclude_checks",
             &format!(
-                "pr={}, issues={}, refused={}",
+                "pr={}, issues={}, refused={}, refused_commits={refused_commits}",
                 reviewing.pr,
                 issues.len(),
                 refused.len()
@@ -178,7 +178,7 @@ impl Owner {
         match step {
             ChecksStep::StartReviews => Ok(None),
             ChecksStep::BackToTeam { pass } => {
-                let told = told_to_team(&refused_now, &refused, &issues);
+                let told = told_to_team(&refused, &issues);
                 let back = Back {
                     issues: &issues,
                     told: &told,
@@ -623,19 +623,13 @@ struct Back<'a> {
     policy: ChecksPolicy,
 }
 
-/// What the team is told the human refused: what they refused just now, and what they refused before about a file that
-/// the round still changes.
-fn told_to_team(refused_now: &[Subject], refused: &[Subject], issues: &[Issue]) -> Vec<Subject> {
-    refused_now
+/// What the team is told the human refused: what they refused about a file that the round still changes. A commit is no
+/// part of it: the team cannot undo a commit.
+fn told_to_team(refused: &[Subject], issues: &[Issue]) -> Vec<Subject> {
+    refused
         .iter()
-        .chain(
-            refused
-                .iter()
-                .filter(|subject| issues.iter().any(|issue| issue.subject() == **subject)),
-        )
+        .filter(|subject| issues.iter().any(|issue| issue.subject() == **subject))
         .cloned()
-        .collect::<std::collections::BTreeSet<Subject>>()
-        .into_iter()
         .collect()
 }
 
