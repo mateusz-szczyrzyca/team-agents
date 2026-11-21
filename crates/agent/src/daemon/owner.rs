@@ -1958,12 +1958,35 @@ impl Owner {
         })
     }
 
-    /// The context needed to lay out a notification about `task`.
+    /// The context needed to lay out a notification about `task`, which names the item `task` works on: the one of its
+    /// latest round, when `task` is a member's or a solo agent's. A coordinator's task works on no item of its own.
     pub(super) fn notice_context<'a>(
         &'a self,
         task: &'a TaskId,
         time: Timestamp,
         pr: Option<&'a str>,
+    ) -> Result<NoticeContext<'a>, OwnerError> {
+        self.context_of(task, time, pr, NoticeItem::OfTheTask)
+    }
+
+    /// The context needed to lay out a notification about `task` that is about `item`, or about no item.
+    pub(super) fn notice_context_for<'a>(
+        &'a self,
+        task: &'a TaskId,
+        time: Timestamp,
+        pr: Option<&'a str>,
+        item: Option<agent_core::ids::ItemId>,
+    ) -> Result<NoticeContext<'a>, OwnerError> {
+        self.context_of(task, time, pr, NoticeItem::Named(item))
+    }
+
+    /// The context of a notification about `task`, whose item `item` says.
+    fn context_of<'a>(
+        &'a self,
+        task: &'a TaskId,
+        time: Timestamp,
+        pr: Option<&'a str>,
+        item: NoticeItem,
     ) -> Result<NoticeContext<'a>, OwnerError> {
         let found = self
             .parts
@@ -1993,7 +2016,13 @@ impl Owner {
             task,
             team,
             pr,
-            words: TaskWords::new(found.team.task_list().list(), item_line_of(found.team, found.member)),
+            words: TaskWords::new(
+                found.team.task_list().list(),
+                match item {
+                    NoticeItem::OfTheTask => item_line_of_task(found.team, found.role, found.member),
+                    NoticeItem::Named(named) => named.and_then(|id| named_item_line(found.team, id)),
+                },
+            ),
         })
     }
 
@@ -2305,14 +2334,39 @@ fn owner_request_span() -> tracing::Span {
     tracing::Span::new(&OWNER_REQUEST_METADATA, &fields.value_set(&pairs))
 }
 
-/// The line that names the item `member` works on in a notification: its number and its full title, or the part's; none
-/// when its latest run is for no item (a list without items) or the list does not have it.
-fn item_line_of(team: &agent_core::state::Team, member: &agent_core::state::Member) -> Option<String> {
-    let rounds = member.runs().last()?.rounds();
-    let round = rounds
-        .iter()
-        .rev()
-        .filter_map(|id| team.round(id))
-        .find(|round| round.item().is_some())?;
-    item_line(team.task_list().list(), team.splits(), round.item()?, round.part())
+/// Which item a notification names.
+#[derive(Debug, Clone, Copy)]
+enum NoticeItem {
+    /// The item the task works on, from its latest round.
+    OfTheTask,
+    /// This item, or none: the notification says what it is about.
+    Named(Option<agent_core::ids::ItemId>),
+}
+
+/// The line that names the item `member`, of role `role`, works on in a notification: its number and its full title, or
+/// the part's; none for a coordinator, whose task is no item's, when its latest run is for no item (a list without
+/// items) or when the list does not have it.
+fn item_line_of_task(team: &agent_core::state::Team, role: Role, member: &agent_core::state::Member) -> Option<String> {
+    match role {
+        Role::Coordinator => None,
+        Role::Solo | Role::Member | Role::Worker | Role::Reviewer => {
+            let rounds = member.runs().last()?.rounds();
+            let round = rounds
+                .iter()
+                .rev()
+                .filter_map(|id| team.round(id))
+                .find(|round| round.item().is_some())?;
+            item_line(team.task_list().list(), team.splits(), round.item()?, round.part())
+        }
+    }
+}
+
+/// The line that names `item` in a notification, with the part its latest round is for, if any.
+fn named_item_line(team: &agent_core::state::Team, item: agent_core::ids::ItemId) -> Option<String> {
+    item_line(
+        team.task_list().list(),
+        team.splits(),
+        item,
+        team.round_of(item).and_then(agent_core::state::Round::part),
+    )
 }

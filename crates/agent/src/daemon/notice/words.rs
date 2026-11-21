@@ -1,9 +1,11 @@
 //! The words that name a task in a notification: its description, its item and the first sentences of its brief.
 
+use std::collections::BTreeSet;
+
 use agent_core::ids::ItemId;
 use agent_core::prompt::Variables;
-use agent_core::state::Team;
 use agent_core::state::split::{PartKey, SplitPlan};
+use agent_core::state::{Completion, ItemPhase, ItemProgress, Team};
 use agent_core::task_list::TaskList;
 use agent_core::task_title::brief_excerpt;
 
@@ -59,8 +61,55 @@ pub(crate) fn item_line(list: &TaskList, splits: &[SplitPlan], item: ItemId, par
 /// The item a notification is about, from what the notification says itself: its `item` or `items` (when exactly one
 /// item is named), its `round` or `rounds`, or its pull request `pr`. A notification about several items, or about none,
 /// names no item.
-pub(crate) fn item_of_notice(_team: &Team, _values: &Variables) -> Option<ItemId> {
-    None
+pub(crate) fn item_of_notice(team: &Team, values: &Variables) -> Option<ItemId> {
+    let value = |name: &str| {
+        values
+            .names()
+            .find(|candidate| candidate.as_str() == name)
+            .and_then(|candidate| values.get(candidate))
+    };
+    let items = if let Some(text) = value("item").or_else(|| value("items")) {
+        listed(text, |entry| entry.parse().ok())?
+    } else if let Some(text) = value("round").or_else(|| value("rounds")) {
+        listed(text, |entry| {
+            let id = entry.parse().ok()?;
+            team.round(&id)?.item()
+        })?
+    } else {
+        let number = value("pr")?;
+        team.items()
+            .iter()
+            .filter(|progress| pull_request_number(progress.phase()).is_some_and(|found| found == number))
+            .map(ItemProgress::id)
+            .collect()
+    };
+    let mut items = items.into_iter();
+    match (items.next(), items.next()) {
+        (Some(only), None) => Some(only),
+        _ => None,
+    }
+}
+
+/// The distinct items that the comma-separated `text` names through `item_of`; none when an entry names none.
+fn listed(text: &str, item_of: impl Fn(&str) -> Option<ItemId>) -> Option<BTreeSet<ItemId>> {
+    text.split(',').map(|entry| item_of(entry.trim())).collect()
+}
+
+/// The number, as text, of the pull request of an item in `phase`, if it has one.
+fn pull_request_number(phase: &ItemPhase) -> Option<String> {
+    match phase {
+        ItemPhase::InReview { pr, .. }
+        | ItemPhase::Fixing { pr, .. }
+        | ItemPhase::Approved { pr, .. }
+        | ItemPhase::Done {
+            completion: Completion::Merged { pr, .. },
+        } => Some(pr.number.to_string()),
+        ItemPhase::Pending
+        | ItemPhase::InProgress { .. }
+        | ItemPhase::Done {
+            completion: Completion::Listed,
+        } => None,
+    }
 }
 
 #[cfg(test)]

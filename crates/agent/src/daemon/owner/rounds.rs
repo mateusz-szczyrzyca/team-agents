@@ -45,7 +45,7 @@ use agent_runtime::store::StoreError;
 use agent_runtime::text_file::ReplaceError;
 
 use super::{Owner, OwnerError};
-use crate::daemon::notice::{NoticeContext, NoticeKind, layout_notification};
+use crate::daemon::notice::{NoticeContext, NoticeKind, item_of_notice, layout_notification};
 
 use super::teams::Look;
 use crate::daemon::checks::ChecksTextError;
@@ -663,7 +663,11 @@ impl Owner {
             .ok()
             .and_then(|v| v.names().find(|n| n.as_str() == "url").and_then(|n| v.get(n)))
             .map(str::to_owned);
-        let context = match self.notice_context(&lead.task, now, pr.as_deref()) {
+        let item = values.as_ref().ok().and_then(|values| {
+            let found = self.parts.state.find_task(&lead.task)?;
+            item_of_notice(found.team, values)
+        });
+        let context = match self.notice_context_for(&lead.task, now, pr.as_deref(), item) {
             Ok(c) => c,
             Err(error) => {
                 tracing::error!(
