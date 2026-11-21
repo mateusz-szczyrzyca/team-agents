@@ -16,6 +16,7 @@ use crate::history::{
     RoundSubject, RunChanges, RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord, Step, TeamStart,
 };
 use crate::ids::{AgentName, InvestigatorName, RoundId, RunId, TaskId, TeamId};
+use crate::local_time::Zone;
 use crate::protocol::{Client, ControlAction, Target};
 use crate::state::{AnsweredVia, CommitId, RunEnd, Timestamp};
 
@@ -32,6 +33,8 @@ const SHORT_COMMIT_CHARS: usize = 7;
 struct Page {
     /// The text so far.
     text: String,
+    /// The zone the times of the page are written in; the RFC 3339 form of the files by default.
+    zone: Zone,
 }
 
 impl Page {

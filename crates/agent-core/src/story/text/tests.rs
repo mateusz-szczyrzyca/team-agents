@@ -1,5 +1,6 @@
 //! The opinion part of the story consumed by agent log.
 use super::*;
+use crate::local_time::Zone;
 
 #[test]
 fn opinions_are_told_in_words_with_the_first_line_of_the_evidence() {
@@ -69,4 +70,15 @@ fn failed_opinion_history_distinguishes_replacement_from_exhaustion() {
         assert_eq!(event.identities(), ["inv-first"]);
         assert_eq!(event.key(), Some("pr 1 finding 2 pass 1 by inv-first".to_owned()));
     }
+}
+
+#[test]
+fn the_times_of_a_story_are_written_in_the_zone_of_its_page() {
+    let mut page = Page {
+        zone: Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("a literal offset is valid")),
+        ..Page::default()
+    };
+    let at = "2026-11-11T19:50:00Z".parse().expect("a literal time is valid");
+    entry(&mut page, at, "the run ended");
+    assert_eq!(page.text, "2026-11-11 20:50:00 +01:00  the run ended\n");
 }
