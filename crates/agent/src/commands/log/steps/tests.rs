@@ -6,13 +6,13 @@ use agent_core::cli::ActivityEvent;
 use agent_core::history::{
     AgentIdentity, MaxTextBytes, Record, RoundOpening, RoundSubject, RunStart, RunWhy, Step, TeamStart,
 };
-use agent_core::ids::{AgentName, RoundId, RunId, TaskId, TeamId};
+use agent_core::ids::{RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{CliKind, Role, Tier};
 use agent_core::log::{LogEvent, LogRecord};
 use agent_core::state::{MergeMode, Timestamp};
-use agent_runtime::history::{HistoryDb, Reader, Store};
+use agent_runtime::history::{HistoryDb, LogFilter, Reader, Store};
 
-use super::{agent_steps, run_steps, task_steps};
+use super::{covered_runs, run_steps};
 
 /// The team of the history.
 fn team() -> TeamId {
@@ -123,13 +123,29 @@ fn history(path: &std::path::Path) {
     db.write_logs(&[row(5), row(15)]).expect("the rows are written");
 }
 
+/// The IDs of the runs `filter` covers, oldest first.
+fn covered(path: &std::path::Path, filter: &LogFilter) -> Vec<String> {
+    let reader = Reader::open(path).expect("the history opens");
+    covered_runs(&reader, filter)
+        .expect("the runs are read")
+        .into_iter()
+        .map(|row| row.start.value.agent.name)
+        .collect()
+}
+
 #[test]
-fn task_steps_are_the_steps_of_its_runs_oldest_first() {
+fn a_task_covers_its_runs_and_their_steps_come_oldest_first() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let path = dir.path().join("history.db");
     history(&path);
+    let filter = LogFilter {
+        task: Some(task("7")),
+        ..LogFilter::default()
+    };
+    assert_eq!(covered(&path, &filter), ["inv-claude-sonnet"]);
     let reader = Reader::open(&path).expect("the history opens");
-    let steps = task_steps(&reader, &task("7")).expect("the steps are read");
+    let runs = covered_runs(&reader, &filter).expect("the runs are read");
+    let steps = run_steps(&reader, &runs[0].start.value).expect("the steps are read");
     assert_eq!(
         steps
             .iter()
@@ -137,8 +153,44 @@ fn task_steps_are_the_steps_of_its_runs_oldest_first() {
             .collect::<Vec<_>>(),
         vec![(1, at(1)), (2, at(2))]
     );
-    assert_eq!(steps.len(), 2, "{steps:?}");
-    assert_eq!(steps[0].run.agent.name, "inv-claude-sonnet");
+}
+
+#[test]
+fn a_round_and_a_team_cover_the_runs_of_every_agent_in_them() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    history(&path);
+    let round = LogFilter {
+        round: Some(self::round()),
+        ..LogFilter::default()
+    };
+    let team = LogFilter {
+        team: Some(self::team()),
+        ..LogFilter::default()
+    };
+    assert_eq!(covered(&path, &round), ["inv-claude-sonnet", "codex-1"]);
+    assert_eq!(covered(&path, &team), ["inv-claude-sonnet", "codex-1"]);
+}
+
+#[test]
+fn a_scope_that_names_two_things_covers_the_runs_that_match_both() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    history(&path);
+    let both = LogFilter {
+        task: Some(task("7")),
+        agent: Some("codex-1".parse().expect("a literal name is valid")),
+        ..LogFilter::default()
+    };
+    assert_eq!(covered(&path, &both), Vec::<String>::new());
+}
+
+#[test]
+fn a_scope_with_no_run_task_agent_round_or_team_covers_no_run() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    history(&path);
+    assert_eq!(covered(&path, &LogFilter::default()), Vec::<String>::new());
 }
 
 #[test]
@@ -160,13 +212,13 @@ fn run_steps_are_the_steps_of_that_run() {
 }
 
 #[test]
-fn agent_steps_are_the_steps_of_every_run_of_that_agent() {
+fn an_agent_covers_every_run_of_its_own() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let path = dir.path().join("history.db");
     history(&path);
-    let reader = Reader::open(&path).expect("the history opens");
-    let name: AgentName = "codex-1".parse().expect("a literal name is valid");
-    let steps = agent_steps(&reader, &name).expect("the steps are read");
-    assert_eq!(steps.len(), 1);
-    assert_eq!(steps[0].at, at(12));
+    let filter = LogFilter {
+        agent: Some("codex-1".parse().expect("a literal name is valid")),
+        ..LogFilter::default()
+    };
+    assert_eq!(covered(&path, &filter), ["codex-1"]);
 }
