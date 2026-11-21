@@ -88,6 +88,10 @@ pub fn steps_to_judge<'a>(
             to_judge.push(step);
             continue;
         }
+        if last_state(&step.id()).is_none() {
+            to_judge.push(step);
+            continue;
+        }
         if last_state(&step.id()) == Some(JudgementState::Mismatch) {
             to_judge.push(step);
             continue;
