@@ -604,8 +604,8 @@ fn a_test_fix_that_touches_a_file_that_is_not_a_test_is_a_finding_about_the_comm
     let cases = [
         ("src/lib.rs", vec![modified("tests/a.rs", 1, 1), modified("src/lib.rs", 1, 0)]),
         ("docs/notes.md", vec![added("docs/notes.md", 2), modified("tests/a.rs", 0, 1)]),
-        // a file next to the tests is not one
-        ("tests/notes.rs", vec![modified("tests/notes.rs", 1, 1)]),
+        // a file of the code list is not a test
+        ("bin/tool", vec![added("bin/tool", 3), modified("tests/a.rs", 1, 0)]),
     ];
     for (other, files) in cases {
         let issues = found(&test_fix_touching(files));

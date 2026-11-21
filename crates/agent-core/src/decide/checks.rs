@@ -406,9 +406,29 @@ pub fn assess_near(rules: &Checks, facts: &RoundFacts, unchanged: &[UnchangedLin
     issues
 }
 
-/// The commits of the round that a later commit cannot correct.
-fn commits_the_team_cannot_repair(_rules: &Checks, _facts: &RoundFacts) -> Vec<Issue> {
-    Vec::new()
+/// The commits of the round that a later commit cannot correct: a `TEST-FIX:`, by its subject, that touches a file that
+/// is not a test. Other commits may change any file; only a later commit cannot correct this one, whatever it says.
+fn commits_the_team_cannot_repair(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
+    facts
+        .commits
+        .iter()
+        .filter(|commit| commit.subject.starts_with(TEST_FIX_PREFIX))
+        .filter_map(|commit| {
+            let other = commit
+                .files
+                .iter()
+                .map(|file| &file.path)
+                .filter(|path| !rules.test_paths.matches(path))
+                .min_by(|one, two| one.as_str().cmp(two.as_str()))?;
+            Some(Issue::Tried {
+                commit: commit.id.clone(),
+                fault: CommitFault::FixTouchesOther {
+                    fix: commit.id.clone(),
+                    other: other.clone(),
+                },
+            })
+        })
+        .collect()
 }
 
 /// The protected paths `file` touches: where it was when it moved out of one and where it is when it is in one, each
