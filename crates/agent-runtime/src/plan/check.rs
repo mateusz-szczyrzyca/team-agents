@@ -404,15 +404,7 @@ pub async fn execute_command_check(
 
     // The supervisor appends output, so initialize this attempt's artifact before spawning.
     if let Err(error) = fs::write(&log_path, []).await {
-        return Ok(JudgementResult {
-            state: JudgementState::Mismatch,
-            check_line: Some(command_str.to_owned()),
-            reason: Some(format!("cannot create check output: {error}")),
-            duration_ms: duration_millis(start.elapsed())?,
-            output_path: None,
-            tail: String::new(),
-            gate_refused: false,
-        });
+        return failure_without_output(command_str, format!("cannot create check output: {error}"), start);
     }
 
     let supervisor = Supervisor::new(NonZeroUsize::MIN);
@@ -442,6 +434,19 @@ pub async fn execute_command_check(
         duration_ms,
         output_path: Some(rel_output_path),
         tail,
+        gate_refused: false,
+    })
+}
+
+/// Reports a preparation failure without claiming that an output artifact exists.
+fn failure_without_output(command: &str, reason: String, start: Instant) -> Result<JudgementResult, CheckError> {
+    Ok(JudgementResult {
+        state: JudgementState::Mismatch,
+        check_line: Some(command.to_owned()),
+        reason: Some(reason),
+        duration_ms: duration_millis(start.elapsed())?,
+        output_path: None,
+        tail: String::new(),
         gate_refused: false,
     })
 }
