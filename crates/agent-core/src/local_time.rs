@@ -61,7 +61,8 @@ pub enum TypedTimeError {
     },
 }
 
-/// A time typed on a command line; the stub refuses every text until the reading is written.
+/// A time typed on a command line: its form is checked when it is typed, and it is read in a zone when it is used,
+/// since the zone of a time is known only then.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypedTime {
     /// The text as it was typed.
@@ -71,19 +72,23 @@ pub struct TypedTime {
 impl FromStr for TypedTime {
     type Err = TypedTimeError;
 
-    /// Stub: refuses every text.
+    /// Checks the form of `text`: it is read in UTC, which tells only whether the text is a time and the calendar has it.
+    ///
+    /// # Errors
+    /// [`TypedTimeError`] when `text` is not a time of either form.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Err(TypedTimeError::NotATime { value: text.to_owned() })
+        Zone::Utc.parse_typed(text)?;
+        Ok(Self { text: text.to_owned() })
     }
 }
 
 impl TypedTime {
-    /// Stub: reads nothing.
+    /// The moment the typed time means in `zone`, as [`Zone::parse_typed`] reads it.
     ///
     /// # Errors
-    /// Always, for now.
-    pub fn read_in(&self, _zone: Zone) -> Result<Timestamp, TypedTimeError> {
-        Err(TypedTimeError::NotATime { value: self.text.clone() })
+    /// [`TypedTimeError::NoSuchMoment`] when the zone has no such moment for the time.
+    pub fn read_in(&self, zone: Zone) -> Result<Timestamp, TypedTimeError> {
+        zone.parse_typed(&self.text)
     }
 }
 
