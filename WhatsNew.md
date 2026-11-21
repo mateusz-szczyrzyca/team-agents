@@ -28,7 +28,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
   TASK (task-20261121-132909-y6mz):
   The first sentences of the task's description.
   ```
-- [agent] [agent-core] `agent status` ends the line of each team with its description in quotes, and the summary of a team that the daemon sends carries it as the optional field `short_desc`.
+- [agent] [agent-core] `agent status` ends the line of each team with its description in quotes, `agent status --json` prints the teams as a JSON array with each team's `short_desc`, and the summary of a team that the daemon sends carries it as the optional field `short_desc`.
 
 ### Enhancements
 - [agent] [agent-core] **Action:** the text of the notifications changed (new order of the fields, new lines): a script that reads them must follow. The socket protocol only gained the optional field `short_desc` in version 6, which older negotiated protocols do not carry; replace the CLI together with the daemon.

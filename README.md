@@ -727,7 +727,10 @@ brief, at most 70 characters ([the format](docs/task-list.md)). For a task given
 concerns an item it names it, number and title, on a line of its own after the fields (the title of the part for a
 split part), and it ends with a block `TASK (<task>):` with the first sentences of the task's brief. A task without the
 line has a description derived from its brief: its first sentence cut to 70 characters. `agent status` ends the line of
-each team with its description in quotes. The summary of a team that the daemon sends gains the optional field
+each team with its description in quotes, and `agent status --json` (alone, or with a team or a task) prints the teams as one
+JSON array in which each team has its `short_desc`. A notification about an item names the item the notification itself is
+about (a notice about a pull request or a failed member, for instance, names that item), and the notification that a whole
+team is done names none. `--short-desc` takes one line only. The summary of a team that the daemon sends gains the optional field
 `short_desc` in the current protocol (version 6); older negotiated protocols do not carry it, and a client from before
 this version must be replaced together with the daemon. The text of the notifications changed: a program that reads
 them must follow.
