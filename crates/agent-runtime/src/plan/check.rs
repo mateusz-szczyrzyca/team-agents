@@ -1,24 +1,24 @@
 //! Execution of plan step checks.
 
+use std::collections::BTreeMap;
 use std::io::{self, SeekFrom};
-use std::os::unix::process::ExitStatusExt;
-use std::path::Path;
-use std::process::Stdio;
-use std::time::Instant;
+use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::time::{Duration, Instant};
 
+use agent_core::config::{AbsolutePath, EnvName, Program};
 use agent_core::ids::{ItemId, RunId, TaskId, TeamId};
 use agent_core::plan::judge::{JudgementState, refuse_command};
 use agent_core::plan::{Check, Step};
 use agent_core::repo_path::RepoPath;
 use agent_core::state::Timestamp;
-use rustix::process::Pid;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::history::JudgementRecord;
-use crate::process::{GroupSignal, signal_group};
+use crate::process::{ExitReport, ProcessSpec, RunningProcess, Supervisor};
 
 #[cfg(test)]
 mod tests;
@@ -177,11 +177,7 @@ async fn read_tail(path: &Path) -> Result<String, io::Error> {
     Ok(lines.into_iter().skip(keep).collect::<Vec<_>>().join("\n"))
 }
 
-async fn open_check_logs(
-    checks_dir: &Path,
-    run_id: Option<&RunId>,
-    step_id: ItemId,
-) -> io::Result<(std::path::PathBuf, String, std::fs::File, std::fs::File)> {
+async fn check_log_paths(checks_dir: &Path, run_id: Option<&RunId>, step_id: ItemId) -> io::Result<(PathBuf, String)> {
     let (target_dir, rel_path) = match run_id {
         Some(run) => (
             checks_dir.join(run.as_str()),
@@ -191,82 +187,37 @@ async fn open_check_logs(
     };
     fs::create_dir_all(&target_dir).await?;
     let log_path = target_dir.join(format!("{step_id}.log"));
-    let std_file = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&log_path)
-        .await?
-        .into_std()
-        .await;
-    let err_file = std_file.try_clone()?;
-    Ok((log_path, rel_path, std_file, err_file))
+    Ok((log_path, rel_path))
 }
 
-/// Guard ensuring a process group is terminated when dropped prematurely.
-struct GroupGuard {
-    group: Pid,
-    active: bool,
-}
-
-impl Drop for GroupGuard {
-    fn drop(&mut self) {
-        if self.active
-            && let Err(error) = signal_group(self.group, GroupSignal::Kill)
-        {
-            tracing::warn!(%error, "cannot kill process group on check guard drop");
-        }
-    }
-}
-
-async fn wait_child_outcome(
-    mut child: tokio::process::Child,
-    group: Pid,
-    check_seconds: u64,
-) -> (JudgementState, Option<String>) {
-    let mut guard = GroupGuard { group, active: true };
-    let check_duration = std::time::Duration::from_secs(check_seconds);
-    match timeout(check_duration, child.wait()).await {
-        Ok(Ok(status)) => {
-            guard.active = false;
-            if let Err(error) = signal_group(group, GroupSignal::Kill) {
-                tracing::warn!(%error, "cannot kill process group after check completion");
+async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> (JudgementState, Option<String>) {
+    let check_duration = Duration::from_secs(check_seconds);
+    match timeout(check_duration, process.wait()).await {
+        Ok(Ok(exit)) => {
+            if let Err(error) = process.stop(Duration::ZERO).await {
+                tracing::warn!(%error, "cannot stop process group after check completion");
             }
-            if status.success() {
-                (JudgementState::Confirmed, None)
-            } else if let Some(code) = status.code() {
-                (
+            match exit {
+                ExitReport::Exited { code: 0 } => (JudgementState::Confirmed, None),
+                ExitReport::Exited { code } => (
                     JudgementState::Mismatch,
                     Some(format!("check failed with exit code {code}")),
-                )
-            } else if let Some(signal) = status.signal() {
-                (
+                ),
+                ExitReport::Signaled { signal } => (
                     JudgementState::Mismatch,
                     Some(format!("check terminated by signal {signal}")),
-                )
-            } else {
-                (
-                    JudgementState::Mismatch,
-                    Some("check failed with unknown status".to_owned()),
-                )
+                ),
             }
         }
         Ok(Err(error)) => {
-            guard.active = false;
-            if let Err(err) = signal_group(group, GroupSignal::Kill) {
-                tracing::warn!(%err, "cannot kill process group after check wait error");
+            if let Err(err) = process.stop(Duration::ZERO).await {
+                tracing::warn!(%err, "cannot stop process group after check wait error");
             }
             (JudgementState::Mismatch, Some(format!("check wait failed: {error}")))
         }
         Err(_elapsed) => {
-            guard.active = false;
-            if let Err(error) = signal_group(group, GroupSignal::Kill) {
-                tracing::warn!(%error, "cannot kill process group on check timeout");
-            }
-            match timeout(std::time::Duration::from_secs(5), child.wait()).await {
-                Ok(Ok(_)) => {}
-                Ok(Err(err)) => tracing::warn!(%err, "error reaping timed out check process"),
-                Err(_) => tracing::warn!("reaping timed out check process exceeded grace"),
+            if let Err(error) = process.stop(Duration::from_secs(5)).await {
+                tracing::warn!(%error, "cannot stop process group on check timeout");
             }
             (
                 JudgementState::Mismatch,
@@ -326,38 +277,70 @@ pub async fn execute_command_check(
         });
     }
 
-    let (log_path, rel_output_path, std_file, err_file) =
-        match open_check_logs(&checks_dir, context.run, step.id()).await {
-            Ok(files) => files,
-            Err(error) => {
-                return Ok(JudgementResult {
-                    state: JudgementState::Mismatch,
-                    check_line: Some(command_str.to_owned()),
-                    reason: Some(format!("cannot open check output file: {error}")),
-                    duration_ms: duration_millis(start.elapsed())?,
-                    output_path: None,
-                    tail: String::new(),
-                    gate_refused: false,
-                });
-            }
-        };
+    let (log_path, rel_output_path) = match check_log_paths(&checks_dir, context.run, step.id()).await {
+        Ok(paths) => paths,
+        Err(error) => {
+            return Ok(JudgementResult {
+                state: JudgementState::Mismatch,
+                check_line: Some(command_str.to_owned()),
+                reason: Some(format!("cannot create check log path: {error}")),
+                duration_ms: duration_millis(start.elapsed())?,
+                output_path: None,
+                tail: String::new(),
+                gate_refused: false,
+            });
+        }
+    };
 
-    let mut cmd = Command::new("/bin/sh");
-    cmd.arg("-c")
-        .arg(command_str)
-        .current_dir(context.worktree)
-        .stdin(Stdio::null())
-        .stdout(std_file)
-        .stderr(err_file)
-        .process_group(0)
-        .kill_on_drop(true);
+    let program = match Program::from_str("sh") {
+        Ok(prog) => prog,
+        Err(err) => {
+            return Ok(JudgementResult {
+                state: JudgementState::Mismatch,
+                check_line: Some(command_str.to_owned()),
+                reason: Some(format!("cannot parse shell program: {err}")),
+                duration_ms: duration_millis(start.elapsed())?,
+                output_path: Some(rel_output_path),
+                tail: String::new(),
+                gate_refused: false,
+            });
+        }
+    };
 
+    let working_dir = match AbsolutePath::from_str(context.worktree.to_str().unwrap_or_default()) {
+        Ok(dir) => dir,
+        Err(err) => {
+            return Ok(JudgementResult {
+                state: JudgementState::Mismatch,
+                check_line: Some(command_str.to_owned()),
+                reason: Some(format!("invalid worktree path: {err}")),
+                duration_ms: duration_millis(start.elapsed())?,
+                output_path: Some(rel_output_path),
+                tail: String::new(),
+                gate_refused: false,
+            });
+        }
+    };
+
+    let mut env_map = BTreeMap::new();
     for (key, val) in context.envs {
-        cmd.env(key, val);
+        if let Ok(name) = EnvName::from_str(key) {
+            env_map.insert(name, val.clone());
+        }
     }
 
-    let child = match cmd.spawn() {
-        Ok(child) => child,
+    let spec = ProcessSpec {
+        program,
+        args: vec!["-c".to_owned(), command_str.to_owned()],
+        env: env_map,
+        working_dir,
+        stdout_file: log_path.clone(),
+        stderr_file: log_path.clone(),
+    };
+
+    let supervisor = Supervisor::new(NonZeroUsize::new(1).unwrap());
+    let process = match supervisor.spawn(&spec).await {
+        Ok(proc) => proc,
         Err(error) => {
             return Ok(JudgementResult {
                 state: JudgementState::Mismatch,
@@ -371,26 +354,10 @@ pub async fn execute_command_check(
         }
     };
 
-    let (_id, group_pid) = match crate::process::leader_of(&child) {
-        Ok(ids) => ids,
-        Err(error) => {
-            return Ok(JudgementResult {
-                state: JudgementState::Mismatch,
-                check_line: Some(command_str.to_owned()),
-                reason: Some(format!("cannot identify check process leader: {error}")),
-                duration_ms: duration_millis(start.elapsed())?,
-                output_path: Some(rel_output_path),
-                tail: String::new(),
-                gate_refused: false,
-            });
-        }
-    };
-
-    let (state, reason) = wait_child_outcome(child, group_pid, context.check_seconds).await;
-
+    let (state, reason) = wait_child_outcome(process, context.check_seconds).await;
     let tail = resolve_mismatch_tail(state, &log_path).await;
-
     let duration_ms = duration_millis(start.elapsed())?;
+
     Ok(JudgementResult {
         state,
         check_line: Some(command_str.to_owned()),
