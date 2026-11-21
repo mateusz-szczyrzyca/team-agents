@@ -48,7 +48,12 @@ pub fn next_parts(plan: &SplitPlan, merged: &BTreeSet<PartKey>) -> Result<NextPa
 /// A round closed without a merge carries none, so its part has not merged. The daemon opens the next part from
 /// this set and the status prints the state of a part from it, so the two cannot disagree.
 pub fn merged_parts<'round>(rounds: impl IntoIterator<Item = &'round Round>, item: ItemId) -> BTreeSet<PartKey> {
-    BTreeSet::new()
+    rounds
+        .into_iter()
+        .filter(|round| round.item() == Some(item))
+        .filter(|round| round.part_pull_request().is_some())
+        .filter_map(Round::part)
+        .collect()
 }
 
 /// Lists dependency-ready definitions after the caller has checked the merged keys against the plan.

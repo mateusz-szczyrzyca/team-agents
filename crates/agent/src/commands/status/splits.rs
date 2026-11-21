@@ -4,24 +4,23 @@
 //! the same answer with its round lines limited. The state of a part is a decision on the whole team — the plan, the
 //! rounds of its item, merged rounds included, and the wait for a tier — taken once and printed by every view.
 
-use std::collections::BTreeSet;
-
+use agent_core::decide::split::merged_parts;
 use agent_core::protocol::TeamSummary;
-use agent_core::state::RoundLife;
-use agent_core::state::split::{PartId, PartKey, SplitPlan};
+use agent_core::state::split::{PartId, SplitPlan};
+use agent_core::state::{Round, RoundLife};
 
 use super::View;
 
 /// What a part of a split is doing, as the daemon schedules it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PartState {
-    /// A round of the item bound the part and closed: it merged the part's pull request, or gave it up.
+    /// The part's pull request merged.
     Done,
     /// The round bound to the part is open, and the item does not wait for an agent of a tier.
     InProgress,
-    /// The lead goes on with the part once the parts it depends on have closed; none has to, so it is next.
+    /// The parts it depends on merged, or it depends on none, so the lead goes on with it next.
     Ready,
-    /// The lead goes on with the part once these parts have closed.
+    /// The lead goes on with the part once these parts merged.
     WaitingFor(Vec<PartId>),
     /// The item waits for an agent of the tier it asks for before its next part starts.
     WaitingForTier,
@@ -34,34 +33,22 @@ pub(super) fn states(team: &TeamSummary) -> Vec<(&SplitPlan, Vec<(PartId, PartSt
 
 /// The state of each part of `plan`, from the rounds `team` carries and its wait for a tier.
 ///
-/// A part is over when a round of the item bound it and closed: the round that merged its pull request, or one that
-/// gave it up. A part whose round is open is being worked on, unless the item waits for an agent of a tier. Another
-/// part is next when every part it depends on is over, and otherwise waits for those that are not.
+/// A part is done when its pull request merged, as [`merged_parts`] tells: a round closed without a merge does not
+/// make it done. A part whose round is open is being worked on, unless the item waits for an agent of a tier.
+/// Another part is next when every part it depends on is done, and otherwise waits for those that are not.
 fn states_of(plan: &SplitPlan, team: &TeamSummary) -> Vec<(PartId, PartState)> {
-    let rounds: Vec<_> = team
+    let merged = merged_parts(&team.rounds, plan.parent());
+    let open = team
         .rounds
         .iter()
         .filter(|round| round.item() == Some(plan.parent()))
-        .collect();
-    let merged: BTreeSet<PartKey> = rounds
-        .iter()
-        .filter(|round| round.part_pull_request().is_some())
-        .filter_map(|round| round.part())
-        .collect();
-    let closed: BTreeSet<PartKey> = rounds
-        .iter()
-        .filter(|round| matches!(round.life(), RoundLife::Closed { .. }))
-        .filter_map(|round| round.part())
-        .collect();
-    let open = rounds
-        .iter()
         .find(|round| matches!(round.life(), RoundLife::Open))
-        .and_then(|round| round.part());
+        .and_then(Round::part);
     let tier_wait = team.tier_waits.contains_key(&plan.parent());
     plan.entries()
         .map(|(id, definition)| {
             let key = id.key();
-            let state = if merged.contains(&key) || closed.contains(&key) && has_pull_request(&rounds, key) {
+            let state = if merged.contains(&key) {
                 PartState::Done
             } else if open == Some(key) {
                 if tier_wait {
@@ -70,11 +57,9 @@ fn states_of(plan: &SplitPlan, team: &TeamSummary) -> Vec<(PartId, PartState)> {
                     PartState::InProgress
                 }
             } else {
-                let over =
-                    |key: PartKey| merged.contains(&key) || (closed.contains(&key) && has_pull_request(&rounds, key));
                 let waiting: Vec<PartId> = plan
                     .entries()
-                    .filter(|(other, _)| definition.depends_on.contains(&other.key()) && !over(other.key()))
+                    .filter(|(other, _)| definition.depends_on.contains(&other.key()) && !merged.contains(&other.key()))
                     .map(|(other, _)| other)
                     .collect();
                 if !waiting.is_empty() {
@@ -125,11 +110,4 @@ pub(super) fn lines_of(team: &TeamSummary, view: View) -> Vec<String> {
         }
     }
     lines
-}
-
-/// Whether a round of the item bound the part `key` and carried a pull request: the part merged.
-fn has_pull_request(rounds: &[&agent_core::state::Round], key: PartKey) -> bool {
-    rounds
-        .iter()
-        .any(|round| round.part() == Some(key) && round.part_pull_request().is_some())
 }
