@@ -614,10 +614,12 @@ Legacy unanswered blockers require a committed fix too.
 An idle open round's line in `agent status` and `agent status <round>` names what it waits for: a harness gate,
 a review, a free independent investigator (for a review, a second opinion or the replacement of a reviewer that cannot
 work, when none is free), a second opinion that an investigator is giving, the human's answer, the lead's correction,
-or the queued run of its task to start. A round waits for that run while the task that will work for it is queued, or
-waits for a free agent or for a limit of runs: the run starts the round, so it is no defect, and the round opened right
-after a merge of a part writes no error. `nothing: this is a defect` means the harness has lost its next action; it logs
-one `daemon_task_failed` error for that round with `operation=round_wait`.
+or the queued run of its task to start. A round waits for that run while a task of it is queued — the lead's, the
+one of the member the item or part is given to, or one that worked in the round — whether the daemon has not started it
+yet or holds it for a free agent or a limit of runs: the run goes on with the round, so it is no defect, and the round
+opened right after a merge of a part writes no error. A task that waits for a message, an assignment or a merge has no
+run to come. `nothing: this is a defect` means the harness has lost its next action, as when every task of the round
+waits; it logs one `daemon_task_failed` error for that round with `operation=round_wait`.
 
 When another pull request of the same team already contains an item's deliverable (code, documents, images or
 anything else), the coordinator can report it instead of creating an empty pull request. It writes the standalone
