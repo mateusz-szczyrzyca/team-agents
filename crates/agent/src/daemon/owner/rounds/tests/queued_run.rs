@@ -137,6 +137,33 @@ async fn a_round_whose_run_is_queued_writes_no_error() {
     );
 }
 
+// A round whose lead ended its run and waits, and whose other tasks wait too, has nothing left to do: it is still a
+// defect, and the owner reports it, so the error keeps its meaning.
+#[tokio::test]
+async fn a_round_that_waits_for_nothing_is_still_an_error() {
+    let (mut state, team) = lead_round(
+        RunEnd::Reported {
+            outcome: RunOutcome::Done,
+        },
+        TaskStatus::Waiting,
+    );
+    {
+        let mut sample = state.team_mut(&team).unwrap();
+        for number in [2, 3, 4] {
+            let (_, mut member) = sample.find_mut(&task(number)).unwrap();
+            member.transition(TaskStatus::Running).unwrap();
+            member.transition(TaskStatus::Waiting).unwrap();
+        }
+    }
+
+    let logged = events_of_a_look(&state, &team).await;
+
+    assert!(
+        logged.contains(&LogEvent::DaemonTaskFailed.as_str().to_owned()),
+        "{logged:?}"
+    );
+}
+
 /// The autopilot of `owner`, with the real texts.
 async fn pulls_of(owner: &crate::daemon::owner::Owner) -> Option<crate::daemon::owner::Pulls> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");

@@ -640,3 +640,105 @@ async fn a_round_without_a_part_waits_for_no_member_between_its_runs() {
 
     assert_eq!(found, Some(Waiting::Defect));
 }
+
+/// Puts the task `number` of `team` to waiting for a message, as a task that ended a run is: queued, then running, then
+/// waiting.
+fn make_wait(state: &mut State, team: &TeamId, number: u32) {
+    let mut found = state.team_mut(team).unwrap();
+    let (_, mut member) = found.find_mut(&task(number)).unwrap();
+    if member.status() == TaskStatus::Queued {
+        member.transition(TaskStatus::Running).unwrap();
+    }
+    member.transition(TaskStatus::Waiting).unwrap();
+}
+
+/// The round of item 1.1 given to `claude-1` (task 2), whose lead (task 1) ended its run and is done and in which
+/// every other task waits for a message, with a split of two parts bound to the round when `split` is set.
+fn round_of_waiting_tasks(split: bool) -> (State, TeamId, RoundId) {
+    let (mut state, team, round) = idle_round(in_progress(), LEAD_DONE);
+    for number in [2, 3, 4] {
+        make_wait(&mut state, &team, number);
+    }
+    if split {
+        let plan = serde_json::json!({"parent": "1.1", "parts": [
+            {"title": "A part", "delivers": "A guide", "checks": "Read it", "depends_on": []},
+            {"title": "Another part", "delivers": "Another guide", "checks": "Read it", "depends_on": ["a"]},
+        ]});
+        state
+            .team_mut(&team)
+            .unwrap()
+            .activate_split(serde_json::from_value(plan).unwrap())
+            .unwrap();
+    }
+    (state, team, round)
+}
+
+// A task that waits for a message, an assignment or a merge has no run to come: a round whose tasks all wait, the lead
+// among them, waits for nothing, and that is the defect.
+#[tokio::test]
+async fn a_round_whose_tasks_all_wait_for_a_message_waits_for_nothing() {
+    let (mut state, team, round) = round_for(1, TaskStatus::Waiting);
+    for number in [2, 3, 4] {
+        make_wait(&mut state, &team, number);
+    }
+    let daemon = home_with_token(&state);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let found = waiting_after(&mut owner, &round, &team, |_, _, _| {}).await;
+
+    assert_eq!(found, Some(Waiting::Defect));
+}
+
+// The member the item is given to, queued behind a busy agent or the limit of runs, has not run in the round yet: its
+// run is the one the round waits for, whether the item is split or not.
+#[tokio::test]
+async fn a_round_whose_assignee_is_queued_for_its_first_run_waits_for_it() {
+    for split in [false, true] {
+        let (mut state, team, round) = round_of_waiting_tasks(split);
+        {
+            let mut found = state.team_mut(&team).unwrap();
+            let (_, mut member) = found.find_mut(&task(2)).unwrap();
+            member.transition(TaskStatus::Queued).unwrap();
+        }
+        let daemon = home_with_token(&state);
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+
+        let found = waiting_after(&mut owner, &round, &team, |_, _, _| {}).await;
+
+        assert_eq!(found, Some(Waiting::For(Obligation::QueuedRun)), "split: {split}");
+    }
+}
+
+// A member that worked in the round and is queued again for its next run waits for that run: the round is idle, not
+// at work, and says so.
+#[tokio::test]
+async fn a_round_whose_member_is_queued_again_after_a_run_in_it_waits_for_the_run() {
+    let (mut state, team, round) = idle_round(in_progress(), LEAD_DONE);
+    for number in [2, 4] {
+        make_wait(&mut state, &team, number);
+    }
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        found
+            .begin_run(
+                &task(3),
+                NewRun {
+                    id: run(3),
+                    at: at(40),
+                    session: None,
+                    rounds: vec![round.clone()],
+                },
+            )
+            .unwrap();
+        let (_, mut member) = found.find_mut(&task(3)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.end_run(at(50), LEAD_DONE).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    let daemon = home_with_token(&state);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let found = waiting_after(&mut owner, &round, &team, |_, _, _| {}).await;
+
+    assert_eq!(found, Some(Waiting::For(Obligation::QueuedRun)));
+}
