@@ -156,6 +156,10 @@ pub struct TeamSummary {
     pub id: TeamId,
     /// The repository.
     pub repo: RepoName,
+    /// What the team's task is, in words: the `Short desc:` of its task list or the one derived from its brief; absent
+    /// from a daemon before it told it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_desc: Option<String>,
     /// When the team was started.
     pub created_at: Timestamp,
     /// What happens to an approved pull request.
@@ -470,6 +474,17 @@ impl RoundDetail {
     }
 }
 
+impl TeamSummary {
+    /// The summary of `team` with the description of its task, which the daemon tells: the one its task list gives, or
+    /// the one derived from its brief. [`TeamSummary::from`] leaves it out.
+    #[must_use]
+    pub fn described(team: &Team) -> Self {
+        let mut summary = Self::from(team);
+        summary.short_desc = Some(team.task_list().list().display_short_desc());
+        summary
+    }
+}
+
 impl From<&Team> for TeamSummary {
     fn from(team: &Team) -> Self {
         let mut items = ItemCounts::default();
@@ -481,6 +496,7 @@ impl From<&Team> for TeamSummary {
         Self {
             id: team.id().clone(),
             repo: team.repo().clone(),
+            short_desc: None,
             created_at: team.created_at(),
             merge: team.merge(),
             items,
@@ -974,3 +990,9 @@ mod executor_tests;
 
 #[cfg(test)]
 mod executor_negotiation_tests;
+
+#[cfg(test)]
+mod short_desc_tests;
+
+#[cfg(test)]
+mod described_tests;

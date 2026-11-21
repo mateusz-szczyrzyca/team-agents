@@ -28,6 +28,7 @@ async fn rendered(notice: &Notice) -> (String, String) {
         task: &task_id,
         team: None,
         pr: None,
+        words: crate::daemon::notice::sample::words(),
     };
     let notification = notice.render(&texts().await, &context).unwrap();
     (notification.title().to_owned(), notification.body().to_owned())
@@ -143,6 +144,7 @@ fn layout_as_a_table_every_field_present() {
         task: &task_id,
         team: Some(&team_id),
         pr: Some("https://github.com/org/team-agents/pull/42"),
+        words: crate::daemon::notice::sample::words_about(&task_id),
     };
 
     let rendered = "Pull request 42 of team-agents is approved\nBoth reviewers approved pull request #42.";
@@ -151,15 +153,19 @@ fn layout_as_a_table_every_field_present() {
     assert_eq!(notification.title(), "✅✅ team-agents");
     let expected_body = "\
 Repo: team-agents
-Agent: codex-1 (codex, o3-mini)
 Time: 2026-11-11 21:15
-Task: task-20261111-191500-1111
+Task: Fix the typo in the README.
+Agent: codex-1 (codex, o3-mini)
+Task ID: task-20261111-191500-1111
 Team: team-20261111-153001-t5m8
 Status: ✅✅ approved: ready to merge
 Note: Pull request 42 of team-agents is approved
 PR: https://github.com/org/team-agents/pull/42
 
-Both reviewers approved pull request #42.";
+Both reviewers approved pull request #42.
+
+TASK (task-20261111-191500-1111):
+Fix the typo in the README. It has one.";
 
     assert_eq!(notification.body(), expected_body);
 }
@@ -180,6 +186,7 @@ fn layout_optional_fields_absent() {
         task: &task_id,
         team: None,
         pr: None,
+        words: crate::daemon::notice::sample::words_about(&task_id),
     };
 
     let rendered = "codex-1 ended without a status (task-20261111-191500-1111)\nThe run ended without a status line.";
@@ -188,13 +195,17 @@ fn layout_optional_fields_absent() {
     assert_eq!(notification.title(), "❌ team-agents");
     let expected_body = "\
 Repo: team-agents
-Agent: codex-1 (codex)
 Time: 2026-11-11 19:15
-Task: task-20261111-191500-1111
+Task: Fix the typo in the README.
+Agent: codex-1 (codex)
+Task ID: task-20261111-191500-1111
 Status: ❌ failed
 Note: codex-1 ended without a status (task-20261111-191500-1111)
 
-The run ended without a status line.";
+The run ended without a status line.
+
+TASK (task-20261111-191500-1111):
+Fix the typo in the README. It has one.";
 
     assert_eq!(notification.body(), expected_body);
 }
@@ -215,6 +226,7 @@ fn layout_empty_body() {
         task: &task_id,
         team: None,
         pr: None,
+        words: crate::daemon::notice::sample::words_about(&task_id),
     };
 
     let rendered = "Single line notice title with no body";
@@ -223,11 +235,15 @@ fn layout_empty_body() {
     assert_eq!(notification.title(), "❌ team-agents");
     let expected_body = "\
 Repo: team-agents
-Agent: codex-1 (codex)
 Time: 2026-11-11 19:15
-Task: task-20261111-191500-1111
+Task: Fix the typo in the README.
+Agent: codex-1 (codex)
+Task ID: task-20261111-191500-1111
 Status: ❌ failed
-Note: Single line notice title with no body";
+Note: Single line notice title with no body
+
+TASK (task-20261111-191500-1111):
+Fix the typo in the README. It has one.";
 
     assert_eq!(notification.body(), expected_body);
 }
@@ -276,6 +292,7 @@ async fn actual_notice_templates_render_expected_notes_and_statuses() {
         task: &task_id,
         team: None,
         pr: None,
+        words: crate::daemon::notice::sample::words(),
     };
     let texts = texts().await;
 
@@ -360,6 +377,7 @@ async fn actual_task_state_notices_render_expected_notes_and_statuses() {
         task: &task_id,
         team: None,
         pr: None,
+        words: crate::daemon::notice::sample::words(),
     };
     let texts = texts().await;
 
@@ -432,6 +450,7 @@ async fn actual_run_error_notices_render_expected_notes_and_statuses() {
         task: &task_id,
         team: None,
         pr: None,
+        words: crate::daemon::notice::sample::words(),
     };
     let texts = texts().await;
 
@@ -503,6 +522,7 @@ async fn check_autopilot_notices(
         task: &task_id,
         team: Some(&team_id),
         pr: Some("https://github.example.com/octo/example/pull/1"),
+        words: crate::daemon::notice::sample::words(),
     };
     let texts = AutopilotPrompts::load(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
@@ -652,6 +672,7 @@ async fn actual_checks_not_asked_notice_renders_expected_note_and_status() {
         task: &task_id,
         team: Some(&team_id),
         pr: None,
+        words: crate::daemon::notice::sample::words(),
     };
     let texts = ChecksPrompts::load(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
@@ -735,6 +756,7 @@ fn longest_allowed_repository_name_stays_within_notification_limit() {
         task: &task_id,
         team: None,
         pr: None,
+        words: crate::daemon::notice::sample::words(),
     };
 
     let notification = layout_notification(NoticeKind::Approved, &context, "Title\nBody").unwrap();

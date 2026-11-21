@@ -38,6 +38,7 @@ async fn assert_autopilot_notices(cases: &[(AutopilotNotice, NoticeStatus, Varia
         task: &task_id,
         team: Some(&team_id),
         pr: Some("https://github.example.com/octo/example/pull/1"),
+        words: crate::daemon::notice::sample::words(),
     };
     let texts = texts().await;
 

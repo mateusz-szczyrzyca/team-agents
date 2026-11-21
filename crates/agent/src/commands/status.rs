@@ -41,6 +41,9 @@ pub(crate) enum StatusError {
     /// The output cannot be written.
     #[error("cannot write the status")]
     Output(#[source] io::Error),
+    /// The teams cannot be written as JSON.
+    #[error("cannot write the status as JSON")]
+    Json(#[source] serde_json::Error),
 }
 
 /// Where `agent status` reads when a task that runs was last active, and the offset it tells the time in.
@@ -232,6 +235,32 @@ pub(crate) fn running(teams: Vec<TeamSummary>) -> Vec<TeamSummary> {
         .collect()
 }
 
+/// Asks the daemon for the status of `target` (every team without one) and writes the teams to `out` as one JSON array,
+/// each team with its description.
+///
+/// # Errors
+/// [`StatusError`].
+pub(crate) async fn status_json(
+    connection: &mut Connection,
+    target: Option<Target>,
+    out: &mut impl Write,
+) -> Result<(), StatusError> {
+    let (teams, _) = teams(connection, target).await?;
+    out.write_all(render_json(&teams)?.as_bytes())
+        .map_err(StatusError::Output)?;
+    out.flush().map_err(StatusError::Output)
+}
+
+/// The teams as one JSON array and a newline.
+///
+/// # Errors
+/// [`StatusError::Json`] when the teams cannot be written as JSON.
+pub(crate) fn render_json(teams: &[TeamSummary]) -> Result<String, StatusError> {
+    let mut text = serde_json::to_string(teams).map_err(StatusError::Json)?;
+    text.push('\n');
+    Ok(text)
+}
+
 /// The teams the daemon answers a status request for `target` with, and what it says of the history.
 async fn teams(
     connection: &mut Connection,
@@ -377,8 +406,12 @@ fn render_in(
     let mut lines: Vec<String> = Vec::new();
     for team in teams {
         let items = &team.items;
+        let task = team
+            .short_desc
+            .as_ref()
+            .map_or_else(String::new, |desc| format!("  \"{desc}\""));
         lines.push(format!(
-            "{}  {}  {}  {} pending, {} in progress, {} in review, {} approved, {} done",
+            "{}  {}  {}  {} pending, {} in progress, {} in review, {} approved, {} done{task}",
             team.id,
             team.repo,
             team.merge.as_str(),
@@ -603,6 +636,10 @@ mod split_tests;
 #[cfg(test)]
 #[path = "status/tests/negotiation.rs"]
 mod negotiation_tests;
+
+#[cfg(test)]
+#[path = "status/tests/short_desc.rs"]
+mod short_desc_tests;
 
 #[cfg(test)]
 #[path = "status/tests/part_states.rs"]

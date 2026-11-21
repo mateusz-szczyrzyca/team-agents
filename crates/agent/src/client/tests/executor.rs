@@ -9,6 +9,7 @@ fn summary() -> TeamSummary {
     TeamSummary {
         id: "team-20261111-193000-a1b2".parse().unwrap(),
         repo: "sample".parse().unwrap(),
+        short_desc: None,
         created_at: "2026-11-11T19:30:00Z".parse().unwrap(),
         merge: agent_core::state::MergeMode::Autopilot,
         items: ItemCounts::default(),

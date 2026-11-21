@@ -41,6 +41,9 @@ mod log_command_tests;
 mod run_command_tests;
 mod split_context;
 #[cfg(test)]
+#[path = "tests/status_json.rs"]
+mod status_json_tests;
+#[cfg(test)]
 #[path = "tests/steer_commands.rs"]
 mod steer_command_tests;
 #[cfg(test)]
@@ -58,7 +61,9 @@ use crate::commands::pause::pause;
 use crate::commands::resume::resume;
 use crate::commands::run::{RunError, RunInput, prepare, start};
 use crate::commands::say::{say, text as say_text};
-use crate::commands::status::{Activity, StatusError, status_active, status_investigators, status_running};
+use crate::commands::status::{
+    Activity, StatusError, status_active, status_investigators, status_json, status_running,
+};
 use crate::commands::stop::stop;
 use crate::commands::unpause::unpause;
 use crate::environment::{EditorError, Environment, EnvironmentError};
@@ -214,6 +219,10 @@ struct RunArgs {
     /// The agent that coordinates the team; it wins over the `Coordinator:` line of the task list.
     #[arg(long, value_name = "NAME")]
     coordinator: Option<AgentName>,
+    /// A line of at most 70 characters that says what the task is, for a task given as text (a file has its own
+    /// `Short desc:` line).
+    #[arg(long, value_name = "TEXT")]
+    short_desc: Option<String>,
     /// Stop before the merge of an approved pull request and hand it to you.
     #[arg(long)]
     no_merge: bool,
@@ -359,6 +368,9 @@ struct StatusArgs {
     /// What every configured investigator is doing: its last two activities in the teams that are not closed.
     #[arg(long, conflicts_with = "target")]
     investigators: bool,
+    /// Print the teams as JSON, with their descriptions, instead of the lines.
+    #[arg(long, conflicts_with_all = ["running", "investigators"])]
+    json: bool,
 }
 
 /// Why a text is neither a team nor a task.
@@ -678,7 +690,9 @@ async fn execute(environment: &Environment, command: Command, out: &mut impl Wri
             let home = environment.home()?;
             let mut connection = Connection::connect(&home.socket_file()).await?;
             let activity = Activity::new(home.clone(), environment.local_offset());
-            if args.investigators {
+            if args.json {
+                status_json(&mut connection, args.target, out).await?;
+            } else if args.investigators {
                 status_investigators(&mut connection, &home, environment.local_offset(), out).await?;
             } else if args.running {
                 status_running(&mut connection, &activity, out).await?;
@@ -806,7 +820,7 @@ async fn execute_run(environment: &Environment, args: RunArgs, out: &mut impl Wr
         directory,
         RunInput {
             allow_unpushed_base: args.allow_unpushed_base,
-            words: args.words,
+            words: commands::run::words_with_short_desc(args.words, args.file.as_deref(), args.short_desc.as_deref())?,
             file: args.file,
             coordinator: args.coordinator,
             merge,

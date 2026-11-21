@@ -5,6 +5,34 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.51.0 — 21.11.2026 — PR #168
+
+### New features
+- [agent] [agent-core] A task file can say what it is in one line: `Short desc: Fix the typo in the README`, among the `Allow:` lines before the brief (at most 70 characters, once; a longer, an empty or a second one refuses the file with its line number and what to do). `agent run --short-desc "Fix the typo" claude-1 "..."` gives it to a task given as text. A task without it has a description derived from its brief: its first sentence cut to 70 characters with a `…`.
+- [agent] [agent-core] Every notification about a task or a team says in words what the task is: `Task:` with the description and `Task ID:` on a line of its own, the item's number and title after the fields when the notification concerns an item (the part's title for a split part), and at the end a block `TASK (<task>):` with the first sentences of the task's brief. For example:
+
+  ```text
+  Repo: team-agents
+  Time: 2026-11-21 16:30
+  Task: Notifications name the task in words; `Short desc:` in task files
+  Agent: inv-claude-sonnet (claude, sonnet)
+  Task ID: task-20261121-132909-y6mz
+  Team: team-20261121-132909-4qem
+  Status: ❓ waiting for answers
+  Note: inv-claude-sonnet has questions (task-20261121-132909-y6mz)
+
+  1.1 The daemon runs the command check of a step that became done, one at a time for a task, without blocking
+
+  Questions number 4 of task task-20261121-132909-y6mz wait for your answers in /home/…/questions-4.md.
+
+  TASK (task-20261121-132909-y6mz):
+  The first sentences of the task's description.
+  ```
+- [agent] [agent-core] `agent status` ends the line of each team with its description in quotes, `agent status --json` prints the teams as a JSON array with each team's `short_desc`, and the summary of a team that the daemon sends carries it as the optional field `short_desc`.
+
+### Enhancements
+- [agent] [agent-core] **Action:** the text of the notifications changed (new order of the fields, new lines): a script that reads them must follow. The socket protocol only gained the optional field `short_desc` in version 6, which older negotiated protocols do not carry; replace the CLI together with the daemon.
+
 ## 0.50.0 — 21.11.2026 — PR #167
 
 ### New features
