@@ -125,7 +125,8 @@ async fn a_round_whose_run_is_queued_writes_no_error() {
     );
 }
 
-// A round with nothing left to do is still a defect: the owner reports it, so the error keeps its meaning.
+// A round of an item the crew can no longer work on, with nothing left to do, is still a defect: the owner reports
+// it, so the error keeps its meaning.
 #[tokio::test]
 async fn a_round_that_waits_for_nothing_is_still_an_error() {
     let (state, team) = lead_round(

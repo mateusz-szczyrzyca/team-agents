@@ -55,6 +55,7 @@ fn an_item_delivered_by_a_team_pr_waits_for_its_merge_without_a_defect() {
     let waiting = round_wait(Activity::Idle, Some(Obligation::Merge)).unwrap();
     assert_eq!(waiting.text(), "the delivering pull request to merge");
 }
+
 // A round whose run is queued waits for that run: it is not a round that waits for nothing.
 #[test]
 fn a_round_whose_run_is_queued_waits_for_the_run_and_is_not_a_defect() {
