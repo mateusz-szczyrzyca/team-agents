@@ -1,8 +1,8 @@
 //! One text in the order things happened: rows and steps together, each once, and the newest lines of both.
 //!
-//! The rows are the daemon's, in the order they were written; a step is lined up against the row recorded before it, so
-//! that the text keeps the order of the day. A run is told once, before the first of its steps that the text shows,
-//! with its task, its team and its round.
+//! The rows are the daemon's, in the order they were written; rows and steps are merged by the time they were recorded,
+//! a row first when the times are equal. A run is told once, before the first of its steps that the text shows, with its
+//! task, its team and its round; that line takes no place of the newest lines asked for.
 
 #[cfg(test)]
 mod tests;
@@ -20,8 +20,6 @@ use super::steps::TimedStep;
 /// What one thing of the text is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
-    /// A run, told by its first line.
-    Run(usize),
     /// A row of the scope.
     Row(usize),
     /// A step of the scope.
@@ -76,29 +74,28 @@ impl<'a> Timeline<'a> {
         }
     }
 
-    /// The newest `limit` things of the text, oldest first: each once, and a run told before the first of its steps.
+    /// The newest `limit` rows and steps of the text, oldest first, each once; a run is told before the first of its
+    /// steps that is shown, and its line takes no place of the `limit`.
     pub(crate) fn newest(&self, limit: u32) -> String {
-        let shown = self.shown(limit);
-        let mut text = String::new();
-        for step in self.first_steps(&shown).values() {
-            text.push_str(&self.run_line(*step));
-        }
-        for kind in &shown {
-            if !matches!(kind, Kind::Run(_)) {
-                text.push_str(&self.line(*kind));
-            }
-        }
-        text
+        self.render(&self.shown(limit), &mut BTreeSet::new())
     }
 
     /// The runs [`Self::newest`] with the same `limit` tells: a later page does not tell them again.
     pub(crate) fn newest_runs(&self, limit: u32) -> BTreeSet<String> {
-        self.first_steps(&self.shown(limit)).into_keys().collect()
+        let mut told = BTreeSet::new();
+        self.render(&self.shown(limit), &mut told);
+        told
     }
 
-    /// The newest `limit` things of the text, oldest first.
+    /// Every row and step of the text, oldest first, as one page of a follow: a run in `told` is not told again, and
+    /// the runs this page tells are added to it.
+    pub(crate) fn page(&self, told: &mut BTreeSet<String>) -> String {
+        self.render(&self.merged(), told)
+    }
+
+    /// The newest `limit` rows and steps, oldest first.
     fn shown(&self, limit: u32) -> Vec<Kind> {
-        let order = self.order(BTreeSet::new());
+        let order = self.merged();
         let limit = usize::try_from(limit).unwrap_or(usize::MAX);
         order
             .get(order.len().saturating_sub(limit)..)
@@ -106,79 +103,42 @@ impl<'a> Timeline<'a> {
             .to_vec()
     }
 
-    /// For each run that has a step among `shown`, the first of them.
-    fn first_steps(&self, shown: &[Kind]) -> BTreeMap<String, usize> {
-        let mut runs: BTreeMap<String, usize> = BTreeMap::new();
-        for kind in shown {
+    /// The lines of `kinds`, each step of a run that is not in `told` yet preceded by the line of its run.
+    fn render(&self, kinds: &[Kind], told: &mut BTreeSet<String>) -> String {
+        let mut text = String::new();
+        for kind in kinds {
             if let Kind::Step(step) = kind
                 && let Some(timed) = self.steps.get(*step)
+                && told.insert(timed.run.run.to_string())
             {
-                runs.entry(timed.run.run.to_string()).or_insert(*step);
+                text.push_str(&run_start_line(&timed.run, timed.run.at));
+                text.push('\n');
             }
-        }
-        runs
-    }
-
-    /// Every thing of the text, oldest first, as one page of a follow: a run in `told` is not told again, and the runs
-    /// this page tells are added to it.
-    pub(crate) fn page(&self, told: &mut BTreeSet<String>) -> String {
-        let text = self
-            .order(told.clone())
-            .into_iter()
-            .map(|kind| self.line(kind))
-            .collect();
-        for timed in &self.steps {
-            told.insert(timed.run.run.to_string());
+            text.push_str(&self.line(*kind));
         }
         text
     }
 
-    /// Every thing of the text, in the order it happened: the steps before every row first, then each row with the
-    /// steps recorded before the next row's time.
-    fn order(&self, mut told: BTreeSet<String>) -> Vec<Kind> {
-        let mut order: Vec<Kind> = Vec::new();
-        let push = |order: &mut Vec<Kind>, told: &mut BTreeSet<String>, step: usize| {
-            if let Some(timed) = self.steps.get(step)
-                && told.insert(timed.run.run.to_string())
-            {
-                order.push(Kind::Run(step));
-            }
-            order.push(Kind::Step(step));
-        };
-        // The steps recorded before every row come first; the others stand after the row recorded before them.
-        let mut opening: Vec<usize> = Vec::new();
-        let mut rest: Vec<usize> = Vec::new();
-        for step in 0..self.steps.len() {
-            match self.steps.get(step) {
-                Some(timed) if self.rows.first().is_none_or(|first| timed.at < first.at()) => opening.push(step),
-                Some(_) => rest.push(step),
-                None => {}
-            }
-        }
-        for step in opening {
-            push(&mut order, &mut told, step);
-        }
-        let mut steps = rest.into_iter().peekable();
-        for row in 0..self.rows.len() {
-            let Some(known) = self.rows.get(row) else {
-                continue;
+    /// The rows and the steps in the order of their times; a row stands before a step of the same time. The rows keep
+    /// the order they were written in, and so do the steps of a run.
+    fn merged(&self) -> Vec<Kind> {
+        let mut order: Vec<Kind> = Vec::with_capacity(self.rows.len().saturating_add(self.steps.len()));
+        let (mut row, mut step) = (0, 0);
+        while row < self.rows.len() || step < self.steps.len() {
+            let row_at = self.rows.get(row).map(|row| row.at());
+            let step_at = self.steps.get(step).map(|timed| timed.at);
+            let row_first = match (row_at, step_at) {
+                (Some(row), Some(step)) => row <= step,
+                (Some(_), None) => true,
+                (None, _) => false,
             };
-            let limit = self
-                .rows
-                .get(row.saturating_add(1))
-                .map_or_else(|| known.at(), |next| next.at());
-            while let Some(step) = steps.peek().copied() {
-                let before = self.steps.get(step).is_some_and(|timed| timed.at < limit);
-                if !before {
-                    break;
-                }
-                steps.next();
-                push(&mut order, &mut told, step);
+            if row_first {
+                order.push(Kind::Row(row));
+                row += 1;
+            } else {
+                order.push(Kind::Step(step));
+                step += 1;
             }
-            order.push(Kind::Row(row));
-        }
-        for step in steps {
-            push(&mut order, &mut told, step);
         }
         order
     }
@@ -201,18 +161,9 @@ impl<'a> Timeline<'a> {
         line
     }
 
-    /// A run's first line: when, the agent, the task, the team and the round it works for.
-    fn run_line(&self, step: usize) -> String {
-        match self.steps.get(step) {
-            Some(timed) => format!("{}\n", run_start_line(&timed.run, timed.run.at)),
-            None => String::new(),
-        }
-    }
-
     /// The line of one thing of the text.
     fn line(&self, kind: Kind) -> String {
         match kind {
-            Kind::Run(step) => self.run_line(step),
             Kind::Row(row) => match self.rows.get(row) {
                 Some(row) => self.row_line(row),
                 None => String::new(),

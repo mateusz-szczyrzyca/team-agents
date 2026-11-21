@@ -10,6 +10,7 @@ mod tests;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use agent_core::cli::ActivityEvent;
 use agent_core::history::RunStart;
 use agent_core::ids::{AgentName, RoundId, RunId};
 use agent_core::log::{LogEntry, LogEvent};
@@ -112,7 +113,8 @@ impl Feed {
 
     /// The runs the follow covers, noted as known; none when it prints no steps.
     fn covered(&mut self, reader: &Reader) -> Result<Vec<RunRow>, LogError> {
-        if self.steps == StepView::LeftOut {
+        // A level and an event name only the rows of the daemon: no step has either.
+        if self.steps == StepView::LeftOut || self.filter.level.is_some() || self.filter.event.is_some() {
             return Ok(Vec::new());
         }
         let covered = covered_runs(reader, &self.filter)?;
@@ -150,8 +152,11 @@ impl Feed {
             for step in run_steps(reader, start)? {
                 let number = step.step.number.get();
                 if number > after {
+                    // A step the filter refuses is passed all the same: it is not read again.
                     self.step_cursors.insert(start.run.clone(), number);
-                    timed.push(step);
+                    if self.wanted(&step) {
+                        timed.push(step);
+                    }
                 }
             }
             // The end was read before the steps, so a run that had ended has no step left that was not read.
@@ -161,6 +166,18 @@ impl Feed {
         }
         timed.sort_by_key(|timed| (timed.at, timed.step.run.clone(), timed.step.number));
         Ok(timed)
+    }
+
+    /// Whether the filter of the follow lets `step` through: its time must be inside `--since` and `--until`, and it must
+    /// contain the phrase of `--grep` (any case), as the rows must.
+    fn wanted(&self, step: &TimedStep) -> bool {
+        self.filter.since.is_none_or(|since| step.at >= since)
+            && self.filter.until.is_none_or(|until| step.at <= until)
+            && self.filter.grep.as_deref().is_none_or(|phrase| {
+                searchable(&step.step.event)
+                    .to_lowercase()
+                    .contains(&phrase.to_lowercase())
+            })
     }
 
     /// The text of `rows` and of `steps`, with the start of the run each row refers to.
@@ -190,5 +207,19 @@ impl Feed {
             .teams
             .extend(teams.into_iter().map(|(team, runs)| Team::new(team, runs)));
         Ok(timeline)
+    }
+}
+
+/// The text of a step that `--grep` looks in: what the step says, whole.
+fn searchable(event: &ActivityEvent) -> String {
+    match event {
+        ActivityEvent::Text(text)
+        | ActivityEvent::Command(text)
+        | ActivityEvent::Error(text)
+        | ActivityEvent::Info(text) => text.clone(),
+        ActivityEvent::FileEdit { path } => path.clone(),
+        ActivityEvent::BusCall { tool, arguments } => format!("{tool} {arguments}"),
+        ActivityEvent::ToolCall { name, summary } => format!("{name} {summary}"),
+        ActivityEvent::Control { .. } => String::new(),
     }
 }
