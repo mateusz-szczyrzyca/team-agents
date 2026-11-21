@@ -939,8 +939,31 @@ impl Git {
     /// [`GitError::Failed`] when there is no `origin` or the credentials fail; [`GitError::UnknownRevision`] when
     /// there is no such branch; [`GitError::Run`], for example when the command ran over its time.
     pub async fn push(&self, branch: &BranchName) -> Result<(), GitError> {
+        let operation = GitOperation::Push;
         let tip = self.rev_parse(&Revision::Branch(branch.clone())).await?;
-        self.push_commit(branch, &tip).await
+        let reference = format!("refs/heads/{branch}:refs/heads/{branch}");
+        // The lease names the commit `origin` must still have: git writes over that one and over no other.
+        let lease = self
+            .rewritten_since_pushed(branch, &tip)
+            .await?
+            .map(|pushed| format!("--force-with-lease=refs/heads/{branch}:{pushed}"));
+        let mut args = vec![arg("push"), arg("--set-upstream")];
+        if let Some(lease) = &lease {
+            args.push(arg(lease));
+        }
+        args.extend([arg(REMOTE), arg(&reference)]);
+        let captured = self.run(operation, Reach::Network, &args).await?;
+        if captured.exit != (ExitReport::Exited { code: 0 }) {
+            let error = failed(operation, &captured);
+            return Err(match error {
+                GitError::Failed { stderr, .. } if stderr.contains(REJECTED) => GitError::PushRefused {
+                    branch: branch.clone(),
+                    stderr,
+                },
+                other => other,
+            });
+        }
+        self.keep(&Revision::Published(branch.clone()), &tip).await
     }
 
     /// Pushes `commit` directly to `branch` on `origin`.
@@ -956,7 +979,7 @@ impl Git {
             .rewritten_since_pushed(branch, commit)
             .await?
             .map(|pushed| format!("--force-with-lease=refs/heads/{branch}:{pushed}"));
-        let mut args = vec![arg("push"), arg("--set-upstream")];
+        let mut args = vec![arg("push")];
         if let Some(lease) = &lease {
             args.push(arg(lease));
         }
