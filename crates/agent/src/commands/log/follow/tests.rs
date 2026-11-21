@@ -395,3 +395,197 @@ fn a_value_the_history_masks_is_masked_in_the_step_a_follow_prints() {
     );
     assert!(!text.contains("private"), "{text}");
 }
+
+/// The lines of `text`.
+fn lines_of(text: &str) -> Vec<&str> {
+    text.lines().collect()
+}
+
+/// A history of run 1 of task 1 (started at 01 s) with a step at 12 s and rows at 05 s and 15 s.
+fn two_rows_around_a_step(path: &Path) -> HistoryDb {
+    let mut db = database(path);
+    db.write(&[
+        Record::Run(Box::new(start(1, "claude-1", 1, 1))),
+        step(1, 1, 12, "cargo test"),
+    ])
+    .expect("the run is written");
+    db.write_logs(&[
+        row(LogEvent::TaskStatusChanged, 1, 1, 5),
+        row(LogEvent::TaskStatusChanged, 1, 1, 15),
+    ])
+    .expect("the rows are written");
+    db
+}
+
+#[test]
+fn a_step_stands_between_the_rows_recorded_before_and_after_it() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let _db = two_rows_around_a_step(&path);
+
+    let (_feed, text) = open(&path, of_task(1), 10);
+
+    let lines = lines_of(&text);
+    assert_eq!(lines.len(), 4, "{text}");
+    assert!(
+        lines[0].starts_with("2026-11-21T12:50:05Z info task_status_changed "),
+        "{text}"
+    );
+    assert!(
+        lines[1].contains(" run run-20261121-132909-0001 started by claude-1"),
+        "{text}"
+    );
+    assert_eq!(lines[2], "2026-11-21T12:50:12Z command: cargo test");
+    assert!(
+        lines[3].starts_with("2026-11-21T12:50:15Z info task_status_changed "),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_page_puts_a_step_between_the_rows_around_it_too() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let mut db = database(&path);
+    db.write(&[Record::Run(Box::new(start(1, "claude-1", 1, 1)))])
+        .expect("the run is written");
+    let (mut feed, _opening) = open(&path, of_task(1), 10);
+    db.write(&[step(1, 1, 12, "cargo test")]).expect("the step is written");
+    db.write_logs(&[
+        row(LogEvent::TaskStatusChanged, 1, 1, 5),
+        row(LogEvent::TaskStatusChanged, 1, 1, 15),
+    ])
+    .expect("the rows are written");
+
+    let page = poll(&mut feed, &path);
+
+    let lines = lines_of(&page);
+    assert_eq!(lines.len(), 4, "{page}");
+    assert!(lines[0].starts_with("2026-11-21T12:50:05Z "), "{page}");
+    assert_eq!(lines[2], "2026-11-21T12:50:12Z command: cargo test");
+    assert!(lines[3].starts_with("2026-11-21T12:50:15Z "), "{page}");
+}
+
+#[test]
+fn the_line_of_a_run_does_not_take_a_place_of_the_newest_lines() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let mut db = database(&path);
+    db.write(&[
+        Record::Run(Box::new(start(1, "claude-1", 1, 1))),
+        step(1, 1, 8, "cargo test"),
+    ])
+    .expect("the run is written");
+    db.write_logs(&[row(LogEvent::TaskStatusChanged, 1, 1, 5)])
+        .expect("the row is written");
+
+    let (_feed, text) = open(&path, of_task(1), 2);
+
+    assert!(
+        text.contains("2026-11-21T12:50:05Z info task_status_changed "),
+        "{text}"
+    );
+    assert!(text.contains("2026-11-21T12:50:08Z command: cargo test"), "{text}");
+}
+
+#[test]
+fn each_run_is_told_just_before_its_own_first_step() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let mut db = database(&path);
+    db.write(&[
+        Record::Run(Box::new(start(1, "claude-1", 1, 1))),
+        step(1, 1, 2, "first"),
+        Record::Run(Box::new(start(2, "claude-1", 1, 3))),
+        step(2, 1, 4, "second"),
+    ])
+    .expect("the runs are written");
+
+    let (_feed, text) = open(&path, of_task(1), 10);
+
+    let lines = lines_of(&text);
+    assert_eq!(lines.len(), 4, "{text}");
+    assert!(lines[0].contains(" run run-20261121-132909-0001 "), "{text}");
+    assert!(lines[1].ends_with("command: first"), "{text}");
+    assert!(lines[2].contains(" run run-20261121-132909-0002 "), "{text}");
+    assert!(lines[3].ends_with("command: second"), "{text}");
+}
+
+/// A filter of task 1 that also asks for `change`.
+fn filtered(change: impl FnOnce(&mut LogFilter)) -> LogFilter {
+    let mut filter = of_task(1);
+    change(&mut filter);
+    filter
+}
+
+#[test]
+fn a_step_outside_the_times_of_the_filter_is_not_printed() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let _db = two_rows_around_a_step(&path);
+
+    let (_feed, after) = open(&path, filtered(|filter| filter.since = Some(at(20))), 10);
+    let (_feed, before) = open(&path, filtered(|filter| filter.until = Some(at(10))), 10);
+    let (_feed, inside) = open(&path, filtered(|filter| filter.since = Some(at(10))), 10);
+
+    assert!(!after.contains("command"), "{after}");
+    assert!(!before.contains("command"), "{before}");
+    assert!(inside.contains("2026-11-21T12:50:12Z command: cargo test"), "{inside}");
+}
+
+#[test]
+fn a_step_that_does_not_contain_the_searched_phrase_is_not_printed() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let _db = two_rows_around_a_step(&path);
+
+    let (_feed, missing) = open(&path, filtered(|filter| filter.grep = Some("absent".to_owned())), 10);
+    let (_feed, found) = open(&path, filtered(|filter| filter.grep = Some("CARGO".to_owned())), 10);
+
+    assert!(!missing.contains("command"), "{missing}");
+    assert!(found.contains("2026-11-21T12:50:12Z command: cargo test"), "{found}");
+}
+
+#[test]
+fn a_page_leaves_out_the_steps_a_filter_refuses_and_still_goes_past_them() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let mut db = database(&path);
+    db.write(&[Record::Run(Box::new(start(1, "claude-1", 1, 1)))])
+        .expect("the run is written");
+    let (mut feed, _opening) = open(&path, filtered(|filter| filter.grep = Some("test".to_owned())), 10);
+
+    db.write(&[step(1, 1, 3, "cargo build")]).expect("the step is written");
+    let refused = poll(&mut feed, &path);
+    db.write(&[step(1, 2, 4, "cargo test")]).expect("the step is written");
+    let accepted = poll(&mut feed, &path);
+
+    assert_eq!(refused, "");
+    assert!(
+        accepted.ends_with("2026-11-21T12:50:04Z command: cargo test\n"),
+        "{accepted}"
+    );
+    assert!(!accepted.contains("build"), "{accepted}");
+}
+
+#[test]
+fn a_filter_by_level_or_event_has_no_steps_to_show() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let _db = two_rows_around_a_step(&path);
+
+    let (_feed, by_event) = open(
+        &path,
+        filtered(|filter| filter.event = Some(LogEvent::TaskStatusChanged)),
+        10,
+    );
+    let (_feed, by_level) = open(
+        &path,
+        filtered(|filter| filter.level = Some(agent_core::log::LogLevel::Info)),
+        10,
+    );
+
+    assert!(!by_event.contains("command"), "{by_event}");
+    assert!(!by_level.contains("command"), "{by_level}");
+    assert_eq!(by_event.lines().count(), 2, "{by_event}");
+}

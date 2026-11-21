@@ -4,6 +4,9 @@
 //! that the text keeps the order of the day. A run is told once, before the first of its steps that the text shows,
 //! with its task, its team and its round.
 
+#[cfg(test)]
+mod tests;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use agent_core::history::RunStart;
