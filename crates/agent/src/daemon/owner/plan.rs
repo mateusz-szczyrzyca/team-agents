@@ -337,7 +337,7 @@ impl Owner {
 
 impl Owner {
     /// What the end `end` of a run of `task` does with its plan: what the worktree has is kept in the history, and a
-    /// run that reported `DONE` against its plan is sent back or the human asked, by [`decide_plan`].
+    /// run that reported `DONE` against its plan is sent back or the human asked, by [`decide_plan_with_mismatch`].
     /// `settled` is what the run's end comes to otherwise; the result is what it comes to now.
     ///
     /// # Errors
