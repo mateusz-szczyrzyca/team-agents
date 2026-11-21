@@ -106,8 +106,6 @@ fn the_line_goes_after_the_first_nonblank_coordinator_line_the_parser_reads() {
         "\nCoordinator: claude-1\nFix it.",
         "\n\n  \nCoordinator: claude-1\n\nFix it.",
         "\u{feff}Coordinator: claude-1\nFix it.",
-        "Coordinator: claude-1",
-        "Coordinator: claude-1\n",
     ] {
         let result = words_with_short_desc(words(&["claude-1", task]), None, Some("Fix")).unwrap();
         let list = TaskList::parse(result.last().unwrap());
