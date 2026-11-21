@@ -691,3 +691,57 @@ async fn plan_steps_are_judged_when_run_asks_questions() {
         Some(agent_core::plan::judge::JudgementState::Confirmed)
     );
 }
+
+#[tokio::test]
+async fn judgement_write_failure_keeps_the_settlement_and_cached_steps() {
+    use agent_runtime::history::{History, RecordKind, Setup, Store, TracingReporter, WriteError};
+    struct Failing;
+    impl Store for Failing {
+        fn write(&mut self, _: &[agent_core::history::Record]) -> Result<(), WriteError> {
+            Ok(())
+        }
+        fn write_judgements(&mut self, _: &[agent_runtime::history::JudgementRecord]) -> Result<(), WriteError> {
+            Err(WriteError::Rule {
+                record: RecordKind::Judgement,
+                rule: "injected judgement failure",
+            })
+        }
+    }
+    let daemon = with_bounces(&solo_state(), 1);
+    finished_plan(&daemon);
+    let started = History::start(
+        Failing,
+        Setup {
+            reporter: std::sync::Arc::new(TracingReporter),
+            capacity: agent_runtime::history::DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let mut owner = owner.with_history(started.history.clone());
+    let located = owner.locate(&task(1)).unwrap();
+    let end = agent_core::state::RunEnd::Reported {
+        outcome: agent_core::status::RunOutcome::Done,
+    };
+    let result = owner
+        .plan_at_end(
+            &task(1),
+            &located,
+            &end,
+            crate::daemon::settle::Settled::Status(TaskStatus::Done),
+        )
+        .await;
+    assert!(
+        matches!(
+            result,
+            Ok((crate::daemon::settle::Settled::Status(TaskStatus::Done), _))
+        ),
+        "{result:?}"
+    );
+    assert_eq!(
+        owner.task_plans.get(&task(1)).unwrap()[0].state,
+        Some(agent_core::plan::judge::JudgementState::Declared)
+    );
+    assert_eq!(started.history.health().lost, 1);
+    started.writer.close().unwrap();
+}
