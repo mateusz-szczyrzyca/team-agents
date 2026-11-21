@@ -132,3 +132,20 @@ fn a_task_whose_first_nonblank_line_is_not_a_coordinator_line_gets_the_line_firs
         assert_eq!(result.last().unwrap(), &format!("Short desc: Fix\n{task}"), "{task:?}");
     }
 }
+
+#[test]
+fn a_task_that_starts_with_a_byte_order_mark_keeps_the_brief_the_parser_reads() {
+    for task in [
+        "\u{feff}Fix it.",
+        "\u{feff}\nFix it.",
+        "\u{feff}Fix it.\n\n1. Feature\n[ ] 1.1 Item\n    Do it.\n",
+    ] {
+        let result = words_with_short_desc(words(&["claude-1", task]), None, Some("Fix")).unwrap();
+
+        let list = TaskList::parse(result.last().unwrap()).unwrap();
+
+        assert_eq!(list.short_desc(), Some("Fix"), "{task:?}");
+        assert!(list.brief().starts_with("Fix it."), "{task:?}: {:?}", list.brief());
+        assert!(!list.brief().contains('\u{feff}'), "{task:?}");
+    }
+}
