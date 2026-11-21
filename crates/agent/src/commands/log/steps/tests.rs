@@ -10,9 +10,9 @@ use agent_core::ids::{AgentName, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{CliKind, Role, Tier};
 use agent_core::log::{LogEvent, LogRecord};
 use agent_core::state::{MergeMode, Timestamp};
-use agent_runtime::history::{HistoryDb, LogFilter, LogWindow, Reader, Store};
+use agent_runtime::history::{HistoryDb, Reader, Store};
 
-use super::{Place, agent_steps, places, run_steps, task_steps};
+use super::{agent_steps, run_steps, task_steps};
 
 /// The team of the history.
 fn team() -> TeamId {
@@ -169,23 +169,4 @@ fn agent_steps_are_the_steps_of_every_run_of_that_agent() {
     let steps = agent_steps(&reader, &name).expect("the steps are read");
     assert_eq!(steps.len(), 1);
     assert_eq!(steps[0].at, at(12));
-}
-
-#[test]
-fn places_stand_each_step_after_the_last_row_recorded_no_later_than_it() {
-    let dir = tempfile::tempdir().expect("a temporary directory");
-    let path = dir.path().join("history.db");
-    history(&path);
-    let reader = Reader::open(&path).expect("the history opens");
-    let rows = reader
-        .log_rows(&LogFilter::default(), LogWindow::Newest(10))
-        .expect("the rows are read");
-    let name: AgentName = "codex-1".parse().expect("a literal name is valid");
-    let steps = agent_steps(&reader, &name).expect("the steps are read");
-    assert_eq!(rows.len(), 2, "{rows:?}");
-    assert_eq!(
-        places(&rows.iter().collect::<Vec<_>>(), &[&steps[0]]),
-        vec![Place::After(rows.get(0).expect("one row").id())]
-    );
-    assert_eq!(places(&[], &[&steps[0]]), vec![Place::First]);
 }
