@@ -311,3 +311,71 @@ async fn a_daemon_that_starts_on_a_state_from_before_the_line_derives_the_descri
 
     assert_eq!(summary.short_desc.as_deref(), Some("Short desc: Original brief"));
 }
+
+#[tokio::test]
+async fn a_daemon_that_goes_on_with_a_state_from_before_the_line_tells_the_human_with_the_derived_description() {
+    use agent_core::protocol::{AnswerInput, AnswerList, AnswerRequest, Client, Command, Reply};
+    use agent_core::questions::Verdict;
+
+    use super::history_stories_tests::{gate_when_committed, patient};
+
+    let mut rig = patient(
+        &[
+            normal("claude-1", "ask,gated"),
+            investigator("inv-r1", "verify:VERDICT: APPROVE\\nSUMMARY: fine"),
+            investigator("inv-r2", "late-verify:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    // The state as the version before wrote it: a brief that starts with a line that looks like the new header.
+    let path = rig.home.state_file();
+    let mut state: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let old = state["teams"][0]["task_list"].as_str().unwrap().to_owned();
+    state["teams"][0]["task_list"] = serde_json::json!(format!("Short desc: Original brief\n\n{old}"));
+    std::fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+
+    rig.start().await;
+    let answers = AnswerList::try_from(vec![AnswerInput {
+        question: std::num::NonZeroU32::MIN,
+        verdict: Verdict::from_text("a").unwrap().unwrap(),
+    }])
+    .unwrap();
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: std::num::NonZeroU32::MIN,
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+    gate_when_committed(&rig, &tasks[0], 2).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    let notification = rig.notification_with("is merged").await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        notification.contains("\nTask: Short desc: Original brief\n"),
+        "{notification}"
+    );
+    assert!(notification.contains("\n\n1.1 The first item\n\n"), "{notification}");
+    assert!(
+        notification.ends_with(&format!(
+            "\n\nTASK ({}):\nShort desc: Original brief\n\nBuild the thing.",
+            tasks[0]
+        )),
+        "{notification}"
+    );
+}
