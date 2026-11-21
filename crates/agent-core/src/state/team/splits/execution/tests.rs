@@ -200,7 +200,7 @@ fn part_assignment_survives_review_and_reload_and_tracks_a_reassigned_executor()
     use crate::state::{NewRun, Round};
     let mut found = working();
     found.activate_split(plan(&[&[], &["a"]])).unwrap();
-    assert_eq!(found.rounds()[0].assigned_to(), Some(&agent("codex-1")));
+    assert_eq!(found.part_assignments().get(&round_id(1)), Some(&agent("codex-1")));
     found
         .item_mut("1.2".parse().unwrap())
         .unwrap()
@@ -226,9 +226,9 @@ fn part_assignment_survives_review_and_reload_and_tracks_a_reassigned_executor()
         })
         .unwrap();
     let found = round_trip(&found);
-    assert_eq!(found.rounds()[0].assigned_to(), Some(&agent("inv-opus")));
+    assert_eq!(found.part_assignments().get(&round_id(1)), Some(&agent("inv-opus")));
     let legacy: Round = serde_json::from_str(include_str!("before-assignment.json")).unwrap();
-    assert_eq!(legacy.assigned_to(), None);
+    assert_eq!(serde_json::to_value(&legacy).unwrap().get("assigned_to"), None);
     assert_eq!(
         serde_json::to_value(legacy).unwrap(),
         serde_json::from_str::<serde_json::Value>(include_str!("before-assignment.json")).unwrap()

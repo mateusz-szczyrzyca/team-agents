@@ -57,10 +57,11 @@ fn status_split_provenance_keeps_historical_executors_and_explicit_legacy_unknow
         wire["rounds"] = serde_json::json!([
             {"id":"round-20261111-153001-q1w2","item":"1.1","opened_at":crate::fixtures::at(1),
              "state":{"status":"closed","at":crate::fixtures::at(2),"how":"merged"},
-             "part":{"status":"merged","key":"a","pr":crate::fixtures::pr(7)},"assigned_to":"glm-1"},
+             "part":{"status":"merged","key":"a","pr":crate::fixtures::pr(7)}},
             {"id":"round-20261111-153002-q1w2","item":"1.1","opened_at":crate::fixtures::at(2),
              "state":{"status":"open"},"part":{"status":"working","key":"b"}}
         ]);
+        wire["part_assignments"] = serde_json::json!({"round-20261111-153001-q1w2":"glm-1"});
         let team: TeamSummary = serde_json::from_value(wire).unwrap();
         for line in render(&[team]).lines().filter(|line| line.starts_with("      Split ")) {
             actual.push_str(line);
