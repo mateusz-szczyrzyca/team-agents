@@ -6,6 +6,7 @@ use std::path::Path;
 use agent_core::ids::{AgentName, RoundId, RunId, TaskId, TeamId};
 use agent_core::log::{LogEvent, LogLevel, LogView};
 use agent_core::state::Timestamp;
+use agent_core::story::StepView;
 use agent_runtime::history::{LogFilter, LogWindow, Reader};
 use clap::Args;
 
@@ -118,7 +119,7 @@ impl RowArgs {
             None
         };
         let agents = followed_agents(&reader, &filter)?;
-        let steps = if scoped {
+        let steps = if scoped && !matches!(format, Format::Text(options) if options.steps == StepView::LeftOut) {
             steps_of(&reader, &filter)?
         } else {
             Vec::new()
@@ -146,12 +147,7 @@ impl RowArgs {
                 }
                 Format::Text(_) => {
                     let rows: Vec<&agent_core::log::LogEntry> = rows.iter().collect();
-                    let steps = steps
-                        .iter()
-                        .filter(|step| near(&rows, step.at, step.run.task.as_str()))
-                        .cloned()
-                        .collect();
-                    let mut timeline = Timeline::new(rows, steps, agents.clone());
+                    let mut timeline = Timeline::new(rows, steps.clone(), agents.clone());
                     timeline.teams.extend(teams.iter().cloned());
                     let text = timeline.newest(self.limit.unwrap_or(DEFAULT_LINES));
                     out.write_all(text.as_bytes()).map_err(LogError::Output)?;
@@ -184,16 +180,6 @@ fn print_row(row: &agent_core::log::LogEntry, format: Format, out: &mut impl Wri
         .to_string(),
     };
     writeln!(out, "{text}").map_err(LogError::Output)
-}
-
-/// Whether `step` is one of the rows' task or comes between the first and the last of them in the day.
-fn near(rows: &[&agent_core::log::LogEntry], at: Timestamp, task: &str) -> bool {
-    let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
-        return false;
-    };
-    rows.iter()
-        .any(|row| row.task().is_some_and(|row| row.as_str() == task))
-        || (first.at() <= at && at <= last.at())
 }
 
 /// The agents whose runs the scope covers: the one of `--agent`, those of the runs of `--task` and `--run`, and those
