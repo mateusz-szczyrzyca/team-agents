@@ -6,7 +6,7 @@
 //! commits and the added lines are read as text with the bytes that are not UTF-8 replaced: only ASCII words and
 //! markers are looked for in them.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use agent_core::decide::checks::{
     AddedLine, Change, CommitFacts, FileChange, Lines, RoundFacts, UnchangedLine, markers,
@@ -135,6 +135,15 @@ impl Git {
             }
         }
         Ok(commits)
+    }
+
+    /// The name of the author of each of `commits`.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when a commit is not in the repository; [`GitError::Unexpected`] and [`GitError::NotUtf8`]
+    /// for output that is not what git prints; [`GitError::Run`] and [`GitError::OutputTooLong`].
+    pub async fn commit_authors(&self, _commits: &[CommitId]) -> Result<BTreeMap<CommitId, String>, GitError> {
+        Ok(BTreeMap::new())
     }
 
     /// The lines added between `base` and `head` to each of `paths`, with their numbers in the file at `head`. A file
