@@ -334,7 +334,7 @@ impl BriefingFacts {
 }
 
 /// Why the session before went bad, as the state records it; the briefing's text says what each word means.
-const fn reason_word(reason: Trouble) -> &'static str {
+pub(super) const fn reason_word(reason: Trouble) -> &'static str {
     match reason {
         Trouble::NoStatus => "no_status",
         Trouble::Hang => "hang",

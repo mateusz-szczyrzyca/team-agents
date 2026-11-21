@@ -13,6 +13,7 @@ mod disk;
 mod fixture;
 mod gate;
 mod history;
+mod last_step;
 mod plan;
 mod round_state;
 mod rounds;
@@ -1311,6 +1312,13 @@ impl Owner {
             settled,
             progress,
         } = ended;
+        // The troubles of the ladder: a task whose last step went bad with one may be asked about instead of failing.
+        let trouble = match settled {
+            Settled::NoStatus { .. } => Some(Trouble::NoStatus),
+            Settled::Hung => Some(Trouble::Hang),
+            Settled::TurnLimit => Some(Trouble::TurnLimit),
+            Settled::Status(_) | Settled::Failed(_) | Settled::Questions | Settled::Paused(_) => None,
+        };
         let next = match settled {
             Settled::Status(status) => {
                 self.hangs.remove(task);
@@ -1347,6 +1355,12 @@ impl Owner {
                 self.turn_limit(task)?
             }
         };
+        if next.0 == TaskStatus::Failed
+            && let Some(trouble) = trouble
+            && let Some(asked) = self.ask_after_last_step(task, located, trouble, now, events).await?
+        {
+            return Ok(asked);
+        }
         Ok(next)
     }
 

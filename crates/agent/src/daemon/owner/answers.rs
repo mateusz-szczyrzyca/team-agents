@@ -391,7 +391,8 @@ impl Owner {
             via,
         });
         self.apply_plan_answer(task, open.number, file)?;
-        self.move_to(task, &open.located.team, TaskStatus::Queued, &mut events)?;
+        let next = self.after_answer(task, &open.located, open.number, file)?;
+        self.move_to(task, &open.located.team, next, &mut events)?;
         self.unwatch_task(task);
         self.commit(task, &open.located, now, events, None).await?;
         // The file keeps the answers: what the human answered, whole, is what it says now.
