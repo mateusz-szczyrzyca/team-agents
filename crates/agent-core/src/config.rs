@@ -458,6 +458,10 @@ pub struct Plan {
     roles: Vec<Role>,
     /// How many times a task's runs go back for its plan before the human is asked; `0` never sends a run back.
     bounces: u32,
+    /// Timeout in seconds for command checks; `0` disables command check execution.
+    check_seconds: u64,
+    /// Prefixes of commands refused as step checks (e.g. `agent gate`, `make gate`).
+    check_refuse: Vec<String>,
 }
 
 impl Plan {
@@ -477,24 +481,33 @@ impl Plan {
     /// Timeout in seconds for command checks; `0` disables command check execution.
     #[must_use]
     pub const fn check_seconds(&self) -> u64 {
-        0
+        self.check_seconds
     }
 
     /// Prefixes of commands refused as step checks (e.g. `agent gate`, `make gate`).
     #[must_use]
     pub fn check_refuse(&self) -> &[String] {
-        &[]
+        &self.check_refuse
     }
 }
 
 /// How many times a task's runs go back for its plan before the human is asked, by default.
 const DEFAULT_PLAN_BOUNCES: u32 = 3;
 
+/// Default timeout in seconds for command checks.
+const DEFAULT_PLAN_CHECK_SECONDS: u64 = 60;
+
+fn default_plan_check_refuse() -> Vec<String> {
+    vec!["agent gate".to_owned(), "make gate".to_owned()]
+}
+
 impl Default for Plan {
     fn default() -> Self {
         Self {
             roles: vec![Role::Solo, Role::Member, Role::Coordinator],
             bounces: DEFAULT_PLAN_BOUNCES,
+            check_seconds: DEFAULT_PLAN_CHECK_SECONDS,
+            check_refuse: default_plan_check_refuse(),
         }
     }
 }
