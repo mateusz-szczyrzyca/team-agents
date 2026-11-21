@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.51.0 — 21.11.2026 — PR #168
+## 0.51.0 — 21.11.2026 — PR #169
 
 ### Bug fixes
 - [agent] [agent-core] [agent-runtime] Publication now pushes the passing gated commit directly to the pull request branch without switching or forcing checked-out worktree branches, correctly selects the existing PR branch across publication kinds, and refuses diverged remote heads.
