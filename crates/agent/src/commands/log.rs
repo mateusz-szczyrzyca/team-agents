@@ -14,7 +14,8 @@ use std::io::Write;
 use std::path::Path;
 
 use agent_core::ids::{RoundId, TeamId};
-use agent_core::story::{Selection, StoryOptions, json_lines, render};
+use agent_core::local_time::{TypedTimeError, Zone};
+use agent_core::story::{Selection, StoryOptions, json_lines, render_in};
 use agent_runtime::history::{ReadError, Reader};
 
 /// The exit status of `agent log` when the round or team asked for is not in the history.
@@ -66,6 +67,15 @@ pub(crate) enum LogError {
         /// The team.
         team: TeamId,
     },
+    /// A time given for `flag` cannot be read: it is RFC 3339 with its zone, or a date and a time of the zone printed.
+    #[error("{flag} needs a time: RFC 3339 with its zone, or a date and a time such as 2026-11-21 17:29")]
+    Time {
+        /// The flag the time was given for.
+        flag: &'static str,
+        /// Why the text is not a time.
+        #[source]
+        source: TypedTimeError,
+    },
     /// The story cannot be written.
     #[error("cannot write the story")]
     Output(#[source] std::io::Error),
@@ -76,7 +86,12 @@ impl LogError {
     pub(crate) const fn exit_code(&self) -> u8 {
         match self {
             Self::UnknownRound { .. } | Self::UnknownTeam { .. } => UNKNOWN_ID_EXIT,
-            Self::NoSubject | Self::TwoSubjects | Self::Read(_) | Self::Output(_) | Self::FollowRuntime(_) => 1,
+            Self::NoSubject
+            | Self::TwoSubjects
+            | Self::Read(_)
+            | Self::Output(_)
+            | Self::FollowRuntime(_)
+            | Self::Time { .. } => 1,
         }
     }
 }
@@ -97,12 +112,21 @@ impl LogRequest {
     }
 }
 
-/// Prints what `request` asks of the history in `history`.
+/// Prints what `request` asks of the history in `history`, its times in the RFC 3339 form of the files.
+///
+/// # Errors
+/// As [`log_in`].
+#[cfg(test)]
+pub(crate) fn log(history: &Path, request: &LogRequest, out: &mut impl Write) -> Result<(), LogError> {
+    log_in(history, request, Zone::Utc, out)
+}
+
+/// Prints what `request` asks of the history in `history`, with every time in `zone`.
 ///
 /// # Errors
 /// [`LogError::Read`] when the history cannot be read, [`LogError::UnknownRound`] or [`LogError::UnknownTeam`] when it
 /// has no record of what is asked for, [`LogError::Output`] when `out` refuses the text.
-pub(crate) fn log(history: &Path, request: &LogRequest, out: &mut impl Write) -> Result<(), LogError> {
+pub(crate) fn log_in(history: &Path, request: &LogRequest, zone: Zone, out: &mut impl Write) -> Result<(), LogError> {
     let reader = Reader::open(history)?;
     let records = match &request.selection {
         Selection::Round(round) => reader.round_records(round)?,
@@ -115,7 +139,7 @@ pub(crate) fn log(history: &Path, request: &LogRequest, out: &mut impl Write) ->
         });
     }
     let text = match request.format {
-        Format::Text(options) => render(&records, &request.selection, options),
+        Format::Text(options) => render_in(&records, &request.selection, options, zone),
         Format::Json => json_lines(&records, &request.selection)
             .into_iter()
             .fold(String::new(), |mut text, line| {

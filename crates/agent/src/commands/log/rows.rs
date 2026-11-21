@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::Path;
 
 use agent_core::ids::{AgentName, RoundId, RunId, TaskId, TeamId};
+use agent_core::local_time::{TypedTime, Zone};
 use agent_core::log::{LogEvent, LogLevel, LogView};
 use agent_core::state::Timestamp;
 use agent_core::story::StepView;
@@ -19,6 +20,15 @@ const FOLLOW_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// The newest lines `agent log` prints when `-n` names none.
 const DEFAULT_LINES: u32 = 100;
+
+/// The round or the team a print is about: `agent log` names one of them, or none for the daemon's rows of all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Scope {
+    /// The round, when the command names one.
+    pub(crate) round: Option<RoundId>,
+    /// The team, when the command names one.
+    pub(crate) team: Option<TeamId>,
+}
 
 /// Row arguments; their presence opts a scoped story into log queries.
 #[derive(Debug, Args)]
@@ -48,12 +58,13 @@ pub(crate) struct RowArgs {
     /// Exact daemon event name.
     #[arg(long)]
     event: Option<LogEvent>,
-    /// Include timestamps at or after this RFC 3339 time.
-    #[arg(long)]
-    since: Option<Timestamp>,
-    /// Include timestamps at or before this RFC 3339 time.
-    #[arg(long)]
-    until: Option<Timestamp>,
+    /// Include timestamps at or after this time: RFC 3339 with its zone, or a date and a time read in the zone of the
+    /// output (`2026-11-21 17:29`, `2026-11-21T17:29:53`), as `--utc` says.
+    #[arg(long, value_name = "TIME")]
+    since: Option<TypedTime>,
+    /// Include timestamps at or before this time, read as `--since` reads its time.
+    #[arg(long, value_name = "TIME")]
+    until: Option<TypedTime>,
     /// Maximum newest lines (default 100); zero prints none.
     #[arg(short = 'n')]
     limit: Option<u32>,
@@ -86,11 +97,12 @@ impl RowArgs {
         &self,
         path: &Path,
         socket: &Path,
-        round: Option<RoundId>,
-        team: Option<TeamId>,
+        scope: Scope,
         format: Format,
+        zone: Zone,
         out: &mut impl Write,
     ) -> Result<(), LogError> {
+        let Scope { round, team } = scope;
         let reader = Reader::open(path)?;
         if self.stats {
             writeln!(out, "{}", reader.statistics()?).map_err(LogError::Output)?;
@@ -99,6 +111,8 @@ impl RowArgs {
         if let Some(view) = self.show.filter(|view| *view != LogView::Log) {
             return super::views::print(&reader, round, team.as_ref(), view, format, out);
         }
+        let since = typed_time(self.since.as_ref(), "--since", zone)?;
+        let until = typed_time(self.until.as_ref(), "--until", zone)?;
         let filter = LogFilter {
             grep: self.grep.clone(),
             team,
@@ -108,8 +122,8 @@ impl RowArgs {
             agent: self.agent.clone(),
             level: self.level,
             event: self.event,
-            since: self.since,
-            until: self.until,
+            since,
+            until,
         };
         let limit = self.limit.unwrap_or(DEFAULT_LINES);
         let runtime = if self.follow {
@@ -123,7 +137,7 @@ impl RowArgs {
             None
         };
         match format {
-            Format::Json => follow_json(&reader, &filter, limit, runtime.as_ref(), out),
+            Format::Json => follow_json(&reader, &filter, limit, runtime.as_ref(), zone, out),
             Format::Text(options) => {
                 // A round or a team without `--follow` is told by its rows (`--show log`) or its story; the steps of
                 // its runs are listed only for a run, a task or an agent, or when following.
@@ -132,7 +146,7 @@ impl RowArgs {
                 } else {
                     StepView::LeftOut
                 };
-                let (mut feed, text) = Feed::open(&reader, filter, steps, limit)?;
+                let (mut feed, text) = Feed::open_in(&reader, filter, steps, limit, zone)?;
                 out.write_all(text.as_bytes()).map_err(LogError::Output)?;
                 out.flush().map_err(LogError::Output)?;
                 let Some(runtime) = &runtime else {
@@ -157,6 +171,7 @@ fn follow_json(
     filter: &LogFilter,
     limit: u32,
     runtime: Option<&tokio::runtime::Runtime>,
+    zone: Zone,
     out: &mut impl Write,
 ) -> Result<(), LogError> {
     let mut cursor = reader.log_cursor()?;
@@ -165,7 +180,7 @@ fn follow_json(
         let rows = reader.log_rows(filter, window)?;
         for row in &rows {
             cursor = cursor.max(row.id());
-            print_row(row, Format::Json, out)?;
+            print_row(row, Format::Json, zone, out)?;
         }
         out.flush().map_err(LogError::Output)?;
         let Some(runtime) = runtime else {
@@ -179,10 +194,31 @@ fn follow_json(
     }
 }
 
+/// Reads the time typed for `flag` (`--since` or `--until`): none when the flag is not given.
+///
+/// # Errors
+/// [`LogError::Time`] when the text is not a time that `zone` can read.
+fn typed_time(typed: Option<&TypedTime>, flag: &'static str, zone: Zone) -> Result<Option<Timestamp>, LogError> {
+    typed
+        .map(|typed| typed.read_in(zone).map_err(|source| LogError::Time { flag, source }))
+        .transpose()
+}
+
 /// Writes one row in the same format for the initial window and follow pages.
-fn print_row(row: &agent_core::log::LogEntry, format: Format, out: &mut impl Write) -> Result<(), LogError> {
+fn print_row(
+    row: &agent_core::log::LogEntry,
+    format: Format,
+    zone: Zone,
+    out: &mut impl Write,
+) -> Result<(), LogError> {
     let text = match format {
-        Format::Text(_) => format!("{} {} {} {}", row.at(), row.level(), row.event(), row.message()),
+        Format::Text(_) => format!(
+            "{} {} {} {}",
+            zone.stamp(row.at()),
+            row.level(),
+            row.event(),
+            row.message()
+        ),
         Format::Json => serde_json::json!({
             "id": row.id(), "first_at": row.first_at(), "at": row.at(), "level": row.level(),
             "event": row.event(), "module": row.module(), "team": row.team(), "rounds": row.rounds(),

@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use agent_core::cli::ActivityEvent;
 use agent_core::history::RunStart;
 use agent_core::ids::{AgentName, RoundId, RunId};
+use agent_core::local_time::Zone;
 use agent_core::log::{LogEntry, LogEvent};
 use agent_core::story::StepView;
 use agent_runtime::history::{LogFilter, LogWindow, Reader, RunRow};
@@ -43,19 +44,36 @@ pub(crate) struct Feed {
     runs: BTreeMap<RunId, RunStart>,
     /// The agents of the runs the follow covers: a line names its agent when there are more than one.
     agents: Vec<AgentName>,
+    /// The zone the times of what is printed are written in.
+    zone: Zone,
 }
 
 impl Feed {
-    /// Opens the feed of `filter`: the text of its newest `limit` lines, rows and steps together, and the feed that
-    /// goes on after them.
+    /// Opens the feed of `filter` as [`Feed::open_in`] does, with the times in the RFC 3339 form.
     ///
     /// # Errors
     /// [`LogError::Read`] when the history cannot be read.
+    #[cfg(test)]
     pub(crate) fn open(
         reader: &Reader,
         filter: LogFilter,
         steps: StepView,
         limit: u32,
+    ) -> Result<(Self, String), LogError> {
+        Self::open_in(reader, filter, steps, limit, Zone::Utc)
+    }
+
+    /// Opens the feed of `filter`: the text of its newest `limit` lines, rows and steps together, with every time in
+    /// `zone`, and the feed that goes on after them.
+    ///
+    /// # Errors
+    /// [`LogError::Read`] when the history cannot be read.
+    pub(crate) fn open_in(
+        reader: &Reader,
+        filter: LogFilter,
+        steps: StepView,
+        limit: u32,
+        zone: Zone,
     ) -> Result<(Self, String), LogError> {
         let row_cursor = reader.log_cursor()?;
         let rows = reader.log_rows(&filter, LogWindow::Newest(limit))?;
@@ -68,6 +86,7 @@ impl Feed {
             told: BTreeSet::new(),
             runs: BTreeMap::new(),
             agents: Vec::new(),
+            zone,
         };
         feed.row_cursor = rows.iter().map(LogEntry::id).fold(row_cursor, i64::max);
         let covered = feed.covered(reader)?;
@@ -195,7 +214,7 @@ impl Feed {
                 self.runs.insert(run.clone(), found.start.value);
             }
         }
-        let mut timeline = Timeline::new(rows.iter().collect(), steps, self.agents.clone());
+        let mut timeline = Timeline::new_in(rows.iter().collect(), steps, self.agents.clone(), self.zone);
         let mut teams: BTreeMap<_, BTreeMap<RunId, RunStart>> = BTreeMap::new();
         for (id, start) in &self.runs {
             teams
