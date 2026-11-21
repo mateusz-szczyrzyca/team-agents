@@ -19,7 +19,7 @@ use agent_core::history::{CheckOutcome, HistoryEvent};
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::prompt::Variables;
 use agent_core::repo_path::RepoPath;
-use agent_core::state::{Asked, Basis, ChecksRecord, Covers, PrNumber, Sent, Timestamp};
+use agent_core::state::{Asked, Basis, ChecksRecord, CommitId, Covers, PrNumber, Sent, Timestamp};
 use agent_runtime::git::Revision;
 use agent_runtime::history::log_decision;
 use agent_runtime::notify::Notification;
@@ -142,7 +142,7 @@ impl Owner {
             }
         }
         let (gathered, assessed) = self.assess_round(site, reviewing, &mut record, &rules).await?;
-        let Assessed { issues, settled } = assessed;
+        let Assessed { issues, settled, .. } = assessed;
         // What the human refused about a file keeps the round back until the team undoes it; what they refused about a
         // commit is told to the team once, when they refuse it: the team cannot undo a commit.
         let refused: Vec<Subject> = record
@@ -221,11 +221,8 @@ impl Owner {
             .to_vec();
         // A file the human allowed before the findings about commits had a subject of their own covers the commits that
         // were in the round then: they are kept as they are before the file's allowance may be taken back.
-        let inherited = judge(&gathered, rules, record, reviewing.items, &team_allowances)
-            .settled
-            .inherited;
-        if !inherited.is_empty() {
-            record.allow(reviewing.items, &inherited);
+        let first = judge(&gathered, rules, record, reviewing.items, &team_allowances);
+        if migrate(record, reviewing.items, &first, &reviewing.ready.tip) {
             self.parts.store.save_checks_record(&lead.task, record).await?;
         }
         self.revoke_changed_allowances(site, reviewing, record).await?;
@@ -647,6 +644,8 @@ struct Assessed {
     issues: Vec<Issue>,
     /// The findings about commits: what the human is still to be asked, and what an earlier allowance covers.
     settled: Settled,
+    /// The subjects of the findings that a file the human refused before commits had subjects covers.
+    inherited_refused: Vec<Subject>,
 }
 
 /// What a question is put about.
@@ -685,16 +684,25 @@ fn judge(
         .collect();
     let allowed = record.allowed_of(items);
     let refused = record.refused_of(items);
+    let covered = record.covered_at_of(items);
     let heads = record.allowed_at_of(items);
-    let paths: BTreeMap<RepoPath, Option<agent_core::state::CommitId>> = allowed_for_all
+    let paths: BTreeMap<RepoPath, Option<CommitId>> = allowed_for_all
         .iter()
         .filter_map(|subject| match subject {
-            Subject::Path(path) => Some((path.clone(), heads.get(path).cloned())),
+            Subject::Path(path) => Some((path.clone(), heads.get(path).or_else(|| covered.get(path)).cloned())),
             Subject::NoTests | Subject::Commit { .. } => None,
         })
         .collect();
+    let refused_paths: BTreeMap<RepoPath, Option<CommitId>> = refused
+        .iter()
+        .filter_map(|subject| match subject {
+            Subject::Path(path) => Some((path.clone(), covered.get(path).cloned())),
+            Subject::NoTests | Subject::Commit { .. } => None,
+        })
+        .collect();
+    let by_refusal = commits::inherit_refusals(found.commits, &gathered.facts, &refused_paths);
     let settled = commits::settle(
-        found.commits,
+        by_refusal.remaining,
         &gathered.facts,
         &Said {
             allowed: &allowed,
@@ -703,7 +711,36 @@ fn judge(
             task_list: allowances,
         },
     );
-    Assessed { issues, settled }
+    Assessed {
+        issues,
+        settled,
+        inherited_refused: by_refusal.refused,
+    }
+}
+
+/// Records what a file the human allowed or refused before commits had subjects covers: the commits that are in the round
+/// now, as subjects of their own, and for a file with no head the head up to which that holds, so that a commit added
+/// later is a finding of its own. Whether anything was recorded.
+fn migrate(record: &mut ChecksRecord, items: &[ItemId], assessed: &Assessed, tip: &CommitId) -> bool {
+    let allowed = &assessed.settled.inherited;
+    let refused = &assessed.inherited_refused;
+    if allowed.is_empty() && refused.is_empty() {
+        return false;
+    }
+    let mut known = record.allowed_at_of(items);
+    known.extend(record.covered_at_of(items));
+    let unbounded: Vec<RepoPath> = allowed
+        .iter()
+        .chain(refused)
+        .filter_map(|subject| match subject {
+            Subject::Commit { path, .. } if !known.contains_key(path) => Some(path.clone()),
+            Subject::Commit { .. } | Subject::Path(_) | Subject::NoTests => None,
+        })
+        .collect();
+    record.allow(items, allowed);
+    record.keep_refused(items, refused);
+    record.snapshot_covered(items, &unbounded, tip);
+    true
 }
 
 /// The `issues` in words, a line each, as the history keeps them.
