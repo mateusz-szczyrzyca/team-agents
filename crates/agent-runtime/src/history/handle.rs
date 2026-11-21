@@ -26,6 +26,32 @@ use super::error::{CloseError, StartError, WriteError, WriteKind};
 use super::redact::Redactor;
 use crate::process::error_chain;
 
+/// What can go wrong when persisting judgements to history.
+#[derive(Debug, thiserror::Error)]
+pub enum PersistJudgementsError {
+    /// The database writer is unavailable or stopped.
+    #[error("history writer is unavailable")]
+    Unavailable,
+    /// Writing to the database failed.
+    #[error(transparent)]
+    Write(#[from] WriteError),
+    /// The blocking persistence task failed.
+    #[error("judgement persistence task failed")]
+    Task(#[from] tokio::task::JoinError),
+    /// The persistence acknowledgement was dropped before receipt.
+    #[error("judgement persistence acknowledgement was dropped")]
+    Acknowledged(#[from] tokio::sync::oneshot::error::RecvError),
+}
+
+/// Result of handing a job to the database writer queue.
+#[derive(Debug, PartialEq, Eq)]
+enum QueueOutcome {
+    /// The job was placed in the queue.
+    Enqueued,
+    /// The writer channel has closed or disconnected.
+    Closed,
+}
+
 /// How many records may wait for the writer, unless the setup says otherwise.
 pub const DEFAULT_QUEUE: NonZeroUsize = NonZeroUsize::new(4096).unwrap();
 
@@ -129,6 +155,13 @@ enum Job {
     Log(LogRecord),
     /// Reads of a task's plan to write.
     Plans(Vec<super::plans::PlanRecord>),
+    /// Judgements of a task's plan steps to write, with awaited confirmation.
+    PersistJudgements {
+        /// The judgement records to write.
+        records: Vec<super::judgements::JudgementRecord>,
+        /// Channel to confirm the write outcome.
+        ack: tokio::sync::oneshot::Sender<Result<(), WriteError>>,
+    },
     /// The writer is to answer on this channel when everything before it is written.
     Flush(SyncSender<()>),
     /// The writer is to stop.
@@ -282,6 +315,32 @@ impl Writer {
 }
 
 impl History {
+    /// Hands `records` of judgements of a task's plan steps to the history and awaits confirmation of commit.
+    ///
+    /// # Errors
+    /// Returns [`PersistJudgementsError`] if the history writer is unavailable or the write fails.
+    pub async fn persist_judgements(
+        &self,
+        records: Vec<super::judgements::JudgementRecord>,
+    ) -> Result<(), PersistJudgementsError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let Some(queue) = self.queue.clone() else {
+            return Err(PersistJudgementsError::Unavailable);
+        };
+        let (ack, rx) = tokio::sync::oneshot::channel();
+        let outcome = tokio::task::spawn_blocking(move || match queue.send(Job::PersistJudgements { records, ack }) {
+            Ok(()) => QueueOutcome::Enqueued,
+            Err(_) => QueueOutcome::Closed,
+        })
+        .await?;
+        if outcome == QueueOutcome::Closed {
+            return Err(PersistJudgementsError::Unavailable);
+        }
+        rx.await?.map_err(PersistJudgementsError::Write)
+    }
+
     /// A handle that records nothing and loses nothing: `[history] enabled = false`.
     #[must_use]
     pub fn disabled() -> Self {
@@ -619,6 +678,7 @@ impl History {
             Err(TrySendError::Full(job) | TrySendError::Disconnected(job)) => {
                 let lost = match job {
                     Job::Plans(plans) => count(plans.len()),
+                    Job::PersistJudgements { records, .. } => count(records.len()),
                     Job::Record(_) | Job::Flush(_) | Job::Retain(_) | Job::Log(_) | Job::Close => 1,
                 };
                 self.shared.lose(lost);
@@ -697,6 +757,19 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
                     write_plans(&mut store, shared, &plans);
                     continue;
                 }
+                Job::PersistJudgements { records, ack } => {
+                    write_batch(&mut store, shared, std::mem::take(&mut batch));
+                    write_log_batch(&mut store, shared, std::mem::take(&mut log_batch));
+                    let res = store.write_judgements(&records);
+                    if let Err(error) = &res {
+                        shared.lose(count(records.len()));
+                        shared.report(Cause::Write(error.kind()), || error_chain(error));
+                    }
+                    if ack.send(res).is_err() {
+                        tracing::debug!("caller dropped persistence receiver");
+                    }
+                    continue;
+                }
                 Job::Retain(request) => {
                     write_batch(&mut store, shared, std::mem::take(&mut batch));
                     write_log_batch(&mut store, shared, std::mem::take(&mut log_batch));
@@ -740,6 +813,10 @@ fn count_what_is_left(jobs: &Receiver<Job>, shared: &Shared) {
             }
             Job::Retain(_) => shared.report(Cause::Retention, || "writer stopped before retention".to_owned()),
             Job::Plans(plans) => shared.lose(count(plans.len())),
+            Job::PersistJudgements { records, ack } => {
+                shared.lose(count(records.len()));
+                drop(ack);
+            }
             Job::Log(_) | Job::Close => {}
         }
     }

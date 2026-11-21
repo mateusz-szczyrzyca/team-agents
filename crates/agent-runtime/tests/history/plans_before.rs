@@ -32,7 +32,7 @@ fn a_history_written_before_plans_keeps_its_records_and_keeps_plans_after_its_mi
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
     let reader = Reader::open(&path).unwrap();
     assert_eq!(reader.round_records(round).unwrap(), before);
     assert_eq!(reader.plan_versions(&task).unwrap(), Vec::new());

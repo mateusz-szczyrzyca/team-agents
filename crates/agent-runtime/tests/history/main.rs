@@ -57,6 +57,9 @@ mod disputes;
 
 #[cfg(test)]
 mod handover_events;
+mod judgements;
+#[cfg(test)]
+mod judgements_before;
 #[cfg(test)]
 mod opinions;
 #[cfg(test)]

@@ -18,6 +18,7 @@ pub mod github;
 pub mod harness_prompts;
 pub mod history;
 pub mod notify;
+pub mod plan;
 pub mod process;
 pub mod prompts;
 pub mod questions_prompts;

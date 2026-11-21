@@ -27,6 +27,8 @@ use crate::ids::ItemId;
 use crate::repo_path::RepoPath;
 use crate::task_list::{self, MAX_TASK_LIST_BYTES, NumberProblem};
 
+pub mod judge;
+
 /// Where a task keeps its plan, relative to the root of its worktree: the task's working file, never part of what it
 /// delivers.
 pub const PLAN_FILE: &str = ".agent/plan.md";
@@ -83,6 +85,12 @@ impl Plan {
     #[must_use]
     pub fn stages(&self) -> &[Stage] {
         &self.stages
+    }
+
+    /// Looks up a step by its ID.
+    #[must_use]
+    pub fn step(&self, id: &ItemId) -> Option<&Step> {
+        self.steps().find(|step| step.id == *id)
     }
 
     /// What changed from this plan to `newer`.
@@ -332,16 +340,33 @@ impl Step {
 }
 
 /// The state of a step: its mark.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum StepState {
     /// `[ ]`: to do.
+    #[serde(rename = " ")]
     Todo,
     /// `[>]`: in hand; at most one step of a plan is.
+    #[serde(rename = ">")]
     InHand,
     /// `[x]` (or `[X]`): done.
+    #[serde(rename = "x")]
     Done,
     /// `[-]`: given up; its note says why.
+    #[serde(rename = "-")]
     GivenUp,
+}
+
+impl StepState {
+    /// The mark character representing this state: `' '` for `Todo`, `'>'` for `InHand`, `'x'` for `Done`, `'-'` for `GivenUp`.
+    #[must_use]
+    pub const fn mark(&self) -> char {
+        match self {
+            Self::Todo => ' ',
+            Self::InHand => '>',
+            Self::Done => 'x',
+            Self::GivenUp => '-',
+        }
+    }
 }
 
 /// How a step is shown to be done, by the line that follows `Check:`.
@@ -355,14 +380,20 @@ pub enum Check {
     Reviewer,
 }
 
+impl std::fmt::Display for Check {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Command(command) => f.write_str(command),
+            Self::Exists(path) => write!(f, "{EXISTS_CHECK} {}", path.as_str()),
+            Self::Reviewer => f.write_str(REVIEWER_CHECK),
+        }
+    }
+}
+
 impl Check {
     /// The check as a `Check:` line, indented, with the line's end.
     fn to_text(&self) -> String {
-        match self {
-            Self::Command(command) => format!("{TEXT_INDENT}{CHECK_PREFIX} {command}\n"),
-            Self::Exists(path) => format!("{TEXT_INDENT}{CHECK_PREFIX} {EXISTS_CHECK} {}\n", path.as_str()),
-            Self::Reviewer => format!("{TEXT_INDENT}{CHECK_PREFIX} {REVIEWER_CHECK}\n"),
-        }
+        format!("{TEXT_INDENT}{CHECK_PREFIX} {self}\n")
     }
 }
 

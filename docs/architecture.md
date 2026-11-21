@@ -1188,6 +1188,15 @@ socket. One owner, no file races (CON-3).
   count outside the team warns that reviewer rotation may be unavailable, but the team starts. "Changes requested" goes back
   to the team at most 5 times; after that the human is asked.
 
+## Plan-step judgements
+
+`agent-core::plan::judge` selects done steps that need judgement and defines `confirmed`, `declared` and `mismatch`.
+`agent-runtime::plan::check` checks file and directory existence asynchronously, resolving paths inside the worktree.
+The owner runs these checks sequentially after reading a plan at every run's end, independently of role and outcome,
+and awaits durable history acknowledgement before settling the run. Commands stay declared in this part.
+Task and round status use cached plan summaries; their read path does no filesystem or database work.
+History schema 17 adds append-only step judgements and migrates older databases.
+
 ## Rules of the plan
 
 These hold for every item of the plan, on top of the rules each role is given — the developer rules to write Rust, the

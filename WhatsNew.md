@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.45.0 — 21.11.2026 — PR #162
+## 0.46.0 — 21.11.2026 — PR #162
 
 ### New features
 - [agent] [agent-core] An item and every part of a split are now given only to an agent of at least the tier they ask for (investigators above normal agents above workers; no `Tier:` and no tier in the split means normal). The first part of a split is handed to a fitting agent as well, not only to whoever was already running the item. A part for an investigator in a team with one investigator and one normal agent goes to the investigator, and a part for a normal agent never starts a worker.
@@ -14,6 +14,16 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Enhancements
 - [agent] A coordinator that is not of the tier of a part is no longer told to take that part over, and an unassigned coordinator is not given the delivery scope of a part.
+
+## 0.45.0 — 21.11.2026 — PR #163
+
+### New features
+- [agent] [agent-core] [agent-runtime] `agent status <task>` and `agent status <round>` show plan steps with their marks and a done step's settlement: `confirmed`, `declared` or `mismatch`. The daemon checks `exists PATH` inside the worktree and retains judgements across restarts; steps without checks, reviewer checks and command checks remain declared.
+- [agent-runtime] **Action:** history upgrades automatically to schema 17 while retaining older records. Keep a backup before upgrading if you may need to return to an older binary.
+
+### Enhancements
+- [agent] [agent-core] Plan status uses socket protocol 5. Older `agent` CLIs using protocols 3 and 4 still talk to the new daemon, without plan summaries; the new CLI falls back when talking to older daemons.
+
 
 ## 0.44.0 — 21.11.2026 — PR #161
 

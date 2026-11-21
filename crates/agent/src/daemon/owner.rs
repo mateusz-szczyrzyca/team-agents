@@ -40,7 +40,8 @@ use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::protocol::{
-    Client, Command, Event, EventKind, Failure, FailureKind, Reply, RoundDetail, RoundTask, Target, TeamSummary,
+    Client, Command, Event, EventKind, Failure, FailureKind, PlanStepSummary, Reply, RoundDetail, RoundTask, Target,
+    TeamSummary,
 };
 use agent_core::state::{
     BeginRunError, CloseRoundError, InvalidTimestamp, NewRun, Question, QuestionError, RunEnd, RunError, SessionId,
@@ -496,6 +497,8 @@ pub(super) struct Owner {
     pending_removals: disk::PendingRemovals,
     /// Whether free space was below min threshold on last check.
     was_min_space: bool,
+    /// Cached plan summaries of tasks, refreshed when a run ends.
+    task_plans: HashMap<TaskId, Vec<PlanStepSummary>>,
 }
 
 /// The next report of the watch on the questions files; never, when the files are not watched.
@@ -555,6 +558,7 @@ impl Owner {
             deferred_targets: BTreeMap::new(),
             pending_removals: disk::PendingRemovals::default(),
             was_min_space: false,
+            task_plans: HashMap::new(),
         }
     }
 
@@ -643,6 +647,7 @@ impl Owner {
         self.hangs.extend(recovery.hangs);
         self.record_recovered_ends(&recovery.interrupted);
         self.snapshot_interrupted(&recovery.interrupted, now).await;
+        self.load_plan_snapshots().await;
         for task in &recovery.exhausted {
             let located = self.locate(task)?;
             // The retries of the session are used up: the ladder may still start the task in a new session, or another
@@ -1745,7 +1750,16 @@ impl Owner {
             .teams()
             .iter()
             .filter(|known| team.is_none_or(|wanted| known.id() == wanted))
-            .map(TeamSummary::from)
+            .map(|known| {
+                let mut summary = TeamSummary::from(known);
+                for member in &summary.members {
+                    let steps = self.task_plan_summary(&member.task);
+                    if !steps.is_empty() {
+                        summary.task_plans.insert(member.task.clone(), steps);
+                    }
+                }
+                summary
+            })
             .collect()
     }
 
@@ -1791,21 +1805,33 @@ impl Owner {
                 found
             }
             Some(Target::Task(task)) => {
-                let found = self
+                let mut found = self
                     .parts
                     .state
                     .find_task(task)
                     .map(|found| TeamSummary::from(found.team))
                     .ok_or_else(|| not_found(format!("there is no task {task}")))?;
+                let steps = self.task_plan_summary(task);
+                if !steps.is_empty() {
+                    found.task_plans.insert(task.clone(), steps);
+                }
                 vec![found]
             }
             Some(Target::Round(round)) => {
-                let found = self
+                let mut found = self
                     .parts
                     .state
                     .find_round(round)
                     .map(|(team, _)| TeamSummary::from(team))
                     .ok_or_else(|| not_found(format!("there is no round {round}")))?;
+                if let Some((team, _)) = self.parts.state.find_round(round) {
+                    for (_role, member) in team.members_in(round) {
+                        let steps = self.task_plan_summary(member.task());
+                        if !steps.is_empty() {
+                            found.task_plans.insert(member.task().clone(), steps);
+                        }
+                    }
+                }
                 vec![found]
             }
         };
@@ -1844,6 +1870,12 @@ impl Owner {
                     .ok_or_else(|| not_found(format!("there is no round {round}")))?;
                 let tasks = self.round_tasks(team, round)?;
                 let mut detail = RoundDetail::new(team, found, tasks);
+                for task in &detail.tasks {
+                    let steps = self.task_plan_summary(&task.task);
+                    if !steps.is_empty() {
+                        detail.task_plans.insert(task.task.clone(), steps);
+                    }
+                }
                 detail.waiting = self
                     .watch
                     .github_waits
@@ -1855,6 +1887,11 @@ impl Owner {
                 })
             }
         }
+    }
+
+    /// Short summaries of the steps of `task`'s plan and their settlement states from the in-memory snapshot.
+    fn task_plan_summary(&self, task: &TaskId) -> Vec<PlanStepSummary> {
+        self.task_plans.get(task).cloned().unwrap_or_default()
     }
 
     /// The tasks of `team` that worked for `round`, each with its worktree, its branch and the runs that named the round.

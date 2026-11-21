@@ -7,7 +7,10 @@ use std::time::SystemTime;
 use agent_core::history::HistoryHealth;
 use agent_core::ids::{RoundId, TaskId};
 use agent_core::kinds::Role;
-use agent_core::protocol::{Client, Command, Reply, RoundDetail, ShowRequest, StatusRequest, Target, TeamSummary};
+use agent_core::plan::judge::JudgementState;
+use agent_core::protocol::{
+    Client, Command, PlanStepSummary, Reply, RoundDetail, ShowRequest, StatusRequest, Target, TeamSummary,
+};
 use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState, Timestamp};
 use agent_core::status::TaskStatus;
@@ -400,6 +403,11 @@ fn render_at(
                 member.role.to_string(),
                 member.agent.name(),
             ));
+            if let Some(steps) = team.task_plans.get(&member.task) {
+                for step in steps {
+                    lines.push(render_plan_step(step));
+                }
+            }
         }
     }
     let mut text = lines.join("\n");
@@ -512,10 +520,29 @@ pub(crate) fn render_round(detail: &RoundDetail) -> String {
             };
             lines.push(format!("    {}  started {}  {state}", run.id(), run.started_at()));
         }
+        if let Some(steps) = detail.task_plans.get(&task.task) {
+            for step in steps {
+                lines.push(render_plan_step(step));
+            }
+        }
     }
     let mut text = lines.join("\n");
     text.push('\n');
     text
+}
+
+/// A step of a plan as a line of a task: its mark, its ID, its title, and its settled state when judged.
+pub(crate) fn render_plan_step(step: &PlanStepSummary) -> String {
+    let state_suffix = match step.state {
+        Some(JudgementState::Confirmed) => " (confirmed)".to_owned(),
+        Some(JudgementState::Declared) => " (declared)".to_owned(),
+        Some(JudgementState::Mismatch) => match &step.reason {
+            Some(reason) => format!(" (mismatch: {reason})"),
+            None => " (mismatch)".to_owned(),
+        },
+        None => String::new(),
+    };
+    format!("    [{}] {} {}{}", step.mark.mark(), step.id, step.title, state_suffix)
 }
 
 /// What is written when the daemon knows no team.

@@ -489,13 +489,15 @@ version-3 replies and events. A version-3 `show` of a full split team returns an
 protocol 4 is required: removing part identities would make historical rounds invalid. Ordinary version-3 frames
 retain their existing encoding. State schema 13 is unchanged.
 
-The CLI negotiates before sending split-aware commands: it sends a read-only version-4 `status` probe, then sends
+Version 5 adds `task_plans` to status snapshots. Versions 3 and 4 omit this field, so strict older clients remain compatible. Plan-aware status and show requests first probe version 5, falling back to version 4 and then version 3 when needed. Status uses cached summaries; it performs no filesystem or history reads.
+
+The CLI negotiates before sending other split-aware commands: it sends a read-only version-4 `status` probe, then sends
 the intended command in version 4. If an older daemon rejects the probe or closes the connection, it reconnects
 once and uses version 3 instead; no mutating command is retried. The choice is cached on that connection. Older
 clients continue to send version 3 directly.
 
 A reader checks the version before decoding the message body. Strict legacy `Request::from_line` and
-`Frame::from_line` retain version-3-only behavior; their negotiated counterparts accept 3 and 4. Other versions
+`Frame::from_line` retain version-3-only behavior; their negotiated counterparts accept 3, 4 and 5. Other versions
 return `ProtocolError::UnsupportedVersion`. A line without a usable version, or invalid JSON, is `Malformed`;
 a line over the direction's limit is `TooLong`. A message change that old peers cannot read raises the version.
 
@@ -764,3 +766,10 @@ The owner recomputes waits from ready pending items: only absence of qualified c
 busyness. The map and assignment changes are saved together. A newly entered wait is logged once; restarting
 with the same wait does not announce it again. A split uses the original item ID while its active round keeps
 the part identity. No schema migration is needed for this optional field.
+
+### Plan-step status snapshots
+
+Step judgements live in history schema 17, not `state.json`; state schema 14 is unchanged.
+The daemon caches plan-step summaries for task and round status and rebuilds them on startup.
+A summary includes the mark, step ID and title, plus a done step's settlement and optional reason.
+The optional `task_plans` map in team and round replies is absent when there is no readable plan.
