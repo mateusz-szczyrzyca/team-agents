@@ -605,5 +605,9 @@ mod split_tests;
 mod negotiation_tests;
 
 #[cfg(test)]
+#[path = "status/tests/short_desc.rs"]
+mod short_desc_tests;
+
+#[cfg(test)]
 #[path = "status/tests/part_states.rs"]
 mod part_state_tests;

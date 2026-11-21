@@ -156,6 +156,10 @@ pub struct TeamSummary {
     pub id: TeamId,
     /// The repository.
     pub repo: RepoName,
+    /// What the team's task is, in words: the `Short desc:` of its task list or the one derived from its brief; absent
+    /// from a daemon before it told it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_desc: Option<String>,
     /// When the team was started.
     pub created_at: Timestamp,
     /// What happens to an approved pull request.
@@ -481,6 +485,7 @@ impl From<&Team> for TeamSummary {
         Self {
             id: team.id().clone(),
             repo: team.repo().clone(),
+            short_desc: None,
             created_at: team.created_at(),
             merge: team.merge(),
             items,
@@ -974,3 +979,6 @@ mod executor_tests;
 
 #[cfg(test)]
 mod executor_negotiation_tests;
+
+#[cfg(test)]
+mod short_desc_tests;

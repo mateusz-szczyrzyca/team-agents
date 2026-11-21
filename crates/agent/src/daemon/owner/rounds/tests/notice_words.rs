@@ -107,3 +107,76 @@ async fn the_notification_of_a_merge_names_the_item_of_the_round() {
         "{notification}"
     );
 }
+
+/// What the daemon answers `agent status` with for `target`: the one team it lists.
+async fn listed_team(rig: &Rig, target: Option<agent_core::protocol::Target>) -> agent_core::protocol::TeamSummary {
+    use agent_core::protocol::{Client, Command, Reply, StatusRequest};
+
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(Client::Cli, Command::Status(StatusRequest { target }))
+        .await
+        .unwrap();
+    let (Reply::Teams { mut teams } | Reply::Overview { mut teams, .. }) = reply else {
+        panic!("the status answers with teams: {reply:?}");
+    };
+    assert_eq!(teams.len(), 1, "{teams:?}");
+    teams.remove(0)
+}
+
+#[tokio::test]
+async fn the_status_of_a_team_and_of_its_task_say_the_description_also_after_a_restart() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "ask"),
+            investigator("inv-r1", "done"),
+            investigator("inv-r2", "done"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["claude-1"], &one_with_a_description(), MergeMode::Autopilot, None)
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let of_the_team = listed_team(&rig, None).await;
+    let of_the_task = listed_team(&rig, Some(agent_core::protocol::Target::Task(tasks[0].clone()))).await;
+    rig.stop().await.unwrap();
+    rig.start().await;
+    let after_restart = listed_team(&rig, None).await;
+    rig.stop().await.unwrap();
+
+    for summary in [&of_the_team, &of_the_task, &after_restart] {
+        assert_eq!(summary.short_desc.as_deref(), Some("Build the thing in words"));
+    }
+    assert!(
+        crate::commands::status::render(std::slice::from_ref(&of_the_team))
+            .lines()
+            .next()
+            .is_some_and(|line| line.ends_with("\"Build the thing in words\""))
+    );
+}
+
+#[tokio::test]
+async fn the_status_of_a_team_whose_list_names_nothing_says_the_derived_description() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "ask"),
+            investigator("inv-r1", "done"),
+            investigator("inv-r2", "done"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let summary = listed_team(&rig, None).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(summary.short_desc.as_deref(), Some("Build the thing."));
+}
