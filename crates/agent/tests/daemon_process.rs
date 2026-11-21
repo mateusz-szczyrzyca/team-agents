@@ -319,4 +319,55 @@ mod daemon_process {
             "notice={notice}\nended_stamp={ended_stamp}"
         );
     }
+
+    #[test]
+    fn agent_debug_uses_the_process_zone_and_status_json_is_byte_for_byte_unchanged() {
+        use std::os::unix::fs::PermissionsExt;
+
+        const CENTRAL_EUROPE: &str = "CET-1CEST,M3.5.0,M10.5.0/3";
+        const ROUND: &str = "round-20261111-153000-q1w2";
+
+        let (dir, home) = home();
+        let secrets = home.root().join("secrets.toml");
+        std::fs::write(&secrets, "").unwrap();
+        std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o600)).unwrap();
+        seed_open_round_questions(&home, ROUND);
+        let daemon = start_daemon(&home);
+        let socket = home.socket_file();
+        eventually("the socket", || socket.exists());
+        eventually("the task waiting on questions", || {
+            std::fs::read_to_string(home.state_file())
+                .ok()
+                .and_then(|text| State::from_json(&text).ok())
+                .and_then(|state| {
+                    state
+                        .find_task(&TaskId::from_str(TASK).unwrap())
+                        .map(|found| found.member.status())
+                })
+                == Some(TaskStatus::Questions)
+        });
+
+        let json_east = run_in_zone(&home, &["status", "--json"], CENTRAL_EUROPE);
+        let debug_out = run_in_zone(
+            &home,
+            &["debug", "--task", TASK, "--out", dir.path().to_str().unwrap()],
+            CENTRAL_EUROPE,
+        );
+
+        terminate(&daemon);
+        let ended = finish(daemon);
+        assert!(ended.status.success(), "{ended:?}");
+
+        assert_eq!(
+            json_east,
+            "[{\"id\":\"team-20261111-153000-t5m8\",\"repo\":\"team-agents\",\"short_desc\":\"Build it.\",\"created_at\":\"2026-11-11T19:15:00Z\",\"merge\":\"autopilot\",\"items\":{\"pending\":0,\"in_progress\":1,\"in_review\":0,\"approved\":0,\"done\":0},\"rounds\":[{\"id\":\"round-20261111-153000-q1w2\",\"item\":\"1.1\",\"opened_at\":\"2026-11-11T19:15:00Z\",\"state\":{\"status\":\"open\"}}],\"members\":[{\"task\":\"task-20261111-153001-k3x9\",\"agent\":{\"tier\":\"normal\",\"name\":\"claude-1\"},\"role\":\"solo\",\"status\":\"questions\",\"open_question\":1}]}]\n"
+        );
+
+        let summary_path = debug_out
+            .lines()
+            .find_map(|line| line.strip_prefix("Debug summary: "))
+            .expect("debug prints the summary path");
+        let summary = std::fs::read_to_string(summary_path).unwrap();
+        assert!(summary.contains(" +01:00\n"), "{summary}");
+    }
 }

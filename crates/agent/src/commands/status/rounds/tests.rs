@@ -407,7 +407,7 @@ fn unanswered_opinions_show_the_finding_investigator_assignment_time_and_free_wa
     );
     assert_eq!(
         opinion_waits(&detail, Zone::Fixed(warsaw())),
-        include_str!("opinions.golden")
+        include_str!("opinions.golden").replace("11-11-2026 20:15", "2026-11-11 20:15 +01:00")
     );
     detail.opinions.clear();
     assert_eq!(opinion_waits(&detail, Zone::Fixed(warsaw())), "");

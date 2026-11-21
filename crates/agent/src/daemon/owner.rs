@@ -2015,7 +2015,7 @@ impl Owner {
             cli,
             model,
             time,
-            zone: self.parts.zone,
+            offset: self.parts.zone,
             task,
             team,
             pr,

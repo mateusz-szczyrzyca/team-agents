@@ -21,7 +21,7 @@ fn a_notification_about_a_task_of_a_state_from_before_carries_a_derived_descript
         cli: Some(CliKind::Claude),
         model: None,
         time: at(0),
-        zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        offset: time::UtcOffset::UTC,
         task: &task_id,
         team: Some(&team_id),
         pr: None,

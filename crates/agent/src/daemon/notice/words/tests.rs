@@ -143,7 +143,7 @@ fn context<'a>(task_id: &'a TaskId, team: Option<&'a TeamId>, words: TaskWords) 
         cli: Some(CliKind::Claude),
         model: Some("sonnet"),
         time: at(0),
-        zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         task: task_id,
         team,
         pr: None,

@@ -238,7 +238,7 @@ impl Rig {
             home: self.home.clone(),
             prompts_dir: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
             clock: SharedClock::new(self.clock.clone()),
-            zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+            zone: agent_core::local_time::Zone::Utc,
             timings: Some(Timings {
                 tick: Duration::from_millis(25),
                 run: RunTimings {
@@ -311,7 +311,9 @@ impl Rig {
         let socket = self.home.socket_file();
         let deadline = Instant::now() + PATIENCE;
         'attempts: loop {
-            let daemon = tokio::spawn(run_with_log_layer(self.setup(), self.shutdown.clone(), layer.clone()));
+            let mut setup = self.setup();
+            setup.zone = agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC);
+            let daemon = tokio::spawn(run_with_log_layer(setup, self.shutdown.clone(), layer.clone()));
             while !socket.exists() {
                 if daemon.is_finished() {
                     match daemon.await.unwrap() {

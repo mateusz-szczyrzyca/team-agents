@@ -52,7 +52,7 @@ fn notification_of(words: TaskWords, task_id: &TaskId) -> String {
         cli: Some(CliKind::Claude),
         model: None,
         time: at(0),
-        zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        offset: time::UtcOffset::UTC,
         task: task_id,
         team: None,
         pr: None,

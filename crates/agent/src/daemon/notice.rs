@@ -105,7 +105,7 @@ impl NoticeKind {
 
 /// The facts about the task and environment needed to lay out a notification.
 #[derive(Debug, Clone)]
-pub(super) struct NoticeContext<'a> {
+pub(super) struct NoticeContext<'a, Z = Zone> {
     /// The repository name.
     pub(super) repo: &'a str,
     /// The agent name.
@@ -117,7 +117,7 @@ pub(super) struct NoticeContext<'a> {
     /// The time the event occurred.
     pub(super) time: Timestamp,
     /// The zone of the host: the times a notification shows are written in it, with the offset of each moment.
-    pub(super) zone: Zone,
+    pub(super) offset: Z,
     /// The task ID.
     pub(super) task: &'a TaskId,
     /// The team ID, if the task belongs to a team.
@@ -142,9 +142,9 @@ pub(super) fn client_label(cli: Option<CliKind>, model: Option<&str>) -> String 
 ///
 /// # Errors
 /// [`InvalidNotification`] when title or body violates limits or format rules.
-pub(super) fn layout_notification(
+pub(super) fn layout_notification<Z: Into<Zone> + Copy>(
     notice: NoticeKind,
-    context: &NoticeContext<'_>,
+    context: &NoticeContext<'_, Z>,
     rendered: &str,
 ) -> Result<Notification, InvalidNotification> {
     let (note, original_body) = rendered.split_once('\n').unwrap_or((rendered, ""));
@@ -154,7 +154,7 @@ pub(super) fn layout_notification(
     let status = notice.status();
     let title = format!("{} {}", status.icon(), context.repo);
 
-    let time_str = context.zone.stamp_minute(context.time);
+    let time_str = context.offset.into().stamp_minute(context.time);
 
     let client = client_label(context.cli, context.model);
     let agent_str = if client.is_empty() {
