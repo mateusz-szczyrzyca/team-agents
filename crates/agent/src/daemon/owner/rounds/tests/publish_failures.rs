@@ -716,8 +716,10 @@ async fn publish_with_diverged_remote_branch_refuses_push_and_leaves_remote_unch
         .await
         .unwrap();
 
-    // The daemon attempts publication, classifies remote as Diverged, and refuses to push.
-    // Wait until claude-1 finishes work and waits:
+    // claude-1 finishes work with STATUS: DONE, but because initial publication is refused by origin
+    // (carried is None, non-fast-forward push fails), the item remains InProgress.
+    // In solo_waits_for_its_items, Settled::Status(TaskStatus::Done) is mapped to TaskStatus::Waiting.
+    // The task never transitions to TaskStatus::Done; it settles into TaskStatus::Waiting.
     rig.status_is(&task, TaskStatus::Waiting).await;
     let note = rig.notification_with("origin refused the push of").await;
     assert!(
@@ -739,11 +741,10 @@ async fn publish_with_diverged_remote_branch_refuses_push_and_leaves_remote_unch
 #[tokio::test]
 async fn existing_pr_equal_head_publication_takes_uptodate_and_skips_push() {
     const R1_CHANGES: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — see `HEAD` for issue → fix it\\n   CHECK: read `HEAD`,verify:VERDICT: APPROVE\\nSUMMARY: fixed in `HEAD`";
-    const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,fix-work-pushed"),
+            normal("claude-1", "work,fix-script:held-fix-pushed"),
             investigator("inv-r1", R1_CHANGES),
             investigator("inv-r2", APPROVING),
         ],
@@ -751,24 +752,52 @@ async fn existing_pr_equal_head_publication_takes_uptodate_and_skips_push() {
         false,
     )
     .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("held-fix-pushed.sh"),
+        "set -eu\necho started > .fake-started-fix\nfor _ in $(seq 1 600); do\n  if [ -f .fake-release-fix ]; then\n    break\n  fi\n  sleep 0.05\ndone\nif [ ! -f .fake-release-fix ]; then\n  echo 'test never released fix' >&2\n  exit 65\nfi\ncommit() { git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q \"$@\"; }\necho 'fixed work' > fixed.txt\ngit add fixed.txt\ncommit -m 'Fix finding 1'\ngit push -q origin HEAD\n",
+    )
+    .unwrap();
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    let _task = tasks[0].clone();
+    let task = tasks[0].clone();
+    let worktree = rig.worktree(&task);
 
     // Wait until round 1 is published and in review:
     rig.item_where("1.1", "in review", |phase| matches!(phase, ItemPhase::InReview { .. }))
         .await;
 
-    // Install pre-receive hook in origin to log any push attempts:
-    let hook_path = rig.origin.join("hooks/pre-receive");
-    std::fs::create_dir_all(hook_path.parent().unwrap()).unwrap();
-    std::fs::write(&hook_path, "#!/bin/sh\nprintf 'push\\n' >> \"$GIT_DIR/push-log\"\n").unwrap();
-    std::fs::set_permissions(&hook_path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    // Synchronize deterministically before starting the fix:
+    // Wait until claude-1 starts the fix run and holds before committing or pushing:
+    let started_fix = worktree.join(".fake-started-fix");
+    rig.wait_for("fix pass started", || started_fix.exists()).await;
 
-    // The fix pass runs fix-work-pushed, which pushes the fix to origin itself before ending.
+    // Configure a client-facing receivepack wrapper on the worktree's origin remote.
+    // Git invokes the remote.origin.receivepack executable for every client push command,
+    // even when the remote ref is already equal to the pushed commit (which server-side pre-receive skips).
+    let push_log = rig.origin.join("push-log");
+    let wrapper_path = rig.origin.join("receivepack-wrapper.sh");
+    std::fs::write(
+        &wrapper_path,
+        format!(
+            "#!/bin/sh\nprintf 'push\\n' >> \"{}\"\nexec git-receive-pack \"$@\"\n",
+            push_log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper_path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    git(
+        &worktree,
+        &["config", "remote.origin.receivepack", wrapper_path.to_str().unwrap()],
+    );
+
+    // Release claude-1 to commit the fix and push it directly to origin:
+    std::fs::write(worktree.join(".fake-release-fix"), "release\n").unwrap();
+
     // When the daemon publishes the update, it observes existing PR carried == gated tip (Equal),
-    // takes PublishAction::UpToDate, calls adopt_pushed, and does NOT execute a push.
+    // takes PublishAction::UpToDate, calls adopt_pushed, and skips push_commit.
     let state = rig
         .item_where("1.1", "approved or done", |phase| {
             matches!(phase, ItemPhase::Approved { .. } | ItemPhase::Done { .. })
@@ -776,12 +805,12 @@ async fn existing_pr_equal_head_publication_takes_uptodate_and_skips_push() {
         .await;
     rig.stop().await.unwrap();
 
-    // Exactly one push reached origin: the push from fix-work-pushed in the fake-cli, and zero from the daemon.
-    let push_log = std::fs::read_to_string(rig.origin.join("push-log")).unwrap_or_default();
+    // Exactly one client push reached origin: the push from held-fix-pushed in the fake-cli, and zero from daemon:
+    let log_contents = std::fs::read_to_string(&push_log).expect("push-log must exist and be readable");
     assert_eq!(
-        push_log.lines().count(),
+        log_contents.lines().count(),
         1,
-        "origin must receive exactly one push (from the agent CLI), proving daemon took UpToDate and skipped push: {push_log}"
+        "origin must receive exactly one client git push (from the agent CLI), proving daemon took UpToDate and skipped push: {log_contents}"
     );
     let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
     assert!(matches!(
