@@ -259,8 +259,10 @@ At every run's end, the daemon also judges done steps, for every role and outcom
 folder inside the worktree; an absent path or a symlink outside it is a mismatch. Steps without checks, with
 `reviewer`, or with commands remain declared. `agent status <task>` and `agent status <round>` show these states
 beside the steps. Judgements are retained in history schema 17, which automatically upgrades older histories;
-keep a backup before upgrading if you need to return to an older daemon. This release records mismatches without
-sending runs back for them; command execution and mismatch bounces follow in the next part.
+keep a backup before upgrading if you need to return to an older daemon. This release provides the runtime engine
+and configuration (`[plan] check_seconds`, default 120; `[plan] check_refuse`, default `["agent gate", "make gate"]`)
+for command checks; in the daemon, commands remain declared, and durable command execution with mismatch bounces follows
+in a dedicated task.
 
 
 A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt
