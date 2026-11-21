@@ -1663,3 +1663,63 @@ async fn a_refusal_about_commits_is_told_once_and_kept() {
     assert!(!rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists());
     assert!(!rig.github.pulls()[0].draft);
 }
+
+// Rule: a file the human allowed before findings had a subject of their own — a record that an earlier daemon wrote —
+// covers the commits that were in the round then: they are kept as they are, not asked again.
+#[tokio::test]
+async fn a_file_allowed_in_a_record_of_an_earlier_daemon_covers_the_commits_already_in_the_round() {
+    let mut rig = checking_rig("script:two-edits,questions,done", 2, SILENT, SILENT).await;
+    frozen_test_scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let (first, second) = (
+        commit_of(&rig, &tasks[0], "GREEN"),
+        commit_of(&rig, &tasks[0], "Tidy the test once more"),
+    );
+    rig.stop().await.unwrap();
+    // What the earlier daemon had written: the file is allowed, with no head, and no question waits.
+    std::fs::write(
+        rig.home.checks_file(&tasks[0]),
+        r#"{"items":{"1.1":{"passes":0,"allowed":[{"path":"tests/new.txt"}]}}}"#,
+    )
+    .unwrap();
+    rig.start().await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    let kept = record(&rig, &tasks[0]).await;
+    assert_eq!(
+        kept.allowed_of(&["1.1".parse().unwrap()]),
+        [
+            Subject::Path("tests/new.txt".parse().unwrap()),
+            edits_of(&[&first, &second])[0].clone(),
+            edits_of(&[&first, &second])[1].clone(),
+        ]
+    );
+    assert_eq!(kept.asked, None);
+    assert!(!rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists());
+}
+
+// Rule: a `TEST-FIX:` commit that also touches a file that is not a test is no test fix: it is a finding about its commit.
+#[tokio::test]
+async fn a_test_fix_that_also_changes_code_is_a_finding_about_its_commit_and_is_asked() {
+    let mut rig = checking_rig("script:fix-with-code,questions,done", 2, SILENT, SILENT).await;
+    script(
+        &rig,
+        "fix-with-code",
+        "printf 'x\\ny\\n' > tests/new.txt\ngit add tests/new.txt\ncommit -m 'RED: a test'\nprintf 'x\\nz\\n' > tests/new.txt\necho 'fn a() {}' > src/a.txt\ngit add tests/new.txt src/a.txt\ncommit -m 'TEST-FIX: the second line was wrong, and the code'\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let fix = commit_of(&rig, &tasks[0], "TEST-FIX");
+    let kept = record(&rig, &tasks[0]).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(kept.asked.as_ref().unwrap().subjects, [edit_of(&fix)]);
+    assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
+}
