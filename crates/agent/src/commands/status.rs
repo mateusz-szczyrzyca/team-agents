@@ -319,7 +319,8 @@ async fn show_round(
     out: &mut impl Write,
 ) -> Result<(), StatusError> {
     let detail = round_detail(connection, round.clone()).await?;
-    let mut text = render_round(&detail);
+    let zone = activity.map_or(Zone::Fixed(UtcOffset::UTC), |activity| activity.offset);
+    let mut text = render_round_in(&detail, zone);
     if let Some(activity) = activity {
         text.push_str(&snapshots::snapshots_of(&activity.home, &round, activity.offset));
     }
@@ -528,21 +529,22 @@ pub(crate) fn round_line(round: &Round) -> String {
 }
 
 /// A round in full as text, its times in UTC: what the tests of the layout compare.
+#[cfg(test)]
 pub(crate) fn render_round(detail: &RoundDetail) -> String {
     render_round_in(detail, Zone::Fixed(UtcOffset::UTC))
 }
 
 /// A round in full as text: its line, the item, the pull request, the review passes, and the tasks that worked for it
 /// with where they work and their runs, its times in `zone`.
-pub(crate) fn render_round_in(detail: &RoundDetail, _zone: Zone) -> String {
+pub(crate) fn render_round_in(detail: &RoundDetail, zone: Zone) -> String {
     let waiting = detail
         .waiting
         .as_ref()
         .map_or_else(String::new, |waiting| format!(", waits for {waiting}"));
     let mut lines = vec![format!("{}  team {}{waiting}", round_line(&detail.round), detail.team)];
-    lines.push(format!("  opened {}", detail.round.opened_at()));
+    lines.push(format!("  opened {}", zone.stamp(detail.round.opened_at())));
     if let RoundLife::Closed { at, how } = detail.round.life() {
-        lines.push(format!("  closed {at}, {how}"));
+        lines.push(format!("  closed {}, {how}", zone.stamp(*at)));
     }
     if let Some(item) = &detail.item {
         lines.push(format!("  item {}: {} ({})", item.id, item.title, item.status));
@@ -596,9 +598,13 @@ pub(crate) fn render_round_in(detail: &RoundDetail, _zone: Zone) -> String {
         for run in &task.runs {
             let state = match run.state() {
                 RunState::Running => "running".to_owned(),
-                RunState::Ended { at, .. } => format!("ended {at}"),
+                RunState::Ended { at, .. } => format!("ended {}", zone.stamp(*at)),
             };
-            lines.push(format!("    {}  started {}  {state}", run.id(), run.started_at()));
+            lines.push(format!(
+                "    {}  started {}  {state}",
+                run.id(),
+                zone.stamp(run.started_at())
+            ));
         }
         if let Some(steps) = detail.task_plans.get(&task.task) {
             for step in steps {
