@@ -334,13 +334,8 @@ pub(crate) enum OwnerError {
     #[error("the notification that a team is finished cannot be made")]
     TeamDone(#[from] DoneNoticeError),
     /// The question about publication cannot be prepared or written.
-    #[error("the question about publication for task {task} cannot be prepared: {reason}")]
-    PublishQuestion {
-        /// The task.
-        task: TaskId,
-        /// Why it failed.
-        reason: String,
-    },
+    #[error(transparent)]
+    PublishQuestion(#[from] rounds::PublishQuestionError),
 }
 
 /// What the owner is made of.

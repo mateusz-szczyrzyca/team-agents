@@ -18,6 +18,7 @@ mod merges;
 mod opinions;
 mod prompts;
 mod publish;
+pub(crate) use publish::PublishQuestionError;
 mod replace;
 mod responses;
 pub(crate) use opinions::OpinionDaemonError;

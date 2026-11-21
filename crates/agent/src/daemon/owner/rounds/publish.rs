@@ -286,6 +286,62 @@ async fn carry_open_pull(
     carry(ready, round_pub, &branches, existing.map(|found| &found.head)).await
 }
 
+/// Why a publication failure question cannot be prepared or written.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PublishQuestionError {
+    /// Preparing prompt variables failed.
+    #[error("cannot prepare publication variables for task {task}: {source}")]
+    Variables {
+        /// The task.
+        task: TaskId,
+        /// What failed.
+        #[source]
+        source: agent_core::prompt::VariablesError,
+    },
+    /// Rendering the question prompt failed.
+    #[error("cannot render publication question for task {task}: {source}")]
+    Render {
+        /// The task.
+        task: TaskId,
+        /// What failed.
+        #[source]
+        source: agent_runtime::autopilot_prompts::RenderAutopilotTextError,
+    },
+    /// Writing the question file failed.
+    #[error("cannot write publication question file for task {task}: {source}")]
+    Write {
+        /// The task.
+        task: TaskId,
+        /// What failed.
+        #[source]
+        source: agent_runtime::text_file::ReplaceError,
+    },
+    /// Reading the question file back failed.
+    #[error("cannot read publication question file for task {task}: {source}")]
+    Read {
+        /// The task.
+        task: TaskId,
+        /// What failed.
+        #[source]
+        source: crate::daemon::questions::QuestionsProblem,
+    },
+    /// The questions file path is not valid.
+    #[error("publication question file path is not valid for task {task}")]
+    InvalidPath {
+        /// The task.
+        task: TaskId,
+    },
+    /// The question could not be recorded in state.
+    #[error("cannot record publication question for task {task}: {source}")]
+    State {
+        /// The task.
+        task: TaskId,
+        /// What failed.
+        #[source]
+        source: agent_core::state::QuestionError,
+    },
+}
+
 impl Owner {
     /// Publishes the branches of `team_id` that are ready: its pull requests are opened or updated, and its items go in
     /// review.
@@ -1360,22 +1416,18 @@ impl Owner {
             }
             Ok(())
         })?;
-        self.save().await?;
         let limit = self.parts.settings.config.publish().tries;
         let step = agent_core::decide::publish::publish_tries_step(max_tries, limit);
         match step {
             agent_core::decide::publish::PublishTriesStep::Retry => {
                 self.retry_publish(site, publication, &reason, (max_tries, limit), now)?;
+                self.save().await?;
             }
             agent_core::decide::publish::PublishTriesStep::TellLead => {
                 self.tell_lead_publish_failed(site, publication, &reason, (max_tries, limit), look)?;
+                self.save().await?;
             }
             agent_core::decide::publish::PublishTriesStep::AskHuman => {
-                self.each_item(site.team, &item_ids, |item| {
-                    item.ask_human_about_publication(now);
-                    Ok(())
-                })?;
-                self.save().await?;
                 self.ask_human_publish_failed(site, publication, &reason, (max_tries, limit), now)
                     .await?;
             }
@@ -1437,14 +1489,20 @@ impl Owner {
             %reason,
             "publication cannot succeed: telling the lead once"
         );
-        let text = Variables::new()
+        let vars = Variables::new()
             .with("branch", publication.head_branch.as_str())
             .and_then(|v| v.with("reason", reason))
-            .map_err(PublishError::from)
-            .and_then(|v| Ok(site.pulls.texts.render(AutopilotPrompt::PublishFailed, &v)?))
-            .map_err(|error| OwnerError::PublishQuestion {
+            .map_err(|source| PublishQuestionError::Variables {
                 task: site.lead.task.clone(),
-                reason: format!("cannot render publish failed notice: {}", error_chain(&error)),
+                source,
+            })?;
+        let text = site
+            .pulls
+            .texts
+            .render(AutopilotPrompt::PublishFailed, &vars)
+            .map_err(|source| PublishQuestionError::Render {
+                task: site.lead.task.clone(),
+                source,
             })?;
         self.release(&site.lead.task, Why::Gate(text.trim_end().to_owned()), look)
     }
@@ -1481,53 +1539,58 @@ impl Owner {
         })?;
         let path = self.parts.store.home().questions_file(&site.lead.task, number);
         let items_text = items_of(publication).join(", ");
-        let text = Variables::new()
+        let vars = Variables::new()
             .with("task", site.lead.task.as_str())
             .and_then(|v| v.with("items", &items_text))
             .and_then(|v| v.with("branch", publication.head_branch.as_str()))
             .and_then(|v| v.with("reason", reason))
-            .map_err(PublishError::from)
-            .and_then(|v| Ok(site.pulls.texts.render(AutopilotPrompt::NoticePublishQuestion, &v)?))
-            .map_err(|error| OwnerError::PublishQuestion {
+            .map_err(|source| PublishQuestionError::Variables {
                 task: site.lead.task.clone(),
-                reason: format!("cannot render publish question: {}", error_chain(&error)),
+                source,
+            })?;
+        let text = site
+            .pulls
+            .texts
+            .render(AutopilotPrompt::NoticePublishQuestion, &vars)
+            .map_err(|source| PublishQuestionError::Render {
+                task: site.lead.task.clone(),
+                source,
             })?;
         agent_runtime::text_file::replace_text_file(&path, &text, 0o600)
             .await
-            .map_err(|error| OwnerError::PublishQuestion {
+            .map_err(|source| PublishQuestionError::Write {
                 task: site.lead.task.clone(),
-                reason: format!("cannot write question file: {}", error_chain(&error)),
+                source,
             })?;
         let file = match path.to_str().map(agent_core::config::AbsolutePath::from_str) {
             Some(Ok(file)) => file,
-            Some(Err(problem)) => {
-                return Err(OwnerError::PublishQuestion {
+            _ => {
+                return Err(PublishQuestionError::InvalidPath {
                     task: site.lead.task.clone(),
-                    reason: format!("question path is invalid: {}", error_chain(&problem)),
-                });
-            }
-            None => {
-                return Err(OwnerError::PublishQuestion {
-                    task: site.lead.task.clone(),
-                    reason: format!("question path {} is not UTF-8", path.display()),
-                });
+                }
+                .into());
             }
         };
         let (_, mut member) = self.member_mut(&site.lead.task)?;
         member
             .ask_question(agent_core::state::Question::new(number, file, now))
-            .map_err(|source| OwnerError::Question {
+            .map_err(|source| PublishQuestionError::State {
                 task: site.lead.task.clone(),
                 source,
             })?;
         let loaded = crate::daemon::questions::read(&path)
             .await
-            .map_err(|error| OwnerError::PublishQuestion {
+            .map_err(|source| PublishQuestionError::Read {
                 task: site.lead.task.clone(),
-                reason: format!("cannot read question file {}: {}", path.display(), error_chain(&error)),
+                source,
             })?;
         self.prepare_questions(&site.lead.task, &path, &loaded).await;
         self.watch.publish_question.insert(site.lead.task.clone(), number);
+        let item_ids = item_ids_of(publication);
+        self.each_item(site.team, &item_ids, |item| {
+            item.record_publish_question(site.lead.task.clone(), number, now);
+            Ok(())
+        })?;
         let located = self.locate(&site.lead.task)?;
         let mut events = Vec::new();
         events.push(EventKind::QuestionAsked {

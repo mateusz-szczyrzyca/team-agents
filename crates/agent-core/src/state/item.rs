@@ -2,6 +2,7 @@
 //! result.
 
 use std::collections::HashSet;
+use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
 
@@ -446,6 +447,12 @@ pub struct ItemProgress {
     /// When the publication failure question was asked to the human, if one is open; absent while none is open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     publish_question: Option<Timestamp>,
+    /// Which task was asked about publication, if a question is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    publish_question_task: Option<TaskId>,
+    /// The question number asked about publication, if a question is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    publish_question_number: Option<NonZeroU32>,
 }
 
 /// A merge of an approved pull request that GitHub refused for a conflict, while the harness works on it.
@@ -511,6 +518,12 @@ struct ItemProgressWire {
     /// See [`ItemProgress`]; a state written before publication questions has none.
     #[serde(default)]
     publish_question: Option<Timestamp>,
+    /// See [`ItemProgress`]; a state written before publication question task has none.
+    #[serde(default)]
+    publish_question_task: Option<TaskId>,
+    /// See [`ItemProgress`]; a state written before publication question number has none.
+    #[serde(default)]
+    publish_question_number: Option<NonZeroU32>,
 }
 
 checked!(ItemProgress, ItemProgressWire, check_item_progress);
@@ -551,6 +564,11 @@ impl CheckedMut<'_, ItemProgress> {
     /// See [`ItemProgress::ask_human_about_publication`].
     pub fn ask_human_about_publication(&mut self, at: Timestamp) {
         self.value.ask_human_about_publication(at);
+    }
+
+    /// See [`ItemProgress::record_publish_question`].
+    pub fn record_publish_question(&mut self, task: TaskId, number: NonZeroU32, at: Timestamp) {
+        self.value.record_publish_question(task, number, at);
     }
 
     /// See [`ItemProgress::clear_publish_question`].
@@ -983,6 +1001,8 @@ impl ItemProgress {
             merge_conflict: None,
             publish_tries: 0,
             publish_question: None,
+            publish_question_task: None,
+            publish_question_number: None,
         }
     }
 
@@ -1009,14 +1029,35 @@ impl ItemProgress {
         self.publish_question
     }
 
+    /// Which task was asked about publication, if a question is open.
+    #[must_use]
+    pub const fn publish_question_task(&self) -> Option<&TaskId> {
+        self.publish_question_task.as_ref()
+    }
+
+    /// The question number asked about publication, if a question is open.
+    #[must_use]
+    pub const fn publish_question_number(&self) -> Option<NonZeroU32> {
+        self.publish_question_number
+    }
+
     /// Records that the human was asked about publication failure at `at`.
     pub fn ask_human_about_publication(&mut self, at: Timestamp) {
         self.publish_question = Some(at);
     }
 
+    /// Records that the human was asked about publication failure for `task` in question `number` at `at`.
+    pub fn record_publish_question(&mut self, task: TaskId, number: NonZeroU32, at: Timestamp) {
+        self.publish_question = Some(at);
+        self.publish_question_task = Some(task);
+        self.publish_question_number = Some(number);
+    }
+
     /// Clears the open publication question.
     pub fn clear_publish_question(&mut self) {
         self.publish_question = None;
+        self.publish_question_task = None;
+        self.publish_question_number = None;
     }
 
     /// Records that a merge conflict pass was published and increments spent merge passes.
@@ -1861,6 +1902,35 @@ mod tests {
         item.clear_publish_question();
         assert_eq!(item.publish_tries(), 0);
         assert_eq!(item.publish_question(), None);
+    }
+
+    #[test]
+    fn publish_question_identity_stores_and_clears_task_and_number() {
+        let mut item = progress_in(PhaseKind::InProgress);
+        assert_eq!(item.publish_question_task(), None);
+        assert_eq!(item.publish_question_number(), None);
+
+        let t: TaskId = "task-20261111-153001-k3x9".parse().unwrap();
+        let num = NonZeroU32::new(3).unwrap();
+        item.record_publish_question(t.clone(), num, at(100));
+
+        assert_eq!(item.publish_question(), Some(at(100)));
+        assert_eq!(item.publish_question_task(), Some(&t));
+        assert_eq!(item.publish_question_number(), Some(num));
+
+        let text = serde_json::to_string(&item).unwrap();
+        assert!(text.contains("\"publish_question_task\":\"task-20261111-153001-k3x9\""), "{text}");
+        assert!(text.contains("\"publish_question_number\":3"), "{text}");
+
+        let back: ItemProgress = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.publish_question(), Some(at(100)));
+        assert_eq!(back.publish_question_task(), Some(&t));
+        assert_eq!(back.publish_question_number(), Some(num));
+
+        item.clear_publish_question();
+        assert_eq!(item.publish_question(), None);
+        assert_eq!(item.publish_question_task(), None);
+        assert_eq!(item.publish_question_number(), None);
     }
 
     #[test]

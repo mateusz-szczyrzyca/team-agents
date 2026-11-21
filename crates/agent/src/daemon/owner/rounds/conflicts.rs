@@ -517,7 +517,7 @@ impl Owner {
     }
 
     /// Changes each of `items` of `team` with `change`.
-    pub(crate) fn each_item(
+    pub(super) fn each_item(
         &mut self,
         team: &TeamId,
         items: &[ItemId],
