@@ -342,3 +342,56 @@ fn steps_left_out_print_the_records_alone() {
     assert_eq!(opening.lines().count(), 1, "{opening}");
     assert_eq!(page, "");
 }
+
+/// Diagnostics of the writer in a test: there are none to read.
+#[derive(Debug)]
+struct Silent;
+
+impl agent_runtime::history::Reporter for Silent {
+    fn report(&self, _problem: &agent_runtime::history::Problem) {}
+}
+
+#[test]
+fn a_value_the_history_masks_is_masked_in_the_step_a_follow_prints() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let db = HistoryDb::open(&path, MaxTextBytes::default()).expect("a temporary history opens");
+    let secrets =
+        agent_core::config::Secrets::parse("github_token = \"private-é-token\"", 0o600).expect("the secrets parse");
+    let started = agent_runtime::history::History::start_with_secrets(
+        db,
+        agent_runtime::history::Setup {
+            capacity: agent_runtime::history::DEFAULT_QUEUE,
+            reporter: std::sync::Arc::new(Silent),
+        },
+        secrets,
+    )
+    .expect("the history starts");
+    started.history.record(Record::Team(Box::new(TeamStart {
+        team: team(),
+        at: at(0),
+        repo: "example".to_owned(),
+        base_branch: "main".parse().expect("a literal branch is valid"),
+        merge: agent_core::state::MergeMode::NoMerge,
+        task_list: String::new(),
+        plan: Vec::new(),
+    })));
+    started
+        .history
+        .record(Record::Run(Box::new(start(1, "claude-1", 1, 1))));
+    started.history.record(step(
+        1,
+        1,
+        2,
+        "curl -H 'Authorization: private-é-token' https://example.com",
+    ));
+    started.writer.close().expect("the writer closes");
+
+    let (_feed, text) = open(&path, of_task(1), 10);
+
+    assert!(
+        text.contains("2026-11-21T12:50:02Z command: curl -H 'Authorization: [REDACTED]' https://example.com"),
+        "{text}"
+    );
+    assert!(!text.contains("private"), "{text}");
+}
