@@ -351,7 +351,12 @@ impl Owner {
             })
         });
         let source = if independent {
-            crate::daemon::team::task_branch(&lead.agent, &lead.task)?
+            // The lead's own branch is named after the agent its task was first given to, whoever holds it now.
+            let first = self.parts.state.find_task(&lead.task).map_or_else(
+                || Ok(lead.agent.clone()),
+                |found| found.member.bus_agent().name().parse(),
+            )?;
+            crate::daemon::team::task_branch(&first, &lead.task)?
         } else {
             publication.head_branch.clone()
         };

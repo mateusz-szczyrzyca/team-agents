@@ -95,6 +95,8 @@ pub(in crate::daemon) struct LeadWork {
     pub(in crate::daemon) branch: BranchName,
     /// The member's worktree, as a path.
     pub(in crate::daemon) worktree: String,
+    /// What the member's runs left, rendered for the lead; `None` when it could not be gathered.
+    pub(in crate::daemon) briefing: Option<String>,
 }
 
 /// How a request for a worker ended, for the requester.
@@ -169,8 +171,9 @@ pub(in crate::daemon) fn notice_for(
     let Some(coordinator) = team.crew().coordinator() else {
         return Ok(None);
     };
-    let to = agent_name(coordinator.agent())?;
-    let who = agent_name(member.agent())?;
+    // The coordinator and the member are named as the team's bus knows them: by the agent each task was first given to.
+    let to = agent_name(coordinator.bus_agent())?;
+    let who = agent_name(member.bus_agent())?;
     if let Some((item, _branch)) = worked_on(team, member)
         && message.is_some_and(|text| text.lines().any(|line| line.trim() == format!("SPLIT: {item}")))
     {
@@ -232,7 +235,8 @@ pub(in crate::daemon) fn notice_for(
 }
 
 /// What the lead of `team` is told when the work of `member`, whose task stopped, is its own now; `worktree` is the
-/// member's worktree. `None` for a team without a lead.
+/// member's worktree and `briefing` what its runs left. Both are named as the team's bus knows them. `None` for a team
+/// without a lead.
 ///
 /// # Errors
 /// [`NoticeError`].
@@ -240,27 +244,25 @@ pub(in crate::daemon) fn lead_takes_work(
     team: &Team,
     member: &Member,
     worktree: &std::path::Path,
+    briefing: Option<String>,
 ) -> Result<Option<Told>, NoticeError> {
     let Some(coordinator) = team.crew().coordinator() else {
         return Ok(None);
     };
-    let who = agent_name(member.agent())?;
-    // A task's own branch is named after its first agent, whoever holds the task now.
-    let first = member
-        .past_holders()
-        .first()
-        .map_or_else(|| member.agent(), |held| &held.agent);
+    // The task's own branch and its name on the bus are those of its first agent, whoever holds the task now.
+    let who = agent_name(member.bus_agent())?;
     let branch = match worked_on(team, member) {
         Some((_, branch)) => branch,
-        None => task_branch(&agent_name(first)?, member.task())?,
+        None => task_branch(&who, member.task())?,
     };
     Ok(Some(Told {
-        to: agent_name(coordinator.agent())?,
+        to: agent_name(coordinator.bus_agent())?,
         notice: BusNotice::LeadTakesWork(LeadWork {
             member: who,
             task: member.task().clone(),
             branch,
             worktree: worktree.display().to_string(),
+            briefing,
         }),
     }))
 }

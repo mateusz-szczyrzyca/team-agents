@@ -54,7 +54,7 @@ impl Owner {
                 Takeover::Agent
             }
             Chosen::Lead => {
-                self.to_lead.insert(task.clone());
+                self.to_lead.insert(task.clone(), trouble);
                 log_decision("takeover", &format!("task={task}, from={}", held.name()), "lead");
                 Takeover::Lead
             }
@@ -62,8 +62,9 @@ impl Owner {
         Ok(takeover)
     }
 
-    /// The choice of `[replacement]` for `task` of `role`; `None` when the task fails as before: mode `off`, no agents
-    /// listed in mode `auto`, the task taken over as often as `replacements` allows, or nobody but the human fits.
+    /// The choice of `[replacement]` for `task` of `role`; `None` when the task fails as before: mode `off`, the task
+    /// taken over as often as `replacements` allows, or nobody but the human fits. With no agents listed, `auto` gives a
+    /// member's work to its lead, as `lead` does.
     fn choose_for(&self, task: &TaskId, role: Role) -> Result<Option<Chosen>, OwnerError> {
         let replacement = self.parts.settings.config.replacement();
         let found = self
@@ -73,8 +74,7 @@ impl Owner {
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
         let member = found.member;
         let taken_over = u32::try_from(member.past_holders().len()).unwrap_or(u32::MAX);
-        let unlisted = replacement.agents().is_empty() && replacement.mode() == ReplacementMode::Auto;
-        if replacement.mode() == ReplacementMode::Off || unlisted || taken_over >= replacement.replacements().get() {
+        if replacement.mode() == ReplacementMode::Off || taken_over >= replacement.replacements().get() {
             return Ok(None);
         }
         let held = member.agent();
@@ -148,12 +148,14 @@ impl Owner {
                 team.items()
                     .iter()
                     .filter_map(|progress| match progress.phase() {
-                        ItemPhase::InProgress { assignee, branch } | ItemPhase::Fixing { assignee, branch, .. }
-                            if assignee.as_str() == held.name() =>
-                        {
-                            Some((progress.id(), branch.clone()))
+                        ItemPhase::InProgress { assignee, branch } | ItemPhase::Fixing { assignee, branch, .. } => {
+                            (assignee.as_str() == held.name()).then(|| (progress.id(), branch.clone()))
                         }
-                        _ => None,
+                        // An item nobody works on, or one under review or finished, is not the task's to carry.
+                        ItemPhase::Pending
+                        | ItemPhase::InReview { .. }
+                        | ItemPhase::Approved { .. }
+                        | ItemPhase::Done { .. } => None,
                     })
                     .collect()
             })
@@ -184,12 +186,12 @@ impl Owner {
                     source,
                 })?;
         }
-        // A new session for the new agent: no session of the agent before it is resumed, the next run is briefed, and
-        // the bad runs before the hand-over are not counted against it. A task without a run would not be started
-        // anew, but it has no session to resume either, so its next run is a first one all the same.
-        let renewed = self.parts.state.renew_task(task, trouble, at)?;
-        if !renewed {
-            tracing::debug!(task = %task, "a task handed over before any run of it is not started anew");
+        // The new agent's own session: no session of the agent before it is resumed, the next run is briefed, and the bad
+        // runs before the hand-over are not counted against it; no new session of the task's agent is counted. A task
+        // without a run has no session to resume either, so its next run is a first one all the same.
+        let begun = self.parts.state.begin_holder_session(task, trouble, at)?;
+        if !begun {
+            tracing::debug!(task = %task, "a task handed over before any run of it begins no session");
         }
         Ok(())
     }

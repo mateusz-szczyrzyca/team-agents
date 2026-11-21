@@ -303,7 +303,7 @@ pub(super) async fn plan(
         };
         (RunMode::New { session_id }, recorded)
     };
-    let mcp_servers = mcp_servers(ctx, team, participant, task, &working, &work_branch(team, member)?)?;
+    let mcp_servers = mcp_servers(ctx, team, member, &working, &work_branch(team, member)?)?;
     let identity = CommitIdentity::for_agent(config.git(), &participant.name().parse()?);
     Ok(Plan {
         run: run.clone(),
@@ -572,11 +572,7 @@ pub(super) fn work_branch(team: &Team, member: &Member) -> Result<BranchName, St
         return Ok(branch);
     }
     // A task's own branch is named after its first agent: an agent that took the task over works on that branch.
-    let first = member
-        .past_holders()
-        .first()
-        .map_or_else(|| member.agent(), |held| &held.agent);
-    Ok(task_branch(&agent_name(first)?, member.task())?)
+    Ok(task_branch(&agent_name(member.bus_agent())?, member.task())?)
 }
 
 /// A session ID in the form of a version 4 UUID, which Claude Code accepts for `--session-id`.
@@ -602,19 +598,20 @@ const UUID_LEN: usize = 36;
 /// The positions of the hex digits of a UUID before which a dash stands.
 const UUID_DASHES: [usize; 4] = [8, 12, 16, 20];
 
-/// The MCP servers of the run of `task`: the agentbus, and Serena when the configuration has it.
+/// The MCP servers of the run of `member`'s task: the agentbus, and Serena when the configuration has it. On the bus the
+/// run acts under the name its task has there, the agent it was first given to, with the tier of the agent that runs.
 fn mcp_servers(
     ctx: &Context<'_>,
     team: &Team,
-    participant: &Participant,
-    task: &TaskId,
+    member: &Member,
     working: &std::path::Path,
     branch: &BranchName,
 ) -> Result<BTreeMap<McpServerKind, CommandLine>, StartProblem> {
     let binaries = ctx.settings.config.binaries();
     let home = absolute(ctx.home.root())?;
     let bus_dir = AgentBus::new(binaries.agentbus.clone(), home).bus_dir();
-    let (tier, role) = match participant.tier() {
+    let task = member.task();
+    let (tier, role) = match member.agent().tier() {
         Tier::Normal => (BusTier::Normal, BUS_ROLE_WORKER),
         Tier::Worker => (BusTier::Worker, BUS_ROLE_WORKER),
         Tier::Investigator => (BusTier::Normal, BUS_ROLE_INVESTIGATOR),
@@ -629,7 +626,7 @@ fn mcp_servers(
         text(binaries.agentbus.as_path())?,
         "serve".to_owned(),
         "--agent".to_owned(),
-        participant.name().to_owned(),
+        member.bus_agent().name().to_owned(),
         "--task".to_owned(),
         task.to_string(),
         "--task-dir".to_owned(),

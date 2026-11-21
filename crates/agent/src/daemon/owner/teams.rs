@@ -37,8 +37,8 @@ use super::wakes::Wake;
 use super::{Located, Owner, OwnerError};
 use crate::daemon::team::{
     Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace, assignable,
-    closing_transitions, failure_reason, form, is_finished, item_in_flight, lead_takes_work, notice_for, reconcile,
-    render_notice, request_outcome, shared_agents, start_item, team_done_notification,
+    closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for, reconcile, render_notice,
+    request_outcome, shared_agents, start_item, team_done_notification,
 };
 
 /// The name the harness puts on the messages it writes to the bus, as the bus itself does.
@@ -412,6 +412,7 @@ impl Owner {
     /// # Errors
     /// [`OwnerError`] when the state cannot be saved or is found inconsistent.
     pub(super) async fn team_life(&mut self) -> Result<(), OwnerError> {
+        self.brief_leads().await;
         self.flush_outbox().await?;
         self.drop_closed_waits();
         let looks = std::mem::take(&mut self.looks);
@@ -469,7 +470,7 @@ impl Owner {
     // ---- the bus --------------------------------------------------------------------------------------------
 
     /// Does what is waiting for the bus, oldest first; stops at the first thing the bus does not take.
-    async fn flush_outbox(&mut self) -> Result<(), OwnerError> {
+    pub(super) async fn flush_outbox(&mut self) -> Result<(), OwnerError> {
         while let Some(next) = self.outbox.front().cloned() {
             match self.carry_out(&next).await? {
                 Ok(()) => {
@@ -868,7 +869,7 @@ impl Owner {
     }
 
     /// Keeps `job` for the bus: it is done at the next turn of the loop, and again until the bus takes it.
-    fn tell_bus(&mut self, team: &TeamId, job: BusJob) {
+    pub(super) fn tell_bus(&mut self, team: &TeamId, job: BusJob) {
         self.outbox.push_back(Outbound {
             team: team.clone(),
             job,
@@ -922,10 +923,11 @@ impl Owner {
         if let Some(found) = self.parts.state.find_task(task)
             && found.team.crew().coordinator().is_some()
         {
-            // A member's work that is its lead's now is told as such, not as a failure.
-            let told = if self.to_lead.remove(task) {
-                let worktree = self.parts.store.home().worktree_dir(found.team.repo(), task);
-                lead_takes_work(found.team, found.member, &worktree)?
+            // A member's work that is its lead's now is told as such, with its briefing, not as a failure; the briefing is
+            // gathered at the next turn of the loop.
+            let told = if let Some(trouble) = self.to_lead.remove(task) {
+                self.lead_briefings.push((task.clone(), trouble));
+                None
             } else {
                 notice_for(found.team, located.role, found.member, end, message)?
             };

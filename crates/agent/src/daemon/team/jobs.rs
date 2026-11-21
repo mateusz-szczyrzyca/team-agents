@@ -153,8 +153,8 @@ pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) 
     Ok(Outgoing::Notice { kind, fields, text })
 }
 
-/// The notice that `member` is done: with its item when the list has items, else with its branch alone.
-/// The kind, the fields and the text of the message that a member's work is its lead's now.
+/// The kind, the fields and the text of the message that a member's work is its lead's now, with the briefing of what
+/// the member's runs left after it when there is one.
 fn lead_takes_work(texts: &TeamPrompts, work: &LeadWork) -> Result<Rendered, NoticeRenderError> {
     let text = texts.render(
         TeamPrompt::LeadTakesWork,
@@ -164,6 +164,10 @@ fn lead_takes_work(texts: &TeamPrompts, work: &LeadWork) -> Result<Rendered, Not
             .with("branch", work.branch.as_str())?
             .with("worktree", &work.worktree)?,
     )?;
+    let text = match &work.briefing {
+        Some(briefing) => format!("{}\n\n{}", text.trim_end(), briefing.trim_end()),
+        None => text,
+    };
     Ok((
         NoticeKind::MemberFailed,
         vec![
@@ -175,6 +179,7 @@ fn lead_takes_work(texts: &TeamPrompts, work: &LeadWork) -> Result<Rendered, Not
     ))
 }
 
+/// The notice that `member` is done: with its item when the list has items, else with its branch alone.
 fn member_finished(
     texts: &TeamPrompts,
     member: &AgentName,

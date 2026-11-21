@@ -441,8 +441,12 @@ pub(super) struct Owner {
     hangs: HashMap<TaskId, u32>,
     /// Why a queued task of a team starts now; read when its run is made ready.
     reasons: HashMap<TaskId, Why>,
-    /// The member tasks whose work goes to the team's lead: the lead is told when the end of their run is settled.
-    to_lead: HashSet<TaskId>,
+    /// The member tasks whose work goes to the team's lead, with the trouble of their last runs: the lead is told when
+    /// the end of their run is settled.
+    to_lead: HashMap<TaskId, Trouble>,
+    /// The member tasks whose run's end is settled and whose lead is to be told, with its briefing, that their work is
+    /// its own; told at the next turn of the loop, and before the daemon ends.
+    lead_briefings: Vec<(TaskId, Trouble)>,
     /// How often each task was woken for the newest message that waits for it.
     wake_counts: HashMap<TaskId, wakes::WakeCount>,
     /// What the log line of the run of a task that was woken says of the wake-up; read when the run starts.
@@ -528,7 +532,8 @@ impl Owner {
             wakes: HashMap::new(),
             hangs: HashMap::new(),
             reasons: HashMap::new(),
-            to_lead: HashSet::new(),
+            to_lead: HashMap::new(),
+            lead_briefings: Vec::new(),
             wake_counts: HashMap::new(),
             wake_notes: HashMap::new(),
             outbox: VecDeque::new(),
@@ -610,6 +615,16 @@ impl Owner {
             }
         }
         let stopped = self.stop_runs().await;
+        // What the runs' ends told the bus is carried out before the daemon ends: a lead given a member's work at the end
+        // of the last retry is told even when the daemon stops then, as the state already says the member stopped.
+        self.brief_leads().await;
+        if let Err(error) = self.flush_outbox().await {
+            tracing::warn!(
+                event = LogEvent::BusDown.as_str(),
+                error = %error_chain(&error),
+                "the bus could not be told what the last runs left before the daemon ends"
+            );
+        }
         // The removals and listings already started finish before the owner ends: a stopped daemon leaves no build
         // directory half removed.
         while let Some(joined) = self.disk_jobs.join_next_with_id().await {
