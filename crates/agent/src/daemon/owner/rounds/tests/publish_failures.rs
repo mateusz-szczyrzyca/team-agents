@@ -694,11 +694,11 @@ async fn publish_with_diverged_remote_branch_refuses_push_and_leaves_remote_unch
     git(&rig.repo, &["add", "diverged.txt"]);
     git(&rig.repo, &["commit", "-q", "-m", "Remote diverged commit"]);
     let diverged_head = git(&rig.repo, &["rev-parse", "HEAD"]).trim().to_string();
-    let task_branch = crate::daemon::team::task_branch(&"claude-1".parse().unwrap(), &task).unwrap();
+    let target_branch = format!("agents/claude-1/{task}-1.1");
     let origin_str = rig.origin.to_str().unwrap();
     git(
         &rig.repo,
-        &["push", "-q", origin_str, &format!("HEAD:refs/heads/{task_branch}")],
+        &["push", "-q", origin_str, &format!("HEAD:refs/heads/{target_branch}")],
     );
 
     // Answer questions so claude-1 commits independent work and requests publication:
@@ -717,13 +717,15 @@ async fn publish_with_diverged_remote_branch_refuses_push_and_leaves_remote_unch
         .unwrap();
 
     // The daemon attempts publication, classifies remote as Diverged, and refuses to push.
-    // Wait until claude-1 finishes work:
-    rig.status_is(&task, TaskStatus::Done).await;
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let note = rig.notification_with("origin refused the push of").await;
+    assert!(
+        note.contains("origin refused the push of"),
+        "publication must be refused with origin refused notification: {note}"
+    );
     rig.stop().await.unwrap();
 
     // The remote branch on origin must remain unchanged at diverged_head (not overwritten):
-    let current_origin_head = git(&rig.origin, &["rev-parse", task_branch.as_str()])
+    let current_origin_head = git(&rig.origin, &["rev-parse", target_branch.as_str()])
         .trim()
         .to_string();
     assert_eq!(
