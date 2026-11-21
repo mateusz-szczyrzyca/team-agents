@@ -326,8 +326,7 @@ Approve using the [explicit split verdict](docs/task-list.md#approved-split-plan
 lists the recorded parts, or explains a rejected form. The current round delivers part a. Later parts receive
 separate rounds, branches and pull requests after their dependencies merge; the original item and team remain
 open until all parts merge. `agent status` shows the parts and their dependency states. Definitions and progress
-survive restarts. The CLI negotiates socket protocol `5` for plan status and protocol `4` for split acknowledgements. Plan status falls back to protocol `4` and then `3`; both older formats omit plan summaries. Older clients keep protocol
-`3`, whose replies omit split fields; ordinary replies retain their existing shape. A new CLI probes with a
+survive restarts. The CLI negotiates socket protocol `5` for plan status and protocol `4` for split acknowledgements. Plan status falls back to protocol `4` and then `3`; both older formats omit plan summaries. Older `agent` CLIs using protocols `3` and `4` still talk to the new daemon. Protocol `3` replies also omit split fields; ordinary replies retain their existing shape. A new CLI probes with a
 read-only status request and reconnects once using protocol `3` when an older daemon rejects or closes the probe.
 The actual answer is sent once. Showing the full state of a split team requires protocol `4`.
 Schema `13` states from version 0.29.0 remain readable, with original round names and histories.
