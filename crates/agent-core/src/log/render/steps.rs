@@ -20,7 +20,13 @@ const CUT_MARK: &str = "…";
 /// knows its start.
 #[must_use]
 pub fn step_line(step: &Step, run: Option<&RunStart>, followed: &[AgentName]) -> String {
-    let mut line = step.at.to_string();
+    step_line_in(step, run, followed, &Zone::Utc)
+}
+
+/// The line of `step` as [`step_line`] writes it, with its time in `zone`.
+#[must_use]
+pub fn step_line_in(step: &Step, run: Option<&RunStart>, followed: &[AgentName], zone: &Zone) -> String {
+    let mut line = zone.stamp(step.at);
     line.push(' ');
     if followed.len() > 1
         && let Some(name) = run.map(|run| run.agent.name.as_str())
@@ -30,12 +36,6 @@ pub fn step_line(step: &Step, run: Option<&RunStart>, followed: &[AgentName]) ->
     }
     line.push_str(&text(&step.event));
     line
-}
-
-/// Stub: written in the next commit.
-#[must_use]
-pub fn step_line_in(_step: &Step, _run: Option<&RunStart>, _followed: &[AgentName], _zone: &Zone) -> String {
-    String::new()
 }
 
 /// A step as `kind: what`; a message is its text alone, since that is what its kind means here.
