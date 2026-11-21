@@ -9,9 +9,12 @@
 
 use std::path::PathBuf;
 
-use agent_core::decide::checks::{Issue, Judge, Subject, assess_near, markers};
+use std::collections::BTreeMap;
+
+use agent_core::decide::checks::commits::{self, CommitFinding, Said, Settled};
+use agent_core::decide::checks::{Issue, Judge, RoundFacts, Subject, UnchangedLine, assess_near, markers};
 use agent_core::decide::disclosure::{test_fix_section, with_section};
-use agent_core::decide::round::{AskReason, Checking, ChecksPolicy, ChecksStep};
+use agent_core::decide::round::{AskReason, Checking, ChecksPolicy, ChecksStep, CommitsLeft};
 use agent_core::history::{CheckOutcome, HistoryEvent};
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::prompt::Variables;
@@ -26,7 +29,9 @@ use super::super::start::next_number;
 use super::super::{Owner, OwnerError};
 use super::publish::{Ready, Site};
 use super::{Announcement, Lead, PublishError, Pulls};
-use crate::daemon::checks::{MAX_RELAYS, authored, grouped_decisions, named, questions, reason, team_message};
+use crate::daemon::checks::{
+    CommitQuestion, MAX_RELAYS, authored, grouped_decisions, named, questions_with_commits, reason, team_message,
+};
 use crate::daemon::notice::{NoticeContext, NoticeKind, layout_notification};
 use crate::daemon::questions;
 use crate::daemon::team::Why;
@@ -115,7 +120,8 @@ impl Owner {
             .load_checks_record(&lead.task)
             .await?
             .unwrap_or_default();
-        let mut refused: Vec<Subject> = Vec::new();
+        // What the human refused in the answer that is taken now: the team is told once.
+        let mut refused_now: Vec<Subject> = Vec::new();
         if let Some(asked) = record.asked.clone() {
             match self.where_is(&lead.task, &asked)? {
                 Asking::Open => return Ok(Some(Held::Waiting)),
@@ -131,16 +137,53 @@ impl Owner {
                     return Ok(Some(Held::WakeLead));
                 }
                 Asking::Answered(file) => {
-                    refused = self.take_answer(site, reviewing, &mut record, &asked, &file).await?;
+                    refused_now = self.take_answer(site, reviewing, &mut record, &asked, &file).await?;
                 }
             }
         }
-        self.revoke_changed_allowances(site, reviewing, &mut record).await?;
         let written = self.written_description(site, reviewing).await?;
-        let issues = self.round_issues(lead, reviewing, &written, &rules, &record).await?;
+        let gathered = self.gather(lead, reviewing, &written).await?;
+        let team_allowances = self
+            .parts
+            .state
+            .find_task(&lead.task)
+            .ok_or(PublishError::Lost)?
+            .team
+            .allowances()
+            .to_vec();
+        // A file the human allowed before the findings about commits had a subject of their own covers the commits that
+        // were in the round then: they are kept as they are before the file's allowance may be taken back.
+        let inherited = judge(&gathered, &rules, &record, reviewing.items, &team_allowances)
+            .settled
+            .inherited;
+        if !inherited.is_empty() {
+            record.allow(reviewing.items, &inherited);
+            self.parts.store.save_checks_record(&lead.task, &record).await?;
+        }
+        self.revoke_changed_allowances(site, reviewing, &mut record).await?;
+        let Assessed { issues, settled } = judge(&gathered, &rules, &record, reviewing.items, &team_allowances);
+        // What the human refused about a file keeps the round back until the team undoes it; what they refused about a
+        // commit is told to the team once, when they refuse it: the team cannot undo a commit.
+        let refused: Vec<Subject> = record
+            .refused_of(reviewing.items)
+            .into_iter()
+            .filter(|subject| !matches!(subject, Subject::Commit { .. }))
+            .collect();
+        let refused_commits = refused_now
+            .iter()
+            .filter(|subject| matches!(subject, Subject::Commit { .. }))
+            .count();
         let policy = ChecksPolicy::new(self.parts.settings.config.review());
         let checking = Checking::after(record.passes_of(reviewing.items));
-        let step = checking.conclude(&issues, &refused, policy);
+        let step = checking.conclude_with_commits(
+            &issues,
+            &refused,
+            CommitsLeft {
+                to_ask: settled.ask.len(),
+                refused_now: refused_commits,
+            },
+            policy,
+        );
         log_decision(
             "conclude_checks",
             &format!(
@@ -154,14 +197,20 @@ impl Owner {
         match step {
             ChecksStep::StartReviews => Ok(None),
             ChecksStep::BackToTeam { pass } => {
-                let text = team_message(
-                    pulls.checks(),
-                    reviewing.pr,
-                    pass,
-                    policy.check_passes,
-                    &issues,
-                    &refused,
-                )?;
+                // The team is told what the human refused just now, and what they refused before about a file that
+                // the round still changes.
+                let told: Vec<Subject> = refused_now
+                    .iter()
+                    .chain(
+                        refused
+                            .iter()
+                            .filter(|subject| issues.iter().any(|issue| issue.subject() == **subject)),
+                    )
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<Subject>>()
+                    .into_iter()
+                    .collect();
+                let text = team_message(pulls.checks(), reviewing.pr, pass, policy.check_passes, &issues, &told)?;
                 record.send_back(reviewing.items, pass.get());
                 record.sent = Some(Sent {
                     at: now,
@@ -192,14 +241,19 @@ impl Owner {
                 Ok(Some(Held::WakeLead))
             }
             ChecksStep::AskHuman { reason } => {
-                self.put_question(site, reviewing, &mut record, issues, (reason, checking.passes()), now)
+                let asking = Putting {
+                    issues,
+                    findings: settled.ask,
+                    facts: &gathered.facts,
+                };
+                self.put_question(site, reviewing, &mut record, asking, (reason, checking.passes()), now)
                     .await
             }
         }
     }
 
-    /// Takes the human's answer to the questions of the checks: what they allowed is kept for the items, what they refused
-    /// goes back to the team. Returns the refused subjects.
+    /// Takes the human's answer to the questions of the checks: what they allowed and what they refused is kept for the
+    /// items. Returns the refused subjects.
     async fn take_answer(
         &mut self,
         site: Site<'_>,
@@ -211,7 +265,7 @@ impl Owner {
         let Site { pulls, team, lead } = site;
         let loaded = questions::read(file).await?;
         let decided = grouped_decisions(&asked.subjects, &loaded.file)?;
-        record.answer(&asked.items, &decided.allowed);
+        record.answered(&asked.items, &decided.allowed, &decided.refused);
         self.parts.store.save_checks_record(&lead.task, record).await?;
         tracing::info!(
             event = agent_core::log::LogEvent::ChecksDecided.as_str(),
@@ -238,24 +292,33 @@ impl Owner {
         site: Site<'_>,
         reviewing: &Reviewing<'_>,
         record: &mut ChecksRecord,
-        mut issues: Vec<Issue>,
+        asking: Putting<'_>,
         (reason, passes): (AskReason, u32),
         now: Timestamp,
     ) -> Result<Option<Held>, PublishError> {
         let Site { pulls, team, lead } = site;
+        let Putting {
+            mut issues,
+            findings,
+            facts,
+        } = asking;
         let number = self
             .parts
             .state
             .find_task(&lead.task)
             .and_then(|found| next_number(found.member))
             .ok_or(PublishError::QuestionNumbers)?;
-        let covers = if reason == AskReason::PassesUsed || issues.iter().all(|issue| issue.judge() == Judge::Human) {
+        // A question about the commits alone spends and restarts no pass of the team: they were never the team's to settle.
+        let covers = if reason == AskReason::PassesUsed
+            || (!issues.is_empty() && issues.iter().all(|issue| issue.judge() == Judge::Human))
+        {
             Covers::Everything
         } else {
             Covers::HumanPart
         };
         issues.retain(|issue| covers == Covers::Everything || issue.judge() == Judge::Human);
-        let asked = questions(pulls.checks(), team, &lead.task, &issues, reason, passes)?;
+        let commits = self.commit_question(reviewing, record, &findings, facts).await?;
+        let asked = questions_with_commits(pulls.checks(), team, &lead.task, &issues, &commits, reason, passes)?;
         let file = self.parts.store.home().questions_file(&lead.task, number);
         replace_text_file(&file, &asked.file.render(), QUESTIONS_FILE_MODE).await?;
         record.sent = None;
@@ -271,7 +334,10 @@ impl Owner {
             relays: 0,
         });
         self.parts.store.save_checks_record(&lead.task, record).await?;
-        let lines = issue_lines(pulls, &issues)?;
+        let mut lines = issue_lines(pulls, &issues)?;
+        for note in &commits.notes {
+            lines.push(named(pulls.checks(), &note.finding.subject())?);
+        }
         self.record_checked(
             team,
             reviewing,
@@ -288,9 +354,33 @@ impl Owner {
             pr = %reviewing.pr,
             ?reason,
             issues = issues.len(),
+            commits = commits.notes.len(),
             "the checks ask the human about the round"
         );
         Ok(Some(Held::WakeLead))
+    }
+
+    /// What the human is shown about the `findings` about commits, and what was settled for the items before.
+    async fn commit_question(
+        &self,
+        reviewing: &Reviewing<'_>,
+        record: &ChecksRecord,
+        findings: &[CommitFinding],
+        facts: &RoundFacts,
+    ) -> Result<CommitQuestion, PublishError> {
+        if findings.is_empty() {
+            return Ok(CommitQuestion::default());
+        }
+        let ids: Vec<_> = findings.iter().map(|finding| finding.commit.clone()).collect();
+        let authors = reviewing.ready.git.commit_authors(&ids).await?;
+        let notes = findings
+            .iter()
+            .map(|finding| commits::describe(finding, facts, &authors))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(CommitQuestion {
+            notes,
+            before: record.allowed_of(reviewing.items),
+        })
     }
 
     /// Hands the history the issues the checks found at the head under review, and what followed.
@@ -324,16 +414,13 @@ impl Owner {
         Ok(with_section(description, test_fix_section(&facts.commits).as_deref()))
     }
 
-    /// What the checks find in the round of `reviewing`, whose pull request somebody described as `description`, without what
-    /// the human allowed for its items.
-    async fn round_issues(
+    /// What git says about the round of `reviewing`, whose pull request somebody described as `description`.
+    async fn gather(
         &self,
         lead: &Lead,
         reviewing: &Reviewing<'_>,
         description: &str,
-        rules: &agent_core::config::Checks,
-        record: &ChecksRecord,
-    ) -> Result<Vec<agent_core::decide::checks::Issue>, PublishError> {
+    ) -> Result<Gathered, PublishError> {
         let git = &reviewing.ready.git;
         let tip = &reviewing.ready.tip;
         let base = self.base_branch(&lead.repo)?;
@@ -355,19 +442,7 @@ impl Owner {
             .collect();
         edited.dedup();
         let unchanged = git.range_unchanged_lines(&merge_base, tip, &edited).await?;
-        let team = self.parts.state.find_task(&lead.task).ok_or(PublishError::Lost)?.team;
-        let human_only = record.human_only_of(reviewing.items);
-        let allowed_for_all: Vec<Subject> = record
-            .allowed_of(reviewing.items)
-            .into_iter()
-            .filter(|subject| !human_only.contains(subject))
-            .collect();
-        Ok(assess_near(rules, &facts, &unchanged, &allowed_for_all)
-            .into_iter()
-            // An allowance given to a question about the human's part covers the issues the human alone may allow.
-            .filter(|issue| !(issue.judge() == Judge::Human && human_only.contains(&issue.subject())))
-            .filter(|issue| issue.allowed_beforehand(team.allowances()).is_none())
-            .collect())
+        Ok(Gathered { facts, unchanged })
     }
 
     /// Takes back the allowances for files that the round changed after the human allowed them: the checks ask about them
@@ -505,6 +580,79 @@ impl Owner {
             }
         }
     }
+}
+
+/// What git says about a round.
+struct Gathered {
+    /// The files, the commits and the added lines of the round.
+    facts: RoundFacts,
+    /// The lines near the added ones that the round left as they were.
+    unchanged: Vec<UnchangedLine>,
+}
+
+/// What the checks find in a round, told apart by whom they wait for.
+struct Assessed {
+    /// The issues the team and the human are still to settle, without what the human allowed.
+    issues: Vec<Issue>,
+    /// The findings about commits: what the human is still to be asked, and what an earlier allowance covers.
+    settled: Settled,
+}
+
+/// What a question is put about.
+struct Putting<'a> {
+    /// The issues the question names.
+    issues: Vec<Issue>,
+    /// The findings about commits the question names.
+    findings: Vec<CommitFinding>,
+    /// The facts of the round, which describe the commits.
+    facts: &'a RoundFacts,
+}
+
+/// What the checks find in the round `gathered`, without what the human allowed for `items` in `record` and what the task
+/// list allows beforehand in `allowances`.
+fn judge(
+    gathered: &Gathered,
+    rules: &agent_core::config::Checks,
+    record: &ChecksRecord,
+    items: &[ItemId],
+    allowances: &[agent_core::task_allowance::TaskAllowance],
+) -> Assessed {
+    let found = commits::split(assess_near(rules, &gathered.facts, &gathered.unchanged, &[]));
+    let human_only = record.human_only_of(items);
+    let allowed_for_all: Vec<Subject> = record
+        .allowed_of(items)
+        .into_iter()
+        .filter(|subject| !human_only.contains(subject))
+        .collect();
+    let issues = found
+        .rest
+        .into_iter()
+        .filter(|issue| !allowed_for_all.contains(&issue.subject()))
+        // An allowance given to a question about the human's part covers the issues the human alone may allow.
+        .filter(|issue| !(issue.judge() == Judge::Human && human_only.contains(&issue.subject())))
+        .filter(|issue| issue.allowed_beforehand(allowances).is_none())
+        .collect();
+    let allowed = record.allowed_of(items);
+    let refused = record.refused_of(items);
+    let heads = record.allowed_at_of(items);
+    let paths: BTreeMap<RepoPath, Option<agent_core::state::CommitId>> = allowed_for_all
+        .iter()
+        .filter_map(|subject| match subject {
+            Subject::Path(path) => Some((path.clone(), heads.get(path).cloned())),
+            Subject::NoTests | Subject::Commit { .. } => None,
+        })
+        .collect();
+    let settled = commits::settle(
+        found.commits,
+        &gathered.facts,
+        &Said {
+            allowed: &allowed,
+            refused: &refused,
+            paths: &paths,
+            task_list: allowances,
+        },
+    );
+    Assessed { issues, settled }
 }
 
 /// The `issues` in words, a line each, as the history keeps them.

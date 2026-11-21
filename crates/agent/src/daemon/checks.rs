@@ -203,6 +203,7 @@ pub(super) struct CommitQuestion {
 ///
 /// # Errors
 /// [`ChecksTextError`].
+#[cfg(test)]
 pub(super) fn questions(
     texts: &ChecksPrompts,
     team: &TeamId,
