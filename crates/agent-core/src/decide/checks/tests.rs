@@ -345,16 +345,27 @@ fn red_then(subject: &str, files: Vec<FileChange>) -> RoundFacts {
 fn a_later_commit_that_takes_lines_out_of_a_red_test_is_an_issue_for_the_team() {
     let issues = found(&red_then("GREEN: code a", vec![modified("tests/a.rs", 1, 2)]));
 
+    // the same edit is also a finding about the commit that the team cannot repair (Rule: commits the team cannot
+    // repair); the round is not sent back for that one
     assert_eq!(
-        issues,
-        [Issue::RedTestEdited {
+        issues.first(),
+        Some(&Issue::RedTestEdited {
             path: path("tests/a.rs"),
             red: id('1'),
             edit: id('2')
-        }]
+        })
     );
     assert_eq!(issues[0].judge(), Judge::Team);
     assert_eq!(issues[0].subject(), Subject::Path(path("tests/a.rs")));
+    assert_eq!(
+        issues.last(),
+        Some(&Issue::EditedTest {
+            path: path("tests/a.rs"),
+            red: id('1'),
+            edit: id('2')
+        })
+    );
+    assert_eq!(issues.last().map(Issue::judge), Some(Judge::Human));
 }
 
 #[test]
@@ -372,7 +383,8 @@ fn a_later_commit_that_deletes_a_red_test_is_an_issue() {
         vec![file("tests/a.rs", Change::Deleted, text(0, 10))],
     ));
 
-    assert_eq!(issues.len(), 1);
+    // the edit is the team's as well, and the commit's, which only the human may allow
+    assert_eq!(issues.len(), 2);
 }
 
 #[test]
@@ -421,14 +433,17 @@ fn a_commit_after_a_merge_of_the_red_commit_is_later_than_it() {
         commit('4', "3", "GREEN: code", vec![modified("tests/a.rs", 0, 1)]),
     ]);
 
+    let issues = found(&facts);
+
     assert_eq!(
-        found(&facts),
-        [Issue::RedTestEdited {
+        issues.first(),
+        Some(&Issue::RedTestEdited {
             path: path("tests/a.rs"),
             red: id('1'),
             edit: id('4')
-        }]
+        })
     );
+    assert!(issues.len() > 1);
 }
 
 /// `commit` as a merge that changed `against_each` against each of its parents, in their order.
@@ -455,19 +470,25 @@ fn a_merge_that_takes_lines_out_of_a_red_test_against_a_parent_that_has_it_is_an
         ]);
         facts.files = vec![added("tests/a.rs", 9)];
 
-        assert_eq!(
-            found(&facts),
-            if parents == "12" {
-                vec![Issue::RedTestEdited {
-                    path: path("tests/a.rs"),
-                    red: id('1'),
-                    edit: id('3'),
-                }]
-            } else {
-                vec![]
-            },
-            "the RED commit on {red_side}"
-        );
+        let found = found(&facts);
+        if parents == "12" {
+            // the merge that takes the line out is the edit `3`, against its first parent
+            let edit = |issue: &Issue| {
+                matches!(issue, Issue::RedTestEdited { path: edited, red, edit }
+                    if *edited == path("tests/a.rs") && *red == id('1') && *edit == id('3'))
+                    || matches!(issue, Issue::EditedTest { path: edited, red, edit }
+                        if *edited == path("tests/a.rs") && *red == id('1') && *edit == id('3'))
+            };
+            // the edit is the team's as well, and the commit's, which only the human may allow
+            let mut judges: Vec<Judge> = found.iter().filter(|issue| edit(issue)).map(Issue::judge).collect();
+            judges.sort_by_key(|judge| match judge {
+                Judge::Team => 0,
+                Judge::Human => 1,
+            });
+            assert_eq!(judges, [Judge::Team, Judge::Human], "the RED commit on {red_side}");
+        } else {
+            assert_eq!(found, [], "the RED commit on {red_side}");
+        }
     }
 }
 
@@ -494,7 +515,8 @@ fn a_test_file_two_red_commits_touched_is_one_issue_per_edit() {
         commit('3', "2", "GREEN: code", vec![modified("tests/a.rs", 0, 1)]),
     ]);
 
-    assert_eq!(found(&facts).len(), 1);
+    // one edit, found for the team and, about its commit, for the human
+    assert_eq!(found(&facts).len(), 2);
 }
 
 /// The description of a pull request with the section of the tests changed after RED, naming `named`.
@@ -555,7 +577,8 @@ fn a_test_fix_that_the_description_does_not_name_is_an_issue() {
             &description,
         );
 
-        assert_eq!(found(&facts).len(), 1, "{description:?}");
+        // the edit of the test is the team's and the commit's
+        assert_eq!(found(&facts).len(), 2, "{description:?}");
     }
 }
 
@@ -580,7 +603,7 @@ fn a_commit_that_is_not_a_test_fix_is_not_excused_by_being_named() {
         // a test fix that changes other files is a finding about its commit too (Rule: commits the team cannot repair)
         let edits = issues
             .iter()
-            .filter(|issue| !matches!(issue, Issue::Tried { .. }))
+            .filter(|issue| matches!(issue, Issue::RedTestEdited { .. }))
             .count();
         assert_eq!(edits, 1, "{subject}");
     }
@@ -602,16 +625,22 @@ fn test_fix_touching(files: Vec<FileChange>) -> RoundFacts {
 #[test]
 fn a_test_fix_that_touches_a_file_that_is_not_a_test_is_a_finding_about_the_commit() {
     let cases = [
-        ("src/lib.rs", vec![modified("tests/a.rs", 1, 1), modified("src/lib.rs", 1, 0)]),
-        ("docs/notes.md", vec![added("docs/notes.md", 2), modified("tests/a.rs", 0, 1)]),
+        (
+            "src/lib.rs",
+            vec![modified("tests/a.rs", 1, 1), modified("src/lib.rs", 1, 0)],
+        ),
+        (
+            "docs/notes.md",
+            vec![added("docs/notes.md", 2), modified("tests/a.rs", 0, 1)],
+        ),
         // a file of the code list is not a test
         ("bin/tool", vec![added("bin/tool", 3), modified("tests/a.rs", 1, 0)]),
     ];
     for (other, files) in cases {
         let issues = found(&test_fix_touching(files));
 
-        // the commit that takes a line out of the test of the `RED:` commit is a finding for the team as well: it comes
-        // before the commit's own
+        // a commit that only adds lines to the test of the `RED:` commit has the finding about its own files only;
+        // one that also takes a line out has the finding about that edit too
         let tried = Issue::Tried {
             commit: id('2'),
             fault: CommitFault::FixTouchesOther {
@@ -619,7 +648,7 @@ fn a_test_fix_that_touches_a_file_that_is_not_a_test_is_a_finding_about_the_comm
                 other: path(other),
             },
         };
-        assert_eq!(issues.last(), Some(&tried), "{other}");
+        assert!(issues.iter().any(|issue| *issue == tried), "{other}: {issues:?}");
         assert_eq!(tried.judge(), Judge::Human, "{other}");
         assert_eq!(tried.subject(), Subject::Commit(id('2')), "{other}");
     }
@@ -645,6 +674,113 @@ fn a_commit_that_is_not_a_test_fix_and_touches_other_files_is_no_finding_about_a
     );
 
     assert_eq!(found(&facts), []);
+}
+
+// Rule: a commit that takes lines out of a test of the `RED:` commit and is not a `TEST-FIX:` of test files only is a
+// finding about that commit: no later commit restores what only a rewrite of the branch removes, so only the human may
+// allow it — and the round is not sent back for it. The one it can be repaired by, a named `TEST-FIX:`, stays the
+// team's.
+#[test]
+fn a_commit_that_takes_lines_out_of_a_red_test_and_is_no_test_fix_is_a_finding_about_the_commit() {
+    let facts = red_then(
+        "GREEN: code a",
+        vec![modified("tests/a.rs", 1, 2), added("src/a.rs", 3)],
+    );
+
+    let issues = found(&facts);
+
+    // the edit stays a finding for the team as well: the human decides, the team is not sent back for it, and no later
+    // commit can remove the commit's finding
+    let expected = Issue::EditedTest {
+        path: path("tests/a.rs"),
+        red: id('1'),
+        edit: id('2'),
+    };
+    assert_eq!(issues.last(), Some(&expected));
+    assert!(!issues.iter().any(|issue| matches!(issue, Issue::Tried { .. })));
+}
+
+#[test]
+fn a_named_test_fix_of_test_files_only_is_the_teams_to_repair_and_no_finding_about_a_commit() {
+    for subject in ["TEST-FIX: the assertion was wrong", "TEST-FIX: another subject"] {
+        let facts = test_fix(
+            subject,
+            vec![modified("tests/a.rs", 1, 1)],
+            &describing(&id('2').to_string()),
+        );
+        let issues = found(&facts);
+        // no finding about the commit is added: the team settles what is left
+        let about_commits = issues
+            .iter()
+            .filter(|issue| matches!(issue, Issue::Tried { .. } | Issue::EditedTest { .. }))
+            .count();
+        assert_eq!(about_commits, 0, "{subject}: {issues:?}");
+    }
+}
+
+#[test]
+fn a_test_fix_that_touches_other_files_is_a_finding_about_its_commit_and_not_the_teams() {
+    let cases = [
+        (
+            "TEST-FIX: and more, named",
+            vec![modified("tests/a.rs", 1, 1), modified("src/lib.rs", 1, 0)],
+            describing(&id('2').to_string()),
+        ),
+        (
+            "TEST-FIX: the assertion was wrong",
+            vec![modified("tests/a.rs", 1, 1)],
+            String::new(),
+        ),
+    ];
+    for (subject, files, description) in cases {
+        let issues = found(&test_fix(subject, files, &description));
+
+        // the only finding it has is the one about the commit: the team is not sent back for it
+        // the test fix that is a finding about its commit is built by its own RED commit: drop that one
+        let issues: Vec<&Issue> = issues
+            .iter()
+            .filter(|issue| !matches!(issue, Issue::RedTestEdited { .. }))
+            .collect();
+        assert!(
+            !issues.is_empty() && issues.iter().all(|issue| issue.judge() == Judge::Human),
+            "{subject}: {issues:?}"
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| matches!(issue, Issue::EditedTest { edit, .. } if *edit == id('2'))),
+            "{subject}: {issues:?}"
+        );
+    }
+}
+
+#[test]
+fn a_line_added_to_a_red_test_by_a_later_commit_is_no_finding_about_a_commit() {
+    let facts = red_then("GREEN: code a", vec![modified("tests/a.rs", 2, 0)]);
+
+    assert_eq!(found(&facts), []);
+}
+
+#[test]
+fn a_merge_of_main_that_takes_lines_out_of_a_red_test_is_the_teams() {
+    let merge = merging(
+        commit('2', "1a", "Merge main", Vec::new()),
+        vec![vec![], vec![modified("tests/a.rs", 0, 1)]],
+    );
+    let facts = history(vec![
+        commit('1', "", "RED: test a", vec![added("tests/a.rs", 10)]),
+        commit('a', "", "Work on main", vec![modified("docs/notes.md", 2, 0)]),
+        merge,
+    ]);
+
+    let issues = found(&facts);
+
+    assert!(
+        !issues
+            .iter()
+            .any(|issue| matches!(issue, Issue::EditedTest { .. } | Issue::Tried { .. })),
+        "{issues:?}"
+    );
 }
 
 // ---- production code without tests ------------------------------------------------------------------------------------
@@ -1101,10 +1237,22 @@ fn the_issues_come_in_the_order_of_the_rules() {
             Issue::NoTests => "no tests",
             Issue::Marker { .. } => "marker",
             Issue::Tried { .. } => "tried",
+            Issue::EditedTest { .. } => "edited test",
         })
         .collect();
 
-    assert_eq!(kinds, ["protected", "test changed", "red edited", "no tests", "marker"]);
+    // the commits the team cannot repair come after the rules it can settle
+    assert_eq!(
+        kinds,
+        [
+            "protected",
+            "test changed",
+            "red edited",
+            "no tests",
+            "marker",
+            "edited test"
+        ]
+    );
 }
 
 #[test]
@@ -1287,11 +1435,18 @@ fn merge_edits_are_scoped_to_first_parent_and_the_round_diff() {
             vec![modified("tests/a.rs", 0, 1)],
             vec![],
             true,
-            vec![Issue::RedTestEdited {
-                path: path("tests/a.rs"),
-                red: id('1'),
-                edit: id('3'),
-            }],
+            vec![
+                Issue::RedTestEdited {
+                    path: path("tests/a.rs"),
+                    red: id('1'),
+                    edit: id('3'),
+                },
+                Issue::EditedTest {
+                    path: path("tests/a.rs"),
+                    red: id('1'),
+                    edit: id('3'),
+                },
+            ],
         ),
     ] {
         let mut facts = history(vec![

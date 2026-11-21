@@ -196,6 +196,17 @@ pub enum Issue {
         /// What it did.
         fault: CommitFault,
     },
+    /// A test file that a `RED:` commit of the round touched had lines removed or replaced by a commit that is not a
+    /// repaired [`Issue::RedTestEdited`] ([`CommitFault::TestEdited`]): the team cannot repair it, the commit being in
+    /// the branch.
+    EditedTest {
+        /// The test file.
+        path: RepoPath,
+        /// The `RED:` commit that touched it.
+        red: CommitId,
+        /// The commit that took lines out of it.
+        edit: CommitId,
+    },
 }
 
 /// What was done to an existing test file.
@@ -229,6 +240,14 @@ pub enum CommitFault {
         fix: CommitId,
         /// The first file it touched that is not a test.
         other: RepoPath,
+    },
+    /// A commit took lines out of a test that a `RED:` commit of the round committed, and is not a named `TEST-FIX:` of
+    /// test files only.
+    TestEdited {
+        /// The test file.
+        path: RepoPath,
+        /// The `RED:` commit that committed it.
+        red: CommitId,
     },
 }
 
@@ -327,6 +346,8 @@ pub enum IssueKind {
     Marker(markers::Marker),
     /// A commit the team cannot repair; each kind of fault has its own question.
     Tried(std::mem::Discriminant<CommitFault>),
+    /// A commit that took lines out of a test that a later commit cannot restore.
+    TestEdited,
 }
 
 impl Issue {
@@ -340,7 +361,7 @@ impl Issue {
             Self::TestChanged { path, .. } | Self::ProtectedChanged { path, .. } | Self::RedTestEdited { path, .. } => {
                 path
             }
-            Self::NoTests | Self::Marker { .. } | Self::Tried { .. } => return None,
+            Self::NoTests | Self::Marker { .. } | Self::Tried { .. } | Self::EditedTest { .. } => return None,
         };
         allowances.iter().find(|allowance| allowance.matches(path))
     }
@@ -355,6 +376,7 @@ impl Issue {
             Self::NoTests => IssueKind::NoTests,
             Self::Marker { marker, .. } => IssueKind::Marker(*marker),
             Self::Tried { fault, .. } => IssueKind::Tried(std::mem::discriminant(fault)),
+            Self::EditedTest { .. } => IssueKind::TestEdited,
         }
     }
 
@@ -364,7 +386,7 @@ impl Issue {
         match self {
             Self::TestChanged { .. } | Self::ProtectedChanged { .. } => Judge::Human,
             Self::RedTestEdited { .. } | Self::NoTests | Self::Marker { .. } => Judge::Team,
-            Self::Tried { .. } => Judge::Human,
+            Self::Tried { .. } | Self::EditedTest { .. } => Judge::Human,
         }
     }
 
@@ -378,6 +400,7 @@ impl Issue {
             | Self::Marker { path, .. } => Subject::Path(path.clone()),
             Self::NoTests => Subject::NoTests,
             Self::Tried { commit, .. } => Subject::Commit(commit.clone()),
+            Self::EditedTest { edit, .. } => Subject::Commit(edit.clone()),
         }
     }
 }
@@ -402,6 +425,7 @@ pub fn assess_near(rules: &Checks, facts: &RoundFacts, unchanged: &[UnchangedLin
     issues.extend(missing_tests(rules, facts));
     issues.extend(markers_added(rules, facts, unchanged));
     issues.extend(commits_the_team_cannot_repair(rules, facts));
+    issues.extend(edited_test_commits(rules, facts));
     issues.retain(|issue| !allowed.contains(&issue.subject()));
     issues
 }
@@ -429,6 +453,52 @@ fn commits_the_team_cannot_repair(rules: &Checks, facts: &RoundFacts) -> Vec<Iss
             })
         })
         .collect()
+}
+
+/// The tests a `RED:` commit of the round committed that a commit the team can repair took lines out of: the same rule
+/// as [`Issue::RedTestEdited`], for the commits that are not a named `TEST-FIX:` of test files only, which the team
+/// cannot repair.
+fn edited_test_commits(rules: &Checks, facts: &RoundFacts) -> Vec<Issue> {
+    let mut issues = Vec::new();
+    let mut reported: HashSet<(&CommitId, &RepoPath)> = HashSet::new();
+    for (position, red) in facts
+        .commits
+        .iter()
+        .enumerate()
+        .filter(|(_, commit)| commit.subject.starts_with(RED_PREFIX))
+    {
+        let tests: Vec<&RepoPath> = red
+            .files
+            .iter()
+            .map(|file| &file.path)
+            .filter(|path| rules.test_paths.matches(path))
+            .collect();
+        if tests.is_empty() {
+            continue;
+        }
+        let later = later_commits(&facts.commits, position);
+        let having_red: HashSet<&CommitId> = std::iter::once(&red.id)
+            .chain(later.iter().map(|commit| &commit.id))
+            .collect();
+        for edit in later {
+            if is_named_test_fix(rules, facts, edit) {
+                continue;
+            }
+            for file in changes_after(edit, &having_red).filter(|file| {
+                file.takes_lines_out()
+                    && (edit.parents.len() < 2 || facts.files.iter().any(|changed| changed.path == file.path))
+            }) {
+                if tests.contains(&&file.path) && reported.insert((&edit.id, &file.path)) {
+                    issues.push(Issue::EditedTest {
+                        path: file.path.clone(),
+                        red: red.id.clone(),
+                        edit: edit.id.clone(),
+                    });
+                }
+            }
+        }
+    }
+    issues
 }
 
 /// The protected paths `file` touches: where it was when it moved out of one and where it is when it is in one, each
