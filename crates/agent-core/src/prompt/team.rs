@@ -43,6 +43,10 @@ pub enum TeamPrompt {
     Part,
     /// What a member that already has a session is told when it is given its next item.
     Assignment,
+    /// The selected member meets the minimum capability.
+    TierMember,
+    /// The coordinator is the only fitting participant in the crew.
+    TierCoordinator,
     /// What a member whose sleep a message ended is told.
     Wake,
     /// What a worker is told when it is given a request of a member.
@@ -104,6 +108,8 @@ impl TeamPrompt {
         Self::SplitUnreadable,
         Self::Part,
         Self::Assignment,
+        Self::TierMember,
+        Self::TierCoordinator,
         Self::Wake,
         Self::Delegation,
         Self::MemberFinished,
@@ -182,6 +188,16 @@ impl TeamPrompt {
                 "harness/team/assignment.md",
                 Audience::Model,
                 &["item_id", "branch", "base"],
+            ),
+            Self::TierMember => PromptSpec::new(
+                "harness/team/tier-member.md",
+                Audience::Model,
+                &["required", "agent", "tier"],
+            ),
+            Self::TierCoordinator => PromptSpec::new(
+                "harness/team/tier-coordinator.md",
+                Audience::Model,
+                &["required", "agent", "tier"],
             ),
             Self::Wake => PromptSpec::new("harness/team/wake.md", Audience::Model, &["team"]),
             Self::Delegation => delegation_spec(),

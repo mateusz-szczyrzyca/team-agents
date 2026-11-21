@@ -217,6 +217,36 @@ fn with_part(texts: &TeamPrompts, run: &TeamRun<'_>, mut prompt: String) -> Resu
             .with("previous", if previous.is_empty() { "none" } else { &previous })?;
         prompt = join_sections(&prompt, &texts.render(TeamPrompt::Part, &values)?);
     }
+    with_tier(texts, run, prompt)
+}
+
+/// Explains the capability choice only to the run holding the assignment branch.
+fn with_tier(texts: &TeamPrompts, run: &TeamRun<'_>, prompt: String) -> Result<String, TeamPromptError> {
+    for (role, member) in run.team.crew().roster() {
+        let assigned = run.team.items().iter().find(|item| match item.phase() {
+            agent_core::state::ItemPhase::InProgress { assignee, branch }
+            | agent_core::state::ItemPhase::Fixing { assignee, branch, .. } => {
+                branch == run.branch && assignee.as_str() == member.agent().name()
+            }
+            agent_core::state::ItemPhase::Pending
+            | agent_core::state::ItemPhase::InReview { .. }
+            | agent_core::state::ItemPhase::Approved { .. }
+            | agent_core::state::ItemPhase::Done { .. } => false,
+        });
+        let Some(item) = assigned else {
+            continue;
+        };
+        let required = agent_core::decide::assign::dispatch::required_tier(run.team, item.id());
+        let values = Variables::new()
+            .with("required", required.as_str())?
+            .with("agent", member.agent().name())?
+            .with("tier", member.agent().tier().as_str())?;
+        let text = match role {
+            Role::Coordinator => TeamPrompt::TierCoordinator,
+            Role::Solo | Role::Member | Role::Worker | Role::Reviewer => TeamPrompt::TierMember,
+        };
+        return Ok(join_sections(&prompt, &texts.render(text, &values)?));
+    }
     Ok(prompt)
 }
 
