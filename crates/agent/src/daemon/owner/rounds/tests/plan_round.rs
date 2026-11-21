@@ -1,11 +1,13 @@
 //! The plan of a solo agent through a round: a run that ends done with a step to do goes back, one that then loses a
 //! step goes back again, and the run that settles its plan goes on; every version is kept.
 
+use agent_core::protocol::{Client, Command, Reply, StatusRequest};
 use agent_core::state::{ItemPhase, MergeMode, PlanKeeping, PlanStage};
 use agent_core::status::TaskStatus;
 use agent_runtime::history::{PlanRead, Reader};
 
 use super::rig::{ONE, Rig, investigator, normal};
+use crate::client::Connection;
 
 /// Writes the script `name` of the stand-in CLI, which writes `plan` as the plan of the worktree it runs in.
 fn plan_script(rig: &Rig, name: &str, plan: &str) {
@@ -383,4 +385,357 @@ async fn a_plan_committed_by_mistake_is_not_in_the_published_branch() {
     );
     assert!(published.lines().any(|path| path == "one.txt"), "{published}");
     assert!(!published.contains(".agent"), "{published}");
+}
+
+async fn round_with_changes(lead: &'static str) -> Rig {
+    let rig = Rig::new(
+        &[
+            normal("claude-1", lead),
+            investigator("inv-r1", CHANGES_ONCE),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 3\n"),
+    )
+    .unwrap();
+    rig
+}
+
+fn committing_plan_script_waiting(rig: &Rig, name: &str, plan: &str, file_to_create: &str, wait_file: &str) {
+    let dir = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join(format!("{name}.sh")),
+        format!(
+            "set -eu\nwhile [ ! -f {wait_file} ]; do sleep 0.05; done\n\
+             mkdir -p .agent\ncat > .agent/plan.md <<'PLAN'\n{plan}PLAN\n\
+             echo ok > {file_to_create}\ngit add {file_to_create}\n\
+             git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q -m 'Work'\n"
+        ),
+    )
+    .unwrap();
+}
+
+fn example_repo() -> agent_core::config::RepoName {
+    "example".parse().unwrap()
+}
+
+#[tokio::test]
+async fn plan_steps_are_reported_in_status_summaries() {
+    let mut rig = approved_round("script:first").await;
+    committing_plan_script(
+        &rig,
+        "first",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    Check: exists one.txt\n",
+        "one.txt",
+    );
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+
+    let mut connection = Connection::connect(&rig.home.socket_file()).await.unwrap();
+    let reply = connection
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+
+    let (Reply::Teams { teams } | Reply::Overview { teams, .. }) = reply else {
+        panic!("expected Reply::Teams, got {reply:?}");
+    };
+
+    let team_summary = teams.iter().find(|t| t.id == team).unwrap();
+    let steps = team_summary.task_plans.get(&tasks[0]).unwrap();
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0].id, "1.1".parse().unwrap());
+    assert_eq!(steps[0].mark, 'x');
+    assert_eq!(steps[0].state, Some(agent_core::plan::judge::JudgementState::Confirmed));
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn plan_steps_are_preserved_in_status_after_daemon_restart() {
+    let mut rig = approved_round("script:first").await;
+    committing_plan_script(
+        &rig,
+        "first",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    Check: exists one.txt\n",
+        "one.txt",
+    );
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+
+    // Verify status before restart
+    let mut connection = Connection::connect(&rig.home.socket_file()).await.unwrap();
+    let reply = connection
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+    let (Reply::Teams { teams } | Reply::Overview { teams, .. }) = reply else {
+        panic!("expected Reply::Teams, got {reply:?}");
+    };
+    let team_summary = teams.iter().find(|t| t.id == team).unwrap();
+    let steps = team_summary.task_plans.get(&tasks[0]).unwrap();
+    assert_eq!(steps[0].state, Some(agent_core::plan::judge::JudgementState::Confirmed));
+
+    // Restart the daemon
+    rig.stop().await.unwrap();
+    rig.start().await;
+
+    // Verify status after restart: reads from in-memory snapshot recovered at startup
+    let mut connection2 = Connection::connect(&rig.home.socket_file()).await.unwrap();
+    let reply2 = connection2
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+    let (Reply::Teams { teams: teams2 } | Reply::Overview { teams: teams2, .. }) = reply2 else {
+        panic!("expected Reply::Teams, got {reply2:?}");
+    };
+    let team_summary2 = teams2.iter().find(|t| t.id == team).unwrap();
+    let steps2 = team_summary2.task_plans.get(&tasks[0]).unwrap();
+    assert_eq!(steps2.len(), 1);
+    assert_eq!(steps2[0].id, "1.1".parse().unwrap());
+    assert_eq!(steps2[0].mark, 'x');
+    assert_eq!(
+        steps2[0].state,
+        Some(agent_core::plan::judge::JudgementState::Confirmed)
+    );
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn plan_steps_with_various_checks_report_declared_and_mismatch() {
+    let mut rig = round_with_changes("script:first,fix-script:second").await;
+    let plan = "\
+Do several.
+
+1. Steps
+[x] 1.1 Reviewer
+    Check: reviewer
+[x] 1.2 No check
+[x] 1.3 Command check
+    Check: cargo test -p agent-core
+[x] 1.4 Exists file
+    Check: exists one.txt
+[x] 1.5 Missing file
+    Check: exists missing.txt
+";
+    committing_plan_script(&rig, "first", plan, "one.txt");
+    committing_plan_script_waiting(&rig, "second", plan, "missing.txt", "continue.signal");
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+
+    // Wait until run 1 has ended
+    rig.state_where("run 1 has ended", |state| {
+        state.find_task(&tasks[0]).is_some_and(|f| {
+            f.member.runs().len() >= 2
+                || (!f.member.runs().is_empty()
+                    && matches!(f.member.runs()[0].state(), agent_core::state::RunState::Ended { .. }))
+        })
+    })
+    .await;
+
+    let mut connection = Connection::connect(&rig.home.socket_file()).await.unwrap();
+    let reply = connection
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+    let (Reply::Teams { teams } | Reply::Overview { teams, .. }) = reply else {
+        panic!("expected Reply::Teams, got {reply:?}");
+    };
+    let team_summary = teams.into_iter().find(|t| t.id == team).unwrap();
+    let steps = team_summary.task_plans.get(&tasks[0]).unwrap().clone();
+    assert_eq!(steps.len(), 5);
+
+    // 1.1 reviewer -> Declared
+    assert_eq!(steps[0].id, "1.1".parse().unwrap());
+    assert_eq!(steps[0].state, Some(agent_core::plan::judge::JudgementState::Declared));
+    assert_eq!(steps[0].reason, None);
+
+    // 1.2 no check -> Declared
+    assert_eq!(steps[1].id, "1.2".parse().unwrap());
+    assert_eq!(steps[1].state, Some(agent_core::plan::judge::JudgementState::Declared));
+    assert_eq!(steps[1].reason, None);
+
+    // 1.3 command check -> Declared in Part A
+    assert_eq!(steps[2].id, "1.3".parse().unwrap());
+    assert_eq!(steps[2].state, Some(agent_core::plan::judge::JudgementState::Declared));
+
+    // 1.4 exists file present -> Confirmed
+    assert_eq!(steps[3].id, "1.4".parse().unwrap());
+    assert_eq!(steps[3].state, Some(agent_core::plan::judge::JudgementState::Confirmed));
+    assert_eq!(steps[3].reason, None);
+
+    // 1.5 missing file -> Mismatch in run 1
+    assert_eq!(steps[4].id, "1.5".parse().unwrap());
+    assert_eq!(steps[4].state, Some(agent_core::plan::judge::JudgementState::Mismatch));
+    assert!(
+        steps[4]
+            .reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("path does not exist: missing.txt"),
+        "{:?}",
+        steps[4].reason
+    );
+
+    // Signal run 2 to proceed and create missing.txt
+    let worktree = rig.home.worktree_dir(&example_repo(), &tasks[0]);
+    std::fs::write(worktree.join("continue.signal"), "ok").unwrap();
+
+    // Once run 2 creates missing.txt, round reaches Done and 1.5 becomes Confirmed
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+
+    let reply = connection
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+    let (Reply::Teams { teams } | Reply::Overview { teams, .. }) = reply else {
+        panic!("expected Reply::Teams, got {reply:?}");
+    };
+    let team_summary = teams.into_iter().find(|t| t.id == team).unwrap();
+    let steps = team_summary.task_plans.get(&tasks[0]).unwrap();
+    assert_eq!(steps[4].state, Some(agent_core::plan::judge::JudgementState::Confirmed));
+    assert_eq!(steps[4].reason, None);
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn unchanged_confirmed_steps_are_not_rejudged_across_runs_and_roles() {
+    let mut rig = round_with_changes("script:first,fix-script:second").await;
+    let plan = "\
+Do two.
+
+1. Steps
+[x] 1.1 First
+    Check: exists one.txt
+[x] 1.2 Second
+    Check: exists missing.txt
+";
+    committing_plan_script(&rig, "first", plan, "one.txt");
+    committing_plan_script_waiting(&rig, "second", plan, "missing.txt", "continue.signal");
+    rig.start().await;
+
+    let (_team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+
+    // Wait until run 1 has finished and fix pass run 2 has started
+    rig.state_where("run 1 has ended", |state| {
+        state.find_task(&tasks[0]).is_some_and(|f| {
+            f.member.runs().len() >= 2
+                || (!f.member.runs().is_empty()
+                    && matches!(f.member.runs()[0].state(), agent_core::state::RunState::Ended { .. }))
+        })
+    })
+    .await;
+
+    // Signal run 2 to proceed and create missing.txt
+    let worktree = rig.home.worktree_dir(&example_repo(), &tasks[0]);
+    std::fs::write(worktree.join("continue.signal"), "ok").unwrap();
+
+    // Run 2 completes and round reaches Done
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let judgements = reader.step_judgements(&tasks[0]).unwrap();
+
+    let step1 = "1.1".parse::<agent_core::ids::ItemId>().unwrap();
+    let step2 = "1.2".parse::<agent_core::ids::ItemId>().unwrap();
+
+    // 1.1 was confirmed in run 1, remained unchanged in run 2 -> deduplicated, exactly 1 judgement in history:
+    let step1_judgements: Vec<_> = judgements.iter().filter(|j| j.step == step1).collect();
+    assert_eq!(step1_judgements.len(), 1, "step 1.1 must only be judged once");
+    assert_eq!(
+        step1_judgements[0].state,
+        agent_core::plan::judge::JudgementState::Confirmed
+    );
+
+    // 1.2 was mismatch in run 1, confirmed in run 2 -> re-judged, 2 judgements in history:
+    let step2_judgements: Vec<_> = judgements.iter().filter(|j| j.step == step2).collect();
+    assert_eq!(step2_judgements.len(), 2, "step 1.2 mismatch must be re-judged");
+    assert_eq!(
+        step2_judgements[0].state,
+        agent_core::plan::judge::JudgementState::Mismatch
+    );
+    assert_eq!(
+        step2_judgements[1].state,
+        agent_core::plan::judge::JudgementState::Confirmed
+    );
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn run_with_plan_steps_settles_normally_when_history_is_disabled() {
+    let mut rig = approved_round("script:done").await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        format!("{config}\n[history]\nenabled = false\n"),
+    )
+    .unwrap();
+    committing_plan_script(
+        &rig,
+        "done",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    Check: exists one.txt\n",
+        "one.txt",
+    );
+    rig.start().await;
+
+    let (_team, _tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn reviewer_tasks_have_no_plan_summaries_in_status() {
+    let mut rig = approved_round("script:first").await;
+    committing_plan_script(&rig, "first", "Do one.\n\n1. Work\n[x] 1.1 Write it\n", "one.txt");
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+
+    let mut connection = Connection::connect(&rig.home.socket_file()).await.unwrap();
+    let reply = connection
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+
+    let (Reply::Teams { teams } | Reply::Overview { teams, .. }) = reply else {
+        panic!("expected Reply::Teams, got {reply:?}");
+    };
+
+    let team_summary = teams.iter().find(|t| t.id == team).unwrap();
+    // Lead task has plan summaries:
+    assert!(team_summary.task_plans.contains_key(&tasks[0]));
+
+    // Reviewer tasks have NO plan summaries:
+    let reviewers = state.team(&team).unwrap().reviewers();
+    assert_eq!(reviewers.len(), 2);
+    for reviewer in reviewers {
+        let reviewer_steps = team_summary.task_plans.get(reviewer.task());
+        assert!(reviewer_steps.is_none() || reviewer_steps.unwrap().is_empty());
+    }
+
+    rig.stop().await.unwrap();
 }

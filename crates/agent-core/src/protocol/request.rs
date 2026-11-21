@@ -422,6 +422,7 @@ impl Request {
         match format {
             super::ReplyFormat::Legacy => self.to_line(),
             super::ReplyFormat::Split => super::encode_split(self),
+            super::ReplyFormat::Plan => self.to_line(),
         }
     }
 

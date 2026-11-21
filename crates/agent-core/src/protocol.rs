@@ -34,6 +34,9 @@ pub const PROTOCOL_VERSION: u32 = 3;
 /// The negotiated protocol version carrying split plans, acknowledgements and part round identities.
 pub const SPLIT_PROTOCOL_VERSION: u32 = 4;
 
+/// The negotiated protocol version carrying plan step judgements and settlement states in status and show replies.
+pub const PLAN_PROTOCOL_VERSION: u32 = 5;
+
 /// Wire format requested by a client; version four includes approved split details.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyFormat {
@@ -41,6 +44,8 @@ pub enum ReplyFormat {
     Legacy,
     /// Version four, including split acknowledgements, plans and round identities.
     Split,
+    /// Version five, including plan step judgements and status snapshots.
+    Plan,
 }
 
 /// Longest line a client may send, in bytes: a task list (1 MiB at most) with room for the rest of the request.
@@ -231,6 +236,7 @@ impl Frame {
         match format {
             ReplyFormat::Legacy => self.to_line(),
             ReplyFormat::Split => encode_split(self),
+            ReplyFormat::Plan => self.to_line(),
         }
     }
 
