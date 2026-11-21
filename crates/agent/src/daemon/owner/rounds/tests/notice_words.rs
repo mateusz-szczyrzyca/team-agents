@@ -281,3 +281,33 @@ async fn the_json_status_of_a_team_and_of_its_task_holds_the_description() {
         assert_eq!(value[0]["short_desc"], "Build the thing in words");
     }
 }
+
+#[tokio::test]
+async fn a_daemon_that_starts_on_a_state_from_before_the_line_derives_the_description_of_its_teams() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "ask"),
+            investigator("inv-r1", "done"),
+            investigator("inv-r2", "done"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    // The state as the version before wrote it: a brief that starts with a line that looks like the new header.
+    let path = rig.home.state_file();
+    let mut state: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let old = state["teams"][0]["task_list"].as_str().unwrap().to_owned();
+    state["teams"][0]["task_list"] = serde_json::json!(format!("Short desc: Original brief\n\n{old}"));
+    std::fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+
+    rig.start().await;
+    let summary = listed_team(&rig, None).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(summary.short_desc.as_deref(), Some("Short desc: Original brief"));
+}

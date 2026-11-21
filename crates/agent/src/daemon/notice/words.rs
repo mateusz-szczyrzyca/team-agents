@@ -117,3 +117,6 @@ mod tests;
 
 #[cfg(test)]
 mod item_tests;
+
+#[cfg(test)]
+mod legacy_tests;
