@@ -138,3 +138,43 @@ fn step_line_names_its_agent_beside_another_and_tells_each_kind_of_step_for_each
         }
     }
 }
+
+#[test]
+fn the_end_of_a_call_is_told_as_each_cli_records_it_with_one_agent_and_with_two() {
+    // What the adapters give today: Codex turns a command that exited with a code other than 0 into an error naming the
+    // code and the command; Claude Code, OpenCode and Antigravity give the text of the error of a failed call. No CLI
+    // gives a step for an exit code 0: the result of a call that went well is not recorded as a step.
+    let rows: Vec<(&str, CliKind, ActivityEvent, &str)> = vec![
+        (
+            "codex-1",
+            CliKind::Codex,
+            ActivityEvent::Error("exit 101: /usr/bin/bash -lc 'cargo test'".to_owned()),
+            "error: exit 101: /usr/bin/bash -lc 'cargo test'",
+        ),
+        (
+            "inv-claude-sonnet",
+            CliKind::Claude,
+            ActivityEvent::Error("Exit code 1\nfatal: not a git repository".to_owned()),
+            "error: Exit code 1…",
+        ),
+        (
+            "opencode-1",
+            CliKind::Opencode,
+            ActivityEvent::Error("Invalid arguments for tool \"shell\":\n- command: Missing key".to_owned()),
+            "error: Invalid arguments for tool \"shell\":…",
+        ),
+        (
+            "gemini-1",
+            CliKind::Gemini,
+            ActivityEvent::Error("tool call failed: permission denied".to_owned()),
+            "error: tool call failed: permission denied",
+        ),
+    ];
+    for (name, cli, event, expected) in &rows {
+        let run = start(name, *cli, "task-20261121-132909-8cgk");
+        let alone = step_line(&step(event.clone(), 3), Some(&run), &[agent(name)]);
+        let beside = step_line(&step(event.clone(), 3), Some(&run), &[agent(name), agent("other-1")]);
+        assert_eq!(alone, format!("{AT} {expected}"));
+        assert_eq!(beside, format!("{AT} {name} {expected}"));
+    }
+}
