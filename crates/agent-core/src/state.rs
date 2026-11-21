@@ -429,18 +429,40 @@ impl State {
     /// [`RenewTaskError`] when the task is not in the state, is not a member's, or the boundary does not fit its runs.
     pub fn owe_lead(
         &mut self,
-        _task: &TaskId,
-        _trouble: crate::decide::ladder::Trouble,
-        _at: Timestamp,
+        task: &TaskId,
+        trouble: crate::decide::ladder::Trouble,
+        at: Timestamp,
     ) -> Result<(), RenewTaskError> {
-        Ok(())
+        let (role, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        match role {
+            Role::Member => {}
+            Role::Solo | Role::Coordinator | Role::Worker | Role::Reviewer => {
+                return Err(RenewTaskError::Role {
+                    task: task.clone(),
+                    role,
+                });
+            }
+        }
+        member
+            .owe_lead(trouble, at)
+            .map(|_| ())
+            .map_err(|source| RenewTaskError::Renewal {
+                task: task.clone(),
+                source,
+            })
     }
 
     /// Records that the lead of `task` was told that the member's work is its own: nothing is owed any more.
     ///
     /// # Errors
     /// [`RenewTaskError::NoTask`] when the task is not in the state.
-    pub fn lead_told(&mut self, _task: &TaskId) -> Result<(), RenewTaskError> {
+    pub fn lead_told(&mut self, task: &TaskId) -> Result<(), RenewTaskError> {
+        let (_, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        member.lead_told();
         Ok(())
     }
 

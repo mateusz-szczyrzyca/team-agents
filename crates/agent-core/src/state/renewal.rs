@@ -29,6 +29,10 @@ pub struct Renewals {
     /// and in a state written before such questions existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     asked: Option<NonZeroU32>,
+    /// Since when the work of the member's task is owed to its team's lead, which is still to be told of it; `None`
+    /// when nothing is owed, and in a state written before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lead_owed: Option<Timestamp>,
 }
 
 impl Renewals {
@@ -61,6 +65,17 @@ impl Renewals {
         self.asked = Some(question);
     }
 
+    /// Whether the work of the member's task is owed to its team's lead, still to be told.
+    #[must_use]
+    pub const fn lead_owed(&self) -> bool {
+        self.lead_owed.is_some()
+    }
+
+    /// Records that the work of the member's task is owed to its team's lead from `at`, or nothing any more (`None`).
+    pub(super) const fn owe_lead(&mut self, at: Option<Timestamp>) {
+        self.lead_owed = at;
+    }
+
     /// Whether a task with `runs` runs has begun no run since it was last started anew.
     pub(super) const fn awaits_run(&self, runs: usize) -> bool {
         runs <= self.after_runs
@@ -74,6 +89,7 @@ impl Renewals {
             reason,
             after_runs,
             asked: None,
+            lead_owed: None,
         }
     }
 
@@ -86,6 +102,7 @@ impl Renewals {
             reason,
             after_runs,
             asked: None,
+            lead_owed: None,
         }
     }
 
