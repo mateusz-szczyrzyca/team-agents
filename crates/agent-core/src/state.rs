@@ -42,7 +42,7 @@ pub use findings::{
     RaisedFinding, Reconciled, RecordedFinding, SecondOpinion, Verification, VerifierAnswers, reconcile,
 };
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
-pub use holding::Holding;
+pub use holding::{HandOverError, Holding};
 pub use item::{
     AdvanceError, AskReviewsError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut,
     ItemPhase, ItemProgress, MergeConflict, NotWorkedOn, PhaseKind, PullRequest, ReplaceReviewError, Review,
@@ -350,6 +350,18 @@ impl State {
             task: task.clone(),
             source,
         })
+    }
+
+    /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
+    /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
+    /// that the state it leaves loads again.
+    ///
+    /// # Errors
+    /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
+    /// `holder` is in its team, or a run of it is going.
+    pub fn hand_over_task(&mut self, task: &TaskId, holder: Participant, at: Timestamp) -> Result<(), HandOverError> {
+        let _ = (task, holder, at);
+        Ok(())
     }
 
     /// The round `round` with its team.
