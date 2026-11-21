@@ -9,14 +9,20 @@ use super::{CUT_MARK, MAX_EXCERPT_CHARS, MAX_SHORT_DESC_CHARS, NO_BRIEF_DESC, br
 fn a_short_first_sentence_is_the_description() {
     let cases = [
         ("Fix the flaky test in foo.", "Fix the flaky test in foo."),
-        ("Fix the flaky test in foo.\nIt fails on CI.", "Fix the flaky test in foo."),
+        (
+            "Fix the flaky test in foo.\nIt fails on CI.",
+            "Fix the flaky test in foo.",
+        ),
         ("# Fix the flaky test.\n\nMore.", "Fix the flaky test."),
         ("- Fix the flaky test.\n- Then stop.", "Fix the flaky test."),
         ("* Fix the flaky test\n* Then stop.", "Fix the flaky test"),
         ("1. Fix the flaky test.\n2. Then stop.", "Fix the flaky test."),
         ("  Fix the flaky test  ", "Fix the flaky test"),
         ("\n\nFix the flaky test.", "Fix the flaky test."),
-        ("Fix the flaky test in `foo` at v1.2 (not 1.3)!\nNext.", "Fix the flaky test in `foo` at v1.2 (not 1.3)!"),
+        (
+            "Fix the flaky test in `foo` at v1.2 (not 1.3)!\nNext.",
+            "Fix the flaky test in `foo` at v1.2 (not 1.3)!",
+        ),
         ("Żółć w powiadomieniach. Potem nic.", "Żółć w powiadomieniach."),
     ];
 
@@ -52,7 +58,11 @@ fn a_brief_that_opens_with_a_heading_or_a_list_falls_back_to_its_first_word() {
     for (brief, expected) in [("## ", "##"), ("- \n- x", "-"), ("1. \n", "1."), ("   \n#", "#")] {
         assert_eq!(derived_short_desc(brief), expected, "{brief:?}");
     }
-    for (brief, expected) in [("## A heading", "A heading"), ("- an item", "an item"), ("1. an item", "an item")] {
+    for (brief, expected) in [
+        ("## A heading", "A heading"),
+        ("- an item", "an item"),
+        ("1. an item", "an item"),
+    ] {
         assert_eq!(derived_short_desc(brief), expected, "{brief:?}");
     }
 }
@@ -78,7 +88,11 @@ fn an_excerpt_of_a_long_brief_stops_after_the_last_sentence_that_fits() {
 
     let excerpt = brief_excerpt(&brief);
 
-    assert!(excerpt.chars().count() <= MAX_EXCERPT_CHARS, "{}", excerpt.chars().count());
+    assert!(
+        excerpt.chars().count() <= MAX_EXCERPT_CHARS,
+        "{}",
+        excerpt.chars().count()
+    );
     assert_eq!(excerpt.trim_end(), sentence.repeat(9).trim_end());
     assert!(brief.starts_with(&excerpt));
     assert!(!excerpt.trim_end().ends_with(CUT_MARK), "{excerpt:?}");
