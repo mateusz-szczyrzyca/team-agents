@@ -145,14 +145,26 @@ impl ChecksRecord {
 
     /// What the human refused for any of `items`, without repeats.
     #[must_use]
-    pub fn refused_of(&self, _items: &[ItemId]) -> Vec<Subject> {
-        Vec::new()
+    pub fn refused_of(&self, items: &[ItemId]) -> Vec<Subject> {
+        let refused: BTreeSet<&Subject> = items
+            .iter()
+            .filter_map(|item| self.items.get(item))
+            .flat_map(|held| held.refused.iter())
+            .collect();
+        refused.into_iter().cloned().collect()
     }
 
     /// Takes the human's answer to the question that is waited on, as [`Self::answer`] does for what they `allowed`,
     /// and keeps what they `refused` for `items`.
-    pub fn answered(&mut self, items: &[ItemId], allowed: &[Subject], _refused: &[Subject]) {
+    pub fn answered(&mut self, items: &[ItemId], allowed: &[Subject], refused: &[Subject]) {
         self.answer(items, allowed);
+        for item in items {
+            let held = self.items.entry(*item).or_default();
+            for subject in allowed {
+                held.refused.remove(subject);
+            }
+            held.refused.extend(refused.iter().cloned());
+        }
     }
 
     /// The heads at which the files of `items` were allowed, for those that have one.
