@@ -783,6 +783,23 @@ fn a_merge_of_main_that_takes_lines_out_of_a_red_test_is_the_teams() {
     );
 }
 
+#[test]
+fn a_commit_whose_finding_the_human_allows_on_the_task_list_is_no_issue_for_the_round() {
+    let facts = red_then("GREEN: code a", vec![modified("tests/a.rs", 1, 2)]);
+
+    let issues = assess_untried(&rules(), &facts, &[], &[], &[id('2')]);
+
+    // what the team can repair stays: only the commit's own finding is left out
+    assert_eq!(
+        issues,
+        [Issue::RedTestEdited {
+            path: path("tests/a.rs"),
+            red: id('1'),
+            edit: id('2')
+        }]
+    );
+}
+
 // ---- production code without tests ------------------------------------------------------------------------------------
 
 // Rule: a round that changes production code adds a line to a test file, or one of its commits says why not.
