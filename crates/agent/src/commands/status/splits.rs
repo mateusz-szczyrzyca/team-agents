@@ -8,9 +8,9 @@ use std::collections::BTreeSet;
 
 use agent_core::protocol::TeamSummary;
 use agent_core::state::RoundLife;
+use agent_core::state::split::{PartId, PartKey, SplitPlan};
 
 use super::View;
-use agent_core::state::split::{PartId, PartKey, SplitPlan};
 
 /// What a part of a split is doing, as the daemon schedules it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +32,7 @@ pub(super) fn states(team: &TeamSummary) -> Vec<(&SplitPlan, Vec<(PartId, PartSt
     team.splits.iter().map(|plan| (plan, states_of(plan, team))).collect()
 }
 
-/// The state of each part of `plan` with `merged`, from the rounds `team` carries and its wait for a tier.
+/// The state of each part of `plan`, from the rounds `team` carries and its wait for a tier.
 ///
 /// A part is over when a round of the item bound it and closed: the round that merged its pull request, or one that
 /// gave it up. A part whose round is open is being worked on, unless the item waits for an agent of a tier. Another
