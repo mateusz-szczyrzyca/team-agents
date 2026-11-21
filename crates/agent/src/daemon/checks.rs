@@ -12,7 +12,7 @@ use std::path::Path;
 
 use agent_core::decide::checks::commits::CommitNote;
 use agent_core::decide::checks::markers::Marker;
-use agent_core::decide::checks::{Issue, Subject, TestChange};
+use agent_core::decide::checks::{Issue, Lines, Subject, TestChange};
 use agent_core::decide::round::AskReason;
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::prompt::{ChecksPrompt, Variables, VariablesError};
@@ -141,7 +141,7 @@ pub(super) fn named(texts: &ChecksPrompts, subject: &Subject) -> Result<String, 
             .render(ChecksPrompt::QuestionTitleNoTests, &Variables::new())?
             .trim()
             .to_owned(),
-        Subject::Commit { .. } => String::new(),
+        Subject::Commit { commit, path } => format!("commit {} in `{path}`", short(commit)),
     })
 }
 
@@ -223,7 +223,7 @@ pub(super) fn questions_with_commits(
     team: &TeamId,
     task: &TaskId,
     issues: &[Issue],
-    _commits: &CommitQuestion,
+    commits: &CommitQuestion,
     reason: AskReason,
     passes: u32,
 ) -> Result<Questions, ChecksTextError> {
@@ -293,6 +293,53 @@ pub(super) fn questions_with_commits(
                 .with_check_subjects(&group_subjects),
         );
     }
+    if !commits.notes.is_empty() {
+        let number = NonZeroU32::MIN.saturating_add(u32::try_from(entries.len())?);
+        let finding_subjects: Vec<Subject> = commits.notes.iter().map(|note| note.finding.subject()).collect();
+        for subject in &finding_subjects {
+            if seen.insert(subject.clone()) {
+                subjects.push(subject.clone());
+            }
+        }
+        let title = texts.render(
+            ChecksPrompt::QuestionTitleCommits,
+            &Variables::new().with("count", commits.notes.len().to_string())?,
+        )?;
+        let lines: Vec<String> = commits
+            .notes
+            .iter()
+            .map(|note| commit_line(texts, note).map(|line| format!("- {line}")))
+            .collect::<Result<_, _>>()?;
+        let before = if commits.before.is_empty() {
+            String::new()
+        } else {
+            let named: Vec<String> = commits
+                .before
+                .iter()
+                .map(|subject| named(texts, subject).map(|name| format!("- {name}")))
+                .collect::<Result<_, _>>()?;
+            let told = texts.render(
+                ChecksPrompt::QuestionBefore,
+                &Variables::new().with("subjects", named.join("\n"))?,
+            )?;
+            format!("\n{}\n", told.trim())
+        };
+        let body = texts.render(
+            ChecksPrompt::QuestionBodyCommits,
+            &Variables::new()
+                .with("why", why.trim())?
+                .with("commits", lines.join("\n"))?
+                .with("before", before)?
+                .with("allow", ALLOW_WORD)?
+                .with("refuse", REFUSE_WORD)?,
+        )?;
+        entries.push(
+            Entry::new(number, title.trim())?
+                .with_body(body.trim())?
+                .recommend(recommendation.trim())?
+                .with_check_subjects(&finding_subjects),
+        );
+    }
     let title = texts.render(
         ChecksPrompt::QuestionsTitle,
         &Variables::new()
@@ -305,6 +352,26 @@ pub(super) fn questions_with_commits(
         &Variables::new().with("task", task.as_str())?,
     )?);
     Ok(Questions { file, subjects })
+}
+
+/// What the human is told of one commit of the question about commits.
+fn commit_line(texts: &ChecksPrompts, note: &CommitNote) -> Result<String, ChecksTextError> {
+    let values = Variables::new()
+        .with("commit", short(&note.finding.commit))?
+        .with("subject", note.subject.as_str())?
+        .with("author", note.author.as_str())?
+        .with("path", note.finding.path.as_str())?
+        .with("red", short(&note.finding.red))?;
+    let (prompt, values) = match note.lines {
+        Lines::Text { added, removed } => (
+            ChecksPrompt::QuestionCommit,
+            values
+                .with("added", added.to_string())?
+                .with("removed", removed.to_string())?,
+        ),
+        Lines::Binary => (ChecksPrompt::QuestionCommitBinary, values),
+    };
+    Ok(texts.render(prompt, &values)?.trim().to_owned())
 }
 
 /// What the human decided about the subjects of a questions file.
