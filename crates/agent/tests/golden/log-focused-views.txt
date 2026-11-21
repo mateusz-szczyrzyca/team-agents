@@ -96,9 +96,9 @@
   "message": "Tokens are not recorded yet (11.1)."
 }
 --round --show log --event run_started
-<time> info run_started run started
-<time> info run_started run started
-<time> info run_started run started
+<time> info run_started <task-1> (claude-1) team <team-5> rounds <round-8> run <run-4>: run started by claude-1
+<time> info run_started <task-2> (inv-r1) team <team-5> rounds <round-8> run <run-6>: run started by inv-r1
+<time> info run_started <task-3> (inv-r2) team <team-5> rounds <round-8> run <run-7>: run started by inv-r2
 --team --show tasks
 {
   "agent": "claude-1",
@@ -197,6 +197,6 @@
   "message": "Tokens are not recorded yet (11.1)."
 }
 --team --show log --event run_started
-<time> info run_started run started
-<time> info run_started run started
-<time> info run_started run started
+<time> info run_started <task-1> (claude-1) team <team-5> rounds <round-8> run <run-4>: run started by claude-1
+<time> info run_started <task-2> (inv-r1) team <team-5> rounds <round-8> run <run-6>: run started by inv-r1
+<time> info run_started <task-3> (inv-r2) team <team-5> rounds <round-8> run <run-7>: run started by inv-r2
