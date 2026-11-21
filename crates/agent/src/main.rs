@@ -41,6 +41,9 @@ mod log_command_tests;
 mod run_command_tests;
 mod split_context;
 #[cfg(test)]
+#[path = "tests/status_json.rs"]
+mod status_json_tests;
+#[cfg(test)]
 #[path = "tests/steer_commands.rs"]
 mod steer_command_tests;
 #[cfg(test)]
@@ -363,6 +366,9 @@ struct StatusArgs {
     /// What every configured investigator is doing: its last two activities in the teams that are not closed.
     #[arg(long, conflicts_with = "target")]
     investigators: bool,
+    /// Print the teams as JSON, with their descriptions, instead of the lines.
+    #[arg(long)]
+    json: bool,
 }
 
 /// Why a text is neither a team nor a task.

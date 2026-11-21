@@ -75,6 +75,7 @@ async fn status_prints_the_teams_the_daemon_lists() {
             target: None,
             running: false,
             investigators: false,
+            json: false,
         }),
         &mut out,
     )
@@ -112,6 +113,7 @@ async fn investigators_prints_the_configured_investigators_and_not_the_teams() {
             target: None,
             running: false,
             investigators: true,
+            json: false,
         }),
         &mut out,
     )

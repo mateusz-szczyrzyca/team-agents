@@ -41,6 +41,9 @@ pub(crate) enum StatusError {
     /// The output cannot be written.
     #[error("cannot write the status")]
     Output(#[source] io::Error),
+    /// The teams cannot be written as JSON.
+    #[error("cannot write the status as JSON")]
+    Json(#[source] serde_json::Error),
 }
 
 /// Where `agent status` reads when a task that runs was last active, and the offset it tells the time in.
@@ -230,6 +233,27 @@ pub(crate) fn running(teams: Vec<TeamSummary>) -> Vec<TeamSummary> {
             (!team.rounds.is_empty()).then_some(team)
         })
         .collect()
+}
+
+/// Asks the daemon for the status of `target` (every team without one) and writes the teams to `out` as one JSON array,
+/// each team with its description.
+///
+/// # Errors
+/// [`StatusError`].
+pub(crate) async fn status_json(
+    _connection: &mut Connection,
+    _target: Option<Target>,
+    _out: &mut impl Write,
+) -> Result<(), StatusError> {
+    Ok(())
+}
+
+/// The teams as one JSON array and a newline.
+///
+/// # Errors
+/// [`StatusError::Json`] when the teams cannot be written as JSON.
+pub(crate) fn render_json(_teams: &[TeamSummary]) -> Result<String, StatusError> {
+    Ok(String::new())
 }
 
 /// The teams the daemon answers a status request for `target` with, and what it says of the history.

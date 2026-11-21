@@ -240,3 +240,44 @@ async fn the_notification_that_a_team_is_done_names_no_item() {
     assert!(!notification.contains("1.1 The first item"), "{notification}");
     assert!(notification.contains("\nTask: Build the thing.\n"), "{notification}");
 }
+
+#[tokio::test]
+async fn the_json_status_of_a_team_and_of_its_task_holds_the_description() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "ask"),
+            investigator("inv-r1", "done"),
+            investigator("inv-r2", "done"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["claude-1"], &one_with_a_description(), MergeMode::Autopilot, None)
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let mut connection = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap();
+    let mut all = Vec::new();
+    let mut of_the_task = Vec::new();
+    crate::commands::status::status_json(&mut connection, None, &mut all)
+        .await
+        .unwrap();
+    crate::commands::status::status_json(
+        &mut connection,
+        Some(agent_core::protocol::Target::Task(tasks[0].clone())),
+        &mut of_the_task,
+    )
+    .await
+    .unwrap();
+    rig.stop().await.unwrap();
+
+    for text in [all, of_the_task] {
+        let value: serde_json::Value = serde_json::from_slice(&text).unwrap();
+        assert_eq!(value[0]["id"], team.as_str());
+        assert_eq!(value[0]["short_desc"], "Build the thing in words");
+    }
+}
