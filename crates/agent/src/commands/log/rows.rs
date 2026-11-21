@@ -6,10 +6,19 @@ use std::path::Path;
 use agent_core::ids::{AgentName, RoundId, RunId, TaskId, TeamId};
 use agent_core::log::{LogEvent, LogLevel, LogView};
 use agent_core::state::Timestamp;
+use agent_core::story::StepView;
 use agent_runtime::history::{LogFilter, LogWindow, Reader};
 use clap::Args;
 
+use super::follow::Feed;
+use super::wait::wait_line;
 use super::{Format, LogError};
+
+/// How long a follow waits before it reads the history again.
+const FOLLOW_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// The newest lines `agent log` prints when `-n` names none.
+const DEFAULT_LINES: u32 = 100;
 
 /// Row arguments; their presence opts a scoped story into log queries.
 #[derive(Debug, Args)]
@@ -45,7 +54,7 @@ pub(crate) struct RowArgs {
     /// Include timestamps at or before this RFC 3339 time.
     #[arg(long)]
     until: Option<Timestamp>,
-    /// Maximum newest rows (default 100); zero prints none.
+    /// Maximum newest lines (default 100); zero prints none.
     #[arg(short = 'n')]
     limit: Option<u32>,
     /// Print one subject of the selected round or team.
@@ -71,9 +80,12 @@ impl RowArgs {
     }
 
     /// Prints a bounded query of the directly opened history.
+    ///
+    /// In text, the rows of the scope and the steps of its runs are one text, the newest `limit` things of it.
     pub(crate) fn print(
         &self,
         path: &Path,
+        socket: &Path,
         round: Option<RoundId>,
         team: Option<TeamId>,
         format: Format,
@@ -99,34 +111,71 @@ impl RowArgs {
             since: self.since,
             until: self.until,
         };
+        let limit = self.limit.unwrap_or(DEFAULT_LINES);
         let runtime = if self.follow {
             Some(
                 tokio::runtime::Builder::new_current_thread()
-                    .enable_time()
+                    .enable_all()
                     .build()
                     .map_err(LogError::FollowRuntime)?,
             )
         } else {
             None
         };
-        let mut cursor = reader.log_cursor()?;
-        let mut window = LogWindow::Newest(self.limit.unwrap_or(100));
-        loop {
-            for row in reader.log_rows(&filter, window)? {
-                cursor = cursor.max(row.id());
-                print_row(&row, format, out)?;
+        match format {
+            Format::Json => follow_json(&reader, &filter, limit, runtime.as_ref(), out),
+            Format::Text(options) => {
+                // A round or a team without `--follow` is told by its rows (`--show log`) or its story; the steps of
+                // its runs are listed only for a run, a task or an agent, or when following.
+                let steps = if self.follow || self.run.is_some() || self.task.is_some() || self.agent.is_some() {
+                    options.steps
+                } else {
+                    StepView::LeftOut
+                };
+                let (mut feed, text) = Feed::open(&reader, filter, steps, limit)?;
+                out.write_all(text.as_bytes()).map_err(LogError::Output)?;
+                out.flush().map_err(LogError::Output)?;
+                let Some(runtime) = &runtime else {
+                    return Ok(());
+                };
+                let mut waits = |round: &RoundId| runtime.block_on(wait_line(socket, round));
+                loop {
+                    // SQLite and stdout stay outside the async runtime. Only the cancellable timer runs inside it.
+                    runtime.block_on(async { tokio::time::sleep(FOLLOW_PAUSE).await });
+                    let text = feed.poll(&reader, &mut waits)?;
+                    out.write_all(text.as_bytes()).map_err(LogError::Output)?;
+                    out.flush().map_err(LogError::Output)?;
+                }
             }
-            out.flush().map_err(LogError::Output)?;
-            let Some(runtime) = &runtime else {
-                return Ok(());
-            };
-            // SQLite and stdout stay outside the async runtime. Only the cancellable timer runs inside it.
-            runtime.block_on(async { tokio::time::sleep(std::time::Duration::from_millis(100)).await });
-            window = LogWindow::After {
-                id: cursor,
-                limit: 1000,
-            };
         }
+    }
+}
+
+/// The rows as JSON lines: the newest `limit`, then, when `runtime` is given, every row recorded after them.
+fn follow_json(
+    reader: &Reader,
+    filter: &LogFilter,
+    limit: u32,
+    runtime: Option<&tokio::runtime::Runtime>,
+    out: &mut impl Write,
+) -> Result<(), LogError> {
+    let mut cursor = reader.log_cursor()?;
+    let mut window = LogWindow::Newest(limit);
+    loop {
+        let rows = reader.log_rows(filter, window)?;
+        for row in &rows {
+            cursor = cursor.max(row.id());
+            print_row(row, Format::Json, out)?;
+        }
+        out.flush().map_err(LogError::Output)?;
+        let Some(runtime) = runtime else {
+            return Ok(());
+        };
+        runtime.block_on(async { tokio::time::sleep(FOLLOW_PAUSE).await });
+        window = LogWindow::After {
+            id: cursor,
+            limit: 1000,
+        };
     }
 }
 

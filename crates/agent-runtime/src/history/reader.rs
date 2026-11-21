@@ -255,6 +255,31 @@ impl Reader {
         read_team(&snapshot, team)
     }
 
+    /// Every team of the history, oldest first.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn teams(&self) -> Result<Vec<Stored<TeamStart>>, ReadError> {
+        let snapshot = self.snapshot("teams")?;
+        let mut statement = snapshot
+            .prepare("SELECT team FROM teams ORDER BY at, rowid")
+            .map_err(query("teams"))?;
+        let ids: Vec<String> = statement
+            .query_map([], |row| row.get(0))
+            .map_err(query("teams"))?
+            .collect::<Result<_, _>>()
+            .map_err(query("teams"))?;
+        drop(statement);
+        let mut teams = Vec::with_capacity(ids.len());
+        for id in ids {
+            let team = Row_::of("teams", &id).value("team", TeamId::from_str(&id))?;
+            if let Some(team) = read_team(&snapshot, &team)? {
+                teams.push(team);
+            }
+        }
+        Ok(teams)
+    }
+
     /// Every entry of `daemon_logs`, in write order (`id ASC`); databases before version 4 have none.
     ///
     /// # Errors
@@ -385,6 +410,36 @@ impl Reader {
             "SELECT runs.run FROM run_rounds JOIN runs ON runs.run = run_rounds.run WHERE run_rounds.round = ?1 \
              ORDER BY runs.at, runs.rowid",
             round.as_str(),
+        )?;
+        read_runs(&snapshot, &ids)
+    }
+
+    /// The runs of `task`, oldest first.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn runs_of_task(&self, task: &TaskId) -> Result<Vec<RunRow>, ReadError> {
+        let snapshot = self.snapshot("runs")?;
+        let ids = keys(
+            &snapshot,
+            "runs",
+            "SELECT run FROM runs WHERE task = ?1 ORDER BY at, rowid",
+            task.as_str(),
+        )?;
+        read_runs(&snapshot, &ids)
+    }
+
+    /// The runs of `agent`, in every team, oldest first.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn runs_of_agent(&self, agent: &AgentName) -> Result<Vec<RunRow>, ReadError> {
+        let snapshot = self.snapshot("runs")?;
+        let ids = keys(
+            &snapshot,
+            "runs",
+            "SELECT run FROM runs WHERE agent = ?1 ORDER BY at, rowid",
+            agent.as_str(),
         )?;
         read_runs(&snapshot, &ids)
     }

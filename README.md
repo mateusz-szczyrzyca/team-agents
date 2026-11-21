@@ -424,6 +424,13 @@ select rows instead of its story, or add a row filter: `--task`, `--run`, `--age
 `--since`, `--until`, `--grep`, `-n` or `-f`. Filters intersect; `--json` emits one log row per line in this mode. Combining
 `--round` and `--team` also selects rows. A row query with no matches succeeds with empty output.
 
+A line of a row names the task, the agent, the run and what changed (`task-… (claude-1) …: queued ← waiting`); other events
+print their fields as `key=value`. With `--task`, `--agent`, `--run`, or with `-f` and a round or a team, `agent log` also
+prints the steps of the runs it covers — the agent's messages, commands and tool calls, and their results — between the
+rows, as one text of the newest `-n` lines (default `100`); `-f` goes on with the new rows and steps as they are recorded,
+across runs and daemon restarts, and says what the round waits for when a run ends. `--no-steps` leaves the steps out;
+`--json` is unchanged. See [`docs/log.md`](docs/log.md).
+
 Use `--grep TEXT` for literal FTS5 search, `-f` to follow new rows across daemon restarts, and `--stats` for database
 size, table counts and the oldest timestamp. A scoped `--show` selects `tasks`, `agents`, `worktrees`, `runs`, `prompts`,
 `changes`, `reviews`, `log` or `usage`. `[history] keep_days` removes expired closed rounds and their gate output;
