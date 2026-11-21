@@ -129,6 +129,17 @@ pub fn underqualified(team: &Team) -> Vec<ItemId> {
 
 /// Whether the coordinator meets every capability required by a member's working items.
 #[must_use]
-pub fn coordinator_can_take_over(_team: &Team, _member: &Member) -> bool {
-    true
+pub fn coordinator_can_take_over(team: &Team, member: &Member) -> bool {
+    team.crew().coordinator().is_some_and(|coordinator| {
+        team.items().iter().all(|item| match item.phase() {
+            crate::state::ItemPhase::InProgress { assignee, .. } | crate::state::ItemPhase::Fixing { assignee, .. } => {
+                assignee.as_str() != member.agent().name()
+                    || coordinator.agent().tier() >= required_tier(team, item.id())
+            }
+            crate::state::ItemPhase::Pending
+            | crate::state::ItemPhase::InReview { .. }
+            | crate::state::ItemPhase::Approved { .. }
+            | crate::state::ItemPhase::Done { .. } => true,
+        })
+    })
 }
