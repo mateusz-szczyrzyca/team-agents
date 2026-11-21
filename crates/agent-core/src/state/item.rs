@@ -538,6 +538,31 @@ impl CheckedMut<'_, ItemProgress> {
         self.value.ask_human_about_merge_conflict(at);
     }
 
+    /// See [`ItemProgress::record_publish_try`].
+    pub fn record_publish_try(&mut self) -> u32 {
+        self.value.record_publish_try()
+    }
+
+    /// See [`ItemProgress::reset_publish_tries`].
+    pub fn reset_publish_tries(&mut self) {
+        self.value.reset_publish_tries();
+    }
+
+    /// See [`ItemProgress::ask_human_about_publication`].
+    pub fn ask_human_about_publication(&mut self, at: Timestamp) {
+        self.value.ask_human_about_publication(at);
+    }
+
+    /// See [`ItemProgress::clear_publish_question`].
+    pub fn clear_publish_question(&mut self) {
+        self.value.clear_publish_question();
+    }
+
+    /// See [`ItemProgress::record_published_conflict_pass`].
+    pub fn record_published_conflict_pass(&mut self) -> u32 {
+        self.value.record_published_conflict_pass()
+    }
+
     /// See [`ItemProgress::set_conflict_approved_head`].
     pub fn set_conflict_approved_head(&mut self, approved_head: CommitId) {
         self.value.set_conflict_approved_head(approved_head);
@@ -964,32 +989,39 @@ impl ItemProgress {
     /// How many times publication of this item was tried.
     #[must_use]
     pub const fn publish_tries(&self) -> u32 {
-        99
+        self.publish_tries
     }
 
     /// Increments the publication attempt counter and returns the new count.
     pub fn record_publish_try(&mut self) -> u32 {
-        0
+        self.publish_tries = self.publish_tries.saturating_add(1);
+        self.publish_tries
     }
 
     /// Resets the publication attempt counter.
-    pub fn reset_publish_tries(&mut self) {}
+    pub fn reset_publish_tries(&mut self) {
+        self.publish_tries = 0;
+    }
 
     /// When the publication failure question was asked to the human, if one is open.
     #[must_use]
     pub const fn publish_question(&self) -> Option<Timestamp> {
-        None
+        self.publish_question
     }
 
     /// Records that the human was asked about publication failure at `at`.
-    pub fn ask_human_about_publication(&mut self, _at: Timestamp) {}
+    pub fn ask_human_about_publication(&mut self, at: Timestamp) {
+        self.publish_question = Some(at);
+    }
 
     /// Clears the open publication question.
-    pub fn clear_publish_question(&mut self) {}
+    pub fn clear_publish_question(&mut self) {
+        self.publish_question = None;
+    }
 
     /// Records that a merge conflict pass was published and increments spent merge passes.
     pub fn record_published_conflict_pass(&mut self) -> u32 {
-        0
+        self.spend_merge_pass()
     }
 
     getter!("The item's number in the task list.", pub const fn id(&self) -> ItemId = self.id);
@@ -1039,12 +1071,12 @@ impl ItemProgress {
         self.merge_conflict.as_ref()
     }
 
-    /// Sends the lead to merge the base into the branch of `approved_head`: one more pass is spent and the pass is
-    /// recorded at `at`. Returns the passes spent so far, this one included.
+    /// Sends the lead to merge the base into the branch of `approved_head`. The pass is recorded at `at`.
+    /// The passes spent are not incremented until the conflict pass is published.
     pub fn begin_merge_conflict(&mut self, approved_head: CommitId, at: Timestamp) -> u32 {
         self.conflict_approved_head = Some(approved_head.clone());
         self.merge_conflict = Some(MergeConflict::MergingBase { approved_head, at });
-        self.spend_merge_pass()
+        self.merge_passes
     }
 
     /// Ends the merge conflict pass in progress; the passes spent stay counted.
