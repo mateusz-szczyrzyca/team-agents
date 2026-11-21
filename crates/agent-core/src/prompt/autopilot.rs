@@ -68,6 +68,8 @@ pub enum AutopilotPrompt {
     PrAllowedBeforehand,
     /// Durable evidence that this team started with unpublished base commits.
     PrUnpushedBase,
+    /// Durable split identity, approval authority and executor.
+    PrSplit,
     /// The lead's instructions after GitHub refused an approved pull request for a conflict with its base.
     PrMergeConflict,
     /// The lead's instructions to put a merge conflict to the human, when its passes are used up.
@@ -257,6 +259,7 @@ impl AutopilotPrompt {
         Self::PrSize,
         Self::PrAllowedBeforehand,
         Self::PrUnpushedBase,
+        Self::PrSplit,
         Self::PrMergeConflict,
         Self::PrMergeConflictAsk,
         Self::PrGate,
@@ -406,6 +409,7 @@ impl AutopilotPrompt {
             Self::PrSize => "harness/pr/size.md",
             Self::PrAllowedBeforehand => "harness/pr/allowed-beforehand.md",
             Self::PrUnpushedBase => "harness/pr/unpushed-base.md",
+            Self::PrSplit => "harness/pr/split.md",
             Self::PrMergeConflict => "harness/pr/merge-conflict.md",
             Self::PrMergeConflictAsk => "harness/pr/merge-conflict-ask.md",
             Self::PrGate => "harness/pr/gate.md",
@@ -544,6 +548,7 @@ impl AutopilotPrompt {
             Self::PrSize => &["size"],
             Self::PrAllowedBeforehand => &["paths"],
             Self::PrUnpushedBase => &["base", "count", "first", "subject"],
+            Self::PrSplit => &["split"],
             Self::PrMergeConflict => &["pr", "base", "branch", "pass", "passes"],
             Self::PrMergeConflictAsk => &["pr", "base", "passes"],
             Self::PrGate | Self::ReviewGate => &["head", "finished", "result", "log"],

@@ -39,6 +39,7 @@ mod log_command_tests;
 #[cfg(test)]
 #[path = "tests/run_command.rs"]
 mod run_command_tests;
+mod split_context;
 #[cfg(test)]
 #[path = "tests/steer_commands.rs"]
 mod steer_command_tests;

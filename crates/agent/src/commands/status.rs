@@ -362,6 +362,13 @@ fn render_at(
                 .map(|round| format!("  {}{}", round_line(round), rounds(round))),
         );
         lines.extend(splits::lines(team));
+        for plan in &team.splits {
+            lines.extend(
+                crate::split_context::lines(plan, &team.rounds)
+                    .into_iter()
+                    .map(|(_, text)| format!("      {text}")),
+            );
+        }
         for (item, tier) in &team.tier_waits {
             if team.splits.iter().any(|plan| plan.parent() == *item) {
                 continue;

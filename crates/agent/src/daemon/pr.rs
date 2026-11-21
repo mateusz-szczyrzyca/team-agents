@@ -322,6 +322,17 @@ pub(super) fn pull_text(
             .with("gate", gate.summary())?
             .with("items", sections.join(SECTION_SEPARATOR))?,
     )?;
+    for id in items {
+        if let Some(key) = team.round_of(*id).and_then(agent_core::state::Round::part)
+            && let Some(plan) = team.splits().iter().find(|plan| plan.parent() == *id)
+            && let Some((_, context)) = crate::split_context::lines(plan, team.rounds())
+                .into_iter()
+                .find(|(part, _)| *part == key)
+        {
+            body.push_str(SECTION_SEPARATOR);
+            body.push_str(&texts.render(AutopilotPrompt::PrSplit, &Variables::new().with("split", context)?)?);
+        }
+    }
     if let Some(base) = team.unpushed_base() {
         body.push_str(SECTION_SEPARATOR);
         body.push_str(
