@@ -435,6 +435,15 @@ async fn split_publication_records_approval_and_executor_across_restart() {
     use agent_core::protocol::{AnswerRequest, Client, Command};
     use agent_core::state::split::SplitApproval;
 
+    let section = |body: &str| {
+        body.split("## Split\n\n")
+            .nth(1)
+            .unwrap()
+            .split("\n\n")
+            .next()
+            .unwrap()
+            .to_owned()
+    };
     let mut actual = Vec::new();
     let mut expected = Vec::new();
     for (authority, name, script) in [
@@ -484,15 +493,7 @@ async fn split_publication_records_approval_and_executor_across_restart() {
         let pulls = rig.github.pulls();
         assert_eq!(pulls.len(), 1);
         assert_eq!(pulls[0].body.matches("## Split").count(), 1);
-        let first = pulls[0]
-            .body
-            .split("## Split\n\n")
-            .nth(1)
-            .unwrap()
-            .split("\n\n")
-            .next()
-            .unwrap();
-        actual.push((recorded, first.to_owned()));
+        actual.push((recorded, section(&pulls[0].body)));
         expected.push((
             Some(authority),
             include_str!("split-first.txt").trim().replace("{{approval}}", name),
@@ -518,15 +519,7 @@ async fn split_publication_records_approval_and_executor_across_restart() {
         let pulls = rig.github.pulls();
         assert_eq!(pulls.len(), 2);
         assert_eq!(pulls[1].body.matches("## Split").count(), 1);
-        let second = pulls[1]
-            .body
-            .split("## Split\n\n")
-            .nth(1)
-            .unwrap()
-            .split("\n\n")
-            .next()
-            .unwrap();
-        actual.push((recorded, second.to_owned()));
+        actual.push((recorded, section(&pulls[1].body)));
         expected.push((
             Some(authority),
             include_str!("split-second.txt").trim().replace("{{approval}}", name),
