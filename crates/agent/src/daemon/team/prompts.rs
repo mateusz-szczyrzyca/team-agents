@@ -159,14 +159,19 @@ pub(in crate::daemon) fn shape_with_answers(
 ) -> Result<String, TeamPromptError> {
     let Some(answers) = answers else {
         let shaped = shape(texts, harness, run, composed)?;
-        return with_part(texts, run, shaped);
+        return with_assignment(texts, run, shaped);
     };
     if run.new_session {
         let shaped = shape(texts, harness, run, composed)?;
-        return with_part(texts, run, join_sections(&shaped, answers));
+        return with_assignment(texts, run, join_sections(&shaped, answers));
     }
     let reason = shape(texts, harness, run, String::new())?;
-    with_part(texts, run, join_sections(answers, &reason))
+    with_assignment(texts, run, join_sections(answers, &reason))
+}
+
+/// Adds assignment context after the resumed or new-session prompt.
+fn with_assignment(texts: &TeamPrompts, run: &TeamRun<'_>, prompt: String) -> Result<String, TeamPromptError> {
+    with_tier(texts, run, with_part(texts, run, prompt)?)
 }
 
 /// Adds the approved part scope even when the session resumes with only an answer or assignment.
@@ -217,7 +222,7 @@ fn with_part(texts: &TeamPrompts, run: &TeamRun<'_>, mut prompt: String) -> Resu
             .with("previous", if previous.is_empty() { "none" } else { &previous })?;
         prompt = join_sections(&prompt, &texts.render(TeamPrompt::Part, &values)?);
     }
-    with_tier(texts, run, prompt)
+    Ok(prompt)
 }
 
 /// Explains the capability choice only to the run holding the assignment branch.
