@@ -7,6 +7,7 @@ use agent_core::state::split::{PartDefinition, PartKey};
 use agent_core::task_title::{CUT_MARK, MAX_EXCERPT_CHARS};
 
 use super::*;
+use crate::daemon::notice::sample;
 use crate::daemon::notice::{NoticeContext, NoticeKind, layout_notification};
 use crate::fixtures::{at, task};
 
@@ -45,7 +46,7 @@ fn split() -> SplitPlan {
 
 #[test]
 fn the_words_carry_the_given_description_and_the_item_line() {
-    let words = TaskWords::new(&list(LIST), Some("1.1 Title".to_owned()));
+    let words = sample::words_of(&list(LIST), Some("1.1 Title".to_owned()));
 
     assert_eq!(words.short_desc(), "Notifications name the task");
     assert_eq!(words.item(), Some("1.1 Title"));
@@ -53,7 +54,7 @@ fn the_words_carry_the_given_description_and_the_item_line() {
 
 #[test]
 fn the_words_derive_the_description_of_a_task_that_has_none() {
-    let words = TaskWords::new(&list("Fix the typo. Then stop.\n"), None);
+    let words = sample::words_of(&list("Fix the typo. Then stop.\n"), None);
 
     assert_eq!(words.short_desc(), "Fix the typo.");
     assert_eq!(words.item(), None);
@@ -61,7 +62,7 @@ fn the_words_derive_the_description_of_a_task_that_has_none() {
 
 #[test]
 fn the_excerpt_is_the_first_sentences_of_the_brief_not_the_header_or_the_items() {
-    let words = TaskWords::new(&list(LIST), None);
+    let words = sample::words_of(&list(LIST), None);
 
     assert_eq!(
         words.excerpt(),
@@ -73,7 +74,7 @@ fn the_excerpt_is_the_first_sentences_of_the_brief_not_the_header_or_the_items()
 fn a_brief_longer_than_the_limit_gives_a_cut_excerpt() {
     let brief = "Sentence of the brief. ".repeat(40);
 
-    let words = TaskWords::new(&list(&brief), None);
+    let words = sample::words_of(&list(&brief), None);
 
     assert!(words.excerpt().chars().count() <= MAX_EXCERPT_CHARS);
     assert!(words.excerpt().ends_with(CUT_MARK), "{:?}", words.excerpt());
@@ -81,7 +82,7 @@ fn a_brief_longer_than_the_limit_gives_a_cut_excerpt() {
 
 #[test]
 fn a_list_of_features_without_a_brief_has_an_empty_excerpt() {
-    let words = TaskWords::new(&list("1. Feature\n[ ] 1.1 Item\n    Do it.\n"), None);
+    let words = sample::words_of(&list("1. Feature\n[ ] 1.1 Item\n    Do it.\n"), None);
 
     assert_eq!(words.excerpt(), "");
 }
@@ -154,7 +155,7 @@ fn context<'a>(task_id: &'a TaskId, team: Option<&'a TeamId>, words: TaskWords) 
 fn a_notification_starts_with_repo_time_and_task_and_ends_with_the_first_sentences_of_the_task() {
     let task_id = task(1);
     let team_id: TeamId = "team-20261111-153001-t5m8".parse().unwrap();
-    let words = TaskWords::new(&list(LIST), Some("1.1 The daemon names the task".to_owned()));
+    let words = sample::words_of(&list(LIST), Some("1.1 The daemon names the task".to_owned()));
 
     let notification = layout_notification(
         NoticeKind::Questions,
@@ -185,7 +186,7 @@ The harness tells identifiers only. The human wants words.";
 #[test]
 fn a_notification_without_an_item_a_team_or_a_message_has_no_empty_sections() {
     let task_id = task(1);
-    let words = TaskWords::new(&list("Fix the typo.\n"), None);
+    let words = sample::words_of(&list("Fix the typo.\n"), None);
 
     let notification = layout_notification(NoticeKind::Failed, &context(&task_id, None, words), "It failed").unwrap();
 
@@ -206,7 +207,7 @@ Fix the typo.";
 #[test]
 fn a_task_without_a_brief_has_no_task_block() {
     let task_id = task(1);
-    let words = TaskWords::new(&list("1. Feature\n[ ] 1.1 Item\n    Do it.\n"), None);
+    let words = sample::words_of(&list("1. Feature\n[ ] 1.1 Item\n    Do it.\n"), None);
 
     let notification = layout_notification(NoticeKind::Failed, &context(&task_id, None, words), "It failed").unwrap();
 
@@ -276,7 +277,7 @@ fn every_kind_of_notification_has_the_same_head_and_tail() {
     let team_id: TeamId = "team-20261111-153001-t5m8".parse().unwrap();
 
     for kind in every_kind() {
-        let words = TaskWords::new(&list(LIST), Some("1.1 The daemon names the task".to_owned()));
+        let words = sample::words_of(&list(LIST), Some("1.1 The daemon names the task".to_owned()));
         let notification = layout_notification(
             kind,
             &context(&task_id, Some(&team_id), words),

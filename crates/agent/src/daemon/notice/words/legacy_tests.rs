@@ -26,7 +26,7 @@ fn a_notification_about_a_task_of_a_state_from_before_carries_a_derived_descript
         task: &task_id,
         team: Some(&team_id),
         pr: None,
-        words: TaskWords::new(team.task_list().list(), None),
+        words: crate::daemon::notice::sample::words_for(team.task_list().list(), None, &task_id),
     };
 
     let notification = layout_notification(NoticeKind::Failed, &context, "It failed").unwrap();
