@@ -164,7 +164,10 @@ fn a_brief_that_opens_with_a_short_desc_line_is_described_by_that_line_without_i
         ("\n  Short desc:   Fix it  \nFix the typo.", "Fix it"),
         ("\u{feff}Short desc: Fix it\nFix the typo.", "Fix it"),
         ("Short desc: One\nShort desc: Two\nBrief.", "One"),
-        ("Short desc: Uses `agent log`. Twice.\nBrief.", "Uses `agent log`. Twice."),
+        (
+            "Short desc: Uses `agent log`. Twice.\nBrief.",
+            "Uses `agent log`. Twice.",
+        ),
     ];
 
     for (brief, expected) in cases {
@@ -193,7 +196,10 @@ fn a_short_desc_line_longer_than_the_limit_is_cut_with_a_mark_and_keeps_no_label
 fn only_a_line_that_opens_the_brief_with_the_exact_label_names_the_task() {
     let cases = [
         ("Fix it.\n\nShort desc: later in the brief", "Fix it."),
-        ("Short description of the change. More.", "Short description of the change."),
+        (
+            "Short description of the change. More.",
+            "Short description of the change.",
+        ),
         ("short desc: fix it. More.", "short desc: fix it."),
     ];
 
