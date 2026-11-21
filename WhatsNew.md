@@ -5,12 +5,6 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.49.0 — 21.11.2026 — PR #166
-
-### Bug fixes
-- [agent] `agent status --running` showed the parts of a split that were already merged as `to do` and the parts after them as `waiting for`, while `agent status` showed them `done`. Every view now prints the same state for a part, and the running view leaves out the parts of an item whose parts are all merged.
-- [agent] [agent-core] Opening the round of the next part right after a merge no longer writes `daemon_task_failed` for `round_wait` into the daemon's log: a round whose run is queued waits for that run, and only a round that waits for nothing is still reported.
-
 ## 0.48.0 — 21.11.2026 — PR #165
 
 ### New features
