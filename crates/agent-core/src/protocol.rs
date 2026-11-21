@@ -4,7 +4,8 @@
 //! A client sends one [`Request`] per line; the daemon answers each with a [`Response`] and, to a client that
 //! subscribed, sends [`Event`]s as the state changes — a [`Frame`] is either. The strict legacy APIs use
 //! [`PROTOCOL_VERSION`]; negotiated APIs also accept [`SPLIT_PROTOCOL_VERSION`] for split-aware clients and
-//! [`PLAN_PROTOCOL_VERSION`] for plan status snapshots.
+//! [`PLAN_PROTOCOL_VERSION`] for plan status snapshots, and [`EXECUTOR_PROTOCOL_VERSION`] for split executors
+//! and capability waits.
 //! Unsupported tags are refused before the message body is decoded.
 //! The types here only describe lines and read and write them; the socket is the daemon's.
 
@@ -41,7 +42,7 @@ pub const PLAN_PROTOCOL_VERSION: u32 = 5;
 /// The negotiated version carrying split executors and capability waits.
 pub const EXECUTOR_PROTOCOL_VERSION: u32 = 6;
 
-/// Wire format requested by a client; version four includes approved split details.
+/// Wire format requested by a client, with metadata limited to the negotiated version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyFormat {
     /// Version three, readable by clients predating split execution.
@@ -173,7 +174,7 @@ fn encode_executor<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     encode(&value)
 }
 
-/// Checks the wire boundary before decoding either supported format into the shared domain types.
+/// Checks the wire boundary before decoding a supported format into the shared domain types.
 fn decode_negotiated<T: DeserializeOwned>(line: &str, max: usize) -> Result<(T, ReplyFormat), ProtocolError> {
     if line.len() > max {
         return Err(ProtocolError::TooLong { len: line.len(), max });
