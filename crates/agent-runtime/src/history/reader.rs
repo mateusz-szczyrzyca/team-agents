@@ -273,9 +273,8 @@ impl Reader {
         let mut teams = Vec::with_capacity(ids.len());
         for id in ids {
             let team = Row_::of("teams", &id).value("team", TeamId::from_str(&id))?;
-            match read_team(&snapshot, &team)? {
-                Some(team) => teams.push(team),
-                None => {}
+            if let Some(team) = read_team(&snapshot, &team)? {
+                teams.push(team);
             }
         }
         Ok(teams)
