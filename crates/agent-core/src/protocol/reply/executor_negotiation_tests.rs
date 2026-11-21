@@ -106,3 +106,26 @@ fn executor_protocol_round_trips_requests_responses_and_events_with_both_metadat
         assert_eq!(Frame::from_line_negotiated(&wire).unwrap(), frame);
     }
 }
+
+#[test]
+fn full_team_replies_hide_asked_wait_markers_from_older_clients() {
+    let mut value = serde_json::to_value(team(1)).unwrap();
+    value["tier_waits"] = serde_json::json!({"1.2": "investigator"});
+    let mut team: crate::state::Team = serde_json::from_value(value).unwrap();
+    team.mark_tier_questions();
+    let frame = Frame::Response(Response::ok(RequestId(1), Reply::Team { team: Box::new(team) }));
+    let marker = serde_json::json!({"1.2": "investigator"});
+    for (format, expected) in [
+        (ReplyFormat::Legacy, None),
+        (ReplyFormat::Split, None),
+        (ReplyFormat::Plan, None),
+        (ReplyFormat::Executor, Some(&marker)),
+    ] {
+        let wire: serde_json::Value = serde_json::from_str(&frame.to_line_for(format).unwrap()).unwrap();
+        assert_eq!(
+            wire.pointer("/result/reply/team/tier_questions"),
+            expected,
+            "{format:?}"
+        );
+    }
+}
