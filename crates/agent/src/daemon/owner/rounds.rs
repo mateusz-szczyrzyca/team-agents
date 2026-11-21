@@ -776,8 +776,12 @@ mod history_stories_tests;
 #[path = "rounds/tests/merge_conflict.rs"]
 mod merge_conflict_tests;
 #[cfg(test)]
+#[cfg(test)]
 #[path = "rounds/tests/publish_failures.rs"]
 mod publish_failures_tests;
+#[cfg(test)]
+#[path = "rounds/tests/queued_run.rs"]
+mod queued_run_tests;
 #[cfg(test)]
 #[path = "rounds/tests/review_head.rs"]
 mod review_head_tests;
@@ -787,6 +791,9 @@ mod rig;
 #[cfg(test)]
 #[path = "rounds/tests/round_records.rs"]
 mod round_records_tests;
+#[cfg(test)]
+#[path = "rounds/tests/split_status.rs"]
+mod split_status_tests;
 #[cfg(test)]
 mod tests;
 

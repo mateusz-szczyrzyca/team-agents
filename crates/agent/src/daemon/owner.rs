@@ -592,6 +592,12 @@ impl Owner {
         self
     }
 
+    /// Gives the owner the pull requests it is asked for, keeping those it has.
+    #[cfg(test)]
+    pub(super) fn set_pulls(&mut self, pulls: Pulls) {
+        self.pulls = Some(pulls);
+    }
+
     /// Serves `inbox` and runs the tasks until the shutdown is cancelled; then stops the runs and records them.
     ///
     /// # Errors

@@ -11,6 +11,10 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent] [agent-core] [agent-runtime] `[publish] tries` (default 3; `0` asks immediately) bounds publication retries when a pull request branch cannot be pushed. When publication cannot succeed, the lead is told once with what is wrong, and if it still fails the human is asked once in a questions file with options to retry or stop.
 - [agent] [agent-runtime] A round's gated work reaches the branch of its pull request without forcing, even when the branch or another branch is checked out in a worktree, and after a conflict pass of a part of a split.
 
+### Bug fixes
+- [agent] `agent status --running` showed the parts of a split that were already merged as `to do` and the parts after them as `waiting for`, while `agent status` showed them `done`. Every view now prints the same state for a part, and the running view leaves out the parts of an item whose parts are all merged.
+- [agent] [agent-core] Opening the round of the next part right after a merge no longer writes `daemon_task_failed` for `round_wait` into the daemon's log: a round whose run is queued waits for that run, and only a round that waits for nothing is still reported.
+
 ## 0.48.0 — 21.11.2026 — PR #165
 
 ### New features

@@ -5,7 +5,7 @@ use agent_core::ids::TeamId;
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::prompt::Variables;
-use agent_core::state::{ItemPhase, OpinionStage, PrNumber, Round, RoundLife, Team, Timestamp};
+use agent_core::state::{ItemPhase, Member, OpinionStage, PrNumber, Round, RoundLife, Team, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::github::Outlook;
 use agent_runtime::process::error_chain;
@@ -261,12 +261,11 @@ impl Owner {
 
     /// The action that owns the next step of an idle round.
     pub(in crate::daemon::owner) fn waiting_for(&self, team: &Team, round: &Round) -> Option<Waiting> {
-        let members = team.members_in(round.id());
         let activity = if *round.life() != RoundLife::Open {
             Activity::Closed
-        } else if members
+        } else if round_tasks(team, round)
             .iter()
-            .any(|(_, member)| matches!(member.status(), TaskStatus::Queued | TaskStatus::Running))
+            .any(|member| member.status() == TaskStatus::Running)
         {
             Activity::Active
         } else {
@@ -277,6 +276,7 @@ impl Owner {
         } else {
             self.stuck_obligation(team, round)
                 .or_else(|| self.round_obligation(team, round))
+                .or_else(|| Self::queued_run_obligation(team, round))
                 // A step that waits for GitHub or git owns the round: its next try, or the human's resume of a
                 // refusal. The status says which before anything else.
                 .or_else(|| {
@@ -317,6 +317,19 @@ impl Owner {
                 Obligation::Human
             }
         })
+    }
+
+    /// What an idle round waits for when a task of it is queued: the run that the daemon starts next is the one that
+    /// goes on with the round, so the round is not unowned.
+    ///
+    /// Only a `Queued` task has a run to come. A task that waits for a message, an assignment or a merge has none, and a
+    /// round whose tasks all wait is the defect. A task that ended, asked the human or was stopped is looked at by
+    /// [`Owner::stuck_obligation`] and [`Owner::round_obligation`] first.
+    pub(in crate::daemon::owner) fn queued_run_obligation(team: &Team, round: &Round) -> Option<Obligation> {
+        round_tasks(team, round)
+            .iter()
+            .any(|member| member.status() == TaskStatus::Queued)
+            .then_some(Obligation::QueuedRun)
     }
 
     /// The pending operation, including gates which do not run a model task.
@@ -394,4 +407,41 @@ impl Owner {
             | None => None,
         }
     }
+}
+
+/// The tasks whose runs the work of `round` is waiting for or is done by, each once: the members that ran in it, the
+/// member its item is given to, which has a run to come before it ever names the round, and the lead, who is given a
+/// run of every item's round.
+fn round_tasks<'team>(team: &'team Team, round: &Round) -> Vec<&'team Member> {
+    let assignee = round
+        .item()
+        .and_then(|item| team.item(item))
+        .and_then(|progress| match progress.phase() {
+            ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } => Some(assignee),
+            ItemPhase::Pending | ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. } => {
+                None
+            }
+        });
+    let roster = team.crew().roster();
+    let lead = roster
+        .first()
+        .map(|(_, member)| *member)
+        .filter(|_| round.item().is_some());
+    let holders = roster
+        .iter()
+        .map(|(_, member)| *member)
+        .filter(|member| assignee.is_some_and(|name| member.agent().agent_name() == *name));
+    let mut tasks: Vec<&Member> = Vec::new();
+    for member in team
+        .members_in(round.id())
+        .into_iter()
+        .map(|(_, member)| member)
+        .chain(holders)
+        .chain(lead)
+    {
+        if !tasks.iter().any(|known| known.task() == member.task()) {
+            tasks.push(member);
+        }
+    }
+    tasks
 }
