@@ -285,7 +285,9 @@ learns of a new holder, and needs no change. With nobody fitting — or at once 
 with no agents listed — a member's task is stopped and its lead is told on the bus that the work is its own
 (`harness/team/bus-lead-takes-work.md`, notice `member_failed`), followed by the briefing of the member's work without
 its prompt (`harness/run/lead-briefing.md`), gathered with a snapshot at the next turn of the loop and before the daemon
-ends; the item of the stopped member is published when the lead ends `DONE`, as for a member the human stopped
+ends. The work is owed to the lead in the state (`State::owe_lead`, `lead_owed` in the member's `renewals`), saved with
+the stop, and the mark is cleared (`State::lead_told`) only once the bus took the notice, so a restart or a bus that
+fails before the lead is told tells it at the next turn after all; the item of the stopped member is published when the lead ends `DONE`, as for a member the human stopped
 (`pr::joins`). A solo task and a coordinator's have no lead: they fail as before, and so does every task with
 `mode = "off"`, or once it was taken over `replacements` times. Each choice is logged as `decision_taken` with
 `decision` `takeover`, and each hand-over as `task_handed_over` (history migration 16 admits it).
@@ -293,9 +295,12 @@ ends; the item of the stopped member is published when the lead ends `DONE`, as 
 **After the last step** (`daemon/owner/last_step.rs`): when a run would fail a task that was handed over before, or a
 coordinator holding the item of a stopped member, the daemon writes the task's next questions file from
 `harness/run/notice-last-step.md` instead, records its number with `State::ask_after_last_step` (in the member's
-`renewals`, with the boundary of a new session) and settles the run as one that asked questions. The answer `a` queues
-the task, which starts briefed in that new session; any other answer stops it, and a member's work goes to its lead with
-the briefing. A task is asked so only once, and never in mode `off`.
+`renewals`, with the boundary of a new session) and settles the run as one that asked questions; a file the state does
+not record is removed again and the task fails as before. Whether to ask is decided by `decide::last_step::after_last_step`
+(mode, role, asked before, held before, a stopped member's work), the answer by `decide::last_step::last_step_answer`:
+`a` queues the task, which starts briefed in that new session; any other answer — `b`, `ok`, free text — stops it, and
+a member's work is owed to its lead as above. A task is asked so only once, and never in mode `off`. The open question
+is in the state, so a restart while it waits keeps it, and its answer still does what it says.
 
 **The watchdog** is the engine's: a run whose output files show no change for `[watchdog] hang_minutes` is stopped (its
 whole process group, `SIGTERM` then `SIGKILL`) and classified as a hang unless the provider refused it. **A pause** is
