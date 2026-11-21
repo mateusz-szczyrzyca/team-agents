@@ -231,7 +231,7 @@ async fn teams(
     target: Option<Target>,
 ) -> Result<(Vec<TeamSummary>, Option<HistoryHealth>), StatusError> {
     let reply = connection
-        .request_split(Client::Cli, Command::Status(StatusRequest { target }))
+        .request(Client::Cli, Command::Status(StatusRequest { target }))
         .await?;
     match reply {
         Reply::Teams { teams } => Ok((teams, None)),
