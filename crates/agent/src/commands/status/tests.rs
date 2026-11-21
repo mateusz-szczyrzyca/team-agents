@@ -1459,3 +1459,13 @@ fn a_ready_later_split_part_shows_its_tier_wait_before_a_round_opens() {
         ]
     );
 }
+
+#[test]
+fn a_status_time_and_a_log_time_of_one_moment_in_one_zone_are_the_same_text() {
+    use agent_core::local_time::Zone;
+    let zone = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("a literal offset is valid"));
+    let at: agent_core::state::Timestamp = "2026-11-21T12:50:02Z".parse().expect("a literal time is valid");
+    assert_eq!(clock_of(at, zone), zone.stamp(at));
+    assert_eq!(clock_of(at, zone), "2026-11-21 13:50:02 +01:00");
+    assert_eq!(zone.stamp_minute(at), "2026-11-21 13:50 +01:00");
+}
