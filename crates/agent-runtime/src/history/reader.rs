@@ -389,6 +389,36 @@ impl Reader {
         read_runs(&snapshot, &ids)
     }
 
+    /// The runs of `task`, oldest first.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn runs_of_task(&self, task: &TaskId) -> Result<Vec<RunRow>, ReadError> {
+        let snapshot = self.snapshot("runs")?;
+        let ids = keys(
+            &snapshot,
+            "runs",
+            "SELECT run FROM runs WHERE task = ?1 ORDER BY at, rowid",
+            task.as_str(),
+        )?;
+        read_runs(&snapshot, &ids)
+    }
+
+    /// The runs of `agent`, in every team, oldest first.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn runs_of_agent(&self, agent: &AgentName) -> Result<Vec<RunRow>, ReadError> {
+        let snapshot = self.snapshot("runs")?;
+        let ids = keys(
+            &snapshot,
+            "runs",
+            "SELECT run FROM runs WHERE agent = ?1 ORDER BY at, rowid",
+            agent.as_str(),
+        )?;
+        read_runs(&snapshot, &ids)
+    }
+
     /// The run `run`.
     ///
     /// # Errors

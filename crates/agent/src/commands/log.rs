@@ -1,6 +1,7 @@
 //! `agent log`: tell the story of a round or a team from the history database, which is read directly: no daemon is asked.
 
 pub(crate) mod rows;
+pub(crate) mod steps;
 #[cfg(test)]
 mod tests;
 mod views;
