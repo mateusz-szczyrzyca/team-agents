@@ -1,4 +1,4 @@
-//! Tests for bounded publication failures, lead notifications, human questions, and split part conflict publishing.
+//! Tests for gated publication to pull request branches across worktree checkouts and split conflict passes.
 
 use agent_core::protocol::{AnswerRequest, Client, Command};
 use agent_core::state::{ItemPhase, MergeMode};
