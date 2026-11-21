@@ -330,13 +330,14 @@ impl Owner {
                 TaskStatus::Queued | TaskStatus::Waiting | TaskStatus::Running
             )
         };
+        // A stub of the part round: every member of the round and the lead count alike.
         let in_the_round = team.members_in(round.id()).into_iter().map(|(_, member)| member);
         let lead = team.crew().roster().into_iter().next();
         lead.into_iter()
             .map(|(_, member)| member)
             .chain(in_the_round)
             .filter(runs_next)
-            .any(|member| member.status() == TaskStatus::Queued)
+            .any(|member| matches!(member.status(), TaskStatus::Queued | TaskStatus::Waiting))
             .then_some(Obligation::QueuedRun)
     }
 

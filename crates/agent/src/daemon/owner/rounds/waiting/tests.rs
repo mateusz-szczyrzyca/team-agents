@@ -608,3 +608,35 @@ async fn pulls_of(owner: &crate::daemon::owner::Owner) -> Option<crate::daemon::
     )
     .unwrap()
 }
+
+// The member that keeps the item counts only in a part round: a round of the whole item, with the same lead and the
+// same member between two runs, waits for nothing and is still a defect.
+#[tokio::test]
+async fn a_round_without_a_part_waits_for_no_member_between_its_runs() {
+    let (mut state, team, round) = round_for(1, TaskStatus::Done);
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        // The member worked in the round, so it is one of its members, and the item stays given to it.
+        found
+            .begin_run(
+                &task(2),
+                agent_core::state::NewRun {
+                    id: crate::fixtures::run(3),
+                    at: at(11),
+                    session: None,
+                    rounds: vec![round.clone()],
+                },
+            )
+            .unwrap();
+        let (_, mut member) = found.find_mut(&task(2)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.end_run(at(12), LEAD_DONE).unwrap();
+        member.transition(TaskStatus::Waiting).unwrap();
+    }
+    let daemon = home_with_token(&state);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let found = waiting_after(&mut owner, &round, &team, |_, _, _| {}).await;
+
+    assert_eq!(found, Some(Waiting::Defect));
+}
