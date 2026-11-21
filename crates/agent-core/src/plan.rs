@@ -27,6 +27,8 @@ use crate::ids::ItemId;
 use crate::repo_path::RepoPath;
 use crate::task_list::{self, MAX_TASK_LIST_BYTES, NumberProblem};
 
+pub mod judge;
+
 /// Where a task keeps its plan, relative to the root of its worktree: the task's working file, never part of what it
 /// delivers.
 pub const PLAN_FILE: &str = ".agent/plan.md";
