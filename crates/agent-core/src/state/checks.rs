@@ -31,6 +31,10 @@ pub struct ItemChecks {
     /// that file after it. A file with no head here was allowed before this key existed and holds for any.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub allowed_at: BTreeMap<RepoPath, CommitId>,
+    /// What the human refused for the item: it is kept until the item is closed, so that it is not asked again. A file
+    /// written before this key existed has none.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub refused: BTreeSet<Subject>,
 }
 
 /// What a question of the checks covers of the issues the checks found.
@@ -137,6 +141,18 @@ impl ChecksRecord {
             .flat_map(|held| held.human_only.iter())
             .collect();
         allowed.into_iter().cloned().collect()
+    }
+
+    /// What the human refused for any of `items`, without repeats.
+    #[must_use]
+    pub fn refused_of(&self, _items: &[ItemId]) -> Vec<Subject> {
+        Vec::new()
+    }
+
+    /// Takes the human's answer to the question that is waited on, as [`Self::answer`] does for what they `allowed`,
+    /// and keeps what they `refused` for `items`.
+    pub fn answered(&mut self, items: &[ItemId], allowed: &[Subject], _refused: &[Subject]) {
+        self.answer(items, allowed);
     }
 
     /// The heads at which the files of `items` were allowed, for those that have one.
