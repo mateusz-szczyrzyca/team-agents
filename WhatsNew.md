@@ -5,14 +5,6 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.48.0 — 21.11.2026 — PR pending
-
-### New features
-- [agent-core] [agent-runtime] The runtime executes plan step command checks in the task's worktree with the agent environment, closed input, and timeout cleanup. `[plan] check_seconds` configures the command timeout (default 120; `0` disables commands and keeps them declared). Commands matching `[plan] check_refuse` prefixes (default `["agent gate", "make gate"]`) are refused and remain declared.
-
-### Enhancements
-- [agent-runtime] Check outputs are written to `checks/<run_id>/<step_id>.log` under the task directory, and process groups are killed cleanly via `GroupGuard` upon timeout or drop.
-
 ## 0.47.0 — 21.11.2026 — PR #164
 
 ### New features
