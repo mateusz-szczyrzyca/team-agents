@@ -345,7 +345,7 @@ async fn after_its_passes_the_human_is_asked_and_their_answer_starts_the_review(
 // ---- a test that was frozen -------------------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_green_commit_that_edits_the_test_of_its_red_commit_goes_back_to_the_team_with_the_commit_and_the_file() {
+async fn a_green_commit_that_edits_the_test_of_its_red_commit_goes_to_the_human_with_the_commit_and_the_file() {
     let mut rig = checking_rig("script:red-green,done", 2, SILENT, SILENT).await;
     script(
         &rig,
@@ -355,7 +355,13 @@ async fn a_green_commit_that_edits_the_test_of_its_red_commit_goes_back_to_the_t
     rig.start().await;
 
     let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    let back = rig.prompt(&tasks[0], 2).await;
+    // The team cannot repair a commit that is in its branch: the human is asked at once, and the question names it.
+    rig.wait_for("the question of the checks", || {
+        rig.home.questions_file(&tasks[0], NonZeroU32::MIN).exists()
+    })
+    .await;
+    let back = questions_of(&rig, &tasks[0], 1).entries()[0].body().to_owned();
+    let told = rig.prompt(&tasks[0], 2).await;
     // A commit is named by its first seven digits.
     let short = |grep: &str| -> String {
         git(&rig.worktree(&tasks[0]), &["log", "-1", "--format=%H", grep])
@@ -370,6 +376,7 @@ async fn a_green_commit_that_edits_the_test_of_its_red_commit_goes_back_to_the_t
     assert!(back.contains(&green), "{back}");
     assert!(back.contains(&red), "{back}");
     assert!(back.contains("TEST-FIX:"), "{back}");
+    assert!(!told.contains("THE ROUND IS NOT READY"), "{told}");
     assert_eq!(rig.state().team(&team).unwrap().reviewers(), []);
     assert_eq!(rig.github.calls("POST", "/graphql"), []);
 }
