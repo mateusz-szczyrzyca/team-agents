@@ -277,6 +277,7 @@ impl Owner {
         } else {
             self.stuck_obligation(team, round)
                 .or_else(|| self.round_obligation(team, round))
+                .or_else(|| Self::queued_run_obligation(team, round))
                 // A step that waits for GitHub or git owns the round: its next try, or the human's resume of a
                 // refusal. The status says which before anything else.
                 .or_else(|| {
@@ -317,6 +318,13 @@ impl Owner {
                 Obligation::Human
             }
         })
+    }
+
+    /// What a round waits for when a task that will work for it is queued, or waits for a free agent or a limit of
+    /// runs: that task's run advances the round, so the round waits for it and is not unowned. A round opened a moment
+    /// ago has no member in it yet, and the only task that can start it is the lead's, queued for it.
+    pub(in crate::daemon::owner) fn queued_run_obligation(_team: &Team, _round: &Round) -> Option<Obligation> {
+        None
     }
 
     /// The pending operation, including gates which do not run a model task.

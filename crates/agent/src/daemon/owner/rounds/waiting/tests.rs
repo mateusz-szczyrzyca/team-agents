@@ -495,3 +495,116 @@ async fn an_approved_round_merging_the_base_waits_for_the_lead_and_asking_the_hu
     let asking = obligation_after(&state, |_, _, _| {}, &round, &team).await;
     assert_eq!(asking, Some(Obligation::Human));
 }
+
+/// The round `round` of item 1.1 of the sample team, opened, whose item is given to the task `number`, that is
+/// `status`.
+fn round_for(number: u32, status: TaskStatus) -> (State, TeamId, RoundId) {
+    let mut state = team_state();
+    let team_id = team_id(0);
+    let round: RoundId = "round-20261119-090001-wait".parse().unwrap();
+    {
+        let mut team = state.team_mut(&team_id).unwrap();
+        team.open_round(round.clone(), Some("1.1".parse().unwrap()), at(10))
+            .unwrap();
+        let (_, mut member) = team.find_mut(&task(number)).unwrap();
+        if member.status() == TaskStatus::Queued && status != TaskStatus::Queued {
+            // A queued task runs, then waits: that is how a task comes to wait for its next run.
+            member.transition(TaskStatus::Running).unwrap();
+        }
+        if member.status() != status {
+            member.transition(status).unwrap();
+        }
+    }
+    (state, team_id, round)
+}
+
+// Instant after a round opens, its task is queued and the run that will name the round has not started yet: the round
+// waits for that run, it is not a round that waits for nothing.
+#[tokio::test]
+async fn a_round_of_a_queued_task_waits_for_the_run_of_the_task() {
+    let (state, team, round) = round_for(1, TaskStatus::Queued);
+    let daemon = home_with_token(&state);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let found = waiting_after(&mut owner, &round, &team, |_, _, _| {}).await;
+
+    assert_eq!(found, Some(Waiting::For(Obligation::QueuedRun)));
+}
+
+// A round whose task has run, given its answers and has no run yet is queued again with a new run, and waits for
+// that run.
+#[tokio::test]
+async fn a_round_of_a_task_that_waits_for_its_next_run_is_not_a_defect() {
+    let (mut state, team, round) = round_for(1, TaskStatus::Running);
+    {
+        let mut team_state = state.team_mut(&team).unwrap();
+        let (_, mut lead) = team_state.find_mut(&task(1)).unwrap();
+        lead.begin_run(run(1), at(11), None).unwrap();
+        lead.end_run(at(12), LEAD_DONE).unwrap();
+        lead.send_back_once_more();
+        lead.transition(TaskStatus::Queued).unwrap();
+    }
+    let daemon = home_with_token(&state);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let found = waiting_after(&mut owner, &round, &team, |_, _, _| {}).await;
+
+    assert_eq!(found, Some(Waiting::For(Obligation::QueuedRun)));
+}
+
+// A round a step of which waits for GitHub keeps that wait, whatever its lead's task is doing.
+#[tokio::test]
+async fn a_round_whose_step_waits_for_github_is_not_a_queued_run() {
+    let (state, team, round) = round_for(1, TaskStatus::Queued);
+    let daemon = home_with_token(&state);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let found = waiting_after(&mut owner, &round, &team, |owner, _, round| {
+        owner.watch.waits.insert(round.clone(), Obligation::FreeInvestigator);
+    })
+    .await;
+
+    assert_eq!(found, Some(Waiting::For(Obligation::FreeInvestigator)));
+}
+
+/// What `owner`, with pull requests to keep, says the round `round` of `team` waits for once its scheduling is done.
+async fn waiting_after(
+    owner: &mut crate::daemon::owner::Owner,
+    round: &RoundId,
+    team: &TeamId,
+    prepare: impl FnOnce(&mut crate::daemon::owner::Owner, &TaskId, &RoundId),
+) -> Option<Waiting> {
+    owner.set_pulls(pulls_of(owner).await.expect("the fixture home has a GitHub token"));
+    prepare(owner, &task(1), round);
+    let found = owner.parts.state.team(team).and_then(|team| team.round(round));
+    owner.waiting_for(owner.parts.state.team(team).unwrap(), found.unwrap())
+}
+
+/// A daemon home with `state` and the token of a GitHub account, so that the owner has its autopilot.
+fn home_with_token(state: &State) -> Daemon {
+    let daemon = Daemon::new(state, None);
+    let secrets = daemon.home.root().join("secrets.toml");
+    std::fs::write(&secrets, "github_token = \"ghp_test_token_0123\"\n").unwrap();
+    std::fs::set_permissions(&secrets, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+    daemon
+}
+
+/// The autopilot of `owner`, with the real texts.
+async fn pulls_of(owner: &crate::daemon::owner::Owner) -> Option<crate::daemon::owner::Pulls> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+    let language = owner.parts.settings.config.language();
+    crate::daemon::owner::Pulls::new(
+        Arc::new(
+            agent_runtime::autopilot_prompts::AutopilotPrompts::load(&root, language)
+                .await
+                .unwrap(),
+        ),
+        Arc::new(
+            agent_runtime::checks_prompts::ChecksPrompts::load(&root, language)
+                .await
+                .unwrap(),
+        ),
+        &owner.parts.settings,
+    )
+    .unwrap()
+}
