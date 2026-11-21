@@ -70,5 +70,6 @@ pub mod state;
 pub mod status;
 pub mod story;
 pub mod task_list;
+pub mod task_title;
 
 pub mod task_allowance;

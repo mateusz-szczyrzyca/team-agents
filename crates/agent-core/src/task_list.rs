@@ -27,6 +27,7 @@ use std::str::FromStr;
 
 use crate::ids::{AgentName, InvalidItemId, InvalidName, ItemId};
 use crate::kinds::{Tier, UnknownKeyword};
+use crate::task_title::{MAX_SHORT_DESC_CHARS, derived_short_desc};
 
 /// Largest task list accepted, in bytes: a bound on untrusted input, far above any real list.
 pub const MAX_TASK_LIST_BYTES: usize = 1 << 20;
@@ -39,6 +40,9 @@ const COORDINATOR_PREFIX: &str = "Coordinator:";
 
 /// The text that starts a line naming a path or glob that the task's rounds may change.
 const ALLOW_PREFIX: &str = "Allow:";
+
+/// The text that starts the header line naming the task in words.
+const SHORT_DESC_PREFIX: &str = "Short desc:";
 
 /// The text that starts the line listing the features a feature waits for.
 const DEPENDS_ON_PREFIX: &str = "Depends on:";
@@ -56,6 +60,100 @@ pub enum AllowLines {
     /// The lines are text of the brief, as every version before the lines existed read them: a state of such a version
     /// may hold a brief that starts with one, and it neither has to be a valid pattern nor grants anything.
     Brief,
+}
+
+/// The description of a task in one line: what `Short desc:` of its task list says.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "String")]
+pub struct ShortDesc(String);
+
+/// What is wrong with a text given as the description of a task.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum InvalidShortDesc {
+    /// There is no text but blanks.
+    #[error("the description is empty: write what the task is in one line of at most {max} characters")]
+    Empty {
+        /// The limit, in characters.
+        max: usize,
+    },
+    /// The text is longer than the limit.
+    #[error("the description has {len} characters, at most {max}: shorten it to one line of {max} characters")]
+    TooLong {
+        /// The text's length, in characters.
+        len: usize,
+        /// The limit, in characters.
+        max: usize,
+    },
+    /// The text is more than one line.
+    #[error("the description has more than one line: write what the task is in one line of at most {max} characters")]
+    SeveralLines {
+        /// The limit, in characters.
+        max: usize,
+    },
+    /// The text starts with the label it is written after, as it would on the line of a task file.
+    #[error("the description starts with {prefix:?}: write the words only, after the label")]
+    Labelled {
+        /// The label the text starts with.
+        prefix: &'static str,
+    },
+}
+
+impl ShortDesc {
+    /// Longest description, in characters.
+    pub const MAX_CHARS: usize = MAX_SHORT_DESC_CHARS;
+
+    /// The text of the description.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ShortDesc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl FromStr for ShortDesc {
+    type Err = InvalidShortDesc;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if text.chars().any(|c| matches!(c, '\n' | '\r')) {
+            return Err(InvalidShortDesc::SeveralLines { max: Self::MAX_CHARS });
+        }
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(InvalidShortDesc::Empty { max: Self::MAX_CHARS });
+        }
+        if text.starts_with(SHORT_DESC_PREFIX) {
+            return Err(InvalidShortDesc::Labelled {
+                prefix: SHORT_DESC_PREFIX,
+            });
+        }
+        let len = text.chars().count();
+        if len > Self::MAX_CHARS {
+            return Err(InvalidShortDesc::TooLong {
+                len,
+                max: Self::MAX_CHARS,
+            });
+        }
+        Ok(Self(text.to_owned()))
+    }
+}
+
+impl TryFrom<String> for ShortDesc {
+    type Error = InvalidShortDesc;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+impl From<ShortDesc> for String {
+    fn from(desc: ShortDesc) -> Self {
+        desc.0
+    }
 }
 
 /// Whether an item is marked as done in the text: `[ ]` or `[x]`.
@@ -116,6 +214,8 @@ pub struct TaskList {
     coordinator: Option<AgentName>,
     /// Root-relative permissions given in the header.
     allowances: Vec<crate::task_allowance::TaskAllowance>,
+    /// The description from the `Short desc:` header line, if there is one.
+    short_desc: Option<ShortDesc>,
     /// The text before the first feature, without the `Coordinator:` line and the blank lines around it.
     brief: String,
     /// The features, in the order written.
@@ -327,6 +427,30 @@ pub enum TaskListError {
         /// The label.
         part: ItemPart,
     },
+    /// The `Short desc:` header line has no text.
+    #[error(
+        "line {line}: Short desc: is empty: write what the task is in one line, up to {MAX_SHORT_DESC_CHARS} characters"
+    )]
+    ShortDescEmpty {
+        /// The line of the label.
+        line: NonZeroUsize,
+    },
+    /// The `Short desc:` header line is longer than the limit.
+    #[error("line {line}: Short desc: has {len} characters, at most {max}: shorten it to one line of {max} characters")]
+    ShortDescTooLong {
+        /// The line of the label.
+        line: NonZeroUsize,
+        /// The description's length, in characters.
+        len: usize,
+        /// The limit, in characters.
+        max: usize,
+    },
+    /// A second `Short desc:` header line.
+    #[error("line {line}: Short desc: is already given: keep one such line in the header")]
+    ShortDescTwice {
+        /// The line of the second label.
+        line: NonZeroUsize,
+    },
     /// A label has nothing after it.
     #[error("line {line}: {part} has no text")]
     EmptyPart {
@@ -395,6 +519,21 @@ impl TaskList {
             Err(TaskListError::Empty) => Self::parse_with(text, AllowLines::Brief).is_ok(),
             Err(_) => false,
         }
+    }
+
+    /// The description from the `Short desc:` header line, if there is one: what the task is, in one line.
+    #[must_use]
+    pub const fn short_desc(&self) -> Option<&ShortDesc> {
+        self.short_desc.as_ref()
+    }
+
+    /// What the task is, in one line: the `Short desc:` line, or the first sentence of the brief cut to the limit of
+    /// [`ShortDesc`] when the list has none.
+    #[must_use]
+    pub fn shown_short_desc(&self) -> ShortDesc {
+        self.short_desc
+            .clone()
+            .unwrap_or_else(|| ShortDesc(derived_short_desc(&self.brief)))
     }
 
     /// The name from the `Coordinator:` line, if the list starts with one. It may name a normal agent or an
@@ -696,6 +835,8 @@ struct Parser<'a> {
     allow_lines: AllowLines,
     /// Root-relative permissions given in the header.
     allowances: Vec<crate::task_allowance::TaskAllowance>,
+    /// The description from the header's `Short desc:` line.
+    short_desc: Option<ShortDesc>,
     /// The lines before the first feature.
     brief: Vec<&'a str>,
     /// The features read so far; the last one is the current one.
@@ -740,6 +881,17 @@ impl<'a> Parser<'a> {
                         source,
                     }
                 })?);
+            return Ok(());
+        }
+        if self.features.is_empty()
+            && self.brief.iter().all(|line| line.trim().is_empty())
+            && let Some(rest) = text.strip_prefix(SHORT_DESC_PREFIX)
+        {
+            if self.short_desc.is_some() {
+                return Err(TaskListError::ShortDescTwice { line });
+            }
+            let read = short_desc::short_desc_line(line, rest)?;
+            self.short_desc = Some(ShortDesc(read.text));
             return Ok(());
         }
         if let Some(open) = &self.item
@@ -923,6 +1075,7 @@ impl<'a> Parser<'a> {
         Ok(TaskList {
             coordinator: self.coordinator,
             allowances: self.allowances,
+            short_desc: self.short_desc,
             brief,
             features: self.features,
             tiers: self.tiers,
@@ -937,6 +1090,8 @@ impl FromStr for TaskList {
         Self::parse(text)
     }
 }
+
+mod short_desc;
 
 #[cfg(test)]
 mod tests {
