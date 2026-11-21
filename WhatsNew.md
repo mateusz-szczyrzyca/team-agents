@@ -40,6 +40,9 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ### Enhancements
 - [agent] [agent-core] **Action:** the text of the notifications changed (new order of the fields, new lines): a script that reads them must follow. The socket protocol only gained the optional field `short_desc` in version 6, which older negotiated protocols do not carry; replace the CLI together with the daemon.
 
+### Bug fixes
+- [agent-core] A team started before 0.51.0 from a task file that already had a `Short desc:` line was named with the label in notifications and in `agent status` (`Task: Short desc: Checks ask…`): now only the description is shown (`Task: Checks ask…`), and the excerpt under `TASK` no longer repeats the line.
+
 ## 0.50.0 — 21.11.2026 — PR #167
 
 ### New features
