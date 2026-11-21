@@ -141,7 +141,7 @@ fn places_are_against_the_rows() {
     let found = rows(&reader, &round);
     let steps = vec![step("0001", 12)];
     assert_eq!(
-        crate::commands::log::steps::places(&found, &steps),
+        crate::commands::log::steps::places(&found.iter().collect::<Vec<_>>(), &[&steps[0]]),
         vec![Place::After(found.get(0).expect("a row").id())]
     );
     let name: AgentName = "inv-claude-sonnet".parse().expect("a literal name is valid");

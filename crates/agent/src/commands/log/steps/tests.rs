@@ -184,8 +184,8 @@ fn places_stand_each_step_after_the_last_row_recorded_no_later_than_it() {
     let steps = agent_steps(&reader, &name).expect("the steps are read");
     assert_eq!(rows.len(), 2, "{rows:?}");
     assert_eq!(
-        places(&rows, &steps),
+        places(&rows.iter().collect::<Vec<_>>(), &[&steps[0]]),
         vec![Place::After(rows.get(0).expect("one row").id())]
     );
-    assert_eq!(places(&[], &steps), vec![Place::First]);
+    assert_eq!(places(&[], &[&steps[0]]), vec![Place::First]);
 }

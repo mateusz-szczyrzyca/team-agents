@@ -83,7 +83,7 @@ pub(crate) fn agent_steps(reader: &Reader, agent: &AgentName) -> Result<Vec<Time
 
 /// Where each step of `steps`, oldest first, stands against `rows`, oldest first: after the last row recorded no later
 /// than its time, which keeps a step between the rows of its time.
-pub(crate) fn places(rows: &[LogEntry], steps: &[TimedStep]) -> Vec<Place> {
+pub(crate) fn places(rows: &[&LogEntry], steps: &[&TimedStep]) -> Vec<Place> {
     let mut places: Vec<Place> = Vec::with_capacity(steps.len());
     let mut next = 0_usize;
     for timed in steps {
