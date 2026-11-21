@@ -529,7 +529,7 @@ pub(crate) fn render_plan_step(step: &PlanStepSummary) -> String {
         },
         None => String::new(),
     };
-    format!("    [{}] {} {}{}", step.mark, step.id, step.title, state_suffix)
+    format!("    [{}] {} {}{}", step.mark.mark(), step.id, step.title, state_suffix)
 }
 
 /// What is written when the daemon knows no team.

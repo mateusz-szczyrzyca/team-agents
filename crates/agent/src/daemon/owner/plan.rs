@@ -745,7 +745,7 @@ impl Owner {
                 let judgement = if is_done { judgements.get(&step.id()) } else { None };
                 PlanStepSummary {
                     id: step.id(),
-                    mark: step.state().mark(),
+                    mark: step.state(),
                     title: step.title().to_owned(),
                     state: judgement.map(|j| j.state),
                     reason: judgement.and_then(|j| j.reason.clone()),
@@ -789,7 +789,7 @@ fn step_summary(
     };
     PlanStepSummary {
         id: step.id(),
-        mark: step.state().mark(),
+        mark: step.state(),
         title: step.title().to_owned(),
         state,
         reason,

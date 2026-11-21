@@ -340,15 +340,19 @@ impl Step {
 }
 
 /// The state of a step: its mark.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum StepState {
     /// `[ ]`: to do.
+    #[serde(rename = " ")]
     Todo,
     /// `[>]`: in hand; at most one step of a plan is.
+    #[serde(rename = ">")]
     InHand,
     /// `[x]` (or `[X]`): done.
+    #[serde(rename = "x")]
     Done,
     /// `[-]`: given up; its note says why.
+    #[serde(rename = "-")]
     GivenUp,
 }
 

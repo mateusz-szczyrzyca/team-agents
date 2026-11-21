@@ -280,8 +280,8 @@ pub struct ReviewPass {
 pub struct PlanStepSummary {
     /// The step ID.
     pub id: ItemId,
-    /// The mark character (`' '`, `'>'`, `'x'`, `'-'`).
-    pub mark: char,
+    /// The step state, serialized as its plan mark.
+    pub mark: crate::plan::StepState,
     /// The step's title.
     pub title: String,
     /// The settled state for a done step, if judged.
