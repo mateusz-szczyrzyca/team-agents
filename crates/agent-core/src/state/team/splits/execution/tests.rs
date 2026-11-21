@@ -234,3 +234,12 @@ fn part_assignment_survives_review_and_reload_and_tracks_a_reassigned_executor()
         serde_json::from_str::<serde_json::Value>(include_str!("before-assignment.json")).unwrap()
     );
 }
+
+#[test]
+fn executor_is_stored_at_team_level_and_round_format_is_unchanged() {
+    let mut found = working();
+    found.activate_split(plan(&[&[], &["a"]])).unwrap();
+    let wire = serde_json::to_value(&found).unwrap();
+    assert_eq!(wire["part_assignments"][round_id(1).as_str()], "codex-1");
+    assert_eq!(wire["rounds"][0].get("assigned_to"), None);
+}
