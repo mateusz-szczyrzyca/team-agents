@@ -943,7 +943,7 @@ async fn try_publish_while_own_gate_running_does_not_load_stale_or_invalid_gate_
     // Write an invalid / in-flight record to gate.json.
     // If try_publish reads gate_record before checking own_gate_state (or while OwnGate::Running),
     // it will attempt to parse this invalid record and fail with StoreError::ParseGateRecord.
-    // When read after own_gate_state reports completion, it returns Attempt::Nothing without loading the record.
+    // While own_gate_state reports running, it returns Attempt::Nothing without loading the record.
     let gate_file = daemon.home.gate_record_file(&lead.task);
     std::fs::create_dir_all(gate_file.parent().unwrap()).unwrap();
     std::fs::write(&gate_file, "in-flight-invalid-json\n").unwrap();
@@ -972,7 +972,13 @@ async fn try_publish_while_own_gate_running_does_not_load_stale_or_invalid_gate_
 
     let attempt_completed = owner.try_publish(site, publication, now).await;
     assert!(
-        !matches!(attempt_completed, Ok(Attempt::Nothing)),
-        "try_publish after gate completion must read the updated gate record and proceed"
+        matches!(
+            attempt_completed,
+            Ok(Attempt::SentBack {
+                tip: actual,
+                hold: agent_core::decide::publish::GateHold::NoCommit,
+            }) if actual == tip
+        ),
+        "try_publish after gate completion must read updated gate record and return SentBack with NoCommit at tip"
     );
 }
