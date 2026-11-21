@@ -17,6 +17,7 @@ use agent_core::state::{CommitId, GateRecord, ItemPhase, PullRequest, Timestamp}
 use agent_core::status::TaskStatus;
 use agent_runtime::git::{Git, Revision};
 use agent_runtime::github::{NewPullRequest, PullRequestUpdate, Readiness, RemotePullRequest, RepoSlug};
+use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 use tokio::sync::oneshot;
 
@@ -1418,6 +1419,11 @@ impl Owner {
         })?;
         let limit = self.parts.settings.config.publish().tries;
         let step = agent_core::decide::publish::publish_tries_step(max_tries, limit);
+        log_decision(
+            "publish_tries_step",
+            &format!("tries={max_tries}, limit={limit}"),
+            &format!("{step:?}"),
+        );
         match step {
             agent_core::decide::publish::PublishTriesStep::Retry => {
                 self.retry_publish(site, publication, &reason, (max_tries, limit), now)?;
