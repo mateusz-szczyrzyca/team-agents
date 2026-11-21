@@ -1039,9 +1039,9 @@ Do seq.
 
 1. Work
 [x] 1.1 First
-    Check: sh -c \"echo first-done > step1.txt; exit 0\"
+    Check: sh -c \"test -n \\\"$GIT_AUTHOR_NAME\\\" && test -n \\\"$PATH\\\" && echo first-done > step1.txt\"
 [x] 1.2 Second
-    Check: sh -c \"test -f step1.txt && echo second-done; exit 0\"
+    Check: sh -c \"test -f step1.txt && echo second-done\"
 ";
     plan_script(&rig, "seq", seq_plan);
     rig.start().await;

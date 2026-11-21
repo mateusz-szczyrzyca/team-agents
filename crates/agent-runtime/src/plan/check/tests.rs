@@ -309,10 +309,18 @@ async fn check_command_kills_descendant_processes_in_group() {
 
     let pid_text = fs::read_to_string(&pid_file).unwrap();
     let pid: i32 = pid_text.trim().parse().unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     let proc_path = format!("/proc/{pid}");
+    let path = std::path::Path::new(&proc_path);
+    let start = std::time::Instant::now();
+    while path.exists() {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "timed out waiting for descendant process to be killed"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
     assert!(
-        !std::path::Path::new(&proc_path).exists(),
+        !path.exists(),
         "descendant process must be killed"
     );
 }

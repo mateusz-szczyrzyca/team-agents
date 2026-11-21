@@ -505,18 +505,62 @@ impl Owner {
             },
             |id| previous.get(id).map(|j| j.state),
         );
+        let identity = match AgentName::from_str(&located.agent) {
+            Ok(agent) => Some(CommitIdentity::for_agent(self.parts.settings.config.git(), &agent)),
+            Err(_) => None,
+        };
         let plan_config = self.parts.settings.config.plan();
-        let agent_envs: Vec<(String, String)> = agent_launch_env(
+        let agent_envs_result = agent_launch_env(
             &self.parts.settings.secrets,
             self.parts.engine.parts().agent_binary_dir.as_path(),
             &self.parts.settings.config.binaries().agent_path,
             self.parts.store.home().root(),
-            None,
+            identity.as_ref(),
             self.parts.settings.config.build().incremental,
-        )
-        .map(|envs| envs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
-        .unwrap_or_default();
+        );
         let task_dir = self.parts.store.home().task_dir(task);
+        let mut first_mismatch = None;
+        let mut records = Vec::new();
+
+        let agent_envs: Vec<(String, String)> = match agent_envs_result {
+            Ok(envs) => envs.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            Err(error) => {
+                let reason_text = format!("cannot prepare agent environment: {}", error_chain(&error));
+                tracing::warn!(task = %task, error = %reason_text, "check environment construction failed");
+                for step in to_judge {
+                    let result = JudgementResult {
+                        state: JudgementState::Mismatch,
+                        check_line: step.check().map(ToString::to_string),
+                        reason: Some(reason_text.clone()),
+                        duration_ms: 0,
+                        output_path: None,
+                        tail: String::new(),
+                        gate_refused: false,
+                    };
+                    if first_mismatch.is_none() {
+                        first_mismatch = Some(PlanReason::Mismatch {
+                            step: step.id(),
+                            title: step.title().to_owned(),
+                            check: result.check_line.clone(),
+                            reason: result.reason.clone(),
+                            tail: result.tail.clone(),
+                        });
+                    }
+                    let at = Timestamp::now(&self.parts.clock)?;
+                    records.push(result.into_record(task.clone(), located.team.clone(), run.cloned(), at, step.id()));
+                }
+                for record in &records {
+                    previous.insert(record.step, record.clone());
+                }
+                if !records.is_empty() && self.history.is_writing() {
+                    if let Err(error) = self.history.persist_judgements(records).await {
+                        tracing::warn!(task = %task, error = %error_chain(&error), "failed to persist environment failure judgements");
+                    }
+                }
+                return Ok((previous, first_mismatch));
+            }
+        };
+
         let context = CheckContext {
             worktree: worktree.as_path(),
             task_dir: &task_dir,
@@ -525,8 +569,6 @@ impl Owner {
             check_refuse: plan_config.check_refuse(),
             envs: &agent_envs,
         };
-        let mut first_mismatch = None;
-        let mut records = Vec::new();
         for step in to_judge {
             let result = match execute_step_check(&context, step).await {
                 Ok(res) => res,
