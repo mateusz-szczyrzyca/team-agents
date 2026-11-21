@@ -35,6 +35,44 @@ pub enum CheckError {
     },
 }
 
+/// Errors that can happen while preparing a command check process spec.
+#[derive(Debug, thiserror::Error)]
+pub enum CommandPreparationError {
+    /// The program name cannot be parsed as a valid program.
+    #[error("cannot parse program {program:?}")]
+    InvalidProgram {
+        /// The program string that could not be parsed.
+        program: String,
+        /// The underlying value error.
+        #[source]
+        source: agent_core::config::InvalidValue,
+    },
+    /// The worktree path is not valid UTF-8.
+    #[error("worktree path is not valid UTF-8: {}", path.display())]
+    NonUtf8WorktreePath {
+        /// The non-UTF-8 path.
+        path: PathBuf,
+    },
+    /// The worktree path cannot be parsed as an absolute path.
+    #[error("invalid worktree path {}: {source}", path.display())]
+    InvalidWorktreePath {
+        /// The invalid path.
+        path: PathBuf,
+        /// The underlying value error.
+        #[source]
+        source: agent_core::config::InvalidValue,
+    },
+    /// An environment variable name is invalid.
+    #[error("invalid environment variable name {name:?}: {source}")]
+    InvalidEnvName {
+        /// The invalid variable name.
+        name: String,
+        /// The underlying value error.
+        #[source]
+        source: agent_core::config::InvalidValue,
+    },
+}
+
 /// Context for running a step check.
 #[derive(Debug, Clone)]
 pub struct CheckContext<'a> {
@@ -256,15 +294,29 @@ fn prepare_process_spec(
     context: &CheckContext<'_>,
     command_str: &str,
     log_path: PathBuf,
-) -> Result<ProcessSpec, String> {
-    let program = Program::from_str("sh").map_err(|err| format!("cannot parse shell program: {err}"))?;
-    let working_dir = AbsolutePath::from_str(context.worktree.to_str().unwrap_or_default())
-        .map_err(|err| format!("invalid worktree path: {err}"))?;
+) -> Result<ProcessSpec, CommandPreparationError> {
+    let program = Program::from_str("sh").map_err(|source| CommandPreparationError::InvalidProgram {
+        program: "sh".to_owned(),
+        source,
+    })?;
+    let worktree_str = context
+        .worktree
+        .to_str()
+        .ok_or_else(|| CommandPreparationError::NonUtf8WorktreePath {
+            path: context.worktree.to_path_buf(),
+        })?;
+    let working_dir =
+        AbsolutePath::from_str(worktree_str).map_err(|source| CommandPreparationError::InvalidWorktreePath {
+            path: context.worktree.to_path_buf(),
+            source,
+        })?;
     let mut env_map = BTreeMap::new();
     for (key, val) in context.envs {
-        if let Ok(name) = EnvName::from_str(key) {
-            env_map.insert(name, val.clone());
-        }
+        let name = EnvName::from_str(key).map_err(|source| CommandPreparationError::InvalidEnvName {
+            name: key.clone(),
+            source,
+        })?;
+        env_map.insert(name, val.clone());
     }
     Ok(ProcessSpec {
         program,
@@ -340,11 +392,11 @@ pub async fn execute_command_check(
 
     let spec = match prepare_process_spec(context, command_str, log_path.clone()) {
         Ok(spec) => spec,
-        Err(reason) => {
+        Err(error) => {
             return Ok(JudgementResult {
                 state: JudgementState::Mismatch,
                 check_line: Some(command_str.to_owned()),
-                reason: Some(reason),
+                reason: Some(format!("cannot prepare check command: {error}")),
                 duration_ms: duration_millis(start.elapsed())?,
                 output_path: Some(rel_output_path),
                 tail: String::new(),
