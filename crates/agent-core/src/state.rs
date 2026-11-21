@@ -362,11 +362,28 @@ impl State {
     /// its runs.
     pub fn begin_holder_session(
         &mut self,
-        _task: &TaskId,
-        _trouble: crate::decide::ladder::Trouble,
-        _at: Timestamp,
+        task: &TaskId,
+        trouble: crate::decide::ladder::Trouble,
+        at: Timestamp,
     ) -> Result<bool, RenewTaskError> {
-        Ok(false)
+        let (role, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        match role {
+            Role::Solo | Role::Coordinator | Role::Member => {}
+            Role::Worker | Role::Reviewer => {
+                return Err(RenewTaskError::Role {
+                    task: task.clone(),
+                    role,
+                });
+            }
+        }
+        member
+            .begin_holder_session(trouble, at)
+            .map_err(|source| RenewTaskError::Renewal {
+                task: task.clone(),
+                source,
+            })
     }
 
     /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
