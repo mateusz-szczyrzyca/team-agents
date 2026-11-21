@@ -213,3 +213,77 @@ async fn split_requests_fall_back_to_a_legacy_daemon_before_sending_work() {
     assert_eq!(daemon.requests().len(), 2);
     assert_eq!(connection.split_acknowledgement(), None);
 }
+
+#[tokio::test]
+async fn plan_requests_fall_back_to_a_legacy_protocol_three_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = FakeDaemon::serve(&socket(&dir), |request| Answer::Lines(teams(request.id.0)));
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+    let result = connection.request_plan(Client::Cli, status()).await;
+    assert!(matches!(result, Ok(Reply::Teams { teams }) if teams.is_empty()));
+    assert_eq!(daemon.requests(), [Request::new(RequestId(1), Client::Cli, status())]);
+    assert_eq!(connection.format, Some(ReplyFormat::Legacy));
+
+    // Subsequent status request reuses the negotiated legacy format:
+    let result = connection.request(Client::Cli, status()).await;
+    assert!(matches!(result, Ok(Reply::Teams { teams }) if teams.is_empty()));
+    assert_eq!(daemon.requests().len(), 2);
+    assert_eq!(connection.format, Some(ReplyFormat::Legacy));
+}
+
+#[tokio::test]
+async fn plan_requests_fall_back_to_split_protocol_four_daemon() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixListener;
+
+    let dir = tempfile::tempdir().unwrap();
+    let sock = socket(&dir);
+    let listener = UnixListener::bind(&sock).unwrap();
+
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let (read, mut write) = stream.into_split();
+                let mut reader = BufReader::new(read);
+                let mut line = String::new();
+                while reader.read_line(&mut line).await.unwrap_or(0) > 0 {
+                    let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else {
+                        break;
+                    };
+                    let protocol = val.get("protocol").and_then(serde_json::Value::as_u64).unwrap_or(3);
+                    let id = val.get("id").and_then(serde_json::Value::as_u64).unwrap_or(0);
+                    if protocol == 5 {
+                        // Protocol 4 daemon rejects protocol 5 probe:
+                        let refusal = concat!(
+                            "{\"protocol\":4,\"id\":0,\"type\":\"response\",",
+                            "\"result\":{\"status\":\"error\",\"error\":{\"kind\":\"invalid\",",
+                            "\"message\":\"unsupported protocol version: 5\"}}}\n"
+                        );
+                        drop(write.write_all(refusal.as_bytes()).await);
+                        break;
+                    }
+                    let answer = format!(
+                        "{{\"protocol\":4,\"id\":{id},\"type\":\"response\",\"result\":{{\"status\":\"ok\",\"reply\":{{\"kind\":\"teams\",\"teams\":[]}}}}}}\n"
+                    );
+                    drop(write.write_all(answer.as_bytes()).await);
+                    line.clear();
+                }
+            });
+        }
+    });
+
+    let mut connection = Connection::connect(&sock).await.unwrap();
+    let result = connection.request_plan(Client::Cli, status()).await;
+    assert!(matches!(result, Ok(Reply::Teams { teams }) if teams.is_empty()));
+    assert_eq!(connection.format, Some(ReplyFormat::Split));
+
+    // Subsequent request reuses the negotiated split protocol 4 format:
+    let result = connection.request(Client::Cli, status()).await;
+    assert!(matches!(result, Ok(Reply::Teams { teams }) if teams.is_empty()));
+    assert_eq!(connection.format, Some(ReplyFormat::Split));
+
+    server.abort();
+}
