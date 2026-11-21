@@ -745,3 +745,37 @@ async fn judgement_write_failure_keeps_the_settlement_and_cached_steps() {
     assert_eq!(started.history.health().lost, 1);
     started.writer.close().unwrap();
 }
+
+#[tokio::test]
+async fn stopped_run_keeps_its_cached_plan_steps() {
+    use agent_core::protocol::{Client, Command, ControlRequest, StatusRequest, Target};
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "hang");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(dir.join(".agent/plan.md"), FINISHED).unwrap();
+    daemon.start().await;
+    daemon.status_is(1, TaskStatus::Running).await;
+    let mut connection = crate::client::Connection::connect(&daemon.home.socket_file())
+        .await
+        .unwrap();
+    connection
+        .request(
+            Client::Cli,
+            Command::Stop(ControlRequest {
+                target: Target::Task(task(1)),
+            }),
+        )
+        .await
+        .unwrap();
+    daemon.status_is(1, TaskStatus::Stopped).await;
+    let reply = connection
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+    let (agent_core::protocol::Reply::Teams { teams } | agent_core::protocol::Reply::Overview { teams, .. }) = reply
+    else {
+        panic!("{reply:?}")
+    };
+    assert_eq!(teams[0].task_plans.get(&task(1)).map(Vec::len), Some(2));
+    daemon.stop().await.unwrap();
+}
