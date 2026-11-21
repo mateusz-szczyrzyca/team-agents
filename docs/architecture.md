@@ -1322,3 +1322,13 @@ The prompt catalog supplies each part's deliverable, checks and earlier merged p
 adds optional split plans, and answer responses carry an optional split acknowledgement alongside the ordinary
 `applied` reply; the CLI derives the four part states from plans and durable rounds. Recovery reads this
 same state, so neither the gap between parts nor an open part requires a separate restart mechanism.
+
+### Tier requirement preparation
+
+`agent-core::kinds::Tier` has a total capability order: investigator > normal > worker, independent of the
+stable keyword declaration order. Task-list `Tier:` directives default to normal and are exposed through
+`TaskList::required_tier`. The pure `decide::assign::tier::choose_agent` takes offered members in preference order
+and an optional coordinator; it returns a fitting member, a fitting coordinator only if no member fits, or an
+explicit missing-tier result. Availability and waiting remain the caller's responsibility. The existing daemon
+assignment path is unchanged in this preparatory part. Split plans optionally retain their approval authority;
+legacy plans leave it unknown until recorded explicitly.

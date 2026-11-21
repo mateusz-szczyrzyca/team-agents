@@ -302,6 +302,11 @@ run evidence. The activity record also supplies the investigator selection order
 `agent status --investigators`. See the
 [activity record](docs/state.md#investigator-activities).
 
+Task-list items can declare an optional column-zero [`Tier:` directive](docs/task-list.md#the-lines), defaulting
+to `normal`. Core decisions compare capabilities as investigator > normal > worker and prefer a fitting member
+before a fitting coordinator. Approved split plans can retain who approved them. These are preparatory APIs;
+the daemon's enforcement of tier requirements and its recording of approval authority follow in the next part.
+
 A coordinator can submit a [split proposal](docs/task-list.md#coordinator-proposal-form) by writing
 `split-proposal-<item>.json` in its task directory and reporting `SPLIT: <item>` before `STATUS: SLEEPING`.
 The daemon approves a complete valid plan without human intervention when it keeps the scope, sends faults back

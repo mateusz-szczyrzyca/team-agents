@@ -1,0 +1,19 @@
+{
+  "parent": "1.2",
+  "parts": [
+    {
+      "title": "Draft",
+      "delivers": "A reviewed document",
+      "checks": "A reviewer reads it",
+      "depends_on": []
+    },
+    {
+      "title": "Publish",
+      "delivers": "A reviewed document",
+      "checks": "A reviewer reads it",
+      "depends_on": [
+        "a"
+      ]
+    }
+  ]
+}

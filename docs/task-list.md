@@ -23,6 +23,7 @@ first feature is the brief.
 1. First feature                            a feature: "N. Title" at column 0
 Depends on: none                            optional: "none" or feature numbers, right after the feature line
 [ ] 1.1 First item                          an item: "[ ] N.M Title" ("[x]" for done)
+Tier: investigator                         optional minimum capability, at column 0
     What to do, in indented lines.          the description
     Expected result:                        a part: its label alone on a line
     - Files: `src/a.rs`.                    what the reviewers check the pull request against
@@ -71,6 +72,13 @@ Depends on: 1
 - **An item** — `[ ] N.M Title` or `[x] N.M Title` (`[X]` too) at column 0, in the feature `N`: the mark, a space, an
   item number (`2.3`, as `ItemId`: two numbers without leading zeros), a space, the title. Item numbers are unique.
   `[x]` means the author says it is done; it is only a mark on the item (`Item::mark`).
+- **`Tier: investigator|normal|worker`** — at column 0 inside an item, at most once. Whitespace around
+  the value is removed; keywords are lowercase. Omission means `normal`. Unknown or empty values and repeated
+  directives are errors at their line. The directive is not part of the item's description or checks; an indented
+  `Tier:` remains ordinary item text. In a brief it is ordinary brief text. `TaskList::required_tier` exposes the
+  requirement without changing existing `Item` fields. Capability comparisons order investigator above normal
+  above worker. This release prepares parsing and pure assignment decisions; the daemon still uses its existing
+  assignment policy until the enforcement part lands.
 - **The description** — the indented lines (spaces or tabs) after the item line, until the next line at column 0. The
   smallest indentation of the item's lines is removed; relative indentation, blank lines inside, and non-ASCII text are
   kept; blank lines at the start and the end are dropped.
@@ -92,6 +100,8 @@ mark, blank lines and the coordinator line count). The first fault in the text i
 |---|---|
 | `Empty` | nothing in the text but blank lines, or only a `Coordinator:` line |
 | `TooLarge` | the text is over 1 MiB |
+| `InvalidTier` | an item's `Tier:` value is empty or unknown |
+| `DuplicateTier` | an item contains a second column-zero `Tier:` directive |
 | `InvalidAllowance` | an `Allow:` header has invalid or unsafe syntax; the error names its line and pattern |
 | `InvalidCoordinator` | the `Coordinator:` line has no valid name |
 | `FeatureNumber` | the number of a feature is `0`, has a leading zero, or is over 65535; `NumberProblem` says which: `Shape` (not digits, or a leading zero) or `Range` (`0`, over 65535) |

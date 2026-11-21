@@ -53,6 +53,12 @@ Schema remains 14. Approved parts may additionally retain `estimate` (`amount`, 
 and `tier` (`investigator`, `normal`, `worker`). Absent estimates remain absent; an absent tier means `normal`.
 Default fields are omitted on saving, preserving the old split representation.
 
+An approved split plan may also carry `approved_by`: `"harness"` or `"human"`. The optional field records the
+approval authority without changing the parts or their requirements. Absence means the authority was not recorded;
+reading and saving such a plan leaves the field absent. Existing plans load without a migration. The core API can
+attach provenance when recording approval; daemon wiring follows in a later part. The pre-change plan fixture is
+`crates/agent-core/tests/fixtures/split-plan-before-approval.json`.
+
 Teams may have an optional `split_proposals` object, keyed by original item ID. Each entry stores bounded raw
 `text`, the `corrections` count and `stage`: `"pending"`, `{"correction":{"fault":…}}`, or
 `{"asked":{"question":N}}` with a nonzero questions number. Raw text deliberately includes unreadable proposals

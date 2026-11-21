@@ -12,6 +12,8 @@
 //! - Workers take no items: they serve `delegate` requests, the first free one in the configured order
 //!   ([`first_free_worker`]).
 
+pub mod tier;
+
 use std::collections::HashSet;
 
 use crate::ids::{AgentName, ItemId};

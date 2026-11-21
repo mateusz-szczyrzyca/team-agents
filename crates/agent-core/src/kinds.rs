@@ -93,7 +93,7 @@ impl CliKind {
     }
 }
 
-/// The list of the configuration an agent is in, which decides what it may do.
+/// The configuration tier, ordered by capability: worker < normal < investigator.
 #[derive(
     Debug,
     Clone,
@@ -101,8 +101,6 @@ impl CliKind {
     PartialEq,
     Eq,
     Hash,
-    PartialOrd,
-    Ord,
     serde::Serialize,
     serde::Deserialize,
     strum::Display,
@@ -122,6 +120,18 @@ pub enum Tier {
     Investigator,
 }
 
+impl Ord for Tier {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.capability().cmp(&other.capability())
+    }
+}
+
+impl PartialOrd for Tier {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl Keyword for Tier {
     const WHAT: &'static str = "tier";
 }
@@ -135,6 +145,15 @@ impl TryFrom<String> for Tier {
 }
 
 impl Tier {
+    /// Capability rank, independent of the stable keyword declaration order.
+    const fn capability(self) -> u8 {
+        match self {
+            Self::Worker => 0,
+            Self::Normal => 1,
+            Self::Investigator => 2,
+        }
+    }
+
     /// Every variant, in declaration order.
     pub const ALL: &'static [Self] = <Self as strum::VariantArray>::VARIANTS;
 
@@ -381,3 +400,6 @@ impl ActivityKind {
 #[cfg(test)]
 #[path = "kinds/activity_tests.rs"]
 mod activity_tests;
+
+#[cfg(test)]
+mod tier_order_tests;
