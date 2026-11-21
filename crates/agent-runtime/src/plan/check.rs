@@ -222,10 +222,7 @@ async fn wait_child_outcome(
                 )
             }
         }
-        Ok(Err(error)) => (
-            JudgementState::Mismatch,
-            Some(format!("check wait failed: {error}")),
-        ),
+        Ok(Err(error)) => (JudgementState::Mismatch, Some(format!("check wait failed: {error}"))),
         Err(_elapsed) => {
             if let Some(group) = group {
                 drop(signal_group(group, GroupSignal::Kill));

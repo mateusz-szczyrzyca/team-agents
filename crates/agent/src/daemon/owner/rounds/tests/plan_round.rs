@@ -739,3 +739,245 @@ async fn reviewer_tasks_have_no_plan_summaries_in_status() {
 
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_command_check_mismatch_sends_the_run_back_and_passes_when_repaired() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:first,script:second"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 3\n"),
+    )
+    .unwrap();
+    plan_script(
+        &rig,
+        "first",
+        "Do one.\n\n1. Work\n[x] 1.1 Run command\n    Check: sh -c \"echo failing-step-output >&2; exit 1\"\n",
+    );
+    plan_script(
+        &rig,
+        "second",
+        "Do one.\n\n1. Work\n[x] 1.1 Run command\n    Check: sh -c \"echo repaired-output; exit 0\"\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["claude-1"], "Test command check mismatch.", MergeMode::NoMerge, None)
+        .await;
+    let second = rig.prompt(&tasks[0], 2).await;
+    let _state = rig
+        .state_where("the task settled after run 2", |state| {
+            state.find_task(&tasks[0]).is_some_and(|found| {
+                found.member.status() != TaskStatus::Running
+                    && found.member.status() != TaskStatus::Queued
+                    && found.member.runs().len() == 2
+            })
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    assert!(second.contains("Step 1.1 check failed"), "{second}");
+    assert!(second.contains("failing-step-output"), "{second}");
+
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let judgements = reader.step_judgements(&tasks[0]).unwrap();
+    let step = "1.1".parse::<agent_core::ids::ItemId>().unwrap();
+    let step_judgements: Vec<_> = judgements.iter().filter(|j| j.step == step).collect();
+    assert_eq!(step_judgements.len(), 2);
+    assert_eq!(
+        step_judgements[0].state,
+        agent_core::plan::judge::JudgementState::Mismatch
+    );
+    assert_eq!(
+        step_judgements[1].state,
+        agent_core::plan::judge::JudgementState::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn gate_refusal_is_declared_and_delivers_once_only_notice_on_next_run() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:first,script:second,script:third"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 3\n"),
+    )
+    .unwrap();
+    plan_script(
+        &rig,
+        "first",
+        "Do one.\n\n1. Work\n[x] 1.1 Gate check\n    Check: agent gate\n[ ] 1.2 Later step\n",
+    );
+    plan_script(
+        &rig,
+        "second",
+        "Do one.\n\n1. Work\n[x] 1.1 Gate check\n    Check: agent gate\n[ ] 1.2 Later step\n",
+    );
+    plan_script(
+        &rig,
+        "third",
+        "Do one.\n\n1. Work\n[x] 1.1 Gate check\n    Check: agent gate\n[x] 1.2 Later step\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["claude-1"], "Test gate refusal notice.", MergeMode::NoMerge, None)
+        .await;
+    let second = rig.prompt(&tasks[0], 2).await;
+    let third = rig.prompt(&tasks[0], 3).await;
+    rig.state_where("task completed all 3 runs", |state| {
+        state.find_task(&tasks[0]).is_some_and(|found| {
+            found.member.status() != TaskStatus::Running
+                && found.member.status() != TaskStatus::Queued
+                && found.member.runs().len() == 3
+        })
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    assert!(second.contains("Step 1.1 check was refused"), "{second}");
+    assert!(
+        second.contains("repository gate is never run as a step check"),
+        "{second}"
+    );
+    assert!(!third.contains("Step 1.1 check was refused"), "{third}");
+
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let judgements = reader.step_judgements(&tasks[0]).unwrap();
+    let step = "1.1".parse::<agent_core::ids::ItemId>().unwrap();
+    let step_judgements: Vec<_> = judgements.iter().filter(|j| j.step == step).collect();
+    assert_eq!(step_judgements.len(), 1);
+    assert_eq!(
+        step_judgements[0].state,
+        agent_core::plan::judge::JudgementState::Declared
+    );
+}
+
+#[tokio::test]
+async fn exhaustion_of_bounces_creates_questions_file_naming_step_and_check() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:failing,script:failing"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 1\n"),
+    )
+    .unwrap();
+    plan_script(
+        &rig,
+        "failing",
+        "Do one.\n\n1. Work\n[x] 1.1 Failing step\n    Check: sh -c \"echo fail-exhaust-marker >&2; exit 1\"\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["claude-1"], "Test bounce exhaustion.", MergeMode::NoMerge, None)
+        .await;
+    let _state = rig
+        .state_where("task is in questions status after 2 runs", |state| {
+            state
+                .find_task(&tasks[0])
+                .is_some_and(|found| found.member.status() == TaskStatus::Questions && found.member.runs().len() == 2)
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let questions_file = rig
+        .home
+        .questions_file(&tasks[0], std::num::NonZeroU32::new(1).unwrap());
+    assert!(questions_file.exists(), "questions file must exist");
+    let content = std::fs::read_to_string(questions_file).unwrap();
+    assert!(content.contains("Step 1.1 check failed"), "{content}");
+    assert!(content.contains("fail-exhaust-marker"), "{content}");
+}
+
+#[tokio::test]
+async fn command_check_timeout_kills_child_and_judges_mismatch() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:timeout,script:pass"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 3\ncheck_seconds = 1\n"),
+    )
+    .unwrap();
+    plan_script(
+        &rig,
+        "timeout",
+        "Do one.\n\n1. Work\n[x] 1.1 Long check\n    Check: sh -c \"sleep 30\"\n",
+    );
+    plan_script(
+        &rig,
+        "pass",
+        "Do one.\n\n1. Work\n[x] 1.1 Long check\n    Check: sh -c \"exit 0\"\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["claude-1"], "Test command check timeout.", MergeMode::NoMerge, None)
+        .await;
+    let second = rig.prompt(&tasks[0], 2).await;
+    rig.state_where("task finished after 2 runs", |state| {
+        state.find_task(&tasks[0]).is_some_and(|found| {
+            found.member.status() != TaskStatus::Running
+                && found.member.status() != TaskStatus::Queued
+                && found.member.runs().len() == 2
+        })
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    assert!(second.contains("Step 1.1 check failed"), "{second}");
+
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let judgements = reader.step_judgements(&tasks[0]).unwrap();
+    let step = "1.1".parse::<agent_core::ids::ItemId>().unwrap();
+    let step_judgements: Vec<_> = judgements.iter().filter(|j| j.step == step).collect();
+    assert_eq!(step_judgements.len(), 2);
+    assert_eq!(
+        step_judgements[0].state,
+        agent_core::plan::judge::JudgementState::Mismatch
+    );
+    assert_eq!(
+        step_judgements[0].reason.as_deref(),
+        Some("check timed out after 1 seconds")
+    );
+    assert_eq!(
+        step_judgements[1].state,
+        agent_core::plan::judge::JudgementState::Confirmed
+    );
+}

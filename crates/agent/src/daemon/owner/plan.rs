@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
-use agent_core::decide::plan::{DoneEnds, PlanFacts, PlanRead, PlanVerdict, decide_plan, done_ends_with};
+use agent_core::decide::plan::{DoneEnds, PlanFacts, PlanRead, PlanVerdict, decide_plan_with_mismatch, done_ends_with};
 use agent_core::ids::RunId;
 use agent_core::ids::{AgentName, BranchName, InvalidName, ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
@@ -373,8 +373,8 @@ impl Owner {
             (Vec::new(), HashMap::new())
         };
         self.keep_plan(task, located, run.clone(), &found)?;
-        if let PlanRead::Parsed(plan) = &found.read {
-            let latest = self
+        let (_latest, mismatch_reason) = if let PlanRead::Parsed(plan) = &found.read {
+            let (latest, mismatch) = self
                 .judge_steps_at_end(
                     task,
                     located,
@@ -385,9 +385,11 @@ impl Owner {
                 )
                 .await?;
             self.refresh_task_plan(task, plan, &latest);
+            (latest, mismatch)
         } else {
             self.invalidate_task_plan(task);
-        }
+            (HashMap::new(), None)
+        };
         let ends = self.parts.state.team(&located.team).map_or(DoneEnds::Work, |team| {
             done_ends_with(located.role, team.items().iter().map(ItemProgress::phase), |agent| {
                 member_works(team, agent)
@@ -405,14 +407,17 @@ impl Owner {
                 .find_task(task)
                 .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
                 .member;
-            decide_plan(PlanFacts {
-                role: located.role,
-                end,
-                read: &found.read,
-                earlier: &earlier,
-                keeping: member.plan(),
-                policy: self.parts.settings.config.plan(),
-            })
+            decide_plan_with_mismatch(
+                PlanFacts {
+                    role: located.role,
+                    end,
+                    read: &found.read,
+                    earlier: &earlier,
+                    keeping: member.plan(),
+                    policy: self.parts.settings.config.plan(),
+                },
+                mismatch_reason,
+            )
         };
         log_decision("plan", &task.as_str(), &format!("{verdict:?}"));
         Ok(match verdict {
@@ -479,7 +484,7 @@ impl Owner {
         plan: &Plan,
         worktree: &AbsolutePath,
         earlier: (Option<&Plan>, &HashMap<RunId, Plan>),
-    ) -> Result<HashMap<ItemId, JudgementRecord>, OwnerError> {
+    ) -> Result<(HashMap<ItemId, JudgementRecord>, Option<PlanReason>), OwnerError> {
         let (earlier_plan, earlier_by_run) = earlier;
         let mut previous = self.latest_judgements(task).await;
         let to_judge = steps_to_judge_with(
@@ -499,15 +504,25 @@ impl Owner {
             },
             |id| previous.get(id).map(|j| j.state),
         );
+        let plan_config = self.parts.settings.config.plan();
+        let agent_envs: Vec<(String, String)> = self
+            .parts
+            .settings
+            .secrets
+            .agent_env()
+            .iter()
+            .map(|(name, secret)| (name.to_string(), secret.expose().to_string()))
+            .collect();
         let task_dir = self.parts.store.home().task_dir(task);
         let context = CheckContext {
             worktree: worktree.as_path(),
             task_dir: &task_dir,
             run,
-            check_seconds: 0,
-            check_refuse: &[],
-            envs: &[],
+            check_seconds: plan_config.check_seconds(),
+            check_refuse: plan_config.check_refuse(),
+            envs: &agent_envs,
         };
+        let mut first_mismatch = None;
         let mut records = Vec::new();
         for step in to_judge {
             let result = match execute_step_check(&context, step).await {
@@ -522,6 +537,19 @@ impl Owner {
                     gate_refused: false,
                 },
             };
+            if result.gate_refused
+                && let Some(cmd) = &result.check_line
+                && let Some((_, mut member)) = self.parts.state.find_task_mut(task)
+            {
+                member.set_plan_refused_gate(step.id(), cmd.clone());
+            }
+            if result.state == JudgementState::Mismatch && first_mismatch.is_none() {
+                first_mismatch = Some(PlanReason::Mismatch {
+                    step: step.id(),
+                    check: result.check_line.clone(),
+                    tail: result.tail.clone(),
+                });
+            }
             let at = Timestamp::now(&self.parts.clock)?;
             records.push(result.into_record(task.clone(), located.team.clone(), run.cloned(), at, step.id()));
         }
@@ -542,7 +570,7 @@ impl Owner {
                 }
             }
         }
-        Ok(previous)
+        Ok((previous, first_mismatch))
     }
 
     /// The latest judgements of steps of `task` kept in history, keyed by step ID.
@@ -942,6 +970,13 @@ pub(super) fn correction(texts: &HarnessPrompts, reason: &PlanReason) -> Result<
         PlanReason::LostStep { steps: ids } => texts.render(
             HarnessPrompt::PlanLostStep,
             &Variables::new().with("steps", steps(ids))?,
+        )?,
+        PlanReason::Mismatch { step, check, tail } => texts.render(
+            HarnessPrompt::PlanMismatch,
+            &Variables::new()
+                .with("step", step.to_string())?
+                .with("check", check.as_deref().unwrap_or("-"))?
+                .with("output", tail.as_str())?,
         )?,
     };
     Ok(text)
