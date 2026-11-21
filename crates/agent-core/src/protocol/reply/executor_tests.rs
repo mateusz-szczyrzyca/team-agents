@@ -28,10 +28,7 @@ fn older_protocol_frames_omit_executor_metadata() {
     ] {
         for format in [ReplyFormat::Legacy, ReplyFormat::Split, ReplyFormat::Plan] {
             let value: serde_json::Value = serde_json::from_str(&frame.to_line_for(format).unwrap()).unwrap();
-            let expected = match format {
-                ReplyFormat::Legacy | ReplyFormat::Split | ReplyFormat::Plan => None,
-            };
-            assert_eq!(value.pointer(pointer), expected, "{format:?}");
+            assert_eq!(value.pointer(pointer), None, "{format:?}");
         }
     }
 }
