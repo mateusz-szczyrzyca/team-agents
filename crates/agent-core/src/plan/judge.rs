@@ -118,6 +118,16 @@ pub enum CheckRun<'a> {
 /// What is done with the check of a step that became done, given `check_seconds` and the refused prefixes.
 #[must_use]
 pub fn check_run<'a>(check: Option<&'a Check>, check_seconds: u64, refused: &[String]) -> CheckRun<'a> {
-    let _ = (check, check_seconds, refused);
-    CheckRun::Inline
+    match check {
+        None | Some(Check::Reviewer | Check::Exists(_)) => CheckRun::Inline,
+        Some(Check::Command(command)) => {
+            if refuse_command(command, refused) {
+                CheckRun::Refused
+            } else if check_seconds == 0 {
+                CheckRun::Disabled
+            } else {
+                CheckRun::Run(command)
+            }
+        }
+    }
 }
