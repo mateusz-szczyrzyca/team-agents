@@ -5,12 +5,6 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.68.0 — 22.11.2026 — PR #185
-
-### New features
-- [agent] [agent-core] The next part of a split item opens with an assigned qualified member or lead fallback, or asks the human when capability is missing.
-- [agent] [agent-core] Split parts delivered outside their round via `DELIVERED: #N` are validated and accepted if already merged, or refused if unmerged or using a foreign branch.
-
 ## 0.67.0 — 22.11.2026 — PR #184
 
 ### New features
