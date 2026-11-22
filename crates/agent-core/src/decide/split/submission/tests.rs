@@ -71,3 +71,36 @@ fn a_line_the_harness_cannot_take_is_refused_with_its_reason() {
         assert_eq!(judged(split, Some(message)), want, "{message:?}");
     }
 }
+
+// Rule: only a line that has the form of a proposal — `SPLIT:` and an item number such as `1.1` — is a submission; a word
+// that merely starts with `SPLIT:` in a report (`SPLIT: none`, `SPLIT: 1.1a`) asks nothing and is left alone.
+#[test]
+fn a_line_that_has_not_the_form_of_a_proposal_submits_nothing() {
+    let cases = [
+        "SPLIT: none",
+        "SPLIT: 1.1a",
+        "SPLIT:",
+        "SPLIT: 1.1 and more",
+        "SPLIT: item one",
+        "SPLIT: 1.",
+        "SPLIT: .1",
+        "SPLIT: 1.1.1",
+        "SPLIT: -1.1",
+    ];
+
+    for line in cases {
+        assert_eq!(
+            judged(&[], Some(&format!("{line}\nSTATUS: DONE"))),
+            Submission::NotSubmitted,
+            "{line}"
+        );
+        assert_eq!(judged(&["1.1"], Some(line)), Submission::NotSubmitted, "{line}");
+    }
+}
+
+// Rule: an item that has the form of one, and that the team does not have, is refused by its name.
+#[test]
+fn a_well_formed_item_the_team_does_not_have_is_refused_by_name() {
+    assert_eq!(judged(&[], Some("SPLIT: 9.9\nSTATUS: SLEEPING")), unknown("9.9"));
+    assert_eq!(judged(&["1.1"], Some("SPLIT: 12.34")), unknown("12.34"));
+}
