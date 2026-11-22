@@ -400,16 +400,23 @@ fn process_group_has_member_since_in(proc_root: &Path, group: u32, recorded_tick
         Err(error) => return Err(error),
     };
     for entry in entries {
-        let Ok(entry) = entry else {
-            continue;
+        let entry = match entry {
+            Ok(entry) => entry,
+            // A `/proc/<pid>` entry can disappear between `read_dir` and `readdir` as a process exits.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) if error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) => continue,
+            Err(error) => return Err(error),
         };
+        // Non-process entries in `/proc` (such as `self`, `cpuinfo`, or non-UTF-8 names) have no numeric PID.
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
         let Ok(pid) = name.parse::<u32>() else {
             continue;
         };
-        if let Ok(Some((pgrp, ticks))) = process_stat_group_and_ticks_in(proc_root, pid)
+        // `process_stat_group_and_ticks_in` maps `NotFound` and `ESRCH` (a process that exited during the scan) to
+        // `Ok(None)`; any other I/O or parse failure is propagated so recovery never removes the record blindly.
+        if let Some((pgrp, ticks)) = process_stat_group_and_ticks_in(proc_root, pid)?
             && pgrp == group
             && ticks >= recorded_ticks
         {
@@ -427,9 +434,18 @@ fn process_group_has_member_since(group: u32, recorded_ticks: u64) -> io::Result
 /// Atomically renames `temp` over `record`, retaining any non-`NotFound` cleanup failure of `temp` alongside the
 /// rename error if the rename fails.
 async fn replace_running_record(temp: &Path, record: &Path) -> io::Result<()> {
-    if let Err(error) = fs::rename(temp, record).await {
-        drop(fs::remove_file(temp).await);
-        return Err(error);
+    if let Err(rename_error) = fs::rename(temp, record).await {
+        return Err(match fs::remove_file(temp).await {
+            Ok(()) => rename_error,
+            Err(remove_error) if remove_error.kind() == io::ErrorKind::NotFound => rename_error,
+            Err(remove_error) => io::Error::new(
+                rename_error.kind(),
+                format!(
+                    "{rename_error}; cannot remove temporary record {}: {remove_error}",
+                    temp.display()
+                ),
+            ),
+        });
     }
     Ok(())
 }
@@ -518,8 +534,8 @@ fn prepare_process_spec_for_daemon(
     command_str: &str,
     record: &Path,
     log_path: PathBuf,
-    _daemon_pid: u32,
-    _daemon_ticks: u64,
+    daemon_pid: u32,
+    daemon_ticks: u64,
 ) -> Result<ProcessSpec, CommandPreparationError> {
     let program = Program::posix_shell();
     let worktree_str = context
@@ -546,9 +562,17 @@ fn prepare_process_spec_for_daemon(
         })?;
         env_map.insert(name, val.clone());
     }
-    let gate_script =
-        "rec=\"$1\"; cmd=\"$2\"; read -r s < \"/proc/$$/stat\" && set -- ${s#*)} && printf '%s %s\\n' \"$$\" \"${20}\" > \"$rec.child\" && mv -f \"$rec.child\" \"$rec\" && exec /bin/sh -c \"$cmd\""
-            .to_owned();
+    let gate_script = concat!(
+        "rec=\"$1\"; cmd=\"$2\"; dpid=\"$3\"; dticks=\"$4\"; ",
+        "[ -f \"$rec\" ] && ",
+        "read -r s < \"/proc/$$/stat\" && set -- ${s#*)} && cticks=\"${20}\" && ",
+        "read -r ds < \"/proc/$dpid/stat\" && set -- ${ds#*)} && [ \"$1\" != \"Z\" ] && [ \"${20}\" = \"$dticks\" ] && ",
+        "printf '%s %s\\n' \"$$\" \"$cticks\" > \"$rec.child\" && mv -f \"$rec.child\" \"$rec\" && ",
+        "if read -r ds < \"/proc/$dpid/stat\" && set -- ${ds#*)} && [ \"$1\" != \"Z\" ] && [ \"${20}\" = \"$dticks\" ]; then ",
+        "exec /bin/sh -c \"$cmd\"; ",
+        "else rm -f \"$rec\"; exit 125; fi"
+    )
+    .to_owned();
     Ok(ProcessSpec {
         program,
         args: vec![
@@ -557,6 +581,8 @@ fn prepare_process_spec_for_daemon(
             "sh".to_owned(),
             record_str.to_owned(),
             command_str.to_owned(),
+            daemon_pid.to_string(),
+            daemon_ticks.to_string(),
         ],
         env: env_map,
         working_dir,
@@ -757,6 +783,11 @@ pub fn recover_checks(task_dir: &Path) -> Result<Option<NonZeroU32>, CheckError>
     };
     let trimmed = text.trim();
     if trimmed.is_empty() {
+        // An empty record means the previous daemon died between pre-creating `checks/running` and the child shell's
+        // atomic rename. Because the child shell verifies `[ -f "$rec" ]` and checks that its spawning daemon
+        // (`/proc/$dpid/stat`, start ticks `$dticks`) is still alive both before and after moving `running.child` into
+        // place (removing `running` and exiting 125 without `exec`ing the command if the daemon died), removing the
+        // empty pre-spawn file here leaves no unrecorded command able to start.
         std::fs::remove_file(&path).map_err(|source| CheckError::RecordRemove { path, source })?;
         return Ok(None);
     }

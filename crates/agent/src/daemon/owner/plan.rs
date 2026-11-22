@@ -961,10 +961,15 @@ impl Owner {
     /// Ends any recorded command check process group of `task` on the blocking thread pool so `/proc` scanning never
     /// blocks the async owner loop.
     async fn recover_task_checks(&self, task: &TaskId) -> Result<Option<NonZeroU32>, PlanCheckCleanupError> {
+        let task_dir = self.parts.store.home().task_dir(task);
         let task_id = task.clone();
-        tokio::task::spawn_blocking(move || Ok(None))
+        let joined = tokio::task::spawn_blocking(move || recover_checks(&task_dir))
             .await
-            .map_err(|source| PlanCheckCleanupError::Join { task: task_id, source })?
+            .map_err(|source| PlanCheckCleanupError::Join {
+                task: task_id.clone(),
+                source,
+            })?;
+        joined.map_err(|source| PlanCheckCleanupError::Recover { task: task_id, source })
     }
 
     /// Ends the parked command check of `task` when the human stops or pauses the task, and settles the run with the
