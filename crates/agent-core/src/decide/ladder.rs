@@ -29,6 +29,8 @@ pub enum Trouble {
     Hang,
     /// The run exhausted its turn budget.
     TurnLimit,
+    /// The task waited too long for its agent, which was busy in another task: a free agent took it over. No run went bad.
+    Busy,
 }
 
 /// How many sessions of a task were started anew, and the limit `[replacement] new_sessions`.
@@ -72,6 +74,8 @@ pub fn next_step(
         // `after_hang` reads only whether there is a session to resume; the one a task has is the one it resumes.
         Trouble::Hang => session.is_some() && count < watchdog.hang_strikes.get(),
         Trouble::TurnLimit => session.is_some() && u64::from(count) <= u64::from(limits.turn_limit_resumes),
+        // A busy agent's wait is not a bad run: the ladder has no rung for it.
+        Trouble::Busy => false,
     };
     if retried {
         return LadderStep::SameSession;

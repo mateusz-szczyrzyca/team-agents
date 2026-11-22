@@ -35,6 +35,8 @@ pub mod split;
 mod strict;
 mod team;
 mod values;
+#[cfg(test)]
+mod waiting_tests;
 mod wake_delivery;
 
 pub use base::UnpushedBase;
@@ -605,6 +607,13 @@ impl State {
             .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
         member.lead_told();
         Ok(())
+    }
+
+    /// Records that `task` waits for its busy agent from `at`, and returns the moment the wait began: an earlier one is kept.
+    /// `None` when the task is not in the state.
+    pub fn start_waiting(&mut self, task: &TaskId, at: Timestamp) -> Option<Timestamp> {
+        let (_, mut member) = self.find_task_mut(task)?;
+        Some(member.start_waiting(at))
     }
 
     /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
