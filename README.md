@@ -464,7 +464,9 @@ it also keeps `build_directory_removed` from then on, which such a file refused 
 Read a round with `target/debug/agent log --round <round-id>`, or a team's rounds with
 `target/debug/agent log --team <team-id>`. Both read the history directly and work with the daemon stopped.
 Use `--prompts` for whole prompts, `--no-steps` to omit individual steps, or `--json` for every record exactly once
-as JSON lines. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
+as JSON lines. In text, adjacent reviewer run blocks of the same team, pull request and pass follow their first recorded
+review requests; if any request is missing, their original order remains. Events stay in place, run timestamps and contents
+are preserved, and JSON stays chronological. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
 ordering and exit codes. Schema version `6` adds the search index and durable follow cursor after the daemon-log schema; older history files remain readable without migration
 by `agent log`, and the daemon migrates them when it opens them for writing.
 

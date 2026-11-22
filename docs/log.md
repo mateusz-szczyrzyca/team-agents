@@ -133,6 +133,11 @@ else is read. Its parts, in the order of time (records with the same time keep t
    review pass with the reviewers' runs, each verdict and report whole; every fix pass with the findings it sent the team; the
    questions asked and the answers; the notifications; the controls; the end of the round.
 
+Text has one ordering exception: an uninterrupted group of reviewer run blocks for the same team, pull request and
+review pass follows the order of its first recorded review requests. Repeated runs of a reviewer task retain their
+relative order. If any request is missing, the whole group keeps its original order. Events stay in place, each run keeps
+all its timestamps and contents, and `--json` keeps chronological record order.
+
 A team's story is the stories of its rounds, in the order of their records, followed by a `Team events` section when the team
 has records that belong to no single round (such as a coordinator run started while more than one round is open, a team-wide
 control or notification, or `team_ended`). Because `team_ended` is linked to every round of its team, in a team of one or
