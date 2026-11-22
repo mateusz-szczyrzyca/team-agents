@@ -5,6 +5,20 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.70.0 — 22.11.2026 — PR #187
+
+### New features
+- [agent] [agent-runtime] A worker's result is checked before it reaches your branch: when a worker's run ends `STATUS: DONE`, the request's check runs in the worker's worktree, and only when it passes is the worker's commit brought to the requester's branch, after a snapshot of the requester's worktree; the requester's uncommitted and untracked files stay as they were.
+- [agent] The requester is told what became of the result: the step, the commit, the files and the end of the check's output when the commit is on its branch; the files in conflict, or in the way, when it is not applied; the reasons when the result is wrong (the check failed or ran past its limit, a file outside the request's `files` was changed, nothing was committed, the run lasted past `[workers] seconds`). A request answered that way ends `failed`, and `agent status` shows `request H1  step 1.1  worker glm-1  failed`.
+- [agent] When a commit is brought over, the step of the requester's plan is recorded `confirmed` in the history, with the worker's name and the commit.
+- [agent] [agent-runtime] A daemon that stops while a worker's result is being settled goes on from the stage it reached: the check runs once and a commit is brought over once. The stage is kept in `tasks/<worker task>/worker-request-<n>.json`.
+
+### Bug fixes
+- [agent] A result of a worker for a request that names files and a check is no longer given to the requester unchecked as `done`; a worker that commits nothing for such a request has its step returned.
+
+### Configuration
+- [agent-core] changed: `[workers] seconds` (default `0`, no limit) is applied now: a worker's run that lasts longer is a wrong result and the step is returned to the requester. `tries` is applied with the second try of a request, in the next version.
+
 ## 0.69.0 — 22.11.2026 — PR #185
 
 ### New features
