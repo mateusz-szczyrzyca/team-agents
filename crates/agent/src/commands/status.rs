@@ -147,6 +147,16 @@ pub(crate) fn clock_of(at: Timestamp, zone: Zone) -> String {
     zone.stamp(at)
 }
 
+/// What a list of the teams prints of each team: the short view of the team, its rounds and a count of its tasks, or
+/// the tasks with their plans and parts as before the short view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Detail {
+    /// The team, its rounds and a count of its tasks, with the questions that wait for answers named.
+    Short,
+    /// The team, its rounds, its tasks with their plans, and its parts.
+    Tasks,
+}
+
 /// Asks the daemon for the status of `target` (every team without one) and writes it to `out`; the tasks that run say
 /// when they were last active.
 ///
@@ -236,6 +246,7 @@ pub(crate) async fn status_running(
         let text = render_in(
             &listed,
             View::Running,
+            Detail::Tasks,
             &|task| activity.of(task),
             &|round| told.of(round),
             activity.zone,
@@ -395,7 +406,7 @@ fn render_at(
     rounds: &dyn Fn(&Round) -> String,
     zone: Zone,
 ) -> String {
-    render_in(teams, View::Full, activity, rounds, zone)
+    render_in(teams, View::Full, Detail::Tasks, activity, rounds, zone)
 }
 
 /// What a view of the status prints, the running view being the same teams with their open rounds only.
@@ -404,6 +415,7 @@ pub(crate) fn render_running(teams: &[TeamSummary]) -> String {
     render_in(
         teams,
         View::Running,
+        Detail::Tasks,
         &|_| None,
         &|_| String::new(),
         Zone::Fixed(UtcOffset::UTC),
@@ -422,6 +434,7 @@ pub(crate) enum View {
 fn render_in(
     teams: &[TeamSummary],
     view: View,
+    _detail: Detail,
     activity: &dyn Fn(&TaskId) -> Option<String>,
     rounds: &dyn Fn(&Round) -> String,
     zone: Zone,
@@ -660,6 +673,7 @@ mod reviewer;
 mod rounds;
 mod snapshots;
 mod splits;
+pub(crate) mod versions;
 
 #[cfg(test)]
 #[path = "status/history/tests.rs"]
@@ -682,3 +696,11 @@ mod short_desc_tests;
 #[cfg(test)]
 #[path = "status/tests/part_states.rs"]
 mod part_state_tests;
+
+#[cfg(test)]
+#[path = "status/tests/short.rs"]
+mod short_tests;
+
+#[cfg(test)]
+#[path = "status/tests/versions.rs"]
+mod versions_tests;

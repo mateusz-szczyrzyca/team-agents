@@ -45,11 +45,15 @@ mod split_context;
 #[path = "tests/status_json.rs"]
 mod status_json_tests;
 #[cfg(test)]
+#[path = "tests/status_short.rs"]
+mod status_short_tests;
+#[cfg(test)]
 #[path = "tests/steer_commands.rs"]
 mod steer_command_tests;
 #[cfg(test)]
 #[path = "tests/testing.rs"]
 mod testing;
+mod versions;
 
 use crate::client::{ClientError, Connection};
 use crate::commands::answer::{AnswerError, Source, answer};
