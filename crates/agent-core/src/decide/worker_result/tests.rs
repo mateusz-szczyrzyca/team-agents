@@ -87,9 +87,9 @@ fn first_try_rows() -> Vec<Row> {
             give(vec![Wrong::PastSeconds]),
         ),
         row(
-            "a request that names files but has no check",
+            "a request that names files but has no check: nothing shows the commit right",
             |facts| facts.check = CheckOutcome::Absent,
-            Verdict::Accept,
+            give(vec![Wrong::NoCheck]),
         ),
     ]
 }
@@ -159,7 +159,7 @@ fn more_rows() -> Vec<Row> {
             "a facts-only request whose check passed",
             |facts| {
                 facts.scope = Scope::Facts;
-                facts.check = CheckOutcome::Absent;
+                facts.check = CheckOutcome::Passed;
             },
             Verdict::Accept,
         ),
