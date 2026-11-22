@@ -18,7 +18,7 @@ use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::plan::PLAN_FILE;
-use agent_core::protocol::{EventKind, Failure, FailureKind, Reply, RunRequest, TeamSummary};
+use agent_core::protocol::{EventKind, Failure, FailureKind, Reply, RunRequest};
 use agent_core::state::{ItemPhase, RunEnd, Timestamp};
 use agent_core::status::{ItemStatus, TaskStatus};
 use agent_runtime::agentbus::{
@@ -464,7 +464,7 @@ impl Owner {
             self.publish(
                 at,
                 EventKind::TeamUpdated {
-                    summary: Box::new(TeamSummary::described(found)),
+                    summary: Box::new(self.described(found)),
                 },
             );
         }

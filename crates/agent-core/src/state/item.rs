@@ -405,6 +405,92 @@ fn check_fix_pass(pass: &[Review]) -> Result<(), InvalidReviews> {
     Ok(())
 }
 
+/// A rejection of an item: its lead sent the member's work back instead of taking it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Rejection {
+    /// When the lead's run ended with the line.
+    at: Timestamp,
+    /// What the lead said, from the bus.
+    reason: String,
+    /// The run of the item that counts the rejection as carried out on the branch; absent until it starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recorded_in: Option<NonZeroU32>,
+    /// The part of a split item the work belonged to; absent for an item that is not split and in states written before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    part: Option<super::split::PartKey>,
+    /// The run of the member that ended `DONE` and was sent back; absent in states written before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    of_run: Option<crate::ids::RunId>,
+}
+
+impl Rejection {
+    /// When the lead's run ended with the line.
+    #[must_use]
+    pub const fn at(&self) -> Timestamp {
+        self.at
+    }
+
+    /// What the lead said, from the bus.
+    #[must_use]
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+
+    /// The part of a split item the work belonged to; `None` for an item that is not split.
+    #[must_use]
+    pub const fn part(&self) -> Option<super::split::PartKey> {
+        self.part
+    }
+
+    /// The run of the member that ended `DONE` and was sent back, when the state kept it.
+    #[must_use]
+    pub const fn of_run(&self) -> Option<&crate::ids::RunId> {
+        self.of_run.as_ref()
+    }
+
+    /// The run of the item that counts it; `None` while the member has not started one after it.
+    #[must_use]
+    pub const fn counted_in(&self) -> Option<NonZeroU32> {
+        self.recorded_in
+    }
+}
+
+/// Why [`ItemProgress::record_rejection`] or [`ItemProgress::next_run_started`] refused to count a rejection.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RejectionError {
+    /// The item is not in progress or being fixed: nobody's work can be sent back.
+    #[error("item {item} is not worked on")]
+    NotWorkedOn {
+        /// The item.
+        item: ItemId,
+    },
+    /// The lead said nothing that can be shown as the reason.
+    #[error("item {item}: the rejection has no reason")]
+    NoReason {
+        /// The item.
+        item: ItemId,
+    },
+    /// A rejection at this time is recorded already.
+    #[error("item {item}: the rejection of {at} is counted already")]
+    AlreadyCounted {
+        /// The item.
+        item: ItemId,
+        /// When it was recorded.
+        at: Timestamp,
+    },
+    /// The run that would count the rejection started before the rejection was recorded.
+    #[error("item {item}: the run that started at {run_started_at} is before the rejection of {counted}")]
+    RunBeforeRejection {
+        /// The item.
+        item: ItemId,
+        /// When the run started.
+        run_started_at: Timestamp,
+        /// When the rejection to count was recorded.
+        counted: Timestamp,
+    },
+}
+
 /// An item's progress: its phase, the fix passes behind it and its last gate result.
 ///
 /// The phase changes only through [`ItemProgress::advance`], which follows [`PhaseKind::successors`].
@@ -456,6 +542,9 @@ pub struct ItemProgress {
     /// Complete ownership of the publication question, absent while none is open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     publish_question: Option<PublishQuestion>,
+    /// The rejections the lead made since the agent that held the item last had none, oldest first; absent while none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rejections: Option<Vec<Rejection>>,
 }
 
 /// Exact ownership of a publication question; legacy questions may lack a recorded branch.
@@ -561,6 +650,9 @@ struct ItemProgressWire {
     /// See [`ItemProgress`]; a state written before publication question number has none.
     #[serde(default)]
     publish_question_number: Option<NonZeroU32>,
+    /// See [`ItemProgress`]; a state written before a lead could return an item has none.
+    #[serde(default)]
+    rejections: Option<Vec<Rejection>>,
 }
 
 impl<'de> Deserialize<'de> for ItemProgress {
@@ -595,6 +687,7 @@ impl<'de> Deserialize<'de> for ItemProgress {
             merge_conflict: wire.merge_conflict,
             publish_tries: wire.publish_tries,
             publish_question,
+            rejections: wire.rejections,
         };
         check_item_progress(&value).map_err(serde::de::Error::custom)?;
         Ok(value)
@@ -704,6 +797,36 @@ impl CheckedMut<'_, ItemProgress> {
     /// [`NotWorkedOn`] when the item is in any other phase than in progress or fixing.
     pub fn reassign(&mut self, assignee: AgentName, branch: BranchName) -> Result<(), NotWorkedOn> {
         self.value.reassign(assignee, branch)
+    }
+
+    /// See [`ItemProgress::record_rejection`].
+    ///
+    /// # Errors
+    /// [`RejectionError`], as for [`ItemProgress::record_rejection`].
+    pub fn record_rejection(&mut self, reason: String, at: Timestamp) -> Result<Option<Timestamp>, RejectionError> {
+        self.value.record_rejection(reason, at)
+    }
+
+    /// See [`ItemProgress::record_rejection_of`].
+    ///
+    /// # Errors
+    /// [`RejectionError`], as for [`ItemProgress::record_rejection`].
+    pub fn record_rejection_of(
+        &mut self,
+        reason: String,
+        at: Timestamp,
+        part: Option<super::split::PartKey>,
+        run: Option<crate::ids::RunId>,
+    ) -> Result<Option<Timestamp>, RejectionError> {
+        self.value.record_rejection_of(reason, at, part, run)
+    }
+
+    /// See [`ItemProgress::next_run_started`].
+    ///
+    /// # Errors
+    /// [`RejectionError`], as for [`ItemProgress::next_run_started`].
+    pub fn next_run_started(&mut self, run: NonZeroU32, at: Timestamp) -> Result<u32, RejectionError> {
+        self.value.next_run_started(run, at)
     }
 
     /// See [`ItemProgress::submit_review`].
@@ -1055,6 +1178,135 @@ fn check_item_progress(progress: &ItemProgress) -> Result<(), InvalidItemProgres
 }
 
 impl ItemProgress {
+    /// The rejections of the lead since the agent that held the item last had none, oldest first; `None` for an item
+    /// whose state was written before a lead could return work.
+    #[must_use]
+    pub fn rejections(&self) -> Option<&[Rejection]> {
+        self.rejections.as_deref()
+    }
+
+    /// How many rejections of the item were counted against the limit `limit` of `[replacement] rejections`.
+    #[must_use]
+    pub fn counted_rejections(&self, limit: u32) -> crate::decide::rejection::Rejections {
+        let counted = self
+            .rejections
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|rejection| rejection.counted_in().is_some())
+            .count();
+        let counted = u32::try_from(counted).unwrap_or(u32::MAX);
+        crate::decide::rejection::Rejections::new(counted, limit)
+    }
+
+    /// Records that the lead returned the item at `at` with `reason`, after the rejections recorded already: returns
+    /// whether that makes a run of the item count the rejections recorded before `at` as carried out on the branch.
+    ///
+    /// # Errors
+    /// [`RejectionError::NotWorkedOn`] when the item is not in progress or being fixed;
+    /// [`RejectionError::NoReason`] when `reason` says nothing;
+    /// [`RejectionError::AlreadyCounted`] when a rejection at `at` is recorded already.
+    pub fn record_rejection(&mut self, reason: String, at: Timestamp) -> Result<Option<Timestamp>, RejectionError> {
+        self.record_rejection_of(reason, at, None, None)
+    }
+
+    /// Records the rejection as [`ItemProgress::record_rejection`] does, with the `part` of the split item the work
+    /// belonged to and the `run` of the member that ended `DONE` and was sent back.
+    ///
+    /// # Errors
+    /// [`RejectionError`], as for [`ItemProgress::record_rejection`].
+    pub fn record_rejection_of(
+        &mut self,
+        reason: String,
+        at: Timestamp,
+        part: Option<super::split::PartKey>,
+        run: Option<crate::ids::RunId>,
+    ) -> Result<Option<Timestamp>, RejectionError> {
+        if !matches!(self.phase, ItemPhase::InProgress { .. } | ItemPhase::Fixing { .. }) {
+            return Err(RejectionError::NotWorkedOn { item: self.id });
+        }
+        if reason.trim().is_empty() {
+            return Err(RejectionError::NoReason { item: self.id });
+        }
+        let recorded = self.rejections.get_or_insert_with(Vec::new);
+        if recorded.iter().any(|rejection| rejection.at == at) {
+            return Err(RejectionError::AlreadyCounted { item: self.id, at });
+        }
+        let settled_at = recorded.last().map(|rejection| rejection.at);
+        recorded.push(Rejection {
+            at,
+            reason,
+            recorded_in: None,
+            part,
+            of_run: run,
+        });
+        Ok(settled_at)
+    }
+
+    /// How many rejections of the work of `part` were counted against the limit `limit`; `None` is the item that is not
+    /// split.
+    #[must_use]
+    pub fn counted_rejections_of(
+        &self,
+        part: Option<super::split::PartKey>,
+        limit: u32,
+    ) -> crate::decide::rejection::Rejections {
+        let counted = self
+            .rejections
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|rejection| rejection.part == part && rejection.counted_in().is_some())
+            .count();
+        crate::decide::rejection::Rejections::new(u32::try_from(counted).unwrap_or(u32::MAX), limit)
+    }
+
+    /// Whether the work the member ended `DONE` in `run` was sent back already, whether the member ran again since or not.
+    #[must_use]
+    pub fn was_rejected(&self, run: &crate::ids::RunId) -> bool {
+        self.rejections
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|rejection| rejection.of_run.as_ref() == Some(run))
+    }
+
+    /// Records that run `run` of the item started at `at`, the run the rejections recorded so far count on: returns
+    /// how many of them that run counts.
+    ///
+    /// # Errors
+    /// [`RejectionError::RunBeforeRejection`] when a rejection was recorded after the run started.
+    pub fn next_run_started(&mut self, run: NonZeroU32, at: Timestamp) -> Result<u32, RejectionError> {
+        let Some(recorded) = self.rejections.as_deref_mut() else {
+            return Ok(0);
+        };
+        if recorded
+            .iter()
+            .any(|rejection| rejection.recorded_in.is_none() && rejection.at > at)
+        {
+            let rejection = recorded
+                .iter()
+                .find(|rejection| rejection.recorded_in.is_none() && rejection.at > at)
+                .map(|rejection| rejection.at);
+            return Err(RejectionError::RunBeforeRejection {
+                item: self.id,
+                run_started_at: at,
+                counted: rejection.unwrap_or(at),
+            });
+        }
+        // The run that starts is the run every rejection so far was settled by; the rejections present when it starts
+        // are the ones it carries.
+        let mut counted = 0_u32;
+        for rejection in recorded.iter_mut() {
+            if rejection.recorded_in.is_some() {
+                continue;
+            }
+            rejection.recorded_in = Some(run);
+            counted = counted.saturating_add(1);
+        }
+        Ok(counted)
+    }
+
     /// Completes only a working item after the team checked its delivery claim.
     pub(super) fn complete_delivery(
         &mut self,
@@ -1095,6 +1347,7 @@ impl ItemProgress {
             merge_conflict: None,
             publish_tries: 0,
             publish_question: None,
+            rejections: None,
         }
     }
 

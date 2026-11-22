@@ -15,6 +15,7 @@ mod gate;
 mod history;
 mod last_step;
 mod plan;
+mod returned;
 mod round_state;
 mod rounds;
 mod snapshots;
@@ -166,6 +167,14 @@ pub(crate) enum OwnerError {
         item: agent_core::ids::ItemId,
         /// What the state refused.
         source: agent_core::state::NotWorkedOn,
+    },
+    /// The state refuses a rejection of an item by its lead.
+    #[error("the rejection of item {item} cannot be recorded")]
+    Rejection {
+        /// The item.
+        item: agent_core::ids::ItemId,
+        /// What the state refused.
+        source: agent_core::state::RejectionError,
     },
     /// The state cannot be saved.
     #[error("the state cannot be saved")]
@@ -457,6 +466,10 @@ pub(super) struct Owner {
     /// not briefed again until the bus took it, when the state is told so. Empty after a restart, so that what is still
     /// owed is told again.
     leads_being_told: HashSet<TaskId>,
+    /// The newest message of the bus when each lead's run that goes on began: what the lead says to its member after it is
+    /// the reason of what it returns in that run. Not kept over a restart: a run that was going is not finished by the
+    /// daemon that starts. A task whose mark could not be read has none.
+    lead_marks: HashMap<TaskId, std::num::NonZeroU64>,
     /// How often each task was woken for the newest message that waits for it.
     wake_counts: HashMap<TaskId, wakes::WakeCount>,
     /// What the log line of the run of a task that was woken says of the wake-up; read when the run starts.
@@ -520,6 +533,11 @@ async fn next_report(saves: &mut Option<Saves>) -> Option<Report> {
 }
 
 impl Owner {
+    /// The summary of `team` as `agent status` shows it: with the limit of returns `[replacement] rejections` sets.
+    fn described(&self, team: &agent_core::state::Team) -> TeamSummary {
+        TeamSummary::described(team).with_rejection_limit(self.parts.settings.config.replacement().rejections().get())
+    }
+
     /// An owner made of `parts`.
     pub(super) fn new(parts: OwnerParts, shutdown: CancellationToken) -> Self {
         let (watcher, saved) = match Watcher::new() {
@@ -545,6 +563,7 @@ impl Owner {
             hangs: HashMap::new(),
             reasons: HashMap::new(),
             leads_being_told: HashSet::new(),
+            lead_marks: HashMap::new(),
             wake_counts: HashMap::new(),
             wake_notes: HashMap::new(),
             outbox: VecDeque::new(),
@@ -873,6 +892,9 @@ impl Owner {
                 task: task.clone(),
                 source,
             })?;
+        // A member that is started again for items its lead returned makes those returns rejections.
+        self.confirm_returns(task, now)?;
+        self.mark_lead_run(task, located.role).await;
         // The run's prompt has the reason it was sent back for its plan, if any: no later run is told it again.
         // So are the answers about its plan that no run asked for.
         if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
@@ -1216,6 +1238,15 @@ impl Owner {
             let mut look = teams::Look::default();
             self.read_fix_responses(&pulls, &located.team, &mut look).await?;
             events.extend(look.events);
+        }
+        // The returns of a lead are recorded before its run is saved as ended: a restart cannot keep the one and lose the other.
+        if located.role == Role::Coordinator
+            && let RunEnd::Reported {
+                outcome: outcome @ (RunOutcome::Sleeping | RunOutcome::Done),
+            } = &end
+            && let Some(message) = run.final_message.as_deref()
+        {
+            self.read_returns(task, &located, *outcome, message).await?;
         }
         self.commit(task, &located, now, events, notice).await?;
         self.report_the_end(task, &located, &end, run.final_message.as_deref(), held)
@@ -1773,7 +1804,7 @@ impl Owner {
             .iter()
             .filter(|known| team.is_none_or(|wanted| known.id() == wanted))
             .map(|known| {
-                let mut summary = TeamSummary::described(known);
+                let mut summary = self.described(known);
                 for member in &summary.members {
                     let steps = self.task_plan_summary(&member.task);
                     if !steps.is_empty() {
@@ -1831,7 +1862,7 @@ impl Owner {
                     .parts
                     .state
                     .find_task(task)
-                    .map(|found| TeamSummary::described(found.team))
+                    .map(|found| self.described(found.team))
                     .ok_or_else(|| not_found(format!("there is no task {task}")))?;
                 let steps = self.task_plan_summary(task);
                 if !steps.is_empty() {
@@ -1844,7 +1875,7 @@ impl Owner {
                     .parts
                     .state
                     .find_round(round)
-                    .map(|(team, _)| TeamSummary::described(team))
+                    .map(|(team, _)| self.described(team))
                     .ok_or_else(|| not_found(format!("there is no round {round}")))?;
                 if let Some((team, _)) = self.parts.state.find_round(round) {
                     for (_role, member) in team.members_in(round) {
@@ -2175,7 +2206,7 @@ impl Owner {
             self.publish(
                 at,
                 EventKind::TeamUpdated {
-                    summary: Box::new(TeamSummary::described(team)),
+                    summary: Box::new(self.described(team)),
                 },
             );
         }
