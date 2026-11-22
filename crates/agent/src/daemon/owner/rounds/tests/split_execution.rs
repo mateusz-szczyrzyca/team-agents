@@ -678,10 +678,7 @@ async fn split_part_delivered_by_merged_pr_on_task_branch_is_accepted_for_split_
 async fn split_part_delivery_with_closed_pr_is_refused_and_tells_lead() {
     let mut rig = Rig::new(
         &[
-            investigator(
-                "inv-lead",
-                "ask,clean-done:DELIVERED: #1,sleep",
-            ),
+            investigator("inv-lead", "ask,clean-done:DELIVERED: #1,sleep"),
             normal("claude-1", "clean-done:already delivered,sleep"),
             investigator("inv-r1", "done:VERDICT: APPROVE"),
             investigator("inv-r2", "done:VERDICT: APPROVE"),
@@ -942,7 +939,10 @@ async fn split_part_nobody_qualified_writes_one_question_and_no_repeated_lead_wa
             "tier": "investigator"
         }),
     ];
-    let split_plan = format!("split\n```json\n{}\n```", serde_json::json!({"parent": "1.1", "parts": parts}));
+    let split_plan = format!(
+        "split\n```json\n{}\n```",
+        serde_json::json!({"parent": "1.1", "parts": parts})
+    );
 
     let mut rig = Rig::new(
         &[
@@ -956,7 +956,9 @@ async fn split_part_nobody_qualified_writes_one_question_and_no_repeated_lead_wa
     )
     .await;
     rig.start().await;
-    let (team_id, tasks) = rig.run(&["lead", "claude-1"], ONE, MergeMode::NoMerge, Some("lead")).await;
+    let (team_id, tasks) = rig
+        .run(&["lead", "claude-1"], ONE, MergeMode::NoMerge, Some("lead"))
+        .await;
     rig.status_is(&tasks[0], TaskStatus::Questions).await;
     rig.status_is(&tasks[1], TaskStatus::Waiting).await;
     Connection::connect(&rig.home.socket_file())
@@ -1000,9 +1002,25 @@ async fn split_part_nobody_qualified_writes_one_question_and_no_repeated_lead_wa
     assert!(content.contains("1.1b"), "{content}");
 
     // The coordinator's run count remains stable: exactly one question, no repeated wakeups:
-    let runs_before = rig.state().team(&team_id).unwrap().find(&tasks[0]).unwrap().1.runs().len();
+    let runs_before = rig
+        .state()
+        .team(&team_id)
+        .unwrap()
+        .find(&tasks[0])
+        .unwrap()
+        .1
+        .runs()
+        .len();
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let runs_after = rig.state().team(&team_id).unwrap().find(&tasks[0]).unwrap().1.runs().len();
+    let runs_after = rig
+        .state()
+        .team(&team_id)
+        .unwrap()
+        .find(&tasks[0])
+        .unwrap()
+        .1
+        .runs()
+        .len();
     assert_eq!(runs_before, runs_after);
     assert!(!rig.home.questions_file(&tasks[0], n(3)).exists());
 
@@ -1012,10 +1030,7 @@ async fn split_part_nobody_qualified_writes_one_question_and_no_repeated_lead_wa
 #[tokio::test]
 async fn authentic_pre_task_persisted_fixture_loads_and_daemon_resumes() {
     let mut rig = Rig::new(
-        &[
-            investigator("inv-lead", "sleep"),
-            normal("claude-1", "sleep"),
-        ],
+        &[investigator("inv-lead", "sleep"), normal("claude-1", "sleep")],
         5,
         false,
     )
