@@ -76,7 +76,7 @@ async fn standing_was_announced(
             .read_to_string(&mut text)
             .await
             .map_err(|source| SavedNoticeError { path, source })?;
-        if text.contains(&item) && text.contains(&standing.line) {
+        if text.contains(&item) && (text.contains(&standing.line) || text.contains(&standing.legacy_line)) {
             return Ok(true);
         }
     }
@@ -106,12 +106,14 @@ struct Standing {
     member: String,
     /// The member task id.
     task: agent_core::ids::TaskId,
-    /// The member status and last run detail line.
+    /// The member status and last run detail line in the daemon's zone.
     line: String,
+    /// The legacy UTC form of `line`, matched against saved notifications written in UTC.
+    legacy_line: String,
 }
 
-/// How the task of `member` ended, in a line for the lead and the human.
-fn line(role: Role, member: &Member) -> String {
+/// How the task of `member` ended, in a line for the lead and the human in `zone`.
+fn line_in(role: Role, member: &Member, zone: agent_core::local_time::Zone) -> String {
     let how = match member.runs().last().map(agent_core::state::Run::state) {
         Some(RunState::Ended { at, end }) => {
             let end = match end {
@@ -123,7 +125,7 @@ fn line(role: Role, member: &Member) -> String {
                 RunEnd::TurnLimit => "it reached its turn limit".to_owned(),
                 RunEnd::Stopped => "it was stopped".to_owned(),
             };
-            format!("its last run ended at {at} with: {end}")
+            format!("its last run ended at {} with: {end}", zone.stamp(*at))
         }
         Some(RunState::Running) => "a run of it is going".to_owned(),
         None => "it has not run".to_owned(),
@@ -178,14 +180,16 @@ impl Owner {
                 };
                 let (role, member) = roster.iter().find(|(_, m)| m.agent().name() == assignee.as_str())?;
                 if member.status() == TaskStatus::Failed {
+                    let line_for = |zone| match member.runs().last() {
+                        Some(run) => format!("{}; run {}", line_in(*role, member, zone), run.id()),
+                        None => line_in(*role, member, zone),
+                    };
                     Some(Standing {
                         item: progress.id().to_string(),
                         member: assignee.to_string(),
                         task: member.task().clone(),
-                        line: match member.runs().last() {
-                            Some(run) => format!("{}; run {}", line(*role, member), run.id()),
-                            None => line(*role, member),
-                        },
+                        line: line_for(self.parts.zone),
+                        legacy_line: line_for(agent_core::local_time::Zone::Utc),
                     })
                 } else {
                     None
@@ -195,7 +199,10 @@ impl Owner {
         Some(Found {
             unfinished,
             statuses: roster.iter().map(|(_, member)| member.status()).collect(),
-            tasks: roster.iter().map(|(role, member)| line(*role, member)).collect(),
+            tasks: roster
+                .iter()
+                .map(|(role, member)| line_in(*role, member, self.parts.zone))
+                .collect(),
             quiet_since: ended.and_then(|times| times.into_iter().max()),
             standings,
         })

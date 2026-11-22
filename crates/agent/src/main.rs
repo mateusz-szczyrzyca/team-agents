@@ -680,7 +680,7 @@ async fn execute_debug_cmd(
         }
     };
     let location = agent_runtime::debug::DebugLocation {
-        local_offset: environment.local_offset(),
+        zone: environment.zone(),
         checkout,
     };
     debug(&home, args.into(), location, out)
@@ -698,11 +698,11 @@ async fn execute(environment: &Environment, command: Command, out: &mut impl Wri
         Command::Status(args) => {
             let home = environment.home()?;
             let mut connection = Connection::connect(&home.socket_file()).await?;
-            let activity = Activity::new(home.clone(), environment.local_offset());
+            let activity = Activity::new(home.clone(), environment.zone());
             if args.json {
                 status_json(&mut connection, args.target, out).await?;
             } else if args.investigators {
-                status_investigators(&mut connection, &home, environment.local_offset(), out).await?;
+                status_investigators(&mut connection, &home, environment.zone(), out).await?;
             } else if args.running {
                 status_running(&mut connection, &activity, out).await?;
             } else {
@@ -937,5 +937,46 @@ mod tests {
         let result = run(["agent", "--bogus"], &mut Vec::new(), &mut ClosedPipe);
 
         assert!(matches!(result, Err(OutputError::Write(e)) if e.kind() == io::ErrorKind::BrokenPipe));
+    }
+
+    #[tokio::test]
+    async fn execute_debug_cmd_writes_summary_times_in_the_environment_zone() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::fixtures::solo_state();
+        std::fs::write(dir.path().join("state.json"), state.to_json().unwrap()).unwrap();
+        std::fs::write(dir.path().join("agents.toml"), "").unwrap();
+        let secrets = dir.path().join("secrets.toml");
+        std::fs::write(&secrets, "").unwrap();
+        std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let east = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("valid"));
+        let environment = Environment::new(Some(dir.path().into()))
+            .in_directory(dir.path().to_path_buf())
+            .with_zone(east);
+        let mut out = Vec::new();
+
+        execute_debug_cmd(
+            &environment,
+            DebugArgs {
+                round: None,
+                team: None,
+                task: Some(crate::fixtures::task(1)),
+                out: Some(dir.path().to_path_buf()),
+                stale_minutes: None,
+                daemon_log: None,
+            },
+            &mut out,
+        )
+        .await
+        .unwrap();
+
+        let printed = String::from_utf8(out).unwrap();
+        let summary_path = printed
+            .lines()
+            .find_map(|line| line.strip_prefix("Debug summary: "))
+            .expect("debug prints the summary path");
+        let summary = std::fs::read_to_string(summary_path).unwrap();
+        assert!(summary.contains(" +01:00\n"), "{summary}");
     }
 }

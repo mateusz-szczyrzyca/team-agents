@@ -1,4 +1,7 @@
+//! Unit tests for `agent status`, expecting local timestamps in the single zoned form `YYYY-MM-DD HH:MM:SS <zone>`.
+
 use std::num::NonZeroU32;
+use time::UtcOffset;
 
 use agent_core::plan::judge::JudgementState;
 use agent_core::protocol::PlanStepSummary;
@@ -239,7 +242,7 @@ async fn the_investigator_view_asks_the_daemon_and_lists_the_configured_investig
     let mut connection = Connection::connect(daemon.socket()).await.unwrap();
     let mut out = Vec::new();
 
-    status_investigators(&mut connection, &home, UtcOffset::UTC, &mut out)
+    status_investigators(&mut connection, &home, Zone::Fixed(UtcOffset::UTC), &mut out)
         .await
         .unwrap();
 
@@ -248,7 +251,7 @@ async fn the_investigator_view_asks_the_daemon_and_lists_the_configured_investig
         investigators::render(
             &listed,
             &["inv-codex".parse().unwrap(), "inv-gemini".parse().unwrap()],
-            UtcOffset::UTC
+            Zone::Fixed(UtcOffset::UTC)
         )
     );
     assert_eq!(
@@ -271,7 +274,7 @@ async fn the_investigator_view_says_why_a_configuration_it_cannot_read_lists_nob
     let home = Home::new(&AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap());
     let mut connection = Connection::connect(daemon.socket()).await.unwrap();
 
-    let error = status_investigators(&mut connection, &home, UtcOffset::UTC, &mut Vec::new())
+    let error = status_investigators(&mut connection, &home, Zone::Fixed(UtcOffset::UTC), &mut Vec::new())
         .await
         .unwrap_err();
 
@@ -387,7 +390,7 @@ team-20261111-153000-t5m8  team-agents  autopilot  0 pending, 1 in progress, 0 i
 /// The activity of a home in `dir`, which has no runs.
 fn no_activity(dir: &std::path::Path) -> Activity {
     let home = Home::new(&AbsolutePath::from_str(dir.to_str().unwrap()).unwrap());
-    Activity::new(home, UtcOffset::UTC)
+    Activity::new(home, Zone::Fixed(UtcOffset::UTC))
 }
 
 // Rule: a task that runs says when it was last active; a task that does not run says nothing of it.
@@ -418,8 +421,11 @@ fn the_last_activity_is_told_as_the_local_time_of_day() {
     let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_794_694_211);
     let warsaw = UtcOffset::from_hms(1, 0, 0).unwrap();
 
-    assert_eq!(clock_time(at, UtcOffset::UTC), "22:10:11");
-    assert_eq!(clock_time(at, warsaw), "23:10:11");
+    assert_eq!(
+        clock_time(at, Zone::Fixed(UtcOffset::UTC)),
+        "2026-11-14 22:10:11 +00:00"
+    );
+    assert_eq!(clock_time(at, Zone::Fixed(warsaw)), "2026-11-14 23:10:11 +01:00");
 }
 
 // Rule: the last activity of a running task is read from the output of its runs in the home.
@@ -451,7 +457,10 @@ async fn the_status_reads_the_last_activity_of_a_running_task_from_the_home() {
     status_active(&mut connection, None, &activity, &mut out).await.unwrap();
 
     let text = String::from_utf8(out).unwrap();
-    let expected = format!("running, last activity {}\n", clock_time(changed, UtcOffset::UTC));
+    let expected = format!(
+        "running, last activity {}\n",
+        clock_time(changed, Zone::Fixed(UtcOffset::UTC))
+    );
     assert!(text.contains(&expected), "{text}");
 }
 
@@ -566,10 +575,10 @@ fn a_round_is_shown_with_its_item_its_tasks_with_where_they_work_and_their_runs(
         text,
         "\
 round-20261111-153002-q1w2  item 1.2  open  team team-20261111-153000-t5m8
-  opened 2026-11-11T19:15:20Z
+  opened 2026-11-11 19:15:20 +00:00
   item 1.2: The second item (in_progress)
   task-20261111-153002-k3x9  member  claude-1  /srv/agents/worktrees/team-agents/task-20261111-153002-k3x9  agents/claude-1/task-20261111-153002-k3x9-1.2
-    run-20261111-153001-r7q2  started 2026-11-11T19:15:21Z  running
+    run-20261111-153001-r7q2  started 2026-11-11 19:15:21 +00:00  running
 "
     );
 }
@@ -591,7 +600,10 @@ fn a_closed_round_says_when_and_how_it_ended_and_an_item_in_review_shows_its_pul
 
     let text = render_round(&detail(&state));
 
-    assert!(text.contains("  closed 2026-11-11T19:15:50Z, abandoned\n"), "{text}");
+    assert!(
+        text.contains("  closed 2026-11-11 19:15:50 +00:00, abandoned\n"),
+        "{text}"
+    );
     assert!(
         text.contains("  pull request #7 on agents/codex-1/item-1-2\n"),
         "{text}"
@@ -697,7 +709,7 @@ fn disk_line_appears_below_limit_and_not_above() {
     let dir = tempfile::tempdir().unwrap();
     let abs = agent_core::config::AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap();
     let home = Home::new(&abs);
-    let activity = Activity::new(home.clone(), time::UtcOffset::UTC);
+    let activity = Activity::new(home.clone(), Zone::Fixed(UtcOffset::UTC));
 
     std::fs::write(home.free_space_file(), (50 * 1024 * 1024 * 1024u64).to_string()).unwrap();
     assert_eq!(
@@ -779,7 +791,7 @@ fn a_reviewers_line_says_what_it_did_or_does_rather_than_that_it_waits() {
                 ),
             ],
             None,
-            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 19:15:50",
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 2026-11-11 19:15:50 +00:00",
         ),
         (
             vec![review_activity(
@@ -790,7 +802,7 @@ fn a_reviewers_line_says_what_it_did_or_does_rather_than_that_it_waits() {
                 &finished(at(30)),
             )],
             None,
-            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 19:15:30",
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:30 +00:00",
         ),
         (
             vec![review_activity(
@@ -815,7 +827,7 @@ fn a_reviewers_line_says_what_it_did_or_does_rather_than_that_it_waits() {
                 },
             )],
             None,
-            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: the human stopped it",
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: the human stopped it",
         ),
         (
             vec![review_activity(
@@ -831,7 +843,7 @@ fn a_reviewers_line_says_what_it_did_or_does_rather_than_that_it_waits() {
                 },
             )],
             None,
-            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: the run showed no activity for too long",
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: the run showed no activity for too long",
         ),
     ];
     for (activities, running, line) in tables {
@@ -865,7 +877,7 @@ fn the_ordinal_of_a_review_counts_only_the_reviews_this_investigator_gave_for_th
 
     assert_eq!(
         reviewer_line(4, activities),
-        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 19:15:30"
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:30 +00:00"
     );
 }
 
@@ -940,7 +952,9 @@ fn a_review_that_ended_without_a_report_says_when_and_why_it_stopped() {
 
         assert_eq!(
             reviewer_line(4, activities),
-            format!("  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: {reason}")
+            format!(
+                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: {reason}"
+            )
         );
     }
 }
@@ -991,7 +1005,9 @@ fn a_review_that_failed_says_the_end_of_its_run() {
 
         assert_eq!(
             reviewer_line(4, activities),
-            format!("  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: {reason}")
+            format!(
+                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: {reason}"
+            )
         );
     }
 }
@@ -1070,7 +1086,7 @@ fn a_reviewers_ordinal_leaves_out_a_review_that_ended_without_its_report() {
 
     assert_eq!(
         reviewer_line(4, activities),
-        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 19:15:50"
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:50 +00:00"
     );
 }
 
@@ -1103,7 +1119,7 @@ fn a_verification_asked_in_the_second_of_the_first_review_is_its_second_review()
 
     assert_eq!(
         reviewer_line(4, activities),
-        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 19:15:40"
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 2026-11-11 19:15:40 +00:00"
     );
 }
 
@@ -1138,7 +1154,7 @@ fn an_abandoned_second_opinion_says_the_reason_the_daemon_recorded() {
         assert_eq!(
             reviewer_line(4, activities),
             format!(
-                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 19:15:30, reason: its second opinion was abandoned: {reason}"
+                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: its second opinion was abandoned: {reason}"
             )
         );
     }
@@ -1447,4 +1463,116 @@ fn a_ready_later_split_part_shows_its_tier_wait_before_a_round_opens() {
             "    1.1b  waiting for investigator agent  Second",
         ]
     );
+}
+
+#[test]
+fn a_status_time_and_a_log_time_of_one_moment_in_one_zone_are_the_same_text() {
+    use agent_core::local_time::Zone;
+    let zone = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("a literal offset is valid"));
+    let at: agent_core::state::Timestamp = "2026-11-21T12:50:02Z".parse().expect("a literal time is valid");
+    assert_eq!(clock_of(at, zone), zone.stamp(at));
+    assert_eq!(clock_of(at, zone), "2026-11-21 13:50:02 +01:00");
+    assert_eq!(zone.stamp_minute(at), "2026-11-21 13:50 +01:00");
+}
+
+#[test]
+fn a_round_in_full_writes_the_time_it_was_opened_in_the_zone_given() {
+    let state = team_with_rounds();
+    let zone = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("a literal offset is valid"));
+
+    let text = render_round_in(&detail(&state), zone);
+
+    assert!(text.contains("  opened 2026-11-11 20:15:"), "{text}");
+    assert!(text.contains(" +01:00\n"), "{text}");
+}
+
+#[test]
+fn a_round_is_shown_with_its_times_in_the_zone_given() {
+    use agent_core::local_time::Zone;
+    let mut state = team_with_rounds();
+    {
+        let (_, mut member) = state.find_task_mut(&task(2)).unwrap();
+        member
+            .end_run(
+                at(30),
+                agent_core::state::RunEnd::Reported {
+                    outcome: agent_core::status::RunOutcome::Done,
+                },
+            )
+            .unwrap();
+    }
+    {
+        let mut team = state.team_mut(&team_id(0)).unwrap();
+        team.close_round(&round_id(2), at(50), RoundEnd::Abandoned).unwrap();
+    }
+    let zone = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("a literal offset is valid"));
+
+    let text = super::render_round_in(&detail(&state), zone);
+
+    assert!(text.contains("  opened 2026-11-11 20:15:20 +01:00\n"), "{text}");
+    assert!(
+        text.contains("  closed 2026-11-11 20:15:50 +01:00, abandoned\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "    run-20261111-153001-r7q2  started 2026-11-11 20:15:21 +01:00  ended 2026-11-11 20:15:30 +01:00\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn clock_time_outside_four_digit_years_falls_back_to_marked_utc() {
+    use std::time::{Duration, SystemTime};
+    let before_year_zero = SystemTime::UNIX_EPOCH - Duration::from_secs(62_167_219_201);
+    let zone = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("valid"));
+
+    assert_eq!(clock_time(before_year_zero, zone), "-0001-12-31 23:59:59 UTC");
+}
+
+#[test]
+fn a_round_with_a_github_retry_wait_shows_its_next_try_in_the_client_zone() {
+    let state = team_with_rounds();
+    let mut shown = detail(&state);
+    shown.waiting = Some(
+        "GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21T00:07:00Z".to_owned(),
+    );
+    let east = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("valid"));
+    let west = Zone::Fixed(time::UtcOffset::from_hms(-5, 0, 0).expect("valid"));
+
+    let east_text = render_round_in(&shown, east);
+    let west_text = render_round_in(&shown, west);
+
+    assert!(
+        east_text.contains(
+            ", waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21 01:07 +01:00\n"
+        ),
+        "{east_text}"
+    );
+    assert!(
+        west_text.contains(
+            ", waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-20 19:07 -05:00\n"
+        ),
+        "{west_text}"
+    );
+}
+
+#[test]
+fn clock_time_and_clock_of_format_moments_with_the_offset_of_their_day_in_zone() {
+    use std::time::{Duration, SystemTime};
+    let summer: Timestamp = "2026-07-15T12:00:00Z".parse().expect("valid");
+    let winter: Timestamp = "2026-11-21T16:29:53Z".parse().expect("valid");
+    let cet_cest = Zone::Lookup(|moment| {
+        if u8::from(moment.month()) == 7 {
+            time::UtcOffset::from_hms(2, 0, 0).ok()
+        } else {
+            time::UtcOffset::from_hms(1, 0, 0).ok()
+        }
+    });
+    let winter_system = SystemTime::UNIX_EPOCH + Duration::from_secs(1_795_278_593);
+
+    assert_eq!(clock_of(summer, cet_cest), "2026-07-15 14:00:00 +02:00");
+    assert_eq!(clock_of(winter, cet_cest), "2026-11-21 17:29:53 +01:00");
+    assert_eq!(clock_time(winter_system, cet_cest), "2026-11-21 17:29:53 +01:00");
 }

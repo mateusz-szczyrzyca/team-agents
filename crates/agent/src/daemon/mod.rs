@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_core::config::{AbsolutePath, OpenQuestions};
+use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, AutopilotPromptsError};
@@ -37,7 +38,6 @@ use agent_runtime::store::{Home, StateStore, StoreError};
 use agent_runtime::team_prompts::{TeamPrompts, TeamPromptsError};
 use rand::SeedableRng;
 use rand::rngs::{StdRng, SysError, SysRng};
-use time::UtcOffset;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -91,8 +91,10 @@ pub(crate) struct DaemonSetup {
     pub(crate) prompts_dir: PathBuf,
     /// The clock that stamps everything.
     pub(crate) clock: SharedClock,
-    /// The machine's offset from UTC.
-    pub(crate) local_offset: UtcOffset,
+    /// The zone the times a person reads are written in.
+    pub(crate) zone: Zone,
+    /// The machine's offset from UTC, with which a reset time without a zone is read.
+    pub(crate) local_offset: time::UtcOffset,
     /// The timings, or `None` for those the configuration gives.
     pub(crate) timings: Option<Timings>,
     /// The directory containing the daemon's own executable, or `None` to resolve `std::env::current_exe()`.
@@ -424,7 +426,7 @@ async fn run_with_rng_and_log_layer(
             rng,
             notices,
             events,
-            local_offset: setup.local_offset,
+            zone: setup.zone,
             tick: timings.tick,
             notifier: emergency_notifier,
             free_space: surroundings.free_space.clone(),

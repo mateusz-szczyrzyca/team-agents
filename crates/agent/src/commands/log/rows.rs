@@ -12,7 +12,7 @@ use agent_runtime::history::{LogFilter, LogWindow, Reader};
 use clap::Args;
 
 use super::follow::Feed;
-use super::wait::wait_line;
+use super::wait::wait_line_in;
 use super::{Format, LogError};
 
 /// How long a follow waits before it reads the history again.
@@ -162,7 +162,7 @@ impl RowArgs {
                 let Some(runtime) = &runtime else {
                     return Ok(());
                 };
-                let mut waits = |round: &RoundId| runtime.block_on(wait_line(socket, round));
+                let mut waits = |round: &RoundId| runtime.block_on(wait_line_in(socket, round, zones.output));
                 loop {
                     // SQLite and stdout stay outside the async runtime. Only the cancellable timer runs inside it.
                     runtime.block_on(async { tokio::time::sleep(FOLLOW_PAUSE).await });

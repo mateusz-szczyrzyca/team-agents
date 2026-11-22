@@ -102,3 +102,28 @@ fn lead_cannot_replace_the_recorded_split_provenance() {
         "## What and why\n\nUseful work.\n\n## Tests\n\nPassed."
     );
 }
+
+#[tokio::test]
+async fn measured_sections_in_formats_gate_finished_time_in_the_daemon_zone() {
+    use agent_core::local_time::Zone;
+    let texts = AutopilotPrompts::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &Language::default(),
+    )
+    .await
+    .unwrap();
+    let gate = GateRecord {
+        tree: GateTree::Clean,
+        result: GateResult {
+            head: "26b65de7e4076596768ca96b48a7f94799c93874".parse().unwrap(),
+            finished_at: "2026-11-19T09:30:00Z".parse().unwrap(),
+            outcome: GateOutcome::Passed,
+            log: "/tmp/tasks/task-1/gate-2.log".parse().unwrap(),
+        },
+    };
+    let east = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("valid"));
+
+    let rendered = measured_sections_in(&texts, 42, &gate, None, east).unwrap();
+
+    assert!(rendered.contains("Finished: 2026-11-19 10:30:00 +01:00."), "{rendered}");
+}

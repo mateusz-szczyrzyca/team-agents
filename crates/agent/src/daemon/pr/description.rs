@@ -58,11 +58,23 @@ fn without_sections(text: &str, names: &[&str]) -> String {
 }
 
 /// Renders the measured size and recorded gate, including a preceding failure at this head.
+#[cfg(test)]
 pub(crate) fn measured_sections(
     texts: &AutopilotPrompts,
     size: usize,
     gate: &GateRecord,
     previous: Option<&GateRecord>,
+) -> Result<String, PullTextError> {
+    measured_sections_in(texts, size, gate, previous, agent_core::local_time::Zone::Utc)
+}
+
+/// Renders the measured size and recorded gate in `zone`, including a preceding failure at this head.
+pub(crate) fn measured_sections_in(
+    texts: &AutopilotPrompts,
+    size: usize,
+    gate: &GateRecord,
+    previous: Option<&GateRecord>,
+    zone: agent_core::local_time::Zone,
 ) -> Result<String, PullTextError> {
     let size = texts.render(
         AutopilotPrompt::PrSize,
@@ -70,7 +82,7 @@ pub(crate) fn measured_sections(
     )?;
     let values = Variables::new()
         .with("head", gate.result.head.as_str())?
-        .with("finished", gate.result.finished_at.to_string())?
+        .with("finished", zone.stamp(gate.result.finished_at))?
         .with("result", gate.summary())?
         .with("log", gate.result.log.as_path().display().to_string())?;
     let mut sections = vec![size, texts.render(AutopilotPrompt::PrGate, &values)?];

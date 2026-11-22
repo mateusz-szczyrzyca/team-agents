@@ -90,7 +90,7 @@ fn reported(teams: &[TeamSummary], task: &str) -> Option<String> {
             ActivityOutcome::Working => None,
         })
         .max()
-        .map(|(_, at)| clock_of(at, UtcOffset::UTC))
+        .map(|(_, at)| clock_of(at, agent_core::local_time::Zone::Fixed(UtcOffset::UTC)))
 }
 
 /// The tasks of the reviewers of `team` in `state`.
@@ -110,7 +110,7 @@ fn reviewers(state: &agent_core::state::State, team: &TeamId) -> Vec<String> {
 async fn while_a_round_goes_through_its_reviews_the_reviewers_lines_say_what_they_did() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,fix-work-pushed"),
+            normal("claude-1", "work,hold"),
             investigator("inv-r1", "structured-commit:REQUEST_CHANGES"),
             investigator("inv-r2", "late-structured-commit:REQUEST_CHANGES"),
         ],
@@ -119,7 +119,7 @@ async fn while_a_round_goes_through_its_reviews_the_reviewers_lines_say_what_the
     )
     .await;
     rig.start().await;
-    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let state = rig
         .item_where("1.1", "a fix pass", |phase| matches!(phase, ItemPhase::Fixing { .. }))
         .await;
@@ -128,6 +128,7 @@ async fn while_a_round_goes_through_its_reviews_the_reviewers_lines_say_what_the
     })
     .await;
     rig.stop().await.unwrap();
+    std::fs::write(rig.worktree(&tasks[0]).join(".fake-continue"), "").unwrap();
 
     let found = state.team(&team).unwrap();
     let text = printed(&teams, &team);
@@ -152,7 +153,10 @@ async fn while_a_round_goes_through_its_reviews_the_reviewers_lines_say_what_the
         };
         assert_eq!(
             state_of(&text, task.as_str()),
-            format!("done, 1st review finished {}", clock_of(at, UtcOffset::UTC)),
+            format!(
+                "done, 1st review finished {}",
+                clock_of(at, agent_core::local_time::Zone::Fixed(UtcOffset::UTC))
+            ),
             "{text}"
         );
     }
@@ -173,7 +177,7 @@ fn printed_all(teams: &[TeamSummary], team: &TeamId) -> String {
 async fn after_the_fix_pass_the_verifiers_line_says_the_second_review_finished() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,fix-work-pushed"),
+            normal("claude-1", "work,sleep,fix-work-pushed,hold"),
             investigator("inv-r1", "rotating-verify"),
             investigator("inv-r2", "rotating-verify"),
         ],
@@ -182,7 +186,7 @@ async fn after_the_fix_pass_the_verifiers_line_says_the_second_review_finished()
     )
     .await;
     rig.start().await;
-    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let first = rig
         .item_where("1.1", "a fix pass", |phase| matches!(phase, ItemPhase::Fixing { .. }))
         .await;
@@ -190,6 +194,8 @@ async fn after_the_fix_pass_the_verifiers_line_says_the_second_review_finished()
         reviews_reported(listed, 2)
     })
     .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.resume(&tasks[0]).await;
     // With two investigators, the verification of the fix is the pair of the first pass again; it is in when both
     // reports of it are, and the daemon may ask for the next pass right after.
     let later_teams = listed_when(&rig, &team, "the two reports of the verification in", |listed| {
@@ -197,6 +203,7 @@ async fn after_the_fix_pass_the_verifiers_line_says_the_second_review_finished()
     })
     .await;
     rig.stop().await.unwrap();
+    std::fs::write(rig.worktree(&tasks[0]).join(".fake-continue"), "").unwrap();
 
     let asked = reviewers(&first, &team);
     assert_eq!(asked.len(), 2, "{first_teams:?}");

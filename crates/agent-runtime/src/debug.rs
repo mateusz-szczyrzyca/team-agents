@@ -190,7 +190,7 @@ pub async fn execute_debug(
         args,
         status,
         DebugLocation {
-            local_offset: time::UtcOffset::UTC,
+            zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
             checkout: None,
         },
         out,
@@ -228,7 +228,7 @@ pub(super) async fn execute_debug_with_procfs(
     temp_dir: &std::path::Path,
 ) -> Result<DebugResult, DebugRuntimeError> {
     let location = DebugLocation {
-        local_offset: time::UtcOffset::UTC,
+        zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         checkout: None,
     };
     execute_debug_internal(home, args, None, location, procfs, temp_dir).await
@@ -257,7 +257,7 @@ async fn execute_debug_internal(
     )?;
     collection.cut = cut.clone();
     collection.checkout = location.checkout;
-    collection.local_offset = location.local_offset;
+    collection.zone = location.zone;
     collection.observe(home, team, status).await?;
     observe_daemon(&mut collection, home, args.daemon_log.as_deref(), team, procfs).await;
     observe_bus(&mut collection, home, team).await;
@@ -288,7 +288,7 @@ async fn execute_debug_internal(
     );
     let summary = compact_summary_with(
         &collection.summary,
-        location.local_offset,
+        location.zone,
         collection.git_notice.as_deref(),
         |text| {
             // Replacing valid UTF-8 patterns with ASCII preserves valid UTF-8.
@@ -319,16 +319,21 @@ fn short(text: &str, limit: usize) -> String {
 
 #[cfg(test)]
 fn compact_summary(input: &SummaryInput) -> Result<String, SummaryError> {
-    compact_summary_with(input, time::UtcOffset::UTC, None, str::to_owned)
+    compact_summary_with(
+        input,
+        agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        None,
+        str::to_owned,
+    )
 }
 
 fn compact_summary_with(
     input: &SummaryInput,
-    offset: time::UtcOffset,
+    zone: agent_core::local_time::Zone,
     git_notice: Option<&str>,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    match render_command_summary_with_git_notice(input, offset, &redact, git_notice) {
+    match render_command_summary_with_git_notice(input, zone, &redact, git_notice) {
         Ok(text) => Ok(text),
         Err(SummaryError::RequiredFactsTooLarge { .. }) => {
             let mut compact = input.clone();
@@ -342,7 +347,7 @@ fn compact_summary_with(
                 git.commits_over_base.clear();
                 git.newest_untracked.clear();
             }
-            render_command_summary_with_git_notice(&compact, offset, &redact, git_notice)
+            render_command_summary_with_git_notice(&compact, zone, &redact, git_notice)
         }
         Err(error) => Err(error),
     }
@@ -525,8 +530,8 @@ async fn observe_machine(
 /// Machine presentation context captured by the CLI before it starts async workers.
 #[derive(Debug, Clone)]
 pub struct DebugLocation {
-    /// Machine's current offset from UTC.
-    pub local_offset: time::UtcOffset,
+    /// The zone the times a person reads in the debug bundle are written in.
+    pub zone: agent_core::local_time::Zone,
     /// Clone from which diagnostics were requested, when known.
     pub checkout: Option<PathBuf>,
 }

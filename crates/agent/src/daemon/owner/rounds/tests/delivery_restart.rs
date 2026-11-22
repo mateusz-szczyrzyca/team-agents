@@ -87,7 +87,7 @@ async fn stepped(rig: &Rig) -> Stepped {
         rng: StdRng::seed_from_u64(88),
         notices,
         events,
-        local_offset: time::UtcOffset::UTC,
+        zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         tick: Duration::from_millis(25),
         store,
         notifier: agent_runtime::notify::Notifier::from_config(

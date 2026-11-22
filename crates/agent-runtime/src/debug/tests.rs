@@ -109,7 +109,7 @@ fn retries_oversized_required_presentation_without_losing_full_facts() {
         }],
     };
     assert!(matches!(
-        agent_core::debug_summary::render_summary(&input, time::UtcOffset::UTC),
+        agent_core::debug_summary::render_summary(&input, agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC)),
         Err(agent_core::debug_summary::SummaryError::RequiredFactsTooLarge { .. })
     ));
     let rendered = compact_summary(&input);
@@ -382,7 +382,7 @@ fn command_summary_uses_supplied_machine_offset() {
             args,
             None,
             DebugLocation {
-                local_offset: time::UtcOffset::from_hms(5, 30, 0).unwrap(),
+                zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::from_hms(5, 30, 0).unwrap()),
                 checkout: None,
             },
             &mut Vec::new(),

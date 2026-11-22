@@ -34,7 +34,7 @@ async fn assert_autopilot_notices(cases: &[(AutopilotNotice, NoticeStatus, Varia
         cli: Some(CliKind::Claude),
         model: None,
         time: at(0),
-        offset: time::UtcOffset::UTC,
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         task: &task_id,
         team: Some(&team_id),
         pr: Some("https://github.example.com/octo/example/pull/1"),
