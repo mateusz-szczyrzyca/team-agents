@@ -1143,6 +1143,9 @@ impl ItemProgress {
     /// Records that a merge conflict pass was published and increments spent merge passes.
     pub fn record_published_conflict_pass(&mut self) -> u32 {
         if let Some(ref head) = self.conflict_approved_head.clone() {
+            if self.conflict_accounted_head.as_ref() == Some(head) {
+                return self.merge_passes;
+            }
             if self.conflict_refunded_head.as_ref() == Some(head) {
                 self.merge_passes = self.merge_passes.saturating_add(1);
                 self.conflict_refunded_head = None;
@@ -1154,12 +1157,14 @@ impl ItemProgress {
 
     /// Refunds an unspent or unpublished conflict pass and returns the new count.
     pub fn refund_conflict_pass(&mut self) -> u32 {
-        if let Some(ref head) = self.conflict_approved_head.clone()
-            && self.conflict_refunded_head.as_ref() != Some(head)
-        {
-            self.merge_passes = self.merge_passes.saturating_sub(1);
-            self.conflict_refunded_head = Some(head.clone());
-            self.conflict_accounted_head = None;
+        if let Some(ref head) = self.conflict_approved_head.clone() {
+            if self.conflict_accounted_head.as_ref() == Some(head) {
+                return self.merge_passes;
+            }
+            if self.conflict_refunded_head.as_ref() != Some(head) {
+                self.merge_passes = self.merge_passes.saturating_sub(1);
+                self.conflict_refunded_head = Some(head.clone());
+            }
         }
         self.merge_passes
     }
@@ -1206,6 +1211,12 @@ impl ItemProgress {
     #[must_use]
     pub const fn conflict_accounted_head(&self) -> Option<&CommitId> {
         self.conflict_accounted_head.as_ref()
+    }
+
+    /// The conflict head for which the pass was refunded, if any.
+    #[must_use]
+    pub const fn conflict_refunded_head(&self) -> Option<&CommitId> {
+        self.conflict_refunded_head.as_ref()
     }
 
     /// Records the approved head GitHub refused to merge before the current conflict pass or question.
@@ -2120,10 +2131,41 @@ mod tests {
         assert_eq!(item.record_published_conflict_pass(), 2);
         assert_eq!(item.merge_passes(), 2);
 
+        // Refund attempt after publication is an idempotent no-op and preserves accounted head:
+        assert_eq!(item.refund_conflict_pass(), 2);
+        assert_eq!(item.merge_passes(), 2);
+        assert_eq!(item.conflict_accounted_head(), Some(&head2));
+
         // Survives serialization and deserialization:
         let text = serde_json::to_string(&item).unwrap();
         let back: ItemProgress = serde_json::from_str(&text).unwrap();
         assert_eq!(back.merge_passes(), 2);
+    }
+
+    #[test]
+    fn restart_while_refunded_before_success_retains_refund_and_subsequent_publish_recovers() {
+        let mut item = progress_in(PhaseKind::Approved);
+        let head: CommitId = "3333333333333333333333333333333333333333".parse().unwrap();
+        item.begin_merge_conflict(head.clone(), at(10));
+        assert_eq!(item.merge_passes(), 1);
+
+        // Publication fails, refunding pass:
+        assert_eq!(item.refund_conflict_pass(), 0);
+        assert_eq!(item.merge_passes(), 0);
+
+        // Daemon restarts while refunded:
+        let serialized = serde_json::to_string(&item).unwrap();
+        let mut recovered: ItemProgress = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(recovered.merge_passes(), 0);
+
+        // Later attempt succeeds: publication records and spends pass:
+        assert_eq!(recovered.record_published_conflict_pass(), 1);
+        assert_eq!(recovered.merge_passes(), 1);
+        assert_eq!(recovered.conflict_accounted_head(), Some(&head));
+
+        // Subsequent refund attempt does not erase successfully published pass:
+        assert_eq!(recovered.refund_conflict_pass(), 1);
+        assert_eq!(recovered.merge_passes(), 1);
     }
 
     #[test]
