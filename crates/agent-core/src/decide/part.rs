@@ -74,7 +74,8 @@ pub fn who_gets_part_in_mode<'a>(
             PartChoice::Nobody
         }
         crate::decide::replacement::ReplacementMode::Auto => {
-            if let Some(replacement) = replacements.iter().find(|cand| cand.can_take(required)) {
+            let min_tier = previous.map_or(required, |prev| prev.agent.tier().max(required));
+            if let Some(replacement) = replacements.iter().find(|cand| cand.can_take(min_tier)) {
                 return PartChoice::Replacement(replacement.agent);
             }
             if let Some(coord) = lead.filter(|cand| cand.can_take(required)) {

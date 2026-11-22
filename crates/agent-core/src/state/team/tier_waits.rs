@@ -46,8 +46,25 @@ impl Team {
 
     /// Refreshes capability waits and returns newly entered waits for notification.
     pub fn refresh_tier_waits(&mut self) -> Vec<(ItemId, Tier)> {
-        use crate::decide::assign::dispatch::{WaitReason, dispatch};
-        let mut next: BTreeMap<_, _> = dispatch(self)
+        self.refresh_tier_waits_in_mode(crate::decide::replacement::ReplacementMode::Auto)
+    }
+
+    /// Refreshes capability waits under a specific replacement mode.
+    pub fn refresh_tier_waits_in_mode(
+        &mut self,
+        mode: crate::decide::replacement::ReplacementMode,
+    ) -> Vec<(ItemId, Tier)> {
+        self.refresh_tier_waits_in_policy(mode, &[])
+    }
+
+    /// Refreshes capability waits under a specific replacement policy.
+    pub fn refresh_tier_waits_in_policy(
+        &mut self,
+        mode: crate::decide::replacement::ReplacementMode,
+        configured_replacements: &[crate::ids::AgentName],
+    ) -> Vec<(ItemId, Tier)> {
+        use crate::decide::assign::dispatch::{WaitReason, dispatch_in_policy};
+        let mut next: BTreeMap<_, _> = dispatch_in_policy(self, mode, configured_replacements)
             .waiting
             .into_iter()
             .filter(|wait| wait.reason == WaitReason::Absent)
@@ -96,6 +113,23 @@ impl CheckedMut<'_, Team> {
     /// See [`Team::refresh_tier_waits`].
     pub fn refresh_tier_waits(&mut self) -> Vec<(ItemId, Tier)> {
         self.value.refresh_tier_waits()
+    }
+
+    /// See [`Team::refresh_tier_waits_in_mode`].
+    pub fn refresh_tier_waits_in_mode(
+        &mut self,
+        mode: crate::decide::replacement::ReplacementMode,
+    ) -> Vec<(ItemId, Tier)> {
+        self.value.refresh_tier_waits_in_mode(mode)
+    }
+
+    /// See [`Team::refresh_tier_waits_in_policy`].
+    pub fn refresh_tier_waits_in_policy(
+        &mut self,
+        mode: crate::decide::replacement::ReplacementMode,
+        configured_replacements: &[crate::ids::AgentName],
+    ) -> Vec<(ItemId, Tier)> {
+        self.value.refresh_tier_waits_in_policy(mode, configured_replacements)
     }
 }
 

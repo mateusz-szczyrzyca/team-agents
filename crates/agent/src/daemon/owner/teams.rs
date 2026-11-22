@@ -37,8 +37,8 @@ use super::wakes::Wake;
 use super::{Located, Owner, OwnerError};
 use crate::daemon::team::{
     Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace,
-    assignable_in_mode, closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for, reconcile,
-    render_notice, request_outcome, shared_agents, start_item, team_done_notification,
+    assignable_in_mode, assignable_in_policy, closing_transitions, failure_reason, form, is_finished, item_in_flight,
+    notice_for, reconcile, render_notice, request_outcome, shared_agents, start_item, team_done_notification,
 };
 
 /// The name the harness puts on the messages it writes to the bus, as the bus itself does.
@@ -685,13 +685,14 @@ impl Owner {
 
     /// Records absent capability once, retaining the wait through daemon recovery.
     fn refresh_tier_waits(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
+        let replacement = self.parts.settings.config.replacement();
         let mut team = self
             .parts
             .state
             .team_mut(team_id)
             .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
         let previous = team.tier_waits().clone();
-        let entered = team.refresh_tier_waits();
+        let entered = team.refresh_tier_waits_in_policy(replacement.mode(), replacement.agents());
         look.changed |= previous != *team.tier_waits();
         for (item, tier) in entered {
             tracing::info!(event = LogEvent::TeamChanged.as_str(), kind = "tier_wait", team = %team_id,
@@ -706,8 +707,8 @@ impl Owner {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
-        let mode = self.parts.settings.config.replacement().mode();
-        let given = assignable_in_mode(team, mode).map_err(|source| OwnerError::Assign {
+        let replacement = self.parts.settings.config.replacement();
+        let given = assignable_in_policy(team, replacement.mode(), replacement.agents()).map_err(|source| OwnerError::Assign {
             team: team_id.clone(),
             source,
         })?;

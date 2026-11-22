@@ -66,6 +66,18 @@ pub(in crate::daemon) fn assignable_in_mode(
     team: &Team,
     mode: ReplacementMode,
 ) -> Result<Vec<Assigned>, AssignmentError> {
+    assignable_in_policy(team, mode, &[])
+}
+
+/// The items that start now and the members that take them under `mode` and `configured_replacements`, as decided from `team`.
+///
+/// # Errors
+/// [`AssignmentError`].
+pub(in crate::daemon) fn assignable_in_policy(
+    team: &Team,
+    mode: ReplacementMode,
+    configured_replacements: &[AgentName],
+) -> Result<Vec<Assigned>, AssignmentError> {
     let takers = team
         .crew()
         .roster()
@@ -73,7 +85,7 @@ pub(in crate::daemon) fn assignable_in_mode(
         .map(|(_, member)| Ok((agent_name(member.agent())?, member.task())))
         .collect::<Result<Vec<_>, InvalidName>>()?;
     let available: Vec<AgentName> = takers.iter().map(|(name, _)| name.clone()).collect();
-    let decided = dispatch_in_mode(team, mode).assigned;
+    let decided = dispatch_in_policy(team, mode, configured_replacements).assigned;
     if !decided.is_empty() {
         let span = tracing::error_span!("team", team = %team.id());
         let _entered = span.enter();
@@ -86,6 +98,16 @@ pub(in crate::daemon) fn assignable_in_mode(
             &format!("team={}, available={available:?}", team.id()),
             &formatted,
         );
+        for (item, agent) in &decided {
+            if let Some((part, _)) = team.next_part(*item) {
+                let required = crate::decide::assign::dispatch::required_tier(team, *item);
+                agent_runtime::history::log_decision(
+                    "who_gets_part",
+                    &format!("team={}, item={item}, part={part}, required={required:?}, mode={mode:?}"),
+                    &[format!("{agent}")],
+                );
+            }
+        }
     }
     decided
         .into_iter()
