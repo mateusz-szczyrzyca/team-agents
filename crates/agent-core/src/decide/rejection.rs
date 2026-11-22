@@ -217,10 +217,29 @@ pub enum Rejection {
 
 /// What `line` of a lead's final message counts, from the facts the machine saw of the item.
 #[must_use]
-pub fn classify(line: &ReturnLine<'_>, facts: Facts) -> Option<Rejection> {
-    let _ = line;
-    let _ = facts;
-    None
+pub fn classify(_line: &ReturnLine<'_>, facts: Facts) -> Option<Rejection> {
+    // The line names the item, and the daemon gathers `facts` for exactly that item; the facts say whether work was
+    // handed over behind it.
+    // A lead that asked, failed or ended without a status did not answer the hand-over, and the item it names is not
+    // the item it read: nothing it wrote counts.
+    match facts.lead {
+        LeadEnd::Settled(crate::status::RunOutcome::Sleeping | crate::status::RunOutcome::Done) => {}
+        LeadEnd::Settled(
+            crate::status::RunOutcome::Questions
+            | crate::status::RunOutcome::Failed
+            | crate::status::RunOutcome::Excluded,
+        )
+        | LeadEnd::Unsettled => return None,
+    }
+    let handed_over = facts.held == Held::ByTheMember
+        && facts.last_run == LastRun::Reported(crate::status::RunOutcome::Done)
+        && facts.moved_on == MovedOn::No
+        && facts.last_run_number == facts.handed_over_after;
+    Some(if handed_over {
+        Rejection::Counted
+    } else {
+        Rejection::NotHandedOver
+    })
 }
 
 #[cfg(test)]
