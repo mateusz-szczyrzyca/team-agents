@@ -128,3 +128,48 @@ fn a_busy_hand_over_before_any_run_is_written_and_read_back() {
     assert_eq!(member.agent().name(), "claude-2");
     assert!(member.awaits_new_session());
 }
+
+#[test]
+fn a_busy_notice_obligation_survives_a_restart_until_the_team_takes_it() {
+    use crate::decide::ladder::Trouble;
+    use crate::state::{Crew, MergeMode, TaskListText, Team};
+
+    let mut state = old_state();
+    assert!(!state.find_task(&task()).unwrap().member.busy_notice_owed());
+    let fresh_task: TaskId = "task-20261121-100000-not1".parse().unwrap();
+    state
+        .insert_team(Team::new(
+            "team-20261121-100000-frsh".parse().unwrap(),
+            "team-agents".parse().unwrap(),
+            at("2026-11-21T10:00:00Z"),
+            MergeMode::NoMerge,
+            TaskListText::new("Solo task.\n".to_owned()).unwrap(),
+            Crew::solo(Member::new(
+                fresh_task.clone(),
+                Participant::Normal("claude-1".parse().unwrap()),
+            ))
+            .unwrap(),
+        ))
+        .unwrap();
+    state
+        .hand_over_task(
+            &fresh_task,
+            Participant::Normal("claude-2".parse().unwrap()),
+            at("2026-11-21T10:06:00Z"),
+        )
+        .unwrap();
+    assert!(
+        state
+            .begin_holder_session(&fresh_task, Trouble::Busy, at("2026-11-21T10:06:00Z"))
+            .unwrap()
+    );
+    state.owe_busy_notice(&fresh_task).unwrap();
+
+    let mut read = State::from_json(&state.to_json().unwrap()).unwrap();
+    assert!(read.find_task(&fresh_task).unwrap().member.busy_notice_owed());
+    read.busy_notice_told(&fresh_task).unwrap();
+
+    assert!(!read.find_task(&fresh_task).unwrap().member.busy_notice_owed());
+    let read_again = State::from_json(&read.to_json().unwrap()).unwrap();
+    assert!(!read_again.find_task(&fresh_task).unwrap().member.busy_notice_owed());
+}

@@ -609,6 +609,28 @@ impl State {
         Ok(())
     }
 
+    /// Records that the team of `task` is still owed notice of its busy hand-over.
+    ///
+    /// # Errors
+    /// [`RenewTaskError::NoTask`] when the task is not in the state.
+    pub fn owe_busy_notice(&mut self, task: &TaskId) -> Result<(), RenewTaskError> {
+        let (_, mut _member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        Ok(())
+    }
+
+    /// Records that the team took the busy hand-over notice of `task` and nothing is owed any more.
+    ///
+    /// # Errors
+    /// [`RenewTaskError::NoTask`] when the task is not in the state.
+    pub fn busy_notice_told(&mut self, task: &TaskId) -> Result<(), RenewTaskError> {
+        let (_, mut _member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        Ok(())
+    }
+
     /// Records that `task` waits for its busy agent from `at`, and returns the moment the wait began: an earlier one is kept.
     /// `None` when the task is not in the state.
     pub fn start_waiting(&mut self, task: &TaskId, at: Timestamp) -> Option<Timestamp> {

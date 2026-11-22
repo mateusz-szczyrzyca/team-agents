@@ -522,6 +522,12 @@ impl Member {
         self.renewals.as_ref().is_some_and(renewal::Renewals::lead_owed)
     }
 
+    /// Whether the team is still owed notice of this task's busy hand-over.
+    #[must_use]
+    pub const fn busy_notice_owed(&self) -> bool {
+        false
+    }
+
     /// The agent the task is known by on its team's bus: the agent it was first given to. A task keeps that name when
     /// another agent takes it over, so that the messages, the wake-ups and the lead's rights of the team stay with it.
     #[must_use]
