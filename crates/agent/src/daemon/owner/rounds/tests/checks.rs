@@ -1411,7 +1411,7 @@ async fn a_path_the_team_changes_again_after_the_human_allowed_it_is_asked_again
     rig.status_is(&tasks[0], TaskStatus::Questions).await;
     answer(&rig, &tasks[0], 1, "allow").await;
     rig.wait_for("the second question of the checks", || {
-        rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists()
+        second_question_recorded(&rig, &tasks[0])
     })
     .await;
     let after = record(&rig, &tasks[0]).await;
