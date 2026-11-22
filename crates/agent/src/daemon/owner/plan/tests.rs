@@ -1647,6 +1647,7 @@ async fn a_recovered_run_preserves_its_progress_and_pause_across_restart() {
         Some(&at(1200)),
         "recovered pause wake time must match the run's classified pause"
     );
+    drop(owner);
 
     // Case 2: a hung run that made no progress increments hang strikes on recovery instead of resetting to 1.
     let (mut owner, _sinks) = daemon.bare_owner().await;
@@ -1667,6 +1668,7 @@ async fn a_recovered_run_preserves_its_progress_and_pause_across_restart() {
         .unwrap();
     {
         let (_, mut member) = owner.parts.state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
         member.transition(TaskStatus::Running).unwrap();
         member.set_plan_running_check(Some(RunningPlanCheck {
             run: run_id,
