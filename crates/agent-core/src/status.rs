@@ -290,8 +290,9 @@ impl StatusMachine for TaskStatus {
                 Self::Failed,
                 Self::Done,
             ],
-            Self::Waiting => &[Self::Queued, Self::Paused, Self::Stopped, Self::Done],
-            Self::Questions | Self::Paused | Self::Failed => &[Self::Queued, Self::Stopped],
+            Self::Waiting => &[Self::Queued, Self::Paused, Self::Stopped, Self::Done, Self::Questions],
+            Self::Questions | Self::Paused => &[Self::Queued, Self::Stopped],
+            Self::Failed => &[Self::Queued, Self::Stopped, Self::Questions],
             Self::Stopped => &[Self::Queued],
             Self::Done => &[],
         }
@@ -455,6 +456,7 @@ mod tests {
             (Running, Failed),
             (Running, Done),
             (Waiting, Queued),
+            (Waiting, Questions),
             (Waiting, Paused),
             (Waiting, Stopped),
             (Waiting, Done),
@@ -464,6 +466,7 @@ mod tests {
             (Paused, Stopped),
             (Stopped, Queued),
             (Failed, Queued),
+            (Failed, Questions),
             (Failed, Stopped),
         ];
         assert_transitions(TaskStatus::ALL, &allowed);

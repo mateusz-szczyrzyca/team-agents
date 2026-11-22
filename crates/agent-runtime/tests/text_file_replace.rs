@@ -78,4 +78,33 @@ mod text_file_replace {
             "{error:?}"
         );
     }
+
+    #[tokio::test]
+    async fn create_new_text_file_makes_new_file_and_refuses_existing_without_overwriting() {
+        use agent_runtime::text_file::create_new_text_file;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("atomic.md");
+
+        // 1. New file is created with text and mode:
+        create_new_text_file(&path, "first\n", 0o600).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first\n");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+
+        // 2. Existing file is refused with AlreadyExists, leaving content unchanged:
+        let error = create_new_text_file(&path, "second\n", 0o600).await.unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                ReplaceError::Write { source, .. } if source.kind() == std::io::ErrorKind::AlreadyExists
+            ),
+            "expected AlreadyExists error, got {error:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "first\n",
+            "existing file must not be overwritten"
+        );
+    }
 }

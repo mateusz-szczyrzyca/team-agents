@@ -2,12 +2,13 @@
 //! result.
 
 use std::collections::HashSet;
+use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
 
 use super::checked::CheckedMut;
 use super::gate::GateResult;
-use super::strict::{checked, strict_enum};
+use super::strict::strict_enum;
 use super::values::{PrNumber, Timestamp};
 use super::{CommitId, Findings};
 use crate::ids::{AgentName, BranchName, InvestigatorName, ItemId, TaskId};
@@ -440,6 +441,37 @@ pub struct ItemProgress {
     /// trouble.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     merge_conflict: Option<MergeConflict>,
+    /// How many times publication of this item was tried; absent while zero.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    publish_tries: u32,
+    /// Complete ownership of the publication question, absent while none is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    publish_question: Option<PublishQuestion>,
+}
+
+/// Exact ownership of a publication question; legacy questions may lack a recorded branch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PublishQuestion {
+    /// Task whose questions file owns the answer.
+    task: TaskId,
+    /// Number within that task.
+    number: NonZeroU32,
+    /// When the question was registered.
+    at: Timestamp,
+    /// Publication destination, absent only for older records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    branch: Option<BranchName>,
+}
+
+/// Both supported on-disk publication question formats.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PublishQuestionWire {
+    /// A complete current identity.
+    Current(PublishQuestion),
+    /// Earlier versions stored the timestamp separately from the identity.
+    Legacy(Timestamp),
 }
 
 /// A merge of an approved pull request that GitHub refused for a conflict, while the harness works on it.
@@ -470,9 +502,9 @@ fn is_zero(count: &u32) -> bool {
     *count == 0
 }
 
-/// How an [`ItemProgress`] is read; see [`checked!`].
+/// Backward-compatible reading of item progress.
 #[derive(Deserialize)]
-#[serde(remote = "ItemProgress", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct ItemProgressWire {
     /// See [`ItemProgress`].
     id: ItemId,
@@ -499,9 +531,54 @@ struct ItemProgressWire {
     /// See [`ItemProgress`]; a state written before merge conflicts has none.
     #[serde(default)]
     merge_conflict: Option<MergeConflict>,
+    /// See [`ItemProgress`]; a state written before publish tries has none.
+    #[serde(default)]
+    publish_tries: u32,
+    /// See [`ItemProgress`]; a state written before publication questions has none.
+    #[serde(default)]
+    publish_question: Option<PublishQuestionWire>,
+    /// See [`ItemProgress`]; a state written before publication question task has none.
+    #[serde(default)]
+    publish_question_task: Option<TaskId>,
+    /// See [`ItemProgress`]; a state written before publication question number has none.
+    #[serde(default)]
+    publish_question_number: Option<NonZeroU32>,
 }
 
-checked!(ItemProgress, ItemProgressWire, check_item_progress);
+impl<'de> Deserialize<'de> for ItemProgress {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = ItemProgressWire::deserialize(deserializer)?;
+        let publish_question = match wire.publish_question {
+            Some(PublishQuestionWire::Current(question)) => Some(question),
+            Some(PublishQuestionWire::Legacy(at)) => match (wire.publish_question_task, wire.publish_question_number) {
+                (Some(task), Some(number)) => Some(PublishQuestion {
+                    task,
+                    number,
+                    at,
+                    branch: None,
+                }),
+                // Incomplete old records cannot authorize any task's answer. Leave them available for escalation.
+                _ => None,
+            },
+            None => None,
+        };
+        let value = Self {
+            id: wire.id,
+            phase: wire.phase,
+            fix_passes: wire.fix_passes,
+            gate: wire.gate,
+            findings: wire.findings,
+            merge_passes: wire.merge_passes,
+            conflict_verifications: wire.conflict_verifications,
+            conflict_approved_head: wire.conflict_approved_head,
+            merge_conflict: wire.merge_conflict,
+            publish_tries: wire.publish_tries,
+            publish_question,
+        };
+        check_item_progress(&value).map_err(serde::de::Error::custom)?;
+        Ok(value)
+    }
+}
 
 /// An item's progress inside a team, to change through its operations only.
 ///
@@ -524,6 +601,32 @@ impl CheckedMut<'_, ItemProgress> {
     /// See [`ItemProgress::ask_human_about_merge_conflict`].
     pub fn ask_human_about_merge_conflict(&mut self, at: Timestamp) {
         self.value.ask_human_about_merge_conflict(at);
+    }
+
+    /// See [`ItemProgress::record_publish_try`].
+    pub fn record_publish_try(&mut self) -> u32 {
+        self.value.record_publish_try()
+    }
+
+    /// See [`ItemProgress::reset_publish_tries`].
+    pub fn reset_publish_tries(&mut self) {
+        self.value.reset_publish_tries();
+    }
+
+    /// See [`ItemProgress::record_publish_question_branch`].
+    pub fn record_publish_question_branch(
+        &mut self,
+        task: TaskId,
+        number: NonZeroU32,
+        at: Timestamp,
+        branch: BranchName,
+    ) {
+        self.value.record_publish_question_branch(task, number, at, branch);
+    }
+
+    /// See [`ItemProgress::clear_publish_question`].
+    pub fn clear_publish_question(&mut self) {
+        self.value.clear_publish_question();
     }
 
     /// See [`ItemProgress::set_conflict_approved_head`].
@@ -944,7 +1047,71 @@ impl ItemProgress {
             conflict_verifications: 0,
             conflict_approved_head: None,
             merge_conflict: None,
+            publish_tries: 0,
+            publish_question: None,
         }
+    }
+
+    /// How many times publication of this item was tried.
+    #[must_use]
+    pub const fn publish_tries(&self) -> u32 {
+        self.publish_tries
+    }
+
+    /// Increments the publication attempt counter and returns the new count.
+    pub fn record_publish_try(&mut self) -> u32 {
+        self.publish_tries = self.publish_tries.saturating_add(1);
+        self.publish_tries
+    }
+
+    /// Resets the publication attempt counter.
+    pub fn reset_publish_tries(&mut self) {
+        self.publish_tries = 0;
+    }
+
+    /// When the publication failure question was registered.
+    #[must_use]
+    pub fn publish_question(&self) -> Option<Timestamp> {
+        self.publish_question.as_ref().map(|q| q.at)
+    }
+
+    /// Task that owns the publication answer.
+    #[must_use]
+    pub fn publish_question_task(&self) -> Option<&TaskId> {
+        self.publish_question.as_ref().map(|q| &q.task)
+    }
+
+    /// Number of the publication question.
+    #[must_use]
+    pub fn publish_question_number(&self) -> Option<NonZeroU32> {
+        self.publish_question.as_ref().map(|q| q.number)
+    }
+
+    /// Destination recorded with the publication question, if known.
+    #[must_use]
+    pub fn publish_question_branch(&self) -> Option<&BranchName> {
+        self.publish_question.as_ref().and_then(|q| q.branch.as_ref())
+    }
+
+    /// Records the exact publication destination with its question identity.
+    pub fn record_publish_question_branch(
+        &mut self,
+        task: TaskId,
+        number: NonZeroU32,
+        at: Timestamp,
+        branch: BranchName,
+    ) {
+        self.publish_question = Some(PublishQuestion {
+            task,
+            number,
+            at,
+            branch: Some(branch),
+        });
+    }
+
+    /// Clears the publication question identity together.
+    pub fn clear_publish_question(&mut self) {
+        self.publish_question = None;
     }
 
     getter!("The item's number in the task list.", pub const fn id(&self) -> ItemId = self.id);
@@ -1268,6 +1435,13 @@ mod tests {
         (PhaseKind::Approved, "approved"),
         (PhaseKind::Done, "done"),
     ];
+
+    /// Restores a branchless question as written before destinations were persisted.
+    fn record_legacy_publish_question(item: &mut ItemProgress, task: &TaskId, number: NonZeroU32, at: Timestamp) {
+        let mut fixture = serde_json::to_value(&*item).unwrap();
+        fixture["publish_question"] = json!({ "task": task, "number": number, "at": at });
+        *item = serde_json::from_value(fixture).unwrap();
+    }
 
     /// An item's serialized shape, used to construct states that the public constructors refuse.
     #[derive(serde::Deserialize)]
@@ -1763,6 +1937,64 @@ mod tests {
     }
 
     #[test]
+    fn publish_tries_and_question_are_persisted_and_read_back() {
+        let mut item = progress_in(PhaseKind::InProgress);
+        assert_eq!(item.publish_tries(), 0);
+        assert_eq!(item.publish_question(), None);
+
+        assert_eq!(item.record_publish_try(), 1);
+        assert_eq!(item.record_publish_try(), 2);
+        record_legacy_publish_question(
+            &mut item,
+            &"task-20261111-153001-k3x9".parse().unwrap(),
+            NonZeroU32::new(3).unwrap(),
+            at(100),
+        );
+
+        let text = serde_json::to_string(&item).unwrap();
+        assert!(text.contains("\"publish_tries\":2"), "{text}");
+        assert!(text.contains("\"publish_question\":"), "{text}");
+
+        let back: ItemProgress = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.publish_tries(), 2);
+        assert_eq!(back.publish_question(), Some(at(100)));
+
+        item.reset_publish_tries();
+        item.clear_publish_question();
+        assert_eq!(item.publish_tries(), 0);
+        assert_eq!(item.publish_question(), None);
+    }
+
+    #[test]
+    fn publish_question_identity_stores_and_clears_task_and_number() {
+        let mut item = progress_in(PhaseKind::InProgress);
+        assert_eq!(item.publish_question_task(), None);
+        assert_eq!(item.publish_question_number(), None);
+
+        let t: TaskId = "task-20261111-153001-k3x9".parse().unwrap();
+        let num = NonZeroU32::new(3).unwrap();
+        record_legacy_publish_question(&mut item, &t, num, at(100));
+
+        assert_eq!(item.publish_question(), Some(at(100)));
+        assert_eq!(item.publish_question_task(), Some(&t));
+        assert_eq!(item.publish_question_number(), Some(num));
+
+        let text = serde_json::to_string(&item).unwrap();
+        assert!(text.contains("\"task\":\"task-20261111-153001-k3x9\""), "{text}");
+        assert!(text.contains("\"number\":3"), "{text}");
+
+        let back: ItemProgress = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.publish_question(), Some(at(100)));
+        assert_eq!(back.publish_question_task(), Some(&t));
+        assert_eq!(back.publish_question_number(), Some(num));
+
+        item.clear_publish_question();
+        assert_eq!(item.publish_question(), None);
+        assert_eq!(item.publish_question_task(), None);
+        assert_eq!(item.publish_question_number(), None);
+    }
+
+    #[test]
     fn beginning_merge_conflict_spends_pass() {
         let mut item = progress_in(PhaseKind::Approved);
         assert_eq!(item.merge_passes(), 0);
@@ -2117,5 +2349,35 @@ mod tests {
             review_json("inv-opus", 6, &changes)
         ])));
         serde_json::from_value::<ItemProgress>(fixing(&json!([review_json("inv-opus", 5, &changes)]))).unwrap();
+    }
+    #[test]
+    fn legacy_publication_question_requires_complete_identity() {
+        let original = serde_json::to_value(progress_in(PhaseKind::InProgress)).unwrap();
+        for complete in [false, true] {
+            let mut value = original.clone();
+            value["publish_question"] = serde_json::to_value(at(100)).unwrap();
+            if complete {
+                value["publish_question_task"] = serde_json::json!("task-20261111-153001-k3x9");
+                value["publish_question_number"] = serde_json::json!(3);
+            }
+            let item: ItemProgress = serde_json::from_value(value).unwrap();
+            assert_eq!(item.publish_question(), complete.then_some(at(100)));
+            assert_eq!(
+                item.publish_question_number(),
+                complete.then_some(NonZeroU32::new(3).unwrap())
+            );
+        }
+    }
+    #[test]
+    fn publication_question_retains_its_exact_destination_across_restart() {
+        let mut item = progress_in(PhaseKind::InProgress);
+        let task = "task-20261111-153001-k3x9".parse().unwrap();
+        let branch: BranchName = "agents/claude-1/task-1-1.1b".parse().unwrap();
+        item.record_publish_question_branch(task, NonZeroU32::new(3).unwrap(), at(100), branch.clone());
+        let saved = serde_json::to_value(&item).unwrap();
+        let restored: ItemProgress = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.publish_question_branch(), Some(&branch));
+        item.clear_publish_question();
+        assert_eq!(item.publish_question_branch(), None);
     }
 }

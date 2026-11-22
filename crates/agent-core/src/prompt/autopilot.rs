@@ -88,6 +88,10 @@ pub enum AutopilotPrompt {
     ReviewGate,
     /// Missing matching-head gate.
     ReviewGateMissing,
+    /// What the lead is told when publication cannot succeed.
+    PublishFailed,
+    /// The question written for the human when publication cannot succeed.
+    NoticePublishQuestion,
     /// What the lead is told when it is done and the gate has not passed at the tip of its branch.
     GateNotPassed,
     /// What the lead is told when it is done, the gate passed, and its branch contains none of the finished items.
@@ -271,6 +275,8 @@ impl AutopilotPrompt {
         Self::PrLeadInstructions,
         Self::ReviewGate,
         Self::ReviewGateMissing,
+        Self::PublishFailed,
+        Self::NoticePublishQuestion,
         Self::GateNotPassed,
         Self::BranchNotJoined,
         Self::TeamAsleep,
@@ -356,6 +362,7 @@ impl AutopilotPrompt {
                 | Self::NoticeResponseRefused
                 | Self::NoticeReportRefused
                 | Self::NoticePublishFailed
+                | Self::NoticePublishQuestion
                 | Self::NoticeMergeFailed
                 | Self::NoticeGithubRefused
                 | Self::NoticeClosed
@@ -416,6 +423,8 @@ impl AutopilotPrompt {
             Self::PrSplit => "harness/pr/split.md",
             Self::PrMergeConflict => "harness/pr/merge-conflict.md",
             Self::PrMergeConflictAsk => "harness/pr/merge-conflict-ask.md",
+            Self::PublishFailed => "harness/pr/publish-failed.md",
+            Self::NoticePublishQuestion => "harness/pr/notice-publish-question.md",
             Self::PrGate => "harness/pr/gate.md",
             Self::PrGateRetry => "harness/pr/gate-retry.md",
             Self::PrNoLead => "harness/pr/no-lead.md",
@@ -555,6 +564,8 @@ impl AutopilotPrompt {
             Self::PrUnpushedBase => &["base", "count", "first", "subject"],
             Self::PrSplit => &["split"],
             Self::PrMergeConflict => &["pr", "base", "branch", "pass", "passes"],
+            Self::PublishFailed => &["branch", "reason"],
+            Self::NoticePublishQuestion => &["task", "items", "branch", "reason"],
             Self::PrMergeConflictAsk => &["pr", "base", "passes"],
             Self::PrGate | Self::ReviewGate => &["head", "finished", "result", "log"],
             Self::PrLeadInstructions => &["description_file"],

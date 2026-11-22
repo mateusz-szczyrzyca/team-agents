@@ -122,3 +122,37 @@ pub async fn replace_text_file(path: &Path, text: &str, mode: u32) -> Result<(),
         source,
     })?
 }
+
+/// Creates a new text file at `path` with `text` and `mode`, failing if `path` already exists.
+///
+/// The text is written to a temporary file in the same directory and hard-linked into place at `path`, so the target
+/// never appears partially written and is never overwritten if it already exists (SEC-5).
+///
+/// # Errors
+/// [`ReplaceError`]. When `path` already exists, returns [`ReplaceError::Write`] whose source has [`io::ErrorKind::AlreadyExists`].
+pub async fn create_new_text_file(path: &Path, text: &str, mode: u32) -> Result<(), ReplaceError> {
+    let target = path.to_path_buf();
+    let text = text.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let directory = target
+            .parent()
+            .ok_or_else(|| ReplaceError::NoDirectory { path: target.clone() })?;
+        let write_error = |source| ReplaceError::Write {
+            path: target.clone(),
+            source,
+        };
+        let mut file = tempfile::NamedTempFile::new_in(directory).map_err(write_error)?;
+        file.write_all(text.as_bytes()).map_err(write_error)?;
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(mode))
+            .map_err(write_error)?;
+        file.as_file().sync_all().map_err(write_error)?;
+        std::fs::hard_link(file.path(), &target).map_err(write_error)?;
+        Ok(())
+    })
+    .await
+    .map_err(|source| ReplaceError::Worker {
+        path: path.to_path_buf(),
+        source,
+    })?
+}
