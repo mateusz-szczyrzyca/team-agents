@@ -431,7 +431,7 @@ async fn json_output_is_identical_with_and_without_task() {
 
     let dir_with = tempfile::tempdir().unwrap();
     let with_task = {
-        let listed = teams;
+        let listed = teams.clone();
         let _fake = FakeDaemon::serve(&socket(&dir_with), move |request| {
             Answer::Lines(vec![
                 Frame::Response(Response::ok(request.id, Reply::Teams { teams: listed.clone() }))
@@ -456,5 +456,6 @@ async fn json_output_is_identical_with_and_without_task() {
         String::from_utf8(out).unwrap()
     };
 
-    assert_eq!(with_task, without_task);
+    assert_eq!(without_task, with_task);
+    assert_eq!(without_task, crate::commands::status::render_json(&teams).unwrap());
 }
