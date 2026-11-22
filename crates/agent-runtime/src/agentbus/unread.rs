@@ -180,12 +180,39 @@ impl AgentBus {
 
 /// See [`AgentBus::said_since_finished`]; `bus_dir` is the directory of the bus.
 async fn said_since_finished(
-    _bus_dir: &Path,
-    _reader: Reader<'_>,
-    _sender: &str,
-    _finished: Finished<'_>,
+    bus_dir: &Path,
+    reader: Reader<'_>,
+    sender: &str,
+    finished: Finished<'_>,
 ) -> Result<Option<Vec<Said>>, UnreadMessagesError> {
-    Ok(None)
+    let path = bus_dir.join(LOG_FILE);
+    let Some(window) = read_window(&path).await? else {
+        return Ok(None);
+    };
+    let text = std::str::from_utf8(window.bytes()).map_err(|source| UnreadMessagesError::NotUtf8 {
+        path: path.clone(),
+        source,
+    })?;
+    let mut notice = None;
+    let mut answer = Vec::new();
+    for (index, text) in text.lines().enumerate().filter(|(_, text)| !text.trim().is_empty()) {
+        let line: Line = serde_json::from_str(text).map_err(|source| UnreadMessagesError::Line {
+            path: path.clone(),
+            line: index.saturating_add(1),
+            source,
+        })?;
+        if line.is_finished_notice(finished) {
+            // A newer notice is a newer hand-over: what the lead said after the older one answered that one.
+            notice = Some(line.id);
+            answer.clear();
+        } else if notice.is_some() && line.from == sender && line.is_direct_for(reader) {
+            answer.push(Said {
+                id: line.id,
+                text: line.text,
+            });
+        }
+    }
+    Ok(notice.map(|_| answer))
 }
 
 /// See [`AgentBus::last_message_from`]; `bus_dir` is the directory of the bus.
@@ -253,9 +280,6 @@ struct Line {
     /// The task a direct message is for; empty when it is for any session of the agent.
     #[serde(default)]
     task: String,
-    /// The kind of event the message is; empty in messages of older versions.
-    #[serde(default)]
-    kind: String,
     /// The fields of the event, as JSON; null in messages of older versions.
     #[serde(default)]
     data: serde_json::Value,
@@ -277,6 +301,24 @@ impl Line {
             self.to == "all"
         };
         addressed && (self.task.is_empty() || self.task == reader.task.as_str())
+    }
+
+    /// Whether this message is written to the session of `reader` by name or by task, not to everybody or to a team.
+    fn is_direct_for(&self, reader: Reader<'_>) -> bool {
+        (self.to == reader.agent.as_str() || self.to == reader.task.as_str()) && self.is_for(reader)
+    }
+
+    /// Whether this message is the notice that tells the lead of `finished` that its member reported `DONE` on its item.
+    fn is_finished_notice(&self, finished: Finished<'_>) -> bool {
+        let field = |name: &str| {
+            self.data
+                .pointer(&format!("/fields/{name}"))
+                .and_then(serde_json::Value::as_str)
+        };
+        self.to == finished.lead
+            && self.data.get("notice").and_then(serde_json::Value::as_str) == Some("member_finished")
+            && field("member") == Some(finished.member)
+            && field("item") == Some(finished.item)
     }
 }
 
