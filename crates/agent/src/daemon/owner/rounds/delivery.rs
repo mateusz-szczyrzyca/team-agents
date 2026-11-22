@@ -1,7 +1,8 @@
 //! Harness verification of coordinator delivery claims before publication.
 
 use agent_core::decide::delivery::{
-    DeliveryAction, DeliveryObservation, bind_delivery, delivery_action, delivery_report,
+    DeliveryAction, DeliveryObservation, DeliveryReportFacts, DeliveryVerdict, bind_delivery,
+    delivery_action, delivery_report, evaluate_delivery_report,
 };
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{BranchName, RoundId, TaskId, TeamId};
@@ -73,12 +74,24 @@ enum ClaimError {
     /// The PR could not be read from GitHub.
     #[error("cannot read the delivering pull request")]
     GitHub(#[from] agent_runtime::github::GitHubError),
+    /// An unmerged PR cannot deliver work.
+    #[error("the delivering pull request is not merged")]
+    Unmerged,
     /// A closed PR cannot deliver work until it is merged.
     #[error("the delivering pull request was closed without merging")]
     Closed,
     /// The stored team PR and the repository's PR disagree.
     #[error("the delivering pull request does not use its recorded team branch")]
     Branch,
+    /// The PR belongs to another repository.
+    #[error("the delivering pull request belongs to another repository")]
+    ForeignRepository,
+    /// The PR branch does not match the item's or part's branch.
+    #[error("the delivering pull request does not use the task's or part's branch")]
+    ForeignBranch,
+    /// The clock produced an invalid timestamp.
+    #[error(transparent)]
+    Clock(#[from] agent_core::state::InvalidTimestamp),
 }
 
 impl Owner {
@@ -96,12 +109,13 @@ impl Owner {
         };
         let mut look = Look::default();
         match claim {
-            Ok((round, number, state)) => {
+            Ok((round, pr, state)) => {
+                let number = pr.number;
                 self.parts
                     .state
                     .team_mut(team)
                     .ok_or_else(|| OwnerError::LostTeam { team: team.clone() })?
-                    .deliver_round(&round, number)
+                    .deliver_round_with_pr(&round, pr)
                     .map_err(DeliveryDaemonError::from)?;
                 look.changed = true;
                 if state == PullState::Merged {
@@ -149,47 +163,97 @@ impl Owner {
         task: &TaskId,
         team_id: &TeamId,
         number: PrNumber,
-    ) -> Result<(RoundId, PrNumber, PullState), ClaimError> {
+    ) -> Result<(RoundId, agent_core::state::PullRequest, PullState), ClaimError> {
         let team = self.parts.state.team(team_id).ok_or(ClaimError::Member)?;
         let run = team
             .find(task)
             .and_then(|(_, member)| member.runs().last())
             .ok_or(ClaimError::Member)?;
         let round = bind_delivery(team, run.rounds())?;
-        let pr = team
-            .delivery_pull_request(number)
-            .cloned()
-            .ok_or(agent_core::state::DeliverRoundError::NoTeamPr { number })?;
+        let is_part = team.round(&round).is_some_and(|r| r.part().is_some());
+        let recorded_pr = if is_part {
+            team.delivery_pull_request(number).cloned()
+        } else {
+            Some(
+                team.delivery_pull_request(number)
+                    .cloned()
+                    .ok_or(agent_core::state::DeliverRoundError::NoTeamPr { number })?,
+            )
+        };
         let progress = team
             .round(&round)
             .and_then(agent_core::state::Round::item)
             .and_then(|id| team.item(id))
             .ok_or(ClaimError::Member)?;
-        let ItemPhase::InProgress { assignee, branch } = progress.phase() else {
+        let ItemPhase::InProgress { assignee, branch } = progress.phase().clone() else {
             return Err(ClaimError::Member);
         };
-        let member = self.task_of(team_id, assignee).ok_or(ClaimError::Member)?;
-        let git = self.worktree_git(team.repo(), &member, assignee)?;
-        let item = branch.clone();
         let repo = team.repo().clone();
+        let member = self.task_of(team_id, &assignee).ok_or(ClaimError::Member)?;
+        let git = self.worktree_git(&repo, &member, &assignee)?;
+        let item = branch.clone();
         let base = self.base_branch(&repo)?;
         let pulls = self.pulls.clone().ok_or(ClaimError::Disabled)?;
         let github = self.github_for(&pulls, &repo, &git).await?;
         let remote = github.get_pull_request(number).await?;
-        if remote.head_branch != pr.branch {
-            return Err(ClaimError::Branch);
+
+        if is_part {
+            let same_repo = remote.origin == agent_runtime::github::Origin::SameRepository;
+            let pr_branch = remote.head_branch.as_str();
+            let task_branch = branch.as_str();
+            let part_branch = recorded_pr.as_ref().map(|p| p.branch.as_str());
+            let observation = match remote.state {
+                PullState::Open => DeliveryObservation::Open,
+                PullState::Closed => DeliveryObservation::Closed,
+                PullState::Merged => DeliveryObservation::Merged,
+            };
+
+            let verdict = evaluate_delivery_report(DeliveryReportFacts {
+                same_repo,
+                pr_branch,
+                task_branch,
+                part_branch,
+                state: observation,
+            });
+
+            match verdict {
+                DeliveryVerdict::Accepted => {}
+                DeliveryVerdict::RefusedForeignRepository => return Err(ClaimError::ForeignRepository),
+                DeliveryVerdict::RefusedForeignBranch => return Err(ClaimError::ForeignBranch),
+                DeliveryVerdict::RefusedOpen => return Err(ClaimError::Unmerged),
+                DeliveryVerdict::RefusedClosed => return Err(ClaimError::Closed),
+            }
+        } else {
+            let pr = recorded_pr
+                .as_ref()
+                .ok_or(agent_core::state::DeliverRoundError::NoTeamPr { number })?;
+            if remote.head_branch != pr.branch {
+                return Err(ClaimError::Branch);
+            }
+            if remote.state == PullState::Closed {
+                return Err(ClaimError::Closed);
+            }
         }
-        if remote.state == PullState::Closed {
-            return Err(ClaimError::Closed);
-        }
+
         git.fetch(&base).await.map_err(|source| DeliveryGitError::Read {
             read: DeliveryRead::Base,
             source,
         })?;
         let base = Revision::RemoteBranch(base);
-        git.verify_delivery(&item, &pr.branch, &base).await?;
+        git.verify_delivery(&item, &remote.head_branch, &base).await?;
         verify_published_tip(&git, &item, &base, &remote.head).await?;
-        Ok((round, number, remote.state))
+
+        let pr = if let Some(pr) = recorded_pr {
+            pr
+        } else {
+            let now = Timestamp::now(&self.parts.clock)?;
+            agent_core::state::PullRequest {
+                number,
+                branch: remote.head_branch,
+                opened_at: now,
+            }
+        };
+        Ok((round, pr, remote.state))
     }
 
     /// Polls accepted claims independently of the delivering item's current review or fix pass.
