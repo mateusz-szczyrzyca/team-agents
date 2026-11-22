@@ -514,6 +514,14 @@ ended with its report, by your `agent stop`, or as a second opinion that was aba
 listed, since `agent resume` can start it again. `--task` lists every task, and under each its plan (`[x] 1.1 …`), and
 the parts of a split.
 
+After a split part merges, the next part uses an available, qualified previous holder, then the configured
+`[replacement]` policy: an eligible replacement in configured order, or the lead. Stopped and failed tasks are
+excluded. If no fitting participant is allowed, the human gets one capability question; a busy fitting participant
+waits until available. An outside replacement keeps the task and worktree but starts its own CLI session, retaining
+the previous holder's history. Existing states, including splits left waiting by older versions, load and resume
+this scheduling on the next daemon poll. The optional `holder_after_run` state field records the session boundary;
+older tasks omit it and retain their existing session behavior until a handover.
+
 Every view of `agent status` prints the same state for a part of a split, whether its round is open or closed:
 `done` when a round of the item merged the part's pull request, `in progress` while its round is open, `to do` when it
 is next, and `waiting for 1.1a` (and the other parts it depends on) until they are over. A part whose round was closed

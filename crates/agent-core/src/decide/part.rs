@@ -77,7 +77,12 @@ impl PartChoice<'_> {
                 match prev.status {
                     TaskStatus::Stopped => format!("previous member {} is stopped", prev.agent.name()),
                     TaskStatus::Failed => format!("previous member {} failed", prev.agent.name()),
-                    _ => format!("previous member {}", prev.agent.name()),
+                    TaskStatus::Queued
+                    | TaskStatus::Running
+                    | TaskStatus::Waiting
+                    | TaskStatus::Questions
+                    | TaskStatus::Paused
+                    | TaskStatus::Done => format!("previous member {}", prev.agent.name()),
                 }
             }
         });

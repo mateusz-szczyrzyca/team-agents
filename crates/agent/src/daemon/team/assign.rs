@@ -111,57 +111,7 @@ pub(in crate::daemon) fn assignable_with_candidates(
             &format!("team={}, available={available:?}", team.id()),
             &formatted,
         );
-        for (item, agent) in &decided {
-            if let Some((part, _)) = team.next_part(*item) {
-                let required = required_tier(team, *item);
-                let previous = team
-                    .rounds()
-                    .iter()
-                    .rev()
-                    .find(|round| round.item() == Some(*item))
-                    .and_then(|round| {
-                        team.members_in(round.id())
-                            .into_iter()
-                            .find(|(role, _)| {
-                                matches!(role, agent_core::kinds::Role::Solo | agent_core::kinds::Role::Member)
-                            })
-                            .map(|(_, member)| member)
-                    });
-                let choice = if previous.is_some_and(|member| member.agent() == agent) {
-                    agent_core::decide::part::PartChoice::PreviousMember(agent)
-                } else if team
-                    .crew()
-                    .coordinator()
-                    .is_some_and(|c| c.agent().name() == agent.name())
-                {
-                    agent_core::decide::part::PartChoice::Lead(agent)
-                } else {
-                    agent_core::decide::part::PartChoice::Replacement(agent)
-                };
-                let previous = previous.map(|member| agent_core::decide::part::Candidate {
-                    agent: member.agent(),
-                    status: member.status(),
-                    handed_over: member.owes_lead(),
-                    busy: false,
-                });
-                let reason = choice.explanation(previous.as_ref());
-                agent_runtime::history::log_decision(
-                    "who_gets_part",
-                    &serde_json::json!({
-                        "team": team.id().as_str(),
-                        "item": item.to_string(),
-                        "part": part.to_string(),
-                        "required": format!("{required:?}"),
-                        "mode": format!("{mode:?}"),
-                    }),
-                    &serde_json::json!({
-                        "agent": agent.to_string(),
-                        "choice": choice.choice_name(),
-                        "reason": reason,
-                    }),
-                );
-            }
-        }
+        log_split_assignments(team, &decided, mode);
     }
     decided
         .into_iter()
@@ -204,6 +154,61 @@ pub(in crate::daemon) fn assignable_with_candidates(
             })
         })
         .collect()
+}
+
+/// Records the selected holder and reason for every assigned split part.
+fn log_split_assignments(team: &Team, decided: &[(ItemId, Participant)], mode: ReplacementMode) {
+    for (item, agent) in decided {
+        if let Some((part, _)) = team.next_part(*item) {
+            let required = required_tier(team, *item);
+            let previous = team
+                .rounds()
+                .iter()
+                .rev()
+                .find(|round| round.item() == Some(*item))
+                .and_then(|round| {
+                    team.members_in(round.id())
+                        .into_iter()
+                        .find(|(role, _)| {
+                            matches!(role, agent_core::kinds::Role::Solo | agent_core::kinds::Role::Member)
+                        })
+                        .map(|(_, member)| member)
+                });
+            let choice = if previous.is_some_and(|member| member.agent() == agent) {
+                agent_core::decide::part::PartChoice::PreviousMember(agent)
+            } else if team
+                .crew()
+                .coordinator()
+                .is_some_and(|c| c.agent().name() == agent.name())
+            {
+                agent_core::decide::part::PartChoice::Lead(agent)
+            } else {
+                agent_core::decide::part::PartChoice::Replacement(agent)
+            };
+            let previous = previous.map(|member| agent_core::decide::part::Candidate {
+                agent: member.agent(),
+                status: member.status(),
+                handed_over: member.owes_lead(),
+                busy: false,
+            });
+            let reason = choice.explanation(previous.as_ref());
+            agent_runtime::history::log_decision(
+                "who_gets_part",
+                &serde_json::json!({
+                    "team": team.id().as_str(),
+                    "item": item.to_string(),
+                    "part": part.to_string(),
+                    "required": format!("{required:?}"),
+                    "mode": format!("{mode:?}"),
+                }),
+                &serde_json::json!({
+                    "agent": agent.to_string(),
+                    "choice": choice.choice_name(),
+                    "reason": reason,
+                }),
+            );
+        }
+    }
 }
 
 /// The branch a member works `item` on.

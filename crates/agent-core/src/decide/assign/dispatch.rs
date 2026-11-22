@@ -171,7 +171,10 @@ fn dispatch_split_item<'a>(
                     ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } => {
                         assignee.as_str() == agent_name
                     }
-                    _ => false,
+                    ItemPhase::Pending
+                    | ItemPhase::InReview { .. }
+                    | ItemPhase::Approved { .. }
+                    | ItemPhase::Done { .. } => false,
                 }
         }) || ctx.reserved.contains(agent_name)
     };
@@ -245,34 +248,43 @@ fn dispatch_split_item<'a>(
         crate::decide::part::PartChoice::PreviousMember(agent)
         | crate::decide::part::PartChoice::Replacement(agent)
         | crate::decide::part::PartChoice::Lead(agent) => Ok(agent.clone()),
-        crate::decide::part::PartChoice::Nobody => {
-            let fitting = |candidate: crate::decide::part::Candidate<'_>, tier| {
-                !matches!(
-                    candidate.status,
-                    TaskStatus::Stopped | TaskStatus::Failed | TaskStatus::Done
-                ) && !candidate.handed_over
-                    && candidate.agent.tier() >= tier
-            };
-            let previous_fits = previous.is_some_and(|candidate| fitting(candidate, required));
-            let fitting = previous_fits
-                || match ctx.mode {
-                    crate::decide::replacement::ReplacementMode::Off => false,
-                    crate::decide::replacement::ReplacementMode::Lead => {
-                        lead.is_some_and(|candidate| fitting(candidate, required))
-                    }
-                    crate::decide::replacement::ReplacementMode::Auto => {
-                        let tier = previous.map_or(required, |candidate| candidate.agent.tier().max(required));
-                        replacements.iter().any(|candidate| fitting(*candidate, tier))
-                            || lead.is_some_and(|candidate| fitting(candidate, required))
-                    }
-                };
-            Err(Waiting {
-                item,
-                required,
-                reason: if fitting { WaitReason::Busy } else { WaitReason::Absent },
-            })
-        }
+        crate::decide::part::PartChoice::Nobody => Err(Waiting {
+            item,
+            required,
+            reason: split_wait_reason(ctx.mode, required, previous, &replacements, lead),
+        }),
     }
+}
+
+/// Distinguishes temporary unavailability from missing policy-eligible capability.
+fn split_wait_reason(
+    mode: crate::decide::replacement::ReplacementMode,
+    required: Tier,
+    previous: Option<crate::decide::part::Candidate<'_>>,
+    replacements: &[crate::decide::part::Candidate<'_>],
+    lead: Option<crate::decide::part::Candidate<'_>>,
+) -> WaitReason {
+    let fitting = |candidate: crate::decide::part::Candidate<'_>, tier| {
+        !matches!(
+            candidate.status,
+            TaskStatus::Stopped | TaskStatus::Failed | TaskStatus::Done
+        ) && !candidate.handed_over
+            && candidate.agent.tier() >= tier
+    };
+    let previous_fits = previous.is_some_and(|candidate| fitting(candidate, required));
+    let fitting = previous_fits
+        || match mode {
+            crate::decide::replacement::ReplacementMode::Off => false,
+            crate::decide::replacement::ReplacementMode::Lead => {
+                lead.is_some_and(|candidate| fitting(candidate, required))
+            }
+            crate::decide::replacement::ReplacementMode::Auto => {
+                let tier = previous.map_or(required, |candidate| candidate.agent.tier().max(required));
+                replacements.iter().any(|candidate| fitting(*candidate, tier))
+                    || lead.is_some_and(|candidate| fitting(candidate, required))
+            }
+        };
+    if fitting { WaitReason::Busy } else { WaitReason::Absent }
 }
 
 /// The item's minimum capability, defaulting to normal for an omitted directive.

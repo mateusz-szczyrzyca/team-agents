@@ -762,34 +762,7 @@ impl Owner {
         )?;
         let repo = team.repo().clone();
         for assigned in given {
-            let found = self
-                .parts
-                .state
-                .find_task(&assigned.task)
-                .ok_or_else(|| OwnerError::LostTask {
-                    task: assigned.task.clone(),
-                })?;
-            if found.member.agent().name() != assigned.agent.as_str() {
-                let from = found.member.agent().name().to_owned();
-                let holder = self
-                    .participant_of(&assigned.agent)
-                    .ok_or_else(|| OwnerError::LostTask {
-                        task: assigned.task.clone(),
-                    })?;
-                let now = Timestamp::now(&self.parts.clock)?;
-                self.parts
-                    .state
-                    .hand_over_task(&assigned.task, holder, now)
-                    .map_err(|source| OwnerError::HandOver {
-                        task: assigned.task.clone(),
-                        source,
-                    })?;
-                self.move_to(&assigned.task, team_id, TaskStatus::Queued, &mut look.events)?;
-                look.changed = true;
-                tracing::info!(event = LogEvent::TaskHandedOver.as_str(), team = %team_id,
-                    task = %assigned.task, from, to = %assigned.agent,
-                    "the next split part goes to a configured replacement in a fresh session");
-            }
+            self.hand_over_split_task(&assigned, team_id, look)?;
             let Some(base) = self
                 .parts
                 .settings
@@ -846,6 +819,44 @@ impl Owner {
                 );
             }
             self.release(&assigned.task, Why::Assigned(assigned.item), look)?;
+        }
+        Ok(())
+    }
+
+    /// Starts a fresh holder session when a split part selects another agent.
+    fn hand_over_split_task(
+        &mut self,
+        assigned: &Assigned,
+        team_id: &TeamId,
+        look: &mut Look,
+    ) -> Result<(), OwnerError> {
+        let found = self
+            .parts
+            .state
+            .find_task(&assigned.task)
+            .ok_or_else(|| OwnerError::LostTask {
+                task: assigned.task.clone(),
+            })?;
+        if found.member.agent().name() != assigned.agent.as_str() {
+            let from = found.member.agent().name().to_owned();
+            let holder = self
+                .participant_of(&assigned.agent)
+                .ok_or_else(|| OwnerError::LostTask {
+                    task: assigned.task.clone(),
+                })?;
+            let now = Timestamp::now(&self.parts.clock)?;
+            self.parts
+                .state
+                .hand_over_task(&assigned.task, holder, now)
+                .map_err(|source| OwnerError::HandOver {
+                    task: assigned.task.clone(),
+                    source,
+                })?;
+            self.move_to(&assigned.task, team_id, TaskStatus::Queued, &mut look.events)?;
+            look.changed = true;
+            tracing::info!(event = LogEvent::TaskHandedOver.as_str(), team = %team_id,
+                task = %assigned.task, from, to = %assigned.agent,
+                "the next split part goes to a configured replacement in a fresh session");
         }
         Ok(())
     }

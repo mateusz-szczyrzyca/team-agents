@@ -263,12 +263,12 @@ not duplicated. Each outcome is recorded as `split_decision` in history and the 
 Each part of an approved split executes in its own daemon round. When an approved part is ready to start, the daemon
 chooses its assignee following pure handover and capability rules:
 1. The member who held the previous round gets the next part, provided the member is available and qualified.
-2. If the previous member is stopped, failed or handed over, a qualified replacement member from the crew is chosen according to configured `[replacement]` rules.
-3. If no replacement member is available, the coordinator serves as fallback if it meets the part's required tier.
-4. If `[replacement] mode = "off"` or no agent in the crew meets the required tier, the item blocks and the human is asked once in a questions file (`notice-tier-question.md`), avoiding repeated lead wakeups.
+2. If the previous member is stopped, failed or handed over, a qualified agent from `[replacement] agents` is chosen in configured order, including an agent outside the crew. The replacement must meet both the part's tier and the previous holder's tier.
+3. In `auto` mode, if no configured replacement is available, the coordinator serves as fallback if available and qualified. In `lead` mode the coordinator is the only fallback.
+4. If the policy offers no fitting candidate, the human is asked once in a questions file (`notice-tier-question.md`). A fitting candidate that is busy waits without a capability question. In `off` mode a stopped previous holder has no fallback.
 
 When an external or already merged pull request of the same repository delivers the work of a split part, the
 coordinator can report it with standalone `DELIVERED: #N` in its final message. The daemon accepts the delivery if
-the pull request is merged and targets either the parent task branch or the current split part branch, advancing the
+the pull request is merged and its head is either the assigned task branch or the current split part branch, advancing the
 item to the next part or marking it done if all parts have merged. PRs that are unmerged, closed without merging,
-belong to a foreign repository, or target an unrelated branch are refused with a diagnostic reason sent to the lead.
+belong to a foreign repository, or use an unrelated head branch are refused with a diagnostic reason sent to the lead.

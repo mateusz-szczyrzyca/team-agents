@@ -1520,3 +1520,17 @@ response end with it too, when the file is there (a pass begun by an older daemo
 started at or after the verdict (`Response::AfterVerdict`); a message from before the review, or from a run that started
 before it and ended after it, is not judged.
 
+
+### Split continuation and outside replacement
+
+Scheduling a ready split part uses the last round's member task rather than its lead's integration run. The pure
+assignment decision excludes stopped, failed and handed-over holders, applies the configured replacement mode and
+ordered agent list, then falls back to a qualified lead when the mode permits. Outside candidates carry their real
+configured tier and current global run occupancy. Capability waits consume the same facts: busy capability waits,
+absent capability asks the human once. The daemon logs `who_gets_part` with the choice and reason.
+
+An outside replacement takes over the previous member's task, preserving its worktree, bus identity and run history.
+The optional member `holder_after_run` points to the prior holder's last run; session lookup and failure accounting
+exclude runs at or before that boundary. Handing work to a replacement clears the prior holder's lead debt without
+creating a renewal or a fictitious failure. States without the field keep loading. Old split states are scheduled
+from their persisted merged rounds on the next poll, including after a restart between merge and continuation.
