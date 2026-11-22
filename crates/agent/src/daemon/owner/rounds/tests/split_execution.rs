@@ -534,3 +534,70 @@ async fn split_part_delivered_by_merged_pr_outside_round_completes_item_and_team
     assert!(team.rounds().iter().all(|round| !round.is_open()));
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn earlier_split_part_pr_is_refused_for_next_part_as_foreign_branch() {
+    let mut rig = Rig::new(
+        &[
+            investigator(
+                "inv-lead",
+                "ask,clean-done:DELIVERED: #1,clean-done:DELIVERED: #1,sleep",
+            ),
+            normal("claude-1", "clean-done:already delivered,clean-done:already delivered,sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team_id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    let branch_part_a = format!("agents/claude-1/{}-1.1a", tasks[1]);
+    super::rig::git(&rig.origin, &["branch", &branch_part_a, "main"]);
+    let pr1 = rig.github.foreign_pull(&branch_part_a);
+    assert_eq!(pr1, 1);
+    rig.github.merged_by_a_human(1);
+
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.status_is(&tasks[1], TaskStatus::Waiting).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: n(1),
+                answers: answers(&[(1, &approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+    // Round 1 delivers via PR 1
+    rig.state_where("round 1 closed", |state| {
+        let team = state.team(&team_id).unwrap();
+        team.rounds().first().is_some_and(|r| !r.is_open())
+    })
+    .await;
+    // Round 2 opens for Part 1.1b. Lead tries to deliver part b with PR 1 (which belongs to part a)
+    // -> refused as foreign branch!
+    rig.state_where("lead refusal reaches task 0", |state| {
+        state.team(&team_id).unwrap().find(&tasks[0]).unwrap().1.runs().len() >= 4
+    })
+    .await;
+    let prompt = rig.prompt(&tasks[0], 4).await;
+    assert!(
+        prompt.contains("the delivering pull request does not use the task's or part's branch"),
+        "{prompt}"
+    );
+    let state = rig.state();
+    let team = state.team(&team_id).unwrap();
+    assert_eq!(team.rounds().len(), 2);
+    let round2 = &team.rounds()[1];
+    assert!(round2.is_open());
+    assert_eq!(round2.delivered_by(), None);
+    rig.stop().await.unwrap();
+}

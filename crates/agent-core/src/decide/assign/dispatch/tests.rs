@@ -433,3 +433,81 @@ fn split_part_assigns_to_replacement_agent_after_task_handover() {
     let dispatched = dispatch(&team);
     assert_eq!(dispatched.assigned, vec![(item, normal("claude-rep"))]);
 }
+
+#[test]
+fn split_part_prefers_member_over_coordinator_when_both_participated_in_previous_round() {
+    use crate::state::fixtures::{drive, round_id, run, team};
+    use crate::state::{NewRun, PhaseKind, RoundEnd};
+    let item = "1.2".parse().unwrap();
+    let mut team = team(1);
+    let plan = serde_json::from_value(serde_json::json!({
+        "parent": "1.2", "parts": [
+            {"title":"First", "delivers":"First document", "checks":"Read it", "depends_on":[]},
+            {"title":"Second", "delivers":"Second document", "checks":"Read it", "depends_on":["a"]}
+        ]
+    }))
+    .unwrap();
+    team.open_round(round_id(1), Some(item), at(1)).unwrap();
+    drive(&mut team, "1.2", PhaseKind::InProgress);
+    team.activate_split(plan).unwrap();
+    // Coordinator (task 1) runs in round 1
+    team.begin_run(
+        &task(1),
+        NewRun {
+            id: run(1),
+            at: at(2),
+            session: None,
+            rounds: vec![round_id(1)],
+        },
+    )
+    .unwrap();
+    // Member (task 2) also runs in round 1
+    team.begin_run(
+        &task(2),
+        NewRun {
+            id: run(2),
+            at: at(3),
+            session: None,
+            rounds: vec![round_id(1)],
+        },
+    )
+    .unwrap();
+    let mut handle = team.item_mut(item).unwrap();
+    handle
+        .advance(crate::state::ItemPhase::InReview {
+            pr: crate::state::fixtures::pr(1),
+            reviews: Vec::new(),
+        })
+        .unwrap();
+    let reviewer = crate::state::fixtures::review("inv-codex", 21, crate::state::ReviewOutcome::Pending);
+    handle.ask_reviews(vec![reviewer]).unwrap();
+    handle
+        .submit_review(
+            &crate::state::fixtures::task(21),
+            crate::status::ReviewVerdict::Approve,
+            at(5),
+        )
+        .unwrap();
+    let crate::state::ItemPhase::InReview { reviews, .. } = handle.phase().clone() else {
+        panic!("in review")
+    };
+    handle
+        .advance(crate::state::ItemPhase::Approved {
+            pr: crate::state::fixtures::pr(1),
+            reviews,
+        })
+        .unwrap();
+    handle
+        .advance(crate::state::ItemPhase::Done {
+            completion: crate::state::Completion::Merged {
+                pr: crate::state::fixtures::pr(1),
+                at: at(10),
+            },
+        })
+        .unwrap();
+    team.close_round(&round_id(1), at(10), RoundEnd::Merged).unwrap();
+    assert_eq!(team.next_part(item).unwrap().0.to_string(), "1.2b");
+    // Under ReplacementMode::Off, replacement is disabled: only the previous member gets the part
+    let dispatched = dispatch_in_mode(&team, crate::decide::replacement::ReplacementMode::Off);
+    assert_eq!(dispatched.assigned, vec![(item, normal("codex-1"))]);
+}

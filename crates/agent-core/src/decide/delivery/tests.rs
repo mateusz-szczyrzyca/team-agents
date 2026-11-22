@@ -208,6 +208,15 @@ fn evaluate_delivery_report_table_covers_all_spec_cases() {
             state: DeliveryObservation::Merged,
             expected: DeliveryVerdict::RefusedForeignBranch,
         },
+        Case {
+            name: "pr branch of parent task branch is refused when delivering a split part",
+            same_repo: true,
+            pr_branch: "agents/codex-1/task-1-1.1",
+            task_branch: "agents/codex-1/task-1-1.1",
+            part_branch: Some("agents/codex-1/task-1-1.1b"),
+            state: DeliveryObservation::Merged,
+            expected: DeliveryVerdict::RefusedForeignBranch,
+        },
     ];
 
     for case in cases {
