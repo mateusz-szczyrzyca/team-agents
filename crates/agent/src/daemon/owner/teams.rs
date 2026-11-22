@@ -936,7 +936,11 @@ impl Owner {
             .filter(|(role, _)| *role == Role::Worker)
         {
             let name: AgentName = member.agent().name().parse()?;
-            if member.status() != TaskStatus::Waiting || self.serving.contains_key(member.task()) {
+            // A worker whose result is not settled yet is busy: its worktree is what the check reads and the commit comes from.
+            if member.status() != TaskStatus::Waiting
+                || self.serving.contains_key(member.task())
+                || agent_runtime::worker_request::has_pending(&self.parts.store.home().task_dir(member.task()))
+            {
                 busy.push(name.clone());
             }
             workers.push((name, member.task().clone()));

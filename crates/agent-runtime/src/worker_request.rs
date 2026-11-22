@@ -52,6 +52,14 @@ pub enum PendingError {
         /// The failure.
         source: serde_json::Error,
     },
+    /// The file holds another request than the one its name says.
+    #[error("{path:?} holds request H{found}, not the one in its name")]
+    Mismatch {
+        /// The file.
+        path: PathBuf,
+        /// The number of the request it holds.
+        found: std::num::NonZeroU64,
+    },
     /// A request cannot be written as JSON.
     #[error("the request cannot be written as JSON")]
     Encode(#[source] serde_json::Error),
@@ -65,9 +73,11 @@ impl PendingError {
     #[must_use]
     pub fn path(&self) -> Option<&Path> {
         match self {
-            Self::Write { path, .. } | Self::List { path, .. } | Self::Read { path, .. } | Self::Parse { path, .. } => {
-                Some(path)
-            }
+            Self::Write { path, .. }
+            | Self::List { path, .. }
+            | Self::Read { path, .. }
+            | Self::Parse { path, .. }
+            | Self::Mismatch { path, .. } => Some(path),
             Self::Encode(_) | Self::Clock(_) => None,
         }
     }
@@ -317,62 +327,36 @@ pub async fn read_pending_each(task_dir: &Path) -> Result<Vec<Result<Pending, Pe
                 source,
             });
         read.push(text.and_then(|text| {
-            serde_json::from_str::<Pending>(&text).map_err(|source| PendingError::Parse {
+            let pending = serde_json::from_str::<Pending>(&text).map_err(|source| PendingError::Parse {
                 path: path.clone(),
                 source,
-            })
+            })?;
+            // A file is the request of its name; one that holds another would be settled under the wrong number.
+            if request_of_file(&path) == Some(pending.request) {
+                Ok(pending)
+            } else {
+                Err(PendingError::Mismatch {
+                    path: path.clone(),
+                    found: pending.request.number(),
+                })
+            }
         }));
     }
     Ok(read)
 }
 
-/// The requests kept in the task directory `task_dir`, oldest first.
-///
-/// # Errors
-/// [`PendingError`].
-pub async fn read_pending(task_dir: &Path) -> Result<Vec<Pending>, PendingError> {
-    let mut entries = match tokio::fs::read_dir(task_dir).await {
-        Ok(entries) => entries,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(source) => {
-            return Err(PendingError::List {
-                path: task_dir.to_owned(),
-                source,
-            });
-        }
-    };
-    let mut found = Vec::new();
-    loop {
-        let entry = match entries.next_entry().await {
-            Ok(Some(entry)) => entry,
-            Ok(None) => break,
-            Err(source) => {
-                return Err(PendingError::List {
-                    path: task_dir.to_owned(),
-                    source,
-                });
-            }
-        };
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
-        if !name.starts_with(FILE_PREFIX) || Path::new(name).extension().is_none_or(|extension| extension != "json") {
-            continue;
-        }
-        let path = entry.path();
-        let text = tokio::fs::read_to_string(&path)
-            .await
-            .map_err(|source| PendingError::Read {
-                path: path.clone(),
-                source,
-            })?;
-        let pending: Pending = serde_json::from_str(&text).map_err(|source| PendingError::Parse {
-            path: path.clone(),
-            source,
-        })?;
-        found.push(pending);
-    }
-    found.sort_by_key(|pending| pending.request);
-    Ok(found)
+/// Whether the task directory `task_dir` holds a file of a request that is not settled yet: a worker with one is busy.
+/// A directory that cannot be listed holds none.
+#[must_use]
+pub fn has_pending(task_dir: &Path) -> bool {
+    std::fs::read_dir(task_dir).is_ok_and(|entries| {
+        entries.filter_map(Result::ok).any(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                name.starts_with(FILE_PREFIX)
+                    && Path::new(name).extension().is_some_and(|extension| extension == "json")
+            })
+        })
+    })
 }
 
 #[cfg(test)]

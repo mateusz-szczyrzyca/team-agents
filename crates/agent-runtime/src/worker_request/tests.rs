@@ -248,3 +248,37 @@ async fn a_failure_of_a_file_names_the_file_and_one_of_the_clock_names_none() {
         None
     );
 }
+
+#[tokio::test]
+async fn a_file_that_holds_another_request_than_its_name_says_is_a_failure_of_that_file() {
+    let dir = tempfile::tempdir().expect("a directory");
+    write_pending(dir.path(), &pending(1, Stage::Ended)).expect("written");
+    let named_for_five = dir.path().join("worker-request-5.json");
+    std::fs::rename(pending_path(dir.path(), request(1)), &named_for_five).expect("renamed");
+
+    let mut read = read_pending_each(dir.path()).await.expect("listed");
+    let error = read.remove(0).expect_err("a mismatch");
+
+    assert!(
+        matches!(&error, PendingError::Mismatch { found, .. } if found.get() == 1),
+        "{error:?}"
+    );
+    assert_eq!(error.path(), Some(named_for_five.as_path()));
+}
+
+#[test]
+fn a_directory_has_a_pending_request_while_a_file_of_one_is_in_it_and_not_when_it_is_set_aside() {
+    let dir = tempfile::tempdir().expect("a directory");
+    assert!(!has_pending(dir.path()), "an empty directory");
+    assert!(
+        !has_pending(&dir.path().join("task-none")),
+        "a directory that is not there"
+    );
+    write_pending(dir.path(), &pending(3, Stage::Ended)).expect("written");
+    assert!(has_pending(dir.path()));
+
+    let path = pending_path(dir.path(), request(3));
+    std::fs::rename(&path, dir.path().join("worker-request-3.json.damaged")).expect("set aside");
+
+    assert!(!has_pending(dir.path()));
+}

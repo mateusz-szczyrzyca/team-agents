@@ -555,6 +555,8 @@ pub(super) struct Owner {
     request_checking: HashMap<tokio::task::Id, worker_result::Checking>,
     /// The files of requests of workers that were told as unreadable, so that each is told once.
     unreadable_requests: HashSet<String>,
+    /// The requests of workers that were answered by this daemon, so that a file that could not be removed is not answered again.
+    answered_requests: HashSet<agent_runtime::agentbus::RequestId>,
 }
 
 /// The next report of the watch on the questions files; never, when the files are not watched.
@@ -631,6 +633,7 @@ impl Owner {
             request_checks: JoinSet::new(),
             request_checking: HashMap::new(),
             unreadable_requests: HashSet::new(),
+            answered_requests: HashSet::new(),
             aborted_checks: HashSet::new(),
             parked: HashMap::new(),
         }
