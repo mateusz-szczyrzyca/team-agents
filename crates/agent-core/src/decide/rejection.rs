@@ -9,6 +9,7 @@
 use std::num::NonZeroU32;
 
 use crate::ids::ItemId;
+use crate::state::{RunEnd, RunState};
 
 /// The word that starts the line of a lead's final message that sends an item back, before its `:`.
 const RETURNED: &str = "RETURNED";
@@ -193,9 +194,35 @@ impl Facts {
     /// hand-over was sent back already: the end of the last run, the number of the last run, and the number of the last
     /// run that ended `DONE`, which is the one the hand-over was made after.
     #[must_use]
-    pub fn from_runs(held: Held, answered: Answered, _runs: &[crate::state::Run]) -> Self {
-        let first = NonZeroU32::MIN;
-        Self::new(held, LastRun::Never, MovedOn::No, first, first).with_answered(answered)
+    pub fn from_runs(held: Held, answered: Answered, runs: &[crate::state::Run]) -> Self {
+        let last_run = runs.last().map_or(LastRun::Never, |run| match run.state() {
+            RunState::Running => LastRun::Running,
+            RunState::Ended { end, .. } => match end {
+                RunEnd::Reported { outcome } => LastRun::Reported(*outcome),
+                RunEnd::Stopped => LastRun::Stopped,
+                RunEnd::NoStatus { .. }
+                | RunEnd::QuotaExhausted { .. }
+                | RunEnd::RateLimited
+                | RunEnd::Hung
+                | RunEnd::TurnLimit => LastRun::NoStatus,
+            },
+        });
+        let handed_over_after = runs
+            .iter()
+            .rposition(|run| {
+                matches!(
+                    run.state(),
+                    RunState::Ended {
+                        end: RunEnd::Reported {
+                            outcome: crate::status::RunOutcome::Done
+                        },
+                        ..
+                    }
+                )
+            })
+            .map_or(NonZeroU32::MIN, |index| number(index.saturating_add(1)));
+        let last_run_number = number(runs.len().max(1));
+        Self::new(held, last_run, MovedOn::No, handed_over_after, last_run_number).with_answered(answered)
     }
 
     /// The same facts with the lead's end `lead`.
@@ -233,6 +260,15 @@ impl Facts {
             ..self
         }
     }
+}
+
+/// The run number `position`, counted from one: a list of runs is never as long as `u32` can count, so the largest
+/// number stands for a position beyond it.
+fn number(position: usize) -> NonZeroU32 {
+    u32::try_from(position)
+        .ok()
+        .and_then(NonZeroU32::new)
+        .unwrap_or(NonZeroU32::MAX)
 }
 
 /// What a return of `line` counts.
