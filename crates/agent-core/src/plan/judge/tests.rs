@@ -139,3 +139,38 @@ fn previously_confirmed_reopened_steps_are_selected_again() {
         );
     }
 }
+
+/// The check of the first step of a plan whose step names `check` (none when it names none).
+fn plan_check_of(check: Option<&str>) -> Plan {
+    let line = check.map_or(String::new(), |check| format!("    Check: {check}\n"));
+    parse_plan(&format!("Finish it.\n\n1. Work\n[x] 1.1 Do it\n{line}")).unwrap()
+}
+
+#[test]
+fn plan_check_table() {
+    let refuse = vec!["agent gate".to_owned(), "make gate".to_owned()];
+    let rows: Vec<(&str, Option<&str>, u64, CheckRun<'static>)> = vec![
+        ("no check", None, 120, CheckRun::Inline),
+        ("reviewer", Some("reviewer"), 120, CheckRun::Inline),
+        ("exists", Some("exists ok.txt"), 120, CheckRun::Inline),
+        ("command runs", Some("cargo test"), 120, CheckRun::Run("cargo test")),
+        ("refused gate", Some("make gate"), 120, CheckRun::Refused),
+        ("refused gate with flags", Some("agent gate --locked"), 120, CheckRun::Refused),
+        ("prefix in a longer word", Some("make gate-full"), 120, CheckRun::Run("make gate-full")),
+        ("checks switched off", Some("cargo test"), 0, CheckRun::Disabled),
+        ("refused beats switched off", Some("make gate"), 0, CheckRun::Refused),
+        ("exists is inline when switched off", Some("exists ok.txt"), 0, CheckRun::Inline),
+    ];
+    for (name, check, seconds, expected) in rows {
+        let plan = plan_check_of(check);
+        let step = plan.steps().next().unwrap();
+        assert_eq!(check_run(step.check(), seconds, &refuse), expected, "case: {name}");
+    }
+}
+
+#[test]
+fn plan_check_without_refused_prefixes_runs_gate_commands() {
+    let plan = plan_check_of(Some("make gate"));
+    let step = plan.steps().next().unwrap();
+    assert_eq!(check_run(step.check(), 120, &[]), CheckRun::Run("make gate"));
+}

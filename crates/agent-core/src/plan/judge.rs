@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Plan, Step, StepState};
+use super::{Check, Plan, Step, StepState};
 use crate::ids::ItemId;
 
 #[cfg(test)]
@@ -100,4 +100,24 @@ pub fn steps_to_judge_with<'a, 'b>(
     }
 
     to_judge
+}
+
+/// What the daemon does with the check of a step that became done.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckRun<'a> {
+    /// The check is judged without a command: the step has no check, its check is `reviewer`, or it is `exists`.
+    Inline,
+    /// The command is a refused gate: the step is declared and no command runs.
+    Refused,
+    /// Command checks are switched off (`check_seconds = 0`): the step is declared and no command runs.
+    Disabled,
+    /// The command runs in the worktree under the time limit.
+    Run(&'a str),
+}
+
+/// What is done with the check of a step that became done, given `check_seconds` and the refused prefixes.
+#[must_use]
+pub fn check_run<'a>(check: Option<&'a Check>, check_seconds: u64, refused: &[String]) -> CheckRun<'a> {
+    let _ = (check, check_seconds, refused);
+    CheckRun::Inline
 }
