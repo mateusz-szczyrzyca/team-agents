@@ -12,7 +12,7 @@ fn agent(name: &str) -> AgentName {
 }
 
 /// A free agent of `tier` on a CLI with `cli_runs` runs, outside the team.
-fn free<'a>(name: &'a AgentName, tier: Tier, cli_runs: u32) -> Offer<'a> {
+fn free(name: &AgentName, tier: Tier, cli_runs: u32) -> Offer<'_> {
     Offer {
         agent: name,
         tier,
