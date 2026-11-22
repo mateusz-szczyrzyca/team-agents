@@ -167,5 +167,8 @@ fn old_state_from_20261121_case_3_stopped_member_on_split_part_loads_and_continu
     let team = &state.teams()[0];
     assert_eq!(team.next_part("1.1".parse().unwrap()).unwrap().0.to_string(), "1.1b");
     let dispatched = crate::decide::assign::dispatch::dispatch(team);
-    assert_eq!(dispatched.assigned, vec![("1.1".parse().unwrap(), crate::state::fixtures::normal("lead"))]);
+    assert_eq!(
+        dispatched.assigned,
+        vec![("1.1".parse().unwrap(), crate::state::fixtures::normal("lead"))]
+    );
 }

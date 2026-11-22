@@ -1,8 +1,8 @@
 //! Harness verification of coordinator delivery claims before publication.
 
 use agent_core::decide::delivery::{
-    DeliveryAction, DeliveryObservation, DeliveryReportFacts, DeliveryVerdict, bind_delivery,
-    delivery_action, delivery_report, evaluate_delivery_report,
+    DeliveryAction, DeliveryObservation, DeliveryReportFacts, DeliveryVerdict, bind_delivery, delivery_action,
+    delivery_report, evaluate_delivery_report,
 };
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{BranchName, RoundId, TaskId, TeamId};

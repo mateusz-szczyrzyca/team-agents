@@ -1479,12 +1479,16 @@ fn a_split_part_with_stopped_member_shows_in_status_summary() {
         },
     )
     .unwrap();
-    team.activate_split(serde_json::from_value(serde_json::json!({
-        "parent":"1.1", "parts":[
-            {"title":"First", "delivers":"First document", "checks":"Read it", "depends_on":[]},
-            {"title":"Second", "delivers":"Second document", "checks":"Read it", "depends_on":["a"]}
-        ]
-    })).unwrap()).unwrap();
+    team.activate_split(
+        serde_json::from_value(serde_json::json!({
+            "parent":"1.1", "parts":[
+                {"title":"First", "delivers":"First document", "checks":"Read it", "depends_on":[]},
+                {"title":"Second", "delivers":"Second document", "checks":"Read it", "depends_on":["a"]}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
     let reviews = vec![agent_core::state::Review {
         outcome: agent_core::state::ReviewOutcome::Submitted {
             verdict: agent_core::status::ReviewVerdict::Approve,
@@ -1518,16 +1522,18 @@ fn a_split_part_with_stopped_member_shows_in_status_summary() {
         },
     )
     .unwrap();
-    team.close_round(&round, at(2), agent_core::state::RoundEnd::Merged).unwrap();
+    team.close_round(&round, at(2), agent_core::state::RoundEnd::Merged)
+        .unwrap();
     // Case 3: member stopped
-    team.find_mut(&task(2)).unwrap().1.transition(TaskStatus::Stopped).unwrap();
+    team.find_mut(&task(2))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Stopped)
+        .unwrap();
     let summary = TeamSummary::from(&team);
     assert_eq!(
         super::splits::lines(&summary),
-        vec![
-            "    1.1a  done  First",
-            "    1.1b  to do  Second",
-        ]
+        vec!["    1.1a  done  First", "    1.1b  to do  Second",]
     );
 }
 

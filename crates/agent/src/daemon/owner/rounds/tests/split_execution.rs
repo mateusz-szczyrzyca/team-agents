@@ -470,7 +470,10 @@ async fn split_part_delivery_with_unmerged_pr_is_refused_and_round_stays_open() 
 async fn split_part_delivered_by_merged_pr_outside_round_completes_item_and_team() {
     let mut rig = Rig::new(
         &[
-            investigator("inv-lead", "ask,clean-done:DELIVERED: #1,clean-done:DELIVERED: #2,sleep"),
+            investigator(
+                "inv-lead",
+                "ask,clean-done:DELIVERED: #1,clean-done:DELIVERED: #2,sleep",
+            ),
             normal("claude-1", "clean-done:already delivered,clean-done:already delivered"),
             investigator("inv-r1", "done:VERDICT: APPROVE"),
             investigator("inv-r2", "done:VERDICT: APPROVE"),
@@ -516,7 +519,10 @@ async fn split_part_delivered_by_merged_pr_outside_round_completes_item_and_team
     let state = rig
         .state_where("team done after last part", |state| {
             let team = state.team(&team_id).unwrap();
-            matches!(team.item("1.1".parse().unwrap()).unwrap().phase(), ItemPhase::Done { .. })
+            matches!(
+                team.item("1.1".parse().unwrap()).unwrap().phase(),
+                ItemPhase::Done { .. }
+            )
         })
         .await;
     let team = state.team(&team_id).unwrap();
