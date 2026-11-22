@@ -933,8 +933,9 @@ func (s *Server) planCheck(f DelegateFields) (string, *DelegateError) {
 	return "", opErr(cause, "%s", trunc(advice, 1000))
 }
 
-// delegatePlanMissing refuses a request of an agent with a plan that lacks one of its four pieces before the
-// harness is asked: each missing piece has its own cause and says what to add.
+// delegatePlanMissing refuses a request of an agent with a plan that lacks one of its four pieces: planCheck asks it
+// after the harness has answered that the plan file is there (any answer but NO-PLAN). Each missing piece has its own
+// cause and says what to add.
 func delegatePlanMissing(step, files, check, doing string) *DelegateError {
 	switch {
 	case step == "":
