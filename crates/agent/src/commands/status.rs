@@ -169,6 +169,15 @@ struct Shown {
     history: Option<HistoryHealth>,
 }
 
+/// Whether a status request negotiates the daemon's crate versions for the opening list header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VersionsQuery {
+    /// Negotiates protocol seven so the daemon attaches `daemon_versions` to the status reply.
+    Include,
+    /// Uses ordinary executor-aware status negotiation without requesting `daemon_versions`.
+    Omit,
+}
+
 /// Asks the daemon for the status of `target` (every team without one) and writes it to `out`, its versions first; the
 /// tasks that run say when they were last active. A team or a task is shown with its tasks whatever `detail` is.
 ///
@@ -185,7 +194,12 @@ pub(crate) async fn status_shown(
         return show_round(connection, round, Some(activity), out).await;
     }
     let is_list = target.is_none();
-    let shown = listing_text(connection, target, activity, detail).await?;
+    let query = if is_list {
+        VersionsQuery::Include
+    } else {
+        VersionsQuery::Omit
+    };
+    let shown = listing_text(connection, target, activity, detail, query).await?;
     let prefix = if is_list {
         versions::block(&of_this_build(), shown.daemon.as_ref())
     } else {
@@ -205,7 +219,7 @@ pub(crate) async fn status_running_shown(
     detail: Detail,
     out: &mut impl Write,
 ) -> Result<(), StatusError> {
-    let shown = running_text(connection, activity, detail).await?;
+    let shown = running_text(connection, activity, detail, VersionsQuery::Include).await?;
     write_shown(
         out,
         &versions::block(&of_this_build(), shown.daemon.as_ref()),
@@ -225,7 +239,7 @@ pub(crate) async fn status_active(
     if let Some(Target::Round(round)) = target {
         return show_round(connection, round, Some(activity), out).await;
     }
-    let shown = listing_text(connection, target, activity, Detail::Tasks).await?;
+    let shown = listing_text(connection, target, activity, Detail::Tasks, VersionsQuery::Omit).await?;
     write_shown(out, "", &shown, activity)
 }
 
@@ -236,7 +250,7 @@ pub(crate) async fn status_running(
     activity: &Activity,
     out: &mut impl Write,
 ) -> Result<(), StatusError> {
-    let shown = running_text(connection, activity, Detail::Tasks).await?;
+    let shown = running_text(connection, activity, Detail::Tasks, VersionsQuery::Omit).await?;
     write_shown(out, "", &shown, activity)
 }
 
@@ -246,10 +260,11 @@ async fn listing_text(
     target: Option<Target>,
     activity: &Activity,
     detail: Detail,
+    query: VersionsQuery,
 ) -> Result<Shown, StatusError> {
     // A team or a task is shown with its tasks, as it always was.
     let detail = if target.is_some() { Detail::Tasks } else { detail };
-    let listing = teams(connection, target).await?;
+    let listing = teams(connection, target, query).await?;
     let told = rounds::told(connection, activity, &listing.teams).await?;
     let text = render_in(
         &listing.teams,
@@ -267,8 +282,13 @@ async fn listing_text(
 }
 
 /// What the teams with a round that goes on say, in `detail`, with those rounds only.
-async fn running_text(connection: &mut Connection, activity: &Activity, detail: Detail) -> Result<Shown, StatusError> {
-    let listing = teams(connection, None).await?;
+async fn running_text(
+    connection: &mut Connection,
+    activity: &Activity,
+    detail: Detail,
+    query: VersionsQuery,
+) -> Result<Shown, StatusError> {
+    let listing = teams(connection, None, query).await?;
     // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
     // part's round is one that is over.
     let listed: Vec<TeamSummary> = listing
@@ -319,7 +339,7 @@ pub(crate) async fn status(
     if let Some(Target::Round(round)) = target {
         return show_round(connection, round, None, out).await;
     }
-    let listing = teams(connection, target).await?;
+    let listing = teams(connection, target, VersionsQuery::Omit).await?;
     write(out, &render(&listing.teams), listing.history.as_ref(), None)
 }
 
@@ -338,7 +358,7 @@ pub(crate) async fn status_investigators(
     let settings = Settings::load(home).await.map_err(StatusError::Settings)?;
     // The configuration keeps the investigators by name: the view lists them in that order.
     let configured: Vec<_> = settings.config.investigators().keys().cloned().collect();
-    let listing = teams(connection, None).await?;
+    let listing = teams(connection, None, VersionsQuery::Omit).await?;
     let text = investigators::render(&listing.teams, &configured, zone);
     out.write_all(text.as_bytes()).map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)
@@ -366,7 +386,7 @@ pub(crate) async fn status_json(
     target: Option<Target>,
     out: &mut impl Write,
 ) -> Result<(), StatusError> {
-    let listing = teams(connection, target).await?;
+    let listing = teams(connection, target, VersionsQuery::Omit).await?;
     out.write_all(render_json(&listing.teams)?.as_bytes())
         .map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)
@@ -393,10 +413,16 @@ struct Listing {
 }
 
 /// The teams the daemon answers a status request for `target` with, what it says of the history, and its versions.
-async fn teams(connection: &mut Connection, target: Option<Target>) -> Result<Listing, StatusError> {
-    let reply = connection
-        .request_versions(Client::Cli, Command::Status(StatusRequest { target }))
-        .await?;
+async fn teams(
+    connection: &mut Connection,
+    target: Option<Target>,
+    query: VersionsQuery,
+) -> Result<Listing, StatusError> {
+    let command = Command::Status(StatusRequest { target });
+    let reply = match query {
+        VersionsQuery::Include => connection.request_versions(Client::Cli, command).await?,
+        VersionsQuery::Omit => connection.request(Client::Cli, command).await?,
+    };
     // Read before any other request: the next answer replaces the versions of this one.
     let daemon = connection.daemon_versions().cloned();
     match reply {
