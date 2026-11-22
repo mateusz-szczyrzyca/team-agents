@@ -4,6 +4,7 @@ pub(crate) mod answer;
 pub(crate) mod control;
 pub(crate) mod daemon;
 pub(crate) mod debug;
+pub(crate) mod delegation_check;
 pub(crate) mod gate;
 pub(crate) mod guard;
 pub(crate) mod log;

@@ -26,6 +26,9 @@ mod daemon;
 #[cfg(test)]
 #[path = "tests/debug_command.rs"]
 mod debug_command_tests;
+#[cfg(test)]
+#[path = "tests/delegation_check.rs"]
+mod delegation_check_tests;
 mod environment;
 #[cfg(test)]
 #[path = "tests/fixtures.rs"]
@@ -60,6 +63,7 @@ use crate::commands::answer::{AnswerError, Source, answer};
 use crate::commands::control::ControlError;
 use crate::commands::daemon::{DaemonCommandError, daemon};
 use crate::commands::debug::{DebugCliArgs, DebugError, debug};
+use crate::commands::delegation_check::{DelegationCheckArgs, delegation_check};
 use crate::commands::gate::{GateError, gate, task_in};
 use crate::commands::guard::{GuardCommitError, guard_commit};
 use crate::commands::log::{LogError, LogRequest, log_in};
@@ -115,6 +119,13 @@ const GUARD_COMMIT_ABOUT: &str = "Asked by the commit-msg hook of an agent's run
 /// The name of the command that tells the story of a round or a team from the history.
 const LOG: &str = "log";
 
+/// The name of the hidden command the bus runs to check a request to a worker against the requester's plan.
+const DELEGATION_CHECK: &str = "_delegation-check";
+
+/// What `agent _delegation-check` is for, as the help says; the command is hidden from the list of commands.
+const DELEGATION_CHECK_ABOUT: &str =
+    "Asked by agentbus delegate: judges a request to a worker against the requester's plan";
+
 /// What `agent log` is for, as the help says.
 const LOG_ABOUT: &str = "Reads history directly, with no daemon needed. With only --round or --team and optional --prompts, --no-steps, --json: tells the story. With no scope, both scopes, --show log, or any row filter: prints daemon log rows. Row filters are --task, --run, --agent, --level, --event, --since, --until, --grep, -n and -f.";
 
@@ -168,6 +179,11 @@ fn command() -> clap::Command {
                 .about(GUARD_COMMIT_ABOUT)
                 .hide(true),
         )
+        .subcommand(
+            DelegationCheckArgs::augment_args(clap::Command::new(DELEGATION_CHECK))
+                .about(DELEGATION_CHECK_ABOUT)
+                .hide(true),
+        )
         .subcommand(LogArgs::augment_args(clap::Command::new(LOG)).about(LOG_ABOUT))
         .subcommand(DebugArgs::augment_args(clap::Command::new(DEBUG)).about(DEBUG_ABOUT));
     // `augment_subcommands` gives the command the doc comment of `Steer` as its description: the description is kept.
@@ -197,6 +213,8 @@ enum Invocation {
     Log(LogArgs),
     /// `debug`.
     Debug(DebugArgs),
+    /// `_delegation-check`.
+    DelegationCheck(DelegationCheckArgs),
 }
 
 /// Parses `args` (the program name first) as `agent` takes them, the commands that steer included.
@@ -222,6 +240,11 @@ where
     }
     if let Some((LOG, log)) = matches.subcommand() {
         return Ok(Invocation::Log(LogArgs::from_arg_matches(log)?));
+    }
+    if let Some((DELEGATION_CHECK, check)) = matches.subcommand() {
+        return Ok(Invocation::DelegationCheck(DelegationCheckArgs::from_arg_matches(
+            check,
+        )?));
     }
     if let Some((DEBUG, debug)) = matches.subcommand() {
         return Ok(Invocation::Debug(DebugArgs::from_arg_matches(debug)?));
@@ -586,6 +609,9 @@ enum CommandError {
     /// The tokio runtime cannot be built.
     #[error("cannot start the runtime of the command")]
     Runtime(#[source] io::Error),
+    /// A command could not write its answer.
+    #[error(transparent)]
+    Output(#[from] OutputError),
 }
 
 /// Runs `agent` with the command line `args` (the program name first), writing to `out` and `err`.
@@ -630,6 +656,7 @@ where
         // `log` reads a file and needs no runtime: it runs on the thread of the command.
         Ok(Invocation::Log(args)) => finish(execute_log(environment, args, out), err)?,
         Ok(Invocation::Debug(args)) => finish(execute_blocking(environment, Work::Debug(args), out), err)?,
+        Ok(Invocation::DelegationCheck(args)) => finish(execute_delegation_check(&args, out), err)?,
         // `--version` and `--help` arrive here too, as "errors" meant for stdout.
         Err(answer) if !answer.use_stderr() => {
             write_text(out, &answer.render().to_string())?;
@@ -669,7 +696,8 @@ fn finish(result: Result<(), CommandError>, err: &mut impl Write) -> Result<Exit
                 | CommandError::Gate(_)
                 | CommandError::GuardCommit(GuardCommitError::Output(_))
                 | CommandError::Editor(_)
-                | CommandError::Runtime(_) => ExitCode::FAILURE,
+                | CommandError::Runtime(_)
+                | CommandError::Output(_) => ExitCode::FAILURE,
             })
         }
     }
@@ -690,6 +718,8 @@ enum Work {
     GuardCommit(GuardCommitArgs),
     /// `debug`.
     Debug(DebugArgs),
+    /// `_delegation-check`.
+    DelegationCheck(DelegationCheckArgs),
 }
 
 /// Runs `work` on a runtime of its own.
@@ -706,8 +736,17 @@ fn execute_blocking(environment: &Environment, work: Work, out: &mut impl Write)
             Work::Gate(args) => execute_gate(environment, args, out).await,
             Work::GuardCommit(args) => Ok(guard_commit(environment, &args.message_file, out).await?),
             Work::Debug(args) => execute_debug_cmd(environment, args, out).await,
+            Work::DelegationCheck(args) => execute_delegation_check(&args, out),
         }
     })
+}
+
+/// Carries out `agent _delegation-check`, which judges a request in the plan file it is given and needs no runtime.
+///
+/// # Errors
+/// [`CommandError::Output`] when `out` refuses the answer.
+fn execute_delegation_check(args: &DelegationCheckArgs, out: &mut impl Write) -> Result<(), CommandError> {
+    delegation_check(args, out).map_err(|source| OutputError::Write(source).into())
 }
 
 /// Carries out `agent debug`.
