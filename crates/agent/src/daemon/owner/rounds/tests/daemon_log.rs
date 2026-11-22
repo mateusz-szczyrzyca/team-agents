@@ -864,6 +864,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::TaskStatusChanged,
             LogEvent::RunStarted,
             LogEvent::RunEnded,
+            LogEvent::TaskWaitsForAgent,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::info!(event = variant.as_str(), variant_name = variant.as_str(), "info event");
@@ -1431,6 +1432,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::delivery_restart_tests::record_delivery_closed_event(&mut observed).await;
     super::turn_limit_restart_tests::record_snapshot_events(&mut observed).await;
     super::last_step_tests::record_task_handed_over(&mut observed).await;
+    super::agent_slots_tests::record_task_waits_for_agent(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
     assert_eq!(

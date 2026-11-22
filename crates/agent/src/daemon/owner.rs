@@ -810,7 +810,7 @@ impl Owner {
             }
             // An agent has its limit of runs over all teams: a task whose agent holds it waits, queued, for that run.
             if let Some(holder) = self.run_holding_agent(&task)? {
-                self.note_agent_wait(&task, &holder);
+                self.note_agent_wait(&task, &holder)?;
                 continue;
             }
             self.agent_waits.remove(&task);
@@ -837,10 +837,14 @@ impl Owner {
     }
 
     /// Notes that the queued `task` waits for the run `holder`; the log says so once, not at every look of the loop.
-    fn note_agent_wait(&mut self, task: &TaskId, holder: &Going) {
+    fn note_agent_wait(&mut self, task: &TaskId, holder: &Going) -> Result<(), OwnerError> {
         if self.agent_waits.insert(task.clone()) {
+            let located = self.locate(task)?;
+            eprintln!("DEBUGNOTE {} enabled={}", located.team, tracing::enabled!(tracing::Level::INFO));
+            // The team and the task are fields of the event itself: the history keeps them with the record.
             tracing::info!(
                 event = LogEvent::TaskWaitsForAgent.as_str(),
+                team = %located.team,
                 task = %task,
                 holder_team = %holder.team,
                 holder_task = %holder.task,
@@ -848,6 +852,7 @@ impl Owner {
                 "the task waits: its agent runs another task at its limit of runs"
             );
         }
+        Ok(())
     }
 
     /// Whether a new run may start now: the free space is measured and is at least `disk.min_free_gb`. A refusal
