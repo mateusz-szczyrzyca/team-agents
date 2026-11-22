@@ -14,6 +14,7 @@ pub(crate) enum ResponseTextError {
 }
 use super::{AutopilotNotice, Pulls};
 use crate::daemon::team::Why;
+use agent_core::decide::fix::{LeadRun, Response, response_of};
 use agent_core::ids::TeamId;
 use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
@@ -320,12 +321,21 @@ fn needs_response(item: &agent_core::state::ItemProgress, run: &agent_core::stat
     let Some(disputes) = item.findings().and_then(agent_core::state::Findings::disputes) else {
         return false;
     };
+    let verdict_at = item
+        .fix_passes()
+        .last()
+        .and_then(|pass| pass.requested_by.iter().map(|request| request.requested_at).max());
+    let ended = match run.state() {
+        RunState::Ended { at, .. } => *at,
+        RunState::Running => run.started_at(),
+    };
+    let lead = LeadRun {
+        started: run.started_at(),
+        ended,
+    };
     disputes.answered_pass != pass
         && disputes.checked_run.as_ref() != Some(run.id())
-        && !item
-            .fix_passes()
-            .last()
-            .is_some_and(|pass| pass.requested_by.iter().any(|r| r.requested_at > run.started_at()))
+        && response_of(Some(lead), verdict_at) == Response::AfterVerdict
 }
 
 /// Renders a precise correction through the harness catalog.

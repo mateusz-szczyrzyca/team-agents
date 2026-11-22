@@ -95,8 +95,12 @@ pub enum Response {
 
 /// Which of the lead's runs is judged as the response: only one that started at or after the verdict of the pass.
 #[must_use]
-pub fn response_of(_run: Option<LeadRun>, _verdict_at: Option<Timestamp>) -> Response {
-    Response::None
+pub fn response_of(run: Option<LeadRun>, verdict_at: Option<Timestamp>) -> Response {
+    match (run, verdict_at) {
+        (None, _) => Response::None,
+        (Some(run), Some(verdict)) if run.started < verdict => Response::BeforeVerdict,
+        (Some(_), Some(_) | None) => Response::AfterVerdict,
+    }
 }
 
 #[cfg(test)]
